@@ -1,3 +1,4 @@
+extern crate ats_usb;
 extern crate hidapi;
 
 use std::{convert::Infallible, net::{Ipv4Addr, SocketAddr}, time::Duration};
@@ -21,6 +22,13 @@ fn main() -> iced::Result {
             iced::subscription::channel(1, 4, |sender| {
                 println!("subscription inner!");
                 device_hid_task(sender)
+            })
+        })
+        .subscription(|_| {
+            println!("subscription outer!");
+            iced::subscription::channel(1, 4, |sender| {
+                println!("subscription inner!");
+                device_cdc_task(sender)
             })
         })
         .run()
@@ -100,6 +108,51 @@ async fn device_hid_task(mut message_channel: impl Sink<Message> + Unpin) -> Inf
             if device.vendor_id() == 0x1915 && device.product_id() == 0x48AB {
                 new_list.push(SocketAddr::new(Ipv4Addr::new(42, 0, 0, 1).into(), 00000));
             }
+        }
+        dbg!(&new_list);
+        for v in &old_list {
+            if !new_list.contains(v) {
+                let _ = message_channel.send(Message::Disconnect(*v)).await;
+            }
+        }
+        old_list = new_list;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn device_cdc_task(mut message_channel: impl Sink<Message> + Unpin) -> Infallible {
+    let mut old_list = vec![];
+    loop {
+        let mut new_list = vec![];
+        let ports = serialport::available_ports();
+        let ports: Vec<_> = match ports {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Failed to list serial ports {}", &e.to_string());
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
+        }.into_iter().filter(|port| {
+            match &port.port_type {
+                serialport::SerialPortType::UsbPort(port_info) => {
+                    if port_info.vid != 0x1915 || port_info.pid != 0x520f {
+                        return false;
+                    }
+                    if let Some(i) = port_info.interface {
+                        // interface 0: cdc acm module
+                        // interface 1: cdc acm module functional subordinate interface
+                        // interface 2: cdc acm dfu
+                        // interface 3: cdc acm dfu subordinate interface
+                        i == 0
+                    } else {
+                        true
+                    }
+                },
+                _ => false,
+            }
+        }).collect();
+        for device in ports {
+            new_list.push(SocketAddr::new(Ipv4Addr::new(42, 0, 0, 1).into(), 00000));
         }
         dbg!(&new_list);
         for v in &old_list {
