@@ -1463,6 +1463,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "hidapi"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e58251020fe88fe0dae5ebcc1be92b4995214af84725b375d08354d0311c23c"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "pkg-config",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "iced"
 version = "0.13.0-dev"
 source = "git+https://github.com/iced-rs/iced.git?rev=3013463baa71504488a20436beb3db87ecb66df0#3013463baa71504488a20436beb3db87ecb66df0"
@@ -2135,6 +2148,7 @@ name = "odyssey-desktop"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "hidapi",
  "iced",
  "tokio",
 ]

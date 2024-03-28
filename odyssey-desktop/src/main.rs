@@ -1,3 +1,5 @@
+extern crate hidapi;
+
 use std::{convert::Infallible, net::{Ipv4Addr, SocketAddr}, time::Duration};
 
 use iced::{
@@ -12,6 +14,13 @@ fn main() -> iced::Result {
             iced::subscription::channel(0, 4, |sender| {
                 println!("subscription inner!");
                 device_ping_task(sender)
+            })
+        })
+        .subscription(|_| {
+            println!("subscription outer!");
+            iced::subscription::channel(1, 4, |sender| {
+                println!("subscription inner!");
+                device_hid_task(sender)
             })
         })
         .run()
@@ -78,5 +87,27 @@ async fn device_ping_task(mut message_channel: impl Sink<Message> + Unpin) -> In
             }
         }
         old_list = new_list;
+    }
+}
+
+async fn device_hid_task(mut message_channel: impl Sink<Message> + Unpin) -> Infallible {
+    let api = hidapi::HidApi::new().unwrap();
+
+    let mut old_list = vec![];
+    loop {
+        let mut new_list = vec![];
+        for device in api.device_list() {
+            if device.vendor_id() == 0x1915 && device.product_id() == 0x48AB {
+                new_list.push(SocketAddr::new(Ipv4Addr::new(42, 0, 0, 1).into(), 00000));
+            }
+        }
+        dbg!(&new_list);
+        for v in &old_list {
+            if !new_list.contains(v) {
+                let _ = message_channel.send(Message::Disconnect(*v)).await;
+            }
+        }
+        old_list = new_list;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
