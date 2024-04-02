@@ -1,0 +1,15 @@
+[package]
+name = "odyssey_hub_client"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.81"
+tokio = { version = "1.37.0", features = ["macros", "net"] }
+
+[dependencies.interprocess]
+git = "https://github.com/kotauskas/interprocess.git"
+rev = "5232737bb93b5203a4b7f52518b7cd331a1a2481"
+features = ["tokio"]

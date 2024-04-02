@@ -1,0 +1,21 @@
+[package]
+name = "odyssey-desktop"
+version = "0.1.0"
+edition = "2021"
+default-run = "odyssey-desktop"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = { version = "0.3.30", default-features = false, features = ["std", "async-await"] }
+hidapi = "2.6.1"
+serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }
+serial2 = "0.2.20"
+tokio = { version = "1.37.0", features = ["macros", "net"] }
+ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+odyssey_hub_server = { path = "../odyssey_hub_server" }
+
+[dependencies.iced]
+git = "https://github.com/iced-rs/iced.git"
+rev = "3013463baa71504488a20436beb3db87ecb66df0"
+features = ["canvas", "tokio"]
