@@ -1,5 +1,5 @@
 [package]
-name = "odyssey-hub-server"
+name = "odyssey-hub"
 version = "0.1.0"
 edition = "2021"
 

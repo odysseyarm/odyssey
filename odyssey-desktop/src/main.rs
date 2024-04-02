@@ -4,9 +4,8 @@ extern crate hidapi;
 use std::{convert::Infallible, net::{Ipv4Addr, SocketAddr}, time::Duration};
 
 use iced::{
-    futures::{Sink, SinkExt}, widget::{column, text, Column}
+    futures::{Sink, SinkExt}, widget::{column, text, Column}, Command
 };
-use odyssey_hub_server::server::run_server;
 use tokio::net::UdpSocket;
 
 fn main() -> iced::Result {
@@ -32,17 +31,8 @@ fn main() -> iced::Result {
                 device_cdc_task(sender)
             })
         })
-        .subscription(|_| {
-            iced::subscription::channel(3, 0, |_| {
-                async {
-                    loop {
-                        match run_server().await {
-                            Ok(_) => (),
-                            Err(e) => eprintln!("Error in run_server: {}", e),
-                        }
-                    }
-                }
-            })
+        .load(|| {
+            Command::perform(odyssey_hub::server::run(), |_| Message::Server)
         })
         .run()
 }
@@ -56,6 +46,7 @@ struct Counter {
 enum Message {
     Connect(SocketAddr),
     Disconnect(SocketAddr),
+    Server,
 }
 
 impl Counter {
@@ -74,7 +65,9 @@ impl Counter {
                 if let Some(i) = i {
                     self.device_list.remove(i);
                 }
-            }
+            },
+            // I think this never happens because the server loop never ends
+            Message::Server => {},
         }
     }
 }

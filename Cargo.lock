@@ -2300,14 +2300,14 @@ dependencies = [
  "futures",
  "hidapi",
  "iced",
- "odyssey-hub-server",
+ "odyssey-hub",
  "serial2",
  "serialport",
  "tokio",
 ]
 
 [[package]]
-name = "odyssey-hub-server"
+name = "odyssey-hub"
 version = "0.1.0"
 dependencies = [
  "anyhow",

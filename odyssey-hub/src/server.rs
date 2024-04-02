@@ -1,7 +1,7 @@
 use interprocess::local_socket::{tokio::prelude::{LocalSocketListener, LocalSocketStream}, traits::tokio::{Listener, Stream}, NameTypeSupport, ToFsName, ToNsName};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, try_join};
 
-pub async fn run_server() -> anyhow::Result<()> {
+pub async fn run() -> anyhow::Result<()> {
     // Describe the things we do when we've got a connection ready.
     async fn handle_conn(conn: LocalSocketStream) -> std::io::Result<()> {
         // Split the connection into two halves to process
