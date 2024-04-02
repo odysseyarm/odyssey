@@ -10,8 +10,9 @@ futures = { version = "0.3.30", default-features = false, features = ["std", "as
 hidapi = "2.6.1"
 serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }
 serial2 = "0.2.20"
-tokio = { version = "1.36.0", features = ["net"] }
+tokio = { version = "1.37.0", features = ["macros", "net"] }
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+odyssey-hub-server = { path = "../odyssey-hub-server" }
 
 [dependencies.iced]
 git = "https://github.com/iced-rs/iced.git"

@@ -6,6 +6,7 @@ use std::{convert::Infallible, net::{Ipv4Addr, SocketAddr}, time::Duration};
 use iced::{
     futures::{Sink, SinkExt}, widget::{column, text, Column}
 };
+use odyssey_hub_server::server::run_server;
 use tokio::net::UdpSocket;
 
 fn main() -> iced::Result {
@@ -26,9 +27,21 @@ fn main() -> iced::Result {
         })
         .subscription(|_| {
             println!("subscription outer!");
-            iced::subscription::channel(1, 4, |sender| {
+            iced::subscription::channel(2, 4, |sender| {
                 println!("subscription inner!");
                 device_cdc_task(sender)
+            })
+        })
+        .subscription(|_| {
+            iced::subscription::channel(3, 0, |_| {
+                async {
+                    loop {
+                        match run_server().await {
+                            Ok(_) => (),
+                            Err(e) => eprintln!("Error in run_server: {}", e),
+                        }
+                    }
+                }
             })
         })
         .run()

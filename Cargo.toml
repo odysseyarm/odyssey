@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "odyssey-desktop",
+    "odyssey-hub-server",
+]
+
+# Enable optimizations for dependencies in dev profile
+[profile.dev.package."*"]
+opt-level = 3
