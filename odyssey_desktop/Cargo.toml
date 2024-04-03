@@ -1,8 +1,8 @@
 [package]
-name = "odyssey-desktop"
+name = "odyssey_desktop"
 version = "0.1.0"
 edition = "2021"
-default-run = "odyssey-desktop"
+default-run = "odyssey_desktop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
