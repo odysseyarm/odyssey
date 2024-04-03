@@ -2,8 +2,9 @@
 resolver = "2"
 
 members = [
-    "odyssey-desktop",
-    "odyssey-hub",
+    "odyssey_desktop",
+    "odyssey_hub_client",
+    "odyssey_hub_server",
 ]
 
 # Enable optimizations for dependencies in dev profile
