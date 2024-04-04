@@ -13,7 +13,7 @@ serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }
 serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
-odyssey_hub_server = { path = "../odyssey_hub_server" }
+odyssey_hub_service = { path = "../odyssey_hub_service" }
 
 [dependencies.iced]
 git = "https://github.com/iced-rs/iced.git"

@@ -9,6 +9,9 @@ use iced::{
 use tokio::net::UdpSocket;
 
 fn main() -> iced::Result {
+    if odyssey_hub_service::service::start() {
+        return Ok(())
+    }
     iced::program("kajingo", Counter::update, Counter::view)
         .subscription(|_| {
             println!("subscription outer!");
@@ -30,9 +33,6 @@ fn main() -> iced::Result {
                 println!("subscription inner!");
                 device_cdc_task(sender)
             })
-        })
-        .load(|| {
-            Command::perform(odyssey_hub_server::server::run(), |_| Message::Server)
         })
         .run()
 }
