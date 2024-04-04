@@ -4,14 +4,11 @@ extern crate hidapi;
 use std::{convert::Infallible, net::{Ipv4Addr, SocketAddr}, time::Duration};
 
 use iced::{
-    futures::{Sink, SinkExt}, widget::{column, text, Column}, Command
+    futures::{Sink, SinkExt}, widget::{column, text, Column}
 };
 use tokio::net::UdpSocket;
 
 fn main() -> iced::Result {
-    if odyssey_hub_service::service::start() {
-        return Ok(())
-    }
     iced::program("kajingo", Counter::update, Counter::view)
         .subscription(|_| {
             println!("subscription outer!");
