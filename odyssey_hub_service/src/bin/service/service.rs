@@ -23,7 +23,7 @@ pub fn start() {
     }
 }
 
-enum Message {
+pub enum Message {
     ServerInit(Result<(), std::io::Error>),
     Stop,
 }
@@ -75,7 +75,7 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
                 async move {
                     handle_service_status(status_handle, receiver, running_status).await;
                 }
-            }) => {}
+            }) => {},
     };
 
     // Tell the system that service has stopped.
@@ -115,7 +115,7 @@ async fn handle_service_status(
     }
 }
 
-async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
+pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
     // Describe the things we do when we've got a connection ready.
     async fn handle_conn(conn: LocalSocketStream) -> std::io::Result<()> {
         // Split the connection into two halves to process
