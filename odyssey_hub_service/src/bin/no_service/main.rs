@@ -1,6 +1,4 @@
-#[path = "../service/service.rs"] mod service;
-
-use service::Message;
+use odyssey_hub_service::service::{self, Message};
 
 #[tokio::main]
 async fn main() {

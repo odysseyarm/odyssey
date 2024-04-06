@@ -8,6 +8,7 @@ default-run = "no_service"
 
 [dependencies]
 anyhow = "1.0.81"
+odyssey_hub_service_interface = { version = "0.1.0", path = "../odyssey_hub_service_interface" }
 serde = { version = "1.0.197", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 
