@@ -2549,10 +2549,12 @@ name = "odyssey_hub_service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures",
  "interprocess",
  "odyssey_hub_service_interface",
  "serde",
  "tokio",
+ "tonic",
  "windows-service",
  "winres",
 ]

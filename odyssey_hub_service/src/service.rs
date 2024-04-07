@@ -1,40 +1,97 @@
-use interprocess::local_socket::{tokio::prelude::{LocalSocketListener, LocalSocketStream}, traits::tokio::{Listener, Stream}, NameTypeSupport, ToFsName, ToNsName};
-use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, sync::mpsc, try_join};
+use std::{future::ready, pin::Pin};
 
+use tokio::io::{AsyncRead, AsyncWrite};
+use interprocess::local_socket::{tokio::prelude::LocalSocketListener, traits::tokio::{Listener, Stream}, NameTypeSupport, ToFsName, ToNsName};
+use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, sync::mpsc, try_join};
+use odyssey_hub_service_interface::{greeter_server::{Greeter, GreeterServer}, HelloReply, HelloRequest};
+use tonic::transport::server::Connected;
+
+
+#[derive(Debug, Default)]
+struct Server {}
+
+#[tonic::async_trait]
+impl Greeter for Server {
+    async fn say_hello(
+        &self,
+        request: tonic::Request<HelloRequest>,
+    ) -> Result<tonic::Response<HelloReply>, tonic::Status> {
+        println!("Got a request: {:?}", request);
+        let reply = HelloReply {
+            message: format!("Hello {}!", request.into_inner().name), // We must use .into_inner() as the fields of gRPC requests and responses are private
+        };
+
+        Ok(tonic::Response::new(reply)) // Send back our formatted greeting}
+    }
+}
 
 pub enum Message {
     ServerInit(Result<(), std::io::Error>),
     Stop,
 }
 
-pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
-    // Describe the things we do when we've got a connection ready.
-    async fn handle_conn(conn: LocalSocketStream) -> std::io::Result<()> {
-        // Split the connection into two halves to process
-        // received and sent data concurrently.
-        let (reader, mut writer) = conn.split();
-        let mut reader = BufReader::new(reader);
+struct LocalSocketStream(interprocess::local_socket::tokio::prelude::LocalSocketStream);
 
-        // Allocate a sizeable buffer for reading.
-        // This size should be enough and should be easy to find for the allocator.
-        let mut buffer = String::with_capacity(128);
+impl LocalSocketStream {
+    fn split(self) -> (interprocess::local_socket::tokio::RecvHalf, interprocess::local_socket::tokio::SendHalf) {
+        self.0.split()
+    }
+    fn inner_pin(self: Pin<&mut Self>) -> Pin<&mut interprocess::local_socket::tokio::prelude::LocalSocketStream> {
+        unsafe {
+            self.map_unchecked_mut(|s| &mut s.0)
+        }
+    }
+}
 
-        // Describe the write operation as writing our whole message.
-        let write = writer.write_all(b"Hello from server!\n");
-        // Describe the read operation as reading into our big buffer.
-        let read = reader.read_line(&mut buffer);
+impl Connected for LocalSocketStream {
+    type ConnectInfo = ();
 
-        // Run both operations concurrently.
-        try_join!(read, write)?;
+    fn connect_info(&self) -> Self::ConnectInfo {
+        ()
+    }
+}
 
-        // Dispose of our connection right now and not a moment later because I want to!
-        drop((reader, writer));
-
-        // Produce our output!
-        println!("Client answered: {}", buffer.trim());
-        Ok(())
+impl AsyncWrite for LocalSocketStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        self.inner_pin().poll_write(cx, buf)
     }
 
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+        self.inner_pin().poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+        self.inner_pin().poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        self.inner_pin().poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.0.is_write_vectored()
+    }
+}
+
+impl AsyncRead for LocalSocketStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.inner_pin().poll_read(cx, buf)
+    }
+}
+
+pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
     // Pick a name. There isn't a helper function for this, mostly because it's largely unnecessary:
     // in Rust, `match` is your concise, readable and expressive decision making construct.
     let name = {
@@ -52,31 +109,17 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
     // existing socket file that has not been deleted for whatever reason,
     // ensure it's a socket file and not a normal file, and delete it.
     let listener = LocalSocketListener::bind(name.clone())?;
+    let listener = futures::stream::unfold((), |()| {
+        async { Some((listener.accept().await.map(LocalSocketStream), ())) }
+    });
     println!("Server running at {:?}", name.clone());
 
     sender.send(Message::ServerInit(Ok(()))).unwrap();
 
-    // Set up our loop boilerplate that processes our incoming connections.
-    loop {
-        // Sort out situations when establishing an incoming connection caused an error.
-        let conn = match listener.accept().await {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("There was an error with an incoming connection: {}", e);
-                continue;
-            }
-        };
+    tonic::transport::Server::builder()
+        .add_service(GreeterServer::new(Server::default()))
+        .serve_with_incoming(listener)
+        .await?;
 
-        // Spawn new parallel asynchronous tasks onto the Tokio runtime
-        // and hand the connection over to them so that multiple clients
-        // could be processed simultaneously in a lightweight fashion.
-        tokio::spawn(async move {
-            // The outer match processes errors that happen when we're
-            // connecting to something. The inner if-let processes errors that
-            // happen during the connection.
-            if let Err(e) = handle_conn(conn).await {
-                eprintln!("Error while handling connection: {}", e);
-            }
-        });
-    }
+    Ok(())
 }
