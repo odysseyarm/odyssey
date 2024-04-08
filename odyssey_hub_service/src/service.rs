@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use interprocess::local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName};
+use interprocess::{local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName}, os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor}};
 use tokio::sync::mpsc;
 use odyssey_hub_service_interface::{greeter_server::{Greeter, GreeterServer}, HelloReply, HelloRequest};
 use tonic::transport::server::Connected;
@@ -104,7 +104,11 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
     // Create our listener. In a more robust program, we'd check for an
     // existing socket file that has not been deleted for whatever reason,
     // ensure it's a socket file and not a normal file, and delete it.
-    let listener = ListenerOptions::new().name(name.clone()).create_tokio().unwrap();
+	let mut sd = SecurityDescriptor::new()?;
+	unsafe {
+        sd.set_dacl(std::ptr::null_mut(), false);
+	}
+    let listener = ListenerOptions::new().security_descriptor(sd).name(name.clone()).create_tokio().unwrap();
     let listener = futures::stream::unfold((), |()| {
         async {
             let conn = listener.accept().await;
