@@ -2603,9 +2603,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
+ "hidapi",
  "interprocess",
  "odyssey_hub_service_interface",
  "serde",
+ "serial2",
+ "serialport",
  "tokio",
  "tokio-stream",
  "tonic",

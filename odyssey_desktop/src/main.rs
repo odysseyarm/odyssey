@@ -43,7 +43,6 @@ struct Counter {
 enum Message {
     Connect(SocketAddr),
     Disconnect(SocketAddr),
-    Server,
 }
 
 impl Counter {
@@ -63,8 +62,6 @@ impl Counter {
                     self.device_list.remove(i);
                 }
             },
-            // I think this never happens because the server loop never ends
-            Message::Server => {},
         }
     }
 }

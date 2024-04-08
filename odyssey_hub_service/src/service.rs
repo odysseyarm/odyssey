@@ -106,7 +106,7 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
     // ensure it's a socket file and not a normal file, and delete it.
 	let mut sd = SecurityDescriptor::new()?;
 	unsafe {
-        sd.set_dacl(std::ptr::null_mut(), false);
+        sd.set_dacl(std::ptr::null_mut(), false)?;
 	}
     let listener = ListenerOptions::new().security_descriptor(sd).name(name.clone()).create_tokio().unwrap();
     let listener = futures::stream::unfold((), |()| {
@@ -116,9 +116,9 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
             Some((conn.map(LocalSocketStream), ()))
         }
     });
-    println!("Server running at {:?}", name);
 
     sender.send(Message::ServerInit(Ok(()))).unwrap();
+    println!("Server running at {:?}", name);
 
     dbg!(tonic::transport::Server::builder()
         .add_service(GreeterServer::new(Server::default()))
