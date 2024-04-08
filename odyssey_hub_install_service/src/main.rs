@@ -15,7 +15,7 @@ fn main() -> windows_service::Result<()> {
 
     let service_info = ServiceInfo {
         name: OsString::from("OdysseyService"),
-        display_name: OsString::from("Odyssey service"),
+        display_name: OsString::from("Odyssey Service"),
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::OnDemand,
         error_control: ServiceErrorControl::Normal,

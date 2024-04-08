@@ -3,6 +3,8 @@ use std::{ffi::OsString, time::Duration};
 use interprocess::local_socket::{tokio::prelude::{LocalSocketListener, LocalSocketStream}, traits::tokio::{Listener, Stream}, NameTypeSupport, ToFsName, ToNsName};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, sync::mpsc, try_join};
 
+use odyssey_hub_service::service::{run_service, Message};
+
 #[cfg(target_os = "windows")]
 use windows_service::define_windows_service;
 #[cfg(target_os = "windows")]
@@ -61,7 +63,7 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
     };
 
     tokio::select! {
-        _ = tokio::spawn(odyssey_hub_service::run_service(sender)) => {},
+        _ = tokio::spawn(run_service(sender)) => {},
         _ = tokio::spawn({
                 let running_status = running_status.clone();
                 async move {
@@ -90,6 +92,8 @@ async fn handle_service_status(
     mut receiver: mpsc::UnboundedReceiver<Message>,
     running_status: ServiceStatus,
 ) {
+    use odyssey_hub_service::service::Message;
+
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(()))) => {
