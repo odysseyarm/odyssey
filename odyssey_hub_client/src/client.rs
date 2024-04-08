@@ -1,6 +1,10 @@
+use std::time::Duration;
+
 use interprocess::local_socket::{tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName};
-use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, try_join};
+use odyssey_hub_service_interface::{greeter_client::GreeterClient, HelloRequest};
 use tokio_util::sync::CancellationToken;
+use tonic::transport::{Endpoint, Uri};
+use tower::service_fn;
 
 #[derive(Default)]
 pub struct Client {
@@ -10,50 +14,35 @@ pub struct Client {
 impl Client {
     pub async fn run(&self) -> anyhow::Result<()> {
         let name = {
-            use NameTypeSupport::*;
+            use NameTypeSupport as Nts;
             match NameTypeSupport::query() {
-                OnlyFs => "/tmp/odyhub.sock".to_fs_name(),
-                OnlyNs | Both => "@odyhub.sock".to_ns_name(),
+                Nts::OnlyFs => "/tmp/odyhub.sock".to_fs_name().unwrap(),
+                Nts::OnlyNs | Nts::Both => "@odyhub.sock".to_ns_name().unwrap(),
             }
         };
-        let name = name?;
 
         // Await this here since we can't do a whole lot without a connection.
-        let conn = LocalSocketStream::connect(name).await?;
-
-        // This consumes our connection and splits it into two halves,
-        // so that we could concurrently act on both.
-        let (reader, mut writer) = conn.split();
-        let mut reader = BufReader::new(reader);
-
-        // Allocate a sizeable buffer for reading.
-        // This size should be enough and should be easy to find for the allocator.
-        let mut buffer = String::with_capacity(128);
-
-        let task = tokio::spawn({
-            let end_token = self.end_token.clone();
-            async move {
-                while !end_token.is_cancelled() {
-                    // Describe the write operation as writing our whole string.
-                    let write = writer.write_all(b"Hello from client!\n");
-                    // Describe the read operation as reading until a newline into our buffer.
-                    let read = reader.read_line(&mut buffer);
-
-                    // Concurrently perform both operations.
-                    try_join!(write, read).unwrap();
-
-                    // Display the results when we're done!
-                    println!("Server answered: {}", buffer.trim());
-
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        // URI is ignored
+        let channel = Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let name = name.clone();
+                async move {
+                    let r = LocalSocketStream::connect(name).await?;
+                    dbg!(std::io::Result::Ok(r))
                 }
-                writer.write_all(b"exit\n").await.unwrap();
-                drop((reader, writer));
-            }
+            })).await.unwrap();
+        let mut client = GreeterClient::new(channel);
+        println!("connected");
+
+        let request = tonic::Request::new(HelloRequest {
+            name: "Tonic".into(),
         });
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
-        task.await?;
+        println!("sending request");
+        let response = client.say_hello(request).await.unwrap();
 
+        println!("RESPONSE={:?}", response);
         Ok(())
     }
 }

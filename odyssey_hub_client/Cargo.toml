@@ -7,10 +7,13 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.81"
-tokio = { version = "1.37.0", features = ["macros", "net", "signal"] }
-tokio-util = "0.7.10"
+odyssey_hub_service_interface = { version = "0.1.0", path = "../odyssey_hub_service_interface" }
+tokio = { version = "1.37.0", features = ["macros", "net", "signal", "rt-multi-thread"] }
+tokio-util = { version = "0.7.10" }
+tonic = "0.11.0"
+tower = "0.4.13"
 
 [dependencies.interprocess]
 git = "https://github.com/kotauskas/interprocess.git"
-rev = "5232737bb93b5203a4b7f52518b7cd331a1a2481"
+rev = "ffbf7c65911c87251c47a8403da9b91118eb259c"
 features = ["tokio"]

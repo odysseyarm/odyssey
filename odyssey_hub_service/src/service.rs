@@ -1,8 +1,8 @@
-use std::{future::ready, pin::Pin};
+use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use interprocess::local_socket::{tokio::prelude::LocalSocketListener, traits::tokio::{Listener, Stream}, NameTypeSupport, ToFsName, ToNsName};
-use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, sync::mpsc, try_join};
+use interprocess::local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName};
+use tokio::sync::mpsc;
 use odyssey_hub_service_interface::{greeter_server::{Greeter, GreeterServer}, HelloReply, HelloRequest};
 use tonic::transport::server::Connected;
 
@@ -30,13 +30,10 @@ pub enum Message {
     Stop,
 }
 
-struct LocalSocketStream(interprocess::local_socket::tokio::prelude::LocalSocketStream);
+struct LocalSocketStream(interprocess::local_socket::tokio::Stream);
 
 impl LocalSocketStream {
-    fn split(self) -> (interprocess::local_socket::tokio::RecvHalf, interprocess::local_socket::tokio::SendHalf) {
-        self.0.split()
-    }
-    fn inner_pin(self: Pin<&mut Self>) -> Pin<&mut interprocess::local_socket::tokio::prelude::LocalSocketStream> {
+    fn inner_pin(self: Pin<&mut Self>) -> Pin<&mut interprocess::local_socket::tokio::Stream> {
         unsafe {
             self.map_unchecked_mut(|s| &mut s.0)
         }
@@ -47,7 +44,6 @@ impl Connected for LocalSocketStream {
     type ConnectInfo = ();
 
     fn connect_info(&self) -> Self::ConnectInfo {
-        ()
     }
 }
 
@@ -91,35 +87,39 @@ impl AsyncRead for LocalSocketStream {
     }
 }
 
+impl Drop for LocalSocketStream {
+    fn drop(&mut self) {
+        println!("connection closed");
+    }
+}
+
 pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
-    // Pick a name. There isn't a helper function for this, mostly because it's largely unnecessary:
-    // in Rust, `match` is your concise, readable and expressive decision making construct.
     let name = {
-        // This scoping trick allows us to nicely contain the import inside the `match`, so that if
-        // any imports of variants named `Both` happen down the line, they won't collide with the
-        // enum we're working with here. Maybe someone should make a macro for this.
-        use NameTypeSupport::*;
+        use NameTypeSupport as Nts;
         match NameTypeSupport::query() {
-            OnlyFs => "/tmp/odyhub.sock".to_fs_name(),
-            OnlyNs | Both => "@odyhub.sock".to_ns_name(),
+            Nts::OnlyFs => "/tmp/odyhub.sock".to_fs_name().unwrap(),
+            Nts::OnlyNs | Nts::Both => "@odyhub.sock".to_ns_name().unwrap(),
         }
     };
-    let name = name?;
     // Create our listener. In a more robust program, we'd check for an
     // existing socket file that has not been deleted for whatever reason,
     // ensure it's a socket file and not a normal file, and delete it.
-    let listener = LocalSocketListener::bind(name.clone())?;
+    let listener = ListenerOptions::new().name(name.clone()).create_tokio().unwrap();
     let listener = futures::stream::unfold((), |()| {
-        async { Some((listener.accept().await.map(LocalSocketStream), ())) }
+        async {
+            let conn = listener.accept().await;
+            dbg!(&conn);
+            Some((conn.map(LocalSocketStream), ()))
+        }
     });
-    println!("Server running at {:?}", name.clone());
+    println!("Server running at {:?}", name);
 
     sender.send(Message::ServerInit(Ok(()))).unwrap();
 
-    tonic::transport::Server::builder()
+    dbg!(tonic::transport::Server::builder()
         .add_service(GreeterServer::new(Server::default()))
         .serve_with_incoming(listener)
-        .await?;
+        .await)?;
 
     Ok(())
 }
