@@ -2565,11 +2565,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "interprocess",
+ "odyssey_hub_service",
  "odyssey_hub_service_interface",
  "tokio",
  "tokio-util",
  "tonic",
  "tower",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2590,6 +2593,8 @@ dependencies = [
  "odyssey_hub_service_interface",
  "serde",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

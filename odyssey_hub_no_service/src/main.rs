@@ -1,7 +1,17 @@
 use odyssey_hub_service::service::{self, Message};
+use tracing::Level;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_env_var("RUST_LOG")
+                .with_default_directive(Level::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     tokio::select! {
         _ = tokio::spawn(service::run_service(sender)) => {},
@@ -13,18 +23,18 @@ async fn handle_service_status(mut receiver: tokio::sync::mpsc::UnboundedReceive
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(()))) => {
-                eprintln!("Server started");
+                tracing::info!("Server started");
             }
             Some(Message::ServerInit(Err(_))) => {
-                eprintln!("Server start error");
+                tracing::error!("Server start error");
                 break;
             }
             Some(Message::Stop) => {
-                eprintln!("Server stopped");
+                tracing::info!("Server stopped");
                 break;
             }
             None => {
-                eprintln!("Server channel closed");
+                tracing::info!("Server channel closed");
                 break;
             }
         }

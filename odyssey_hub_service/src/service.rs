@@ -30,9 +30,15 @@ pub enum Message {
     Stop,
 }
 
-struct LocalSocketStream(interprocess::local_socket::tokio::Stream);
+/// Wrapper around interprocess's `LocalSocketStream` to implement the `Connected` trait and
+/// override `poll_flush`.
+#[derive(Debug)]
+pub struct LocalSocketStream(interprocess::local_socket::tokio::Stream);
 
 impl LocalSocketStream {
+    pub fn new(inner: interprocess::local_socket::tokio::Stream) -> Self {
+        Self(inner)
+    }
     fn inner_pin(self: Pin<&mut Self>) -> Pin<&mut interprocess::local_socket::tokio::Stream> {
         unsafe {
             self.map_unchecked_mut(|s| &mut s.0)
@@ -56,8 +62,8 @@ impl AsyncWrite for LocalSocketStream {
         self.inner_pin().poll_write(cx, buf)
     }
 
-    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
-        self.inner_pin().poll_flush(cx)
+    fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+        std::task::Poll::Ready(Ok(()))
     }
 
     fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
@@ -84,12 +90,6 @@ impl AsyncRead for LocalSocketStream {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         self.inner_pin().poll_read(cx, buf)
-    }
-}
-
-impl Drop for LocalSocketStream {
-    fn drop(&mut self) {
-        println!("connection closed");
     }
 }
 

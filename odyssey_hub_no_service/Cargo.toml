@@ -11,6 +11,8 @@ odyssey_hub_service = { version = "0.1.0", path = "../odyssey_hub_service" }
 odyssey_hub_service_interface = { version = "0.1.0", path = "../odyssey_hub_service_interface" }
 serde = { version = "1.0.197", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["macros", "net"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
 
 [dependencies.interprocess]
 git = "https://github.com/kotauskas/interprocess.git"
