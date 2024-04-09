@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use interprocess::local_socket::{tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName};
-use odyssey_hub_service_interface::{greeter_client::GreeterClient, HelloRequest};
+use odyssey_hub_service_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, Uri};
 use tower::service_fn;
@@ -32,16 +32,14 @@ impl Client {
                     dbg!(std::io::Result::Ok(r))
                 }
             })).await.unwrap();
-        let mut client = GreeterClient::new(channel);
+        let mut client = ServiceClient::new(channel);
         println!("connected");
 
-        let request = tonic::Request::new(HelloRequest {
-            name: "Tonic".into(),
-        });
+        let request = tonic::Request::new(DeviceListRequest {});
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         println!("sending request");
-        let response = client.say_hello(request).await.unwrap();
+        let response = client.get_device_list(request).await.unwrap();
 
         println!("RESPONSE={:?}", response);
         Ok(())

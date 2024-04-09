@@ -3,25 +3,35 @@ use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncWrite};
 use interprocess::{local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName}, os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor}};
 use tokio::sync::mpsc;
-use odyssey_hub_service_interface::{greeter_server::{Greeter, GreeterServer}, HelloReply, HelloRequest};
+use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest};
 use tonic::transport::server::Connected;
 
+use crate::device_tasks::device_tasks;
 
 #[derive(Debug, Default)]
-struct Server {}
+struct Server {
+    devices: Vec<crate::device_tasks::Device>,
+}
 
 #[tonic::async_trait]
-impl Greeter for Server {
-    async fn say_hello(
+impl Service for Server {
+    async fn get_device_list(
         &self,
-        request: tonic::Request<HelloRequest>,
-    ) -> Result<tonic::Response<HelloReply>, tonic::Status> {
-        println!("Got a request: {:?}", request);
-        let reply = HelloReply {
-            message: format!("Hello {}!", request.into_inner().name), // We must use .into_inner() as the fields of gRPC requests and responses are private
+        request: tonic::Request<DeviceListRequest>,
+    ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
+        let devices = self.devices.iter().map(|d| {
+            match d {
+                crate::device_tasks::Device::Udp(addr) => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(odyssey_hub_service_interface::UdpDevice { ip: addr.to_string(), port: addr.port() as i32 })) },
+                crate::device_tasks::Device::Hid => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::HidDevice(odyssey_hub_service_interface::HidDevice { path: String::new() })) },
+                crate::device_tasks::Device::Cdc => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::CdcDevice(odyssey_hub_service_interface::CdcDevice { path: String::new() })) },
+            }
+        }).collect::<Vec<odyssey_hub_service_interface::Device>>();
+
+        let reply = DeviceListReply {
+            devices,
         };
 
-        Ok(tonic::Response::new(reply)) // Send back our formatted greeting}
+        Ok(tonic::Response::new(reply))
     }
 }
 
@@ -120,10 +130,12 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
     sender.send(Message::ServerInit(Ok(()))).unwrap();
     println!("Server running at {:?}", name);
 
-    dbg!(tonic::transport::Server::builder()
-        .add_service(GreeterServer::new(Server::default()))
-        .serve_with_incoming(listener)
-        .await)?;
+    dbg!(tokio::select! {
+        _ = device_tasks() => {},
+        _ = tonic::transport::Server::builder()
+            .add_service(ServiceServer::new(Server::default()))
+            .serve_with_incoming(listener) => {},
+    });
 
     Ok(())
 }

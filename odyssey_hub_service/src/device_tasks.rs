@@ -1,10 +1,9 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Sender};
-use tokio::io::Sink;
 
 #[derive(Debug, Clone, Copy)]
-enum Device {
+pub enum Device {
     Udp(SocketAddr),
     Hid,
     Cdc,
@@ -27,7 +26,7 @@ enum Message {
     Disconnect(Device),
 }
 
-async fn device_tasks() -> anyhow::Result<()> {
+pub async fn device_tasks() -> anyhow::Result<()> {
     let (sender, mut receiver) = mpsc::channel(12);
     let mut device_list = vec![];
     tokio::select! {
