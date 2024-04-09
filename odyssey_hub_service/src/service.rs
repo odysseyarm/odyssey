@@ -6,20 +6,20 @@ use tokio::sync::mpsc;
 use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest};
 use tonic::transport::server::Connected;
 
-use crate::device_tasks::device_tasks;
+use crate::device_tasks::{self, device_tasks};
 
 #[derive(Debug, Default)]
 struct Server {
-    devices: Vec<crate::device_tasks::Device>,
+    device_list: std::sync::Arc<tokio::sync::Mutex<Vec<crate::device_tasks::Device>>>,
 }
 
 #[tonic::async_trait]
 impl Service for Server {
     async fn get_device_list(
         &self,
-        request: tonic::Request<DeviceListRequest>,
+        _: tonic::Request<DeviceListRequest>,
     ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
-        let devices = self.devices.iter().map(|d| {
+        let device_list = self.device_list.lock().await.iter().map(|d| {
             match d {
                 crate::device_tasks::Device::Udp(addr) => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(odyssey_hub_service_interface::UdpDevice { ip: addr.to_string(), port: addr.port() as i32 })) },
                 crate::device_tasks::Device::Hid => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::HidDevice(odyssey_hub_service_interface::HidDevice { path: String::new() })) },
@@ -28,7 +28,7 @@ impl Service for Server {
         }).collect::<Vec<odyssey_hub_service_interface::Device>>();
 
         let reply = DeviceListReply {
-            devices,
+            device_list,
         };
 
         Ok(tonic::Response::new(reply))
@@ -130,10 +130,38 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
     sender.send(Message::ServerInit(Ok(()))).unwrap();
     println!("Server running at {:?}", name);
 
+    let (sender, mut receiver) = mpsc::channel(12);
+
+    let server = Server::default();
+
+    let dl = server.device_list.clone();
+
+    let handle = async {
+        tokio::select! {
+            _ = device_tasks(sender.clone()) => {},
+            _ = async {
+                while let Some(message) = receiver.recv().await {
+                    match message {
+                        device_tasks::Message::Connect(d) => {
+                            dl.lock().await.push(d);
+                        },
+                        device_tasks::Message::Disconnect(d) => {
+                            let mut dl = dl.lock().await;
+                            let i = dl.iter().position(|a| *a == d);
+                            if let Some(i) = i {
+                                dl.remove(i);
+                            }
+                        },
+                    }
+                }
+            } => {},
+        };
+    };
+
     dbg!(tokio::select! {
-        _ = device_tasks() => {},
+        _ = handle => {},
         _ = tonic::transport::Server::builder()
-            .add_service(ServiceServer::new(Server::default()))
+            .add_service(ServiceServer::new(server))
             .serve_with_incoming(listener) => {},
     });
 

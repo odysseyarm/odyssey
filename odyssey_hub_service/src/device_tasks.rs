@@ -21,38 +21,27 @@ impl PartialEq for Device {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Message {
+pub enum Message {
     Connect(Device),
     Disconnect(Device),
 }
 
-pub async fn device_tasks() -> anyhow::Result<()> {
+pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()> {
     let (sender, mut receiver) = mpsc::channel(12);
-    let mut device_list = vec![];
     tokio::select! {
         _ = device_ping_task(sender.clone()) => {},
         _ = device_hid_task(sender.clone()) => {},
         _ = device_cdc_task(sender.clone()) => {},
         _ = async {
             while let Some(message) = receiver.recv().await {
-                match message {
-                    Message::Connect(d) => {
-                        device_list.push(d);
-                    },
-                    Message::Disconnect(d) => {
-                        let i = device_list.iter().position(|a| *a == d);
-                        if let Some(i) = i {
-                            device_list.remove(i);
-                        }
-                    },
-                }
+                message_channel.send(message).await.unwrap();
             }
         } => {},
     }
     Ok(())
 }
 
-async fn device_ping_task(mut message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 23456)).await.unwrap();
     socket.set_broadcast(true).unwrap();
 
@@ -84,7 +73,7 @@ async fn device_ping_task(mut message_channel: Sender<Message>) -> std::convert:
     }
 }
 
-async fn device_hid_task(mut message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infallible {
     let api = hidapi::HidApi::new().unwrap();
 
     let mut old_list = vec![];
@@ -109,7 +98,7 @@ async fn device_hid_task(mut message_channel: Sender<Message>) -> std::convert::
     }
 }
 
-async fn device_cdc_task(mut message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_cdc_task(message_channel: Sender<Message>) -> std::convert::Infallible {
     let mut old_list = vec![];
     loop {
         let mut new_list = vec![];

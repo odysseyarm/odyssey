@@ -30,5 +30,5 @@ message Device {
 message DeviceListRequest {}
 
 message DeviceListReply {
-  repeated Device devices = 1;
+  repeated Device device_list = 1;
 }
