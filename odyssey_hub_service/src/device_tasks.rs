@@ -4,7 +4,7 @@ use tokio::sync::mpsc::{self, Sender};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Device {
-    Udp(SocketAddr),
+    Udp((SocketAddr, u8)),
     Hid,
     Cdc,
 }
@@ -56,10 +56,10 @@ async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Inf
                 loop {
                     let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 { continue; }
-                    if !old_list.contains(&Device::Udp(addr)) {
-                        let _ = message_channel.send(Message::Connect(Device::Udp(addr))).await;
+                    if !old_list.contains(&Device::Udp((addr, buf[1]))) {
+                        let _ = message_channel.send(Message::Connect(Device::Udp((addr, buf[1])))).await;
                     }
-                    new_list.push(Device::Udp(addr));
+                    new_list.push(Device::Udp((addr, buf[1])));
                 }
             })
         ).await;

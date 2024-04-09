@@ -21,7 +21,7 @@ impl Service for Server {
     ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
         let device_list = self.device_list.lock().await.iter().map(|d| {
             match d {
-                crate::device_tasks::Device::Udp(addr) => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(odyssey_hub_service_interface::UdpDevice { ip: addr.to_string(), port: addr.port() as i32 })) },
+                crate::device_tasks::Device::Udp((addr, id)) => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(odyssey_hub_service_interface::UdpDevice { ip: addr.ip().to_string(), id: *id as i32, port: addr.port() as i32 })) },
                 crate::device_tasks::Device::Hid => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::HidDevice(odyssey_hub_service_interface::HidDevice { path: String::new() })) },
                 crate::device_tasks::Device::Cdc => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::CdcDevice(odyssey_hub_service_interface::CdcDevice { path: String::new() })) },
             }
