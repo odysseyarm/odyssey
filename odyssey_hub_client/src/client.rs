@@ -45,12 +45,7 @@ impl Client {
             let response = service_client.get_device_list(request).await.unwrap();
             println!("RESPONSE={:?}", response);
             Ok(response.into_inner().device_list.into_iter().map(|d| {
-                match d.device_oneof.unwrap() {
-                    // todo implement From<odyssey_hub_service_interface::UdpDevice> for odyssey_hub_common::device::Device
-                    odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(d) => odyssey_hub_common::device::Device::Udp((d.ip.parse().unwrap(), d.port as u8)),
-                    odyssey_hub_service_interface::device::DeviceOneof::HidDevice(_) => odyssey_hub_common::device::Device::Hid,
-                    odyssey_hub_service_interface::device::DeviceOneof::CdcDevice(_) => odyssey_hub_common::device::Device::Cdc,
-                }
+                d.into()
             }).collect::<Vec<odyssey_hub_common::device::Device>>())
         } else {
             Err(anyhow::anyhow!("No service client"))

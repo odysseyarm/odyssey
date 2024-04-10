@@ -2579,6 +2579,9 @@ dependencies = [
 [[package]]
 name = "odyssey_hub_common"
 version = "0.1.0"
+dependencies = [
+ "nalgebra",
+]
 
 [[package]]
 name = "odyssey_hub_install_service"
@@ -2628,6 +2631,8 @@ dependencies = [
 name = "odyssey_hub_service_interface"
 version = "0.1.0"
 dependencies = [
+ "nalgebra",
+ "odyssey_hub_common",
  "prost",
  "tonic",
  "tonic-build",

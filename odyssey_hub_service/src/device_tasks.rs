@@ -2,10 +2,11 @@ use std::net::Ipv4Addr;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Sender};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Message {
     Connect(odyssey_hub_common::device::Device),
     Disconnect(odyssey_hub_common::device::Device),
+    Event(odyssey_hub_common::events::Event),
 }
 
 pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()> {
@@ -38,17 +39,17 @@ async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Inf
                 loop {
                     let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 { continue; }
-                    if !old_list.contains(&odyssey_hub_common::device::Device::Udp((addr, buf[1]))) {
-                        let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp((addr, buf[1])))).await;
+                    if !old_list.contains(&odyssey_hub_common::device::Device::Udp((buf[1], addr))) {
+                        let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(( buf[1], addr)))).await;
                     }
-                    new_list.push(odyssey_hub_common::device::Device::Udp((addr, buf[1])));
+                    new_list.push(odyssey_hub_common::device::Device::Udp((buf[1], addr)));
                 }
             })
         ).await;
         dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
-                let _ = message_channel.send(Message::Disconnect(*v)).await;
+                let _ = message_channel.send(Message::Disconnect(v.clone())).await;
             }
         }
         old_list = new_list;
@@ -63,16 +64,16 @@ async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infa
         let mut new_list = vec![];
         for device in api.device_list() {
             if device.vendor_id() == 0x1915 && device.product_id() == 0x48AB {
-                if !old_list.contains(&odyssey_hub_common::device::Device::Hid) {
-                    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Hid)).await;
+                if !old_list.contains(&odyssey_hub_common::device::Device::Hid(device.path().to_str().unwrap().to_string())) {
+                    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Hid(device.path().to_str().unwrap().to_string()))).await;
                 }
-                new_list.push(odyssey_hub_common::device::Device::Hid);
+                new_list.push(odyssey_hub_common::device::Device::Hid(device.path().to_str().unwrap().to_string()));
             }
         }
         dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
-                let _ = message_channel.send(Message::Disconnect(*v)).await;
+                let _ = message_channel.send(Message::Disconnect(v.clone())).await;
             }
         }
         old_list = new_list;
@@ -112,15 +113,15 @@ async fn device_cdc_task(message_channel: Sender<Message>) -> std::convert::Infa
             }
         }).collect();
         for device in ports {
-            if !old_list.contains(&odyssey_hub_common::device::Device::Cdc) {
-                let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Cdc)).await;
+            if !old_list.contains(&odyssey_hub_common::device::Device::Cdc(device.port_name.clone())) {
+                let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Cdc(device.port_name.clone()))).await;
             }
-            new_list.push(odyssey_hub_common::device::Device::Cdc);
+            new_list.push(odyssey_hub_common::device::Device::Cdc(device.port_name.clone()));
         }
         dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
-                let _ = message_channel.send(Message::Disconnect(*v)).await;
+                let _ = message_channel.send(Message::Disconnect(v.clone())).await;
             }
         }
         old_list = new_list;

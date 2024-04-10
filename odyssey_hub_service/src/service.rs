@@ -1,30 +1,30 @@
-use std::pin::Pin;
+use std::{mem::uninitialized, pin::Pin};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use interprocess::{local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName}, os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor}};
 use tokio::sync::mpsc;
-use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest};
-use tonic::transport::server::Connected;
+use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest, PollRequest, PollReply};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{transport::server::Connected, Response};
 
 use crate::device_tasks::{self, device_tasks};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Server {
     device_list: std::sync::Arc<tokio::sync::Mutex<Vec<odyssey_hub_common::device::Device>>>,
+    event_channel: std::sync::Arc<tokio::sync::Mutex<mpsc::Receiver<odyssey_hub_common::events::Event>>>,
 }
 
 #[tonic::async_trait]
 impl Service for Server {
+    type PollStream = ReceiverStream<Result<PollReply, tonic::Status>>;
+
     async fn get_device_list(
         &self,
         _: tonic::Request<DeviceListRequest>,
     ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
         let device_list = self.device_list.lock().await.iter().map(|d| {
-            match d {
-                odyssey_hub_common::device::Device::Udp((addr, id)) => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(odyssey_hub_service_interface::UdpDevice { ip: addr.ip().to_string(), id: *id as i32, port: addr.port() as i32 })) },
-                odyssey_hub_common::device::Device::Hid => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::HidDevice(odyssey_hub_service_interface::HidDevice { path: String::new() })) },
-                odyssey_hub_common::device::Device::Cdc => odyssey_hub_service_interface::Device { device_oneof: Some(odyssey_hub_service_interface::device::DeviceOneof::CdcDevice(odyssey_hub_service_interface::CdcDevice { path: String::new() })) },
-            }
+            d.clone().into()
         }).collect::<Vec<odyssey_hub_service_interface::Device>>();
 
         let reply = DeviceListReply {
@@ -32,6 +32,22 @@ impl Service for Server {
         };
 
         Ok(tonic::Response::new(reply))
+    }
+
+    async fn poll(
+        &self,
+        _: tonic::Request<PollRequest>,
+    ) -> tonic::Result<tonic::Response<Self::PollStream>, tonic::Status> {
+        let (mut tx, rx) = mpsc::channel::<Result<PollReply, tonic::Status>>(12);
+        tokio::spawn({
+            let event_channel = self.event_channel.clone();
+            async move {
+                while let Some(event) = event_channel.lock().await.recv().await {
+                    tx.send(Ok(PollReply { event: Some(event.into()) })).await.unwrap();
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 }
 
@@ -132,7 +148,12 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
 
     let (sender, mut receiver) = mpsc::channel(12);
 
-    let server = Server::default();
+    let (event_sender, event_receiver) = mpsc::channel(12);
+
+    let server = Server {
+        device_list: Default::default(),
+        event_channel: std::sync::Arc::new(tokio::sync::Mutex::new(event_receiver)),
+    };
 
     let dl = server.device_list.clone();
 
@@ -151,6 +172,9 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
                             if let Some(i) = i {
                                 dl.remove(i);
                             }
+                        },
+                        device_tasks::Message::Event(e) => {
+                            event_sender.send(e).await.unwrap();
                         },
                     }
                 }

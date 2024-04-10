@@ -1,18 +1,18 @@
 use std::net::SocketAddr;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug)]
 pub enum Device {
-    Udp((SocketAddr, u8)),
-    Hid,
-    Cdc,
+    Udp((u8, SocketAddr)),
+    Hid(String),
+    Cdc(String),
 }
 
 impl PartialEq for Device {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Device::Udp(a), Device::Udp(b)) => a == b,
-            (Device::Hid, Device::Hid) => true,
-            (Device::Cdc, Device::Cdc) => true,
+            (Device::Hid(a), Device::Hid(b)) => a == b,
+            (Device::Cdc(a), Device::Cdc(b)) => a == b,
             _ => false,
         }
     }

@@ -6,6 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+nalgebra = "0.32.5"
+odyssey_hub_common = { path = "../odyssey_hub_common" }
 prost = "0.12.4"
 tonic = { version = "0.11.0", features = ["prost"] }
 

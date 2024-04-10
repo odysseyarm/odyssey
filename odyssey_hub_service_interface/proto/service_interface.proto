@@ -4,6 +4,7 @@ package odyssey.service_interface;
 
 service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
+  rpc Poll (PollRequest) returns (stream PollReply) {}
 }
 
 message UdpDevice {
@@ -28,8 +29,59 @@ message Device {
   }
 }
 
+message Matrix3x3 {
+  double m11 = 1;
+  double m12 = 2;
+  double m13 = 3;
+  double m21 = 4;
+  double m22 = 5;
+  double m23 = 6;
+  double m31 = 7;
+  double m32 = 8;
+  double m33 = 9;
+}
+
+message Matrix3x1 {
+  double m11 = 1;
+  double m21 = 2;
+  double m31 = 3;
+}
+
+message Vector2 {
+  double x = 1;
+  double y = 2;
+}
+
+message Pose {
+  Matrix3x3 rotation = 1;
+  Matrix3x1 translation = 2;
+}
+
+message DeviceEvent {
+  Device device = 1;
+  message TrackingEvent {
+    Vector2 aimpoint = 1;
+    optional Pose pose = 2;
+  }
+  oneof device_event_oneof {
+    TrackingEvent tracking = 2;
+  }
+}
+
+message Event {
+  oneof event_oneof {
+    DeviceEvent device = 1;
+  }
+}
+
 message DeviceListRequest {}
 
 message DeviceListReply {
   repeated Device device_list = 1;
+}
+
+message PollRequest {}
+
+message PollReply {
+  Event event = 1;
 }
