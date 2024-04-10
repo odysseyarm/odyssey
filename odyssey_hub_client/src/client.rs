@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use interprocess::local_socket::{tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName};
 use odyssey_hub_service_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
@@ -9,10 +7,11 @@ use tower::service_fn;
 #[derive(Default)]
 pub struct Client {
     pub end_token: CancellationToken,
+    pub service_client: Option<ServiceClient<tonic::transport::Channel>>,
 }
 
 impl Client {
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn connect(&mut self) -> anyhow::Result<()> {
         let name = {
             use NameTypeSupport as Nts;
             match NameTypeSupport::query() {
@@ -32,16 +31,29 @@ impl Client {
                     dbg!(std::io::Result::Ok(r))
                 }
             })).await.unwrap();
-        let mut client = ServiceClient::new(channel);
+
+        self.service_client = Some(ServiceClient::new(channel));
         println!("connected");
 
-        let request = tonic::Request::new(DeviceListRequest {});
-        tokio::time::sleep(Duration::from_secs(1)).await;
-
-        println!("sending request");
-        let response = client.get_device_list(request).await.unwrap();
-
-        println!("RESPONSE={:?}", response);
         Ok(())
+    }
+
+    pub async fn get_device_list(&mut self) -> anyhow::Result<Vec<odyssey_hub_common::device::Device>> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(DeviceListRequest {});
+            // for whatever insane reason get_device_list requires mutable service_client
+            let response = service_client.get_device_list(request).await.unwrap();
+            println!("RESPONSE={:?}", response);
+            Ok(response.into_inner().device_list.into_iter().map(|d| {
+                match d.device_oneof.unwrap() {
+                    // todo implement From<odyssey_hub_service_interface::UdpDevice> for odyssey_hub_common::device::Device
+                    odyssey_hub_service_interface::device::DeviceOneof::UdpDevice(d) => odyssey_hub_common::device::Device::Udp((d.ip.parse().unwrap(), d.port as u8)),
+                    odyssey_hub_service_interface::device::DeviceOneof::HidDevice(_) => odyssey_hub_common::device::Device::Hid,
+                    odyssey_hub_service_interface::device::DeviceOneof::CdcDevice(_) => odyssey_hub_common::device::Device::Cdc,
+                }
+            }).collect::<Vec<odyssey_hub_common::device::Device>>())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
     }
 }

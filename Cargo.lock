@@ -2565,6 +2565,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "interprocess",
+ "odyssey_hub_common",
  "odyssey_hub_service",
  "odyssey_hub_service_interface",
  "tokio",
@@ -2574,6 +2575,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "odyssey_hub_common"
+version = "0.1.0"
 
 [[package]]
 name = "odyssey_hub_install_service"
@@ -2605,6 +2610,7 @@ dependencies = [
  "futures",
  "hidapi",
  "interprocess",
+ "odyssey_hub_common",
  "odyssey_hub_service_interface",
  "serde",
  "serial2",

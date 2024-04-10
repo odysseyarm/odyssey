@@ -8,6 +8,7 @@ members = [
     "odyssey_hub_service_interface",
     "odyssey_hub_no_service",
     "odyssey_hub_install_service",
+    "odyssey_hub_common",
 ]
 
 # Enable optimizations for dependencies in dev profile

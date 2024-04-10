@@ -1,29 +1,11 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Sender};
 
 #[derive(Debug, Clone, Copy)]
-pub enum Device {
-    Udp((SocketAddr, u8)),
-    Hid,
-    Cdc,
-}
-
-impl PartialEq for Device {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Device::Udp(a), Device::Udp(b)) => a == b,
-            (Device::Hid, Device::Hid) => true,
-            (Device::Cdc, Device::Cdc) => true,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 pub enum Message {
-    Connect(Device),
-    Disconnect(Device),
+    Connect(odyssey_hub_common::device::Device),
+    Disconnect(odyssey_hub_common::device::Device),
 }
 
 pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()> {
@@ -56,10 +38,10 @@ async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Inf
                 loop {
                     let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 { continue; }
-                    if !old_list.contains(&Device::Udp((addr, buf[1]))) {
-                        let _ = message_channel.send(Message::Connect(Device::Udp((addr, buf[1])))).await;
+                    if !old_list.contains(&odyssey_hub_common::device::Device::Udp((addr, buf[1]))) {
+                        let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp((addr, buf[1])))).await;
                     }
-                    new_list.push(Device::Udp((addr, buf[1])));
+                    new_list.push(odyssey_hub_common::device::Device::Udp((addr, buf[1])));
                 }
             })
         ).await;
@@ -81,10 +63,10 @@ async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infa
         let mut new_list = vec![];
         for device in api.device_list() {
             if device.vendor_id() == 0x1915 && device.product_id() == 0x48AB {
-                if !old_list.contains(&Device::Hid) {
-                    let _ = message_channel.send(Message::Connect(Device::Hid)).await;
+                if !old_list.contains(&odyssey_hub_common::device::Device::Hid) {
+                    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Hid)).await;
                 }
-                new_list.push(Device::Hid);
+                new_list.push(odyssey_hub_common::device::Device::Hid);
             }
         }
         dbg!(&new_list);
@@ -130,10 +112,10 @@ async fn device_cdc_task(message_channel: Sender<Message>) -> std::convert::Infa
             }
         }).collect();
         for device in ports {
-            if !old_list.contains(&Device::Cdc) {
-                let _ = message_channel.send(Message::Connect(Device::Cdc)).await;
+            if !old_list.contains(&odyssey_hub_common::device::Device::Cdc) {
+                let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Cdc)).await;
             }
-            new_list.push(Device::Cdc);
+            new_list.push(odyssey_hub_common::device::Device::Cdc);
         }
         dbg!(&new_list);
         for v in &old_list {
