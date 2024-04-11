@@ -1,3 +1,6 @@
+use std::net::SocketAddr;
+
+use odyssey_hub_common::device::Device;
 mod proto {
     tonic::include_proto!("odyssey.service_interface");
 }
@@ -23,15 +26,15 @@ impl Into<nalgebra::Matrix3x1<f64>> for proto::Matrix3x1 {
 impl From<nalgebra::Matrix3<f64>> for proto::Matrix3x3 {
     fn from(value: nalgebra::Matrix3<f64>) -> Self {
         Self {
-            m11: value[(0, 0)],
-            m12: value[(0, 1)],
-            m13: value[(0, 2)],
-            m21: value[(1, 0)],
-            m22: value[(1, 1)],
-            m23: value[(1, 2)],
-            m31: value[(2, 0)],
-            m32: value[(2, 1)],
-            m33: value[(2, 2)],
+            m11: value.m11,
+            m12: value.m12,
+            m13: value.m13,
+            m21: value.m21,
+            m22: value.m22,
+            m23: value.m23,
+            m31: value.m31,
+            m32: value.m32,
+            m33: value.m33,
         }
     }
 }
@@ -49,29 +52,34 @@ impl Into<nalgebra::Matrix3<f64>> for proto::Matrix3x3 {
 impl From<odyssey_hub_common::device::Device> for proto::Device {
     fn from(value: odyssey_hub_common::device::Device) -> Self {
         match value {
-            odyssey_hub_common::device::Device::Udp((id, addr)) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::UdpDevice(proto::UdpDevice {
-                    id: id as i32,
-                    ip: addr.ip().to_string(),
-                    port: addr.port() as i32,
-                })),
+            odyssey_hub_common::device::Device::Udp(udp_device) => {
+                proto::Device {
+                    device_oneof: Some(proto::device::DeviceOneof::UdpDevice(proto::UdpDevice {
+                        id: udp_device.id as i32,
+                        ip: udp_device.addr.ip().to_string(),
+                        port: udp_device.addr.port() as i32,
+                    })),
+                }
             },
-            odyssey_hub_common::device::Device::Hid(path) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::HidDevice(proto::HidDevice { path })),
+            odyssey_hub_common::device::Device::Hid(d) => proto::Device {
+                device_oneof: Some(proto::device::DeviceOneof::HidDevice(proto::HidDevice { path: d.path })),
             },
-            odyssey_hub_common::device::Device::Cdc(path) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path })),
+            odyssey_hub_common::device::Device::Cdc(d) => proto::Device {
+                device_oneof: Some(proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path: d.path })),
             },
         }
     }
 }
-
-impl Into<odyssey_hub_common::device::Device> for proto::Device {
-    fn into(self) -> odyssey_hub_common::device::Device {
+impl Into<Device> for proto::Device {
+    fn into(self) -> Device {
         match self.device_oneof.unwrap() {
-            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port }) => odyssey_hub_common::device::Device::Udp((id as u8, format!("{}:{}", ip, port).parse().unwrap())),
-            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path }) => odyssey_hub_common::device::Device::Hid(path),
-            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path }) => odyssey_hub_common::device::Device::Cdc(path),
+            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port }) => Device::Udp(odyssey_hub_common::device::UdpDevice {
+                id: id as u8,
+                addr: SocketAddr::new(ip.parse().unwrap(), port as u16),
+            }),
+            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path }) => Device::Hid(odyssey_hub_common::device::HidDevice { path: path }),
+            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path }) => Device::Cdc(odyssey_hub_common::device::CdcDevice { path: path }),
+            _ => panic!("Invalid device type"),
         }
     }
 }

@@ -25,7 +25,7 @@ impl Service for Server {
     ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
         let device_list = self.device_list.lock().await.iter().map(|d| {
             d.clone().into()
-        }).collect::<Vec<odyssey_hub_service_interface::Device>>();
+        }).collect::<>();
 
         let reply = DeviceListReply {
             device_list,

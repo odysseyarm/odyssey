@@ -39,10 +39,10 @@ async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Inf
                 loop {
                     let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 { continue; }
-                    if !old_list.contains(&odyssey_hub_common::device::Device::Udp((buf[1], addr))) {
-                        let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(( buf[1], addr)))).await;
+                    if !old_list.contains(&odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr })) {
+                        let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr }))).await;
                     }
-                    new_list.push(odyssey_hub_common::device::Device::Udp((buf[1], addr)));
+                    new_list.push(odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr }));
                 }
             })
         ).await;
@@ -64,10 +64,10 @@ async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infa
         let mut new_list = vec![];
         for device in api.device_list() {
             if device.vendor_id() == 0x1915 && device.product_id() == 0x48AB {
-                if !old_list.contains(&odyssey_hub_common::device::Device::Hid(device.path().to_str().unwrap().to_string())) {
-                    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Hid(device.path().to_str().unwrap().to_string()))).await;
+                if !old_list.contains(&odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice { path: device.path().to_str().unwrap().to_string() })) {
+                    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice { path: device.path().to_str().unwrap().to_string() }))).await;
                 }
-                new_list.push(odyssey_hub_common::device::Device::Hid(device.path().to_str().unwrap().to_string()));
+                new_list.push(odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice { path: device.path().to_str().unwrap().to_string() }));
             }
         }
         dbg!(&new_list);
@@ -113,10 +113,10 @@ async fn device_cdc_task(message_channel: Sender<Message>) -> std::convert::Infa
             }
         }).collect();
         for device in ports {
-            if !old_list.contains(&odyssey_hub_common::device::Device::Cdc(device.port_name.clone())) {
-                let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Cdc(device.port_name.clone()))).await;
+            if !old_list.contains(&odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice { path: device.port_name.clone() })) {
+                let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice { path: device.port_name.clone() }))).await;
             }
-            new_list.push(odyssey_hub_common::device::Device::Cdc(device.port_name.clone()));
+            new_list.push(odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice { path: device.port_name.clone() }));
         }
         dbg!(&new_list);
         for v in &old_list {
