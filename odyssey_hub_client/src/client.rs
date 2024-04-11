@@ -51,4 +51,13 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+
+    pub async fn poll(&mut self) -> anyhow::Result<tonic::Streaming<odyssey_hub_service_interface::PollReply>> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_service_interface::PollRequest {});
+            Ok(service_client.poll(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client")).into()
+        }
+    }
 }
