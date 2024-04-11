@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 
-use odyssey_hub_common::device::Device;
 mod proto {
     tonic::include_proto!("odyssey.service_interface");
 }
@@ -70,16 +69,15 @@ impl From<odyssey_hub_common::device::Device> for proto::Device {
         }
     }
 }
-impl Into<Device> for proto::Device {
-    fn into(self) -> Device {
+impl Into<odyssey_hub_common::device::Device> for proto::Device {
+    fn into(self) -> odyssey_hub_common::device::Device {
         match self.device_oneof.unwrap() {
-            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port }) => Device::Udp(odyssey_hub_common::device::UdpDevice {
+            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port }) => odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice {
                 id: id as u8,
                 addr: SocketAddr::new(ip.parse().unwrap(), port as u16),
             }),
-            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path }) => Device::Hid(odyssey_hub_common::device::HidDevice { path: path }),
-            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path }) => Device::Cdc(odyssey_hub_common::device::CdcDevice { path: path }),
-            _ => panic!("Invalid device type"),
+            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path }) => odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice { path: path }),
+            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path }) => odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice { path: path }),
         }
     }
 }

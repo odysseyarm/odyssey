@@ -1,4 +1,4 @@
-use std::{mem::uninitialized, pin::Pin};
+use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use interprocess::{local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName}, os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor}};
@@ -38,7 +38,7 @@ impl Service for Server {
         &self,
         _: tonic::Request<PollRequest>,
     ) -> tonic::Result<tonic::Response<Self::PollStream>, tonic::Status> {
-        let (mut tx, rx) = mpsc::channel::<Result<PollReply, tonic::Status>>(12);
+        let (tx, rx) = mpsc::channel::<Result<PollReply, tonic::Status>>(12);
         tokio::spawn({
             let event_channel = self.event_channel.clone();
             async move {

@@ -15,4 +15,5 @@ odyssey_hub_common = { path = "../odyssey_hub_common" }
 crate-type = ["cdylib"]
 
 [build-dependencies]
+cbindgen = "0.26.0"
 csbindgen = "1.8.0"
