@@ -1,5 +1,3 @@
-use std::future::IntoFuture;
-
 use async_ffi::{FfiFuture, FutureExt};
 use odyssey_hub_client::client::Client;
 

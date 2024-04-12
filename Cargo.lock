@@ -2671,7 +2671,6 @@ dependencies = [
  "csbindgen",
  "odyssey_hub_client",
  "odyssey_hub_common",
- "repr_c_wrapper",
 ]
 
 [[package]]
@@ -3309,12 +3308,6 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
-
-[[package]]
-name = "repr_c_wrapper"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3421470bcacfa80f20e17f49c30d8cbb16063301ae3d4644f2390a3907a50f8e"
 
 [[package]]
 name = "roxmltree"
