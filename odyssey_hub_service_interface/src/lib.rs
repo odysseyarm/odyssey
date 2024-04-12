@@ -85,6 +85,9 @@ impl Into<odyssey_hub_common::device::Device> for proto::Device {
 impl From<odyssey_hub_common::events::Event> for proto::Event {
     fn from(value: odyssey_hub_common::events::Event) -> Self {
         match value {
+            odyssey_hub_common::events::Event::None => proto::Event {
+                event_oneof: None,
+            },
             odyssey_hub_common::events::Event::DeviceEvent(odyssey_hub_common::events::DeviceEvent { device, kind }) => {
                 proto::Event {
                     event_oneof: Some(
@@ -111,7 +114,7 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                         ),
                     )
                 }
-            }
+            },
         }
     }
 }

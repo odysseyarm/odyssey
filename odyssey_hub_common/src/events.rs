@@ -1,5 +1,6 @@
 #[derive(Clone, Debug)]
 pub enum Event {
+    None,
     DeviceEvent(DeviceEvent),
 }
 
