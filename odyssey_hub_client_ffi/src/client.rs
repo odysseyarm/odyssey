@@ -1,7 +1,7 @@
 use async_ffi::{FfiFuture, FutureExt};
 use odyssey_hub_client::client::Client;
 
-use crate::ffi_common::FfiDevice;
+use crate::{ffi_common::FfiDevice, funny::{ClientErrorFuture, DeviceListResultFuture}};
 
 #[repr(C)]
 pub enum ClientError {
@@ -17,14 +17,14 @@ pub extern "C" fn client_new() -> *mut Client {
 }
 
 #[no_mangle]
-pub extern "C" fn client_connect(client: *mut Client) -> FfiFuture<ClientError> {
+pub extern "C" fn client_connect(client: *mut Client) -> ClientErrorFuture {
     let client = unsafe { &mut *client };
     async {
         match client.connect().await {
             Ok(_) => ClientError::ClientErrorNone,
             Err(_) => ClientError::ClientErrorConnectFailure,
         }
-    }.into_ffi()
+    }.into_ffi().into()
 }
 
 #[repr(C)]
@@ -35,7 +35,7 @@ pub struct DeviceListResult {
 }
 
 #[no_mangle]
-pub extern "C" fn client_get_device_list(client: *mut Client) -> FfiFuture<DeviceListResult> {
+pub extern "C" fn client_get_device_list(client: *mut Client) -> DeviceListResultFuture {
     let client = unsafe { &mut *client };
     async {
         match client.get_device_list().await {
@@ -51,16 +51,16 @@ pub extern "C" fn client_get_device_list(client: *mut Client) -> FfiFuture<Devic
             },
             Err(_) => DeviceListResult { error: ClientError::ClientErrorNotConnected, device_list: std::ptr::null_mut(), len: 0 },
         }
-    }.into_ffi()
+    }.into_ffi().into()
 }
 
 #[no_mangle]
-pub extern "C" fn client_poll(client: *mut Client) -> FfiFuture<ClientError> {
+pub extern "C" fn client_poll(client: *mut Client) -> ClientErrorFuture {
     let client = unsafe { &mut *client };
     async {
         match client.poll().await {
             Ok(_) => ClientError::ClientErrorNone,
             Err(_) => ClientError::ClientErrorNotConnected,
         }
-    }.into_ffi()
+    }.into_ffi().into()
 }

@@ -10,6 +10,7 @@ anyhow = "1.0.81"
 async-ffi = "0.5.0"
 odyssey_hub_client = { path = "../odyssey_hub_client" }
 odyssey_hub_common = { path = "../odyssey_hub_common" }
+repr_c_wrapper = "0.1.1"
 
 [lib]
 crate-type = ["cdylib"]
