@@ -101,7 +101,8 @@ pub enum FfiEventTag {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union FfiEventU {
-    none: (),
+    // C# doesn't support void type
+    none: u8,
     device_event: FfiDeviceEvent,
 }
 
@@ -134,7 +135,7 @@ pub union FfiDeviceEventKindU {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct FfiTrackingEvent {
-    aimpoint: nalgebra::Vector2<f64>,
+    aimpoint: crate::funny::Vector2f64,
     pose: FfiPose,
     pose_resolved: bool,
 }
@@ -160,7 +161,7 @@ impl From<odyssey_hub_common::events::Event> for FfiEvent {
         match event {
             odyssey_hub_common::events::Event::None => FfiEvent {
                 tag: FfiEventTag::None,
-                u: FfiEventU { none: () },
+                u: FfiEventU { none: 0, },
             },
             odyssey_hub_common::events::Event::DeviceEvent(device_event) => FfiEvent {
                 tag: FfiEventTag::DeviceEvent,
