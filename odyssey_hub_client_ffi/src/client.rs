@@ -1,7 +1,9 @@
+use std::future::IntoFuture;
+
 use async_ffi::{FfiFuture, FutureExt};
 use odyssey_hub_client::client::Client;
 
-use crate::{ffi_common::FfiDevice, funny::{ClientErrorFuture, DeviceListResultFuture}};
+use crate::{ffi_common::FfiDevice, funny::ReprCWrapper};
 
 #[repr(C)]
 pub enum ClientError {
@@ -17,7 +19,7 @@ pub extern "C" fn client_new() -> *mut Client {
 }
 
 #[no_mangle]
-pub extern "C" fn client_connect(client: *mut Client) -> ClientErrorFuture {
+pub extern "C" fn client_connect(client: *mut Client) -> ReprCWrapper<FfiFuture<ClientError>> {
     let client = unsafe { &mut *client };
     async {
         match client.connect().await {
@@ -35,7 +37,7 @@ pub struct DeviceListResult {
 }
 
 #[no_mangle]
-pub extern "C" fn client_get_device_list(client: *mut Client) -> DeviceListResultFuture {
+pub extern "C" fn client_get_device_list(client: *mut Client) -> ReprCWrapper<FfiFuture<DeviceListResult>> {
     let client = unsafe { &mut *client };
     async {
         match client.get_device_list().await {
@@ -55,7 +57,7 @@ pub extern "C" fn client_get_device_list(client: *mut Client) -> DeviceListResul
 }
 
 #[no_mangle]
-pub extern "C" fn client_poll(client: *mut Client) -> ClientErrorFuture {
+pub extern "C" fn client_poll(client: *mut Client) -> ReprCWrapper<FfiFuture<ClientError>> {
     let client = unsafe { &mut *client };
     async {
         match client.poll().await {

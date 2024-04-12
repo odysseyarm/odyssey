@@ -1,22 +1,32 @@
-use repr_c_wrapper::*;
+use std::mem::ManuallyDrop;
+
+use async_ffi::FfiFuture;
+
+use crate::client::{ClientError, DeviceListResult};
 
 #[repr(C)]
-pub struct Client(repr_c_wrapper_t!(odyssey_hub_client::client::Client));
+pub struct ReprCWrapper<T>
+    where [(); (std::mem::size_of::<ManuallyDrop::<T>>() + std::mem::size_of::<u64>() - 1) / std::mem::size_of::<u64>()]:
+{
+    bytes: [u64; (std::mem::size_of::<ManuallyDrop::<T>>() + std::mem::size_of::<u64>() - 1) / std::mem::size_of::<u64>()],
+}
 
-#[repr(C)]
-pub struct ClientErrorFuture(repr_c_wrapper_t!(async_ffi::FfiFuture<crate::client::ClientError>));
-
-#[repr(C)]
-pub struct DeviceListResultFuture(repr_c_wrapper_t!(async_ffi::FfiFuture<crate::client::DeviceListResult>));
-
-impl From<async_ffi::FfiFuture<crate::client::ClientError>> for ClientErrorFuture {
-    fn from(val: async_ffi::FfiFuture<crate::client::ClientError>) -> Self {
-        Self(val.into())
+impl From<FfiFuture<ClientError>> for ReprCWrapper<FfiFuture<ClientError>> {
+    fn from(val: FfiFuture<ClientError>) -> Self {
+        unsafe {
+            let mut bytes = [0; (std::mem::size_of::<ManuallyDrop<FfiFuture<ClientError>>>() + std::mem::size_of::<u64>() - 1) / std::mem::size_of::<u64>()];
+            std::ptr::copy(&val, bytes.as_mut_ptr() as *mut FfiFuture<ClientError>, 1);
+            Self { bytes }
+        }
     }
 }
 
-impl From<async_ffi::FfiFuture<crate::client::DeviceListResult>> for DeviceListResultFuture {
-    fn from(val: async_ffi::FfiFuture<crate::client::DeviceListResult>) -> Self {
-        Self(val.into())
+impl From<FfiFuture<DeviceListResult>> for ReprCWrapper<FfiFuture<DeviceListResult>> {
+    fn from(val: FfiFuture<DeviceListResult>) -> Self {
+        unsafe {
+            let mut bytes = [0; (std::mem::size_of::<ManuallyDrop<FfiFuture<DeviceListResult>>>() + std::mem::size_of::<u64>() - 1) / std::mem::size_of::<u64>()];
+            std::ptr::copy(&val, bytes.as_mut_ptr() as *mut FfiFuture<DeviceListResult>, 1);
+            Self { bytes }
+        }
     }
 }
