@@ -27,7 +27,6 @@ fn main() {
         .input_extern_file("src/client.rs")
         .input_extern_file("src/ffi_common.rs")
         .input_extern_file("src/funny.rs")
-        
         .csharp_dll_name("odyssey_hub_client_ffi")
         .generate_csharp_file("dotnet/OdysseyHubClient/OdysseyHubClient/generated/NativeMethods.g.cs")
         .unwrap();

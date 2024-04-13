@@ -11,51 +11,51 @@ typedef enum ClientError {
   ClientErrorEnd,
 } ClientError;
 
-typedef enum FfiDeviceEventKindTag {
+typedef enum DeviceEventKindTag {
   TrackingEvent,
-} FfiDeviceEventKindTag;
+} DeviceEventKindTag;
 
-typedef enum FfiDeviceTag {
+typedef enum DeviceTag {
   Udp,
   Hid,
   Cdc,
-} FfiDeviceTag;
+} DeviceTag;
 
-typedef enum FfiEventTag {
+typedef enum EventTag {
   None,
   DeviceEvent,
-} FfiEventTag;
+} EventTag;
 
 typedef struct Client Client;
 
-typedef struct FfiSocketAddr {
+typedef struct SocketAddr {
   const char *ip;
   uint16_t port;
-} FfiSocketAddr;
+} SocketAddr;
 
-typedef struct FfiUdpDevice {
+typedef struct UdpDevice {
   uint8_t id;
-  struct FfiSocketAddr addr;
-} FfiUdpDevice;
+  struct SocketAddr addr;
+} UdpDevice;
 
-typedef struct FfiHidDevice {
+typedef struct HidDevice {
   const char *path;
-} FfiHidDevice;
+} HidDevice;
 
-typedef struct FfiCdcDevice {
+typedef struct CdcDevice {
   const char *path;
-} FfiCdcDevice;
+} CdcDevice;
 
-typedef union FfiU {
-  struct FfiUdpDevice udp;
-  struct FfiHidDevice hid;
-  struct FfiCdcDevice cdc;
-} FfiU;
+typedef union DeviceU {
+  struct UdpDevice udp;
+  struct HidDevice hid;
+  struct CdcDevice cdc;
+} DeviceU;
 
-typedef struct FfiDevice {
-  enum FfiDeviceTag tag;
-  union FfiU u;
-} FfiDevice;
+typedef struct Device {
+  enum DeviceTag tag;
+  union DeviceU u;
+} Device;
 
 typedef struct Vector2f64 {
   double x;
@@ -80,48 +80,48 @@ typedef struct Matrix3x1f64 {
   double z;
 } Matrix3x1f64;
 
-typedef struct FfiPose {
+typedef struct Pose {
   struct Matrix3f64 rotation;
   struct Matrix3x1f64 translation;
-} FfiPose;
+} Pose;
 
-typedef struct FfiTrackingEvent {
+typedef struct TrackingEvent {
   struct Vector2f64 aimpoint;
-  struct FfiPose pose;
+  struct Pose pose;
   bool pose_resolved;
-} FfiTrackingEvent;
+} TrackingEvent;
 
-typedef union FfiDeviceEventKindU {
-  struct FfiTrackingEvent tracking_event;
-} FfiDeviceEventKindU;
+typedef union DeviceEventKindU {
+  struct TrackingEvent tracking_event;
+} DeviceEventKindU;
 
-typedef struct FfiDeviceEventKind {
-  enum FfiDeviceEventKindTag tag;
-  union FfiDeviceEventKindU u;
-} FfiDeviceEventKind;
+typedef struct DeviceEventKind {
+  enum DeviceEventKindTag tag;
+  union DeviceEventKindU u;
+} DeviceEventKind;
 
-typedef struct FfiDeviceEvent {
-  struct FfiDevice device;
-  struct FfiDeviceEventKind kind;
-} FfiDeviceEvent;
+typedef struct DeviceEvent {
+  struct Device device;
+  struct DeviceEventKind kind;
+} DeviceEvent;
 
-typedef union FfiEventU {
+typedef union EventU {
   uint8_t none;
-  struct FfiDeviceEvent device_event;
-} FfiEventU;
+  struct DeviceEvent device_event;
+} EventU;
 
-typedef struct FfiEvent {
-  enum FfiEventTag tag;
-  union FfiEventU u;
-} FfiEvent;
+typedef struct Event {
+  enum EventTag tag;
+  union EventU u;
+} Event;
 
 struct Client *client_new(void);
 
 void client_connect(struct Client *client, void (*callback)(enum ClientError error));
 
 void client_get_device_list(struct Client *client, void (*callback)(enum ClientError error,
-                                                                    struct FfiDevice *device_list,
+                                                                    struct Device *device_list,
                                                                     uintptr_t size));
 
-void start_stream(struct Client *client, void (*callback)(enum ClientError error,
-                                                          struct FfiEvent reply));
+void start_stream(struct Client *client,
+                  void (*callback)(enum ClientError error, struct Event reply));

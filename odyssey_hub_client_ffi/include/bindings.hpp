@@ -12,50 +12,50 @@ enum class ClientError {
   ClientErrorEnd,
 };
 
-enum class FfiDeviceEventKindTag {
+enum class DeviceEventKindTag {
   TrackingEvent,
 };
 
-enum class FfiDeviceTag {
+enum class DeviceTag {
   Udp,
   Hid,
   Cdc,
 };
 
-enum class FfiEventTag {
+enum class EventTag {
   None,
   DeviceEvent,
 };
 
 struct Client;
 
-struct FfiSocketAddr {
+struct SocketAddr {
   const char *ip;
   uint16_t port;
 };
 
-struct FfiUdpDevice {
+struct UdpDevice {
   uint8_t id;
-  FfiSocketAddr addr;
+  SocketAddr addr;
 };
 
-struct FfiHidDevice {
+struct HidDevice {
   const char *path;
 };
 
-struct FfiCdcDevice {
+struct CdcDevice {
   const char *path;
 };
 
-union FfiU {
-  FfiUdpDevice udp;
-  FfiHidDevice hid;
-  FfiCdcDevice cdc;
+union DeviceU {
+  UdpDevice udp;
+  HidDevice hid;
+  CdcDevice cdc;
 };
 
-struct FfiDevice {
-  FfiDeviceTag tag;
-  FfiU u;
+struct Device {
+  DeviceTag tag;
+  DeviceU u;
 };
 
 struct Vector2f64 {
@@ -81,39 +81,39 @@ struct Matrix3x1f64 {
   double z;
 };
 
-struct FfiPose {
+struct Pose {
   Matrix3f64 rotation;
   Matrix3x1f64 translation;
 };
 
-struct FfiTrackingEvent {
+struct TrackingEvent {
   Vector2f64 aimpoint;
-  FfiPose pose;
+  Pose pose;
   bool pose_resolved;
 };
 
-union FfiDeviceEventKindU {
-  FfiTrackingEvent tracking_event;
+union DeviceEventKindU {
+  TrackingEvent tracking_event;
 };
 
-struct FfiDeviceEventKind {
-  FfiDeviceEventKindTag tag;
-  FfiDeviceEventKindU u;
+struct DeviceEventKind {
+  DeviceEventKindTag tag;
+  DeviceEventKindU u;
 };
 
-struct FfiDeviceEvent {
-  FfiDevice device;
-  FfiDeviceEventKind kind;
+struct DeviceEvent {
+  Device device;
+  DeviceEventKind kind;
 };
 
-union FfiEventU {
+union EventU {
   uint8_t none;
-  FfiDeviceEvent device_event;
+  DeviceEvent device_event;
 };
 
-struct FfiEvent {
-  FfiEventTag tag;
-  FfiEventU u;
+struct Event {
+  EventTag tag;
+  EventU u;
 };
 
 extern "C" {
@@ -123,9 +123,9 @@ Client *client_new();
 void client_connect(Client *client, void (*callback)(ClientError error));
 
 void client_get_device_list(Client *client, void (*callback)(ClientError error,
-                                                             FfiDevice *device_list,
+                                                             Device *device_list,
                                                              uintptr_t size));
 
-void start_stream(Client *client, void (*callback)(ClientError error, FfiEvent reply));
+void start_stream(Client *client, void (*callback)(ClientError error, Event reply));
 
 } // extern "C"

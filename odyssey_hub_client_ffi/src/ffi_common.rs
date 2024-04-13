@@ -1,39 +1,37 @@
-use odyssey_hub_common::events::Pose;
-
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiDevice {
-    tag: FfiDeviceTag,
-    u: FfiU,
+pub struct Device {
+    tag: DeviceTag,
+    u: DeviceU,
 }
 
-impl From<odyssey_hub_common::device::Device> for FfiDevice {
+impl From<odyssey_hub_common::device::Device> for Device {
     fn from(device: odyssey_hub_common::device::Device) -> Self {
         match device {
-            odyssey_hub_common::device::Device::Udp(udp_device) => FfiDevice {
-                tag: FfiDeviceTag::Udp,
-                u: FfiU {
-                    udp: FfiUdpDevice {
+            odyssey_hub_common::device::Device::Udp(udp_device) => Device {
+                tag: DeviceTag::Udp,
+                u: DeviceU {
+                    udp: UdpDevice {
                         id: udp_device.id,
-                        addr: FfiSocketAddr {
+                        addr: SocketAddr {
                             ip: std::ffi::CString::new(udp_device.addr.ip().to_string()).unwrap().into_raw(),
                             port: udp_device.addr.port(),
                         },
                     },
                 },
             },
-            odyssey_hub_common::device::Device::Hid(hid_device) => FfiDevice {
-                tag: FfiDeviceTag::Hid,
-                u: FfiU {
-                    hid: FfiHidDevice {
+            odyssey_hub_common::device::Device::Hid(hid_device) => Device {
+                tag: DeviceTag::Hid,
+                u: DeviceU {
+                    hid: HidDevice {
                         path: std::ffi::CString::new(hid_device.path).unwrap().into_raw(),
                     },
                 },
             },
-            odyssey_hub_common::device::Device::Cdc(cdc_device) => FfiDevice {
-                tag: FfiDeviceTag::Cdc,
-                u: FfiU {
-                    cdc: FfiCdcDevice {
+            odyssey_hub_common::device::Device::Cdc(cdc_device) => Device {
+                tag: DeviceTag::Cdc,
+                u: DeviceU {
+                    cdc: CdcDevice {
                         path: std::ffi::CString::new(cdc_device.path).unwrap().into_raw(),
                     },
                 },
@@ -44,34 +42,34 @@ impl From<odyssey_hub_common::device::Device> for FfiDevice {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union FfiU {
-    udp: FfiUdpDevice,
-    hid: FfiHidDevice,
-    cdc: FfiCdcDevice,
+pub union DeviceU {
+    udp: UdpDevice,
+    hid: HidDevice,
+    cdc: CdcDevice,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiUdpDevice {
+pub struct UdpDevice {
     pub id: u8,
-    pub addr: FfiSocketAddr,
+    pub addr: SocketAddr,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiHidDevice {
+pub struct HidDevice {
     pub path: *const std::ffi::c_char,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiCdcDevice {
+pub struct CdcDevice {
     pub path: *const std::ffi::c_char,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub enum FfiDeviceTag {
+pub enum DeviceTag {
     Udp,
     Hid,
     Cdc,
@@ -79,104 +77,104 @@ pub enum FfiDeviceTag {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiSocketAddr {
+pub struct SocketAddr {
     pub ip: *const std::ffi::c_char,
     pub port: u16,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiEvent {
-    tag: FfiEventTag,
-    u: FfiEventU,
+pub struct Event {
+    tag: EventTag,
+    u: EventU,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub enum FfiEventTag {
+pub enum EventTag {
     None,
     DeviceEvent,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union FfiEventU {
+pub union EventU {
     // C# doesn't support void type
     none: u8,
-    device_event: FfiDeviceEvent,
+    device_event: DeviceEvent,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiDeviceEvent {
-    device: FfiDevice,
-    kind: FfiDeviceEventKind,
+pub struct DeviceEvent {
+    device: Device,
+    kind: DeviceEventKind,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiDeviceEventKind {
-    tag: FfiDeviceEventKindTag,
-    u: FfiDeviceEventKindU,
+pub struct DeviceEventKind {
+    tag: DeviceEventKindTag,
+    u: DeviceEventKindU,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub enum FfiDeviceEventKindTag {
+pub enum DeviceEventKindTag {
     TrackingEvent,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union FfiDeviceEventKindU {
-    tracking_event: FfiTrackingEvent,
+pub union DeviceEventKindU {
+    tracking_event: TrackingEvent,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct FfiTrackingEvent {
+pub struct TrackingEvent {
     aimpoint: crate::funny::Vector2f64,
-    pose: FfiPose,
+    pose: Pose,
     pose_resolved: bool,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
-pub struct FfiPose {
+pub struct Pose {
     rotation: crate::funny::Matrix3f64,
     translation: crate::funny::Matrix3x1f64,
 }
 
-impl From<Pose> for FfiPose {
-    fn from(pose: Pose) -> Self {
-        FfiPose {
+impl From<odyssey_hub_common::events::Pose> for Pose {
+    fn from(pose: odyssey_hub_common::events::Pose) -> Self {
+        Pose {
             rotation: pose.rotation.into(),
             translation: pose.translation.into(),
         }
     }
 }
 
-impl From<odyssey_hub_common::events::Event> for FfiEvent {
+impl From<odyssey_hub_common::events::Event> for Event {
     fn from(event: odyssey_hub_common::events::Event) -> Self {
         match event {
-            odyssey_hub_common::events::Event::None => FfiEvent {
-                tag: FfiEventTag::None,
-                u: FfiEventU { none: 0, },
+            odyssey_hub_common::events::Event::None => Event {
+                tag: EventTag::None,
+                u: EventU { none: 0, },
             },
-            odyssey_hub_common::events::Event::DeviceEvent(device_event) => FfiEvent {
-                tag: FfiEventTag::DeviceEvent,
-                u: FfiEventU {
-                    device_event: FfiDeviceEvent {
+            odyssey_hub_common::events::Event::DeviceEvent(device_event) => Event {
+                tag: EventTag::DeviceEvent,
+                u: EventU {
+                    device_event: DeviceEvent {
                         device: device_event.device.into(),
-                        kind: FfiDeviceEventKind {
+                        kind: DeviceEventKind {
                             tag: match device_event.kind {
-                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => FfiDeviceEventKindTag::TrackingEvent,
+                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => DeviceEventKindTag::TrackingEvent,
                             },
                             u: match device_event.kind {
-                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => FfiDeviceEventKindU {
-                                    tracking_event: FfiTrackingEvent {
+                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => DeviceEventKindU {
+                                    tracking_event: TrackingEvent {
                                         aimpoint: tracking_event.aimpoint.into(),
-                                        pose: if let Some(p) = tracking_event.pose { p.into() } else { FfiPose::default() },
+                                        pose: if let Some(p) = tracking_event.pose { p.into() } else { Pose::default() },
                                         pose_resolved: tracking_event.pose.is_some(),
                                     },
                                 },
