@@ -29,6 +29,10 @@ enum class EventTag {
 
 struct Client;
 
+struct UserObj {
+  const void *_0;
+};
+
 struct SocketAddr {
   const char *ip;
   uint16_t port;
@@ -120,12 +124,16 @@ extern "C" {
 
 Client *client_new();
 
-void client_connect(Client *client, void (*callback)(ClientError error));
+void client_connect(UserObj userdata, Client *client, void (*callback)(UserObj userdata,
+                                                                       ClientError error));
 
-void client_get_device_list(Client *client, void (*callback)(ClientError error,
-                                                             Device *device_list,
-                                                             uintptr_t size));
+void client_get_device_list(UserObj userdata, Client *client, void (*callback)(UserObj userdata,
+                                                                               ClientError error,
+                                                                               Device *device_list,
+                                                                               uintptr_t size));
 
-void start_stream(Client *client, void (*callback)(ClientError error, Event reply));
+void start_stream(UserObj userdata, Client *client, void (*callback)(UserObj userdata,
+                                                                     ClientError error,
+                                                                     Event reply));
 
 } // extern "C"

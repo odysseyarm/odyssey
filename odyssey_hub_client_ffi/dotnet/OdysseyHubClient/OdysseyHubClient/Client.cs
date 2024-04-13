@@ -12,28 +12,24 @@ namespace OdysseyHubClient
             }
         }
 
-        private List<GCHandle> gch_list = new List<GCHandle>();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate void ClientErrorDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void ClientErrorDelegate(CsBindgen.ClientError error);
+        unsafe delegate void DeviceListDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Device* devices, nuint count);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        unsafe delegate void DeviceListDelegate(CsBindgen.ClientError error, CsBindgen.Device* devices, nuint count);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        unsafe delegate void EventDelegate(CsBindgen.ClientError error, CsBindgen.Event ev);
+        unsafe delegate void EventDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev);
 
         public Task<ClientError> Connect() {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<ClientError>();
-                int i = gch_list.Count;
-                ClientErrorDelegate completion_delegate = (CsBindgen.ClientError error) => {
+                ClientErrorDelegate completion_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error) => {
                     completion_task_source.SetResult(Helpers.BindgenClientErrToClientErr(error));
-                    gch_list[i].Free();
+                    GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
                 };
-                gch_list.Add(GCHandle.Alloc(completion_delegate));
-                gch_list.RemoveAt(i);
-                CsBindgen.NativeMethods.client_connect(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+                var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(completion_delegate));
+                CsBindgen.NativeMethods.client_connect(new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
                 return completion_task_source.Task;
             }
         }
@@ -41,8 +37,7 @@ namespace OdysseyHubClient
         public Task<(ClientError, IDevice[])> GetDeviceList() {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<(ClientError, IDevice[])>();
-                int i = gch_list.Count;
-                DeviceListDelegate completion_delegate = (CsBindgen.ClientError error, CsBindgen.Device* devices, nuint count) => {
+                DeviceListDelegate completion_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Device* devices, nuint count) => {
                     var result = new IDevice[count];
                     for (nuint i = 0; i < count; i++) {
                         var device = devices[i];
@@ -59,19 +54,17 @@ namespace OdysseyHubClient
                         }
                     }
                     completion_task_source.SetResult((Helpers.BindgenClientErrToClientErr(error), result));
-                    gch_list[i].Free();
-                    gch_list.RemoveAt(i);
+                    GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
                 };
-                gch_list.Add(GCHandle.Alloc(completion_delegate));
-                CsBindgen.NativeMethods.client_get_device_list(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, CsBindgen.Device*, nuint, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+                var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(completion_delegate));
+                CsBindgen.NativeMethods.client_get_device_list(new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Device*, nuint, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
                 return completion_task_source.Task;
             }
         }
 
         public void StartStream(ChannelWriter<IEvent> channelWriter) {
-            int i = gch_list.Count;
             unsafe {
-                EventDelegate completion_delegate = (CsBindgen.ClientError error, CsBindgen.Event ev) => {
+                EventDelegate event_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev) => {
                     switch (error) {
                         case CsBindgen.ClientError.ClientErrorNone:
                             break;
@@ -79,14 +72,13 @@ namespace OdysseyHubClient
                         case CsBindgen.ClientError.ClientErrorStreamEnd:
                         default:
                             channelWriter.Complete();
-                            gch_list[i].Free();
-                            gch_list.RemoveAt(i);
+                            GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
                             return;
                     }
                     channelWriter.WriteAsync(Helpers.EventFactory(ev));
                 };
-                gch_list.Add(GCHandle.Alloc(completion_delegate));
-                CsBindgen.NativeMethods.start_stream(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+                var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(event_delegate));
+                CsBindgen.NativeMethods.start_stream(new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(event_delegate));
             }
         }
     }

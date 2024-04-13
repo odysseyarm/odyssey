@@ -28,6 +28,10 @@ typedef enum EventTag {
 
 typedef struct Client Client;
 
+typedef struct UserObj {
+  const void *_0;
+} UserObj;
+
 typedef struct SocketAddr {
   const char *ip;
   uint16_t port;
@@ -117,11 +121,19 @@ typedef struct Event {
 
 struct Client *client_new(void);
 
-void client_connect(struct Client *client, void (*callback)(enum ClientError error));
+void client_connect(struct UserObj userdata,
+                    struct Client *client,
+                    void (*callback)(struct UserObj userdata, enum ClientError error));
 
-void client_get_device_list(struct Client *client, void (*callback)(enum ClientError error,
-                                                                    struct Device *device_list,
-                                                                    uintptr_t size));
+void client_get_device_list(struct UserObj userdata,
+                            struct Client *client,
+                            void (*callback)(struct UserObj userdata,
+                                             enum ClientError error,
+                                             struct Device *device_list,
+                                             uintptr_t size));
 
-void start_stream(struct Client *client,
-                  void (*callback)(enum ClientError error, struct Event reply));
+void start_stream(struct UserObj userdata,
+                  struct Client *client,
+                  void (*callback)(struct UserObj userdata,
+                                   enum ClientError error,
+                                   struct Event reply));
