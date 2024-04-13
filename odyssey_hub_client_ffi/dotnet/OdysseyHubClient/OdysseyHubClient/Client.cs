@@ -32,6 +32,7 @@ namespace OdysseyHubClient
                     gch_list[i].Free();
                 };
                 gch_list.Add(GCHandle.Alloc(completion_delegate));
+                gch_list.RemoveAt(i);
                 CsBindgen.NativeMethods.client_connect(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
                 return completion_task_source.Task;
             }
@@ -59,6 +60,7 @@ namespace OdysseyHubClient
                     }
                     completion_task_source.SetResult((Helpers.BindgenClientErrToClientErr(error), result));
                     gch_list[i].Free();
+                    gch_list.RemoveAt(i);
                 };
                 gch_list.Add(GCHandle.Alloc(completion_delegate));
                 CsBindgen.NativeMethods.client_get_device_list(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, CsBindgen.Device*, nuint, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
@@ -78,6 +80,7 @@ namespace OdysseyHubClient
                         default:
                             channelWriter.Complete();
                             gch_list[i].Free();
+                            gch_list.RemoveAt(i);
                             return;
                     }
                     channelWriter.WriteAsync(Helpers.EventFactory(ev));
