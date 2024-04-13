@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using System.Threading.Channels;
 
 namespace OdysseyHubClient
 {
@@ -31,7 +32,7 @@ namespace OdysseyHubClient
                     gch_list[i].Free();
                 };
                 gch_list.Add(GCHandle.Alloc(completion_delegate));
-                CsBindgen.NativeMethods.client_connect(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate_fp));
+                CsBindgen.NativeMethods.client_connect(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
                 return completion_task_source.Task;
             }
         }
@@ -65,5 +66,25 @@ namespace OdysseyHubClient
             }
         }
 
+        public void StartStream(ChannelWriter<IEvent> channelWriter) {
+            int i = gch_list.Count;
+            unsafe {
+                EventDelegate completion_delegate = (CsBindgen.ClientError error, CsBindgen.Event ev) => {
+                    switch (error) {
+                        case CsBindgen.ClientError.ClientErrorNone:
+                            break;
+                        case CsBindgen.ClientError.ClientErrorNotConnected:
+                        case CsBindgen.ClientError.ClientErrorStreamEnd:
+                        default:
+                            channelWriter.Complete();
+                            gch_list[i].Free();
+                            return;
+                    }
+                    channelWriter.WriteAsync(Helpers.EventFactory(ev));
+                };
+                gch_list.Add(GCHandle.Alloc(completion_delegate));
+                CsBindgen.NativeMethods.start_stream(_handle, (delegate* unmanaged[Cdecl]<CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+            }
+        }
     }
 }

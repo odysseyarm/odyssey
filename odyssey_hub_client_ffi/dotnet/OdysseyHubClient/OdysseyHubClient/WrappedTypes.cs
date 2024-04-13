@@ -18,7 +18,7 @@ namespace OdysseyHubClient
     }
 
     public class HidDevice: IDevice {
-        public string path;
+        public string? path;
 
         internal HidDevice(CsBindgen.HidDevice hidDevice) {
             unsafe { path = Marshal.PtrToStringAnsi((IntPtr)hidDevice.path); }
@@ -26,7 +26,7 @@ namespace OdysseyHubClient
     }
 
     public class CdcDevice: IDevice {
-        public string path;
+        public string? path;
 
         internal CdcDevice(CsBindgen.CdcDevice cdcDevice) {
             unsafe { path = Marshal.PtrToStringAnsi((IntPtr)cdcDevice.path); }
@@ -34,7 +34,7 @@ namespace OdysseyHubClient
     }
 
     public class SocketAddr {
-        public string ip;
+        public string? ip;
         public ushort port;
 
         internal SocketAddr(CsBindgen.SocketAddr socketAddr) {
@@ -56,8 +56,8 @@ namespace OdysseyHubClient
     public class NoneEvent: IEvent {}
 
     public class DeviceEvent: IEvent {
-        public IDevice device;
-        public IKind kind;
+        public IDevice? device;
+        public IKind? kind;
 
         internal DeviceEvent(CsBindgen.DeviceEvent deviceEvent) {
             switch (deviceEvent.device.tag) {

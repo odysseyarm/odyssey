@@ -17,4 +17,8 @@
     <None Include="$(MSBuildThisFileDirectory)/../../../../target/release/odyssey_hub_client_ffi.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+  </ItemGroup>
+
 </Project>
