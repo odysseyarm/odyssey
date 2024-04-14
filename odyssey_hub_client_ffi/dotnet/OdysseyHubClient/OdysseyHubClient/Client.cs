@@ -4,7 +4,7 @@ using System.Threading.Channels;
 namespace OdysseyHubClient
 {
     public class Client {
-        unsafe CsBindgen.Client* _handle;
+        unsafe private CsBindgen.Client* _handle;
 
         public Client() {
             unsafe {
@@ -21,7 +21,7 @@ namespace OdysseyHubClient
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         unsafe delegate void EventDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev);
 
-        public Task<ClientError> Connect() {
+        public Task<ClientError> Connect(Handle handle) {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<ClientError>();
                 ClientErrorDelegate completion_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error) => {
@@ -29,12 +29,12 @@ namespace OdysseyHubClient
                     GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
                 };
                 var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(completion_delegate));
-                CsBindgen.NativeMethods.client_connect(new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+                CsBindgen.NativeMethods.client_connect(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
                 return completion_task_source.Task;
             }
         }
 
-        public Task<(ClientError, IDevice[])> GetDeviceList() {
+        public Task<(ClientError, IDevice[])> GetDeviceList(Handle handle) {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<(ClientError, IDevice[])>();
                 DeviceListDelegate completion_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Device* devices, nuint count) => {
@@ -57,12 +57,12 @@ namespace OdysseyHubClient
                     GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
                 };
                 var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(completion_delegate));
-                CsBindgen.NativeMethods.client_get_device_list(new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Device*, nuint, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+                CsBindgen.NativeMethods.client_get_device_list(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Device*, nuint, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
                 return completion_task_source.Task;
             }
         }
 
-        public void StartStream(ChannelWriter<IEvent> channelWriter) {
+        public void StartStream(Handle handle, ChannelWriter<IEvent> channelWriter) {
             unsafe {
                 EventDelegate event_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev) => {
                     switch (error) {
@@ -78,7 +78,7 @@ namespace OdysseyHubClient
                     channelWriter.WriteAsync(Helpers.EventFactory(ev));
                 };
                 var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(event_delegate));
-                CsBindgen.NativeMethods.start_stream(new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(event_delegate));
+                CsBindgen.NativeMethods.start_stream(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(event_delegate));
             }
         }
     }

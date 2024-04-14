@@ -27,7 +27,12 @@ enum class EventTag {
   DeviceEvent,
 };
 
+template<typename T = void>
+struct Box;
+
 struct Client;
+
+struct Handle;
 
 struct UserObj {
   const void *_0;
@@ -122,18 +127,28 @@ struct Event {
 
 extern "C" {
 
-Client *client_new();
+Box<Handle> init();
 
-void client_connect(UserObj userdata, Client *client, void (*callback)(UserObj userdata,
-                                                                       ClientError error));
+void free(Handle *handle);
 
-void client_get_device_list(UserObj userdata, Client *client, void (*callback)(UserObj userdata,
-                                                                               ClientError error,
-                                                                               Device *device_list,
-                                                                               uintptr_t size));
+Box<Client> client_new();
 
-void start_stream(UserObj userdata, Client *client, void (*callback)(UserObj userdata,
-                                                                     ClientError error,
-                                                                     Event reply));
+void client_connect(const Handle *handle,
+                    UserObj userdata,
+                    Client *client,
+                    void (*callback)(UserObj userdata, ClientError error));
+
+void client_get_device_list(const Handle *handle,
+                            UserObj userdata,
+                            Client *client,
+                            void (*callback)(UserObj userdata,
+                                             ClientError error,
+                                             Device *device_list,
+                                             uintptr_t size));
+
+void start_stream(const Handle *handle,
+                  UserObj userdata,
+                  Client *client,
+                  void (*callback)(UserObj userdata, ClientError error, Event reply));
 
 } // extern "C"

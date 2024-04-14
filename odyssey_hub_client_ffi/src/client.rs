@@ -17,23 +17,30 @@ pub struct UserObj(*const std::ffi::c_void);
 unsafe impl Send for UserObj {}
 
 #[no_mangle]
-pub extern "C" fn client_new() -> *mut Client {
-    Box::into_raw(Box::new(Client::default()))
+pub extern "C" fn client_new() -> Box<Client> {
+    Box::new(Client::default())
 }
 
 #[no_mangle]
-pub extern "C" fn client_connect(userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError)) {
+pub extern "C" fn client_connect(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError)) {
+    println!("test0");
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_handle.enter();
+
     let client = unsafe { &mut *client };
     tokio::spawn(async move {
         match client.connect().await {
-            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
-            Err(_) => callback(userdata, ClientError::ClientErrorConnectFailure),
+            Ok(_) => { println!("test1"); callback(userdata, ClientError::ClientErrorNone) },
+            Err(_) => { println!("test2"); callback(userdata, ClientError::ClientErrorConnectFailure) },
         }
     });
 }
 
 #[no_mangle]
-pub extern "C" fn client_get_device_list(userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, device_list: *mut crate::ffi_common::Device, size: usize)) {
+pub extern "C" fn client_get_device_list(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, device_list: *mut crate::ffi_common::Device, size: usize)) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_handle.enter();
+
     let client = unsafe { &mut *client };
     tokio::spawn(async move {
         match client.get_device_list().await {
@@ -53,7 +60,10 @@ pub extern "C" fn client_get_device_list(userdata: UserObj, client: *mut Client,
 }
 
 #[no_mangle]
-pub extern "C" fn start_stream(userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, reply: crate::ffi_common::Event)) {
+pub extern "C" fn start_stream(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, reply: crate::ffi_common::Event)) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_handle.enter();
+
     let client = unsafe { &mut *client };
     tokio::spawn(async move {
         match client.poll().await {

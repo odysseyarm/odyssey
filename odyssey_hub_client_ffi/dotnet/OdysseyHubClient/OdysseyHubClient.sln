@@ -5,6 +5,13 @@ VisualStudioVersion = 17.9.34728.123
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OdysseyHubClient", "OdysseyHubClient\OdysseyHubClient.csproj", "{885E5B21-5D2B-4EB7-9E35-FE3545070F39}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OdysseyHubClient.Test", "OdysseyHubClient.Test\OdysseyHubClient.Test.csproj", "{24CE1DC0-42AB-4A7D-A81F-98002C4ECFF6}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{5115AA56-8807-480B-8B3C-4737628A0FC1}"
+	ProjectSection(SolutionItems) = preProject
+		build.ps1 = build.ps1
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +22,10 @@ Global
 		{885E5B21-5D2B-4EB7-9E35-FE3545070F39}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{885E5B21-5D2B-4EB7-9E35-FE3545070F39}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{885E5B21-5D2B-4EB7-9E35-FE3545070F39}.Release|Any CPU.Build.0 = Release|Any CPU
+		{24CE1DC0-42AB-4A7D-A81F-98002C4ECFF6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{24CE1DC0-42AB-4A7D-A81F-98002C4ECFF6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{24CE1DC0-42AB-4A7D-A81F-98002C4ECFF6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{24CE1DC0-42AB-4A7D-A81F-98002C4ECFF6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -28,6 +28,8 @@ typedef enum EventTag {
 
 typedef struct Client Client;
 
+typedef struct Handle Handle;
+
 typedef struct UserObj {
   const void *_0;
 } UserObj;
@@ -119,20 +121,27 @@ typedef struct Event {
   union EventU u;
 } Event;
 
+struct Handle *init(void);
+
+void free(struct Handle *handle);
+
 struct Client *client_new(void);
 
-void client_connect(struct UserObj userdata,
+void client_connect(const struct Handle *handle,
+                    struct UserObj userdata,
                     struct Client *client,
                     void (*callback)(struct UserObj userdata, enum ClientError error));
 
-void client_get_device_list(struct UserObj userdata,
+void client_get_device_list(const struct Handle *handle,
+                            struct UserObj userdata,
                             struct Client *client,
                             void (*callback)(struct UserObj userdata,
                                              enum ClientError error,
                                              struct Device *device_list,
                                              uintptr_t size));
 
-void start_stream(struct UserObj userdata,
+void start_stream(const struct Handle *handle,
+                  struct UserObj userdata,
                   struct Client *client,
                   void (*callback)(struct UserObj userdata,
                                    enum ClientError error,
