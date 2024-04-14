@@ -23,15 +23,15 @@ pub extern "C" fn client_new() -> Box<Client> {
 
 #[no_mangle]
 pub extern "C" fn client_connect(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError)) {
-    println!("test0");
     let handle = unsafe { &*handle };
-    let _guard = handle.tokio_handle.enter();
+    let _guard = handle.tokio_rt.enter();
 
     let client = unsafe { &mut *client };
+
     tokio::spawn(async move {
         match client.connect().await {
-            Ok(_) => { println!("test1"); callback(userdata, ClientError::ClientErrorNone) },
-            Err(_) => { println!("test2"); callback(userdata, ClientError::ClientErrorConnectFailure) },
+            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
+            Err(_) => callback(userdata, ClientError::ClientErrorConnectFailure),
         }
     });
 }
@@ -39,7 +39,7 @@ pub extern "C" fn client_connect(handle: *const crate::Handle, userdata: UserObj
 #[no_mangle]
 pub extern "C" fn client_get_device_list(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, device_list: *mut crate::ffi_common::Device, size: usize)) {
     let handle = unsafe { &*handle };
-    let _guard = handle.tokio_handle.enter();
+    let _guard = handle.tokio_rt.enter();
 
     let client = unsafe { &mut *client };
     tokio::spawn(async move {
@@ -62,7 +62,7 @@ pub extern "C" fn client_get_device_list(handle: *const crate::Handle, userdata:
 #[no_mangle]
 pub extern "C" fn start_stream(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, reply: crate::ffi_common::Event)) {
     let handle = unsafe { &*handle };
-    let _guard = handle.tokio_handle.enter();
+    let _guard = handle.tokio_rt.enter();
 
     let client = unsafe { &mut *client };
     tokio::spawn(async move {

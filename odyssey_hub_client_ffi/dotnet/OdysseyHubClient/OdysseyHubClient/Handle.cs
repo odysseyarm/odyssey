@@ -1,4 +1,4 @@
-﻿namespace OdysseyHubClient
+﻿namespace Radiosity.OdysseyHubClient
 {
     public class Handle
     {

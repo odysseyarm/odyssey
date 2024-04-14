@@ -1,7 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 using System.Threading.Channels;
 
-namespace OdysseyHubClient
+namespace Radiosity.OdysseyHubClient
 {
     public class Client {
         unsafe private CsBindgen.Client* _handle;

@@ -1,4 +1,6 @@
-﻿OdysseyHubClient.Handle handle = new OdysseyHubClient.Handle();
+﻿using OdysseyHubClient = Radiosity.OdysseyHubClient;
+
+OdysseyHubClient.Handle handle = new OdysseyHubClient.Handle();
 
 OdysseyHubClient.Client client = new OdysseyHubClient.Client();
 
@@ -11,11 +13,7 @@ switch (await connectTask) {
     case OdysseyHubClient.ClientError.ConnectFailure:
         Console.WriteLine("Failed to connect!");
         break;
-    case OdysseyHubClient.ClientError.NotConnected:
-        Console.WriteLine("Not connected!");
-        break;
     default:
-        Console.Error.WriteLine("This shouldn't be possible");
         Environment.Exit(1);
         break;
 }

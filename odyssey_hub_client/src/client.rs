@@ -30,7 +30,7 @@ impl Client {
                     let r = odyssey_hub_service::service::LocalSocketStream::new(r);
                     dbg!(std::io::Result::Ok(r))
                 }
-            })).await.unwrap();
+            })).await?;
 
         self.service_client = Some(ServiceClient::new(channel));
         println!("connected");

@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="OdysseyHubClient" Version="1.0.0" />
+    <PackageReference Include="Radiosity.OdysseyHubClient" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
