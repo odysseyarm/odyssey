@@ -46,7 +46,7 @@ async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Inf
                 }
             })
         ).await;
-        dbg!(&new_list);
+        // dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
                 let _ = message_channel.send(Message::Disconnect(v.clone())).await;
@@ -70,7 +70,7 @@ async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infa
                 new_list.push(odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice { path: device.path().to_str().unwrap().to_string() }));
             }
         }
-        dbg!(&new_list);
+        // dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
                 let _ = message_channel.send(Message::Disconnect(v.clone())).await;
@@ -118,7 +118,7 @@ async fn device_cdc_task(message_channel: Sender<Message>) -> std::convert::Infa
             }
             new_list.push(odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice { path: device.port_name.clone() }));
         }
-        dbg!(&new_list);
+        // dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
                 let _ = message_channel.send(Message::Disconnect(v.clone())).await;
