@@ -12,9 +12,9 @@ pub enum Message {
 pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()> {
     let (sender, mut receiver) = mpsc::channel(12);
     tokio::select! {
-        _ = device_ping_task(sender.clone()) => {},
-        _ = device_hid_task(sender.clone()) => {},
-        _ = device_cdc_task(sender.clone()) => {},
+        _ = device_udp_ping_task(sender.clone()) => {},
+        _ = device_hid_ping_task(sender.clone()) => {},
+        _ = device_cdc_ping_task(sender.clone()) => {},
         _ = async {
             while let Some(message) = receiver.recv().await {
                 message_channel.send(message).await.unwrap();
@@ -24,7 +24,7 @@ pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()
     Ok(())
 }
 
-async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 23456)).await.unwrap();
     socket.set_broadcast(true).unwrap();
 
@@ -56,7 +56,7 @@ async fn device_ping_task(message_channel: Sender<Message>) -> std::convert::Inf
     }
 }
 
-async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_hid_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
     let api = hidapi::HidApi::new().unwrap();
 
     let mut old_list = vec![];
@@ -81,7 +81,7 @@ async fn device_hid_task(message_channel: Sender<Message>) -> std::convert::Infa
     }
 }
 
-async fn device_cdc_task(message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
     let mut old_list = vec![];
     loop {
         let mut new_list = vec![];
