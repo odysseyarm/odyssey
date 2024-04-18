@@ -14,11 +14,15 @@ odyssey_hub_common = { version = "0.1.0", path = "../odyssey_hub_common" }
 serde = { version = "1.0.197", features = ["derive"] }
 serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }
 serial2 = "0.2.20"
-tokio = { version = "1.37.0", features = ["macros", "net", "rt-multi-thread"] }
+tokio = { version = "1.37.0", features = ["macros", "net", "rt-multi-thread", "io-util", "signal"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 tonic = "0.11.0"
 tracing = { version = "0.1.40" }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "tracing-log"] }
+parking_lot = "0.12.1"
+tokio-util = "0.7.10"
+pin-project = "1.1.5"
+ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 
 [dependencies.interprocess]
 git = "https://github.com/kotauskas/interprocess.git"

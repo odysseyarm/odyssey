@@ -1,4 +1,5 @@
 use odyssey_hub_service::service::{self, Message};
+use tokio_util::sync::CancellationToken;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -13,8 +14,16 @@ async fn main() {
         )
         .init();
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let cancel_token = CancellationToken::new();
+    tokio::spawn({
+        let cancel_token = cancel_token.clone();
+        async move {
+            tokio::signal::ctrl_c().await.expect("failed to listen for ctrl-c");
+            cancel_token.cancel();
+        }
+    });
     tokio::select! {
-        _ = tokio::spawn(service::run_service(sender)) => {},
+        _ = tokio::spawn(service::run_service(sender, cancel_token)) => {},
         _ = tokio::spawn(handle_service_status(receiver)) => {},
     };
 }

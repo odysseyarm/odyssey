@@ -2696,6 +2696,7 @@ dependencies = [
  "odyssey_hub_service_interface",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2705,16 +2706,20 @@ name = "odyssey_hub_service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ats_usb",
  "futures",
  "hidapi",
  "interprocess",
  "odyssey_hub_common",
  "odyssey_hub_service_interface",
+ "parking_lot 0.12.1",
+ "pin-project",
  "serde",
  "serial2",
  "serialport",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tonic",
  "tracing",
  "tracing-subscriber",

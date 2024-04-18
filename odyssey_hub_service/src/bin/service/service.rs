@@ -1,6 +1,7 @@
 use std::{ffi::OsString, time::Duration};
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use odyssey_hub_service::service::{run_service, Message};
 
@@ -61,14 +62,13 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
         process_id: None,
     };
 
-    tokio::select! {
-        _ = tokio::spawn(run_service(sender)) => {},
-        _ = tokio::spawn({
-                let running_status = running_status.clone();
-                async move {
-                    handle_service_status(status_handle, receiver, running_status).await;
-                }
-            }) => {},
+    let cancel_token = CancellationToken::new();
+    tokio::join! {
+        run_service(sender, cancel_token.clone()),
+        async move {
+            handle_service_status(status_handle, receiver, running_status).await;
+            cancel_token.cancel();
+        }
     };
 
     // Tell the system that service has stopped.

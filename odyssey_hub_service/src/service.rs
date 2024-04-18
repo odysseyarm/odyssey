@@ -1,18 +1,23 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
-use tokio::io::{AsyncRead, AsyncWrite};
-use interprocess::{local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName}, os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor}};
-use tokio::sync::mpsc;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::{broadcast, mpsc},
+};
+use interprocess::local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName};
+#[cfg(os = "windows")]
+use os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor};
 use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest, PollRequest, PollReply};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{transport::server::Connected, Response};
 
 use crate::device_tasks::{self, device_tasks};
 
 #[derive(Debug)]
 struct Server {
-    device_list: std::sync::Arc<tokio::sync::Mutex<Vec<odyssey_hub_common::device::Device>>>,
-    event_channel: std::sync::Arc<tokio::sync::Mutex<mpsc::Receiver<odyssey_hub_common::events::Event>>>,
+    device_list: Arc<parking_lot::Mutex<Vec<odyssey_hub_common::device::Device>>>,
+    event_channel: broadcast::Receiver<odyssey_hub_common::events::Event>,
 }
 
 #[tonic::async_trait]
@@ -23,9 +28,9 @@ impl Service for Server {
         &self,
         _: tonic::Request<DeviceListRequest>,
     ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
-        let device_list = self.device_list.lock().await.iter().map(|d| {
+        let device_list = self.device_list.lock().iter().map(|d| {
             d.clone().into()
-        }).collect::<>();
+        }).collect();
 
         let reply = DeviceListReply {
             device_list,
@@ -38,12 +43,22 @@ impl Service for Server {
         &self,
         _: tonic::Request<PollRequest>,
     ) -> tonic::Result<tonic::Response<Self::PollStream>, tonic::Status> {
-        let (tx, rx) = mpsc::channel::<Result<PollReply, tonic::Status>>(12);
-        tokio::spawn({
-            let event_channel = self.event_channel.clone();
-            async move {
-                while let Some(event) = event_channel.lock().await.recv().await {
-                    tx.send(Ok(PollReply { event: Some(event.into()) })).await.unwrap();
+        let (tx, rx) = mpsc::channel(12);
+        let mut event_channel = self.event_channel.resubscribe();
+        tokio::spawn(async move {
+            loop {
+                let event = match event_channel.recv().await {
+                    Ok(v) => v,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        tracing::warn!("Dropping {dropped} events because the client is too slow");
+                        event_channel = event_channel.resubscribe();
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                let send_result = tx.send(Ok(PollReply { event: Some(event.into()) })).await;
+                if send_result.is_err() {
+                    break;
                 }
             }
         });
@@ -119,7 +134,7 @@ impl AsyncRead for LocalSocketStream {
     }
 }
 
-pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
+pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: CancellationToken) -> anyhow::Result<()> {
     let name = {
         use NameTypeSupport as Nts;
         match NameTypeSupport::query() {
@@ -130,11 +145,16 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
     // Create our listener. In a more robust program, we'd check for an
     // existing socket file that has not been deleted for whatever reason,
     // ensure it's a socket file and not a normal file, and delete it.
-	let mut sd = SecurityDescriptor::new()?;
-	unsafe {
-        sd.set_dacl(std::ptr::null_mut(), false)?;
-	}
-    let listener = ListenerOptions::new().security_descriptor(sd).name(name.clone()).create_tokio().unwrap();
+    let listener_opts = ListenerOptions::new().name(name.clone());
+    #[cfg(os = "windows")]
+    let listener_opts = {
+        let mut sd = SecurityDescriptor::new()?;
+        unsafe {
+            sd.set_dacl(std::ptr::null_mut(), false)?;
+        }
+        listener_opts.security_descriptor(sd);
+    };
+    let listener = listener_opts.create_tokio().unwrap();
     let listener = futures::stream::unfold((), |()| {
         async {
             let conn = listener.accept().await;
@@ -148,46 +168,43 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>) -> anyhow::Resu
 
     let (sender, mut receiver) = mpsc::channel(12);
 
-    let (event_sender, event_receiver) = mpsc::channel(12);
+    let (event_sender, event_receiver) = broadcast::channel(12);
 
     let server = Server {
         device_list: Default::default(),
-        event_channel: std::sync::Arc::new(tokio::sync::Mutex::new(event_receiver)),
+        event_channel: event_receiver,
     };
 
     let dl = server.device_list.clone();
 
-    let handle = async {
-        tokio::select! {
-            _ = device_tasks(sender.clone()) => {},
-            _ = async {
-                while let Some(message) = receiver.recv().await {
-                    match message {
-                        device_tasks::Message::Connect(d) => {
-                            dl.lock().await.push(d);
-                        },
-                        device_tasks::Message::Disconnect(d) => {
-                            let mut dl = dl.lock().await;
-                            let i = dl.iter().position(|a| *a == d);
-                            if let Some(i) = i {
-                                dl.remove(i);
-                            }
-                        },
-                        device_tasks::Message::Event(e) => {
-                            event_sender.send(e).await.unwrap();
-                        },
+    let event_fwd = async {
+        // Forward events from the device tasks to subscribed clients
+        while let Some(message) = receiver.recv().await {
+            match message {
+                device_tasks::Message::Connect(d) => {
+                    dl.lock().push(d);
+                },
+                device_tasks::Message::Disconnect(d) => {
+                    let mut dl = dl.lock();
+                    let i = dl.iter().position(|a| *a == d);
+                    if let Some(i) = i {
+                        dl.remove(i);
                     }
-                }
-            } => {},
-        };
+                },
+                device_tasks::Message::Event(e) => {
+                    event_sender.send(e).unwrap();
+                },
+            }
+        }
     };
 
-    dbg!(tokio::select! {
-        _ = handle => {},
+    tokio::select! {
+        _ = device_tasks(sender) => {},
+        _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))
-            .serve_with_incoming(listener) => {},
-    });
+            .serve_with_incoming_shutdown(listener, cancel_token.cancelled()) => {},
+    }
 
     Ok(())
 }
