@@ -32,7 +32,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
     loop {
         let mut new_list = vec![];
         let mut buf = [0; 1472];
-        socket.send_to(&[255, 1], ("10.0.0.255", 23456)).await.unwrap();
+        socket.send_to(&[255, 1], (Ipv4Addr::BROADCAST, 23456)).await.unwrap();
         futures::future::select(
             std::pin::pin!(tokio::time::sleep(tokio::time::Duration::from_secs(2))),
             std::pin::pin!(async {
