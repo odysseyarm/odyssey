@@ -65,7 +65,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
             std::pin::pin!(async {
                 loop {
                     let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
-                    if buf[0] == 255 { continue; }
+                    if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
                     if !old_list.contains(&odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr })) {
                         let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr }))).await;
                     }
@@ -167,7 +167,7 @@ async fn device_stream_task(device: Device, ct: CancellationToken, message_chann
             while !ct.is_cancelled() {
                 if let Some(combined_markers) = stream.next().await {
                     let CombinedMarkersReport { nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
-        
+
                     let mut rotation_mat = None;
                     let mut translation_mat = None;
                     let mut aim_point = None;
