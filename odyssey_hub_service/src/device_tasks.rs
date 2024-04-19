@@ -52,7 +52,7 @@ pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()
 }
 
 async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 23456)).await.unwrap();
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await.unwrap();
     socket.set_broadcast(true).unwrap();
 
     let mut old_list = vec![];
@@ -159,7 +159,7 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
 async fn device_stream_task(device: Device, ct: CancellationToken, message_channel: Sender<Message>) {
     match device {
         Device::Udp(d) => {
-            let d = UsbDevice::connect_hub("0.0.0.0:23456", d.addr.to_string().as_str()).await.unwrap();
+            let d = UsbDevice::connect_hub("0.0.0.0:0", d.addr.to_string().as_str()).await.unwrap();
             let mut stream = d.stream_combined_markers().await.unwrap();
 
             let mut nf_pva2ds: [Pva2d<f64>; 4] = Default::default();
