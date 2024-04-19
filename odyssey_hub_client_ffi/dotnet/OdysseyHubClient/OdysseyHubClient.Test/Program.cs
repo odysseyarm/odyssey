@@ -1,4 +1,6 @@
-﻿using OdysseyHubClient = Radiosity.OdysseyHubClient;
+﻿using System.Threading.Channels;
+
+using OdysseyHubClient = Radiosity.OdysseyHubClient;
 
 OdysseyHubClient.Handle handle = new OdysseyHubClient.Handle();
 
@@ -44,3 +46,22 @@ foreach (var device in devices) {
 }
 
 Console.WriteLine("Devices printed!");
+
+Channel<OdysseyHubClient.IEvent> eventChannel = Channel.CreateUnbounded<OdysseyHubClient.IEvent>();
+client.StartStream(handle, eventChannel.Writer);
+
+await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
+    switch (@event) {
+        case OdysseyHubClient.DeviceEvent deviceEvent:
+            switch (deviceEvent.kind) {
+                case OdysseyHubClient.DeviceEvent.Tracking tracking:
+                    Console.WriteLine("Tracking event: {0}", tracking);
+                    break;
+                default:
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+}
