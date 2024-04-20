@@ -20,32 +20,10 @@ pub enum Message {
 }
 
 pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()> {
-    let mut dl_cancellation_pairs = vec![];
-
-    let (sender, mut receiver) = mpsc::channel(12);
     tokio::select! {
-        _ = device_udp_ping_task(sender.clone()) => {},
-        _ = device_hid_ping_task(sender.clone()) => {},
-        _ = device_cdc_ping_task(sender.clone()) => {},
-        _ = async {
-            while let Some(message) = receiver.recv().await {
-                match message.clone() {
-                    Message::Connect(d) => {
-                        let ct = CancellationToken::new();
-                        dl_cancellation_pairs.push((d.clone(), ct.clone()));
-                    },
-                    Message::Disconnect(d) => {
-                        let i = dl_cancellation_pairs.iter().position(|a| a.0 == d);
-                        if let Some(i) = i {
-                            dl_cancellation_pairs[i].1.cancel();
-                            dl_cancellation_pairs.remove(i);
-                        }
-                    },
-                    _ => {},
-                }
-                message_channel.send(message).await.unwrap();
-            }
-        } => {},
+        _ = device_udp_ping_task(message_channel.clone()) => {},
+        _ = device_hid_ping_task(message_channel.clone()) => {},
+        _ = device_cdc_ping_task(message_channel.clone()) => {},
     }
     Ok(())
 }
@@ -54,6 +32,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await.unwrap();
     socket.set_broadcast(true).unwrap();
 
+    let mut stream_task_handles = vec![];
     let mut old_list = vec![];
     loop {
         let mut new_list = vec![];
@@ -65,19 +44,25 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                 loop {
                     let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
-                    if !old_list.contains(&odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr })) {
-                        let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr };
+                    let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr };
+                    if !old_list.contains(&device) {
                         let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
-                        tokio::spawn(device_udp_stream_task(device, message_channel.clone()));
+                        stream_task_handles.push((
+                            device.clone(),
+                            tokio::spawn(device_udp_stream_task(device.clone(), message_channel.clone())),
+                        ));
                     }
-                    new_list.push(odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice { id: buf[1], addr: addr }));
+                    new_list.push(device);
                 }
             })
         ).await;
         // dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
-                let _ = message_channel.send(Message::Disconnect(v.clone())).await;
+                let _ = message_channel.send(Message::Disconnect(Device::Udp(v.clone()))).await;
+                if let Some((_, handle)) = stream_task_handles.iter().find(|x| x.0 == *v) {
+                    handle.abort();
+                }
             }
         }
         old_list = new_list;

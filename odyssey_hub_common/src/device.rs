@@ -18,36 +18,18 @@ impl PartialEq for Device {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UdpDevice {
     pub id: u8,
     pub addr: SocketAddr,
 }
 
-impl PartialEq for UdpDevice {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.addr == other.addr
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HidDevice {
     pub path: String,
 }
 
-impl PartialEq for HidDevice {
-    fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
-    } 
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CdcDevice {
     pub path: String,
-}
-
-impl PartialEq for CdcDevice {
-    fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
-    }
 }
