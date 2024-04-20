@@ -55,7 +55,16 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
         case OdysseyHubClient.DeviceEvent deviceEvent:
             switch (deviceEvent.kind) {
                 case OdysseyHubClient.DeviceEvent.Tracking tracking:
-                    Console.WriteLine("Tracking event: {0}", tracking);
+                    // Console.WriteLine(tracking);
+                    Console.WriteLine("Printing tracking event:");
+                    Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
+                    Console.WriteLine("\tpose: ");
+                    Console.WriteLine("\t\trotation: ");
+                    Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
+                    Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
+                    Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
+                    Console.WriteLine("\t\ttranslation: ");
+                    Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
                     break;
                 default:
                     break;
