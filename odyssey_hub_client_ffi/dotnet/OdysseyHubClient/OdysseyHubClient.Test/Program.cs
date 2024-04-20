@@ -57,6 +57,7 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                 case OdysseyHubClient.DeviceEvent.Tracking tracking:
                     // Console.WriteLine(tracking);
                     Console.WriteLine("Printing tracking event:");
+                    Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
                     Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
                     if (tracking.pose != null) {
                         Console.WriteLine("\tpose: ");

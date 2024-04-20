@@ -23,6 +23,7 @@ pub struct Pose {
 
 #[derive(Clone, Copy, Debug)]
 pub struct TrackingEvent {
+    pub timestamp: u32,
     pub aimpoint: nalgebra::Vector2<f64>,
     pub pose: Option<Pose>,
 }

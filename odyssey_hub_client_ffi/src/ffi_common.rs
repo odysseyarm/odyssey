@@ -133,6 +133,7 @@ pub union DeviceEventKindU {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TrackingEvent {
+    timestamp: u32,
     aimpoint: crate::funny::Vector2f64,
     pose: Pose,
     pose_resolved: bool,
@@ -173,6 +174,7 @@ impl From<odyssey_hub_common::events::Event> for Event {
                             u: match device_event.kind {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => DeviceEventKindU {
                                     tracking_event: TrackingEvent {
+                                        timestamp: tracking_event.timestamp,
                                         aimpoint: tracking_event.aimpoint.into(),
                                         pose: if let Some(p) = tracking_event.pose { p.into() } else { Pose::default() },
                                         pose_resolved: tracking_event.pose.is_some(),

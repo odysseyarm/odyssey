@@ -95,9 +95,10 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                             proto::DeviceEvent {
                                 device: Some(device.into()),
                                 device_event_oneof: Some(match kind {
-                                    odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent { aimpoint, pose }) => {
+                                    odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent { timestamp, aimpoint, pose }) => {
                                         proto::device_event::DeviceEventOneof::Tracking(
                                             proto::device_event::TrackingEvent {
+                                                timestamp,
                                                 aimpoint: Some(proto::Vector2 {
                                                     x: aimpoint.x,
                                                     y: aimpoint.y,
@@ -127,9 +128,10 @@ impl Into<odyssey_hub_common::events::Event> for proto::Event {
                     odyssey_hub_common::events::DeviceEvent {
                         device: device.unwrap().into(),
                         kind: match device_event_oneof.unwrap() {
-                            proto::device_event::DeviceEventOneof::Tracking(proto::device_event::TrackingEvent { aimpoint, pose }) => {
+                            proto::device_event::DeviceEventOneof::Tracking(proto::device_event::TrackingEvent { timestamp, aimpoint, pose }) => {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(
                                     odyssey_hub_common::events::TrackingEvent {
+                                        timestamp,
                                         aimpoint: nalgebra::Vector2::new(aimpoint.clone().unwrap().x, aimpoint.clone().unwrap().y),
                                         pose: if let Some(pose) = pose {
                                             Some(odyssey_hub_common::events::Pose {

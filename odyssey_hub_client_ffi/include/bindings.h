@@ -92,6 +92,7 @@ typedef struct Pose {
 } Pose;
 
 typedef struct TrackingEvent {
+  uint32_t timestamp;
   struct Vector2f64 aimpoint;
   struct Pose pose;
   bool pose_resolved;

@@ -149,7 +149,7 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
     let mut nf_pva2ds: [Pva2d<f64>; 4] = Default::default();
 
     while let Some(combined_markers) = stream.next().await {
-        let CombinedMarkersReport { nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
+        let CombinedMarkersReport { timestamp, nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
 
         let mut rotation_mat = None;
         let mut translation_mat = None;
@@ -294,8 +294,8 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
                 None
             }
         } else {
-                None
-            };
+            None
+        };
 
         if let Some(aim_point) = aim_point {
             let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x, aim_point.y]);
@@ -303,6 +303,7 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
                 odyssey_hub_common::events::DeviceEvent {
                     device: Device::Udp(device.clone()),
                     kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                        timestamp,
                         aimpoint: aim_point_matrix,
                         pose: {
                             if let (Some(rotation_mat), Some(translation_mat)) = (rotation_mat, translation_mat) {

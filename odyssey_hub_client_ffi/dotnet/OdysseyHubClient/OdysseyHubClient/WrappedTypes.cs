@@ -81,10 +81,12 @@ namespace Radiosity.OdysseyHubClient
         public interface IKind;
 
         public class Tracking : IKind {
+            public uint timestamp;
             public Matrix2x1<double> aimpoint;
             public Pose? pose;
 
             internal Tracking(CsBindgen.TrackingEvent tracking) {
+                timestamp = tracking.timestamp;
                 aimpoint = new Matrix2x1<double> { x = tracking.aimpoint.x, y = tracking.aimpoint.y };
                 if (tracking.pose_resolved) {
                     pose = new Pose(tracking.pose);

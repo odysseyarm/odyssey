@@ -96,6 +96,7 @@ struct Pose {
 };
 
 struct TrackingEvent {
+  uint32_t timestamp;
   Vector2f64 aimpoint;
   Pose pose;
   bool pose_resolved;

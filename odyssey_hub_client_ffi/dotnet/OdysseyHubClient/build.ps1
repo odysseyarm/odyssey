@@ -2,12 +2,9 @@ Write-Host 'OdysseyHubClient' -ForegroundColor Blue
 Write-Host 'Building native library (Rust)' -ForegroundColor Cyan
 cargo build --manifest-path=../../Cargo.toml --release
 
-Write-Host 'Clearing nuget locals'
-nuget locals all -clear
-
 Write-Host 'Building Radiosity.OdysseyHubClient' -ForegroundColor Cyan
 dotnet build .\OdysseyHubClient\
-dotnet pack .\OdysseyHubClient\
+dotnet pack .\OdysseyHubClient\ -o nugets
 
 Write-Host 'Publishing Radiosity.OdysseyHubClient.Test' -ForegroundColor Cyan
 dotnet build .\OdysseyHubClient.Test\

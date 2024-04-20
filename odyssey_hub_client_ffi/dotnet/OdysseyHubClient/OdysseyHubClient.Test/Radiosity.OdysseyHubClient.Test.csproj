@@ -5,11 +5,11 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RestoreAdditionalProjectSources>../OdysseyHubClient/bin</RestoreAdditionalProjectSources>
+    <RestoreAdditionalProjectSources>../nugets</RestoreAdditionalProjectSources>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Radiosity.OdysseyHubClient" Version="1.0.0" />
+    <PackageReference Include="Radiosity.OdysseyHubClient" Version="1.0.2-alpha" />
   </ItemGroup>
 
 </Project>

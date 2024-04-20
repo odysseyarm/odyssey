@@ -60,8 +60,9 @@ message Pose {
 message DeviceEvent {
   Device device = 1;
   message TrackingEvent {
-    Vector2 aimpoint = 1;
-    optional Pose pose = 2;
+    uint32 timestamp = 1;
+    Vector2 aimpoint = 2;
+    optional Pose pose = 3;
   }
   oneof device_event_oneof {
     TrackingEvent tracking = 2;
