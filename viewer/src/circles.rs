@@ -22,7 +22,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     params.max_area = 1500.0;
     params.filter_by_area = true;
     params.filter_by_circularity = true;
-    params.min_circularity = 0.1;
+    params.min_circularity = 0.4;
     params.filter_by_inertia = true;
     params.min_inertia_ratio = 0.1;
 
@@ -32,7 +32,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
 
-    let _pattern_was_found = find_circles_grid(
+    let pattern_was_found = find_circles_grid(
         &im,
         board_size,
         &mut centers,
@@ -42,7 +42,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     ).unwrap();
 
     if show {
-        display_found_circles(&im, board_size, &mut centers, port);
+        display_found_circles(&im, board_size, &mut centers, pattern_was_found, port);
     }
 
     if centers.len() > 0 {
@@ -52,7 +52,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     }
 }
 
-fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut Vector<Point2f>, port: Port) {
+fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut Vector<Point2f>, pattern_was_found: bool, port: Port) {
     let mut display_im = Mat::default();
     cvt_color(&im, &mut display_im, COLOR_GRAY2BGR, 0).unwrap();
     let tmp = display_im;
@@ -68,7 +68,7 @@ fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut
         &mut display_im,
         board_size,
         centers,
-        !centers.is_empty(),
+        pattern_was_found,
     ).unwrap();
 
     let name = match port {
