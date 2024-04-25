@@ -20,7 +20,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     let mut params = SimpleBlobDetector_Params::default().unwrap();
     params.min_threshold = 10.0;
     params.max_threshold = 255.0;
-    params.min_area = 200.0;
+    params.min_area = 25.0;
     params.max_area = 1500.0;
     params.filter_by_area = true;
     params.filter_by_convexity = true;
