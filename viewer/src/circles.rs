@@ -16,15 +16,17 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     let mut centers = Vector::<Point2f>::default();
 
     let mut params = SimpleBlobDetector_Params::default().unwrap();
-    params.min_threshold = 10.0;
+    params.min_threshold = 8.0;
     params.max_threshold = 255.0;
-    params.min_area = 10.0;
+    params.min_area = 4.0;
     params.max_area = 1500.0;
     params.filter_by_area = true;
     params.filter_by_circularity = true;
-    params.min_circularity = 0.4;
+    params.min_circularity = 0.1;
+    params.filter_by_convexity = true;
+    params.min_convexity = 0.6;
     params.filter_by_inertia = true;
-    params.min_inertia_ratio = 0.1;
+    params.min_inertia_ratio = 0.01;
 
     let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
     circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
@@ -36,7 +38,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
         &im,
         board_size,
         &mut centers,
-        CALIB_CB_ASYMMETRIC_GRID | CALIB_CB_ACCURACY | CALIB_CB_NORMALIZE_IMAGE,
+        CALIB_CB_ASYMMETRIC_GRID,
         &feature2d_detector,
         circle_grid_finder_params,
     ).unwrap();
