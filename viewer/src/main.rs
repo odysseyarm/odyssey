@@ -252,8 +252,7 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 let board_cols = self.board_size.0.load(Ordering::Relaxed);
                 let board_rows = self.board_size.1.load(Ordering::Relaxed);
                 std::thread::spawn(move || {
-                    // chessboard::calibrate_single(&captures, Port::Nf, board_rows, board_cols);
-                    circles::calibrate_single(&captures, Port::Nf, board_rows as i32, board_cols as i32);
+                    chessboard::calibrate_single(&captures, Port::Nf, board_rows, board_cols);
                 });
             }
             Some(KeyCode::Key2) => {
@@ -419,8 +418,7 @@ fn opencv_thread(raw_image: Receiver<(Port, [u8; 98*98])>, board_size: Arc<(Atom
         let board_rows = board_size.1.load(Ordering::Relaxed);
         match port {
             Port::Wf => chessboard::get_chessboard_corners(&image, Port::Wf, board_rows, board_cols, true),
-            // Port::Nf => chessboard::get_chessboard_corners(&image, Port::Nf, board_rows, board_cols, true),
-            Port::Nf => circles::get_circles_centers(&image, Port::Nf, board_rows as i32, board_cols as i32, true),
+            Port::Nf => chessboard::get_chessboard_corners(&image, Port::Nf, board_rows, board_cols, true),
         };
     }
 }
