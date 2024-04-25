@@ -1,5 +1,5 @@
 use opencv::{
-    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC}, core::{flip, no_array, FileStorage, FileStorage_FORMAT_YAML, FileStorage_READ, FileStorage_WRITE, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
+    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC}, core::{flip, no_array, FileStorage, FileStorage_FORMAT_YAML, FileStorage_READ, FileStorage_WRITE, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector, ROTATE_180}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
 };
 
 use crate::Port;
@@ -152,7 +152,19 @@ pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, 
         opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
     }
     let mut corners = Vector::<Point2f>::default();
-    let _chessboard_found = find_chessboard_corners_sb(&im, (board_cols, board_rows).into(), &mut corners, CALIB_CB_ACCURACY | CALIB_CB_NORMALIZE_IMAGE).unwrap();
+    let use_sb = true;
+    if use_sb {
+        let _chessboard_found = find_chessboard_corners_sb(&im, (board_cols, board_rows).into(), &mut corners, CALIB_CB_ACCURACY | CALIB_CB_NORMALIZE_IMAGE).unwrap();
+    } else {
+        let _chessboard_found = find_chessboard_corners(&im, (board_cols, board_rows).into(), &mut corners, CALIB_CB_NORMALIZE_IMAGE).unwrap();
+        if corners.len() > 0 {
+            corner_sub_pix(&im, &mut corners, (3, 3).into(), (-1, -1).into(), opencv::core::TermCriteria {
+                typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
+                max_count: 30,
+                epsilon: 0.001,
+            }).unwrap();
+        }
+    }
     // let chessboard_found = find_chessboard_corners_sb_with_meta(
     //     &im,
     //     (board_cols, board_rows).into(),

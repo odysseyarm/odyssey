@@ -152,14 +152,14 @@ async fn main(spawner: Spawner) {
     ).await;
 
     wide.set_gain_1(0).await;
-    wide.set_gain_2(3).await;
-    // wide.set_frame_period(400000).await;
-    wide.set_exposure_time(46625).await;
+    wide.set_gain_2(2).await;
+    wide.set_frame_period(524288).await;
+    wide.set_exposure_time(62160).await;
     wide.set_bank1_sync_updated(1).await;
     near.set_gain_1(0).await;
     near.set_gain_2(0).await;
-    // near.set_frame_period(400000).await;
-    near.set_exposure_time(46625).await;
+    near.set_frame_period(524288).await;
+    near.set_exposure_time(62160).await;
     near.set_bank1_sync_updated(1).await;
     embassy_time::Timer::after_millis(100).await;
 

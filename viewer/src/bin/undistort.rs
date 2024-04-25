@@ -1,4 +1,4 @@
-use opencv::{calib3d::undistort, core::{no_array, FileStorage, FileStorage_READ, Mat}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, IMREAD_COLOR}};
+use opencv::{calib3d::undistort, core::{no_array, FileStorage, FileStorage_READ, Mat, Size}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, IMREAD_COLOR}, imgproc::{resize, INTER_CUBIC}};
 use clap::Parser;
 
 #[derive(Parser)]
@@ -14,8 +14,12 @@ fn main() {
     let im = imread(&cli.image, IMREAD_COLOR).unwrap();
     let mut unim = Mat::default();
     undistort(&im, &mut unim, &camera_matrix, &dist_coeffs, &no_array()).unwrap();
-    imshow("distorted", &im).unwrap();
-    imshow("undistorted", &unim).unwrap();
+    let mut scaled_unim = Mat::default();
+    let mut scaled_im = Mat::default();
+    resize(&unim, &mut scaled_unim, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
+    resize(&im, &mut scaled_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
+    imshow("distorted", &scaled_im).unwrap();
+    imshow("undistorted", &scaled_unim).unwrap();
     wait_key_def().unwrap();
 }
 
