@@ -13,18 +13,18 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
         im = Mat::default();
         opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
     }
+    let mut im2 = Mat::default();
+    resize(&im, &mut im2, Size::new(1024, 1024), 0.0, 0.0, INTER_CUBIC).unwrap();
     let mut centers = Vector::<Point2f>::default();
 
     let mut params = SimpleBlobDetector_Params::default().unwrap();
-    params.min_threshold = 8.0;
+    params.min_threshold = 10.0;
     params.max_threshold = 255.0;
-    params.min_area = 4.0;
+    params.min_area = 200.0;
     params.max_area = 1500.0;
     params.filter_by_area = true;
-    params.filter_by_circularity = true;
-    params.min_circularity = 0.1;
     params.filter_by_convexity = true;
-    params.min_convexity = 0.6;
+    params.min_convexity = 0.83;
     params.filter_by_inertia = true;
     params.min_inertia_ratio = 0.01;
 
@@ -35,13 +35,17 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
 
     let pattern_was_found = find_circles_grid(
-        &im,
+        &im2,
         board_size,
         &mut centers,
         CALIB_CB_ASYMMETRIC_GRID,
         &feature2d_detector,
         circle_grid_finder_params,
     ).unwrap();
+
+    centers.as_mut_slice().iter_mut().for_each(|x| {
+        *x *= 98.0 / 1024. as f32;
+    });
 
     if show {
         display_found_circles(&im, board_size, &mut centers, pattern_was_found, port);
@@ -89,17 +93,17 @@ pub fn calibrate_single(
 ) {
     let square_length = 1.0; // Specify the size of the squares between dots
     let mut board_points = Vector::<Point3f>::new();
-    let mut current_row = 0f32;
-    for row in 0..board_rows {
+    let mut current_col = 0f32;
+    for row in 0..board_cols {
         let row_shift = if row % 2 == 0 { 0.0 } else { 0.5 };
-        for col in 0..board_cols {
+        for col in 0..board_rows {
             board_points.push(Point3f::new(
                 (col as f32 + row_shift) * square_length,
-                current_row * square_length,
+                current_col * square_length,
                 0.0,
             ));
         }
-        current_row += 1.0;
+        current_col += 1.0;
     }
 
     let corners_arr = images.iter().filter_map(|image| {
