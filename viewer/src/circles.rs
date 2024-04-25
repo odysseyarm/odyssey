@@ -14,19 +14,21 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
         opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
     }
     let mut im2 = Mat::default();
-    resize(&im, &mut im2, Size::new(1024, 1024), 0.0, 0.0, INTER_CUBIC).unwrap();
+    resize(&im, &mut im2, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
     let mut centers = Vector::<Point2f>::default();
 
     let mut params = SimpleBlobDetector_Params::default().unwrap();
-    params.min_threshold = 10.0;
+    params.min_threshold = 0.0;
     params.max_threshold = 255.0;
-    params.min_area = 25.0;
-    params.max_area = 1500.0;
+    params.min_area = 50.0;
+    params.max_area = 10000.0;
     params.filter_by_area = true;
     params.filter_by_convexity = true;
-    params.min_convexity = 0.83;
-    params.filter_by_inertia = true;
+    params.min_convexity = 0.87;
+    params.min_circularity = 0.1;
+    params.filter_by_circularity = true;
     params.min_inertia_ratio = 0.01;
+    params.filter_by_inertia = true;
 
     let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
     circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
@@ -44,7 +46,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
     ).unwrap();
 
     centers.as_mut_slice().iter_mut().for_each(|x| {
-        *x *= 98.0 / 1024. as f32;
+        *x *= 98.0 / 512. as f32;
     });
 
     if show {
