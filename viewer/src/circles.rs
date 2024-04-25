@@ -51,7 +51,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
         display_found_circles(&im, board_size, &mut centers, pattern_was_found, port);
     }
 
-    if centers.len() > 0 {
+    if pattern_was_found {
         Some(centers)
     } else {
         None
