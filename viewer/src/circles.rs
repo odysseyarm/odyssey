@@ -1,10 +1,10 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID }, core::{no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_YAML, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_NORMALIZE_IMAGE }, core::{no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_YAML, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
 use crate::Port;
 
 /// Returns None if no circles were found.
 pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, board_cols: i32, show: bool) -> Option<Vector<Point2f>> {
-    let board_size = opencv::core::Size::new(board_cols, board_rows);
+    let board_size = opencv::core::Size::new(board_rows, board_cols);
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
     opencv::core::flip(&tmp, &mut im, 0).unwrap();
@@ -14,15 +14,31 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, boa
         opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
     }
     let mut centers = Vector::<Point2f>::default();
-    let simple_blob_detector = SimpleBlobDetector::create(SimpleBlobDetector_Params::default().unwrap()).unwrap();
+
+    let mut params = SimpleBlobDetector_Params::default().unwrap();
+    params.min_threshold = 10.0;
+    params.max_threshold = 255.0;
+    params.min_area = 10.0;
+    params.max_area = 1500.0;
+    params.filter_by_area = true;
+    params.filter_by_circularity = true;
+    params.min_circularity = 0.1;
+    params.filter_by_inertia = true;
+    params.min_inertia_ratio = 0.1;
+
+    let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
+    circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
+
+    let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
+
     let _pattern_was_found = find_circles_grid(
         &im,
         board_size,
         &mut centers,
-        CALIB_CB_ASYMMETRIC_GRID,
+        CALIB_CB_ASYMMETRIC_GRID | CALIB_CB_ACCURACY | CALIB_CB_NORMALIZE_IMAGE,
         &feature2d_detector,
-        CirclesGridFinderParameters::default().unwrap(),
+        circle_grid_finder_params,
     ).unwrap();
 
     if show {
