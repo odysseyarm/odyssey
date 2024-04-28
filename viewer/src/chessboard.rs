@@ -153,18 +153,26 @@ pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, 
     }
     let mut corners = Vector::<Point2f>::default();
     let use_sb = true;
+    let mut im_upscaled = Mat::default();
+    // super resolution scale
+    let ss = 4.;
+    resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
     if use_sb {
-        let _chessboard_found = find_chessboard_corners_sb(&im, (board_cols, board_rows).into(), &mut corners, CALIB_CB_ACCURACY | CALIB_CB_NORMALIZE_IMAGE).unwrap();
+        let _chessboard_found = find_chessboard_corners_sb(&im_upscaled, (board_cols, board_rows).into(), &mut corners, 0).unwrap();
     } else {
-        let _chessboard_found = find_chessboard_corners(&im, (board_cols, board_rows).into(), &mut corners, CALIB_CB_NORMALIZE_IMAGE).unwrap();
+        let _chessboard_found = find_chessboard_corners(&im_upscaled, (board_cols, board_rows).into(), &mut corners, 0).unwrap();
         if corners.len() > 0 {
-            corner_sub_pix(&im, &mut corners, (3, 3).into(), (-1, -1).into(), opencv::core::TermCriteria {
+            corner_sub_pix(&im_upscaled, &mut corners, (3, 3).into(), (-1, -1).into(), opencv::core::TermCriteria {
                 typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
                 max_count: 30,
                 epsilon: 0.001,
             }).unwrap();
         }
     }
+    // scale corners back down
+    corners.as_mut_slice().iter_mut().for_each(|x| {
+        *x /= ss as f32;
+    });
     // let chessboard_found = find_chessboard_corners_sb_with_meta(
     //     &im,
     //     (board_cols, board_rows).into(),
