@@ -13,6 +13,7 @@ pub struct DeviceEvent {
 #[derive(Clone, Copy, Debug)]
 pub enum DeviceEventKind {
     TrackingEvent(TrackingEvent),
+    ImpactEvent(ImpactEvent),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -26,4 +27,9 @@ pub struct TrackingEvent {
     pub timestamp: u32,
     pub aimpoint: nalgebra::Vector2<f64>,
     pub pose: Option<Pose>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImpactEvent {
+    pub timestamp: u32,
 }

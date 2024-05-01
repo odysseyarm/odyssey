@@ -110,6 +110,13 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                             },
                                         )
                                     }
+                                    odyssey_hub_common::events::DeviceEventKind::ImpactEvent(odyssey_hub_common::events::ImpactEvent { timestamp, }) => {
+                                        proto::device_event::DeviceEventOneof::Impact(
+                                            proto::device_event::ImpactEvent {
+                                                timestamp,
+                                            },
+                                        )
+                                    }
                                 })
                             }
                         ),
@@ -143,7 +150,14 @@ impl Into<odyssey_hub_common::events::Event> for proto::Event {
                                         },
                                     },
                                 )
-                            }
+                            },
+                            proto::device_event::DeviceEventOneof::Impact(proto::device_event::ImpactEvent { timestamp, }) => {
+                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(
+                                    odyssey_hub_common::events::ImpactEvent {
+                                        timestamp,
+                                    },
+                                )
+                            },
                         }
                     }
                 )

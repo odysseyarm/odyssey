@@ -14,6 +14,7 @@ enum class ClientError {
 
 enum class DeviceEventKindTag {
   TrackingEvent,
+  ImpactEvent,
 };
 
 enum class DeviceTag {
@@ -102,8 +103,13 @@ struct TrackingEvent {
   bool pose_resolved;
 };
 
+struct ImpactEvent {
+  uint32_t timestamp;
+};
+
 union DeviceEventKindU {
   TrackingEvent tracking_event;
+  ImpactEvent impact_event;
 };
 
 struct DeviceEventKind {

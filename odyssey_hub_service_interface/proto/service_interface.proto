@@ -64,8 +64,12 @@ message DeviceEvent {
     Vector2 aimpoint = 2;
     optional Pose pose = 3;
   }
+  message ImpactEvent {
+    uint32 timestamp = 1;
+  }
   oneof device_event_oneof {
     TrackingEvent tracking = 2;
+    ImpactEvent impact = 3;
   }
 }
 

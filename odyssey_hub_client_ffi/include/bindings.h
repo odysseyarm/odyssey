@@ -13,6 +13,7 @@ typedef enum ClientError {
 
 typedef enum DeviceEventKindTag {
   TrackingEvent,
+  ImpactEvent,
 } DeviceEventKindTag;
 
 typedef enum DeviceTag {
@@ -98,8 +99,13 @@ typedef struct TrackingEvent {
   bool pose_resolved;
 } TrackingEvent;
 
+typedef struct ImpactEvent {
+  uint32_t timestamp;
+} ImpactEvent;
+
 typedef union DeviceEventKindU {
   struct TrackingEvent tracking_event;
+  struct ImpactEvent impact_event;
 } DeviceEventKindU;
 
 typedef struct DeviceEventKind {

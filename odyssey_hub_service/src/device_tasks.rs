@@ -1,16 +1,15 @@
+use ahrs::Ahrs;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use ats_cv::kalman::Pva2d;
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
-use nalgebra::{Matrix3, MatrixXx1, MatrixXx2, Point2, Rotation3, Scalar, Translation3, Vector2, Vector3};
+use nalgebra::{Const, Isometry3, Matrix3, MatrixXx1, MatrixXx2, Point2, Rotation3, Scalar, Translation3, Vector2, Vector3};
 use odyssey_hub_common::device::{Device, UdpDevice};
 use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
-use sqpnp::types::{SQPSolution, SolverParameters};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -144,180 +143,206 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
 
 async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) {
     let d = UsbDevice::connect_hub("0.0.0.0:0", device.addr.to_string().as_str()).await.unwrap();
-    let mut stream = d.stream_combined_markers().await.unwrap();
 
-    let mut nf_pva2ds: [Pva2d<f64>; 4] = Default::default();
+    // todo get odr
+    // let mut orientation = ahrs::Madgwick::new(1./400., 0.1);
 
-    while let Some(combined_markers) = stream.next().await {
-        let CombinedMarkersReport { timestamp, nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
+    let gravity_angle = Arc::new(tokio::sync::Mutex::new(0.));
 
-        let mut rotation_mat = None;
-        let mut translation_mat = None;
-        let mut aim_point = None;
+    let screen_id = 0;
+    let mut nf_pva2ds: [Pva2d<f64>; 16] = Default::default();
+    let mut wf_pva2ds: [Pva2d<f64>; 16] = Default::default();
 
-        let camera_model_nf = RosOpenCvIntrinsics::from_params_with_distortion(
-            6070.516352962917,     // fx
-            0.0,
-            6081.704092101642,     // fy
-            2012.5340172306787,    // cx
-            2053.6576652187186,    // cy
-            Distortion::from_opencv_vec(nalgebra::Vector5::new(
-                -0.08717430574570494,  // k1
-                0.5130932472490415,    // k2
-                0.0050450411569348645, // p1
-                0.001854950091801636,  // p2
-                0.048480928208383456,  // k3
-            )),
-        );
+    // todo modules will have their own calibration data
+    let nf_default_yaml = b"
+        camera_matrix: !!opencv-matrix
+            rows: 3
+            cols: 3
+            dt: d
+            data: [ 145.10303635182407, 0., 47.917007513463489, 0.,
+                145.29149528441428, 49.399597700110256, 0., 0., 1. ]
+        dist_coeffs: !!opencv-matrix
+            rows: 1
+            cols: 5
+            dt: d
+            data: [ -0.20386528104463086, 2.2361997667805928,
+                0.0058579118546963271, -0.0013804251043507982,
+                -7.7712738787306455 ]
+        rms_error: 0.074045711900311811
+        num_captures: 62
+    ";
 
-        let nf_points = nf_points.into_iter().zip(nf_radii.into_iter()).filter_map(|(pos, r)| if r > 0 { Some(pos) } else { None }).collect::<Vec<_>>();
-        let nf_points = nf_points.into_iter().map(|pos| Point2::new(pos.x as f64, pos.y as f64)).collect::<Vec<_>>();
+    let wf_default_yaml = b"
+        camera_matrix: !!opencv-matrix
+            rows: 3
+            cols: 3
+            dt: d
+            data: [ 34.34121647200962, 0., 48.738547789766642, 0.,
+                34.394866762375322, 49.988446965249153, 0., 0., 1. ]
+        dist_coeffs: !!opencv-matrix
+            rows: 1
+            cols: 5
+            dt: d
+            data: [ 0.039820534469617412, -0.039933169314557031,
+                0.00043006078813049756, -0.0012057066028621883,
+                0.0053022349797757964 ]
+        rms_error: 0.066816050332039037
+        num_captures: 64
+    ";
 
-        let x_mat = MatrixXx1::from_column_slice(&nf_points.iter().map(|p| p.x as f64).collect::<Vec<_>>());
-        let y_mat = MatrixXx1::from_column_slice(&nf_points.iter().map(|p| p.y as f64).collect::<Vec<_>>());
-        let points = MatrixXx2::from_columns(&[x_mat, y_mat]);
-        let distorted = cam_geom::Pixels::new(points);
-        let undistorted = camera_model_nf.undistort(&distorted);
+    let stereo_default_yaml = b"
+        r: !!opencv-matrix
+            rows: 3
+            cols: 3
+            dt: d
+            data: [ 0.99998692169365289, -0.0051111539633757353,
+                -0.00018040735794555248, 0.0050780667355570033,
+                0.99647084468055069, -0.083785851668757322,
+                0.00060801306019016873, 0.083783839771118418, 0.99648376731049981 ]
+        t: !!opencv-matrix
+            rows: 3
+            cols: 1
+            dt: d
+            data: [ -0.011673356870756095, -0.33280456937540659,
+                0.19656043337961257 ]
+        rms_error: 0.1771451374078685
+        num_captures: 49
+    ";
 
-        let x_vec = undistorted.data.as_slice()[..undistorted.data.len() / 2].to_vec();
-        let y_vec = undistorted.data.as_slice()[undistorted.data.len() / 2..].to_vec();
-        let mut nf_points = x_vec.into_iter().zip(y_vec).map(|(x, y)| Point2::new(x, y)).collect::<Vec<_>>();
+    let camera_model_nf = ats_cv::get_intrinsics_from_opencv_camera_calibration_yaml(&nf_default_yaml[..]).unwrap();
+    let camera_model_wf = ats_cv::get_intrinsics_from_opencv_camera_calibration_yaml(&wf_default_yaml[..]).unwrap();
+    let stereo_iso = ats_cv::get_isometry_from_opencv_stereo_calibration_yaml(&stereo_default_yaml[..]).unwrap();
 
-        if nf_points.len() > 3 {
-            for (i, pva2d) in nf_pva2ds.iter_mut().enumerate() {
-                pva2d.step();
-                pva2d.observe(nf_points[i].coords.as_ref(), &[100.0, 100.0]);
-                nf_points[i].x = pva2d.position()[0];
-                nf_points[i].y = pva2d.position()[1];
-            }
-        }
+    let combined_markers_task = {
+        let d = d.clone();
+        let message_channel = message_channel.clone();
+        let gravity_angle = gravity_angle.clone();
+        async move {
+            let mut stream = d.stream_combined_markers().await.unwrap();
 
-        /// Given 4 points in the following shape
-        ///
-        /// ```
-        /// +--x
-        /// |
-        /// y        a              b
-        ///
-        ///
-        ///          c              d
-        /// ```
-        ///
-        /// Sort them into the order a, b, d, c
-        pub fn sort_rectangle<T: Scalar + PartialOrd>(a: &mut [Point2<T>]) {
-            if a[0].y > a[2].y { a.swap(0, 2); }
-            if a[1].y > a[3].y { a.swap(1, 3); }
-            if a[0].y > a[1].y { a.swap(0, 1); }
-            if a[2].y > a[3].y { a.swap(2, 3); }
-            if a[1].y > a[2].y { a.swap(1, 2); }
-            if a[0].x > a[1].x { a.swap(0, 1); }
-            if a[2].x < a[3].x { a.swap(2, 3); }
-        }
+            while let Some(combined_markers) = stream.next().await {
+                let CombinedMarkersReport { timestamp, nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
 
-        pub fn my_pnp(projections: &[Vector2<f64>]) -> Option<SQPSolution> {
-            let _3dpoints = [
-                Vector3::new((0.35 - 0.5) * 16./9., -0.5, 0.),
-                Vector3::new((0.65 - 0.5) * 16./9., -0.5, 0.),
-                Vector3::new((0.65 - 0.5) * 16./9., 0.5, 0.),
-                Vector3::new((0.35 - 0.5) * 16./9., 0.5, 0.),
-            ];
-            let solver = sqpnp::PnpSolver::new(&_3dpoints, &projections, None, SolverParameters::default());
-            if let Some(mut solver) = solver {
-                solver.solve();
-                debug!("pnp found {} solutions", solver.number_of_solutions());
-                if solver.number_of_solutions() >= 1 {
-                    return Some(solver.solution_ptr(0).unwrap().clone());
+                let mut aim_point = None;
+                let mut rotation_mat = None;
+                let mut translation_mat = None;
+
+                let filtered_nf_point_tuples = filter_and_create_point_id_tuples(&nf_points, &nf_radii);
+                let filtered_wf_point_tuples = filter_and_create_point_id_tuples(&wf_points, &wf_radii);
+    
+                let filtered_nf_points_slice = filtered_nf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
+                let filtered_wf_points_slice = filtered_wf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
+    
+                let mut nf_points_transformed = transform_points(&filtered_nf_points_slice, &camera_model_nf);
+                let mut wf_points_transformed = transform_points(&filtered_wf_points_slice, &camera_model_wf);
+    
+                let nf_point_tuples_transformed = filtered_nf_point_tuples.iter().map(|(id, _)| *id).zip(&mut nf_points_transformed).collect::<Vec<_>>();
+                let wf_point_tuples_transformed = filtered_wf_point_tuples.iter().map(|(id, _)| *id).zip(&mut wf_points_transformed).collect::<Vec<_>>();
+
+                fn update_positions(pva2ds: &mut [Pva2d<f64>], points: Vec<(usize, &mut Point2<f64>)>) {
+                    for (i, point) in points {
+                        pva2ds[i].step();
+                        pva2ds[i].observe(point.coords.as_ref(), &[100.0, 100.0]);
+                        point.x = pva2ds[i].position()[0];
+                        point.y = pva2ds[i].position()[1];
+                    }
                 }
-            } else {
-                info!("pnp solver failed");
-            }
-            None
-        }
-
-        fn ray_plane_intersection(ray_origin: Vector3<f64>, ray_direction: Vector3<f64>, plane_normal: Vector3<f64>, plane_point: Vector3<f64>) -> Vector3<f64> {
-            let d = plane_normal.dot(&plane_point);
-            let t = (d - plane_normal.dot(&ray_origin)) / plane_normal.dot(&ray_direction);
-            ray_origin + t * ray_direction
-        }
-
-        aim_point = if nf_points.len() > 3 {
-            let mut nf_positions = nf_points.clone();
-            sort_rectangle(&mut nf_positions);
-            let center_aim = Point2::new(2047.5, 2047.5);
-            let projections = nf_positions.iter().map(|pos| {
-                // 1/math.tan(38.3 / 180 * math.pi / 2) * 2047.5 (value used in the sim)
-                let f = 5896.181431117499;
-                let x = (pos.x - 2047.5) / f;
-                let y = (pos.y - 2047.5) / f;
-                Vector2::new(x, y)
-            }).collect::<Vec<Vector2<_>>>();
-            let solution = my_pnp(&projections);
-            if let Some(solution) = solution {
-                let r_hat = Rotation3::from_matrix_unchecked(solution.r_hat.reshape_generic(nalgebra::Const::<3>, nalgebra::Const::<3>).transpose());
-                let t = Translation3::from(solution.t);
-                let tf = t * r_hat;
-                let ctf = tf.inverse();
-
-                let flip_yz = Matrix3::new(
-                    1., 0., 0.,
-                    0., -1., 0.,
-                    0., 0., -1.,
+    
+                update_positions(&mut nf_pva2ds, nf_point_tuples_transformed);
+                update_positions(&mut wf_pva2ds, wf_point_tuples_transformed);
+    
+                let (rotation, translation, fv_aim_point) = ats_cv::get_pose_and_aimpoint_foveated(
+                    &nf_points_transformed,
+                    &wf_points_transformed,
+                    *gravity_angle.lock().await,
+                    screen_id,
+                    &camera_model_nf,
+                    &camera_model_wf,
+                    stereo_iso
                 );
-
-                let rotmat = flip_yz * ctf.rotation.matrix() * flip_yz;
-                let transmat = flip_yz * ctf.translation.vector;
-
-                rotation_mat = Some(flip_yz * ctf.rotation.matrix() * flip_yz);
-                translation_mat = Some(flip_yz * ctf.translation.vector);
-
-                let screen_3dpoints = [
-                    Vector3::new((0.0 - 0.5) * 16./9., -0.5, 0.),
-                    Vector3::new((1.0 - 0.5) * 16./9., -0.5, 0.),
-                    Vector3::new((1.0 - 0.5) * 16./9., 0.5, 0.),
-                    Vector3::new((0.0 - 0.5) * 16./9., 0.5, 0.),
-                ];
-
-                let ray_origin = transmat;
-                let ray_direction = rotmat * Vector3::new(0., 0., 1.);
-                let plane_normal = (screen_3dpoints[1] - screen_3dpoints[0]).cross(&(screen_3dpoints[2] - screen_3dpoints[0]));
-                let plane_point = screen_3dpoints[0];
-                let _aim_point = ray_plane_intersection(ray_origin, ray_direction, plane_normal, plane_point);
-
-                let _aim_point = Point2::new(
-                    (_aim_point.x - screen_3dpoints[0].x) / (screen_3dpoints[2].x - screen_3dpoints[0].x),
-                    (_aim_point.y - screen_3dpoints[0].y) / (screen_3dpoints[2].y - screen_3dpoints[0].y),
-                );
-
-                let _aim_point = Point2::new(_aim_point.x, 1. - _aim_point.y);
-                Some(_aim_point)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(aim_point) = aim_point {
-            let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x, aim_point.y]);
-            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                odyssey_hub_common::events::DeviceEvent {
-                    device: Device::Udp(device.clone()),
-                    kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                        timestamp,
-                        aimpoint: aim_point_matrix,
-                        pose: {
-                            if let (Some(rotation_mat), Some(translation_mat)) = (rotation_mat, translation_mat) {
-                                Some(odyssey_hub_common::events::Pose {
-                                    rotation: rotation_mat,
-                                    translation: translation_mat,
-                                })
-                            } else {
-                                None
-                            }
+                if let Some(rotation) = rotation {
+                    rotation_mat = Some(rotation);
+                }
+                if let Some(translation) = translation {
+                    translation_mat = Some(translation);
+                }
+                if let Some(fv_aim_point) = fv_aim_point {
+                    aim_point = Some(fv_aim_point);
+                }
+    
+                if let Some(aim_point) = aim_point {
+                    let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x, aim_point.y]);
+                    let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                        odyssey_hub_common::events::DeviceEvent {
+                            device: Device::Udp(device.clone()),
+                            kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                                timestamp,
+                                aimpoint: aim_point_matrix,
+                                pose: {
+                                    if let (Some(rotation_mat), Some(translation_mat)) = (rotation_mat, translation_mat) {
+                                        Some(odyssey_hub_common::events::Pose {
+                                            rotation: rotation_mat,
+                                            translation: translation_mat,
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                }
+                            }),
                         }
-                    }),
+                    ))).await;
                 }
-            ))).await;
+            }
         }
+    };
+
+    let accel_task = {
+        let d = d.clone();
+        let gravity_angle = gravity_angle.clone();
+        async move {
+            let mut stream = d.stream_accel().await.unwrap();
+            while let Some(accel) = stream.next().await {
+                // let _ = orientation.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
+                *gravity_angle.lock().await = accel.gravity_angle as f64;
+            }
+        }
+    };
+
+    let impact_task = {
+        let d = d.clone();
+        let message_channel = message_channel.clone();
+        async move {
+            let mut stream = d.stream_impact().await.unwrap();
+
+            while let Some(impact) = stream.next().await {
+                let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                    odyssey_hub_common::events::DeviceEvent {
+                        device: Device::Udp(device.clone()),
+                        kind: odyssey_hub_common::events::DeviceEventKind::ImpactEvent(odyssey_hub_common::events::ImpactEvent {
+                            timestamp: impact.timestamp,
+                        }),
+                    }
+                ))).await;
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = combined_markers_task => {},
+        _ = accel_task => {},
+        _ = impact_task => {},
     }
+}
+
+fn filter_and_create_point_id_tuples(points: &[Point2<u16>], radii: &[u8]) -> Vec<(usize, Point2<f64>)> {
+    points.iter().zip(radii.iter())
+        .enumerate()
+        .filter_map(|(id, (pos, &r))| if r > 0 { Some((id, Point2::new(pos.x as f64, pos.y as f64))) } else { None })
+        .collect()
+}
+
+fn transform_points(points: &[Point2<f64>], camera_intrinsics: &RosOpenCvIntrinsics<f64>) -> Vec<Point2<f64>> {
+    let scaled_points = points.iter().map(|p| Point2::new(p.x / 4095. * 98., p.y / 4095. * 98.)).collect::<Vec<_>>();
+    let undistorted_points = ats_cv::undistort_points(camera_intrinsics, &scaled_points);
+    undistorted_points.iter().map(|p| Point2::new(p.x / 98. * 4095., p.y / 98. * 4095.)).collect()
 }

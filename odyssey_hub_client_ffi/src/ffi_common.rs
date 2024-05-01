@@ -122,12 +122,14 @@ pub struct DeviceEventKind {
 #[derive(Copy, Clone)]
 pub enum DeviceEventKindTag {
     TrackingEvent,
+    ImpactEvent,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union DeviceEventKindU {
     tracking_event: TrackingEvent,
+    impact_event: ImpactEvent,
 }
 
 #[repr(C)]
@@ -137,6 +139,12 @@ pub struct TrackingEvent {
     aimpoint: crate::funny::Vector2f64,
     pose: Pose,
     pose_resolved: bool,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ImpactEvent {
+    timestamp: u32,
 }
 
 #[repr(C)]
@@ -170,6 +178,7 @@ impl From<odyssey_hub_common::events::Event> for Event {
                         kind: DeviceEventKind {
                             tag: match device_event.kind {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => DeviceEventKindTag::TrackingEvent,
+                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(_) => DeviceEventKindTag::ImpactEvent,
                             },
                             u: match device_event.kind {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => DeviceEventKindU {
@@ -178,6 +187,11 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                         aimpoint: tracking_event.aimpoint.into(),
                                         pose: if let Some(p) = tracking_event.pose { p.into() } else { Pose::default() },
                                         pose_resolved: tracking_event.pose.is_some(),
+                                    },
+                                },
+                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(impact_event) => DeviceEventKindU {
+                                    impact_event: ImpactEvent {
+                                        timestamp: impact_event.timestamp,
                                     },
                                 },
                             },

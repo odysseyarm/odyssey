@@ -71,6 +71,10 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                         Console.WriteLine("\tpose: Not resolved");
                     }
                     break;
+                case OdysseyHubClient.DeviceEvent.Impact impact:
+                    Console.WriteLine("Printing impact event:");
+                    Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
+                    break;
                 default:
                     break;
             }

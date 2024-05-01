@@ -75,6 +75,9 @@ namespace Radiosity.OdysseyHubClient
                 case CsBindgen.DeviceEventKindTag.TrackingEvent:
                     kind = new Tracking(deviceEvent.kind.u.tracking_event);
                     break;
+                case CsBindgen.DeviceEventKindTag.ImpactEvent:
+                    kind = new Impact(deviceEvent.kind.u.impact_event);
+                    break;
             }
         }
 
@@ -91,6 +94,15 @@ namespace Radiosity.OdysseyHubClient
                 if (tracking.pose_resolved) {
                     pose = new Pose(tracking.pose);
                 }
+            }
+        }
+
+        public class Impact : IKind {
+            public uint timestamp;
+            public Matrix2x1<double> aimpoint;
+
+            internal Impact(CsBindgen.ImpactEvent impact) {
+                timestamp = impact.timestamp;
             }
         }
     }
