@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_NORMALIZE_IMAGE }, core::{no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_YAML, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_NORMALIZE_IMAGE }, core::{no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
 use crate::Port;
 
@@ -134,10 +134,10 @@ pub fn calibrate_single(
     println!("RMS error: {}", reproj_err);
 
     let filename = match port {
-        Port::Nf => "nearfield.yml",
-        Port::Wf => "widefield.yml",
+        Port::Nf => "nearfield.json",
+        Port::Wf => "widefield.json",
     };
-    let mut fs = FileStorage::new_def(filename, FileStorage_WRITE | FileStorage_FORMAT_YAML).unwrap();
+    let mut fs = FileStorage::new_def(filename, FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
     if fs.is_opened().unwrap() {
         fs.write_mat("camera_matrix", &camera_matrix).unwrap();
         fs.write_mat("dist_coeffs", &dist_coeffs).unwrap();
