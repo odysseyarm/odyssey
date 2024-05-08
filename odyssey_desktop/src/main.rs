@@ -79,7 +79,7 @@ async fn device_ping_task(mut message_channel: impl Sink<Message> + Unpin) -> In
             std::pin::pin!(tokio::time::sleep(Duration::from_secs(2))),
             std::pin::pin!(async {
                 loop {
-                    let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
+                    let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 { continue; }
                     if !old_list.contains(&addr) {
                         let _ = message_channel.send(Message::Connect(addr)).await;
@@ -151,7 +151,7 @@ async fn device_cdc_task(mut message_channel: impl Sink<Message> + Unpin) -> Inf
                 _ => false,
             }
         }).collect();
-        for device in ports {
+        for _device in ports {
             new_list.push(SocketAddr::new(Ipv4Addr::new(42, 0, 0, 1).into(), 00000));
         }
         dbg!(&new_list);

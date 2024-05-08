@@ -97,6 +97,7 @@ typedef struct TrackingEvent {
   struct Vector2f64 aimpoint;
   struct Pose pose;
   bool pose_resolved;
+  uint32_t screen_id;
 } TrackingEvent;
 
 typedef struct ImpactEvent {

@@ -67,6 +67,7 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                         Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
                         Console.WriteLine("\t\ttranslation: ");
                         Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
+                        Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
                     } else {
                         Console.WriteLine("\tpose: Not resolved");
                     }

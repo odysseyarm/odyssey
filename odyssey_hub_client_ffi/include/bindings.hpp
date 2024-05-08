@@ -101,6 +101,7 @@ struct TrackingEvent {
   Vector2f64 aimpoint;
   Pose pose;
   bool pose_resolved;
+  uint32_t screen_id;
 };
 
 struct ImpactEvent {

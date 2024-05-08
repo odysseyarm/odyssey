@@ -139,6 +139,7 @@ pub struct TrackingEvent {
     aimpoint: crate::funny::Vector2f64,
     pose: Pose,
     pose_resolved: bool,
+    screen_id: u32,
 }
 
 #[repr(C)]
@@ -187,6 +188,7 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                         aimpoint: tracking_event.aimpoint.into(),
                                         pose: if let Some(p) = tracking_event.pose { p.into() } else { Pose::default() },
                                         pose_resolved: tracking_event.pose.is_some(),
+                                        screen_id: tracking_event.screen_id,
                                     },
                                 },
                                 odyssey_hub_common::events::DeviceEventKind::ImpactEvent(impact_event) => DeviceEventKindU {

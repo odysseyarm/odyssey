@@ -13,12 +13,25 @@
   </PropertyGroup>
 
   <PropertyGroup>
-	  <VersionPrefix>1.0.3</VersionPrefix>
+	  <VersionPrefix>1.0.4</VersionPrefix>
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
   <ItemGroup>
     <Folder Include="generated" />
+    <Folder Include="generated\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="D:\ody\odyssey_desktop\odyssey_hub_client_ffi\dotnet\OdysseyHubClient\OdysseyHubClient\/../../../../target/release/odyssey_hub_client_ffi.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="D:\ody\odyssey_desktop\odyssey_hub_client_ffi\dotnet\OdysseyHubClient\OdysseyHubClient\/../../../../target/release/odyssey_hub_client_ffi.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="D:\ody\odyssey_desktop\odyssey_hub_client_ffi\dotnet\OdysseyHubClient\OdysseyHubClient\/../../../../target/release/odyssey_hub_client_ffi.dll" />
   </ItemGroup>
 
   <ItemGroup>

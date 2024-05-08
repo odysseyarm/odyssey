@@ -95,7 +95,7 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                             proto::DeviceEvent {
                                 device: Some(device.into()),
                                 device_event_oneof: Some(match kind {
-                                    odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent { timestamp, aimpoint, pose }) => {
+                                    odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent { timestamp, aimpoint, pose, screen_id }) => {
                                         proto::device_event::DeviceEventOneof::Tracking(
                                             proto::device_event::TrackingEvent {
                                                 timestamp,
@@ -107,6 +107,7 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                                     rotation: Some(pose.unwrap().rotation.into()),
                                                     translation: Some(pose.unwrap().translation.into()),
                                                 }),
+                                                screen_id,
                                             },
                                         )
                                     }
@@ -135,7 +136,7 @@ impl Into<odyssey_hub_common::events::Event> for proto::Event {
                     odyssey_hub_common::events::DeviceEvent {
                         device: device.unwrap().into(),
                         kind: match device_event_oneof.unwrap() {
-                            proto::device_event::DeviceEventOneof::Tracking(proto::device_event::TrackingEvent { timestamp, aimpoint, pose }) => {
+                            proto::device_event::DeviceEventOneof::Tracking(proto::device_event::TrackingEvent { timestamp, aimpoint, pose, screen_id }) => {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(
                                     odyssey_hub_common::events::TrackingEvent {
                                         timestamp,
@@ -148,6 +149,7 @@ impl Into<odyssey_hub_common::events::Event> for proto::Event {
                                         } else {
                                             None
                                         },
+                                        screen_id,
                                     },
                                 )
                             },

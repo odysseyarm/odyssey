@@ -1,15 +1,16 @@
-use ahrs::Ahrs;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use ats_cv::kalman::Pva2d;
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
-use nalgebra::{Const, Isometry3, Matrix3, MatrixXx1, MatrixXx2, Point2, Rotation3, Scalar, Translation3, Vector2, Vector3};
+use nalgebra::Point2;
 use odyssey_hub_common::device::{Device, UdpDevice};
-use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
+use opencv_ros_camera::RosOpenCvIntrinsics;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
+
+static RECV_PORT: u16 = 23457;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -28,43 +29,74 @@ pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()
 }
 
 async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await.unwrap();
-    socket.set_broadcast(true).unwrap();
+    let multicast_port = 23456;
+    let multicast = Ipv4Addr::new(224, 0, 2, 52);
+    let multicast_addr = SocketAddrV4::new(multicast, multicast_port);
 
-    let mut stream_task_handles = vec![];
-    let mut old_list = vec![];
+    let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP)).unwrap();
+    let addr = std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    socket.set_nonblocking(true).unwrap();
+    socket.set_reuse_address(true).unwrap();
+    socket.bind(&socket2::SockAddr::from(addr)).unwrap();
+    let socket = UdpSocket::from_std(socket.into()).unwrap();
+    socket.join_multicast_v4(multicast, Ipv4Addr::UNSPECIFIED).unwrap();
+    socket.set_multicast_ttl_v4(5).unwrap();
+
+    let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let old_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     loop {
-        let mut new_list = vec![];
+        let new_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let stream_task_handles = stream_task_handles.clone();
         let mut buf = [0; 1472];
-        socket.send_to(&[255, 1], (Ipv4Addr::BROADCAST, 23456)).await.unwrap();
+        socket.send_to(&[255, 1], multicast_addr).await.unwrap();
         futures::future::select(
             std::pin::pin!(tokio::time::sleep(tokio::time::Duration::from_secs(2))),
             std::pin::pin!(async {
+                let old_list = old_list.clone();
+                let new_list = new_list.clone();
+                let message_channel = message_channel.clone();
+                let stream_task_handles = stream_task_handles.clone(); // Clone the Arc
                 loop {
                     let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
                     let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr };
+                    let old_list = old_list.lock().await;
                     if !old_list.contains(&device) {
                         let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
-                        stream_task_handles.push((
+                        stream_task_handles.lock().await.push((
                             device.clone(),
-                            tokio::spawn(device_udp_stream_task(device.clone(), message_channel.clone())),
+                            tokio::spawn({
+                                let stream_task_handles = stream_task_handles.clone();
+                                let message_channel = message_channel.clone();
+                                async move {
+                                    match device_udp_stream_task(device.clone(), message_channel).await {
+                                        Ok(_) => {},
+                                        Err(e) => {
+                                            eprintln!("Error in device stream task: {}", e);
+                                        }
+                                    }
+                                    stream_task_handles.lock().await.retain(|&(ref x, _)| x != &device);
+                                }
+                            }),
                         ));
                     }
-                    new_list.push(device);
+                    new_list.lock().await.push(device);
                 }
             })
         ).await;
         // dbg!(&new_list);
-        for v in &old_list {
+        let new_list = new_list.lock().await;
+        for v in old_list.lock().await.iter() {
             if !new_list.contains(v) {
                 let _ = message_channel.send(Message::Disconnect(Device::Udp(v.clone()))).await;
+                let mut stream_task_handles = stream_task_handles.lock().await;
                 if let Some((_, handle)) = stream_task_handles.iter().find(|x| x.0 == *v) {
                     handle.abort();
+                    stream_task_handles.retain(|x| x.0 != *v);
                 }
             }
         }
-        old_list = new_list;
+        *old_list.lock().await = new_list.to_vec();
     }
 }
 
@@ -108,7 +140,7 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
         }.into_iter().filter(|port| {
             match &port.port_type {
                 serialport::SerialPortType::UsbPort(port_info) => {
-                    if port_info.vid != 0x1915 || port_info.pid != 0x520f {
+                    if port_info.vid != 0x1915 || !(port_info.pid == 0x520f || port_info.pid == 0x5210) {
                         return false;
                     }
                     if let Some(i) = port_info.interface {
@@ -141,82 +173,30 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
     }
 }
 
-async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) {
-    let d = UsbDevice::connect_hub("0.0.0.0:0", device.addr.to_string().as_str()).await.unwrap();
+async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) -> anyhow::Result<()> {
+    let d = match UsbDevice::connect_hub("0.0.0.0:".to_owned() + RECV_PORT.to_string().as_str(), device.addr.to_string().as_str()).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Failed to connect to device {}: {}", device.addr, e);
+            return Ok(());
+        },
+    };
 
-    // todo get odr
-    // let mut orientation = ahrs::Madgwick::new(1./400., 0.1);
+    tracing::info!("Connected to device {}", device.addr);
 
-    let gravity_angle = Arc::new(tokio::sync::Mutex::new(0.));
+    let timeout = tokio::time::Duration::from_millis(500);
+    let config = retry(|| d.read_config(), timeout, 3).await.unwrap()?;
+
+    let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
 
     let screen_id = 0;
     let mut nf_pva2ds: [Pva2d<f64>; 16] = Default::default();
     let mut wf_pva2ds: [Pva2d<f64>; 16] = Default::default();
 
-    // todo modules will have their own calibration data
-    let nf_default_yaml = b"
-        camera_matrix: !!opencv-matrix
-            rows: 3
-            cols: 3
-            dt: d
-            data: [ 145.10303635182407, 0., 47.917007513463489, 0.,
-                145.29149528441428, 49.399597700110256, 0., 0., 1. ]
-        dist_coeffs: !!opencv-matrix
-            rows: 1
-            cols: 5
-            dt: d
-            data: [ -0.20386528104463086, 2.2361997667805928,
-                0.0058579118546963271, -0.0013804251043507982,
-                -7.7712738787306455 ]
-        rms_error: 0.074045711900311811
-        num_captures: 62
-    ";
-
-    let wf_default_yaml = b"
-        camera_matrix: !!opencv-matrix
-            rows: 3
-            cols: 3
-            dt: d
-            data: [ 34.34121647200962, 0., 48.738547789766642, 0.,
-                34.394866762375322, 49.988446965249153, 0., 0., 1. ]
-        dist_coeffs: !!opencv-matrix
-            rows: 1
-            cols: 5
-            dt: d
-            data: [ 0.039820534469617412, -0.039933169314557031,
-                0.00043006078813049756, -0.0012057066028621883,
-                0.0053022349797757964 ]
-        rms_error: 0.066816050332039037
-        num_captures: 64
-    ";
-
-    let stereo_default_yaml = b"
-        r: !!opencv-matrix
-            rows: 3
-            cols: 3
-            dt: d
-            data: [ 0.99998692169365289, -0.0051111539633757353,
-                -0.00018040735794555248, 0.0050780667355570033,
-                0.99647084468055069, -0.083785851668757322,
-                0.00060801306019016873, 0.083783839771118418, 0.99648376731049981 ]
-        t: !!opencv-matrix
-            rows: 3
-            cols: 1
-            dt: d
-            data: [ -0.011673356870756095, -0.33280456937540659,
-                0.19656043337961257 ]
-        rms_error: 0.1771451374078685
-        num_captures: 49
-    ";
-
-    let camera_model_nf = ats_cv::get_intrinsics_from_opencv_camera_calibration_yaml(&nf_default_yaml[..]).unwrap();
-    let camera_model_wf = ats_cv::get_intrinsics_from_opencv_camera_calibration_yaml(&wf_default_yaml[..]).unwrap();
-    let stereo_iso = ats_cv::get_isometry_from_opencv_stereo_calibration_yaml(&stereo_default_yaml[..]).unwrap();
-
     let combined_markers_task = {
         let d = d.clone();
         let message_channel = message_channel.clone();
-        let gravity_angle = gravity_angle.clone();
+        let orientation = orientation.clone();
         async move {
             let mut stream = d.stream_combined_markers().await.unwrap();
 
@@ -233,8 +213,8 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
                 let filtered_nf_points_slice = filtered_nf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
                 let filtered_wf_points_slice = filtered_wf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
     
-                let mut nf_points_transformed = transform_points(&filtered_nf_points_slice, &camera_model_nf);
-                let mut wf_points_transformed = transform_points(&filtered_wf_points_slice, &camera_model_wf);
+                let mut nf_points_transformed = transform_points(&filtered_nf_points_slice, &config.camera_model_nf);
+                let mut wf_points_transformed = transform_points(&filtered_wf_points_slice, &config.camera_model_wf);
     
                 let nf_point_tuples_transformed = filtered_nf_point_tuples.iter().map(|(id, _)| *id).zip(&mut nf_points_transformed).collect::<Vec<_>>();
                 let wf_point_tuples_transformed = filtered_wf_point_tuples.iter().map(|(id, _)| *id).zip(&mut wf_points_transformed).collect::<Vec<_>>();
@@ -254,11 +234,11 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
                 let (rotation, translation, fv_aim_point) = ats_cv::get_pose_and_aimpoint_foveated(
                     &nf_points_transformed,
                     &wf_points_transformed,
-                    *gravity_angle.lock().await,
+                    *orientation.lock().await,
                     screen_id,
-                    &camera_model_nf,
-                    &camera_model_wf,
-                    stereo_iso
+                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf),
+                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf),
+                    config.stereo_iso.cast(),
                 );
                 if let Some(rotation) = rotation {
                     rotation_mat = Some(rotation);
@@ -287,7 +267,8 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
                                     } else {
                                         None
                                     }
-                                }
+                                },
+                                screen_id: screen_id as u32,
                             }),
                         }
                     ))).await;
@@ -296,14 +277,12 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
         }
     };
 
-    let accel_task = {
+    let euler_task = {
         let d = d.clone();
-        let gravity_angle = gravity_angle.clone();
         async move {
-            let mut stream = d.stream_accel().await.unwrap();
-            while let Some(accel) = stream.next().await {
-                // let _ = orientation.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
-                *gravity_angle.lock().await = accel.gravity_angle as f64;
+            let mut euler_stream = d.stream_euler_angles().await.unwrap();
+            while let Some(_orientation) = euler_stream.next().await {
+                *orientation.lock().await = _orientation.rotation;
             }
         }
     };
@@ -329,9 +308,11 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
 
     tokio::select! {
         _ = combined_markers_task => {},
-        _ = accel_task => {},
+        _ = euler_task => {},
         _ = impact_task => {},
     }
+
+    Ok(())
 }
 
 fn filter_and_create_point_id_tuples(points: &[Point2<u16>], radii: &[u8]) -> Vec<(usize, Point2<f64>)> {
@@ -341,8 +322,23 @@ fn filter_and_create_point_id_tuples(points: &[Point2<u16>], radii: &[u8]) -> Ve
         .collect()
 }
 
-fn transform_points(points: &[Point2<f64>], camera_intrinsics: &RosOpenCvIntrinsics<f64>) -> Vec<Point2<f64>> {
+fn transform_points(points: &[Point2<f64>], camera_intrinsics: &RosOpenCvIntrinsics<f32>) -> Vec<Point2<f64>> {
     let scaled_points = points.iter().map(|p| Point2::new(p.x / 4095. * 98., p.y / 4095. * 98.)).collect::<Vec<_>>();
-    let undistorted_points = ats_cv::undistort_points(camera_intrinsics, &scaled_points);
+    let undistorted_points = ats_cv::undistort_points(&ats_cv::ros_opencv_intrinsics_type_convert(camera_intrinsics), &scaled_points);
     undistorted_points.iter().map(|p| Point2::new(p.x / 98. * 4095., p.y / 98. * 4095.)).collect()
+}
+
+/// Retry an asynchronous operation up to `limit` times.
+async fn retry<F, G>(mut op: F, timeout: tokio::time::Duration, limit: usize) -> Option<G::Output>
+where
+    F: FnMut() -> G,
+    G: std::future::Future,
+{
+    for _ in 0..limit {
+        match tokio::time::timeout(timeout, op()).await {
+            Ok(r) => return Some(r),
+            Err(_) => (),
+        }
+    }
+    None
 }

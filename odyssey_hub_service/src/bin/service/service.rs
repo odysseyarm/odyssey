@@ -15,9 +15,8 @@ define_windows_service!(ffi_service_main, service_main);
 
 #[cfg(target_os = "windows")]
 pub fn start() {
-    match service_dispatcher::start("Odyssey", ffi_service_main) {
-        Ok(_) => (),
-        Err(e) => eprintln!("Error starting service: {:?}", e),
+    if let Err(e) = service_dispatcher::start("Odyssey", ffi_service_main) {
+        eprintln!("Error starting service: {:?}", e);
     }
 }
 
@@ -63,13 +62,19 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
     };
 
     let cancel_token = CancellationToken::new();
-    tokio::join! {
+    let result = tokio::join! {
         run_service(sender, cancel_token.clone()),
         async move {
             handle_service_status(status_handle, receiver, running_status).await;
             cancel_token.cancel();
         }
     };
+
+    // Handle the result of the join operation
+    match result {
+        (Ok(_), _) => (),
+        (Err(e), _) => eprintln!("Error running service: {:?}", e),
+    }
 
     // Tell the system that service has stopped.
     status_handle.set_service_status(ServiceStatus {
@@ -82,6 +87,7 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
         process_id: None,
     })?;
 
+
     Ok(())
 }
 
@@ -91,8 +97,6 @@ async fn handle_service_status(
     mut receiver: mpsc::UnboundedReceiver<Message>,
     running_status: ServiceStatus,
 ) {
-    use odyssey_hub_service::service::Message;
-
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(()))) => {

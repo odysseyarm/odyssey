@@ -7,6 +7,9 @@ namespace Radiosity.OdysseyHubClient
 {
     public interface IDevice;
 
+    /// <summary>
+    /// Device that is connected to Odyssey Hub through UDP multicast.
+    /// </summary>
     public class UdpDevice: IDevice {
         public byte id;
         public SocketAddr addr;
@@ -17,6 +20,9 @@ namespace Radiosity.OdysseyHubClient
         }
     }
 
+    /// <summary>
+    /// Device that is connected to Odyssey Hub through HID (unimplemented).
+    /// </summary>
     public class HidDevice: IDevice {
         public string? path;
 
@@ -25,6 +31,10 @@ namespace Radiosity.OdysseyHubClient
         }
     }
 
+    /// <summary>
+    /// Device that is connected to Odyssey Hub through CDC.
+    /// Likely a vision module (unimplemented).
+    /// </summary>
     public class CdcDevice: IDevice {
         public string? path;
 
@@ -87,6 +97,7 @@ namespace Radiosity.OdysseyHubClient
             public uint timestamp;
             public Matrix2x1<double> aimpoint;
             public Pose? pose;
+            public uint screen_id;
 
             internal Tracking(CsBindgen.TrackingEvent tracking) {
                 timestamp = tracking.timestamp;
@@ -94,6 +105,7 @@ namespace Radiosity.OdysseyHubClient
                 if (tracking.pose_resolved) {
                     pose = new Pose(tracking.pose);
                 }
+                screen_id = tracking.screen_id;
             }
         }
 
@@ -107,6 +119,9 @@ namespace Radiosity.OdysseyHubClient
         }
     }
 
+    /// <summary>
+    /// The pose is relative to the screen being aimed at.
+    /// </summary>
     public class Pose {
         public Matrix3x1<double> translation;
         public Matrix3<double> rotation;
