@@ -11,14 +11,17 @@ message UdpDevice {
   int32 id = 1;
   string ip = 2;
   int32 port = 3;
+  uint64 uuid = 4;
 }
 
 message HidDevice {
   string path = 1;
+  uint64 uuid = 2;
 }
 
 message CdcDevice {
   string path = 1;
+  uint64 uuid = 2;
 }
 
 message Device {

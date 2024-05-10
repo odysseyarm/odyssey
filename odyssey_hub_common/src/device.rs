@@ -10,9 +10,9 @@ pub enum Device {
 impl PartialEq for Device {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Device::Udp(a), Device::Udp(b)) => a == b,
-            (Device::Hid(a), Device::Hid(b)) => a == b,
-            (Device::Cdc(a), Device::Cdc(b)) => a == b,
+            (Device::Udp(a), Device::Udp(b)) => a.addr == b.addr && a.id == b.id,
+            (Device::Hid(a), Device::Hid(b)) => a.path == b.path,
+            (Device::Cdc(a), Device::Cdc(b)) => a.path == b.path,
             _ => false,
         }
     }
@@ -22,14 +22,17 @@ impl PartialEq for Device {
 pub struct UdpDevice {
     pub id: u8,
     pub addr: SocketAddr,
+    pub uuid: [u8; 6],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HidDevice {
     pub path: String,
+    pub uuid: [u8; 6],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CdcDevice {
     pub path: String,
+    pub uuid: [u8; 6],
 }

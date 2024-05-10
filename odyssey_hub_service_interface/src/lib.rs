@@ -57,27 +57,48 @@ impl From<odyssey_hub_common::device::Device> for proto::Device {
                         id: udp_device.id as i32,
                         ip: udp_device.addr.ip().to_string(),
                         port: udp_device.addr.port() as i32,
+                        uuid: u64::from_le_bytes([udp_device.uuid[0], udp_device.uuid[1], udp_device.uuid[2], udp_device.uuid[3], udp_device.uuid[4], udp_device.uuid[5], 0, 0]),
                     })),
                 }
             },
             odyssey_hub_common::device::Device::Hid(d) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::HidDevice(proto::HidDevice { path: d.path })),
+                device_oneof: Some(proto::device::DeviceOneof::HidDevice(proto::HidDevice { path: d.path, uuid: u64::from_le_bytes([d.uuid[0], d.uuid[1], d.uuid[2], d.uuid[3], d.uuid[4], d.uuid[5], 0, 0]), })),
             },
             odyssey_hub_common::device::Device::Cdc(d) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path: d.path })),
+                device_oneof: Some(proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path: d.path, uuid: u64::from_le_bytes([d.uuid[0], d.uuid[1], d.uuid[2], d.uuid[3], d.uuid[4], d.uuid[5], 0, 0]), })),
             },
         }
     }
 }
-impl Into<odyssey_hub_common::device::Device> for proto::Device {
-    fn into(self) -> odyssey_hub_common::device::Device {
-        match self.device_oneof.unwrap() {
-            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port }) => odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice {
-                id: id as u8,
-                addr: SocketAddr::new(ip.parse().unwrap(), port as u16),
-            }),
-            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path }) => odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice { path: path }),
-            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path }) => odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice { path: path }),
+
+impl From<proto::Device> for odyssey_hub_common::device::Device {
+    fn from(value: proto::Device) -> Self {
+        match value.device_oneof.unwrap() {
+            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port, uuid }) => {
+                odyssey_hub_common::device::Device::Udp(
+                    odyssey_hub_common::device::UdpDevice {
+                        id: id as u8,
+                        addr: SocketAddr::new(ip.parse().unwrap(), port as u16),
+                        uuid: uuid.to_le_bytes()[0..6].try_into().unwrap(),
+                    }
+                )
+            },
+            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path, uuid }) => {
+                odyssey_hub_common::device::Device::Hid(
+                    odyssey_hub_common::device::HidDevice {
+                        path,
+                        uuid: uuid.to_le_bytes()[0..6].try_into().unwrap(),
+                    }
+                )
+            },
+            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path, uuid }) => {
+                odyssey_hub_common::device::Device::Cdc(
+                    odyssey_hub_common::device::CdcDevice {
+                        path,
+                        uuid: uuid.to_le_bytes()[0..6].try_into().unwrap(),
+                    }
+                )
+            },
         }
     }
 }
@@ -128,9 +149,9 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
     }
 }
 
-impl Into<odyssey_hub_common::events::Event> for proto::Event {
-    fn into(self) -> odyssey_hub_common::events::Event {
-        match self.event_oneof.unwrap() {
+impl From<proto::Event> for odyssey_hub_common::events::Event {
+    fn from(event: proto::Event) -> Self {
+        match event.event_oneof.unwrap() {
             proto::event::EventOneof::Device(proto::DeviceEvent { device, device_event_oneof }) => {
                 odyssey_hub_common::events::Event::DeviceEvent(
                     odyssey_hub_common::events::DeviceEvent {
