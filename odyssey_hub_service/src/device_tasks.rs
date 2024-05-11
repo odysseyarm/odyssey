@@ -165,22 +165,29 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
         }).collect();
         for (port, port_info) in ports {
             let device = odyssey_hub_common::device::CdcDevice { path: port.port_name.clone(), uuid: [0; 6] };
+            let old_list_arc_clone = old_list.clone();
             let old_list = old_list.lock().await;
             if !old_list.contains(&device) {
                 stream_task_handles.lock().await.push((
                     device.clone(),
                     tokio::spawn({
                         let stream_task_handles = stream_task_handles.clone();
+                        let old_list_arc_clone = old_list_arc_clone.clone();
                         let message_channel = message_channel.clone();
                         let device = device.clone();
                         async move {
-                            match device_cdc_stream_task(device.clone(), port_info.pid == 0x5210, message_channel).await {
-                                Ok(_) => {},
-                                Err(e) => {
-                                    eprintln!("Error in device stream task: {}", e);
+                            {
+                                let message_channel = message_channel.clone();
+                                match device_cdc_stream_task(device.clone(), port_info.pid == 0x5210, message_channel).await {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        eprintln!("Error in device stream task: {}", e);
+                                    }
                                 }
                             }
                             stream_task_handles.lock().await.retain(|&(ref x, _)| x != &device);
+                            let _ = message_channel.send(Message::Disconnect(Device::Cdc(device.clone()))).await;
+                            old_list_arc_clone.lock().await.retain(|x| x != &device);
                         }
                     }),
                 ));
