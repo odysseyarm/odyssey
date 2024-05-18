@@ -68,16 +68,14 @@ SECTIONS
 
   /* ## Sections in FLASH */
   /* ### mcuboot image header */
-  .mcuboot_header ORIGIN(FLASH) :
-  {
-    QUAD(0x0);
-    QUAD(0x0);
-    QUAD(0x0);
-    QUAD(0x0);
-  } > FLASH
+  /* .mcuboot_header ORIGIN(FLASH) : */
+  /* { */
+    /* FILL(0x0); */
+    /* . += 32; */
+  /* } > FLASH */
 
   /* ### Vector table */
-  .vector_table :
+  .vector_table ORIGIN(FLASH) :
   {
     __vector_table = .;
 

@@ -1,5 +1,5 @@
 use std::{
-    fs::File, io::BufWriter, path::Path, sync::{atomic::{AtomicU16, Ordering}, mpsc::{Receiver, SyncSender}, Arc, Mutex}, time::{Duration, Instant}
+    fs::File, io::BufWriter, path::Path, sync::{atomic::{AtomicBool, AtomicU16, Ordering}, mpsc::{Receiver, SyncSender}, Arc, Mutex}, time::{Duration, Instant}
 };
 
 use ggez::{
@@ -48,6 +48,8 @@ struct MainState {
     captured_nf: Vec<[u8; 98 * 98]>,
     captured_wf: Vec<[u8; 98 * 98]>,
     board_size: Arc<(AtomicU16, AtomicU16)>, // (width, height)
+    reset: Arc<AtomicBool>,
+    quit: Arc<AtomicBool>,
 }
 
 impl MainState {
@@ -64,6 +66,8 @@ impl MainState {
         let wf_data = Arc::new(Mutex::new(Default::default()));
         let nf_data = Arc::new(Mutex::new(Default::default()));
         let img_channel = std::sync::mpsc::sync_channel(2);
+        let reset = Arc::new(AtomicBool::new(false));
+        let quit = Arc::new(AtomicBool::new(false));
         let main_state = MainState {
             wf_data: wf_data.clone(),
             nf_data: nf_data.clone(),
@@ -72,10 +76,12 @@ impl MainState {
             captured_nf: vec![],
             captured_wf: vec![],
             board_size: Arc::new((4.into(), 4.into())),
+            reset: reset.clone(),
+            quit: quit.clone(),
         };
         let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
         std::thread::spawn(move || {
-            reader_thread(path, wf_data, nf_data, img_channel.0);
+            reader_thread(path, wf_data, nf_data, img_channel.0, reset, quit);
         });
         let board_size = main_state.board_size.clone();
         std::thread::spawn(move || opencv_thread(img_channel.1, board_size));
@@ -84,8 +90,11 @@ impl MainState {
 }
 
 impl event::EventHandler<ggez::GameError> for MainState {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult {
+    fn update(&mut self, ctx: &mut Context) -> GameResult {
         // self.pos_x = self.pos_x % 800.0 + 1.0;
+        if self.quit.load(Ordering::Relaxed) {
+            ctx.request_quit();
+        }
         Ok(())
     }
 
@@ -289,6 +298,9 @@ impl event::EventHandler<ggez::GameError> for MainState {
                     self.board_size.0.fetch_add(1, Ordering::Relaxed);
                 }
             }
+            Some(KeyCode::F1) => {
+                self.reset.store(true, Ordering::Relaxed);
+            }
             _ => (),
         }
         Ok(())
@@ -368,6 +380,8 @@ fn reader_thread(
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
     img_channel: SyncSender<(Port, [u8; 98*98])>,
+    reset: Arc<AtomicBool>,
+    quit: Arc<AtomicBool>,
 ) {
     let mut port = serialport::new(path, 115200)
         .timeout(Duration::from_secs(3))
@@ -380,14 +394,20 @@ fn reader_thread(
 
     let mut buf = [0; 9898];
     loop {
-        port.write(b"a").unwrap();
+        if reset.load(Ordering::Relaxed) {
+            port.write(b"r").unwrap();
+            port.flush().unwrap();
+            quit.store(true, Ordering::Relaxed);
+            break;
+        } else {
+            port.write(b"a").unwrap();
+        }
         port.read_exact(&mut buf).unwrap();
         let [.., id, len0, len1] = buf;
         let len = u16::from_le_bytes([len0, len1]);
         if len == 9898 {
             shiftl(&mut buf, 4);
         } else if len == 9897 {
-            eprintln!("{:x}", buf[buf.len() - 6]);
             for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
                 if buf[buf.len()-6] == byte {
                     shiftr(&mut buf, i as u8+1);

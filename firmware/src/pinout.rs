@@ -34,4 +34,6 @@ macro_rules! pinout {
     ($p:ident . nf_mosi) => ($p.P0_29);
     ($p:ident . nf_cs) => ($p.P1_13);
     ($p:ident . nf_fod) => ($p.P1_14);
+
+    ($p:ident . pwr_btn) => ($p.P1_08); // actice low
 }

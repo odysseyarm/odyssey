@@ -8,7 +8,7 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
 use embassy_nrf::{
-    config::{Config, HfclkSource}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
+    config::{Config, HfclkSource}, gpio::{self, Pull, AnyPin}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
         self,
         vbus_detect::HardwareVbusDetect,
         Driver,
@@ -37,6 +37,22 @@ unsafe fn init_ramtext() {
      stm r0!, {{r3}}
      b 2b
      3:"
+    );
+
+    #[cfg(feature = "mcuboot")]
+    core::arch::asm!(
+        "cpsie i",  // Clear primask
+
+        // Clear SHPR3
+        "ldr r0, =0xE000ED20",
+        "ldr r1, =0x0",
+        "str r1, [r0]",
+        "str r1, [r0, #4]", // Clear SHCSR
+
+        // Clear SCR
+        "ldr r0, =0xE000ED20",
+        "str r1, [r0]",
+        "str r1, [r0, #4]", // Clear CCR
     );
 }
 
@@ -204,18 +220,6 @@ async fn main(spawner: Spawner) {
     info!("Transitioning to image mode");
     join(wide.image_mode(), near.image_mode()).await;
 
-    // let mut cursed_spim = paj7025::image_mode_spim(
-    //     &mut p.SPI3,
-    //     Irqs,
-    //     &mut p.P1_00, // sample SCK
-    // );
-
-    // let mut cs = gpio::Input::new(p.P0_06, Pull::None);
-    // cs.wait_for_falling_edge().await;
-    // let mut data = [0; 32];
-    // cursed_spim.read(&mut data).await;
-    // info!("{:08b}", &data);
-
     let mut config = spis::Config::default();
     config.mode = spis::MODE_3;
     let wide_spis = Spis::new_rxonly(
@@ -248,7 +252,7 @@ async fn main(spawner: Spawner) {
     wf_free_buffers.try_send(b5).unwrap();
     let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender());
     let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender());
-    join3(near_loop, wide_loop, async {
+    let buffer_mgmt_loop = async {
         loop {
             let buf = if let Ok(b) = image_buffers.try_receive() {
                 b
@@ -262,9 +266,29 @@ async fn main(spawner: Spawner) {
             } else {
                 nf_free_buffers.try_send(buf).unwrap();
             }
-            wait_for_serial(&mut class).await;
+            let c = wait_for_serial(&mut class).await;
+            if c == b'r' {
+                cortex_m::peripheral::SCB::sys_reset();
+            }
         }
-    }).await;
+    };
+
+    #[cfg(feature = "atslite-1-1")]
+    spawner.must_spawn(power_button_loop(pinout!(p.pwr_btn).into()));
+
+    join3(
+        near_loop,
+        wide_loop,
+        buffer_mgmt_loop,
+    ).await;
+}
+
+#[cfg(feature = "atslite-1-1")]
+#[embassy_executor::task]
+async fn power_button_loop(pin: AnyPin) {
+    let mut pwr_btn = gpio::Input::new(pin, Pull::None);
+    pwr_btn.wait_for_falling_edge().await;
+    cortex_m::peripheral::SCB::sys_reset();
 }
 
 async fn paj7025_image_loop<'b, T, M, const N: usize, const O: usize>(

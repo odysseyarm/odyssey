@@ -22,8 +22,16 @@ fn main() {
     // here, we ensure the build script is only re-run when
     // `memory.x` is changed.
     if cfg!(feature = "mcuboot") {
-        std::fs::write(out.join("memory.x"), include_bytes!("memory-mcuboot.x")).unwrap();
-        std::fs::write(out.join("link-ram.x"), include_bytes!("link-ram-mcuboot.x")).unwrap();
+        std::fs::write(
+            out.join("memory-mcuboot.x"),
+            include_bytes!("memory-mcuboot.x"),
+        )
+        .unwrap();
+        std::fs::write(
+            out.join("link-ram-mcuboot.x"),
+            include_bytes!("link-ram-mcuboot.x"),
+        )
+        .unwrap();
         println!("cargo:rerun-if-changed=memory-mcuboot.x");
         println!("cargo:rerun-if-changed=link-ram-mcuboot.x");
         println!("cargo:rustc-link-arg-bins=-Tlink-ram-mcuboot.x");

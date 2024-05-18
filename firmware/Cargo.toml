@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = ["vm2"]
-mcuboot = []
+mcuboot = ["cortex-m-rt/set-sp", "cortex-m-rt/set-vtor"]
 vm2 = ["embassy-nrf/nrf52840"]
 atslite-1-1 = ["embassy-nrf/nrf5340-app-s"]
 
