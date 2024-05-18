@@ -387,7 +387,12 @@ fn reader_thread(
         if len == 9898 {
             shiftl(&mut buf, 4);
         } else if len == 9897 {
-            shiftr(&mut buf, 3);
+            eprintln!("{:x}", buf[buf.len() - 6]);
+            for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
+                if buf[buf.len()-6] == byte {
+                    shiftr(&mut buf, i as u8+1);
+                }
+            }
         }
         let mut paj_data = if id == 0 {
             let _ = img_channel.try_send((Port::Wf, buf[..98*98].try_into().unwrap()));
