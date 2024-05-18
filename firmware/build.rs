@@ -15,19 +15,27 @@ fn main() {
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    std::fs::write(out.join("memory.x"), include_bytes!("memory.x")).unwrap();
-    std::fs::write(out.join("link-ram.x"), include_bytes!("link-ram.x")).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
 
     // By default, Cargo will re-run a build script whenever
     // any file in the project changes. By specifying `memory.x`
     // here, we ensure the build script is only re-run when
     // `memory.x` is changed.
-    println!("cargo:rerun-if-changed=memory.x");
-    println!("cargo:rerun-if-changed=link-ram.x");
+    if cfg!(feature = "mcuboot") {
+        std::fs::write(out.join("memory.x"), include_bytes!("memory-mcuboot.x")).unwrap();
+        std::fs::write(out.join("link-ram.x"), include_bytes!("link-ram-mcuboot.x")).unwrap();
+        println!("cargo:rerun-if-changed=memory-mcuboot.x");
+        println!("cargo:rerun-if-changed=link-ram-mcuboot.x");
+        println!("cargo:rustc-link-arg-bins=-Tlink-ram-mcuboot.x");
+    } else {
+        std::fs::write(out.join("memory.x"), include_bytes!("memory.x")).unwrap();
+        std::fs::write(out.join("link-ram.x"), include_bytes!("link-ram.x")).unwrap();
+        println!("cargo:rerun-if-changed=memory.x");
+        println!("cargo:rerun-if-changed=link-ram.x");
+        println!("cargo:rustc-link-arg-bins=-Tlink-ram.x");
+    }
 
     println!("cargo:rustc-link-arg-bins=--nmagic");
-    println!("cargo:rustc-link-arg-bins=-Tlink-ram.x");
     // println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 }

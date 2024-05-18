@@ -4,16 +4,14 @@
 #[macro_use]
 mod pinout;
 
-use core::mem::swap;
-
-use defmt::{info, Debug2Format};
+use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
 use embassy_nrf::{
-    config::{Config, HfclkSource}, gpio::{self, Input, Level, Output, OutputDrive, Pull}, gpiote::{self, InputChannel, InputChannelPolarity, OutputChannel, OutputChannelPolarity}, pac::{self, power::mainregstatus::MAINREGSTATUS_A}, peripherals, ppi::Ppi, spim::{self, Spim}, spis::{self, Spis}, usb::{
+    config::{Config, HfclkSource}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
         self,
-        vbus_detect::{HardwareVbusDetect, VbusDetect},
-        Driver, Instance,
+        vbus_detect::HardwareVbusDetect,
+        Driver,
     }, Peripheral
 };
 use embassy_sync::{blocking_mutex::raw::{NoopRawMutex, RawMutex}, channel::{Channel, Receiver, Sender}};
@@ -43,7 +41,9 @@ unsafe fn init_ramtext() {
 }
 
 // this could go in pre_init, but it already works so /shrug
+#[cfg(feature = "vm2")]
 fn check_regout0() {
+    use embassy_nrf::pac::{self, power::mainregstatus::MAINREGSTATUS_A};
     // if the ats_mot_nrf52840 board is powered from USB
     // (high voltage mode), GPIO output voltage is set to 1.8 volts by
     // default and that is not enough for the vision sensors.
@@ -78,6 +78,17 @@ fn check_regout0() {
     pac::SCB::sys_reset()
 }
 
+#[cfg(feature = "atslite-1-1")]
+embassy_nrf::bind_interrupts!(struct Irqs {
+    USBD => usb::InterruptHandler<peripherals::USBD>;
+    USBREGULATOR => usb::vbus_detect::InterruptHandler;
+    SERIAL0 => spim::InterruptHandler<peripherals::SERIAL0>;
+    SERIAL1 => spim::InterruptHandler<peripherals::SERIAL1>;
+    SERIAL2 => spis::InterruptHandler<peripherals::SERIAL2>;
+    SERIAL3 => spis::InterruptHandler<peripherals::SERIAL3>;
+});
+
+#[cfg(feature = "vm2")]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     POWER_CLOCK => usb::vbus_detect::InterruptHandler;
@@ -87,48 +98,50 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0 => spis::InterruptHandler<peripherals::TWISPI0>;
 });
 
-fn log_stuff() {
-    let pc = cortex_m::register::pc::read();
-    info!("Hello from {:010x}", pc);
-    let mainregstatus = unsafe { &*pac::POWER::ptr() }
-        .mainregstatus
-        .read()
-        .mainregstatus()
-        .variant();
-    info!("MAINREGSTATUS is {}", Debug2Format(&mainregstatus));
-    let regout0 = unsafe { &*pac::UICR::ptr() }
-        .regout0
-        .read()
-        .vout()
-        .variant();
-    info!("REGOUT0 is {}", Debug2Format(&regout0));
-    let hfclkstat = unsafe { &*pac::CLOCK::ptr() }.hfclkstat.read();
-    info!(
-        "HFCLKSTAT_SRC is {}",
-        Debug2Format(&hfclkstat.src().variant())
-    );
-    info!(
-        "HFCLKSTAT_STATE is {}",
-        Debug2Format(&hfclkstat.state().variant())
-    );
-}
+// fn log_stuff() {
+//     let pc = cortex_m::register::pc::read();
+//     info!("Hello from {:010x}", pc);
+//     let mainregstatus = unsafe { &*pac::POWER::ptr() }
+//         .mainregstatus
+//         .read()
+//         .mainregstatus()
+//         .variant();
+//     info!("MAINREGSTATUS is {}", Debug2Format(&mainregstatus));
+//     let regout0 = unsafe { &*pac::UICR::ptr() }
+//         .regout0
+//         .read()
+//         .vout()
+//         .variant();
+//     info!("REGOUT0 is {}", Debug2Format(&regout0));
+//     let hfclkstat = unsafe { &*pac::CLOCK::ptr() }.hfclkstat.read();
+//     info!(
+//         "HFCLKSTAT_SRC is {}",
+//         Debug2Format(&hfclkstat.src().variant())
+//     );
+//     info!(
+//         "HFCLKSTAT_STATE is {}",
+//         Debug2Format(&hfclkstat.state().variant())
+//     );
+// }
 
 const NUM_BUFFERS: usize = 6;
 static SHARED_BUFFERS: StaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = StaticCell::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let shared_buffers = SHARED_BUFFERS.init_with(|| [[0; 98*98+98*3]; NUM_BUFFERS]);
+    #[cfg(feature = "vm2")]
     check_regout0();
+
+    let shared_buffers = SHARED_BUFFERS.init_with(|| [[0; 98*98+98*3]; NUM_BUFFERS]);
     let mut config = Config::default();
     config.hfclk_source = HfclkSource::ExternalXtal;
     let mut p = embassy_nrf::init(config);
 
-    log_stuff();
+    // log_stuff();
 
     let mut wide = Paj7025::new(
         Spim::new(
-            &mut p.SPI3,
+            &mut pinout!(p.wf_spim),
             Irqs,
             &mut pinout!(p.wf_sck),
             &mut pinout!(p.wf_miso),
@@ -140,7 +153,7 @@ async fn main(spawner: Spawner) {
     ).await;
     let mut near = Paj7025::new(
         Spim::new(
-            &mut p.TWISPI1,
+            &mut pinout!(p.nf_spim),
             Irqs,
             &mut pinout!(p.nf_sck),
             &mut pinout!(p.nf_miso),
@@ -206,7 +219,7 @@ async fn main(spawner: Spawner) {
     let mut config = spis::Config::default();
     config.mode = spis::MODE_3;
     let wide_spis = Spis::new_rxonly(
-        &mut p.SPI2,
+        &mut pinout!(p.wf_spis),
         Irqs,
         &mut pinout!(p.wf_cs),
         &mut pinout!(p.wf_sck),
@@ -216,7 +229,7 @@ async fn main(spawner: Spawner) {
     let mut config = spis::Config::default();
     config.mode = spis::MODE_3;
     let near_spis = Spis::new_rxonly(
-        &mut p.TWISPI0,
+        &mut pinout!(p.nf_spis),
         Irqs,
         &mut pinout!(p.nf_cs),
         &mut pinout!(p.nf_sck),

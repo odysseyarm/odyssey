@@ -4,10 +4,17 @@ name = "donger-firmware"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = ["vm2"]
+mcuboot = []
+vm2 = ["embassy-nrf/nrf52840"]
+atslite-1-1 = ["embassy-nrf/nrf5340-app-s"]
+
+
 [dependencies]
 embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "defmt", "executor-thread", "integrated-timers"] } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-executor" }
 embassy-futures = { version = "0.1.1", features = ["defmt"] } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-futures" }
-embassy-nrf = { version = "0.1.0", features = ["defmt", "nrf52840", "time-driver-rtc1", "unstable-pac", "time", "gpiote"] } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-nrf" }
+embassy-nrf = { version = "0.1.0", features = ["defmt", "time-driver-rtc1", "unstable-pac", "time", "gpiote"] } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-nrf" }
 embassy-sync = { version = "0.5.0", features = ["defmt"] } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-sync" }
 embassy-usb = { version = "0.1.0" } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-usb" } # , features = ["defmt"] }
 embassy-time = { version = "0.3.0" } # path = "/home/matthew/code/otherppl/embassy/embassy-main/embassy-time" }
