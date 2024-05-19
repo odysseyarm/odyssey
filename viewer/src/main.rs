@@ -407,7 +407,11 @@ fn reader_thread(
         let len = u16::from_le_bytes([len0, len1]);
         if len == 9898 {
             shiftl(&mut buf, 4);
-        } else if len == 9897 {
+        } else {
+            if len < 9897 {
+                buf.rotate_right(9897 - len as usize);
+                buf[..9897 - len as usize].fill(0);
+            }
             for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
                 if buf[buf.len()-6] == byte {
                     shiftr(&mut buf, i as u8+1);
