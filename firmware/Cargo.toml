@@ -9,6 +9,7 @@ default = ["vm2"]
 mcuboot = ["cortex-m-rt/set-sp", "cortex-m-rt/set-vtor"]
 vm2 = ["embassy-nrf/nrf52840"]
 atslite-1-1 = ["embassy-nrf/nrf5340-app-s"]
+atslite-2-2 = ["embassy-nrf/nrf5340-app-s"]
 
 
 [dependencies]

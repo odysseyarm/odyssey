@@ -26,17 +26,17 @@ use {defmt_rtt as _, panic_probe as _};
 #[cortex_m_rt::pre_init]
 unsafe fn init_ramtext() {
     core::arch::asm!(
-    // Initialise .data memory. `__sdata`, `__sidata`, and `__edata` come from the linker script.
-    "ldr r0, =__sramtext
-     ldr r1, =__eramtext
-     ldr r2, =__siramtext
-     2:
-     cmp r1, r0
-     beq 3f
-     ldm r2!, {{r3}}
-     stm r0!, {{r3}}
-     b 2b
-     3:"
+        // Initialise .data memory. `__sdata`, `__sidata`, and `__edata` come from the linker script.
+        "ldr r0, =__sramtext",
+        "ldr r1, =__eramtext",
+        "ldr r2, =__siramtext",
+        "2:",
+        "cmp r1, r0",
+        "beq 3f",
+        "ldm r2!, {{r3}}",
+        "stm r0!, {{r3}}",
+        "b 2b",
+        "3:",
     );
 
     #[cfg(feature = "mcuboot")]
@@ -50,7 +50,7 @@ unsafe fn init_ramtext() {
         "str r1, [r0, #4]", // Clear SHCSR
 
         // Clear SCR
-        "ldr r0, =0xE000ED20",
+        "ldr r0, =0xE000ED10",
         "str r1, [r0]",
         "str r1, [r0, #4]", // Clear CCR
     );
@@ -94,7 +94,7 @@ fn check_regout0() {
     pac::SCB::sys_reset()
 }
 
-#[cfg(feature = "atslite-1-1")]
+#[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2"))]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => usb::vbus_detect::InterruptHandler;
@@ -273,8 +273,8 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    #[cfg(feature = "atslite-1-1")]
-    spawner.must_spawn(power_button_loop(pinout!(p.pwr_btn).into()));
+    // #[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2"))]
+    // spawner.must_spawn(power_button_loop(pinout!(p.pwr_btn).into()));
 
     join3(
         near_loop,
@@ -283,13 +283,14 @@ async fn main(spawner: Spawner) {
     ).await;
 }
 
-#[cfg(feature = "atslite-1-1")]
-#[embassy_executor::task]
-async fn power_button_loop(pin: AnyPin) {
-    let mut pwr_btn = gpio::Input::new(pin, Pull::None);
-    pwr_btn.wait_for_falling_edge().await;
-    cortex_m::peripheral::SCB::sys_reset();
-}
+// #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2"))]
+// #[embassy_executor::task]
+// async fn power_button_loop(pin: AnyPin) {
+//     let mut pwr_btn = gpio::Input::new(pin, Pull::None);
+//     pwr_btn.wait_for_falling_edge().await;
+//     // cortex_m::peripheral::SCB::sys_reset();
+//     info!("button pressed");
+// }
 
 async fn paj7025_image_loop<'b, T, M, const N: usize, const O: usize>(
     id: u8,
