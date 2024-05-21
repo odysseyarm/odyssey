@@ -48,6 +48,7 @@ struct MainState {
     captured_nf: Vec<[u8; 98 * 98]>,
     captured_wf: Vec<[u8; 98 * 98]>,
     board_size: Arc<(AtomicU16, AtomicU16)>, // (width, height)
+    upside_down: bool,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
 }
@@ -68,6 +69,14 @@ impl MainState {
         let img_channel = std::sync::mpsc::sync_channel(2);
         let reset = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
+        let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
+        let binding = std::env::args().nth(2).unwrap_or("".into());
+        let upside_down = binding.as_str();
+        let upside_down = match upside_down {
+            "--upside-down" | "-ud" => true,
+            _ => false,
+        };
+        println!("upside_down: {}", upside_down);
         let main_state = MainState {
             wf_data: wf_data.clone(),
             nf_data: nf_data.clone(),
@@ -78,13 +87,13 @@ impl MainState {
             board_size: Arc::new((4.into(), 4.into())),
             reset: reset.clone(),
             quit: quit.clone(),
+            upside_down,
         };
-        let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
         std::thread::spawn(move || {
             reader_thread(path, wf_data, nf_data, img_channel.0, reset, quit);
         });
         let board_size = main_state.board_size.clone();
-        std::thread::spawn(move || opencv_thread(img_channel.1, board_size));
+        std::thread::spawn(move || opencv_thread(img_channel.1, board_size, upside_down));
         Ok(main_state)
     }
 }
@@ -260,8 +269,11 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 let captures = self.captured_nf.clone();
                 let board_cols = self.board_size.0.load(Ordering::Relaxed);
                 let board_rows = self.board_size.1.load(Ordering::Relaxed);
-                std::thread::spawn(move || {
-                    chessboard::calibrate_single(&captures, Port::Nf, board_rows, board_cols);
+                std::thread::spawn({
+                    let upside_down = self.upside_down;
+                    move || {
+                        chessboard::calibrate_single(&captures, Port::Nf, board_rows, board_cols, upside_down);
+                    }
                 });
             }
             Some(KeyCode::Key2) => {
@@ -270,8 +282,11 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 let captures = self.captured_wf.clone();
                 let board_cols = self.board_size.0.load(Ordering::Relaxed);
                 let board_rows = self.board_size.1.load(Ordering::Relaxed);
-                std::thread::spawn(move || {
-                    chessboard::calibrate_single(&captures, Port::Wf, board_rows, board_cols);
+                std::thread::spawn({
+                    let upside_down = self.upside_down;
+                    move || {
+                        chessboard::calibrate_single(&captures, Port::Wf, board_rows, board_cols, upside_down);
+                    }
                 });
             }
             Some(KeyCode::Key3) => {
@@ -280,8 +295,11 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 let nf = self.captured_nf.clone();
                 let board_cols = self.board_size.0.load(Ordering::Relaxed);
                 let board_rows = self.board_size.1.load(Ordering::Relaxed);
-                std::thread::spawn(move || {
-                    chessboard::my_stereo_calibrate(&wf, &nf, board_rows, board_cols);
+                std::thread::spawn({
+                    let upside_down = self.upside_down;
+                    move || {
+                        chessboard::my_stereo_calibrate(&wf, &nf, board_rows, board_cols, upside_down);
+                    }
                 });
             }
             Some(KeyCode::R) => {
@@ -440,14 +458,14 @@ fn reader_thread(
     }
 }
 
-fn opencv_thread(raw_image: Receiver<(Port, [u8; 98*98])>, board_size: Arc<(AtomicU16, AtomicU16)>) {
+fn opencv_thread(raw_image: Receiver<(Port, [u8; 98*98])>, board_size: Arc<(AtomicU16, AtomicU16)>, upside_down: bool) {
     loop {
         let (port, image) = raw_image.recv().unwrap();
         let board_cols = board_size.0.load(Ordering::Relaxed);
         let board_rows = board_size.1.load(Ordering::Relaxed);
         match port {
-            Port::Wf => chessboard::get_chessboard_corners(&image, Port::Wf, board_rows, board_cols, true),
-            Port::Nf => chessboard::get_chessboard_corners(&image, Port::Nf, board_rows, board_cols, true),
+            Port::Wf => chessboard::get_chessboard_corners(&image, Port::Wf, board_rows, board_cols, true, upside_down),
+            Port::Nf => chessboard::get_chessboard_corners(&image, Port::Nf, board_rows, board_cols, true, upside_down),
         };
     }
 }
