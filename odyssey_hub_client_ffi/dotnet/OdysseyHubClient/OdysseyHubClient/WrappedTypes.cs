@@ -13,10 +13,21 @@ namespace Radiosity.OdysseyHubClient
     public class UdpDevice: IDevice {
         public byte id;
         public SocketAddr addr;
+        public byte[] uuid;
 
         internal UdpDevice(CsBindgen.UdpDevice udpDevice) {
             id = udpDevice.id;
             addr = new SocketAddr(udpDevice.addr);
+            unsafe {
+                uuid = [
+                    udpDevice.uuid[0],
+                    udpDevice.uuid[1],
+                    udpDevice.uuid[2],
+                    udpDevice.uuid[3],
+                    udpDevice.uuid[4],
+                    udpDevice.uuid[5],
+                ];
+            }
         }
     }
 
@@ -25,21 +36,44 @@ namespace Radiosity.OdysseyHubClient
     /// </summary>
     public class HidDevice: IDevice {
         public string? path;
+        public byte[] uuid;
 
         internal HidDevice(CsBindgen.HidDevice hidDevice) {
             unsafe { path = Marshal.PtrToStringAnsi((IntPtr)hidDevice.path); }
+            unsafe {
+                uuid = [
+                    hidDevice.uuid[0],
+                    hidDevice.uuid[1],
+                    hidDevice.uuid[2],
+                    hidDevice.uuid[3],
+                    hidDevice.uuid[4],
+                    hidDevice.uuid[5],
+                ];
+            }
         }
     }
 
     /// <summary>
     /// Device that is connected to Odyssey Hub through CDC.
-    /// Likely a vision module (unimplemented).
+    /// Could be a vision module or an ATS Lite dongle.
     /// </summary>
     public class CdcDevice: IDevice {
         public string? path;
+        /// <value>Property <c>uuid</c> is the 6-byte unique identifier of the device.</value>
+        public byte[] uuid;
 
         internal CdcDevice(CsBindgen.CdcDevice cdcDevice) {
             unsafe { path = Marshal.PtrToStringAnsi((IntPtr)cdcDevice.path); }
+            unsafe {
+                uuid = [
+                    cdcDevice.uuid[0],
+                    cdcDevice.uuid[1],
+                    cdcDevice.uuid[2],
+                    cdcDevice.uuid[3],
+                    cdcDevice.uuid[4],
+                    cdcDevice.uuid[5],
+                ];
+            }
         }
     }
 
@@ -66,8 +100,8 @@ namespace Radiosity.OdysseyHubClient
     public class NoneEvent: IEvent {}
 
     public class DeviceEvent: IEvent {
-        public IDevice? device;
-        public IKind? kind;
+        public IDevice device;
+        public IKind kind;
 
         internal DeviceEvent(CsBindgen.DeviceEvent deviceEvent) {
             switch (deviceEvent.device.tag) {
@@ -80,6 +114,8 @@ namespace Radiosity.OdysseyHubClient
                 case CsBindgen.DeviceTag.Cdc:
                     device = new CdcDevice(deviceEvent.device.u.cdc);
                     break;
+                default:
+                    throw new Exception("Unknown device type");
             }
             switch (deviceEvent.kind.tag) {
                 case CsBindgen.DeviceEventKindTag.TrackingEvent:
@@ -88,6 +124,8 @@ namespace Radiosity.OdysseyHubClient
                 case CsBindgen.DeviceEventKindTag.ImpactEvent:
                     kind = new Impact(deviceEvent.kind.u.impact_event);
                     break;
+                default:
+                    throw new Exception("Unknown device tag");
             }
         }
 
@@ -97,6 +135,8 @@ namespace Radiosity.OdysseyHubClient
             public uint timestamp;
             public Matrix2x1<double> aimpoint;
             public Pose? pose;
+
+            /// <value>Property <c>screen_id</c> is always 0 (unimplemented).</value>
             public uint screen_id;
 
             internal Tracking(CsBindgen.TrackingEvent tracking) {
@@ -120,7 +160,7 @@ namespace Radiosity.OdysseyHubClient
     }
 
     /// <summary>
-    /// The pose is relative to the screen being aimed at.
+    /// The pose is relative to the screen being aimed at. The translation matrix is currently not normalized or scaled.
     /// </summary>
     public class Pose {
         public Matrix3x1<double> translation;

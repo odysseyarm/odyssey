@@ -47,14 +47,17 @@ struct SocketAddr {
 struct UdpDevice {
   uint8_t id;
   SocketAddr addr;
+  uint8_t uuid[6];
 };
 
 struct HidDevice {
   const char *path;
+  uint8_t uuid[6];
 };
 
 struct CdcDevice {
   const char *path;
+  uint8_t uuid[6];
 };
 
 union DeviceU {

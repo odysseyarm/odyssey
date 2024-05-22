@@ -18,11 +18,20 @@ impl PartialEq for Device {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct UdpDevice {
     pub id: u8,
     pub addr: SocketAddr,
     pub uuid: [u8; 6],
+}
+
+impl PartialEq for UdpDevice {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (a, b) => a.addr == b.addr && a.id == b.id,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

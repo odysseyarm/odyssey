@@ -1,16 +1,16 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
+use std::time::Duration;
+use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::kalman::Pva2d;
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
-use nalgebra::Point2;
+use nalgebra::{Matrix3, Point2, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
-
-static RECV_PORT: u16 = 23457;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -29,18 +29,15 @@ pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()
 }
 
 async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
-    let multicast_port = 23456;
-    let multicast = Ipv4Addr::new(224, 0, 2, 52);
-    let multicast_addr = SocketAddrV4::new(multicast, multicast_port);
+    let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, 23456);
 
     let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP)).unwrap();
     let addr = std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
     socket.set_nonblocking(true).unwrap();
-    socket.set_reuse_address(true).unwrap();
+    socket.set_ttl(5).unwrap();
+    socket.set_broadcast(true).unwrap();
     socket.bind(&socket2::SockAddr::from(addr)).unwrap();
     let socket = UdpSocket::from_std(socket.into()).unwrap();
-    socket.join_multicast_v4(multicast, Ipv4Addr::UNSPECIFIED).unwrap();
-    socket.set_multicast_ttl_v4(5).unwrap();
 
     let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let old_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -48,9 +45,10 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
         let new_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stream_task_handles = stream_task_handles.clone();
         let mut buf = [0; 1472];
-        socket.send_to(&[255, 1], multicast_addr).await.unwrap();
+        // ping without add
+        socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
         futures::future::select(
-            std::pin::pin!(tokio::time::sleep(tokio::time::Duration::from_secs(2))),
+            std::pin::pin!(tokio::time::sleep(tokio::time::Duration::from_secs(5))),
             std::pin::pin!(async {
                 let old_list = old_list.clone();
                 let new_list = new_list.clone();
@@ -67,15 +65,21 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                             device.clone(),
                             tokio::spawn({
                                 let stream_task_handles = stream_task_handles.clone();
+                                let mut old_list = old_list.clone();
                                 let message_channel = message_channel.clone();
                                 async move {
                                     match device_udp_stream_task(device.clone(), message_channel).await {
-                                        Ok(_) => {},
+                                        Ok(_) => {
+                                            println!("UDP device stream task finished");
+                                            stream_task_handles.lock().await.retain(|(x, _)| *x != device);
+                                            old_list.retain(|x| *x != device);
+                                        },
                                         Err(e) => {
                                             eprintln!("Error in device stream task: {}", e);
+                                            stream_task_handles.lock().await.retain(|(x, _)| *x != device);
+                                            old_list.retain(|x| *x != device);
                                         }
                                     }
-                                    stream_task_handles.lock().await.retain(|&(ref x, _)| x != &device);
                                 }
                             }),
                         ));
@@ -88,12 +92,13 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
         let new_list = new_list.lock().await;
         for v in old_list.lock().await.iter() {
             if !new_list.contains(v) {
-                let _ = message_channel.send(Message::Disconnect(Device::Udp(v.clone()))).await;
-                let mut stream_task_handles = stream_task_handles.lock().await;
-                if let Some((_, handle)) = stream_task_handles.iter().find(|x| x.0 == *v) {
-                    handle.abort();
-                    stream_task_handles.retain(|x| x.0 != *v);
-                }
+                // temporary: ping is unreliable
+                // let _ = message_channel.send(Message::Disconnect(Device::Udp(v.clone()))).await;
+                // let mut stream_task_handles = stream_task_handles.lock().await;
+                // if let Some((_, handle)) = stream_task_handles.iter().find(|x| x.0 == *v) {
+                //     handle.abort();
+                //     stream_task_handles.retain(|x| x.0 != *v);
+                // }
             }
         }
         *old_list.lock().await = new_list.to_vec();
@@ -213,110 +218,133 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
     }
 }
 
-async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) -> anyhow::Result<()> {
-    let d = match UsbDevice::connect_hub("0.0.0.0:".to_owned() + RECV_PORT.to_string().as_str(), device.addr.to_string().as_str()).await {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Failed to connect to device {}: {}", device.addr, e);
-            return Ok(());
-        },
-    };
+fn get_raycast_aimpoint(fv_state: &ats_cv::foveated::FoveatedAimpointState) -> (Matrix3<f32>, nalgebra::Point3<f32>, Option<Point2<f32>>) {
+    let orientation = fv_state.filter.orientation;
+    let position = fv_state.filter.position;
 
-    tracing::info!("Connected to device {}", device.addr);
+    let flip_yz = Matrix3::new(
+        1., 0., 0.,
+        0., -1., 0.,
+        0., 0., -1.,
+    );
 
-    let timeout = tokio::time::Duration::from_millis(500);
-    let config = retry(|| d.read_config(), timeout, 3).await.ok_or(anyhow::anyhow!("Failed to read config"))??;
+    let rotmat = flip_yz * orientation.to_rotation_matrix() * flip_yz;
+    let transmat = flip_yz * position;
 
-    let mut device = device.clone();
-    device.uuid = config.uuid.clone();
+    let screen_3dpoints = ats_cv::calculate_screen_3dpoints(108., 16./9.);
 
-    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
+    let fv_aimpoint = ats_cv::calculate_aimpoint_from_pose_and_screen_3dpoints(
+        &rotmat,
+        &transmat.coords,
+        &screen_3dpoints,
+    );
 
-    let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
+    (rotmat, transmat, fv_aimpoint)
+}
 
-    let screen_id = 0;
-    let mut nf_pva2ds: [Pva2d<f64>; 16] = Default::default();
-    let mut wf_pva2ds: [Pva2d<f64>; 16] = Default::default();
+async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Sender<Message>, orientation: Arc<tokio::sync::Mutex<nalgebra::Rotation3<f64>>>, config: ats_usb::packet::GeneralConfig) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
+    let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
+    let fv_aimpoint_pva2d = Arc::new(tokio::sync::Mutex::new(Pva2d::new(0.02, 1.0)));
 
     let combined_markers_task = {
         let d = d.clone();
         let message_channel = message_channel.clone();
         let orientation = orientation.clone();
+        let device = device.clone();
         async move {
             let mut stream = d.stream_combined_markers().await.unwrap();
 
             while let Some(combined_markers) = stream.next().await {
                 let CombinedMarkersReport { timestamp, nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
 
-                let mut aim_point = None;
-                let mut rotation_mat = None;
-                let mut translation_mat = None;
+                let aim_point;
+                let rotation_mat;
+                let translation_mat;
 
                 let filtered_nf_point_tuples = filter_and_create_point_id_tuples(&nf_points, &nf_radii);
                 let filtered_wf_point_tuples = filter_and_create_point_id_tuples(&wf_points, &wf_radii);
-    
+
                 let filtered_nf_points_slice = filtered_nf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
                 let filtered_wf_points_slice = filtered_wf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-    
-                let mut nf_points_transformed = transform_points(&filtered_nf_points_slice, &config.camera_model_nf);
-                let mut wf_points_transformed = transform_points(&filtered_wf_points_slice, &config.camera_model_wf);
-    
-                let nf_point_tuples_transformed = filtered_nf_point_tuples.iter().map(|(id, _)| *id).zip(&mut nf_points_transformed).collect::<Vec<_>>();
-                let wf_point_tuples_transformed = filtered_wf_point_tuples.iter().map(|(id, _)| *id).zip(&mut wf_points_transformed).collect::<Vec<_>>();
 
-                fn update_positions(pva2ds: &mut [Pva2d<f64>], points: Vec<(usize, &mut Point2<f64>)>) {
-                    for (i, point) in points {
-                        pva2ds[i].step();
-                        pva2ds[i].observe(point.coords.as_ref(), &[100.0, 100.0]);
-                        point.x = pva2ds[i].position()[0];
-                        point.y = pva2ds[i].position()[1];
-                    }
-                }
+                let nf_points_transformed = transform_points(&filtered_nf_points_slice, &config.camera_model_nf);
+                let wf_points_transformed = transform_points(&filtered_wf_points_slice, &config.camera_model_wf);
+
+                let wf_to_nf = ats_cv::wf_to_nf_points(&wf_points_transformed, &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf), &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf), config.stereo_iso.cast());
+
+                let wf_normalized: Vec<_> = wf_to_nf.iter().map(|&p| {
+                    let fx = config.camera_model_nf.p.m11 as f64;
+                    let fy = config.camera_model_nf.p.m22 as f64;
+                    let cx = config.camera_model_nf.p.m13 as f64;
+                    let cy = config.camera_model_nf.p.m23 as f64;
+                    Point2::new((p.x/4095.*98. - cx) / fx, (p.y/4095.*98. - cy) / fy)
+                }).collect();
+                let nf_normalized: Vec<_> = nf_points_transformed.iter().map(|&p| {
+                    let fx = config.camera_model_nf.p.m11 as f64;
+                    let fy = config.camera_model_nf.p.m22 as f64;
+                    let cx = config.camera_model_nf.p.m13 as f64;
+                    let cy = config.camera_model_nf.p.m23 as f64;
+                    Point2::new((p.x/4095.*98. - cx) / fx, (p.y/4095.*98. - cy) / fy)
+                }).collect();
     
-                update_positions(&mut nf_pva2ds, nf_point_tuples_transformed);
-                update_positions(&mut wf_pva2ds, wf_point_tuples_transformed);
+                fv_aimpoint_pva2d.lock().await.step();
+
+                let gravity_vec = orientation.lock().await.inverse_transform_vector(&Vector3::z_axis());
+                let gravity_vec = UnitVector3::new_unchecked(gravity_vec.xzy());
     
-                let (rotation, translation, fv_aim_point) = ats_cv::get_pose_and_aimpoint_foveated(
-                    &nf_points_transformed,
-                    &wf_points_transformed,
-                    *orientation.lock().await,
-                    screen_id,
-                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf),
-                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf),
-                    config.stereo_iso.cast(),
-                );
-                if let Some(rotation) = rotation {
-                    rotation_mat = Some(rotation);
+                {
+                    let mut fv_state = fv_state.lock().await;
+                    fv_state.observe_markers(&nf_normalized, &wf_normalized, gravity_vec);
+        
+                    let (rotmat, transmat, fv_aimpoint) = get_raycast_aimpoint(&fv_state);
+        
+                    rotation_mat = rotmat.cast();
+                    translation_mat = transmat.coords.cast();
+                    aim_point = fv_aimpoint;
                 }
-                if let Some(translation) = translation {
-                    translation_mat = Some(translation);
-                }
-                if let Some(fv_aim_point) = fv_aim_point {
-                    aim_point = Some(fv_aim_point);
-                }
-    
+
                 if let Some(aim_point) = aim_point {
-                    let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x, aim_point.y]);
-                    let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                        odyssey_hub_common::events::DeviceEvent {
-                            device: Device::Udp(device.clone()),
-                            kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                                timestamp,
-                                aimpoint: aim_point_matrix,
-                                pose: {
-                                    if let (Some(rotation_mat), Some(translation_mat)) = (rotation_mat, translation_mat) {
-                                        Some(odyssey_hub_common::events::Pose {
-                                            rotation: rotation_mat,
-                                            translation: translation_mat,
-                                        })
-                                    } else {
-                                        None
-                                    }
-                                },
-                                screen_id: screen_id as u32,
-                            }),
-                        }
-                    ))).await;
+                    let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x.into(), aim_point.y.into()]);
+                    let device = device.clone();
+                    match device {
+                        Device::Udp(device) => {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: Device::Udp(device.clone()),
+                                    kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                                        timestamp,
+                                        aimpoint: aim_point_matrix,
+                                        pose: 
+                                            Some(odyssey_hub_common::events::Pose {
+                                                rotation: rotation_mat,
+                                                translation: translation_mat,
+                                            })
+                                        ,
+                                        screen_id: 0,
+                                    }),
+                                }
+                            ))).await;
+                        },
+                        Device::Cdc(device) => {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: Device::Cdc(device.clone()),
+                                    kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                                        timestamp,
+                                        aimpoint: aim_point_matrix,
+                                        pose: {
+                                            Some(odyssey_hub_common::events::Pose {
+                                                rotation: rotation_mat,
+                                                translation: translation_mat,
+                                            })
+                                        },
+                                        screen_id: 0,
+                                    }),
+                                }
+                            ))).await;
+                        },
+                        Device::Hid(_) => {},
+                    }
                 }
             }
         }
@@ -335,13 +363,14 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
     let impact_task = {
         let d = d.clone();
         let message_channel = message_channel.clone();
+        let device = device.clone(); // Add this line to create a new variable for the match expression
         async move {
             let mut stream = d.stream_impact().await.unwrap();
 
             while let Some(impact) = stream.next().await {
                 let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
                     odyssey_hub_common::events::DeviceEvent {
-                        device: Device::Udp(device.clone()),
+                        device: device.clone(),
                         kind: odyssey_hub_common::events::DeviceEventKind::ImpactEvent(odyssey_hub_common::events::ImpactEvent {
                             timestamp: impact.timestamp,
                         }),
@@ -350,6 +379,39 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
             }
         }
     };
+
+    let combined_markers_task_handle = tokio::spawn(combined_markers_task);
+    let euler_task_handle = tokio::spawn(euler_task);
+    let impact_task_handle = tokio::spawn(impact_task);
+
+    (combined_markers_task_handle, euler_task_handle, impact_task_handle)
+}
+
+async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) -> anyhow::Result<()> {
+    let d = match UsbDevice::connect_hub("0.0.0.0:0", device.addr.to_string().as_str()).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Failed to connect to device {}: {}", device.addr, e);
+            return Ok(());
+        },
+    };
+
+    tracing::info!("Connected to device {}", device.addr);
+
+    let timeout = tokio::time::Duration::from_millis(500);
+    let config = match retry(|| d.read_config(), timeout, 3).await {
+        Some(x) => x?,
+        None => { return Err(anyhow::Error::msg("Failed to read config")); }
+    };
+
+    let mut device = device.clone();
+    device.uuid = config.uuid.clone();
+
+    // let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
+
+    let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
+
+    let (combined_markers_task, euler_task, impact_task) = create_common_tasks(d, odyssey_hub_common::device::Device::Udp(device), message_channel, orientation, config).await;
 
     tokio::select! {
         _ = combined_markers_task => {},
@@ -380,123 +442,7 @@ async fn device_cdc_stream_task(device: CdcDevice, wait_dsr: bool, message_chann
 
     let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
 
-    let screen_id = 0;
-    let mut nf_pva2ds: [Pva2d<f64>; 16] = Default::default();
-    let mut wf_pva2ds: [Pva2d<f64>; 16] = Default::default();
-
-    let combined_markers_task = {
-        let d = d.clone();
-        let device = device.clone();
-        let message_channel = message_channel.clone();
-        let orientation = orientation.clone();
-        async move {
-            let mut stream = d.stream_combined_markers().await.unwrap();
-
-            while let Some(combined_markers) = stream.next().await {
-                let CombinedMarkersReport { timestamp, nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
-
-                let mut aim_point = None;
-                let mut rotation_mat = None;
-                let mut translation_mat = None;
-
-                let filtered_nf_point_tuples = filter_and_create_point_id_tuples(&nf_points, &nf_radii);
-                let filtered_wf_point_tuples = filter_and_create_point_id_tuples(&wf_points, &wf_radii);
-    
-                let filtered_nf_points_slice = filtered_nf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-                let filtered_wf_points_slice = filtered_wf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-    
-                let mut nf_points_transformed = transform_points(&filtered_nf_points_slice, &config.camera_model_nf);
-                let mut wf_points_transformed = transform_points(&filtered_wf_points_slice, &config.camera_model_wf);
-    
-                let nf_point_tuples_transformed = filtered_nf_point_tuples.iter().map(|(id, _)| *id).zip(&mut nf_points_transformed).collect::<Vec<_>>();
-                let wf_point_tuples_transformed = filtered_wf_point_tuples.iter().map(|(id, _)| *id).zip(&mut wf_points_transformed).collect::<Vec<_>>();
-
-                fn update_positions(pva2ds: &mut [Pva2d<f64>], points: Vec<(usize, &mut Point2<f64>)>) {
-                    for (i, point) in points {
-                        pva2ds[i].step();
-                        pva2ds[i].observe(point.coords.as_ref(), &[100.0, 100.0]);
-                        point.x = pva2ds[i].position()[0];
-                        point.y = pva2ds[i].position()[1];
-                    }
-                }
-    
-                update_positions(&mut nf_pva2ds, nf_point_tuples_transformed);
-                update_positions(&mut wf_pva2ds, wf_point_tuples_transformed);
-    
-                let (rotation, translation, fv_aim_point) = ats_cv::get_pose_and_aimpoint_foveated(
-                    &nf_points_transformed,
-                    &wf_points_transformed,
-                    *orientation.lock().await,
-                    screen_id,
-                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf),
-                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf),
-                    config.stereo_iso.cast(),
-                );
-                if let Some(rotation) = rotation {
-                    rotation_mat = Some(rotation);
-                }
-                if let Some(translation) = translation {
-                    translation_mat = Some(translation);
-                }
-                if let Some(fv_aim_point) = fv_aim_point {
-                    aim_point = Some(fv_aim_point);
-                }
-                
-                if let Some(aim_point) = aim_point {
-                    let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x, aim_point.y]);
-                    let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                        odyssey_hub_common::events::DeviceEvent {
-                            device: Device::Cdc(device.clone()),
-                            kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                                timestamp,
-                                aimpoint: aim_point_matrix,
-                                pose: {
-                                    if let (Some(rotation_mat), Some(translation_mat)) = (rotation_mat, translation_mat) {
-                                        Some(odyssey_hub_common::events::Pose {
-                                            rotation: rotation_mat,
-                                            translation: translation_mat,
-                                        })
-                                    } else {
-                                        None
-                                    }
-                                },
-                                screen_id: screen_id as u32,
-                            }),
-                        }
-                    ))).await;
-                }
-            }
-        }
-    };
-
-    let euler_task = {
-        let d = d.clone();
-        async move {
-            let mut euler_stream = d.stream_euler_angles().await.unwrap();
-            while let Some(_orientation) = euler_stream.next().await {
-                *orientation.lock().await = _orientation.rotation;
-            }
-        }
-    };
-
-    let impact_task = {
-        let d = d.clone();
-        let message_channel = message_channel.clone();
-        async move {
-            let mut stream = d.stream_impact().await.unwrap();
-
-            while let Some(impact) = stream.next().await {
-                let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                    odyssey_hub_common::events::DeviceEvent {
-                        device: Device::Cdc(device.clone()),
-                        kind: odyssey_hub_common::events::DeviceEventKind::ImpactEvent(odyssey_hub_common::events::ImpactEvent {
-                            timestamp: impact.timestamp,
-                        }),
-                    }
-                ))).await;
-            }
-        }
-    };
+    let (combined_markers_task, euler_task, impact_task) = create_common_tasks(d, odyssey_hub_common::device::Device::Cdc(device), message_channel, orientation, config).await;
 
     tokio::select! {
         _ = combined_markers_task => {},

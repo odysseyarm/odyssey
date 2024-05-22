@@ -1,6 +1,7 @@
 Write-Host 'OdysseyHubClient' -ForegroundColor Blue
 Write-Host 'Building native library (Rust)' -ForegroundColor Cyan
 cargo build --manifest-path=../../Cargo.toml --release
+cargo build --manifest-path=../../Cargo.toml --release --target=i686-pc-windows-msvc
 
 Write-Host 'Building Radiosity.OdysseyHubClient' -ForegroundColor Cyan
 dotnet build .\OdysseyHubClient\

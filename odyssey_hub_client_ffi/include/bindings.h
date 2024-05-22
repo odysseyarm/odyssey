@@ -43,14 +43,17 @@ typedef struct SocketAddr {
 typedef struct UdpDevice {
   uint8_t id;
   struct SocketAddr addr;
+  uint8_t uuid[6];
 } UdpDevice;
 
 typedef struct HidDevice {
   const char *path;
+  uint8_t uuid[6];
 } HidDevice;
 
 typedef struct CdcDevice {
   const char *path;
+  uint8_t uuid[6];
 } CdcDevice;
 
 typedef union DeviceU {

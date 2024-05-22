@@ -13,29 +13,17 @@
   </PropertyGroup>
 
   <PropertyGroup>
-	  <VersionPrefix>1.0.4</VersionPrefix>
+	  <VersionPrefix>1.1.1</VersionPrefix>
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="generated" />
     <Folder Include="generated\" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Remove="D:\ody\odyssey_desktop\odyssey_hub_client_ffi\dotnet\OdysseyHubClient\OdysseyHubClient\/../../../../target/release/odyssey_hub_client_ffi.dll" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Remove="D:\ody\odyssey_desktop\odyssey_hub_client_ffi\dotnet\OdysseyHubClient\OdysseyHubClient\/../../../../target/release/odyssey_hub_client_ffi.dll" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Remove="D:\ody\odyssey_desktop\odyssey_hub_client_ffi\dotnet\OdysseyHubClient\OdysseyHubClient\/../../../../target/release/odyssey_hub_client_ffi.dll" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)/../../../../target/release/odyssey_hub_client_ffi.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
+    <None Include="$(MSBuildThisFileDirectory)/../../../../target/i686-pc-windows-msvc/release/odyssey_hub_client_ffi.dll" Pack="true" PackagePath="runtimes/win-x86/native/" />
   </ItemGroup>
 
   <ItemGroup>

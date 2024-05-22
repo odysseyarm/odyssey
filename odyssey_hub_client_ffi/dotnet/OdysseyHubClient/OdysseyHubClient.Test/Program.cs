@@ -41,8 +41,33 @@ switch (error) {
 
 Console.WriteLine("Devices (count: {0}):", devices.Length);
 
+void PrintDevice(OdysseyHubClient.IDevice device) {
+    Console.WriteLine("\tDevice:");
+    switch (device) {
+        case OdysseyHubClient.UdpDevice udpDevice:
+            Console.WriteLine("\t\tType: UDP");
+            Console.WriteLine("\t\tID: {0}", udpDevice.id);
+            Console.WriteLine("\t\tAddr: {0}", udpDevice.addr);
+            Console.WriteLine("\t\tUUID: {0}", BitConverter.ToString(udpDevice.uuid));
+            break;
+        case OdysseyHubClient.CdcDevice cdcDevice:
+            Console.WriteLine("\t\tType: CDC");
+            Console.WriteLine("\t\tPath: {0}", cdcDevice.path);
+            Console.WriteLine("\t\tUUID: {0}", BitConverter.ToString(cdcDevice.uuid));
+            break;
+        case OdysseyHubClient.HidDevice hidDevice:
+            Console.WriteLine("\t\tType: HID");
+            Console.WriteLine("\t\tPath: {0}", hidDevice.path);
+            Console.WriteLine("\t\tUUID: {0}", BitConverter.ToString(hidDevice.uuid));
+            break;
+        default:
+            break;
+
+    }
+}
+
 foreach (var device in devices) {
-    Console.WriteLine(device);
+    PrintDevice(device);
 }
 
 Console.WriteLine("Devices printed!");
@@ -79,6 +104,7 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                 default:
                     break;
             }
+            PrintDevice(deviceEvent.device);
             break;
         default:
             break;

@@ -17,6 +17,7 @@ impl From<odyssey_hub_common::device::Device> for Device {
                             ip: std::ffi::CString::new(udp_device.addr.ip().to_string()).unwrap().into_raw(),
                             port: udp_device.addr.port(),
                         },
+                        uuid: udp_device.uuid,
                     },
                 },
             },
@@ -25,6 +26,7 @@ impl From<odyssey_hub_common::device::Device> for Device {
                 u: DeviceU {
                     hid: HidDevice {
                         path: std::ffi::CString::new(hid_device.path).unwrap().into_raw(),
+                        uuid: hid_device.uuid,
                     },
                 },
             },
@@ -33,6 +35,7 @@ impl From<odyssey_hub_common::device::Device> for Device {
                 u: DeviceU {
                     cdc: CdcDevice {
                         path: std::ffi::CString::new(cdc_device.path).unwrap().into_raw(),
+                        uuid: cdc_device.uuid,
                     },
                 },
             },
@@ -53,18 +56,21 @@ pub union DeviceU {
 pub struct UdpDevice {
     pub id: u8,
     pub addr: SocketAddr,
+    pub uuid: [u8; 6],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct HidDevice {
     pub path: *const std::ffi::c_char,
+    pub uuid: [u8; 6],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct CdcDevice {
     pub path: *const std::ffi::c_char,
+    pub uuid: [u8; 6],
 }
 
 #[repr(C)]
