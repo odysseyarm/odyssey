@@ -249,14 +249,14 @@ impl event::EventHandler<ggez::GameError> for MainState {
             Some(KeyCode::Space) => {
                 // capture and save image
                 let wf_data = self.wf_data.lock().unwrap();
-                PngEncoder::new(BufWriter::new(File::create(format!("widefield_{:02}.png", self.capture_count)).unwrap())).write_image(&wf_data.gray, 98, 98, ColorType::L8).unwrap();
+                PngEncoder::new(BufWriter::new(File::create(format!("images/widefield_{:02}.png", self.capture_count)).unwrap())).write_image(&wf_data.gray, 98, 98, ColorType::L8).unwrap();
                 self.captured_wf.push(wf_data.gray);
                 drop(wf_data);
-                println!("Saved widefield_{:02}.png", self.capture_count);
+                println!("Saved images/widefield_{:02}.png", self.capture_count);
                 let nf_data = self.nf_data.lock().unwrap();
-                PngEncoder::new(BufWriter::new(File::create(format!("nearfield_{:02}.png", self.capture_count)).unwrap())).write_image(&nf_data.gray, 98, 98, ColorType::L8).unwrap();
+                PngEncoder::new(BufWriter::new(File::create(format!("images/nearfield_{:02}.png", self.capture_count)).unwrap())).write_image(&nf_data.gray, 98, 98, ColorType::L8).unwrap();
                 self.captured_nf.push(nf_data.gray);
-                println!("Saved nearfield_{:02}.png", self.capture_count);
+                println!("Saved images/nearfield_{:02}.png", self.capture_count);
                 self.capture_count += 1;
             }
             Some(KeyCode::Back) => {
@@ -368,10 +368,11 @@ impl event::EventHandler<ggez::GameError> for MainState {
 }
 
 pub fn main() -> GameResult {
+    std::fs::create_dir_all("images").unwrap();
     let capture_count = {
         let mut i = 0;
         loop {
-            let path = format!("nearfield_{:02}.png", i);
+            let path = format!("images/nearfield_{:02}.png", i);
             if !Path::new(&path).exists() {
                 break i;
             }
