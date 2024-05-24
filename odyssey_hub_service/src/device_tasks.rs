@@ -1,6 +1,6 @@
+use core::panic;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
-use std::time::Duration;
 use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::kalman::Pva2d;
 use ats_usb::device::UsbDevice;
@@ -39,69 +39,65 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
     socket.bind(&socket2::SockAddr::from(addr)).unwrap();
     let socket = UdpSocket::from_std(socket.into()).unwrap();
 
-    let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(12);
+
     let old_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    loop {
-        let new_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let stream_task_handles = stream_task_handles.clone();
-        let mut buf = [0; 1472];
-        // ping without add
-        socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
-        futures::future::select(
-            std::pin::pin!(tokio::time::sleep(tokio::time::Duration::from_secs(5))),
-            std::pin::pin!(async {
-                let old_list = old_list.clone();
-                let new_list = new_list.clone();
-                let message_channel = message_channel.clone();
-                let stream_task_handles = stream_task_handles.clone(); // Clone the Arc
-                loop {
-                    let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
-                    if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
-                    let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr, uuid: [0; 6]};
-                    let old_list = old_list.lock().await;
-                    if !old_list.contains(&device) {
-                        let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
-                        stream_task_handles.lock().await.push((
-                            device.clone(),
-                            tokio::spawn({
-                                let stream_task_handles = stream_task_handles.clone();
-                                let mut old_list = old_list.clone();
-                                let message_channel = message_channel.clone();
-                                async move {
-                                    match device_udp_stream_task(device.clone(), message_channel).await {
-                                        Ok(_) => {
-                                            println!("UDP device stream task finished");
-                                            stream_task_handles.lock().await.retain(|(x, _)| *x != device);
-                                            old_list.retain(|x| *x != device);
-                                        },
-                                        Err(e) => {
-                                            eprintln!("Error in device stream task: {}", e);
-                                            stream_task_handles.lock().await.retain(|(x, _)| *x != device);
-                                            old_list.retain(|x| *x != device);
+
+    tokio::select! {
+        _ = async {
+            loop {
+                let mut buf = [0; 1472];
+                // ping without add
+                socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
+                tokio::select! {
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
+                    _ = async {
+                        let old_list = old_list.clone();
+                        let message_channel = message_channel.clone();
+                        loop {
+                            let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
+                            if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
+                            let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr, uuid: [0; 6]};
+                            let mut old_list = old_list.lock().await;
+                            let message_channel = message_channel.clone();
+                            let sender = sender.clone();
+                            if !old_list.contains(&device) {
+                                tokio::spawn({
+                                    async move {
+                                        match device_udp_stream_task(device.clone(), message_channel.clone()).await {
+                                            Ok(_) => {
+                                                println!("UDP device stream task finished");
+                                            },
+                                            Err(e) => {
+                                                eprintln!("Error in device stream task: {}", e);
+                                            }
                                         }
+                                        let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
                                     }
-                                }
-                            }),
-                        ));
-                    }
-                    new_list.lock().await.push(device);
+                                });
+                                old_list.push(device);
+                            }
+                        }
+                    } => {},
                 }
-            })
-        ).await;
-        // dbg!(&new_list);
-        let new_list = new_list.lock().await;
-        for v in old_list.lock().await.iter() {
-            if !new_list.contains(v) {
-                // temporary: ping is unreliable
-                // let _ = message_channel.send(Message::Disconnect(Device::Udp(v.clone()))).await;
-                // let mut stream_task_handles = stream_task_handles.lock().await;
-                // if let Some((_, handle)) = stream_task_handles.iter().find(|x| x.0 == *v) {
-                //     handle.abort();
-                //     stream_task_handles.retain(|x| x.0 != *v);
-                // }
             }
-        }
-        *old_list.lock().await = new_list.to_vec();
+        } => panic!("UDP ping loop is supposed to be infallible"),
+        _ = async {
+            while let Some(message) = receiver.recv().await {
+                match message {
+                    Message::Disconnect(d) => {
+                        if let Device::Udp(d) = d {
+                            let mut old_list = old_list.lock().await;
+                            let i = old_list.iter().position(|a| *a == d);
+                            if let Some(i) = i {
+                                old_list.remove(i);
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            }
+        } => panic!("UDP ping receiver is supposed to be infallible"),
     }
 }
 
