@@ -47,8 +47,7 @@ void PrintDevice(OdysseyHubClient.IDevice device) {
         case OdysseyHubClient.UdpDevice udpDevice:
             Console.WriteLine("\t\tType: UDP");
             Console.WriteLine("\t\tID: {0}", udpDevice.id);
-            Console.WriteLine("\t\tAddr: {0}", udpDevice.addr);
-            Console.WriteLine("\t\tUUID: {0}", BitConverter.ToString(udpDevice.uuid));
+            Console.WriteLine("\t\tAddr: {0}", udpDevice.addr.ip + ":" + udpDevice.addr.port);
             break;
         case OdysseyHubClient.CdcDevice cdcDevice:
             Console.WriteLine("\t\tType: CDC");
