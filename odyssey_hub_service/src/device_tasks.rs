@@ -1,6 +1,8 @@
 use core::panic;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::kalman::Pva2d;
 use ats_usb::device::UsbDevice;
@@ -11,6 +13,7 @@ use opencv_ros_camera::RosOpenCvIntrinsics;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
+use tracing::field::debug;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -238,19 +241,40 @@ fn get_raycast_aimpoint(fv_state: &ats_cv::foveated::FoveatedAimpointState) -> (
     (rotmat, transmat, fv_aimpoint)
 }
 
-async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Sender<Message>, orientation: Arc<tokio::sync::Mutex<nalgebra::Rotation3<f64>>>, config: ats_usb::packet::GeneralConfig) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
+async fn common_tasks(
+    d: UsbDevice,
+    device: Device,
+    message_channel: Sender<Message>,
+    orientation: Arc<tokio::sync::Mutex<nalgebra::Rotation3<f64>>>,
+    config: ats_usb::packet::GeneralConfig,
+) {
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let fv_aimpoint_pva2d = Arc::new(tokio::sync::Mutex::new(Pva2d::new(0.02, 1.0)));
+    let timeout = Duration::from_secs(2);
 
-    let combined_markers_task = {
-        let d = d.clone();
-        let message_channel = message_channel.clone();
-        let orientation = orientation.clone();
-        let device = device.clone();
-        async move {
-            let mut stream = d.stream_combined_markers().await.unwrap();
-
-            while let Some(combined_markers) = stream.next().await {
+    let mut combined_markers_stream = d.stream_combined_markers().await.unwrap();
+    let mut euler_stream = d.stream_euler_angles().await.unwrap();
+    let mut impact_stream = d.stream_impact().await.unwrap();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(timeout) => {
+                // nothing received after timeout, try restarting streams
+                tracing::debug!(device=debug(&device), "common streams timed out, restarting streams");
+                drop(combined_markers_stream);
+                drop(euler_stream);
+                drop(impact_stream);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                combined_markers_stream = d.stream_combined_markers().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                euler_stream = d.stream_euler_angles().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                impact_stream = d.stream_impact().await.unwrap();
+            }
+            item = combined_markers_stream.next() => {
+                let Some(combined_markers) = item else {
+                    // this shouldn't ever happen
+                    break;
+                };
                 let CombinedMarkersReport { timestamp, nf_points, wf_points, nf_radii, wf_radii } = combined_markers;
 
                 let aim_point;
@@ -266,7 +290,12 @@ async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Send
                 let nf_points_transformed = transform_points(&filtered_nf_points_slice, &config.camera_model_nf);
                 let wf_points_transformed = transform_points(&filtered_wf_points_slice, &config.camera_model_wf);
 
-                let wf_to_nf = ats_cv::wf_to_nf_points(&wf_points_transformed, &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf), &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf), config.stereo_iso.cast());
+                let wf_to_nf = ats_cv::wf_to_nf_points(
+                    &wf_points_transformed,
+                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf),
+                    &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf),
+                    config.stereo_iso.cast(),
+                );
 
                 let wf_normalized: Vec<_> = wf_to_nf.iter().map(|&p| {
                     let fx = config.camera_model_nf.p.m11 as f64;
@@ -282,18 +311,18 @@ async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Send
                     let cy = config.camera_model_nf.p.m23 as f64;
                     Point2::new((p.x/4095.*98. - cx) / fx, (p.y/4095.*98. - cy) / fy)
                 }).collect();
-    
+
                 fv_aimpoint_pva2d.lock().await.step();
 
                 let gravity_vec = orientation.lock().await.inverse_transform_vector(&Vector3::z_axis());
                 let gravity_vec = UnitVector3::new_unchecked(gravity_vec.xzy());
-    
+
                 {
                     let mut fv_state = fv_state.lock().await;
                     fv_state.observe_markers(&nf_normalized, &wf_normalized, gravity_vec);
-        
+
                     let (rotmat, transmat, fv_aimpoint) = get_raycast_aimpoint(&fv_state);
-        
+
                     rotation_mat = rotmat.cast();
                     translation_mat = transmat.coords.cast();
                     aim_point = fv_aimpoint;
@@ -302,22 +331,21 @@ async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Send
                 if let Some(aim_point) = aim_point {
                     let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x.into(), aim_point.y.into()]);
                     let device = device.clone();
+                    let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                        timestamp,
+                        aimpoint: aim_point_matrix,
+                        pose: Some(odyssey_hub_common::events::Pose {
+                            rotation: rotation_mat,
+                            translation: translation_mat,
+                        }),
+                        screen_id: 0,
+                    });
                     match device {
                         Device::Udp(device) => {
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
                                 odyssey_hub_common::events::DeviceEvent {
                                     device: Device::Udp(device.clone()),
-                                    kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                                        timestamp,
-                                        aimpoint: aim_point_matrix,
-                                        pose: 
-                                            Some(odyssey_hub_common::events::Pose {
-                                                rotation: rotation_mat,
-                                                translation: translation_mat,
-                                            })
-                                        ,
-                                        screen_id: 0,
-                                    }),
+                                    kind,
                                 }
                             ))).await;
                         },
@@ -325,17 +353,7 @@ async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Send
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
                                 odyssey_hub_common::events::DeviceEvent {
                                     device: Device::Cdc(device.clone()),
-                                    kind: odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                                        timestamp,
-                                        aimpoint: aim_point_matrix,
-                                        pose: {
-                                            Some(odyssey_hub_common::events::Pose {
-                                                rotation: rotation_mat,
-                                                translation: translation_mat,
-                                            })
-                                        },
-                                        screen_id: 0,
-                                    }),
+                                    kind,
                                 }
                             ))).await;
                         },
@@ -343,27 +361,18 @@ async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Send
                     }
                 }
             }
-        }
-    };
-
-    let euler_task = {
-        let d = d.clone();
-        async move {
-            let mut euler_stream = d.stream_euler_angles().await.unwrap();
-            while let Some(_orientation) = euler_stream.next().await {
+            item = euler_stream.next() => {
+                let Some(_orientation) = item else {
+                    // this shouldn't ever happen
+                    break;
+                };
                 *orientation.lock().await = _orientation.rotation;
             }
-        }
-    };
-
-    let impact_task = {
-        let d = d.clone();
-        let message_channel = message_channel.clone();
-        let device = device.clone(); // Add this line to create a new variable for the match expression
-        async move {
-            let mut stream = d.stream_impact().await.unwrap();
-
-            while let Some(impact) = stream.next().await {
+            item = impact_stream.next() => {
+                let Some(impact) = item else {
+                    // this shouldn't ever happen
+                    break;
+                };
                 let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
                     odyssey_hub_common::events::DeviceEvent {
                         device: device.clone(),
@@ -374,13 +383,7 @@ async fn create_common_tasks(d: UsbDevice, device: Device, message_channel: Send
                 ))).await;
             }
         }
-    };
-
-    let combined_markers_task_handle = tokio::spawn(combined_markers_task);
-    let euler_task_handle = tokio::spawn(euler_task);
-    let impact_task_handle = tokio::spawn(impact_task);
-
-    (combined_markers_task_handle, euler_task_handle, impact_task_handle)
+    }
 }
 
 async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) -> anyhow::Result<()> {
@@ -407,14 +410,7 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
 
     let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
 
-    let (combined_markers_task, euler_task, impact_task) = create_common_tasks(d, odyssey_hub_common::device::Device::Udp(device), message_channel, orientation, config).await;
-
-    tokio::select! {
-        _ = combined_markers_task => {},
-        _ = euler_task => {},
-        _ = impact_task => {},
-    }
-
+    common_tasks(d, odyssey_hub_common::device::Device::Udp(device), message_channel, orientation, config).await;
     Ok(())
 }
 
@@ -438,14 +434,7 @@ async fn device_cdc_stream_task(device: CdcDevice, wait_dsr: bool, message_chann
 
     let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
 
-    let (combined_markers_task, euler_task, impact_task) = create_common_tasks(d, odyssey_hub_common::device::Device::Cdc(device), message_channel, orientation, config).await;
-
-    tokio::select! {
-        _ = combined_markers_task => {},
-        _ = euler_task => {},
-        _ = impact_task => {},
-    }
-
+    common_tasks(d, odyssey_hub_common::device::Device::Cdc(device), message_channel, orientation, config).await;
     Ok(())
 }
 
