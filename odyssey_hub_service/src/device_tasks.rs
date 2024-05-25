@@ -57,7 +57,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                     // ping without add
                     socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
                     tokio::select! {
-                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
                         _ = async {
                             let stream_task_handles = stream_task_handles.clone();
                             let message_channel = message_channel.clone();
