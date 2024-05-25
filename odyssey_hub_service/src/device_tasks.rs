@@ -44,44 +44,63 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
 
     let (sender, mut receiver) = tokio::sync::mpsc::channel(12);
 
-    let old_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
     tokio::select! {
         _ = async {
             loop {
                 let mut buf = [0; 1472];
-                // ping without add
-                socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
-                tokio::select! {
-                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
-                    _ = async {
-                        let old_list = old_list.clone();
-                        let message_channel = message_channel.clone();
-                        loop {
-                            let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
-                            if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
-                            let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr, uuid: [0; 6]};
-                            let mut old_list = old_list.lock().await;
+                let mut devices_that_responded = Vec::new();
+
+                // 5 attempts
+                for _ in 0..5 {
+                    // ping without add
+                    socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
+                    tokio::select! {
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
+                        _ = async {
+                            let stream_task_handles = stream_task_handles.clone();
                             let message_channel = message_channel.clone();
-                            let sender = sender.clone();
-                            if !old_list.contains(&device) {
-                                tokio::spawn({
-                                    async move {
-                                        match device_udp_stream_task(device.clone(), message_channel.clone()).await {
-                                            Ok(_) => {
-                                                println!("UDP device stream task finished");
-                                            },
-                                            Err(e) => {
-                                                eprintln!("Error in device stream task: {}", e);
+                            loop {
+                                let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
+                                if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
+                                let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr, uuid: [0; 6]};
+                                let mut stream_task_handles = stream_task_handles.lock().await;
+                                let message_channel = message_channel.clone();
+                                let sender = sender.clone();
+
+                                if !devices_that_responded.contains(&device) {
+                                    devices_that_responded.push(device.clone());
+                                }
+
+                                let i = stream_task_handles.iter().position(|(a, _)| *a == device);
+                                if let None = i {
+                                    stream_task_handles.push((
+                                        device.clone(),
+                                        tokio::spawn({
+                                            async move {
+                                                match device_udp_stream_task(device.clone(), message_channel.clone()).await {
+                                                    Ok(_) => {
+                                                        println!("UDP device stream task finished");
+                                                    },
+                                                    Err(e) => {
+                                                        eprintln!("Error in device stream task: {}", e);
+                                                    }
+                                                }
+                                                let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
                                             }
-                                        }
-                                        let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
-                                    }
-                                });
-                                old_list.push(device);
+                                        })
+                                    ));
+                                }
                             }
-                        }
-                    } => {},
+                        } => {},
+                    }
+                }
+
+                for (device, _) in stream_task_handles.lock().await.iter() {
+                    if !devices_that_responded.contains(device) {
+                        let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
+                    }
                 }
             }
         } => panic!("UDP ping loop is supposed to be infallible"),
@@ -90,10 +109,11 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                 match message {
                     Message::Disconnect(d) => {
                         if let Device::Udp(d) = d {
-                            let mut old_list = old_list.lock().await;
-                            let i = old_list.iter().position(|a| *a == d);
+                            let mut stream_task_handles = stream_task_handles.lock().await;
+                            let i = stream_task_handles.iter().position(|(a, _)| *a == d);
                             if let Some(i) = i {
-                                old_list.remove(i);
+                                stream_task_handles[i].1.abort();
+                                stream_task_handles.remove(i);
                             }
                         }
                     },

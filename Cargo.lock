@@ -368,7 +368,7 @@ dependencies = [
 [[package]]
 name = "ats_usb"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats-vision-tool#4eaa8bb6fe0babc7ed7b3943c21cd05ede3a4e01"
+source = "git+https://github.com/odysseyarm/ats-vision-tool#165eed174791823612764f9700f7c9dd9315a5ba"
 dependencies = [
  "anyhow",
  "ats_cv",
