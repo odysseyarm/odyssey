@@ -109,6 +109,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                 match message {
                     Message::Disconnect(d) => {
                         if let Device::Udp(d) = d {
+                            tracing::info!("Disconnecting {:?}", d);
                             let mut stream_task_handles = stream_task_handles.lock().await;
                             let i = stream_task_handles.iter().position(|(a, _)| *a == d);
                             if let Some(i) = i {
@@ -271,13 +272,24 @@ async fn common_tasks(
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let fv_aimpoint_pva2d = Arc::new(tokio::sync::Mutex::new(Pva2d::new(0.02, 1.0)));
     let timeout = Duration::from_secs(2);
+    let restart_timeout = Duration::from_secs(1);
 
     let mut combined_markers_stream = d.stream_combined_markers().await.unwrap();
     let mut euler_stream = d.stream_euler_angles().await.unwrap();
     let mut impact_stream = d.stream_impact().await.unwrap();
+    let mut no_response_count = 0;
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(timeout) => {
+            _ = tokio::time::sleep(
+                if no_response_count > 0 {
+                    restart_timeout
+                } else {
+                    timeout
+            }) => {
+                if no_response_count >= 5 {
+                    tracing::info!(device=debug(&device), "no response, exiting");
+                    break;
+                }
                 // nothing received after timeout, try restarting streams
                 tracing::debug!(device=debug(&device), "common streams timed out, restarting streams");
                 drop(combined_markers_stream);
@@ -289,6 +301,8 @@ async fn common_tasks(
                 euler_stream = d.stream_euler_angles().await.unwrap();
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 impact_stream = d.stream_impact().await.unwrap();
+                no_response_count += 1;
+                continue;
             }
             item = combined_markers_stream.next() => {
                 let Some(combined_markers) = item else {
@@ -403,6 +417,7 @@ async fn common_tasks(
                 ))).await;
             }
         }
+        no_response_count = 0;
     }
 }
 
