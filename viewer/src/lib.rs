@@ -9,13 +9,13 @@ use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 use mot_data::MotData;
 use serialport::{ClearBuffer, SerialPort};
 
-mod mot_data;
-mod charuco;
-mod chessboard;
-mod circles;
+pub mod mot_data;
+pub mod charuco;
+pub mod chessboard;
+pub mod circles;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Port {
+pub enum Port {
     Wf,
     Nf,
 }

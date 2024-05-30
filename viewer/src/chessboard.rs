@@ -1,5 +1,5 @@
 use opencv::{
-    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC}, core::{flip, no_array, FileStorage, FileStorage_FORMAT_JSON, FileStorage_READ, FileStorage_WRITE, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector, ROTATE_180}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
+    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC}, core::{flip, no_array, FileStorage, FileStorage_FORMAT_JSON, FileStorage_READ, FileStorage_WRITE, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector, ROTATE_180}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
 };
 
 use crate::Port;
@@ -142,9 +142,6 @@ pub fn calibrate_single(
 
 /// Returns None if there were no corners found.
 pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool) -> Option<Vector<Point2f>> {
-    let board_rows = i32::from(board_rows);
-    let board_cols = i32::from(board_cols);
-
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
     if !upside_down {
@@ -162,12 +159,19 @@ pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, 
             opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
         }
     }
+    get_chessboard_corners_cv(&im, port, board_rows, board_cols, show)
+}
+
+pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_rows: u16, board_cols: u16, show: bool) -> Option<Vector<Point2f>> {
+    let board_rows = i32::from(board_rows);
+    let board_cols = i32::from(board_cols);
+
     let mut corners = Vector::<Point2f>::default();
     let use_sb = true;
     let mut im_upscaled = Mat::default();
     // super resolution scale
     let ss = 4.;
-    resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+    resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
     if use_sb {
         let _chessboard_found = find_chessboard_corners_sb(&im_upscaled, (board_cols, board_rows).into(), &mut corners, 0).unwrap();
     } else {
@@ -195,7 +199,7 @@ pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, 
 
     if show {
         let mut im_copy = Mat::default();
-        cvt_color(&im, &mut im_copy, COLOR_GRAY2BGR, 0).unwrap();
+        cvt_color(image, &mut im_copy, COLOR_GRAY2BGR, 0).unwrap();
         let tmp = im_copy;
         let mut im_copy = Mat::default();
         resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
