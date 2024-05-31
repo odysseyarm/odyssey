@@ -1,17 +1,27 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_NORMALIZE_IMAGE }, core::{no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_NORMALIZE_IMAGE }, core::{flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
 use crate::Port;
 
 /// Returns None if no circles were found.
-pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: i32, board_cols: i32, show: bool) -> Option<Vector<Point2f>> {
-    let board_size = opencv::core::Size::new(board_rows, board_cols);
+pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool) -> Option<Vector<Point2f>> {
+    let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
-    opencv::core::flip(&tmp, &mut im, 0).unwrap();
-    if port == Port::Wf {
-        let tmp = im;
-        im = Mat::default();
-        opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
+    flip(&tmp, &mut im, 0).unwrap();
+    if !upside_down {
+        flip(&tmp, &mut im, 0).unwrap();
+        if port == Port::Wf {
+            let tmp = im;
+            im = Mat::default();
+            opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
+        }
+    } else {
+        flip(&tmp, &mut im, 0).unwrap();
+        if port == Port::Nf {
+            let tmp = im;
+            im = Mat::default();
+            opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
+        }
     }
     let mut im2 = Mat::default();
     resize(&im, &mut im2, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
@@ -90,26 +100,24 @@ fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut
 pub fn calibrate_single(
     images: &[[u8; 98 * 98]],
     port: Port,
-    board_rows: i32,
-    board_cols: i32,
+    board_rows: u16,
+    board_cols: u16,
+    upside_down: bool,
 ) {
     let square_length = 1.0; // Specify the size of the squares between dots
     let mut board_points = Vector::<Point3f>::new();
-    let mut current_col = 0f32;
-    for row in 0..board_cols {
-        let row_shift = if row % 2 == 0 { 0.0 } else { 0.5 };
-        for col in 0..board_rows {
+    for row in 0..board_rows {
+        for col in 0..board_cols {
             board_points.push(Point3f::new(
-                (col as f32 + row_shift) * square_length,
-                current_col * square_length,
+                (2*col + row%2) as f32 * square_length,
+                row as f32 * square_length,
                 0.0,
             ));
         }
-        current_col += 1.0;
     }
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_circles_centers(image, port, board_rows, board_cols, false)
+        get_circles_centers(image, port, board_rows, board_cols, false, upside_down)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 

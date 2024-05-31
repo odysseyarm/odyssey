@@ -1,4 +1,4 @@
-use opencv::{calib3d::undistort, core::{no_array, FileStorage, FileStorage_READ, Mat, Size}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, IMREAD_COLOR}, imgproc::{resize, INTER_CUBIC}};
+use opencv::{calib3d::{get_optimal_new_camera_matrix, get_optimal_new_camera_matrix_def, undistort}, core::{no_array, FileStorage, FileStorage_READ, Mat, Size}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, IMREAD_COLOR}, imgproc::{resize, INTER_CUBIC}};
 use clap::Parser;
 
 #[derive(Parser)]
@@ -11,9 +11,10 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
     let (camera_matrix, dist_coeffs) = read_camara_params(&cli.camera_params);
+    let new_camera_matrix = get_optimal_new_camera_matrix_def(&camera_matrix, &dist_coeffs, Size::new(98, 98), 1.0).unwrap();
     let im = imread(&cli.image, IMREAD_COLOR).unwrap();
     let mut unim = Mat::default();
-    undistort(&im, &mut unim, &camera_matrix, &dist_coeffs, &no_array()).unwrap();
+    undistort(&im, &mut unim, &camera_matrix, &dist_coeffs, &new_camera_matrix).unwrap();
     let mut scaled_unim = Mat::default();
     let mut scaled_im = Mat::default();
     resize(&unim, &mut scaled_unim, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
