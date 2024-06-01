@@ -2,17 +2,20 @@ use std::{
     fmt::Display, fs::File, io::BufWriter, path::Path, sync::{atomic::{AtomicBool, AtomicU16, Ordering}, mpsc::{Receiver, SyncSender}, Arc, Mutex}, time::{Duration, Instant}
 };
 
+use draw_pattern_points::DrawPatternPoints;
 use ggez::{
     conf::{WindowMode, WindowSetup}, event, glam::*, graphics::{self, Color, DrawParam, ImageFormat, Sampler, Text, Transform}, input::{keyboard::{KeyCode, KeyMods}, mouse::{cursor_grabbed, set_cursor_grabbed, set_position}}, Context, GameResult
 };
 use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 use mot_data::MotData;
+use opencv::core::{Point2f, Vector};
 use serialport::{ClearBuffer, SerialPort};
 
 pub mod mot_data;
 pub mod charuco;
 pub mod chessboard;
 pub mod circles;
+pub mod draw_pattern_points;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Port {
@@ -24,6 +27,7 @@ struct PajData {
     image: [u8; 98 * 98 * 4],
     gray: [u8; 98 * 98],
     mot_data: [MotData; 16],
+    pattern_points: Option<Vec<Point2f>>,
     avg_frame_period: f64,
     last_frame: Instant,
 }
@@ -36,6 +40,7 @@ impl Default for PajData {
             mot_data: Default::default(),
             avg_frame_period: 1.0,
             last_frame: Instant::now(),
+            pattern_points: None,
         }
     }
 }
@@ -44,6 +49,7 @@ struct MainState {
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
     circle: ggez::graphics::Mesh,
+    draw_pattern_points: DrawPatternPoints,
     capture_count: usize,
     captured_nf: Vec<[u8; 98 * 98]>,
     captured_wf: Vec<[u8; 98 * 98]>,
@@ -91,7 +97,7 @@ impl MainState {
 
         let wf_data = Arc::new(Mutex::new(Default::default()));
         let nf_data = Arc::new(Mutex::new(Default::default()));
-        let img_channel = std::sync::mpsc::sync_channel(2);
+        // let img_channel = std::sync::mpsc::sync_channel(2);
         let reset = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
         let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
@@ -106,6 +112,7 @@ impl MainState {
             wf_data: wf_data.clone(),
             nf_data: nf_data.clone(),
             circle,
+            draw_pattern_points: DrawPatternPoints::new(ctx),
             capture_count,
             captured_nf: vec![],
             captured_wf: vec![],
@@ -118,11 +125,12 @@ impl MainState {
             quit: quit.clone(),
             upside_down,
         };
-        std::thread::spawn(move || {
-            reader_thread(path, wf_data, nf_data, img_channel.0, reset, quit);
-        });
         let detector_params = main_state.detector_params.clone();
-        std::thread::spawn(move || opencv_thread(img_channel.1, detector_params, upside_down));
+        std::thread::spawn(move || {
+            reader_thread(path, wf_data, nf_data, detector_params, upside_down, reset, quit);
+        });
+        // let detector_params = main_state.detector_params.clone();
+        // std::thread::spawn(move || opencv_thread(img_channel.1, detector_params, upside_down));
         Ok(main_state)
     }
 }
@@ -161,57 +169,45 @@ impl event::EventHandler<ggez::GameError> for MainState {
         canvas.draw(
             &wf_image,
             DrawParam {
-                transform: Transform::Matrix(
-                    [
-                        [-7., 0., 0., 0.],
-                        [0., 7., 0., 0.],
-                        [0., 0., 1., 0.],
-                        [7. * 98., 0., 0., 1.],
-                    ]
-                    .into(),
-                ),
+                transform: Transform::Values {
+                    dest: [7.*98., 0.].into(),
+                    rotation: 0.,
+                    scale: [-7., 7.].into(),
+                    offset: [0., 0.].into(),
+                },
                 ..Default::default()
             },
         );
         canvas.draw(
             &nf_image,
             DrawParam {
-                transform: Transform::Matrix(
-                    [
-                        [7., 0., 0., 0.],
-                        [0., -7., 0., 0.],
-                        [0., 0., 1., 0.],
-                        [700., 7. * 98., 0., 1.],
-                    ]
-                    .into(),
-                ),
+                transform: Transform::Values {
+                    dest: [700., 7.*98.].into(),
+                    rotation: 0.,
+                    scale: [7., -7.].into(),
+                    offset: [0., 0.].into(),
+                },
                 ..Default::default()
             },
         );
         canvas.draw(&Text::new(format!("{:.1} fps", 1. / nf_data.avg_frame_period)), DrawParam {
             color: Color::WHITE,
-            transform: Transform::Matrix(
-                [
-                    [1., 0., 0., 0.],
-                    [0., 1., 0., 0.],
-                    [0., 0., 1., 0.],
-                    [700., 7. * 98., 0., 1.],
-                ]
-                .into(),
-            ),
+            transform: Transform::Values {
+                dest: [700., 7.*98.].into(),
+                rotation: 0.,
+                scale: [1., 1.].into(),
+                offset: [0., 0.].into(),
+            },
             ..Default::default()
         });
         canvas.draw(&Text::new(format!("{:.1} fps", 1. / nf_data.avg_frame_period)), DrawParam {
             color: Color::WHITE,
-            transform: Transform::Matrix(
-                [
-                    [1., 0., 0., 0.],
-                    [0., 1., 0., 0.],
-                    [0., 0., 1., 0.],
-                    [0., 7. * 98., 0., 1.],
-                ]
-                .into(),
-            ),
+            transform: Transform::Values {
+                dest: [0., 7.*98.].into(),
+                rotation: 0.,
+                scale: [1., 1.].into(),
+                offset: [0., 0.].into(),
+            },
             ..Default::default()
         });
         let cols = self.detector_params.cols.load(Ordering::Relaxed);
@@ -219,28 +215,22 @@ impl event::EventHandler<ggez::GameError> for MainState {
         let pat = self.detector_params.pattern.load(Ordering::Relaxed);
         canvas.draw(&Text::new(format!("Captures (space): {}    Board (r, c): {rows}x{cols}    Detector (d): {pat}", self.captured_wf.len())), DrawParam {
             color: Color::WHITE,
-            transform: Transform::Matrix(
-                [
-                    [1., 0., 0., 0.],
-                    [0., 1., 0., 0.],
-                    [0., 0., 1., 0.],
-                    [0., 7. * 98. + 18., 0., 1.],
-                ]
-                .into(),
-            ),
+            transform: Transform::Values {
+                dest: [0., 7.*98. + 18.].into(),
+                rotation: 0.,
+                scale: [1., 1.].into(),
+                offset: [0., 0.].into(),
+            },
             ..Default::default()
         });
         canvas.draw(&Text::new("<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close"), DrawParam {
             color: Color::WHITE,
-            transform: Transform::Matrix(
-                [
-                    [1., 0., 0., 0.],
-                    [0., 1., 0., 0.],
-                    [0., 0., 1., 0.],
-                    [0., 7. * 98. + 36., 0., 1.],
-                ]
-                .into(),
-            ),
+            transform: Transform::Values {
+                dest: [0., 7.*98. + 36.].into(),
+                rotation: 0.,
+                scale: [1., 1.].into(),
+                offset: [0., 0.].into(),
+            },
             ..Default::default()
         });
 
@@ -258,6 +248,24 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 let y = mot_data.cy as f32 / 2940.;
                 canvas.draw(&self.circle, Vec2::new(x*7.*98.+700., (1.-y)*7.*98.));
             }
+        }
+
+        if let Some(pattern_points) = &wf_data.pattern_points {
+            self.draw_pattern_points.draw(ctx, &mut canvas, pattern_points, cols.into(), true, Transform::Values {
+                dest: [0., 0.].into(),
+                rotation: 0.,
+                scale: [7., 7.].into(),
+                offset: [0., 0.].into(),
+            });
+        }
+
+        if let Some(pattern_points) = &nf_data.pattern_points {
+            self.draw_pattern_points.draw(ctx, &mut canvas, pattern_points, cols.into(), true, Transform::Values {
+                dest: [700., 0.].into(),
+                rotation: 0.,
+                scale: [7., 7.].into(),
+                offset: [0., 0.].into(),
+            });
         }
 
         canvas.finish(ctx)?;
@@ -461,7 +469,9 @@ fn reader_thread(
     path: String,
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
-    img_channel: SyncSender<(Port, [u8; 98*98])>,
+    // img_channel: SyncSender<(Port, [u8; 98*98])>,
+    detector_params: Arc<DetectorParams>,
+    upside_down: bool,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
 ) {
@@ -500,11 +510,24 @@ fn reader_thread(
                 }
             }
         }
+
+        let board_cols = detector_params.cols.load(Ordering::Relaxed);
+        let board_rows = detector_params.rows.load(Ordering::Relaxed);
+        let pattern = detector_params.pattern.load(Ordering::Relaxed);
+        let gray: &[u8; 98*98] = &buf[..98*98].try_into().unwrap();
+        let pattern_points = match (pattern, id) {
+            (DetectorPattern::None, _) => None,
+            (DetectorPattern::Chessboard, 0) => { chessboard::get_chessboard_corners(&gray, Port::Wf, board_rows, board_cols, false, upside_down) },
+            (DetectorPattern::Chessboard, _) => { chessboard::get_chessboard_corners(&gray, Port::Nf, board_rows, board_cols, false, upside_down) },
+            (DetectorPattern::Acircles, 0) => { circles::get_circles_centers(&gray, Port::Wf, board_rows, board_cols, false, upside_down) },
+            (DetectorPattern::Acircles, _) => { circles::get_circles_centers(&gray, Port::Nf, board_rows, board_cols, false, upside_down) },
+        };
+
         let mut paj_data = if id == 0 {
-            let _ = img_channel.try_send((Port::Wf, buf[..98*98].try_into().unwrap()));
+            // let _ = img_channel.try_send((Port::Wf, buf[..98*98].try_into().unwrap()));
             wf_data.lock().unwrap()
         } else {
-            let _ = img_channel.try_send((Port::Nf, buf[..98*98].try_into().unwrap()));
+            // let _ = img_channel.try_send((Port::Nf, buf[..98*98].try_into().unwrap()));
             nf_data.lock().unwrap()
         };
         for i in 0..98 * 98 {
@@ -512,12 +535,13 @@ fn reader_thread(
             paj_data.image[4 * i + 1] = buf[i];
             paj_data.image[4 * i + 2] = buf[i];
         }
-        paj_data.gray.copy_from_slice(&buf[..98*98]);
+        paj_data.gray = *gray;
         for (i, mut raw_mot) in buf[98*98..][..256].chunks(16).enumerate() {
             paj_data.mot_data[i] = MotData::parse(&mut raw_mot);
         }
         paj_data.avg_frame_period = paj_data.avg_frame_period * 7. / 8. + paj_data.last_frame.elapsed().as_secs_f64() / 8.;
         paj_data.last_frame = Instant::now();
+        paj_data.pattern_points = pattern_points.map(|v| v.into());
         drop(paj_data);
     }
 }
