@@ -1,5 +1,5 @@
 use std::{
-    fs::File, io::BufWriter, path::Path, sync::{atomic::{AtomicBool, AtomicU16, Ordering}, mpsc::{Receiver, SyncSender}, Arc, Mutex}, time::{Duration, Instant}
+    fmt::Display, fs::File, io::BufWriter, path::Path, sync::{atomic::{AtomicBool, AtomicU16, Ordering}, mpsc::{Receiver, SyncSender}, Arc, Mutex}, time::{Duration, Instant}
 };
 
 use ggez::{
@@ -47,10 +47,35 @@ struct MainState {
     capture_count: usize,
     captured_nf: Vec<[u8; 98 * 98]>,
     captured_wf: Vec<[u8; 98 * 98]>,
-    board_size: Arc<(AtomicU16, AtomicU16)>, // (width, height)
+    detector_params: Arc<DetectorParams>,
     upside_down: bool,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
+}
+
+#[derive(Debug)]
+struct DetectorParams {
+    rows: AtomicU16,
+    cols: AtomicU16,
+    pattern: atomic::Atomic<DetectorPattern>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, bytemuck::NoUninit)]
+#[repr(u8)]
+enum DetectorPattern {
+    None,
+    Chessboard,
+    Acircles,
+}
+
+impl Display for DetectorPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DetectorPattern::None => write!(f, "off"),
+            DetectorPattern::Chessboard => write!(f, "chessboard"),
+            DetectorPattern::Acircles => write!(f, "acircles"),
+        }
+    }
 }
 
 impl MainState {
@@ -84,7 +109,11 @@ impl MainState {
             capture_count,
             captured_nf: vec![],
             captured_wf: vec![],
-            board_size: Arc::new((4.into(), 4.into())),
+            detector_params: DetectorParams {
+                rows: 6.into(),
+                cols: 6.into(),
+                pattern: atomic::Atomic::new(DetectorPattern::Chessboard),
+            }.into(),
             reset: reset.clone(),
             quit: quit.clone(),
             upside_down,
@@ -92,8 +121,8 @@ impl MainState {
         std::thread::spawn(move || {
             reader_thread(path, wf_data, nf_data, img_channel.0, reset, quit);
         });
-        let board_size = main_state.board_size.clone();
-        std::thread::spawn(move || opencv_thread(img_channel.1, board_size, upside_down));
+        let detector_params = main_state.detector_params.clone();
+        std::thread::spawn(move || opencv_thread(img_channel.1, detector_params, upside_down));
         Ok(main_state)
     }
 }
@@ -185,9 +214,10 @@ impl event::EventHandler<ggez::GameError> for MainState {
             ),
             ..Default::default()
         });
-        let cols = self.board_size.0.load(Ordering::Relaxed);
-        let rows = self.board_size.1.load(Ordering::Relaxed);
-        canvas.draw(&Text::new(format!("Captures: {}    Board: ({}, {})", self.captured_wf.len(), cols, rows)), DrawParam {
+        let cols = self.detector_params.cols.load(Ordering::Relaxed);
+        let rows = self.detector_params.rows.load(Ordering::Relaxed);
+        let pat = self.detector_params.pattern.load(Ordering::Relaxed);
+        canvas.draw(&Text::new(format!("Captures (space): {}    Board (r, c): {rows}x{cols}    Detector (d): {pat}", self.captured_wf.len())), DrawParam {
             color: Color::WHITE,
             transform: Transform::Matrix(
                 [
@@ -200,7 +230,7 @@ impl event::EventHandler<ggez::GameError> for MainState {
             ),
             ..Default::default()
         });
-        canvas.draw(&Text::new("<1> calib nf    <2> calib wf    <3> stereo calib    <Space> capture    <Backspace> clear    <Esc> close    <R> rows    <C> cols"), DrawParam {
+        canvas.draw(&Text::new("<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close"), DrawParam {
             color: Color::WHITE,
             transform: Transform::Matrix(
                 [
@@ -267,12 +297,17 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 // calibrate nf
                 println!("Calibrating nearfield from {} captures", self.captured_nf.len());
                 let captures = self.captured_nf.clone();
-                let board_cols = self.board_size.0.load(Ordering::Relaxed);
-                let board_rows = self.board_size.1.load(Ordering::Relaxed);
+                let board_cols = self.detector_params.cols.load(Ordering::Relaxed);
+                let board_rows = self.detector_params.rows.load(Ordering::Relaxed);
+                let pat = self.detector_params.pattern.load(Ordering::Relaxed);
                 std::thread::spawn({
                     let upside_down = self.upside_down;
                     move || {
-                        chessboard::calibrate_single(&captures, Port::Nf, board_rows, board_cols, upside_down);
+                        match pat {
+                            DetectorPattern::Acircles => circles::calibrate_single(&captures, Port::Nf, board_rows, board_cols, upside_down),
+                            DetectorPattern::Chessboard => chessboard::calibrate_single(&captures, Port::Nf, board_rows, board_cols, upside_down),
+                            DetectorPattern::None => eprintln!("No pattern selected"),
+                        }
                     }
                 });
             }
@@ -280,12 +315,17 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 // calibrate wf
                 println!("Calibrating widefield from {} captures", self.captured_wf.len());
                 let captures = self.captured_wf.clone();
-                let board_cols = self.board_size.0.load(Ordering::Relaxed);
-                let board_rows = self.board_size.1.load(Ordering::Relaxed);
+                let board_cols = self.detector_params.cols.load(Ordering::Relaxed);
+                let board_rows = self.detector_params.rows.load(Ordering::Relaxed);
+                let pat = self.detector_params.pattern.load(Ordering::Relaxed);
                 std::thread::spawn({
                     let upside_down = self.upside_down;
                     move || {
-                        chessboard::calibrate_single(&captures, Port::Wf, board_rows, board_cols, upside_down);
+                        match pat {
+                            DetectorPattern::Acircles => circles::calibrate_single(&captures, Port::Wf, board_rows, board_cols, upside_down),
+                            DetectorPattern::Chessboard => chessboard::calibrate_single(&captures, Port::Wf, board_rows, board_cols, upside_down),
+                            DetectorPattern::None => eprintln!("No pattern selected"),
+                        }
                     }
                 });
             }
@@ -293,28 +333,51 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 println!("Calibrating stereo from {} captures", self.captured_wf.len());
                 let wf = self.captured_wf.clone();
                 let nf = self.captured_nf.clone();
-                let board_cols = self.board_size.0.load(Ordering::Relaxed);
-                let board_rows = self.board_size.1.load(Ordering::Relaxed);
+                let board_cols = self.detector_params.cols.load(Ordering::Relaxed);
+                let board_rows = self.detector_params.rows.load(Ordering::Relaxed);
+                let pat = self.detector_params.pattern.load(Ordering::Relaxed);
                 std::thread::spawn({
                     let upside_down = self.upside_down;
                     move || {
-                        chessboard::my_stereo_calibrate(&wf, &nf, board_rows, board_cols, upside_down);
+                        match pat {
+                            DetectorPattern::Chessboard => chessboard::my_stereo_calibrate(&wf, &nf, board_rows, board_cols, upside_down),
+                            DetectorPattern::Acircles => eprintln!("Not implemented!"),
+                            DetectorPattern::None => eprintln!("No pattern selected"),
+                        }
                     }
                 });
             }
             Some(KeyCode::R) => {
                 if input.mods.contains(KeyMods::SHIFT) {
-                    self.board_size.1.fetch_sub(1, Ordering::Relaxed);
+                    self.detector_params.rows.fetch_sub(1, Ordering::Relaxed);
                 } else {
-                    self.board_size.1.fetch_add(1, Ordering::Relaxed);
+                    self.detector_params.rows.fetch_add(1, Ordering::Relaxed);
                 }
             }
             Some(KeyCode::C) => {
                 if input.mods.contains(KeyMods::SHIFT) {
-                    self.board_size.0.fetch_sub(1, Ordering::Relaxed);
+                    self.detector_params.cols.fetch_sub(1, Ordering::Relaxed);
                 } else {
-                    self.board_size.0.fetch_add(1, Ordering::Relaxed);
+                    self.detector_params.cols.fetch_add(1, Ordering::Relaxed);
                 }
+            }
+            Some(KeyCode::D) => {
+                use DetectorPattern as P;
+                let pattern = self.detector_params.pattern.load(Ordering::Relaxed);
+                let new_value = if input.mods.contains(KeyMods::SHIFT) {
+                    match pattern {
+                        P::None => P::Acircles,
+                        P::Chessboard => P::None,
+                        P::Acircles => P::Chessboard,
+                    }
+                } else {
+                    match pattern {
+                        P::None => P::Chessboard,
+                        P::Chessboard => P::Acircles,
+                        P::Acircles => P::None,
+                    }
+                };
+                self.detector_params.pattern.store(new_value, Ordering::Relaxed);
             }
             Some(KeyCode::F1) => {
                 self.reset.store(true, Ordering::Relaxed);
@@ -459,15 +522,19 @@ fn reader_thread(
     }
 }
 
-fn opencv_thread(raw_image: Receiver<(Port, [u8; 98*98])>, board_size: Arc<(AtomicU16, AtomicU16)>, upside_down: bool) {
+fn opencv_thread(raw_image: Receiver<(Port, [u8; 98*98])>, detector_params: Arc<DetectorParams>, upside_down: bool) {
     loop {
         let (port, image) = raw_image.recv().unwrap();
-        let board_cols = board_size.0.load(Ordering::Relaxed);
-        let board_rows = board_size.1.load(Ordering::Relaxed);
-        match port {
-            Port::Wf => chessboard::get_chessboard_corners(&image, Port::Wf, board_rows, board_cols, true, upside_down),
-            Port::Nf => chessboard::get_chessboard_corners(&image, Port::Nf, board_rows, board_cols, true, upside_down),
-        };
+        let board_cols = detector_params.cols.load(Ordering::Relaxed);
+        let board_rows = detector_params.rows.load(Ordering::Relaxed);
+        let pattern = detector_params.pattern.load(Ordering::Relaxed);
+        match (pattern, port) {
+            (DetectorPattern::None, _) => (),
+            (DetectorPattern::Chessboard, Port::Wf) => { chessboard::get_chessboard_corners(&image, Port::Wf, board_rows, board_cols, true, upside_down); },
+            (DetectorPattern::Chessboard, Port::Nf) => { chessboard::get_chessboard_corners(&image, Port::Nf, board_rows, board_cols, true, upside_down); },
+            (DetectorPattern::Acircles, Port::Wf) => { circles::get_circles_centers(&image, Port::Wf, board_rows, board_cols, true, upside_down); },
+            (DetectorPattern::Acircles, Port::Nf) => { circles::get_circles_centers(&image, Port::Nf, board_rows, board_cols, true, upside_down); },
+        }
     }
 }
 
