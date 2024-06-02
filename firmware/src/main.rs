@@ -140,7 +140,7 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 //     );
 // }
 
-const NUM_BUFFERS: usize = 6;
+const NUM_BUFFERS: usize = 2;
 static SHARED_BUFFERS: StaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = StaticCell::new();
 
 #[embassy_executor::main]
@@ -240,16 +240,12 @@ async fn main(spawner: Spawner) {
         &mut pinout!(p.nf_mosi),
         config,
     );
-    let nf_free_buffers = Channel::<NoopRawMutex, _, 3>::new();
-    let wf_free_buffers = Channel::<NoopRawMutex, _, 3>::new();
+    let nf_free_buffers = Channel::<NoopRawMutex, _, 1>::new();
+    let wf_free_buffers = Channel::<NoopRawMutex, _, 1>::new();
     let image_buffers = Channel::<NoopRawMutex, _, NUM_BUFFERS>::new();
-    let [b0, b1, b2, b3, b4, b5] = shared_buffers;
+    let [b0, b1] = shared_buffers;
     nf_free_buffers.try_send(b0).unwrap();
-    nf_free_buffers.try_send(b1).unwrap();
-    nf_free_buffers.try_send(b2).unwrap();
-    wf_free_buffers.try_send(b3).unwrap();
-    wf_free_buffers.try_send(b4).unwrap();
-    wf_free_buffers.try_send(b5).unwrap();
+    wf_free_buffers.try_send(b1).unwrap();
     let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender());
     let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender());
     let buffer_mgmt_loop = async {
