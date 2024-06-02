@@ -349,7 +349,7 @@ impl event::EventHandler<ggez::GameError> for MainState {
                     move || {
                         match pat {
                             DetectorPattern::Chessboard => chessboard::my_stereo_calibrate(&wf, &nf, board_rows, board_cols, upside_down),
-                            DetectorPattern::Acircles => eprintln!("Not implemented!"),
+                            DetectorPattern::Acircles => circles::my_stereo_calibrate(&wf, &nf, board_rows, board_cols, upside_down),
                             DetectorPattern::None => eprintln!("No pattern selected"),
                         }
                     }

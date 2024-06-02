@@ -1,6 +1,6 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_NORMALIZE_IMAGE }, core::{flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC }, core::{flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
-use crate::Port;
+use crate::{chessboard::read_camara_params, Port};
 
 /// Returns None if no circles were found.
 pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool) -> Option<Vector<Point2f>> {
@@ -50,7 +50,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         &im2,
         board_size,
         &mut centers,
-        CALIB_CB_ASYMMETRIC_GRID,
+        CALIB_CB_ASYMMETRIC_GRID | CALIB_CB_CLUSTERING,
         &feature2d_detector,
         circle_grid_finder_params,
     ).unwrap();
@@ -105,16 +105,7 @@ pub fn calibrate_single(
     upside_down: bool,
 ) {
     let square_length = 1.0; // Specify the size of the squares between dots
-    let mut board_points = Vector::<Point3f>::new();
-    for row in 0..board_rows {
-        for col in 0..board_cols {
-            board_points.push(Point3f::new(
-                (2*col + row%2) as f32 * square_length,
-                row as f32 * square_length,
-                0.0,
-            ));
-        }
-    }
+    let board_points = board_points(board_rows, board_cols, square_length);
 
     let corners_arr = images.iter().filter_map(|image| {
         get_circles_centers(image, port, board_rows, board_cols, false, upside_down)
@@ -154,5 +145,93 @@ pub fn calibrate_single(
         fs.release().unwrap();
     } else {
         println!("Failed to open {}", filename);
+    }
+}
+
+fn board_points(board_rows: u16, board_cols: u16, square_length: f32) -> Vector<opencv::core::Point3_<f32>> {
+    let mut board_points = Vector::<Point3f>::new();
+    for row in 0..board_rows {
+        for col in 0..board_cols {
+            board_points.push(Point3f::new(
+                (2*col + row%2) as f32 * square_length,
+                row as f32 * square_length,
+                0.0,
+            ));
+        }
+    }
+    board_points
+}
+
+pub fn my_stereo_calibrate(
+    wf: &[[u8; 98 * 98]],
+    nf: &[[u8; 98 * 98]],
+    board_rows: u16,
+    board_cols: u16,
+    upside_down: bool,
+) {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
+        println!("Couldn't get nearfield intrinsics");
+        return;
+    };
+    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params("widefield.json") else {
+        println!("Couldn't get widefield intrinsics");
+        return;
+    };
+
+    let square_length = 1.26; // 7x5 circles grid that i printed out
+    let object_points = board_points(board_rows, board_cols, square_length);
+
+    let mut object_points_arr = Vector::<Vector<Point3f>>::new();
+    let mut wf_points_arr = Vector::<Vector<Point2f>>::new();
+    let mut nf_points_arr = Vector::<Vector<Point2f>>::new();
+    for (wf_image, nf_image) in wf.iter().zip(nf) {
+        let Some(wf_points) =
+            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, upside_down)
+        else {
+            continue;
+        };
+        let Some(nf_points) =
+            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, upside_down)
+        else {
+            continue;
+        };
+        wf_points_arr.push(wf_points);
+        nf_points_arr.push(nf_points);
+        object_points_arr.push(object_points.clone());
+    }
+    let mut r = Mat::default();
+    let mut t = Mat::default();
+    let criteria = TermCriteria {
+        typ: TermCriteria_EPS + TermCriteria_COUNT,
+        max_count: 30,
+        epsilon: 1e-6,
+    };
+    let reproj_err = stereo_calibrate(
+        &object_points_arr,
+        &wf_points_arr,
+        &nf_points_arr,
+        wf_camera_matrix,
+        wf_dist_coeffs,
+        nf_camera_matrix,
+        nf_dist_coeffs,
+        (98, 98).into(),
+        &mut r,
+        &mut t,
+        &mut no_array(),
+        &mut no_array(),
+        CALIB_FIX_INTRINSIC,
+        criteria,
+    )
+    .unwrap();
+    println!("RMS error: {}", reproj_err);
+
+    let mut fs = FileStorage::new_def("stereo.json", FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
+    if fs.is_opened().unwrap() {
+        fs.write_mat("r", &r).unwrap();
+        fs.write_mat("t", &t).unwrap();
+        fs.write_f64("rms_error", reproj_err).unwrap();
+        fs.write_i32("num_captures", wf.len() as i32).unwrap();
+    } else {
+        println!("Failed to open stereo.json");
     }
 }
