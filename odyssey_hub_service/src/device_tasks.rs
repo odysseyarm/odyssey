@@ -441,7 +441,7 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
     let mut device = device.clone();
     device.uuid = config.uuid.clone();
 
-    // let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
+    let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
 
     let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
 

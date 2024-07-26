@@ -182,7 +182,15 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: C
         while let Some(message) = receiver.recv().await {
             match message {
                 device_tasks::Message::Connect(d) => {
-                    dl.lock().push(d);
+                    dl.lock().push(d.clone());
+                    event_sender.send(
+                        odyssey_hub_common::events::Event::DeviceEvent({
+                            odyssey_hub_common::events::DeviceEvent {
+                                device: d.clone(),
+                                kind: odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
+                            }
+                        })
+                    ).unwrap();
                 },
                 device_tasks::Message::Disconnect(d) => {
                     let mut dl = dl.lock();
@@ -190,6 +198,14 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: C
                     if let Some(i) = i {
                         dl.remove(i);
                     }
+                    event_sender.send(
+                        odyssey_hub_common::events::Event::DeviceEvent({
+                            odyssey_hub_common::events::DeviceEvent {
+                                device: d.clone(),
+                                kind: odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
+                            }
+                        })
+                    ).unwrap();
                 },
                 device_tasks::Message::Event(e) => {
                     event_sender.send(e).unwrap();

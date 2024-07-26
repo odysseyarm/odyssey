@@ -15,6 +15,8 @@ enum class ClientError {
 enum class DeviceEventKindTag {
   TrackingEvent,
   ImpactEvent,
+  ConnectEvent,
+  DisconnectEvent,
 };
 
 enum class DeviceTag {
@@ -111,9 +113,19 @@ struct ImpactEvent {
   uint32_t timestamp;
 };
 
+struct ConnectEvent {
+  uint8_t _unused;
+};
+
+struct DisconnectEvent {
+  uint8_t _unused;
+};
+
 union DeviceEventKindU {
   TrackingEvent tracking_event;
   ImpactEvent impact_event;
+  ConnectEvent connect_event;
+  DisconnectEvent disconnect_event;
 };
 
 struct DeviceEventKind {

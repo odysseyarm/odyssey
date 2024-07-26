@@ -129,6 +129,8 @@ pub struct DeviceEventKind {
 pub enum DeviceEventKindTag {
     TrackingEvent,
     ImpactEvent,
+    ConnectEvent,
+    DisconnectEvent,
 }
 
 #[repr(C)]
@@ -136,6 +138,8 @@ pub enum DeviceEventKindTag {
 pub union DeviceEventKindU {
     tracking_event: TrackingEvent,
     impact_event: ImpactEvent,
+    connect_event: ConnectEvent,
+    disconnect_event: DisconnectEvent,
 }
 
 #[repr(C)]
@@ -152,6 +156,18 @@ pub struct TrackingEvent {
 #[derive(Copy, Clone)]
 pub struct ImpactEvent {
     timestamp: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ConnectEvent {
+    _unused: u8,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct DisconnectEvent {
+    _unused: u8,
 }
 
 #[repr(C)]
@@ -186,6 +202,8 @@ impl From<odyssey_hub_common::events::Event> for Event {
                             tag: match device_event.kind {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => DeviceEventKindTag::TrackingEvent,
                                 odyssey_hub_common::events::DeviceEventKind::ImpactEvent(_) => DeviceEventKindTag::ImpactEvent,
+                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent => DeviceEventKindTag::ConnectEvent,
+                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => DeviceEventKindTag::DisconnectEvent,
                             },
                             u: match device_event.kind {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => DeviceEventKindU {
@@ -201,6 +219,12 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                     impact_event: ImpactEvent {
                                         timestamp: impact_event.timestamp,
                                     },
+                                },
+                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent => DeviceEventKindU {
+                                    connect_event: ConnectEvent { _unused: 0 },
+                                },
+                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => DeviceEventKindU {
+                                    disconnect_event: DisconnectEvent { _unused: 0 },
                                 },
                             },
                         },

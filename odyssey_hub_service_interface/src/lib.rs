@@ -139,6 +139,12 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                             },
                                         )
                                     }
+                                    odyssey_hub_common::events::DeviceEventKind::ConnectEvent => {
+                                        proto::device_event::DeviceEventOneof::Connect(proto::device_event::ConnectEvent {})
+                                    }
+                                    odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
+                                        proto::device_event::DeviceEventOneof::Disconnect(proto::device_event::DisconnectEvent {})
+                                    }
                                 })
                             }
                         ),
@@ -180,6 +186,12 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                                         timestamp,
                                     },
                                 )
+                            },
+                            proto::device_event::DeviceEventOneof::Connect(_) => {
+                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent
+                            },
+                            proto::device_event::DeviceEventOneof::Disconnect(_) => {
+                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent
                             },
                         }
                     }

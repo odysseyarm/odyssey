@@ -14,6 +14,8 @@ pub struct DeviceEvent {
 pub enum DeviceEventKind {
     TrackingEvent(TrackingEvent),
     ImpactEvent(ImpactEvent),
+    ConnectEvent,
+    DisconnectEvent,
 }
 
 #[derive(Clone, Copy, Debug)]

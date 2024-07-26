@@ -350,6 +350,24 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=1e1119d169ea32b46c7f27ad27afe5bb6063bf35#1e1119d169ea32b46c7f27ad27afe5bb6063bf35"
+dependencies = [
+ "arrayvec 0.7.4",
+ "cam-geom",
+ "cv",
+ "eskf",
+ "nalgebra 0.32.5",
+ "num",
+ "opencv-ros-camera",
+ "serde",
+ "serde_json",
+ "simba 0.8.1",
+ "sqpnp",
+]
+
+[[package]]
+name = "ats_cv"
+version = "0.1.0"
 source = "git+https://github.com/odysseyarm/ats_cv.git#d04b755643e4ac5dc676ebfbbd9eec69474deba6"
 dependencies = [
  "arrayvec 0.7.4",
@@ -371,7 +389,7 @@ version = "0.1.0"
 source = "git+https://github.com/odysseyarm/ats-vision-tool#165eed174791823612764f9700f7c9dd9315a5ba"
 dependencies = [
  "anyhow",
- "ats_cv",
+ "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git)",
  "enumn",
  "nalgebra 0.32.5",
  "opencv-ros-camera",
@@ -2908,7 +2926,7 @@ version = "0.1.0"
 dependencies = [
  "ahrs",
  "anyhow",
- "ats_cv",
+ "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=1e1119d169ea32b46c7f27ad27afe5bb6063bf35)",
  "ats_usb",
  "cam-geom",
  "futures",

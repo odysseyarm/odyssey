@@ -100,6 +100,12 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                     Console.WriteLine("Printing impact event:");
                     Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
                     break;
+                case OdysseyHubClient.DeviceEvent.Connect _:
+                    Console.WriteLine("Device connected");
+                    break;
+                case OdysseyHubClient.DeviceEvent.Disconnect _:
+                    Console.WriteLine("Device disconnected");
+                    break;
                 default:
                     break;
             }

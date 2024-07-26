@@ -14,6 +14,8 @@ typedef enum ClientError {
 typedef enum DeviceEventKindTag {
   TrackingEvent,
   ImpactEvent,
+  ConnectEvent,
+  DisconnectEvent,
 } DeviceEventKindTag;
 
 typedef enum DeviceTag {
@@ -107,9 +109,19 @@ typedef struct ImpactEvent {
   uint32_t timestamp;
 } ImpactEvent;
 
+typedef struct ConnectEvent {
+  uint8_t _unused;
+} ConnectEvent;
+
+typedef struct DisconnectEvent {
+  uint8_t _unused;
+} DisconnectEvent;
+
 typedef union DeviceEventKindU {
   struct TrackingEvent tracking_event;
   struct ImpactEvent impact_event;
+  struct ConnectEvent connect_event;
+  struct DisconnectEvent disconnect_event;
 } DeviceEventKindU;
 
 typedef struct DeviceEventKind {

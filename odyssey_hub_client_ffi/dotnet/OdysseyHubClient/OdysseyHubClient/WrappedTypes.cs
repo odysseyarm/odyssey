@@ -124,6 +124,12 @@ namespace Radiosity.OdysseyHubClient
                 case CsBindgen.DeviceEventKindTag.ImpactEvent:
                     kind = new Impact(deviceEvent.kind.u.impact_event);
                     break;
+                case CsBindgen.DeviceEventKindTag.ConnectEvent:
+                    kind = new Connect();
+                    break;
+                case CsBindgen.DeviceEventKindTag.DisconnectEvent:
+                    kind = new Disconnect();
+                    break;
                 default:
                     throw new Exception("Unknown device tag");
             }
@@ -156,6 +162,16 @@ namespace Radiosity.OdysseyHubClient
             internal Impact(CsBindgen.ImpactEvent impact) {
                 timestamp = impact.timestamp;
             }
+        }
+
+        public class Connect : IKind
+        {
+            internal Connect() { }
+        }
+
+        public class Disconnect : IKind
+        {
+            internal Disconnect() { }
         }
     }
 
