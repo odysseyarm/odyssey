@@ -1,3 +1,4 @@
-fn main() -> ggez::GameResult {
-    viewer::main()
+#[macroquad::main("donger viewer")]
+async fn main() {
+    viewer::main().await
 }

@@ -10,7 +10,7 @@ default-run = "viewer"
 atomic = { version = "0.6.0", default-features = false, features = ["std"] }
 bytemuck = { version = "1.16.0", features = ["derive"] }
 clap = { version = "4.5.4", features = ["derive"] }
-ggez = "0.9.3"
 image = { version = "0.24.8", default-features = false, features = ["png"] }
+macroquad = "0.4.11"
 opencv = "0.91.1"
 serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }

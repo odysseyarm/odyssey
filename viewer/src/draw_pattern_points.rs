@@ -1,44 +1,63 @@
-use ggez::{glam::{vec2, vec3, vec4, Mat4, Vec4Swizzles}, graphics::{Canvas, Color, DrawMode, DrawParam, Mesh, Transform}, Context};
+use macroquad::prelude::*;
 use opencv::core::Point2f;
 
-pub struct DrawPatternPoints {
-    circle: ggez::graphics::Mesh,
-}
+pub struct DrawPatternPoints;
 
 impl DrawPatternPoints {
-    pub fn new(ctx: &mut Context) -> Self {
-        Self {
-            circle: Mesh::new_circle(ctx, DrawMode::stroke(1.0), vec2(0., 0.), 6.0, 1.0, Color::WHITE).unwrap(),
-        }
+    pub fn new() -> Self {
+        Self {}
     }
 
-    pub fn draw(&self, ctx: &mut Context, canvas: &mut Canvas, points: &[Point2f], cols: usize, pattern_was_found: bool, transform: Transform) {
-        let transform = Mat4::from(transform.to_bare_matrix());
+    pub fn draw(
+        &self,
+        points: &[Point2f],
+        cols: usize,
+        pattern_was_found: bool,
+        transform: Mat4,
+    ) {
         let colors = [
-            (255, 0, 0),
-            (255,128,0),
-            (200,200,0),
-            (0,255,0),
-            (0,200,200),
-            (0,0,255),
-            (255,0,255)
+            Color::from_rgba(255, 0, 0, 255),
+            Color::from_rgba(255, 128, 0, 255),
+            Color::from_rgba(200, 200, 0, 255),
+            Color::from_rgba(0, 255, 0, 255),
+            Color::from_rgba(0, 200, 200, 255),
+            Color::from_rgba(0, 0, 255, 255),
+            Color::from_rgba(255, 0, 255, 255),
         ];
+
         for (i, point) in points.iter().enumerate() {
-            if pattern_was_found {
-                canvas.draw(
-                    &self.circle,
-                    DrawParam::default()
-                        .dest((transform * vec4(point.x, point.y, 0., 1.)).xy())
-                        .color(colors[i / cols % colors.len()])
-                );
+            let transformed_point = transform.transform_point3(vec3(point.x, point.y, 0.0));
+            let color = if pattern_was_found {
+                colors[i / cols % colors.len()]
             } else {
-                canvas.draw(
-                    &self.circle,
-                    DrawParam::default()
-                        .dest((transform * vec4(point.x, point.y, 0., 1.)).xy())
-                        .color(colors[0])
-                );
-            }
+                Color::from_rgba(0, 0, 255, 255)
+            };
+
+            draw_circle_lines(
+                transformed_point.x,
+                transformed_point.y,
+                6.0,
+                1.0,
+                color,
+            );
         }
     }
+}
+
+// Define a function to create the transformation matrix
+pub fn get_transform_matrix(scale: Vec2, rotation: f32, dest: Vec2, offset: Vec2) -> Mat4 {
+    // Create a scaling matrix
+    let scale_matrix = Mat4::from_scale(Vec3::new(scale.x, scale.y, 1.0));
+    
+    // Create a rotation matrix (rotation in radians)
+    let rotation_matrix = Mat4::from_rotation_z(rotation);
+    
+    // Create a translation matrix with destination offset
+    let translation_matrix = Mat4::from_translation(dest.extend(0.0));
+    
+    // Create a translation matrix for offset
+    let offset_matrix = Mat4::from_translation(-offset.extend(0.0));
+
+    // Combine the transformations: translation * rotation * scale * offset
+    translation_matrix * rotation_matrix * scale_matrix * offset_matrix
 }
