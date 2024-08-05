@@ -115,6 +115,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                             if let Some(i) = i {
                                 stream_task_handles[i].1.abort();
                                 stream_task_handles.remove(i);
+                                let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(d.clone()))).await;
                             }
                         }
                     },
