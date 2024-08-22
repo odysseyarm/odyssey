@@ -387,12 +387,12 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=cf5a87032c81283b228f7b18bf7d97be1c844f7e#cf5a87032c81283b228f7b18bf7d97be1c844f7e"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=d9427d304643863d92c919c68376f6de7f22de01#d9427d304643863d92c919c68376f6de7f22de01"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
  "cv",
- "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=cf5a87032c81283b228f7b18bf7d97be1c844f7e)",
+ "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=d9427d304643863d92c919c68376f6de7f22de01)",
  "microfft",
  "nalgebra 0.32.6",
  "num",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git#e65665978d3833759dcb4a2160cd530ca0927882"
+source = "git+https://github.com/odysseyarm/ats_cv.git#d9427d304643863d92c919c68376f6de7f22de01"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
@@ -425,7 +425,7 @@ dependencies = [
 [[package]]
 name = "ats_usb"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats-vision-tool#9dd218e186174abfeba6ef9d9e6bf7c38e08c61c"
+source = "git+https://github.com/odysseyarm/ats-vision-tool#c60ae78dbfc93cbb76dd77a85b1b3c5cb274e9fd"
 dependencies = [
  "anyhow",
  "argmin",
@@ -1276,7 +1276,7 @@ checksum = "a0474425d51df81997e2f90a21591180b38eccf27292d755f3e30750225c175b"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=cf5a87032c81283b228f7b18bf7d97be1c844f7e#cf5a87032c81283b228f7b18bf7d97be1c844f7e"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=d9427d304643863d92c919c68376f6de7f22de01#d9427d304643863d92c919c68376f6de7f22de01"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -1284,7 +1284,7 @@ dependencies = [
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git#e65665978d3833759dcb4a2160cd530ca0927882"
+source = "git+https://github.com/odysseyarm/ats_cv.git#d9427d304643863d92c919c68376f6de7f22de01"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -3012,7 +3012,7 @@ dependencies = [
  "ahrs",
  "anyhow",
  "arrayvec 0.7.6",
- "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=cf5a87032c81283b228f7b18bf7d97be1c844f7e)",
+ "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=d9427d304643863d92c919c68376f6de7f22de01)",
  "ats_usb",
  "cam-geom",
  "futures",
@@ -3474,9 +3474,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7"
+checksum = "b5b9d34b8991d19d98081b46eacdd8eb58c6f2b201139f7c5f643cc155a633af"
 dependencies = [
  "proc-macro2",
 ]

@@ -78,13 +78,13 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
     switch (@event) {
         case OdysseyHubClient.DeviceEvent deviceEvent:
             switch (deviceEvent.kind) {
-                case OdysseyHubClient.DeviceEvent.Accelerometer accelerometer:
-                    Console.WriteLine("Printing accelerometer event:");
-                    Console.WriteLine("\ttimestamp: {0}", accelerometer.timestamp);
-                    Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.acceleration.x, accelerometer.acceleration.y, accelerometer.acceleration.z);
-                    Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
-                    Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
-                    break;
+                // case OdysseyHubClient.DeviceEvent.Accelerometer accelerometer:
+                //     Console.WriteLine("Printing accelerometer event:");
+                //     Console.WriteLine("\ttimestamp: {0}", accelerometer.timestamp);
+                //     Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.acceleration.x, accelerometer.acceleration.y, accelerometer.acceleration.z);
+                //     Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
+                //     Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
+                //     break;
                 case OdysseyHubClient.DeviceEvent.Tracking tracking:
                     // Console.WriteLine(tracking);
                     Console.WriteLine("Printing tracking event:");

@@ -27,7 +27,7 @@ ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 nalgebra = "0.32.5"
 cam-geom = "0.14.1"
 opencv-ros-camera = "0.14.1"
-ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git", rev = "cf5a87032c81283b228f7b18bf7d97be1c844f7e" }
+ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git", rev = "d9427d304643863d92c919c68376f6de7f22de01" }
 sqpnp = { git = "https://github.com/0e4ef622/sqpnp.git" }
 socket2 = "0.5.7"
 arrayvec = "0.7.4"
