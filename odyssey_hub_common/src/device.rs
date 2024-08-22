@@ -29,7 +29,6 @@ impl PartialEq for UdpDevice {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (a, b) => a.addr == b.addr && a.id == b.id,
-            _ => false,
         }
     }
 }

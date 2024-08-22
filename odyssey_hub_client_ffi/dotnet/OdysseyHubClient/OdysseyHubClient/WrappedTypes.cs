@@ -8,7 +8,7 @@ namespace Radiosity.OdysseyHubClient
     public interface IDevice;
 
     /// <summary>
-    /// Device that is connected to Odyssey Hub through UDP multicast.
+    /// Device that is connected to Odyssey Hub through UDP.
     /// </summary>
     public class UdpDevice: IDevice {
         public byte id;
@@ -118,6 +118,9 @@ namespace Radiosity.OdysseyHubClient
                     throw new Exception("Unknown device type");
             }
             switch (deviceEvent.kind.tag) {
+                case CsBindgen.DeviceEventKindTag.AccelerometerEvent:
+                    kind = new Accelerometer(deviceEvent.kind.u.accelerometer_event);
+                    break;
                 case CsBindgen.DeviceEventKindTag.TrackingEvent:
                     kind = new Tracking(deviceEvent.kind.u.tracking_event);
                     break;
@@ -137,12 +140,27 @@ namespace Radiosity.OdysseyHubClient
 
         public interface IKind;
 
+        public class Accelerometer : IKind
+        {
+            public uint timestamp;
+            public Matrix3x1<double> acceleration;
+            public Matrix3x1<double> angular_velocity;
+            public Matrix3x1<double> euler_angles;
+
+            internal Accelerometer(CsBindgen.AccelerometerEvent accelerometer) {
+                timestamp = accelerometer.timestamp;
+                acceleration = new Matrix3x1<double> { x = accelerometer.accel.x, y = accelerometer.accel.y, z = accelerometer.accel.z };
+                angular_velocity = new Matrix3x1<double> { x = accelerometer.gyro.x, y = accelerometer.gyro.y, z = accelerometer.gyro.z };
+                euler_angles = new Matrix3x1<double> { x = accelerometer.euler_angles.x, y = accelerometer.euler_angles.y, z = accelerometer.euler_angles.z };
+            }
+        }
+
         public class Tracking : IKind {
             public uint timestamp;
             public Matrix2x1<double> aimpoint;
             public Pose? pose;
 
-            /// <value>Property <c>screen_id</c> is always 0 (unimplemented).</value>
+            /// <value>Property <c>screen_id</c> is 6 when the screen being aimed at is uncertain. Otherwise it will be 0-5 (6 screen ids).</value>
             public uint screen_id;
 
             internal Tracking(CsBindgen.TrackingEvent tracking) {
@@ -176,7 +194,7 @@ namespace Radiosity.OdysseyHubClient
     }
 
     /// <summary>
-    /// The pose is relative to the screen being aimed at. The translation matrix is currently not normalized or scaled.
+    /// The pose is relative to the screen being aimed at. The translation matrix is in meters based on the assumed screen height.
     /// </summary>
     public class Pose {
         public Matrix3x1<double> translation;

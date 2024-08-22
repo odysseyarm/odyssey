@@ -12,6 +12,7 @@ pub struct DeviceEvent {
 
 #[derive(Clone, Copy, Debug)]
 pub enum DeviceEventKind {
+    AccelerometerEvent(AccelerometerEvent),
     TrackingEvent(TrackingEvent),
     ImpactEvent(ImpactEvent),
     ConnectEvent,
@@ -22,6 +23,14 @@ pub enum DeviceEventKind {
 pub struct Pose {
     pub rotation: nalgebra::Matrix3<f64>,
     pub translation: nalgebra::Matrix3x1<f64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AccelerometerEvent {
+    pub timestamp: u32,
+    pub accel: nalgebra::Vector3<f64>,
+    pub gyro: nalgebra::Vector3<f64>,
+    pub euler_angles: nalgebra::Vector3<f64>,
 }
 
 #[derive(Clone, Copy, Debug)]

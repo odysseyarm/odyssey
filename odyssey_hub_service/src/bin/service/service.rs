@@ -22,7 +22,7 @@ pub fn start() {
 
 #[cfg(target_os = "windows")]
 #[tokio::main]
-async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::Error> {
+async fn service_main(_arguments: Vec<OsString>) {
     let (sender, receiver) = mpsc::unbounded_channel();
 
     let event_handler = {
@@ -42,7 +42,13 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
     };
 
     // Register system service event handler
-    let status_handle = service_control_handler::register("OdysseyService", event_handler)?;
+    let status_handle = match service_control_handler::register("OdysseyService", event_handler) {
+        Ok(status_handle) => status_handle,
+        Err(e) => {
+            eprintln!("Error registering service control handler: {:?}", e);
+            return;
+        }
+    };
 
     let running_status = ServiceStatus {
         // Should match the one from system service registry
@@ -77,7 +83,7 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
     }
 
     // Tell the system that service has stopped.
-    status_handle.set_service_status(ServiceStatus {
+    match status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: ServiceState::Stopped,
         controls_accepted: ServiceControlAccept::empty(),
@@ -85,10 +91,10 @@ async fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,
-    })?;
-
-
-    Ok(())
+    }) {
+        Ok(_) => (),
+        Err(e) => eprintln!("Error setting service status: {:?}", e),
+    }
 }
 
 #[cfg(target_os = "windows")]

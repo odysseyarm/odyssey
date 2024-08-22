@@ -51,6 +51,24 @@ impl From<nalgebra::Matrix3x1<f64>> for Matrix3x1f64 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct Vector3f64 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl From<nalgebra::Vector3<f64>> for Vector3f64 {
+    fn from(v: nalgebra::Vector3<f64>) -> Self {
+        Self {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct Vector2f64 {
     pub x: f64,
     pub y: f64,

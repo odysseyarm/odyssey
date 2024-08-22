@@ -116,6 +116,28 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                             proto::DeviceEvent {
                                 device: Some(device.into()),
                                 device_event_oneof: Some(match kind {
+                                    odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(odyssey_hub_common::events::AccelerometerEvent { timestamp, accel, gyro, euler_angles }) => {
+                                        proto::device_event::DeviceEventOneof::Accelerometer(
+                                            proto::device_event::AccelerometerEvent {
+                                                timestamp,
+                                                acceleration: Some(proto::Vector3 {
+                                                    x: accel.x,
+                                                    y: accel.y,
+                                                    z: accel.z,
+                                                }),
+                                                angular_velocity: Some(proto::Vector3 {
+                                                    x: gyro.x,
+                                                    y: gyro.y,
+                                                    z: gyro.z,
+                                                }),
+                                                euler_angles: Some(proto::Vector3 {
+                                                    x: euler_angles.x,
+                                                    y: euler_angles.y,
+                                                    z: euler_angles.z,
+                                                }),
+                                            },
+                                        )
+                                    }
                                     odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent { timestamp, aimpoint, pose, screen_id }) => {
                                         proto::device_event::DeviceEventOneof::Tracking(
                                             proto::device_event::TrackingEvent {
@@ -163,6 +185,16 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                     odyssey_hub_common::events::DeviceEvent {
                         device: device.unwrap().into(),
                         kind: match device_event_oneof.unwrap() {
+                            proto::device_event::DeviceEventOneof::Accelerometer(proto::device_event::AccelerometerEvent { timestamp, acceleration, angular_velocity, euler_angles }) => {
+                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(
+                                    odyssey_hub_common::events::AccelerometerEvent {
+                                        timestamp,
+                                        accel: nalgebra::Vector3::new(acceleration.clone().unwrap().x, acceleration.clone().unwrap().y, acceleration.clone().unwrap().z),
+                                        gyro: nalgebra::Vector3::new(angular_velocity.clone().unwrap().x, angular_velocity.clone().unwrap().y, angular_velocity.clone().unwrap().z),
+                                        euler_angles: nalgebra::Vector3::new(euler_angles.clone().unwrap().x, euler_angles.clone().unwrap().y, euler_angles.clone().unwrap().z),
+                                    },
+                                )
+                            },
                             proto::device_event::DeviceEventOneof::Tracking(proto::device_event::TrackingEvent { timestamp, aimpoint, pose, screen_id }) => {
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(
                                     odyssey_hub_common::events::TrackingEvent {

@@ -55,6 +55,12 @@ message Vector2 {
   double y = 2;
 }
 
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
 message Pose {
   Matrix3x3 rotation = 1;
   Matrix3x1 translation = 2;
@@ -62,6 +68,12 @@ message Pose {
 
 message DeviceEvent {
   Device device = 1;
+  message AccelerometerEvent {
+    uint32 timestamp = 1;
+    Vector3 acceleration = 2;
+    Vector3 angular_velocity = 3;
+    Vector3 euler_angles = 4;
+  }
   message TrackingEvent {
     uint32 timestamp = 1;
     Vector2 aimpoint = 2;
@@ -74,10 +86,11 @@ message DeviceEvent {
   message ConnectEvent {}
   message DisconnectEvent {}
   oneof device_event_oneof {
-    TrackingEvent tracking = 2;
-    ImpactEvent impact = 3;
-    ConnectEvent connect = 4;
-    DisconnectEvent disconnect = 5;
+    AccelerometerEvent accelerometer = 2;
+    TrackingEvent tracking = 3;
+    ImpactEvent impact = 4;
+    ConnectEvent connect = 5;
+    DisconnectEvent disconnect = 6;
   }
 }
 

@@ -127,6 +127,7 @@ pub struct DeviceEventKind {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum DeviceEventKindTag {
+    AccelerometerEvent,
     TrackingEvent,
     ImpactEvent,
     ConnectEvent,
@@ -136,10 +137,20 @@ pub enum DeviceEventKindTag {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union DeviceEventKindU {
+    accelerometer_event: AccelerometerEvent,
     tracking_event: TrackingEvent,
     impact_event: ImpactEvent,
     connect_event: ConnectEvent,
     disconnect_event: DisconnectEvent,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct AccelerometerEvent {
+    timestamp: u32,
+    accel: crate::funny::Vector3f64,
+    gyro: crate::funny::Vector3f64,
+    euler_angles: crate::funny::Vector3f64,
 }
 
 #[repr(C)]
@@ -200,12 +211,21 @@ impl From<odyssey_hub_common::events::Event> for Event {
                         device: device_event.device.into(),
                         kind: DeviceEventKind {
                             tag: match device_event.kind {
+                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(_) => DeviceEventKindTag::AccelerometerEvent,
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => DeviceEventKindTag::TrackingEvent,
                                 odyssey_hub_common::events::DeviceEventKind::ImpactEvent(_) => DeviceEventKindTag::ImpactEvent,
                                 odyssey_hub_common::events::DeviceEventKind::ConnectEvent => DeviceEventKindTag::ConnectEvent,
                                 odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => DeviceEventKindTag::DisconnectEvent,
                             },
                             u: match device_event.kind {
+                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(accelerometer_event) => DeviceEventKindU {
+                                    accelerometer_event: AccelerometerEvent {
+                                        timestamp: accelerometer_event.timestamp,
+                                        accel: accelerometer_event.accel.into(),
+                                        gyro: accelerometer_event.gyro.into(),
+                                        euler_angles: accelerometer_event.euler_angles.into(),
+                                    },
+                                },
                                 odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => DeviceEventKindU {
                                     tracking_event: TrackingEvent {
                                         timestamp: tracking_event.timestamp,

@@ -12,6 +12,7 @@ typedef enum ClientError {
 } ClientError;
 
 typedef enum DeviceEventKindTag {
+  AccelerometerEvent,
   TrackingEvent,
   ImpactEvent,
   ConnectEvent,
@@ -69,6 +70,19 @@ typedef struct Device {
   union DeviceU u;
 } Device;
 
+typedef struct Vector3f64 {
+  double x;
+  double y;
+  double z;
+} Vector3f64;
+
+typedef struct AccelerometerEvent {
+  uint32_t timestamp;
+  struct Vector3f64 accel;
+  struct Vector3f64 gyro;
+  struct Vector3f64 euler_angles;
+} AccelerometerEvent;
+
 typedef struct Vector2f64 {
   double x;
   double y;
@@ -118,6 +132,7 @@ typedef struct DisconnectEvent {
 } DisconnectEvent;
 
 typedef union DeviceEventKindU {
+  struct AccelerometerEvent accelerometer_event;
   struct TrackingEvent tracking_event;
   struct ImpactEvent impact_event;
   struct ConnectEvent connect_event;

@@ -13,6 +13,7 @@ enum class ClientError {
 };
 
 enum class DeviceEventKindTag {
+  AccelerometerEvent,
   TrackingEvent,
   ImpactEvent,
   ConnectEvent,
@@ -73,6 +74,19 @@ struct Device {
   DeviceU u;
 };
 
+struct Vector3f64 {
+  double x;
+  double y;
+  double z;
+};
+
+struct AccelerometerEvent {
+  uint32_t timestamp;
+  Vector3f64 accel;
+  Vector3f64 gyro;
+  Vector3f64 euler_angles;
+};
+
 struct Vector2f64 {
   double x;
   double y;
@@ -122,6 +136,7 @@ struct DisconnectEvent {
 };
 
 union DeviceEventKindU {
+  AccelerometerEvent accelerometer_event;
   TrackingEvent tracking_event;
   ImpactEvent impact_event;
   ConnectEvent connect_event;
