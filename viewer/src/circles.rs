@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatExprTraitConst, MatTraitConst, Point, Point2f, Point3f, Ptr, Rect, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, VecN, Vector, CV_32S, CV_8UC1, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key, wait_key}, imgproc::{connected_components_with_stats, cvt_color, flood_fill, flood_fill_mask, resize, threshold, COLOR_GRAY2BGR, FLOODFILL_MASK_ONLY, INTER_CUBIC, INTER_NEAREST, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
 use crate::{chessboard::read_camara_params, Port};
 
@@ -9,6 +9,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
     flip(&tmp, &mut im, 0).unwrap();
+
     if !upside_down {
         flip(&tmp, &mut im, 0).unwrap();
         if port == Port::Wf {
@@ -24,59 +25,111 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
             opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
         }
     }
-    let mut im2 = Mat::default();
-    resize(&im, &mut im2, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
-    let mut centers = Vector::<Point2f>::default();
 
-    let mut params = SimpleBlobDetector_Params::default().unwrap();
-    params.min_threshold = 0.0;
-    params.max_threshold = 255.0;
-    params.min_area = 50.0;
-    params.max_area = 10000.0;
-    params.filter_by_area = true;
-    params.filter_by_convexity = true;
-    params.min_convexity = 0.87;
-    params.min_circularity = 0.1;
-    params.filter_by_circularity = true;
-    params.min_inertia_ratio = 0.01;
-    params.filter_by_inertia = true;
-    if invert {
-        params.blob_color = 255;
-    }
+    // let mut im2 = Mat::default();
+    let mut im2 = im.clone();
+    // resize(&im, &mut im2, Size::new(98, 98), 0.0, 0.0, INTER_CUBIC).unwrap();
 
-    let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
-    if asymmetric {
-        circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
-    } else {
-        circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::SYMMETRIC_GRID;
-    }
-
-    let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
-    let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
-
-    let pattern_flag = if asymmetric {
-        CALIB_CB_ASYMMETRIC_GRID
-    } else {
-        CALIB_CB_SYMMETRIC_GRID
-    };
-    let pattern_was_found = find_circles_grid(
-        &im2,
-        board_size,
-        &mut centers,
-        pattern_flag | CALIB_CB_CLUSTERING,
-        &feature2d_detector,
-        circle_grid_finder_params,
+    let mut thresholded = Mat::default();
+    threshold(
+        &im2, 
+        &mut thresholded, 
+        127.0, 
+        255.0, 
+        if invert { THRESH_BINARY } else { THRESH_BINARY_INV }
     ).unwrap();
 
-    centers.as_mut_slice().iter_mut().for_each(|x| {
-        *x *= 98.0 / 512. as f32;
-    });
+    // Label the initial seed regions (connected components in the thresholded image)
+    let mut seed_labels = Mat::default();
+    let mut seed_stats = Mat::default();
+    let mut seed_centroids = Mat::default();
 
-    if show {
-        display_found_circles(&im, board_size, &mut centers, pattern_was_found, port);
+    let num_seed_labels = connected_components_with_stats(
+        &thresholded,
+        &mut seed_labels,
+        &mut seed_stats,
+        &mut seed_centroids,
+        8,
+        CV_32S
+    ).unwrap();
+
+    let mut centers = Vector::<Point2f>::default();
+
+    // Now use these seeds to perform a flood fill or extended connected components
+    for label in 1..num_seed_labels {
+        let mut mask = Mat::default();
+        
+        // Create a binary mask for the current seed label
+        opencv::core::in_range(
+            &seed_labels,
+            &Scalar::from(label as f64),
+            &Scalar::from(label as f64),
+            &mut mask
+        ).unwrap();
+
+        let mut rect = Rect::default();
+
+        let mut _mask = Mat::default();
+
+        opencv::core::copy_make_border(
+            &mask,
+            &mut _mask,
+            1,
+            1,
+            1,
+            1,
+            opencv::core::BORDER_CONSTANT,
+            Scalar::all(0.0)
+        ).unwrap();
+
+        // Get the centroid of the current label
+        let centroid_x = *seed_centroids.at_2d::<f64>(label, 0).unwrap() as i32;
+        let centroid_y = *seed_centroids.at_2d::<f64>(label, 1).unwrap() as i32;
+        let seed_point = Point::new(centroid_x, centroid_y);
+
+        println!("Seed point: {:?}", seed_point);
+
+        let flood_fill_flags = FLOODFILL_MASK_ONLY | 8 | (255 << 8);
+
+        // Call the flood_fill function with the correct arguments
+        flood_fill_mask(
+            &mut im2, &mut _mask, seed_point, Scalar::all(255.0), &mut rect, Scalar::all(254.), Scalar::all(254.), flood_fill_flags
+        ).unwrap();
+
+        let rect = Rect::new(1, 1, 98, 98);
+        let mask = Mat::roi(&mut _mask, rect).unwrap();
+
+        // Mask the original image to consider only the region of the current blob
+        let mut masked_region = Mat::default();
+        bitwise_and(&im2, &im2, &mut masked_region, &mask).unwrap();
+
+        // imshow("img2", &im2).unwrap();
+
+        let mut im2_scaled = Mat::default();
+        resize(&im2, &mut im2_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
+        imshow("img2", &im2_scaled).unwrap();
+
+        let mut masked_region_scaled = Mat::default();
+        resize(&masked_region, &mut masked_region_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
+        imshow("masked_region", &masked_region_scaled).unwrap();
+        wait_key(0).unwrap();
+        
+        // Calculate moments on the masked region to get the centroid
+        let moments = opencv::imgproc::moments(&masked_region, true).unwrap();
+        if moments.m00 > 0. {
+            let center = Point2f::new(
+                (moments.m10 / moments.m00) as f32,
+                (moments.m01 / moments.m00) as f32,
+            );
+            centers.push(center);
+        }
     }
 
-    if pattern_was_found {
+    if show {
+        display_found_circles(&im, board_size, &mut centers, true, port);
+    }
+
+    if !centers.is_empty() {
         Some(centers)
     } else {
         None
