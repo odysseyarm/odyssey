@@ -76,7 +76,8 @@ struct DetectorParams {
 enum DetectorPattern {
     None,
     Chessboard,
-    Acircles,
+    AsymmetricCircles,
+    SymmetricCircles,
 }
 
 impl Display for DetectorPattern {
@@ -84,7 +85,8 @@ impl Display for DetectorPattern {
         match self {
             DetectorPattern::None => write!(f, "off"),
             DetectorPattern::Chessboard => write!(f, "chessboard"),
-            DetectorPattern::Acircles => write!(f, "acircles"),
+            DetectorPattern::AsymmetricCircles => write!(f, "acircles"),
+            DetectorPattern::SymmetricCircles => write!(f, "circles grid"),
         }
     }
 }
@@ -351,12 +353,23 @@ async fn handle_input(state: &mut MainState) {
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
-            DetectorPattern::Acircles => circles::calibrate_single(
+            DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
                 Port::Nf,
                 board_rows,
                 board_cols,
                 upside_down,
+                true,
+                false,
+            ),
+            DetectorPattern::SymmetricCircles => circles::calibrate_single(
+                &captures,
+                Port::Nf,
+                board_rows,
+                board_cols,
+                upside_down,
+                false,
+                true,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
@@ -379,12 +392,23 @@ async fn handle_input(state: &mut MainState) {
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
-            DetectorPattern::Acircles => circles::calibrate_single(
+            DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
                 Port::Wf,
                 board_rows,
                 board_cols,
                 upside_down,
+                false,
+                true,
+            ),
+            DetectorPattern::AsymmetricCircles => circles::calibrate_single(
+                &captures,
+                Port::Wf,
+                board_rows,
+                board_cols,
+                upside_down,
+                true,
+                false,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
@@ -415,12 +439,23 @@ async fn handle_input(state: &mut MainState) {
                 board_cols,
                 upside_down,
             ),
-            DetectorPattern::Acircles => circles::my_stereo_calibrate(
+            DetectorPattern::AsymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
                 &nf,
                 board_rows,
                 board_cols,
                 upside_down,
+                true,
+                false,
+            ),
+            DetectorPattern::SymmetricCircles => circles::my_stereo_calibrate(
+                &wf,
+                &nf,
+                board_rows,
+                board_cols,
+                upside_down,
+                false,
+                true,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -444,15 +479,17 @@ async fn handle_input(state: &mut MainState) {
         let pattern = state.detector_params.pattern.load(Ordering::Relaxed);
         let new_value = if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
             match pattern {
-                P::None => P::Acircles,
+                P::None => P::AsymmetricCircles,
+                P::AsymmetricCircles => P::SymmetricCircles,
+                P::SymmetricCircles => P::Chessboard,
                 P::Chessboard => P::None,
-                P::Acircles => P::Chessboard,
             }
         } else {
             match pattern {
                 P::None => P::Chessboard,
-                P::Chessboard => P::Acircles,
-                P::Acircles => P::None,
+                P::Chessboard => P::SymmetricCircles,
+                P::SymmetricCircles => P::AsymmetricCircles,
+                P::AsymmetricCircles => P::None,
             }
         };
         state.detector_params.pattern.store(new_value, Ordering::Relaxed);
@@ -510,47 +547,45 @@ fn reader_thread(
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
+        let port = match id {
+            0 => Port::Wf,
+            _ => Port::Nf,
+        };
         let gray: &[u8; 98 * 98] = &buf[..98 * 98].try_into().unwrap();
-        let pattern_points = match (pattern, id) {
-            (DetectorPattern::None, _) => None,
-            (DetectorPattern::Chessboard, 0) => {
+        let pattern_points = match pattern {
+            DetectorPattern::None => None,
+            DetectorPattern::Chessboard => {
                 chessboard::get_chessboard_corners(
                     &gray,
-                    Port::Wf,
+                    port,
                     board_rows,
                     board_cols,
                     false,
                     upside_down,
                 )
             }
-            (DetectorPattern::Chessboard, _) => {
-                chessboard::get_chessboard_corners(
-                    &gray,
-                    Port::Nf,
-                    board_rows,
-                    board_cols,
-                    false,
-                    upside_down,
-                )
-            }
-            (DetectorPattern::Acircles, 0) => {
+            DetectorPattern::AsymmetricCircles => {
                 circles::get_circles_centers(
                     &gray,
-                    Port::Wf,
+                    port,
                     board_rows,
                     board_cols,
                     false,
                     upside_down,
+                    true,
+                    false,
                 )
             }
-            (DetectorPattern::Acircles, _) => {
+            DetectorPattern::SymmetricCircles => {
                 circles::get_circles_centers(
                     &gray,
-                    Port::Nf,
+                    port,
                     board_rows,
                     board_cols,
                     false,
                     upside_down,
+                    false,
+                    true,
                 )
             }
         };
@@ -586,9 +621,9 @@ fn opencv_thread(
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
-        match (pattern, port) {
-            (DetectorPattern::None, _) => (),
-            (DetectorPattern::Chessboard, Port::Wf) => {
+        match pattern {
+            DetectorPattern::None => (),
+            DetectorPattern::Chessboard => {
                 chessboard::get_chessboard_corners(
                     &image,
                     Port::Wf,
@@ -598,34 +633,28 @@ fn opencv_thread(
                     upside_down,
                 );
             }
-            (DetectorPattern::Chessboard, Port::Nf) => {
-                chessboard::get_chessboard_corners(
-                    &image,
-                    Port::Nf,
-                    board_rows,
-                    board_cols,
-                    true,
-                    upside_down,
-                );
-            }
-            (DetectorPattern::Acircles, Port::Wf) => {
+            DetectorPattern::AsymmetricCircles => {
                 circles::get_circles_centers(
                     &image,
-                    Port::Wf,
+                    port,
                     board_rows,
                     board_cols,
                     true,
                     upside_down,
+                    true,
+                    false,
                 );
             }
-            (DetectorPattern::Acircles, Port::Nf) => {
+            DetectorPattern::SymmetricCircles => {
                 circles::get_circles_centers(
                     &image,
-                    Port::Nf,
+                    port,
                     board_rows,
                     board_cols,
                     true,
                     upside_down,
+                    false,
+                    true,
                 );
             }
         }

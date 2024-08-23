@@ -1,9 +1,10 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC }, core::{flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
 use crate::{chessboard::read_camara_params, Port};
 
-/// Returns None if no circles were found.
-pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool) -> Option<Vector<Point2f>> {
+/// Returns None if no circles were found. invert = false -> detect dark blobs, invert = true ->
+/// detect white blobs
+pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool, asymmetric: bool, invert: bool) -> Option<Vector<Point2f>> {
     let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
@@ -39,18 +40,30 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     params.filter_by_circularity = true;
     params.min_inertia_ratio = 0.01;
     params.filter_by_inertia = true;
+    if invert {
+        params.blob_color = 255;
+    }
 
     let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
-    circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
+    if asymmetric {
+        circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
+    } else {
+        circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::SYMMETRIC_GRID;
+    }
 
     let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
 
+    let pattern_flag = if asymmetric {
+        CALIB_CB_ASYMMETRIC_GRID
+    } else {
+        CALIB_CB_SYMMETRIC_GRID
+    };
     let pattern_was_found = find_circles_grid(
         &im2,
         board_size,
         &mut centers,
-        CALIB_CB_ASYMMETRIC_GRID | CALIB_CB_CLUSTERING,
+        pattern_flag | CALIB_CB_CLUSTERING,
         &feature2d_detector,
         circle_grid_finder_params,
     ).unwrap();
@@ -103,12 +116,14 @@ pub fn calibrate_single(
     board_rows: u16,
     board_cols: u16,
     upside_down: bool,
+    asymmetric: bool,
+    invert: bool,
 ) {
     let square_length = 1.0; // Specify the size of the squares between dots
-    let board_points = board_points(board_rows, board_cols, square_length);
+    let board_points = board_points(board_rows, board_cols, square_length, asymmetric);
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_circles_centers(image, port, board_rows, board_cols, false, upside_down)
+        get_circles_centers(image, port, board_rows, board_cols, false, upside_down, asymmetric, invert)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 
@@ -148,15 +163,27 @@ pub fn calibrate_single(
     }
 }
 
-fn board_points(board_rows: u16, board_cols: u16, square_length: f32) -> Vector<opencv::core::Point3_<f32>> {
+fn board_points(board_rows: u16, board_cols: u16, square_length: f32, asymmetric: bool) -> Vector<opencv::core::Point3_<f32>> {
     let mut board_points = Vector::<Point3f>::new();
-    for row in 0..board_rows {
-        for col in 0..board_cols {
-            board_points.push(Point3f::new(
-                (2*col + row%2) as f32 * square_length,
-                row as f32 * square_length,
-                0.0,
-            ));
+    if asymmetric {
+        for row in 0..board_rows {
+            for col in 0..board_cols {
+                board_points.push(Point3f::new(
+                    (2*col + row%2) as f32 * square_length,
+                    row as f32 * square_length,
+                    0.0,
+                ));
+            }
+        }
+    } else {
+        for row in 0..board_rows {
+            for col in 0..board_cols {
+                board_points.push(Point3f::new(
+                    col as f32 * square_length,
+                    row as f32 * square_length,
+                    0.0,
+                ));
+            }
         }
     }
     board_points
@@ -168,6 +195,8 @@ pub fn my_stereo_calibrate(
     board_rows: u16,
     board_cols: u16,
     upside_down: bool,
+    asymmetric: bool,
+    invert: bool,
 ) {
     let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
         println!("Couldn't get nearfield intrinsics");
@@ -179,19 +208,19 @@ pub fn my_stereo_calibrate(
     };
 
     let square_length = 1.26; // 7x5 circles grid that i printed out
-    let object_points = board_points(board_rows, board_cols, square_length);
+    let object_points = board_points(board_rows, board_cols, square_length, asymmetric);
 
     let mut object_points_arr = Vector::<Vector<Point3f>>::new();
     let mut wf_points_arr = Vector::<Vector<Point2f>>::new();
     let mut nf_points_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
         let Some(wf_points) =
-            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, upside_down)
+            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, upside_down, asymmetric, invert)
         else {
             continue;
         };
         let Some(nf_points) =
-            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, upside_down)
+            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, upside_down, asymmetric, invert)
         else {
             continue;
         };
