@@ -278,8 +278,8 @@ fn draw_mot_data_circles(
     let offset = if is_wf { 0.0 } else { 98.0 * scale + 20.0 };
     for data in mot_data {
         if data.area > 0 {
-            let mut x = data.cx as f32 / 2940.0 * 98.0 * scale; // Transform back to image space
-            let mut y = data.cy as f32 / 2940.0 * 98.0 * scale;
+            let mut x = data.cx as f32 / 4095.0 * 98.0 * scale; // Transform back to image space
+            let mut y = data.cy as f32 / 4095.0 * 98.0 * scale;
             // Apply flipping
             if flip_x {
                 x = 98.0 * scale - x;

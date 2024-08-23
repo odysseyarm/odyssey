@@ -181,15 +181,23 @@ async fn main(spawner: Spawner) {
     ).await;
 
     wide.set_gain_1(0).await;
-    wide.set_gain_2(2).await;
-    wide.set_frame_period(524288).await;
-    wide.set_exposure_time(62160).await;
+    wide.set_gain_2(0).await;
+    wide.set_frame_period(16384).await;
+    wide.set_exposure_time(4096).await;
     wide.set_bank1_sync_updated(1).await;
     near.set_gain_1(0).await;
     near.set_gain_2(0).await;
-    near.set_frame_period(524288).await;
-    near.set_exposure_time(62160).await;
+    near.set_frame_period(16384).await;
+    near.set_exposure_time(2048).await;
     near.set_bank1_sync_updated(1).await;
+    near.set_brightness_threshold(100).await;
+    near.set_noise_threshold(15).await;
+    wide.set_brightness_threshold(100).await;
+    wide.set_noise_threshold(15).await;
+    near.set_resolution_x(4095).await;
+    near.set_resolution_y(4095).await;
+    wide.set_resolution_x(4095).await;
+    wide.set_resolution_y(4095).await;
     embassy_time::Timer::after_millis(100).await;
 
     info!("wide.exposure_time = {}", wide.exposure_time().await);
