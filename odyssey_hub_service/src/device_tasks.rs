@@ -343,7 +343,7 @@ async fn common_tasks(
     let timeout = Duration::from_secs(2);
     let restart_timeout = Duration::from_secs(1);
 
-    let mut prev_timestamp = 0;
+    let mut prev_timestamp = None;
     let mut wfnf_realign = true;
     let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
     let madgwick = Arc::new(tokio::sync::Mutex::new(ahrs::Madgwick::new(1./config.accel_config.accel_odr as f32, 0.1)));
@@ -486,7 +486,7 @@ async fn common_tasks(
                 let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x.into(), aim_point.y.into()]);
                 let device = device.clone();
                 let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                    timestamp: prev_timestamp,
+                    timestamp: prev_timestamp.unwrap_or(0),
                     aimpoint: aim_point_matrix,
                     pose: Some(odyssey_hub_common::events::Pose {
                         rotation: rotation_mat,
@@ -528,16 +528,44 @@ async fn common_tasks(
                     timestamp: accel.timestamp,
                 };
 
-                prev_timestamp = accel.timestamp;
-                let _ = madgwick.lock().await.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
-                let _orientation = madgwick.lock().await.quat.to_rotation_matrix();
+                if let Some(_prev_timestamp) = prev_timestamp {
+                    if accel.timestamp < _prev_timestamp {
+                        prev_timestamp = None;
+                        continue;
+                    }
+                }
+    
+                let screen_info = screen_info.clone();
+    
+                let _orientation;
+
+                {
+                    let mut madgwick = madgwick.lock().await;
+
+                    let _ = madgwick.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
+                    _orientation = madgwick.quat.to_rotation_matrix();
+
+                    if let Some(prev_timestamp) = prev_timestamp {
+                        let elapsed = accel.timestamp as u64 - prev_timestamp as u64;
+                        // println!("elapsed: {}", elapsed);
+                        fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_micros(elapsed), screen_info.screen_dimensions_meters);
+        
+                        let sample_period = madgwick.sample_period_mut();
+                        *sample_period = elapsed as f32/1_000_000.;
+                    } else {
+                        fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_secs_f32(1./config.accel_config.accel_odr as f32), screen_info.screen_dimensions_meters);
+                    }
+                }
+
+                prev_timestamp = Some(accel.timestamp);
+    
                 let euler_angles = _orientation.euler_angles();
                 let euler_angles = Vector3::new(euler_angles.0 as f64, euler_angles.1 as f64, euler_angles.2 as f64);
                 *orientation.lock().await = _orientation;
                 {
                     let device = device.clone();
                     let kind = odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(odyssey_hub_common::events::AccelerometerEvent {
-                        timestamp: prev_timestamp,
+                        timestamp: prev_timestamp.unwrap_or(0),
                         accel: accel.accel.cast(),
                         gyro: accel.gyro.cast(),
                         euler_angles,
