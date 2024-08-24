@@ -26,16 +26,14 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         }
     }
 
-    // let mut im2 = Mat::default();
-    let mut im2 = im.clone();
-    // resize(&im, &mut im2, Size::new(98, 98), 0.0, 0.0, INTER_CUBIC).unwrap();
+    let im2 = im.clone();
 
     let mut thresholded = Mat::default();
     threshold(
         &im2, 
         &mut thresholded, 
-        127.0, 
-        255.0, 
+        110. - 15., 
+        255., 
         if invert { THRESH_BINARY } else { THRESH_BINARY_INV }
     ).unwrap();
 
@@ -67,55 +65,23 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
             &mut mask
         ).unwrap();
 
-        let mut rect = Rect::default();
-
-        let mut _mask = Mat::default();
-
-        opencv::core::copy_make_border(
-            &mask,
-            &mut _mask,
-            1,
-            1,
-            1,
-            1,
-            opencv::core::BORDER_CONSTANT,
-            Scalar::all(0.0)
-        ).unwrap();
-
-        // Get the centroid of the current label
-        let centroid_x = *seed_centroids.at_2d::<f64>(label, 0).unwrap() as i32;
-        let centroid_y = *seed_centroids.at_2d::<f64>(label, 1).unwrap() as i32;
-        let seed_point = Point::new(centroid_x, centroid_y);
-
-        println!("Seed point: {:?}", seed_point);
-
-        let flood_fill_flags = FLOODFILL_MASK_ONLY | 8 | (255 << 8);
-
-        // Call the flood_fill function with the correct arguments
-        flood_fill_mask(
-            &mut im2, &mut _mask, seed_point, Scalar::all(255.0), &mut rect, Scalar::all(254.), Scalar::all(254.), flood_fill_flags
-        ).unwrap();
-
-        let rect = Rect::new(1, 1, 98, 98);
-        let mask = Mat::roi(&mut _mask, rect).unwrap();
-
         // Mask the original image to consider only the region of the current blob
         let mut masked_region = Mat::default();
         bitwise_and(&im2, &im2, &mut masked_region, &mask).unwrap();
 
         // imshow("img2", &im2).unwrap();
 
-        let mut im2_scaled = Mat::default();
-        resize(&im2, &mut im2_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
-        imshow("img2", &im2_scaled).unwrap();
+        // let mut im2_scaled = Mat::default();
+        // resize(&im2, &mut im2_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
+        // imshow("img2", &im2_scaled).unwrap();
 
-        let mut masked_region_scaled = Mat::default();
-        resize(&masked_region, &mut masked_region_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
-        imshow("masked_region", &masked_region_scaled).unwrap();
-        wait_key(0).unwrap();
+        // let mut masked_region_scaled = Mat::default();
+        // resize(&masked_region, &mut masked_region_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
+        // imshow("masked_region", &masked_region_scaled).unwrap();
+        // wait_key(0).unwrap();
         
         // Calculate moments on the masked region to get the centroid
-        let moments = opencv::imgproc::moments(&masked_region, true).unwrap();
+        let moments = opencv::imgproc::moments(&masked_region, false).unwrap();
         if moments.m00 > 0. {
             let center = Point2f::new(
                 (moments.m10 / moments.m00) as f32,
@@ -136,13 +102,16 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     }
 }
 
-fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut Vector<Point2f>, pattern_was_found: bool, port: Port) {
+fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vector<Point2f>, pattern_was_found: bool, port: Port) {
     let mut display_im = Mat::default();
     cvt_color(&im, &mut display_im, COLOR_GRAY2BGR, 0).unwrap();
     let tmp = display_im;
     let mut display_im = Mat::default();
     resize(&tmp, &mut display_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
+
+    let mut centers = centers.clone();
     centers.as_mut_slice().iter_mut().for_each(|x| {
+        *x += (0.5, 0.5).into();
         *x *= 512.0 / 98. as f32;
         let half_pixel = (512.0 / 98. as f32) / 2.;
         *x += (half_pixel, half_pixel).into();
@@ -151,7 +120,7 @@ fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut
     draw_chessboard_corners(
         &mut display_im,
         board_size,
-        centers,
+        &centers,
         pattern_was_found,
     ).unwrap();
 
