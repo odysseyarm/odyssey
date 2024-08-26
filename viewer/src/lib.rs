@@ -207,9 +207,12 @@ impl MainState {
             WHITE,
         );
 
+        let wf_transform = draw_pattern_points::get_transform_matrix(vec2(image_scale, image_scale), 0., vec2(0., 0.), vec2(0., 0.));
+        let nf_transform = draw_pattern_points::get_transform_matrix(vec2(image_scale, image_scale), 0., vec2(image_size + spacing, 0.0), vec2(0., 0.));
+
         // Draw circles
-        draw_mot_data_circles(&wf_data.mot_data, image_scale, true, false, true);
-        draw_mot_data_circles(&nf_data.mot_data, image_scale, false, true, false);
+        draw_mot_data_circles(&wf_data.mot_data, wf_transform, false, true);
+        draw_mot_data_circles(&nf_data.mot_data, nf_transform, true, false);
 
         // Draw pattern points if available
         if let Some(pattern_points) = &wf_data.pattern_points {
@@ -217,7 +220,7 @@ impl MainState {
                 pattern_points,
                 cols.into(),
                 true,
-                draw_pattern_points::get_transform_matrix(vec2(image_scale, image_scale), 0., vec2(0., 0.), vec2(0., 0.)),
+                wf_transform,
                 // Transform::Values {
                 //     dest: [0., 0.,].into(),
                 //     rotation: 0.,
@@ -231,7 +234,7 @@ impl MainState {
                 pattern_points,
                 cols.into(),
                 true,
-                draw_pattern_points::get_transform_matrix(vec2(image_scale, image_scale), 0., vec2(image_size + spacing, 0.0), vec2(0., 0.)),
+                nf_transform,
                 // Transform::Values {
                 //     dest: [700., 0.,].into(),
                 //     rotation: 0.,
@@ -273,24 +276,21 @@ fn draw_image(
 
 fn draw_mot_data_circles(
     mot_data: &[MotData],
-    scale: f32,
-    is_wf: bool,
+    transform: Mat4,
     flip_y: bool,
     flip_x: bool,
 ) {
-    let offset = if is_wf { 0.0 } else { 98.0 * scale + 20.0 };
     for data in mot_data {
         if data.area > 0 {
-            let mut x = data.cx as f32 / 4095.0 * 98.0 * scale; // Transform back to image space
-            let mut y = data.cy as f32 / 4095.0 * 98.0 * scale;
-            // Apply flipping
+            let mut point = vec3(data.cx as f32 / 4095. * 98., data.cy as f32 / 4095. * 98., 0.0);
             if flip_x {
-                x = 98.0 * scale - x;
+                point.x = 98.0 - point.x;
             }
             if flip_y {
-                y = 98.0 * scale - y;
+                point.y = 98.0 - point.y;
             }
-            draw_circle_lines(offset + x, y, 4.0, 1.0, RED);
+            let transformed_point = transform.transform_point3(point);
+            draw_circle_lines(transformed_point.x, transformed_point.y, 4.0, 1.0, RED);
         }
     }
 }
