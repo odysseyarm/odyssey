@@ -158,9 +158,10 @@ pub fn calibrate_single(
     upside_down: bool,
     asymmetric: bool,
     invert: bool,
+    special: bool,
 ) {
     let square_length = 1.0; // Specify the size of the squares between dots
-    let board_points = board_points(board_rows, board_cols, square_length, asymmetric);
+    let board_points = board_points(board_rows, board_cols, square_length, asymmetric, special);
 
     let corners_arr = images.iter().filter_map(|image| {
         get_circles_centers(image, port, board_rows, board_cols, false, upside_down, asymmetric, invert)
@@ -203,13 +204,33 @@ pub fn calibrate_single(
     }
 }
 
-fn board_points(board_rows: u16, board_cols: u16, square_length: f32, asymmetric: bool) -> Vector<opencv::core::Point3_<f32>> {
+fn board_points(
+    board_rows: u16, 
+    board_cols: u16, 
+    square_length: f32, 
+    asymmetric: bool, 
+    special: bool
+) -> Vector<opencv::core::Point3_<f32>> {
     let mut board_points = Vector::<Point3f>::new();
-    if asymmetric {
+
+    if special {
+        // Assuming the pattern is a square grid with a hole in the center
+        for row in 0..board_rows {
+            for col in 0..board_cols {
+                if !(row > 0 && row < board_rows - 1 && col > 0 && col < board_cols - 1) {
+                    board_points.push(Point3f::new(
+                        col as f32 * square_length,
+                        row as f32 * square_length,
+                        0.0,
+                    ));
+                }
+            }
+        }
+    } else if asymmetric {
         for row in 0..board_rows {
             for col in 0..board_cols {
                 board_points.push(Point3f::new(
-                    (2*col + row%2) as f32 * square_length,
+                    (2 * col + row % 2) as f32 * square_length,
                     row as f32 * square_length,
                     0.0,
                 ));
@@ -226,6 +247,7 @@ fn board_points(board_rows: u16, board_cols: u16, square_length: f32, asymmetric
             }
         }
     }
+
     board_points
 }
 
@@ -237,6 +259,7 @@ pub fn my_stereo_calibrate(
     upside_down: bool,
     asymmetric: bool,
     invert: bool,
+    special: bool,
 ) {
     let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
         println!("Couldn't get nearfield intrinsics");
@@ -248,7 +271,7 @@ pub fn my_stereo_calibrate(
     };
 
     let square_length = 1.26; // 7x5 circles grid that i printed out
-    let object_points = board_points(board_rows, board_cols, square_length, asymmetric);
+    let object_points = board_points(board_rows, board_cols, square_length, asymmetric, special);
 
     let mut object_points_arr = Vector::<Vector<Point3f>>::new();
     let mut wf_points_arr = Vector::<Vector<Point2f>>::new();

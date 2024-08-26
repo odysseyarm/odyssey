@@ -69,6 +69,7 @@ struct DetectorParams {
     rows: AtomicU16,
     cols: AtomicU16,
     pattern: atomic::Atomic<DetectorPattern>,
+    special: AtomicBool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, bytemuck::NoUninit)]
@@ -116,6 +117,7 @@ impl MainState {
                 rows: 6.into(),
                 cols: 6.into(),
                 pattern: atomic::Atomic::new(DetectorPattern::Chessboard),
+                special: false.into(),
             }),
             reset: reset.clone(),
             quit: quit.clone(),
@@ -185,10 +187,11 @@ impl MainState {
 
         let cols = self.detector_params.cols.load(Ordering::Relaxed);
         let rows = self.detector_params.rows.load(Ordering::Relaxed);
+        let special = self.detector_params.special.load(Ordering::Relaxed);
         let pat = self.detector_params.pattern.load(Ordering::Relaxed);
         draw_text(
             &format!(
-                "Captures (space): {}    Board (r, c): {rows}x{cols}    Detector (d): {pat}",
+                "Captures (space): {}    Board (r, c, s): {rows}x{cols}x{special}    Detector (d): {pat}",
                 self.captured_wf.len()
             ),
             10.0,
@@ -350,6 +353,7 @@ async fn handle_input(state: &mut MainState) {
         let captures = state.captured_nf.clone();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
+        let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
@@ -361,6 +365,7 @@ async fn handle_input(state: &mut MainState) {
                 upside_down,
                 true,
                 false,
+                special,
             ),
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
@@ -370,6 +375,7 @@ async fn handle_input(state: &mut MainState) {
                 upside_down,
                 false,
                 true,
+                special,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
@@ -389,6 +395,7 @@ async fn handle_input(state: &mut MainState) {
         let captures = state.captured_wf.clone();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
+        let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
@@ -400,6 +407,7 @@ async fn handle_input(state: &mut MainState) {
                 upside_down,
                 false,
                 true,
+                special,
             ),
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
@@ -409,6 +417,7 @@ async fn handle_input(state: &mut MainState) {
                 upside_down,
                 true,
                 false,
+                special,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
@@ -429,6 +438,7 @@ async fn handle_input(state: &mut MainState) {
         let nf = state.captured_nf.clone();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
+        let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
@@ -447,6 +457,7 @@ async fn handle_input(state: &mut MainState) {
                 upside_down,
                 true,
                 false,
+                special,
             ),
             DetectorPattern::SymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
@@ -456,6 +467,7 @@ async fn handle_input(state: &mut MainState) {
                 upside_down,
                 false,
                 true,
+                special,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -473,6 +485,9 @@ async fn handle_input(state: &mut MainState) {
         } else {
             state.detector_params.cols.fetch_add(1, Ordering::Relaxed);
         }
+    }
+    if is_key_pressed(KeyCode::S) {
+        state.detector_params.special.store(!state.detector_params.special.load(Ordering::Relaxed), Ordering::Relaxed);
     }
     if is_key_pressed(KeyCode::D) {
         use DetectorPattern as P;
