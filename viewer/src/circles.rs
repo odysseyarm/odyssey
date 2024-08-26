@@ -1,10 +1,164 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatExprTraitConst, MatTraitConst, Point, Point2f, Point3f, Ptr, Rect, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, VecN, Vector, CV_32S, CV_8UC1, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key, wait_key}, imgproc::{connected_components_with_stats, cvt_color, flood_fill, flood_fill_mask, resize, threshold, COLOR_GRAY2BGR, FLOODFILL_MASK_ONLY, INTER_CUBIC, INTER_NEAREST, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatExprTraitConst, MatTraitConst, Point, Point2f, Point3f, Ptr, Rect, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, VecN, Vector, CV_32S, CV_8UC1, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key, wait_key}, imgproc::{connected_components_with_stats, cvt_color, flood_fill, flood_fill_mask, resize, threshold, COLOR_GRAY2BGR, FLOODFILL_MASK_ONLY, INTER_CUBIC, INTER_NEAREST, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
 use crate::{chessboard::read_camara_params, Port};
 
+// use opencv::imgproc;
+
+// fn find_circles_grid_special(
+//     centers: &Vector<Point2f>, 
+//     board_size: Size
+// ) -> Option<Vector<Point2f>> {
+//     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
+// 
+//     // Ensure that we have enough points to form the outer boundary
+//     if centers.len() < expected_num_outer_points {
+//         return None;
+//     }
+// 
+//     // Step 1: Find the convex hull of the detected points
+//     let mut hull_indices: Vector<i32> = Vector::new();
+//     imgproc::convex_hull(&centers, &mut hull_indices, true, false).unwrap();
+// 
+//     let mut hull_points = Vector::<Point2f>::new();
+//     for idx in hull_indices.iter() {
+//         hull_points.push(centers.get(idx as usize).unwrap());
+//     }
+// 
+//     // Step 2: Identify the four corners of the grid from the hull points
+//     let mut top_left = Point2f::new(f32::MAX, f32::MAX);
+//     let mut top_right = Point2f::new(f32::MIN, f32::MAX);
+//     let mut bottom_left = Point2f::new(f32::MAX, f32::MIN);
+//     let mut bottom_right = Point2f::new(f32::MIN, f32::MIN);
+// 
+//     for point in hull_points.iter() {
+//         if point.x + point.y < top_left.x + top_left.y {
+//             top_left = point;
+//         }
+//         if point.x - point.y > top_right.x - top_right.y {
+//             top_right = point;
+//         }
+//         if point.x - point.y < bottom_left.x - bottom_left.y {
+//             bottom_left = point;
+//         }
+//         if point.x + point.y > bottom_right.x + bottom_right.y {
+//             bottom_right = point;
+//         }
+//     }
+// 
+//     let corners = vec![top_left, top_right, bottom_right, bottom_left];
+// 
+//     // Step 3: Include points near the edges formed by these corners
+//     let mut sorted_hull_points = Vec::new();
+//     let threshold_distance = 10.0;  // Adjust this threshold as needed
+// 
+//     for i in 0..4 {
+//         let start = &corners[i];
+//         let end = &corners[(i + 1) % 4];
+// 
+//         // Add the corner point itself
+//         sorted_hull_points.push(*start);
+// 
+//         // Check for points near the line segment from start to end
+//         for center in centers.iter() {
+//             let distance = point_line_distance(&center, start, end);
+//             if distance < threshold_distance {
+//                 if !sorted_hull_points.contains(&center) {
+//                     sorted_hull_points.push(center);
+//                 }
+//             }
+//         }
+//     }
+// 
+//     // Ensure that we have exactly the number of expected outer points
+//     if sorted_hull_points.len() != expected_num_outer_points {
+//         return None;
+//     }
+// 
+//     // Step 4: Sort the final list of points
+//     sorted_hull_points.sort_by(|a, b| {
+//         a.x.partial_cmp(&b.x).unwrap().then_with(|| a.y.partial_cmp(&b.y).unwrap())
+//     });
+// 
+//     // Convert Vec<Point2f> back to Vector<Point2f>
+//     Some(Vector::from(sorted_hull_points))
+// }
+
+fn find_circles_grid_special(
+    centers: &Vector<Point2f>, 
+    board_size: Size
+) -> Option<Vector<Point2f>> {
+    let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
+
+    // Ensure that we have enough points to form the outer boundary
+    if centers.len() < expected_num_outer_points {
+        return None;
+    }
+
+    // Find the top-left corner by minimizing x+y
+    let mut top_left = Point2f::new(f32::MAX, f32::MAX);
+    for point in centers.iter() {
+        if point.x + point.y < top_left.x + top_left.y {
+            top_left = point;
+        }
+    }
+
+    let mut sorted_hull_points = vec![top_left];
+    let mut current = top_left;
+    let directions = vec![
+        Point2f::new(1.0, 0.0),  // Right
+        Point2f::new(0.0, 1.0),  // Down
+        Point2f::new(-1.0, 0.0), // Left
+        Point2f::new(0.0, -1.0), // Up
+    ];
+    let mut current_direction = 0;
+    let threshold_distance = 20.0;
+
+    while sorted_hull_points.len() < expected_num_outer_points {
+        let mut best_point = None;
+        let mut best_distance = f32::MAX;
+
+        for point in centers.iter() {
+            let distance = (point - current).norm();
+            if distance < threshold_distance && distance > 0.0 {
+                let direction = point - current;
+                let dot_product = direction.dot(directions[current_direction]);
+
+                if dot_product > 0.9 && distance < best_distance.into() {
+                    best_distance = distance as f32;
+                    best_point = Some(point);
+                }
+            }
+        }
+
+        if let Some(best_point) = best_point {
+            current = best_point;
+            sorted_hull_points.push(current);
+        } else {
+            current_direction = (current_direction + 1) % 4;
+        }
+
+        if current_direction == 0 && best_point.is_none() {
+            break;
+        }
+    }
+
+    if sorted_hull_points.len() == expected_num_outer_points {
+        Some(Vector::from(sorted_hull_points))
+    } else {
+        None
+    }
+}
+
+// Helper function to calculate the perpendicular distance from a point to a line
+// fn point_line_distance(p: &Point2f, a: &Point2f, b: &Point2f) -> f32 {
+//     let numerator = ((b.y - a.y) * p.x - (b.x - a.x) * p.y + b.x * a.y - b.y * a.x).abs();
+//     let denominator = ((b.y - a.y).powi(2) + (b.x - a.x).powi(2)).sqrt();
+//     numerator / denominator
+// }
+
 /// Returns None if no circles were found. invert = false -> detect dark blobs, invert = true ->
 /// detect white blobs
-pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool, asymmetric: bool, invert: bool) -> Option<Vector<Point2f>> {
+pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool, asymmetric: bool, invert: bool, special: bool) -> Option<Vector<Point2f>> {
     let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
@@ -57,7 +211,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     for label in 1..num_seed_labels {
         // area
         let stats = *seed_stats.at_2d::<i32>(label, 4).unwrap();
-        if stats < 4 {
+        if stats < 3 {
             continue;
         }
 
@@ -101,17 +255,28 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         display_found_circles(&im, board_size, &mut centers, true, port);
     }
 
-    if centers.len() != (board_rows * board_cols) as usize {
-        return None;
+    if !special {
+        if centers.len() != (board_rows * board_cols) as usize {
+            return None;
+        }
     }
 
     let mut sorted_centers = Vector::<Point2f>::default();
 
-    let nullf2d;
-    unsafe {
-        nullf2d = Feature2D::from_raw(core::ptr::null_mut());
+    if special {
+        if let Some(_centers) = find_circles_grid_special(&centers, board_size) {
+            if _centers.len() != (board_rows*2 + board_cols*2 - 4) as usize {
+                return None;
+            }
+            sorted_centers = _centers;
+        }
+    } else {
+        let nullf2d;
+        unsafe {
+            nullf2d = Feature2D::from_raw(core::ptr::null_mut());
+        }
+        find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID, &Ptr::new(nullf2d)).unwrap();
     }
-    find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID, &Ptr::new(nullf2d)).unwrap();
 
     if !sorted_centers.is_empty() {
         Some(sorted_centers)
@@ -164,7 +329,7 @@ pub fn calibrate_single(
     let board_points = board_points(board_rows, board_cols, square_length, asymmetric, special);
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_circles_centers(image, port, board_rows, board_cols, false, upside_down, asymmetric, invert)
+        get_circles_centers(image, port, board_rows, board_cols, false, upside_down, asymmetric, invert, special)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 
@@ -214,17 +379,34 @@ fn board_points(
     let mut board_points = Vector::<Point3f>::new();
 
     if special {
-        // Assuming the pattern is a square grid with a hole in the center
-        for row in 0..board_rows {
-            for col in 0..board_cols {
-                if !(row > 0 && row < board_rows - 1 && col > 0 && col < board_cols - 1) {
-                    board_points.push(Point3f::new(
-                        col as f32 * square_length,
-                        row as f32 * square_length,
-                        0.0,
-                    ));
-                }
-            }
+        // Assuming the pattern is the outer boundary of the grid, in clockwise order
+        for col in 0..board_cols {
+            board_points.push(Point3f::new(
+                col as f32 * square_length,
+                0.0,
+                0.0,
+            ));
+        }
+        for row in 1..board_rows {
+            board_points.push(Point3f::new(
+                (board_cols - 1) as f32 * square_length,
+                row as f32 * square_length,
+                0.0,
+            ));
+        }
+        for col in (0..board_cols - 1).rev() {
+            board_points.push(Point3f::new(
+                col as f32 * square_length,
+                (board_rows - 1) as f32 * square_length,
+                0.0,
+            ));
+        }
+        for row in (1..board_rows - 1).rev() {
+            board_points.push(Point3f::new(
+                0.0,
+                row as f32 * square_length,
+                0.0,
+            ));
         }
     } else if asymmetric {
         for row in 0..board_rows {
@@ -278,12 +460,12 @@ pub fn my_stereo_calibrate(
     let mut nf_points_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
         let Some(wf_points) =
-            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, upside_down, asymmetric, invert)
+            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, upside_down, asymmetric, invert, special)
         else {
             continue;
         };
         let Some(nf_points) =
-            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, upside_down, asymmetric, invert)
+            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, upside_down, asymmetric, invert, special)
         else {
             continue;
         };

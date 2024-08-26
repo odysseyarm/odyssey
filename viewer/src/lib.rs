@@ -561,6 +561,7 @@ fn reader_thread(
 
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
+        let special = detector_params.special.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         let port = match id {
             0 => Port::Wf,
@@ -589,6 +590,7 @@ fn reader_thread(
                     upside_down,
                     true,
                     false,
+                    special,
                 )
             }
             DetectorPattern::SymmetricCircles => {
@@ -601,6 +603,7 @@ fn reader_thread(
                     upside_down,
                     false,
                     true,
+                    special,
                 )
             }
         };
@@ -635,6 +638,7 @@ fn opencv_thread(
         let (port, image) = raw_image.recv().unwrap();
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
+        let special = detector_params.special.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         match pattern {
             DetectorPattern::None => (),
@@ -658,6 +662,7 @@ fn opencv_thread(
                     upside_down,
                     true,
                     false,
+                    special,
                 );
             }
             DetectorPattern::SymmetricCircles => {
@@ -670,6 +675,7 @@ fn opencv_thread(
                     upside_down,
                     false,
                     true,
+                    special,
                 );
             }
         }
