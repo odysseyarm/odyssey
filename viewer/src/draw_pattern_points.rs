@@ -40,6 +40,19 @@ impl DrawPatternPoints {
                 1.0,
                 color,
             );
+
+            // Draw the line between points
+            if pattern_was_found && i > 0 {
+                let prev_transformed_point = transform.transform_point3(vec3(points[i-1].x, points[i-1].y, 0.0));
+                draw_line(
+                    prev_transformed_point.x,
+                    prev_transformed_point.y,
+                    transformed_point.x,
+                    transformed_point.y,
+                    1.0,
+                    color,
+                )
+            }
         }
     }
 }
@@ -48,13 +61,13 @@ impl DrawPatternPoints {
 pub fn get_transform_matrix(scale: Vec2, rotation: f32, dest: Vec2, offset: Vec2) -> Mat4 {
     // Create a scaling matrix
     let scale_matrix = Mat4::from_scale(Vec3::new(scale.x, scale.y, 1.0));
-    
+
     // Create a rotation matrix (rotation in radians)
     let rotation_matrix = Mat4::from_rotation_z(rotation);
-    
+
     // Create a translation matrix with destination offset
     let translation_matrix = Mat4::from_translation(dest.extend(0.0));
-    
+
     // Create a translation matrix for offset
     let offset_matrix = Mat4::from_translation(-offset.extend(0.0));
 
