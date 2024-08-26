@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatExprTraitConst, MatTraitConst, Point, Point2f, Point3f, Ptr, Rect, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, VecN, Vector, CV_32S, CV_8UC1, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key, wait_key}, imgproc::{connected_components_with_stats, cvt_color, flood_fill, flood_fill_mask, resize, threshold, COLOR_GRAY2BGR, FLOODFILL_MASK_ONLY, INTER_CUBIC, INTER_NEAREST, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CirclesGridFinderParameters, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatExprTraitConst, MatTraitConst, Point, Point2f, Point3f, Ptr, Rect, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, VecN, Vector, CV_32S, CV_8UC1, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key, wait_key}, imgproc::{connected_components_with_stats, cvt_color, flood_fill, flood_fill_mask, resize, threshold, COLOR_GRAY2BGR, FLOODFILL_MASK_ONLY, INTER_CUBIC, INTER_NEAREST, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
 use crate::{chessboard::read_camara_params, Port};
 
@@ -55,6 +55,12 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
 
     // Now use these seeds to perform a flood fill or extended connected components
     for label in 1..num_seed_labels {
+        // area
+        let stats = *seed_stats.at_2d::<i32>(label, 4).unwrap();
+        if stats < 4 {
+            continue;
+        }
+
         let mut mask = Mat::default();
         
         // Create a binary mask for the current seed label
@@ -79,7 +85,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         // resize(&masked_region, &mut masked_region_scaled, Size::new(512, 512), 0.0, 0.0, INTER_NEAREST).unwrap();
         // imshow("masked_region", &masked_region_scaled).unwrap();
         // wait_key(0).unwrap();
-        
+
         // Calculate moments on the masked region to get the centroid
         let moments = opencv::imgproc::moments(&masked_region, false).unwrap();
         if moments.m00 > 0. {
@@ -95,8 +101,20 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         display_found_circles(&im, board_size, &mut centers, true, port);
     }
 
-    if !centers.is_empty() {
-        Some(centers)
+    if centers.len() != (board_rows * board_cols) as usize {
+        return None;
+    }
+
+    let mut sorted_centers = Vector::<Point2f>::default();
+
+    let nullf2d;
+    unsafe {
+        nullf2d = Feature2D::from_raw(core::ptr::null_mut());
+    }
+    find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID, &Ptr::new(nullf2d)).unwrap();
+
+    if !sorted_centers.is_empty() {
+        Some(sorted_centers)
     } else {
         None
     }
