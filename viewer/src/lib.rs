@@ -23,6 +23,8 @@ pub mod draw_pattern_points;
 
 use macroquad::prelude::*;
 
+const CALIBRATION_VERSION: i32 = 1;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Port {
     Wf,
@@ -207,8 +209,18 @@ impl MainState {
             WHITE,
         );
 
-        let wf_transform = draw_pattern_points::get_transform_matrix(vec2(image_scale, image_scale), 0., vec2(0., 0.), vec2(0., 0.));
-        let nf_transform = draw_pattern_points::get_transform_matrix(vec2(image_scale, image_scale), 0., vec2(image_size + spacing, 0.0), vec2(0., 0.));
+        let wf_transform = draw_pattern_points::get_transform_matrix(
+            vec2(image_scale, image_scale),
+            0.,
+            vec2(0., 0.),
+            vec2(0., 0.),
+        );
+        let nf_transform = draw_pattern_points::get_transform_matrix(
+            vec2(image_scale, image_scale),
+            0.,
+            vec2(image_size + spacing, 0.0),
+            vec2(0., 0.),
+        );
 
         // Draw circles
         draw_mot_data_circles(&wf_data.mot_data, wf_transform, false, true);
@@ -221,12 +233,6 @@ impl MainState {
                 cols.into(),
                 true,
                 wf_transform,
-                // Transform::Values {
-                //     dest: [0., 0.,].into(),
-                //     rotation: 0.,
-                //     scale: [7., 7.].into(),
-                //     offset: [0., 0.].into(),
-                // },
             );
         }
         if let Some(pattern_points) = &nf_data.pattern_points {
@@ -235,12 +241,6 @@ impl MainState {
                 cols.into(),
                 true,
                 nf_transform,
-                // Transform::Values {
-                //     dest: [700., 0.,].into(),
-                //     rotation: 0.,
-                //     scale: [7., 7.].into(),
-                //     offset: [0., 0.].into(),
-                // },
             );
         }
     }
@@ -282,7 +282,11 @@ fn draw_mot_data_circles(
 ) {
     for data in mot_data {
         if data.area > 0 {
-            let mut point = vec3(data.cx as f32 / 4095. * 98., data.cy as f32 / 4095. * 98., 0.0);
+            let mut point = vec3(
+                data.cx as f32 / 4095. * 97. + 0.5,
+                data.cy as f32 / 4095. * 97. + 0.5,
+                0.0,
+            );
             if flip_x {
                 point.x = 98.0 - point.x;
             }

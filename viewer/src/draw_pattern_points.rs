@@ -26,7 +26,12 @@ impl DrawPatternPoints {
         ];
 
         for (i, point) in points.iter().enumerate() {
-            let transformed_point = transform.transform_point3(vec3(point.x, point.y, 0.0));
+            let point = vec3(
+                point.x as f32 / 4095. * 97. + 0.5,
+                point.y as f32 / 4095. * 97. + 0.5,
+                0.0,
+            );
+            let transformed_point = transform.transform_point3(point);
             let color = if pattern_was_found {
                 colors[i / cols % colors.len()]
             } else {
@@ -43,7 +48,12 @@ impl DrawPatternPoints {
 
             // Draw the line between points
             if pattern_was_found && i > 0 {
-                let prev_transformed_point = transform.transform_point3(vec3(points[i-1].x, points[i-1].y, 0.0));
+                let prev_point = vec3(
+                    points[i-1].x as f32 / 4095. * 97. + 0.5,
+                    points[i-1].y as f32 / 4095. * 97. + 0.5,
+                    0.0,
+                );
+                let prev_transformed_point = transform.transform_point3(prev_point);
                 draw_line(
                     prev_transformed_point.x,
                     prev_transformed_point.y,

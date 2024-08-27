@@ -1,90 +1,9 @@
 use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_NORMALIZE_IMAGE, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatExprTraitConst, MatTraitConst, Point, Point2f, Point3f, Ptr, Rect, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, VecN, Vector, CV_32S, CV_8UC1, ROTATE_180}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key, wait_key}, imgproc::{connected_components_with_stats, cvt_color, flood_fill, flood_fill_mask, resize, threshold, COLOR_GRAY2BGR, FLOODFILL_MASK_ONLY, INTER_CUBIC, INTER_NEAREST, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
-use crate::{chessboard::read_camara_params, Port};
-
-// use opencv::imgproc;
-
-// fn find_circles_grid_special(
-//     centers: &Vector<Point2f>, 
-//     board_size: Size
-// ) -> Option<Vector<Point2f>> {
-//     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
-// 
-//     // Ensure that we have enough points to form the outer boundary
-//     if centers.len() < expected_num_outer_points {
-//         return None;
-//     }
-// 
-//     // Step 1: Find the convex hull of the detected points
-//     let mut hull_indices: Vector<i32> = Vector::new();
-//     imgproc::convex_hull(&centers, &mut hull_indices, true, false).unwrap();
-// 
-//     let mut hull_points = Vector::<Point2f>::new();
-//     for idx in hull_indices.iter() {
-//         hull_points.push(centers.get(idx as usize).unwrap());
-//     }
-// 
-//     // Step 2: Identify the four corners of the grid from the hull points
-//     let mut top_left = Point2f::new(f32::MAX, f32::MAX);
-//     let mut top_right = Point2f::new(f32::MIN, f32::MAX);
-//     let mut bottom_left = Point2f::new(f32::MAX, f32::MIN);
-//     let mut bottom_right = Point2f::new(f32::MIN, f32::MIN);
-// 
-//     for point in hull_points.iter() {
-//         if point.x + point.y < top_left.x + top_left.y {
-//             top_left = point;
-//         }
-//         if point.x - point.y > top_right.x - top_right.y {
-//             top_right = point;
-//         }
-//         if point.x - point.y < bottom_left.x - bottom_left.y {
-//             bottom_left = point;
-//         }
-//         if point.x + point.y > bottom_right.x + bottom_right.y {
-//             bottom_right = point;
-//         }
-//     }
-// 
-//     let corners = vec![top_left, top_right, bottom_right, bottom_left];
-// 
-//     // Step 3: Include points near the edges formed by these corners
-//     let mut sorted_hull_points = Vec::new();
-//     let threshold_distance = 10.0;  // Adjust this threshold as needed
-// 
-//     for i in 0..4 {
-//         let start = &corners[i];
-//         let end = &corners[(i + 1) % 4];
-// 
-//         // Add the corner point itself
-//         sorted_hull_points.push(*start);
-// 
-//         // Check for points near the line segment from start to end
-//         for center in centers.iter() {
-//             let distance = point_line_distance(&center, start, end);
-//             if distance < threshold_distance {
-//                 if !sorted_hull_points.contains(&center) {
-//                     sorted_hull_points.push(center);
-//                 }
-//             }
-//         }
-//     }
-// 
-//     // Ensure that we have exactly the number of expected outer points
-//     if sorted_hull_points.len() != expected_num_outer_points {
-//         return None;
-//     }
-// 
-//     // Step 4: Sort the final list of points
-//     sorted_hull_points.sort_by(|a, b| {
-//         a.x.partial_cmp(&b.x).unwrap().then_with(|| a.y.partial_cmp(&b.y).unwrap())
-//     });
-// 
-//     // Convert Vec<Point2f> back to Vector<Point2f>
-//     Some(Vector::from(sorted_hull_points))
-// }
+use crate::{chessboard::read_camara_params, Port, CALIBRATION_VERSION};
 
 fn find_circles_grid_special(
-    centers: &Vector<Point2f>, 
+    centers: &Vector<Point2f>,
     board_size: Size
 ) -> Option<Vector<Point2f>> {
     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
@@ -111,7 +30,7 @@ fn find_circles_grid_special(
         Point2f::new(0.0, -1.0), // Up
     ];
     let mut current_direction = 0;
-    let threshold_distance = 20.0;
+    let threshold_distance = 20.0 * 4095.0 / 97.0;
 
     while sorted_hull_points.len() < expected_num_outer_points {
         let mut best_point = None;
@@ -184,10 +103,10 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
 
     let mut thresholded = Mat::default();
     threshold(
-        &im2, 
-        &mut thresholded, 
-        110. - 15., 
-        255., 
+        &im2,
+        &mut thresholded,
+        110. - 15.,
+        255.,
         if invert { THRESH_BINARY } else { THRESH_BINARY_INV }
     ).unwrap();
 
@@ -216,7 +135,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         }
 
         let mut mask = Mat::default();
-        
+
         // Create a binary mask for the current seed label
         opencv::core::in_range(
             &seed_labels,
@@ -244,15 +163,15 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         let moments = opencv::imgproc::moments(&masked_region, false).unwrap();
         if moments.m00 > 0. {
             let center = Point2f::new(
-                (moments.m10 / moments.m00) as f32,
-                (moments.m01 / moments.m00) as f32,
+                (moments.m10 / moments.m00) as f32 * 4095.0 / 97.0,
+                (moments.m01 / moments.m00) as f32 * 4095.0 / 97.0,
             );
             centers.push(center);
         }
     }
 
     if show {
-        display_found_circles(&im, board_size, &mut centers, true, port);
+        display_found_circles(&im, board_size, &centers, true, port);
     }
 
     if !special {
@@ -295,8 +214,8 @@ fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vec
     let mut centers = centers.clone();
     centers.as_mut_slice().iter_mut().for_each(|x| {
         *x += (0.5, 0.5).into();
-        *x *= 512.0 / 98. as f32;
-        let half_pixel = (512.0 / 98. as f32) / 2.;
+        *x *= 512.0 / 4095. as f32;
+        let half_pixel = (512.0 / 4095. as f32) / 2.;
         *x += (half_pixel, half_pixel).into();
     });
 
@@ -343,7 +262,7 @@ pub fn calibrate_single(
     let reproj_err = calibrate_camera(
         &object_points,
         &corners_arr,
-        (98, 98).into(),
+        (4096, 4096).into(),
         &mut camera_matrix,
         &mut dist_coeffs,
         &mut no_array(),
@@ -363,6 +282,7 @@ pub fn calibrate_single(
         fs.write_mat("dist_coeffs", &dist_coeffs).unwrap();
         fs.write_f64("rms_error", reproj_err).unwrap();
         fs.write_i32("num_captures", images.len() as i32).unwrap();
+        fs.write_i32("version", CALIBRATION_VERSION).unwrap();
         fs.release().unwrap();
     } else {
         println!("Failed to open {}", filename);
@@ -370,10 +290,10 @@ pub fn calibrate_single(
 }
 
 fn board_points(
-    board_rows: u16, 
-    board_cols: u16, 
-    square_length: f32, 
-    asymmetric: bool, 
+    board_rows: u16,
+    board_cols: u16,
+    square_length: f32,
+    asymmetric: bool,
     special: bool
 ) -> Vector<opencv::core::Point3_<f32>> {
     let mut board_points = Vector::<Point3f>::new();
@@ -488,7 +408,7 @@ pub fn my_stereo_calibrate(
         wf_dist_coeffs,
         nf_camera_matrix,
         nf_dist_coeffs,
-        (98, 98).into(),
+        (4096, 4096).into(),
         &mut r,
         &mut t,
         &mut no_array(),

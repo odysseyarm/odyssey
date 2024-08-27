@@ -11,8 +11,10 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
     let (camera_matrix, dist_coeffs) = read_camara_params(&cli.camera_params);
-    let new_camera_matrix = get_optimal_new_camera_matrix_def(&camera_matrix, &dist_coeffs, Size::new(98, 98), 1.0).unwrap();
-    let im = imread(&cli.image, IMREAD_COLOR).unwrap();
+    let new_camera_matrix = get_optimal_new_camera_matrix_def(&camera_matrix, &dist_coeffs, Size::new(4096, 4096), 1.0).unwrap();
+    let tmp = imread(&cli.image, IMREAD_COLOR).unwrap();
+    let mut im = Mat::default();
+    resize(&tmp, &mut im, Size::new(4096, 4096), 0.0, 0.0, INTER_CUBIC).unwrap();
     let mut unim = Mat::default();
     undistort(&im, &mut unim, &camera_matrix, &dist_coeffs, &new_camera_matrix).unwrap();
     let mut scaled_unim = Mat::default();

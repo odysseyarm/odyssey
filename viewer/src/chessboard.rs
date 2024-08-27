@@ -2,7 +2,7 @@ use opencv::{
     calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_CB_ACCURACY, CALIB_CB_NORMALIZE_IMAGE, CALIB_FIX_INTRINSIC}, core::{flip, no_array, FileStorage, FileStorage_FORMAT_JSON, FileStorage_READ, FileStorage_WRITE, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector, ROTATE_180}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
 };
 
-use crate::Port;
+use crate::{Port, CALIBRATION_VERSION};
 
 pub fn read_camara_params(path: &str) -> Option<(Mat, Mat)> {
     let fs = FileStorage::new_def(path, FileStorage_READ).unwrap();
@@ -73,7 +73,7 @@ pub fn my_stereo_calibrate(
         wf_dist_coeffs,
         nf_camera_matrix,
         nf_dist_coeffs,
-        (98, 98).into(),
+        (4096, 4096).into(),
         &mut r,
         &mut t,
         &mut no_array(),
@@ -121,7 +121,7 @@ pub fn calibrate_single(
         max_count: 30,
         epsilon: f64::EPSILON,
     };
-    let reproj_err = calibrate_camera(&object_points, &corners_arr, (98, 98).into(), &mut camera_matrix, &mut dist_coeffs, &mut no_array(), &mut no_array(), 0, criteria).unwrap();
+    let reproj_err = calibrate_camera(&object_points, &corners_arr, (4096, 4096).into(), &mut camera_matrix, &mut dist_coeffs, &mut no_array(), &mut no_array(), 0, criteria).unwrap();
     println!("RMS error: {}", reproj_err);
 
     let filename = match port {
@@ -134,6 +134,7 @@ pub fn calibrate_single(
         fs.write_mat("dist_coeffs", &dist_coeffs).unwrap();
         fs.write_f64("rms_error", reproj_err).unwrap();
         fs.write_i32("num_captures", images.len() as i32).unwrap();
+        fs.write_i32("version", CALIBRATION_VERSION).unwrap();
         fs.release().unwrap();
     } else {
         println!("Failed to open {}", filename);
@@ -186,7 +187,8 @@ pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_ro
     }
     // scale corners back down
     corners.as_mut_slice().iter_mut().for_each(|x| {
-        *x /= ss as f32;
+        x.x = (x.x - 1.0) / ss as f32;
+        x.y = (x.y - 1.0) / ss as f32;
     });
     // let chessboard_found = find_chessboard_corners_sb_with_meta(
     //     &im,
@@ -225,6 +227,9 @@ pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_ro
         poll_key().unwrap();
     }
     if corners.len() > 0 {
+        for corner in corners.as_mut_slice() {
+            *corner *= 4095.0 / 97.0;
+        }
         Some(corners)
     } else {
         None
