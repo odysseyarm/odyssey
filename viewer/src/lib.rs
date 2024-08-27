@@ -283,8 +283,8 @@ fn draw_mot_data_circles(
     for data in mot_data {
         if data.area > 0 {
             let mut point = vec3(
-                data.cx as f32 / 4095. * 97. + 0.5,
-                data.cy as f32 / 4095. * 97. + 0.5,
+                data.cx as f32 / 4094. * 97. + 0.5,
+                data.cy as f32 / 4094. * 97. + 0.5,
                 0.0,
             );
             if flip_x {

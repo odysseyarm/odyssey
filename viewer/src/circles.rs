@@ -30,7 +30,7 @@ fn find_circles_grid_special(
         Point2f::new(0.0, -1.0), // Up
     ];
     let mut current_direction = 0;
-    let threshold_distance = 20.0 * 4095.0 / 97.0;
+    let threshold_distance = 20.0 * 4094.0 / 97.0;
 
     while sorted_hull_points.len() < expected_num_outer_points {
         let mut best_point = None;
@@ -163,8 +163,8 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         let moments = opencv::imgproc::moments(&masked_region, false).unwrap();
         if moments.m00 > 0. {
             let center = Point2f::new(
-                (moments.m10 / moments.m00) as f32 * 4095.0 / 97.0,
-                (moments.m01 / moments.m00) as f32 * 4095.0 / 97.0,
+                (moments.m10 / moments.m00) as f32 * 4094.0 / 97.0,
+                (moments.m01 / moments.m00) as f32 * 4094.0 / 97.0,
             );
             centers.push(center);
         }
@@ -262,7 +262,7 @@ pub fn calibrate_single(
     let reproj_err = calibrate_camera(
         &object_points,
         &corners_arr,
-        (4096, 4096).into(),
+        (4095, 4095).into(),
         &mut camera_matrix,
         &mut dist_coeffs,
         &mut no_array(),
@@ -408,7 +408,7 @@ pub fn my_stereo_calibrate(
         wf_dist_coeffs,
         nf_camera_matrix,
         nf_dist_coeffs,
-        (4096, 4096).into(),
+        (4095, 4095).into(),
         &mut r,
         &mut t,
         &mut no_array(),

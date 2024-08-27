@@ -73,7 +73,7 @@ pub fn my_stereo_calibrate(
         wf_dist_coeffs,
         nf_camera_matrix,
         nf_dist_coeffs,
-        (4096, 4096).into(),
+        (4095, 4095).into(),
         &mut r,
         &mut t,
         &mut no_array(),
@@ -121,7 +121,7 @@ pub fn calibrate_single(
         max_count: 30,
         epsilon: f64::EPSILON,
     };
-    let reproj_err = calibrate_camera(&object_points, &corners_arr, (4096, 4096).into(), &mut camera_matrix, &mut dist_coeffs, &mut no_array(), &mut no_array(), 0, criteria).unwrap();
+    let reproj_err = calibrate_camera(&object_points, &corners_arr, (4095, 4095).into(), &mut camera_matrix, &mut dist_coeffs, &mut no_array(), &mut no_array(), 0, criteria).unwrap();
     println!("RMS error: {}", reproj_err);
 
     let filename = match port {
