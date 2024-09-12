@@ -4,11 +4,11 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 use arrayvec::ArrayVec;
-use ats_cv::foveated::FoveatedAimpointState;
-use ats_cv::kalman::Pva2d;
+use ats_cv::foveated::{match3, FoveatedAimpointState};
+use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
-use nalgebra::{ComplexField, Isometry3, Matrix3, Point2, Point3, RealField, Scalar, UnitVector3, Vector3};
+use nalgebra::{ComplexField, Isometry3, Matrix3, Point2, Point3, RealField, Rotation3, Scalar, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use tokio::net::UdpSocket;
@@ -24,16 +24,16 @@ pub enum Message {
     Event(odyssey_hub_common::events::Event),
 }
 
-pub async fn device_tasks(message_channel: Sender<Message>) -> anyhow::Result<()> {
+pub async fn device_tasks(message_channel: Sender<Message>, screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>) -> anyhow::Result<()> {
     tokio::select! {
-        _ = device_udp_ping_task(message_channel.clone()) => {},
-        _ = device_hid_ping_task(message_channel.clone()) => {},
-        _ = device_cdc_ping_task(message_channel.clone()) => {},
+        _ = device_udp_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
+        _ = device_hid_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
+        _ = device_cdc_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
     }
     Ok(())
 }
 
-async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_udp_ping_task(message_channel: Sender<Message>, screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>) -> std::convert::Infallible {
     let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, 23456);
 
     let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP)).unwrap();
@@ -63,6 +63,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                         _ = async {
                             let stream_task_handles = stream_task_handles.clone();
                             let message_channel = message_channel.clone();
+                            let screen_calibrations = screen_calibrations.clone();
                             loop {
                                 let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
                                 if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
@@ -70,6 +71,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                                 let mut stream_task_handles = stream_task_handles.lock().await;
                                 let message_channel = message_channel.clone();
                                 let sender = sender.clone();
+                                let screen_calibrations = screen_calibrations.clone();
 
                                 if !devices_that_responded.contains(&device) {
                                     devices_that_responded.push(device.clone());
@@ -81,7 +83,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
                                         device.clone(),
                                         tokio::spawn({
                                             async move {
-                                                match device_udp_stream_task(device.clone(), message_channel.clone()).await {
+                                                match device_udp_stream_task(device.clone(), message_channel.clone(), screen_calibrations.clone()).await {
                                                     Ok(_) => {
                                                         println!("UDP device stream task finished");
                                                     },
@@ -128,7 +130,7 @@ async fn device_udp_ping_task(message_channel: Sender<Message>) -> std::convert:
     }
 }
 
-async fn device_hid_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_hid_ping_task(message_channel: Sender<Message>, _screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>) -> std::convert::Infallible {
     let api = hidapi::HidApi::new().unwrap();
 
     let mut old_list = vec![];
@@ -153,7 +155,7 @@ async fn device_hid_ping_task(message_channel: Sender<Message>) -> std::convert:
     }
 }
 
-async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert::Infallible {
+async fn device_cdc_ping_task(message_channel: Sender<Message>, screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>) -> std::convert::Infallible {
     let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let old_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     loop {
@@ -203,10 +205,11 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
                         let old_list_arc_clone = old_list_arc_clone.clone();
                         let message_channel = message_channel.clone();
                         let device = device.clone();
+                        let screen_calibrations = screen_calibrations.clone();
                         async move {
                             {
                                 let message_channel = message_channel.clone();
-                                match device_cdc_stream_task(device.clone(), port_info.pid == 0x5210, message_channel).await {
+                                match device_cdc_stream_task(device.clone(), port_info.pid == 0x5210, message_channel, screen_calibrations.clone()).await {
                                     Ok(_) => {},
                                     Err(e) => {
                                         eprintln!("Error in device stream task: {}", e);
@@ -241,41 +244,30 @@ async fn device_cdc_ping_task(message_channel: Sender<Message>) -> std::convert:
     }
 }
 
-fn get_raycast_aimpoint(
-    fv_state: &ats_cv::foveated::FoveatedAimpointState,
-    screen_info: ScreenInfo,
-) -> (Matrix3<f64>, Point3<f64>, Option<Point2<f64>>) {
-    let iso = Isometry3::from_parts(fv_state.filter.position.into(), fv_state.filter.orientation).cast();
+fn get_raycast_aimpoint(fv_state: &ats_cv::foveated::FoveatedAimpointState, screen_calibration: &ScreenCalibration<f64>) -> (Rotation3<f64>, Translation3<f64>, Option<Point2<f64>>) {
+    let orientation = fv_state.filter.orientation.cast();
+    let position = fv_state.filter.position.cast();
 
-    // using the eskf as a fallback might make the aimpoint seem unstable in some scenarios when it
-    // flips back and forth ¯\_(ツ)_/¯
-    // let iso = iso.unwrap_or(Isometry3::from_parts(fv_state.filter.position.into(), fv_state.filter.orientation).cast());
-    let orientation = iso.rotation;
-    let position = iso.translation.vector;
+    let rot = orientation.to_rotation_matrix();
+    let trans = Translation3::from(position);
 
-    let flip_yz = Matrix3::new(1., 0., 0., 0., -1., 0., 0., 0., -1.);
+    let isometry = nalgebra::Isometry::<f64, Rotation3<f64>, 3>::from_parts(trans, rot);
 
-    let rotmat = flip_yz * orientation.to_rotation_matrix() * flip_yz;
-    let transmat = flip_yz * position;
-
-    let screen_ratio =
-        screen_info.screen_dimensions_meters[0] / screen_info.screen_dimensions_meters[1];
-    let screen_3dpoints =
-        ats_cv::calculate_screen_3dpoints(screen_info.screen_dimensions_meters[1], screen_ratio);
-
-    let fv_aimpoint = ats_cv::calculate_aimpoint_from_pose_and_screen_3dpoints(
-        &rotmat,
-        &transmat,
-        &screen_3dpoints,
+    let fv_aimpoint = ats_cv::calculate_aimpoint(
+        &isometry,
+        screen_calibration,
     );
 
-    let orientation = fv_state.filter.orientation;
-    let position = fv_state.filter.position;
+    let flip_yz = Matrix3::new(
+        1., 0., 0.,
+        0., -1., 0.,
+        0., 0., -1.,
+    );
+ 
+    let rot = Rotation3::from_matrix_unchecked(flip_yz * rot * flip_yz);
+    let trans = Translation3::from(flip_yz * trans.vector);
 
-    let rotmat = flip_yz * orientation.to_rotation_matrix().cast() * flip_yz;
-    let transmat = flip_yz * position.cast();
-
-    (rotmat, transmat.into(), fv_aimpoint)
+    (rot, trans, fv_aimpoint)
 }
 
 /// Screen is centered at (0, 0, 0)
@@ -308,7 +300,6 @@ where
 
 pub struct Marker {
     pub mot_id: u8,
-    pub screen_id: u8,
     pub pattern_id: Option<u8>,
     pub normalized: Point2<f64>,
 }
@@ -317,19 +308,24 @@ impl Marker {
     pub fn ats_cv_marker(&self) -> ats_cv::foveated::Marker {
         ats_cv::foveated::Marker {
             position: self.normalized,
-            screen_id: if self.screen_id <= ats_cv::foveated::MAX_SCREEN_ID {
-                Some(self.screen_id)
-            } else {
-                None
-            },
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ScreenInfo {
-    pub screen_dimensions_meters: [f64; 2],
-    pub marker_points: [nalgebra::Point3<f64>; 6],
+fn raycast_update(screen_calibrations: &ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>, fv_state: &FoveatedAimpointState) -> (Option<(Matrix3<f64>, Vector3<f64>)>, Option<Point2<f64>>) {
+    let screen_id = fv_state.screen_id;
+    if screen_id <= ats_cv::foveated::MAX_SCREEN_ID {
+        if let Some(screen_calibration) = screen_calibrations.iter().find_map(|(id, cal)| if *id == screen_id { Some(cal) } else { None }) {
+            let (rotmat, transmat, _fv_aimpoint) = get_raycast_aimpoint(&fv_state, screen_calibration);
+
+            if let Some(_fv_aimpoint) = _fv_aimpoint {
+                return (Some((rotmat.matrix().cast(), transmat.vector.cast())), Some(_fv_aimpoint))
+            } else {
+                return (Some((rotmat.matrix().cast(), transmat.vector.cast())), None)
+            }
+        }
+    }
+    (None, None)
 }
 
 async fn common_tasks(
@@ -337,9 +333,9 @@ async fn common_tasks(
     device: Device,
     message_channel: Sender<Message>,
     mut config: ats_usb::packet::GeneralConfig,
+    screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>,
 ) {
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
-    let fv_aimpoint_pva2d = Arc::new(tokio::sync::Mutex::new(Pva2d::new(0.0001, 1.0)));
     let timeout = Duration::from_secs(2);
     let restart_timeout = Duration::from_secs(1);
 
@@ -351,11 +347,6 @@ async fn common_tasks(
     let screen_dimensions_meters = [2.032*(16./9.), 2.032];
 
     let pattern = marker_pattern(screen_dimensions_meters);
-
-    let screen_info = ScreenInfo {
-        screen_dimensions_meters,
-        marker_points: pattern,
-    };
 
     let mut combined_markers_stream = d.stream_combined_markers().await.unwrap();
     let mut accel_stream = d.stream_accel().await.unwrap();
@@ -393,50 +384,47 @@ async fn common_tasks(
                     // this shouldn't ever happen
                     break;
                 };
-                let CombinedMarkersReport { nf_points, wf_points, nf_screen_ids, wf_screen_ids } = combined_markers;
+                let CombinedMarkersReport { nf_points, wf_points } = combined_markers;
 
-                let aim_point;
-                let rotation_mat;
-                let translation_mat;
+                let pose;
+                let aimpoint;
 
-                let nf_point_tuples = filter_and_create_point_tuples(&nf_points, &nf_screen_ids);
-                let wf_point_tuples = filter_and_create_point_tuples(&wf_points, &wf_screen_ids);
-
-                let nf_points_slice = nf_point_tuples.iter().map(|(_, _, p)| *p).collect::<Vec<_>>();
-                let wf_points_slice = wf_point_tuples.iter().map(|(_, _, p)| *p).collect::<Vec<_>>();
+                let nf_point_tuples = filter_and_create_point_tuples(&nf_points);
+                let wf_point_tuples = filter_and_create_point_tuples(&wf_points);
+    
+                let nf_points_slice = nf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
+                let wf_points_slice = wf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
     
                 let nf_points_transformed = transform_points(&nf_points_slice, &config.camera_model_nf);
                 let wf_points_transformed = transform_points(&wf_points_slice, &config.camera_model_wf);
     
-                let nf_point_tuples = nf_point_tuples.iter().enumerate().map(|(i, (screen_id, id, _))| (*screen_id, *id, nf_points_transformed[i])).collect::<Vec<_>>();
-                let wf_point_tuples = wf_point_tuples.iter().enumerate().map(|(i, (screen_id, id, _))| (*screen_id, *id, wf_points_transformed[i])).collect::<Vec<_>>();
+                let nf_point_tuples = nf_point_tuples.iter().enumerate().map(|(i, (id, _))| (*id, nf_points_transformed[i])).collect::<Vec<_>>();
+                let wf_point_tuples = wf_point_tuples.iter().enumerate().map(|(i, (id, _))| (*id, wf_points_transformed[i])).collect::<Vec<_>>();
     
                 let wf_normalized: ArrayVec<_, 16> = wf_points_transformed.iter().map(|&p| {
-                    ats_cv::to_normalized_image_coordinates(
+                    to_normalized_image_coordinates(
                         p,
                         &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf),
                         Some(&config.stereo_iso.cast()),
                     )
                 }).collect();
                 let nf_normalized: ArrayVec<_, 16> = nf_points_transformed.iter().map(|&p| {
-                    ats_cv::to_normalized_image_coordinates(
+                    to_normalized_image_coordinates(
                         p,
                         &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf),
                         None,
                     )
                 }).collect();
                 let nf_markers2: Vec<_> = std::iter::zip(&nf_normalized, &nf_point_tuples)
-                    .map(|(&normalized, &(screen_id, mot_id, _))| Marker {
+                    .map(|(&normalized, &(mot_id, _))| Marker {
                         mot_id,
-                        screen_id,
                         pattern_id: None,
                         normalized,
                     })
                     .collect();
                 let wf_markers2: Vec<_> = std::iter::zip(&wf_normalized, &wf_point_tuples)
-                    .map(|(&normalized, &(screen_id, mot_id, _))| Marker {
+                    .map(|(&normalized, &(mot_id, _))| Marker {
                         mot_id,
-                        screen_id,
                         pattern_id: None,
                         normalized,
                     })
@@ -447,72 +435,73 @@ async fn common_tasks(
                 if wfnf_realign {
                     // Try to match widefield using brute force p3p, and then
                     // using that to match nearfield
-                    if let Some((wf_match_ix, _, _)) = ats_cv::foveated::identify_markers2(&wf_normalized, None, gravity_vec.cast(), screen_info.screen_dimensions_meters, screen_info.marker_points) {
+
+                    let screen_calibrations = screen_calibrations.lock().await;
+
+                    if let Some((wf_match_ix, _, _)) = ats_cv::foveated::identify_markers(&wf_normalized, gravity_vec.cast(), &screen_calibrations) {
                         let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
-                        let (nf_match_ix, _error) = ats_cv::foveated::match3(&nf_normalized, &wf_match);
+                        let (nf_match_ix, _) = match3(&nf_normalized, &wf_match);
                         if nf_match_ix.iter().all(Option::is_some) {
                             let nf_ordered = nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
                             let wf_ordered = wf_match_ix.map(|i| wf_normalized[i].coords.push(1.0));
-                            let q = ats_cv::calculate_rotational_offset(&wf_ordered, &nf_ordered);
+                            let q = calculate_rotational_offset(&wf_ordered, &nf_ordered);
                             config.stereo_iso.rotation *= q.cast();
                             wfnf_realign = false;
                         }
                     }
                 }
 
-                fv_aimpoint_pva2d.lock().await.step();
-
                 let screen_id: u32;
 
                 {
                     let mut fv_state = fv_state.lock().await;
-                    let nf = nf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
-                    let wf = wf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
-                    fv_state.observe_markers(&nf, &wf, gravity_vec.cast(), screen_info.screen_dimensions_meters, screen_info.marker_points);
 
-                    let (rotmat, transmat, fv_aimpoint) = get_raycast_aimpoint(&fv_state, screen_info);
+                    let screen_calibrations = screen_calibrations.lock().await;
 
-                    rotation_mat = rotmat.cast();
-                    translation_mat = transmat.coords.cast();
+                    let nf = &nf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
+                    let wf = &wf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
+                    fv_state.observe_markers(nf, wf, gravity_vec.cast(), &screen_calibrations);
+        
+                    let (_pose, _aimpoint) = raycast_update(&screen_calibrations, &fv_state);
 
-                    if let Some(fv_aimpoint) = fv_aimpoint {
-                        fv_aimpoint_pva2d.lock().await.observe(&[fv_aimpoint.x, fv_aimpoint.y], &[20., 20.]);
+                    pose = _pose;
+                    aimpoint = _aimpoint;
+
+                    screen_id = fv_state.screen_id as u32;
+                }
+
+                if let Some(aimpoint) = aimpoint { if let Some(pose) = pose {
+                    let aimpoint_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
+                    let device = device.clone();
+                    let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                        timestamp: prev_timestamp.unwrap_or(0),
+                        aimpoint: aimpoint_matrix,
+                        pose: Some(odyssey_hub_common::events::Pose {
+                            rotation: pose.0,
+                            translation: pose.1,
+                        }),
+                        screen_id,
+                    });
+                    match device {
+                        Device::Udp(device) => {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: Device::Udp(device.clone()),
+                                    kind,
+                                }
+                            ))).await;
+                        },
+                        Device::Cdc(device) => {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: Device::Cdc(device.clone()),
+                                    kind,
+                                }
+                            ))).await;
+                        },
+                        Device::Hid(_) => {},
                     }
-                    aim_point = Point2::from(fv_aimpoint_pva2d.lock().await.position());
-
-                    screen_id = fv_state.screen_id.into();
-                }
-
-                let aim_point_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aim_point.x.into(), aim_point.y.into()]);
-                let device = device.clone();
-                let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                    timestamp: prev_timestamp.unwrap_or(0),
-                    aimpoint: aim_point_matrix,
-                    pose: Some(odyssey_hub_common::events::Pose {
-                        rotation: rotation_mat,
-                        translation: translation_mat,
-                    }),
-                    screen_id,
-                });
-                match device {
-                    Device::Udp(device) => {
-                        let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                            odyssey_hub_common::events::DeviceEvent {
-                                device: Device::Udp(device.clone()),
-                                kind,
-                            }
-                        ))).await;
-                    },
-                    Device::Cdc(device) => {
-                        let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                            odyssey_hub_common::events::DeviceEvent {
-                                device: Device::Cdc(device.clone()),
-                                kind,
-                            }
-                        ))).await;
-                    },
-                    Device::Hid(_) => {},
-                }
+                }}
             }
 
             item = accel_stream.next() => {
@@ -535,8 +524,6 @@ async fn common_tasks(
                     }
                 }
     
-                let screen_info = screen_info.clone();
-    
                 let _orientation;
 
                 {
@@ -548,17 +535,17 @@ async fn common_tasks(
                     if let Some(prev_timestamp) = prev_timestamp {
                         let elapsed = accel.timestamp as u64 - prev_timestamp as u64;
                         // println!("elapsed: {}", elapsed);
-                        fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_micros(elapsed), screen_info.screen_dimensions_meters);
+                        fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_micros(elapsed));
         
                         let sample_period = madgwick.sample_period_mut();
                         *sample_period = elapsed as f32/1_000_000.;
                     } else {
-                        fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_secs_f32(1./config.accel_config.accel_odr as f32), screen_info.screen_dimensions_meters);
+                        fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_secs_f32(1./config.accel_config.accel_odr as f32));
                     }
                 }
 
                 prev_timestamp = Some(accel.timestamp);
-    
+
                 let euler_angles = _orientation.euler_angles();
                 let euler_angles = Vector3::new(euler_angles.0 as f64, euler_angles.1 as f64, euler_angles.2 as f64);
                 *orientation.lock().await = _orientation;
@@ -610,7 +597,7 @@ async fn common_tasks(
     }
 }
 
-async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>) -> anyhow::Result<()> {
+async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Message>, screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>) -> anyhow::Result<()> {
     let d = match UsbDevice::connect_hub("0.0.0.0:0", device.addr.to_string().as_str()).await {
         Ok(d) => d,
         Err(e) => {
@@ -636,11 +623,11 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
 
     let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
 
-    common_tasks(d, odyssey_hub_common::device::Device::Udp(device), message_channel, config).await;
+    common_tasks(d, odyssey_hub_common::device::Device::Udp(device), message_channel, config, screen_calibrations.clone()).await;
     Ok(())
 }
 
-async fn device_cdc_stream_task(device: CdcDevice, wait_dsr: bool, message_channel: Sender<Message>) -> anyhow::Result<()> {
+async fn device_cdc_stream_task(device: CdcDevice, wait_dsr: bool, message_channel: Sender<Message>, screen_calibrations: Arc<tokio::sync::Mutex<ArrayVec<(u8, ScreenCalibration<f64>), {(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}>>>) -> anyhow::Result<()> {
     let d = match UsbDevice::connect_serial(&device.path, wait_dsr).await {
         Ok(d) => d,
         Err(e) => {
@@ -659,22 +646,20 @@ async fn device_cdc_stream_task(device: CdcDevice, wait_dsr: bool, message_chann
 
     let _ = message_channel.send(Message::Connect(odyssey_hub_common::device::Device::Cdc(device.clone()))).await;
 
-    common_tasks(d, odyssey_hub_common::device::Device::Cdc(device), message_channel, config).await;
+    common_tasks(d, odyssey_hub_common::device::Device::Cdc(device), message_channel, config, screen_calibrations.clone()).await;
     Ok(())
 }
 
 fn filter_and_create_point_tuples(
     points: &[Point2<u16>],
-    screen_ids: &[u8],
-) -> Vec<(u8, u8, Point2<f64>)> {
+) -> Vec<(u8, Point2<f64>)> {
     points
         .iter()
-        .zip(screen_ids.iter())
         .enumerate()
-        .filter_map(|(id, (pos, &screen_id))| {
+        .filter_map(|(id, pos)| {
             // screen id of 7 means there is no marker
-            if screen_id < 7 && (80..4016).contains(&pos.x) && (80..4016).contains(&pos.y) {
-                Some((screen_id, id as u8, Point2::new(pos.x as f64, pos.y as f64)))
+            if (100..3996).contains(&pos.x) && (100..3996).contains(&pos.y) {
+                Some((id as u8, Point2::new(pos.x as f64, pos.y as f64)))
             } else {
                 None
             }
