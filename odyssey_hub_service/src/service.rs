@@ -1,5 +1,7 @@
-use std::{pin::Pin, sync::Arc};
+use std::{fs::File, pin::Pin, sync::Arc};
 
+use app_dirs2::{get_app_root, AppDataType, AppInfo};
+use ats_cv::ScreenCalibration;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{broadcast, mpsc},
@@ -11,6 +13,8 @@ use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, De
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::server::Connected, Response};
+use tracing::{error, Level};
+use tracing_subscriber::EnvFilter;
 
 use crate::device_tasks::{self, device_tasks};
 
@@ -135,6 +139,15 @@ impl AsyncRead for LocalSocketStream {
 }
 
 pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: CancellationToken) -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+    .with_env_filter(
+        EnvFilter::builder()
+            .with_env_var("RUST_LOG")
+            .with_default_directive(Level::INFO.into())
+            .from_env_lossy(),
+    )
+    .init();
+
     let name = {
         use NameTypeSupport as Nts;
         match NameTypeSupport::query() {
@@ -214,8 +227,33 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: C
         }
     };
 
+    pub const APP_INFO: AppInfo = AppInfo{name: "odyssey", author: "odysseyarm"};
+
+    let screen_calibrations: arrayvec::ArrayVec<(u8, ScreenCalibration<f64>), { (ats_cv::foveated::MAX_SCREEN_ID+1) as usize }> = (0..{(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}).filter_map(|i| {
+        get_app_root(AppDataType::UserConfig, &APP_INFO)
+        .ok()
+        .and_then(|config_dir| {
+            let screen_path = config_dir.join("screens").join(std::format!("screen_{}.json", i));
+            if screen_path.exists() {
+                File::open(screen_path).ok().and_then(|file| {
+                    match serde_json::from_reader(file) {
+                        Ok(calibration) => Some((i as u8, calibration)),
+                        Err(e) => {
+                            error!("Failed to deserialize screen calibration: {}", e);
+                            None
+                        }
+                    }
+                })
+            } else {
+                None
+            }
+        })
+    }).collect();
+
+    let screen_calibrations = Arc::new(tokio::sync::Mutex::new(screen_calibrations));
+
     tokio::select! {
-        _ = device_tasks(sender) => {},
+        _ = device_tasks(sender, screen_calibrations.clone()) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))
