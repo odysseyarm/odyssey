@@ -139,15 +139,6 @@ impl AsyncRead for LocalSocketStream {
 }
 
 pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: CancellationToken) -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-    .with_env_filter(
-        EnvFilter::builder()
-            .with_env_var("RUST_LOG")
-            .with_default_directive(Level::INFO.into())
-            .from_env_lossy(),
-    )
-    .init();
-
     let name = {
         use NameTypeSupport as Nts;
         match NameTypeSupport::query() {

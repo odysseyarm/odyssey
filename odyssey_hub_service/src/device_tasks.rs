@@ -270,34 +270,6 @@ fn get_raycast_aimpoint(fv_state: &ats_cv::foveated::FoveatedAimpointState, scre
     (rot, trans, fv_aimpoint)
 }
 
-/// Screen is centered at (0, 0, 0)
-/// ```text
-/// +--x
-/// |
-/// y    0    3    4
-///
-///      1    5    2
-/// ```
-pub fn marker_pattern<F>(screen_dimensions_meters: [F; 2]) -> [Point3<F>; 6]
-where
-    F: Scalar + std::ops::SubAssign + ComplexField + RealField + Copy,
-{
-    // let _d = F::from_f64(MARKER_DEPTH_METERS).unwrap();
-    let _d = F::from_f64(0.).unwrap();
-
-    let w = screen_dimensions_meters[0];
-    let h = screen_dimensions_meters[1];
-
-    [
-        Point3::from([F::from_f64(0.18 - 0.5).unwrap() * w, F::from_f64(0.29 - 0.5).unwrap() * h, _d]),
-        Point3::from([F::from_f64(0.15 - 0.5).unwrap() * w, F::from_f64(0.82 - 0.5).unwrap() * h, _d]),
-        Point3::from([F::from_f64(0.77 - 0.5).unwrap() * w, F::from_f64(0.8 - 0.5).unwrap() * h, _d]),
-        Point3::from([F::from_f64(0.51 - 0.5).unwrap() * w, F::from_f64(0.35 - 0.5).unwrap() * h, _d]),
-        Point3::from([F::from_f64(0.79 - 0.5).unwrap() * w, F::from_f64(0.25  - 0.5).unwrap() * h, _d]),
-        Point3::from([F::from_f64(0.49 - 0.5).unwrap() * w, F::from_f64(0.76 - 0.5).unwrap() * h, _d]),
-    ]
-}
-
 pub struct Marker {
     pub mot_id: u8,
     pub pattern_id: Option<u8>,
@@ -343,10 +315,6 @@ async fn common_tasks(
     let mut wfnf_realign = true;
     let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
     let madgwick = Arc::new(tokio::sync::Mutex::new(ahrs::Madgwick::new(1./config.accel_config.accel_odr as f32, 0.1)));
-
-    let screen_dimensions_meters = [2.032*(16./9.), 2.032];
-
-    let pattern = marker_pattern(screen_dimensions_meters);
 
     let mut combined_markers_stream = d.stream_combined_markers().await.unwrap();
     let mut accel_stream = d.stream_accel().await.unwrap();
