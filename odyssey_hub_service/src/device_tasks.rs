@@ -583,7 +583,7 @@ async fn device_udp_stream_task(device: UdpDevice, message_channel: Sender<Messa
     };
     let params = match retry(|| d.read_props(), timeout, 3).await {
         Some(x) => x?,
-        None => { return Err(anyhow::Error::msg("Failed to read params")); }
+        None => { return Err(anyhow::Error::msg("Failed to read props")); }
     };
 
     let mut device = device.clone();
