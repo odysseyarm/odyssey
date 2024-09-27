@@ -77,26 +77,16 @@ fn find_circles_grid_special(
 
 /// Returns None if no circles were found. invert = false -> detect dark blobs, invert = true ->
 /// detect white blobs
-pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool, asymmetric: bool, invert: bool, special: bool) -> Option<Vector<Point2f>> {
+pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, asymmetric: bool, invert: bool, special: bool) -> Option<Vector<Point2f>> {
     let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
-    flip(&tmp, &mut im, 0).unwrap();
 
-    if !upside_down {
-        flip(&tmp, &mut im, 0).unwrap();
-        if port == Port::Wf {
-            let tmp = im;
-            im = Mat::default();
-            opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
-        }
-    } else {
-        flip(&tmp, &mut im, 0).unwrap();
-        if port == Port::Nf {
-            let tmp = im;
-            im = Mat::default();
-            opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
-        }
+    flip(&tmp, &mut im, 0).unwrap();
+    if port == Port::Wf {
+        let tmp = im;
+        im = Mat::default();
+        opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
     }
 
     let im2 = im.clone();
@@ -235,7 +225,6 @@ pub fn calibrate_single(
     port: Port,
     board_rows: u16,
     board_cols: u16,
-    upside_down: bool,
     asymmetric: bool,
     invert: bool,
     special: bool,
@@ -244,7 +233,7 @@ pub fn calibrate_single(
     let board_points = board_points(board_rows, board_cols, square_length, asymmetric, special);
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_circles_centers(image, port, board_rows, board_cols, false, upside_down, asymmetric, invert, special)
+        get_circles_centers(image, port, board_rows, board_cols, false, asymmetric, invert, special)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 
@@ -354,7 +343,6 @@ pub fn my_stereo_calibrate(
     nf: &[[u8; 98 * 98]],
     board_rows: u16,
     board_cols: u16,
-    upside_down: bool,
     asymmetric: bool,
     invert: bool,
     special: bool,
@@ -376,12 +364,12 @@ pub fn my_stereo_calibrate(
     let mut nf_points_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
         let Some(wf_points) =
-            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, upside_down, asymmetric, invert, special)
+            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, asymmetric, invert, special)
         else {
             continue;
         };
         let Some(nf_points) =
-            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, upside_down, asymmetric, invert, special)
+            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, asymmetric, invert, special)
         else {
             continue;
         };

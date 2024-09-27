@@ -94,7 +94,7 @@ fn check_regout0() {
     pac::SCB::sys_reset()
 }
 
-#[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2"))]
+#[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2", feature = "atslite-4-1"))]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => usb::vbus_detect::InterruptHandler;

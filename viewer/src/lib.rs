@@ -60,7 +60,6 @@ struct MainState {
     captured_nf: Vec<[u8; 98 * 98]>,
     captured_wf: Vec<[u8; 98 * 98]>,
     detector_params: Arc<DetectorParams>,
-    upside_down: bool,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
     draw_pattern_points: DrawPatternPoints,
@@ -102,12 +101,6 @@ impl MainState {
         let quit = Arc::new(AtomicBool::new(false));
         let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
         let binding = std::env::args().nth(2).unwrap_or("".into());
-        let upside_down = binding.as_str();
-        let upside_down = match upside_down {
-            "--upside-down" | "-ud" => true,
-            _ => false,
-        };
-        println!("upside_down: {}", upside_down);
 
         let main_state = MainState {
             wf_data: wf_data.clone(),
@@ -123,7 +116,6 @@ impl MainState {
             }),
             reset: reset.clone(),
             quit: quit.clone(),
-            upside_down,
             draw_pattern_points: DrawPatternPoints::new(),
         };
 
@@ -134,7 +126,6 @@ impl MainState {
                 wf_data,
                 nf_data,
                 detector_params,
-                upside_down,
                 reset,
                 quit,
             );
@@ -359,14 +350,12 @@ async fn handle_input(state: &mut MainState) {
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
-        let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
                 Port::Nf,
                 board_rows,
                 board_cols,
-                upside_down,
                 true,
                 false,
                 special,
@@ -376,7 +365,6 @@ async fn handle_input(state: &mut MainState) {
                 Port::Nf,
                 board_rows,
                 board_cols,
-                upside_down,
                 false,
                 true,
                 special,
@@ -386,7 +374,6 @@ async fn handle_input(state: &mut MainState) {
                 Port::Nf,
                 board_rows,
                 board_cols,
-                upside_down,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -401,14 +388,12 @@ async fn handle_input(state: &mut MainState) {
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
-        let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
                 Port::Wf,
                 board_rows,
                 board_cols,
-                upside_down,
                 false,
                 true,
                 special,
@@ -418,7 +403,6 @@ async fn handle_input(state: &mut MainState) {
                 Port::Wf,
                 board_rows,
                 board_cols,
-                upside_down,
                 true,
                 false,
                 special,
@@ -428,7 +412,6 @@ async fn handle_input(state: &mut MainState) {
                 Port::Wf,
                 board_rows,
                 board_cols,
-                upside_down,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -444,21 +427,18 @@ async fn handle_input(state: &mut MainState) {
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
-        let upside_down = state.upside_down;
         std::thread::spawn(move || match pat {
             DetectorPattern::Chessboard => chessboard::my_stereo_calibrate(
                 &wf,
                 &nf,
                 board_rows,
                 board_cols,
-                upside_down,
             ),
             DetectorPattern::AsymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
                 &nf,
                 board_rows,
                 board_cols,
-                upside_down,
                 true,
                 false,
                 special,
@@ -468,7 +448,6 @@ async fn handle_input(state: &mut MainState) {
                 &nf,
                 board_rows,
                 board_cols,
-                upside_down,
                 false,
                 true,
                 special,
@@ -523,7 +502,6 @@ fn reader_thread(
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
     detector_params: Arc<DetectorParams>,
-    upside_down: bool,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
 ) {
@@ -581,7 +559,6 @@ fn reader_thread(
                     board_rows,
                     board_cols,
                     false,
-                    upside_down,
                 )
             }
             DetectorPattern::AsymmetricCircles => {
@@ -591,7 +568,6 @@ fn reader_thread(
                     board_rows,
                     board_cols,
                     false,
-                    upside_down,
                     true,
                     false,
                     special,
@@ -604,7 +580,6 @@ fn reader_thread(
                     board_rows,
                     board_cols,
                     false,
-                    upside_down,
                     false,
                     true,
                     special,
@@ -636,7 +611,6 @@ fn reader_thread(
 fn opencv_thread(
     raw_image: Receiver<(Port, [u8; 98 * 98])>,
     detector_params: Arc<DetectorParams>,
-    upside_down: bool,
 ) {
     loop {
         let (port, image) = raw_image.recv().unwrap();
@@ -653,7 +627,6 @@ fn opencv_thread(
                     board_rows,
                     board_cols,
                     true,
-                    upside_down,
                 );
             }
             DetectorPattern::AsymmetricCircles => {
@@ -663,7 +636,6 @@ fn opencv_thread(
                     board_rows,
                     board_cols,
                     true,
-                    upside_down,
                     true,
                     false,
                     special,
@@ -676,7 +648,6 @@ fn opencv_thread(
                     board_rows,
                     board_cols,
                     true,
-                    upside_down,
                     false,
                     true,
                     special,
