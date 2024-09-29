@@ -8,7 +8,7 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
 use embassy_nrf::{
-    config::{Config, HfclkSource}, gpio::{self, Pull, AnyPin}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
+    config::{Config, HfclkSource}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
         self,
         vbus_detect::HardwareVbusDetect,
         Driver,
@@ -375,14 +375,12 @@ fn usb_device(p: impl Peripheral<P = peripherals::USBD> + 'static) -> (
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
-    static DEVICE_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static MSOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
     static STATE: StaticCell<State> = StaticCell::new();
 
-    let device_descriptor = DEVICE_DESCRIPTOR.init_with(|| [0; 256]);
     let config_descriptor = CONFIG_DESCRIPTOR.init_with(|| [0; 256]);
     let bos_descriptor = BOS_DESCRIPTOR.init_with(|| [0; 256]);
     let msos_descriptor = MSOS_DESCRIPTOR.init_with(|| [0; 256]);
@@ -392,7 +390,6 @@ fn usb_device(p: impl Peripheral<P = peripherals::USBD> + 'static) -> (
     let mut builder = Builder::new(
         driver,
         config,
-        device_descriptor,
         config_descriptor,
         bos_descriptor,
         msos_descriptor,

@@ -3,15 +3,17 @@
 use defmt::{info, trace};
 use embassy_embedded_hal::SetConfig;
 use embassy_nrf::{
-    gpio::{AnyPin, Level, Output, OutputDrive, Pin}, pac, spim::{Config, Frequency, Instance, Spim, MODE_3}, Peripheral
+    gpio::{Level, Output, OutputDrive, Pin},
+    spim::{BitOrder, Config, Frequency, Instance, Spim, MODE_3},
+    Peripheral,
 };
 ///
 /// Nothing here is cancel safe, if a future is dropped, the device will be left in an
 /// indeterminate state.
 pub struct Paj7025<'d, T: Instance> {
     spim: Spim<'d, T>,
-    cs: Output<'d, AnyPin>,
-    fod: Output<'d, AnyPin>,
+    cs: Output<'d>,
+    fod: Output<'d>,
 }
 
 impl<'d, T: Instance> Paj7025<'d, T> {
@@ -136,14 +138,16 @@ impl<'d, T: Instance> Paj7025<'d, T> {
     ) -> Self {
         trace!("Paj7025::new");
         let cs = Output::new(cs.into_ref().map_into(), Level::High, OutputDrive::Standard);
-        let fod = Output::new(fod.into_ref().map_into(), Level::High, OutputDrive::Standard);
+        let fod = Output::new(
+            fod.into_ref().map_into(),
+            Level::High,
+            OutputDrive::Standard,
+        );
         let mut config = Config::default();
         config.frequency = Frequency::M8;
         config.mode = MODE_3;
-        // https://github.com/embassy-rs/embassy/pull/2485 :pray:
-        // config.bit_order = BitOrder::LSB_FIRST;
+        config.bit_order = BitOrder::LSB_FIRST;
         spim.set_config(&config).unwrap();
-        regs::<T>().config.write(|w| w.order().lsb_first());
         let mut paj = Self { spim, cs, fod };
         paj.initial_power().await;
         info!("Paj7025 initial power");
@@ -182,7 +186,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
 
     pub async fn initialize_settings2(&mut self) {
         let mut bank = 0x00;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank0
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank0
 
         let mut tmp_data = 0x00;
         self.write_register(0xdc, tmp_data).await; //internal_system_control_disable
@@ -203,13 +207,13 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x1f, tmp_data).await; //freerun_irtx_disable
 
         bank = 0x01;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank1
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank1
 
         tmp_data = 0x00;
         self.write_register(0x2d, tmp_data).await; //V flip
 
         bank = 0x0c;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank12
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank12
 
         let tmp_data_buf_xy = [(4095 & 0xff) as u8, (4095 >> 8) as u8];
         self.write_register_array(0x60, &tmp_data_buf_xy).await;
@@ -242,12 +246,12 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         tmp_data = 0x00;
         self.write_register(0x13, tmp_data).await; //keyscan disable
         bank = 0x00;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank0
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank0
         tmp_data = 0x01;
         self.write_register(0x01, tmp_data).await; //update flag enable
 
         bank = 0x0c;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank12
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank12
         tmp_data = 0x10;
         self.write_register(0x0b, tmp_data).await; //global = 16
         tmp_data = 0x03; // should be 0 for nearfield
@@ -262,7 +266,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x47, tmp_data).await; //Yth = 110
 
         bank = 0x01;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank1
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank1
         tmp_data = 0x01;
         self.write_register(0x01, tmp_data).await; //update flag enable
     }
@@ -389,8 +393,4 @@ impl<'d, T: Instance> Paj7025<'d, T> {
     write_register_spec!(set_frame_period: u32 = 0x0c; [0x07, 0x08, 0x09]);
     write_register_spec!(set_bank1_sync_updated: u8 = 0x01; [0x01]);
     write_register_spec!(set_bank0_sync_updated: u8 = 0x00; [0x01]);
-}
-
-fn regs<I: Instance>() -> &'static pac::spim0::RegisterBlock {
-    I::regs()
 }
