@@ -3,7 +3,9 @@
 use defmt::{info, trace};
 use embassy_embedded_hal::SetConfig;
 use embassy_nrf::{
-    gpio::{Level, Output, OutputDrive, Pin}, spim::{BitOrder, Config, Frequency, Instance, Spim, MODE_3}, Peripheral
+    gpio::{Level, Output, OutputDrive, Pin},
+    spim::{BitOrder, Config, Frequency, Instance, Spim, MODE_3},
+    Peripheral,
 };
 ///
 /// Nothing here is cancel safe, if a future is dropped, the device will be left in an
@@ -136,7 +138,11 @@ impl<'d, T: Instance> Paj7025<'d, T> {
     ) -> Self {
         trace!("Paj7025::new");
         let cs = Output::new(cs.into_ref().map_into(), Level::High, OutputDrive::Standard);
-        let fod = Output::new(fod.into_ref().map_into(), Level::High, OutputDrive::Standard);
+        let fod = Output::new(
+            fod.into_ref().map_into(),
+            Level::High,
+            OutputDrive::Standard,
+        );
         let mut config = Config::default();
         config.frequency = Frequency::M8;
         config.mode = MODE_3;
@@ -180,7 +186,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
 
     pub async fn initialize_settings2(&mut self) {
         let mut bank = 0x00;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank0
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank0
 
         let mut tmp_data = 0x00;
         self.write_register(0xdc, tmp_data).await; //internal_system_control_disable
@@ -201,13 +207,13 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x1f, tmp_data).await; //freerun_irtx_disable
 
         bank = 0x01;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank1
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank1
 
         tmp_data = 0x00;
         self.write_register(0x2d, tmp_data).await; //V flip
 
         bank = 0x0c;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank12
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank12
 
         let tmp_data_buf_xy = [(4095 & 0xff) as u8, (4095 >> 8) as u8];
         self.write_register_array(0x60, &tmp_data_buf_xy).await;
@@ -240,12 +246,12 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         tmp_data = 0x00;
         self.write_register(0x13, tmp_data).await; //keyscan disable
         bank = 0x00;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank0
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank0
         tmp_data = 0x01;
         self.write_register(0x01, tmp_data).await; //update flag enable
 
         bank = 0x0c;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank12
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank12
         tmp_data = 0x10;
         self.write_register(0x0b, tmp_data).await; //global = 16
         tmp_data = 0x03; // should be 0 for nearfield
@@ -260,7 +266,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x47, tmp_data).await; //Yth = 110
 
         bank = 0x01;
-        self.write_register(0xef, bank).await;     //Switching RegBank to Bank1
+        self.write_register(0xef, bank).await; //Switching RegBank to Bank1
         tmp_data = 0x01;
         self.write_register(0x01, tmp_data).await; //update flag enable
     }
