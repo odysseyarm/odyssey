@@ -3,15 +3,15 @@
 use defmt::{info, trace};
 use embassy_embedded_hal::SetConfig;
 use embassy_nrf::{
-    gpio::{AnyPin, Level, Output, OutputDrive, Pin}, pac, spim::{Config, Frequency, Instance, Spim, MODE_3}, Peripheral
+    gpio::{Level, Output, OutputDrive, Pin}, spim::{BitOrder, Config, Frequency, Instance, Spim, MODE_3}, Peripheral
 };
 ///
 /// Nothing here is cancel safe, if a future is dropped, the device will be left in an
 /// indeterminate state.
 pub struct Paj7025<'d, T: Instance> {
     spim: Spim<'d, T>,
-    cs: Output<'d, AnyPin>,
-    fod: Output<'d, AnyPin>,
+    cs: Output<'d>,
+    fod: Output<'d>,
 }
 
 impl<'d, T: Instance> Paj7025<'d, T> {
@@ -140,10 +140,8 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         let mut config = Config::default();
         config.frequency = Frequency::M8;
         config.mode = MODE_3;
-        // https://github.com/embassy-rs/embassy/pull/2485 :pray:
-        // config.bit_order = BitOrder::LSB_FIRST;
+        config.bit_order = BitOrder::LSB_FIRST;
         spim.set_config(&config).unwrap();
-        regs::<T>().config.write(|w| w.order().lsb_first());
         let mut paj = Self { spim, cs, fod };
         paj.initial_power().await;
         info!("Paj7025 initial power");
@@ -389,8 +387,4 @@ impl<'d, T: Instance> Paj7025<'d, T> {
     write_register_spec!(set_frame_period: u32 = 0x0c; [0x07, 0x08, 0x09]);
     write_register_spec!(set_bank1_sync_updated: u8 = 0x01; [0x01]);
     write_register_spec!(set_bank0_sync_updated: u8 = 0x00; [0x01]);
-}
-
-fn regs<I: Instance>() -> &'static pac::spim0::RegisterBlock {
-    I::regs()
 }
