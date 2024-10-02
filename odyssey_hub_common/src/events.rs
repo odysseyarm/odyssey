@@ -10,13 +10,14 @@ pub struct DeviceEvent {
     pub kind: DeviceEventKind,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum DeviceEventKind {
     AccelerometerEvent(AccelerometerEvent),
     TrackingEvent(TrackingEvent),
     ImpactEvent(ImpactEvent),
     ConnectEvent,
     DisconnectEvent,
+    PacketEvent(ats_usb::packet::Packet),
 }
 
 #[derive(Clone, Copy, Debug)]

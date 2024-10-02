@@ -1,4 +1,6 @@
-use interprocess::local_socket::{tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName};
+use interprocess::local_socket::{
+    tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName,
+};
 use odyssey_hub_service_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, Uri};
@@ -30,7 +32,8 @@ impl Client {
                     let r = odyssey_hub_service::service::LocalSocketStream::new(r);
                     dbg!(std::io::Result::Ok(r))
                 }
-            })).await?;
+            }))
+            .await?;
 
         self.service_client = Some(ServiceClient::new(channel));
         println!("connected");
@@ -38,21 +41,28 @@ impl Client {
         Ok(())
     }
 
-    pub async fn get_device_list(&mut self) -> anyhow::Result<Vec<odyssey_hub_common::device::Device>> {
+    pub async fn get_device_list(
+        &mut self,
+    ) -> anyhow::Result<Vec<odyssey_hub_common::device::Device>> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(DeviceListRequest {});
             // for whatever insane reason get_device_list requires mutable service_client
             let response = service_client.get_device_list(request).await.unwrap();
             println!("RESPONSE={:?}", response);
-            Ok(response.into_inner().device_list.into_iter().map(|d| {
-                d.into()
-            }).collect::<Vec<odyssey_hub_common::device::Device>>())
+            Ok(response
+                .into_inner()
+                .device_list
+                .into_iter()
+                .map(|d| d.into())
+                .collect::<Vec<odyssey_hub_common::device::Device>>())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
     }
 
-    pub async fn poll(&mut self) -> anyhow::Result<tonic::Streaming<odyssey_hub_service_interface::PollReply>> {
+    pub async fn poll(
+        &mut self,
+    ) -> anyhow::Result<tonic::Streaming<odyssey_hub_service_interface::PollReply>> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_service_interface::PollRequest {});
             Ok(service_client.poll(request).await?.into_inner())

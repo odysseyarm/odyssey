@@ -76,9 +76,6 @@ pub struct Vector2f64 {
 
 impl From<nalgebra::Vector2<f64>> for Vector2f64 {
     fn from(v: nalgebra::Vector2<f64>) -> Self {
-        Self {
-            x: v.x,
-            y: v.y,
-        }
+        Self { x: v.x, y: v.y }
     }
 }

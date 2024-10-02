@@ -85,12 +85,16 @@ message DeviceEvent {
   }
   message ConnectEvent {}
   message DisconnectEvent {}
+  message PacketEvent {
+    bytes bytes = 1;
+  }
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
     TrackingEvent tracking = 3;
     ImpactEvent impact = 4;
     ConnectEvent connect = 5;
     DisconnectEvent disconnect = 6;
+    PacketEvent packet = 7;
   }
 }
 

@@ -18,7 +18,9 @@ async fn main() {
     tokio::spawn({
         let cancel_token = cancel_token.clone();
         async move {
-            tokio::signal::ctrl_c().await.expect("failed to listen for ctrl-c");
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to listen for ctrl-c");
             cancel_token.cancel();
         }
     });

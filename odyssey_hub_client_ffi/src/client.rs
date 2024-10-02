@@ -22,7 +22,12 @@ pub extern "C" fn client_new() -> Box<Client> {
 }
 
 #[no_mangle]
-pub extern "C" fn client_connect(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError)) {
+pub extern "C" fn client_connect(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
@@ -37,7 +42,17 @@ pub extern "C" fn client_connect(handle: *const crate::Handle, userdata: UserObj
 }
 
 #[no_mangle]
-pub extern "C" fn client_get_device_list(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, device_list: *mut crate::ffi_common::Device, size: usize)) {
+pub extern "C" fn client_get_device_list(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    callback: extern "C" fn(
+        userdata: UserObj,
+        error: ClientError,
+        device_list: *mut crate::ffi_common::Device,
+        size: usize,
+    ),
+) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
@@ -46,21 +61,37 @@ pub extern "C" fn client_get_device_list(handle: *const crate::Handle, userdata:
         match client.get_device_list().await {
             Ok(dl) => {
                 // allocate memory for the device list, and copy the device list into it, and set len to the length of the device list
-                let device_list = dl.into_iter().map(|d| d.into()).collect::<Vec<crate::ffi_common::Device>>();
+                let device_list = dl
+                    .into_iter()
+                    .map(|d| d.into())
+                    .collect::<Vec<crate::ffi_common::Device>>();
                 unsafe {
                     let len = device_list.len();
-                    let device_list_out = std::alloc::alloc(std::alloc::Layout::array::<crate::ffi_common::Device>(device_list.len()).unwrap()) as *mut crate::ffi_common::Device;
+                    let device_list_out = std::alloc::alloc(
+                        std::alloc::Layout::array::<crate::ffi_common::Device>(device_list.len())
+                            .unwrap(),
+                    ) as *mut crate::ffi_common::Device;
                     std::ptr::copy(device_list.as_ptr(), device_list_out, device_list.len());
                     callback(userdata, ClientError::ClientErrorNone, device_list_out, len);
                 }
-            },
-            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected, std::ptr::null_mut(), 0),
+            }
+            Err(_) => callback(
+                userdata,
+                ClientError::ClientErrorNotConnected,
+                std::ptr::null_mut(),
+                0,
+            ),
         }
     });
 }
 
 #[no_mangle]
-pub extern "C" fn start_stream(handle: *const crate::Handle, userdata: UserObj, client: *mut Client, callback: extern "C" fn (userdata: UserObj, error: ClientError, reply: crate::ffi_common::Event)) {
+pub extern "C" fn start_stream(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    callback: extern "C" fn(userdata: UserObj, error: ClientError, reply: crate::ffi_common::Event),
+) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
@@ -72,9 +103,19 @@ pub extern "C" fn start_stream(handle: *const crate::Handle, userdata: UserObj, 
                     let as_event: odyssey_hub_common::events::Event = reply.event.unwrap().into();
                     callback(userdata, ClientError::ClientErrorNone, as_event.into());
                 }
-                callback(userdata, ClientError::ClientErrorStreamEnd, odyssey_hub_common::events::Event::None.into());
-            },
-            Err(_) => { callback(userdata, ClientError::ClientErrorNotConnected, odyssey_hub_common::events::Event::None.into()); },
+                callback(
+                    userdata,
+                    ClientError::ClientErrorStreamEnd,
+                    odyssey_hub_common::events::Event::None.into(),
+                );
+            }
+            Err(_) => {
+                callback(
+                    userdata,
+                    ClientError::ClientErrorNotConnected,
+                    odyssey_hub_common::events::Event::None.into(),
+                );
+            }
         }
     });
 }

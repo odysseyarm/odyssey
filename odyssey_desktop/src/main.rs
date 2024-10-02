@@ -1,10 +1,15 @@
 extern crate ats_usb;
 extern crate hidapi;
 
-use std::{convert::Infallible, net::{Ipv4Addr, SocketAddr}, time::Duration};
+use std::{
+    convert::Infallible,
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use iced::{
-    futures::{Sink, SinkExt}, widget::{column, text, Column}
+    futures::{Sink, SinkExt},
+    widget::{column, text, Column},
 };
 use tokio::net::UdpSocket;
 
@@ -61,33 +66,41 @@ impl Counter {
                 if let Some(i) = i {
                     self.device_list.remove(i);
                 }
-            },
+            }
         }
     }
 }
 
 async fn device_ping_task(mut message_channel: impl Sink<Message> + Unpin) -> Infallible {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 23456)).await.unwrap();
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 23456))
+        .await
+        .unwrap();
     socket.set_broadcast(true).unwrap();
 
     let mut old_list = vec![];
     loop {
         let mut new_list = vec![];
         let mut buf = [0; 1472];
-        socket.send_to(&[255, 1], ("10.0.0.255", 23456)).await.unwrap();
+        socket
+            .send_to(&[255, 1], ("10.0.0.255", 23456))
+            .await
+            .unwrap();
         futures::future::select(
             std::pin::pin!(tokio::time::sleep(Duration::from_secs(2))),
             std::pin::pin!(async {
                 loop {
                     let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
-                    if buf[0] == 255 { continue; }
+                    if buf[0] == 255 {
+                        continue;
+                    }
                     if !old_list.contains(&addr) {
                         let _ = message_channel.send(Message::Connect(addr)).await;
                     }
                     new_list.push(addr);
                 }
-            })
-        ).await;
+            }),
+        )
+        .await;
         dbg!(&new_list);
         for v in &old_list {
             if !new_list.contains(v) {
@@ -132,7 +145,9 @@ async fn device_cdc_task(mut message_channel: impl Sink<Message> + Unpin) -> Inf
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
-        }.into_iter().filter(|port| {
+        }
+        .into_iter()
+        .filter(|port| {
             match &port.port_type {
                 serialport::SerialPortType::UsbPort(port_info) => {
                     if port_info.vid != 0x1915 || port_info.pid != 0x520f {
@@ -147,10 +162,11 @@ async fn device_cdc_task(mut message_channel: impl Sink<Message> + Unpin) -> Inf
                     } else {
                         true
                     }
-                },
+                }
                 _ => false,
             }
-        }).collect();
+        })
+        .collect();
         for _device in ports {
             new_list.push(SocketAddr::new(Ipv4Addr::new(42, 0, 0, 1).into(), 00000));
         }

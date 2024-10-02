@@ -17,6 +17,7 @@ typedef enum DeviceEventKindTag {
   ImpactEvent,
   ConnectEvent,
   DisconnectEvent,
+  PacketEvent,
 } DeviceEventKindTag;
 
 typedef enum DeviceTag {
@@ -29,6 +30,11 @@ typedef enum EventTag {
   None,
   DeviceEvent,
 } EventTag;
+
+typedef enum PacketDataTag {
+  Unsupported,
+  VendorEvent,
+} PacketDataTag;
 
 typedef struct Client Client;
 
@@ -131,12 +137,37 @@ typedef struct DisconnectEvent {
   uint8_t _unused;
 } DisconnectEvent;
 
+typedef struct UnsupportedPacketData {
+  uint8_t _unused;
+} UnsupportedPacketData;
+
+typedef struct VendorEventPacketData {
+  uint8_t len;
+  uint8_t data[98];
+} VendorEventPacketData;
+
+typedef union PacketDataU {
+  struct UnsupportedPacketData unsupported;
+  struct VendorEventPacketData vendor_event;
+} PacketDataU;
+
+typedef struct PacketData {
+  enum PacketDataTag tag;
+  union PacketDataU u;
+} PacketData;
+
+typedef struct PacketEvent {
+  uint8_t ty;
+  struct PacketData data;
+} PacketEvent;
+
 typedef union DeviceEventKindU {
   struct AccelerometerEvent accelerometer_event;
   struct TrackingEvent tracking_event;
   struct ImpactEvent impact_event;
   struct ConnectEvent connect_event;
   struct DisconnectEvent disconnect_event;
+  struct PacketEvent packet_event;
 } DeviceEventKindU;
 
 typedef struct DeviceEventKind {

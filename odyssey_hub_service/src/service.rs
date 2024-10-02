@@ -2,19 +2,25 @@ use std::{fs::File, pin::Pin, sync::Arc};
 
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
+use interprocess::local_socket::{
+    traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName,
+};
+use odyssey_hub_service_interface::{
+    service_server::{Service, ServiceServer},
+    DeviceListReply, DeviceListRequest, PollReply, PollRequest,
+};
+#[cfg(os = "windows")]
+use os::windows::{
+    local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{broadcast, mpsc},
 };
-use interprocess::local_socket::{traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName};
-#[cfg(os = "windows")]
-use os::windows::{local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor};
-use odyssey_hub_service_interface::{service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest, PollRequest, PollReply};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::server::Connected, Response};
-use tracing::{error, Level};
-use tracing_subscriber::EnvFilter;
+use tracing::error;
 
 use crate::device_tasks::{self, device_tasks};
 
@@ -32,13 +38,14 @@ impl Service for Server {
         &self,
         _: tonic::Request<DeviceListRequest>,
     ) -> Result<tonic::Response<DeviceListReply>, tonic::Status> {
-        let device_list = self.device_list.lock().iter().map(|d| {
-            d.clone().into()
-        }).collect();
+        let device_list = self
+            .device_list
+            .lock()
+            .iter()
+            .map(|d| d.clone().into())
+            .collect();
 
-        let reply = DeviceListReply {
-            device_list,
-        };
+        let reply = DeviceListReply { device_list };
 
         Ok(tonic::Response::new(reply))
     }
@@ -60,7 +67,11 @@ impl Service for Server {
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                let send_result = tx.send(Ok(PollReply { event: Some(event.into()) })).await;
+                let send_result = tx
+                    .send(Ok(PollReply {
+                        event: Some(event.into()),
+                    }))
+                    .await;
                 if send_result.is_err() {
                     break;
                 }
@@ -85,17 +96,14 @@ impl LocalSocketStream {
         Self(inner)
     }
     fn inner_pin(self: Pin<&mut Self>) -> Pin<&mut interprocess::local_socket::tokio::Stream> {
-        unsafe {
-            self.map_unchecked_mut(|s| &mut s.0)
-        }
+        unsafe { self.map_unchecked_mut(|s| &mut s.0) }
     }
 }
 
 impl Connected for LocalSocketStream {
     type ConnectInfo = ();
 
-    fn connect_info(&self) -> Self::ConnectInfo {
-    }
+    fn connect_info(&self) -> Self::ConnectInfo {}
 }
 
 impl AsyncWrite for LocalSocketStream {
@@ -107,11 +115,17 @@ impl AsyncWrite for LocalSocketStream {
         self.inner_pin().poll_write(cx, buf)
     }
 
-    fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
         self.inner_pin().poll_shutdown(cx)
     }
 
@@ -138,7 +152,10 @@ impl AsyncRead for LocalSocketStream {
     }
 }
 
-pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: CancellationToken) -> anyhow::Result<()> {
+pub async fn run_service(
+    sender: mpsc::UnboundedSender<Message>,
+    cancel_token: CancellationToken,
+) -> anyhow::Result<()> {
     let name = {
         use NameTypeSupport as Nts;
         match NameTypeSupport::query() {
@@ -159,12 +176,10 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: C
         listener_opts.security_descriptor(sd);
     };
     let listener = listener_opts.create_tokio().unwrap();
-    let listener = futures::stream::unfold((), |()| {
-        async {
-            let conn = listener.accept().await;
-            dbg!(&conn);
-            Some((conn.map(LocalSocketStream), ()))
-        }
+    let listener = futures::stream::unfold((), |()| async {
+        let conn = listener.accept().await;
+        dbg!(&conn);
+        Some((conn.map(LocalSocketStream), ()))
     });
 
     sender.send(Message::ServerInit(Ok(()))).unwrap();
@@ -187,59 +202,69 @@ pub async fn run_service(sender: mpsc::UnboundedSender<Message>, cancel_token: C
             match message {
                 device_tasks::Message::Connect(d) => {
                     dl.lock().push(d.clone());
-                    event_sender.send(
-                        odyssey_hub_common::events::Event::DeviceEvent({
+                    event_sender
+                        .send(odyssey_hub_common::events::Event::DeviceEvent({
                             odyssey_hub_common::events::DeviceEvent {
                                 device: d.clone(),
                                 kind: odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
                             }
-                        })
-                    ).unwrap();
-                },
+                        }))
+                        .unwrap();
+                }
                 device_tasks::Message::Disconnect(d) => {
                     let mut dl = dl.lock();
                     let i = dl.iter().position(|a| *a == d);
                     if let Some(i) = i {
                         dl.remove(i);
                     }
-                    event_sender.send(
-                        odyssey_hub_common::events::Event::DeviceEvent({
+                    event_sender
+                        .send(odyssey_hub_common::events::Event::DeviceEvent({
                             odyssey_hub_common::events::DeviceEvent {
                                 device: d.clone(),
                                 kind: odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
                             }
-                        })
-                    ).unwrap();
-                },
+                        }))
+                        .unwrap();
+                }
                 device_tasks::Message::Event(e) => {
                     event_sender.send(e).unwrap();
-                },
+                }
             }
         }
     };
 
-    pub const APP_INFO: AppInfo = AppInfo{name: "odyssey", author: "odysseyarm"};
+    pub const APP_INFO: AppInfo = AppInfo {
+        name: "odyssey",
+        author: "odysseyarm",
+    };
 
-    let screen_calibrations: arrayvec::ArrayVec<(u8, ScreenCalibration<f64>), { (ats_cv::foveated::MAX_SCREEN_ID+1) as usize }> = (0..{(ats_cv::foveated::MAX_SCREEN_ID+1) as usize}).filter_map(|i| {
-        get_app_root(AppDataType::UserConfig, &APP_INFO)
-        .ok()
-        .and_then(|config_dir| {
-            let screen_path = config_dir.join("screens").join(std::format!("screen_{}.json", i));
-            if screen_path.exists() {
-                File::open(screen_path).ok().and_then(|file| {
-                    match serde_json::from_reader(file) {
-                        Ok(calibration) => Some((i as u8, calibration)),
-                        Err(e) => {
-                            error!("Failed to deserialize screen calibration: {}", e);
-                            None
-                        }
+    let screen_calibrations: arrayvec::ArrayVec<
+        (u8, ScreenCalibration<f64>),
+        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+    > = (0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
+        .filter_map(|i| {
+            get_app_root(AppDataType::UserConfig, &APP_INFO)
+                .ok()
+                .and_then(|config_dir| {
+                    let screen_path = config_dir
+                        .join("screens")
+                        .join(std::format!("screen_{}.json", i));
+                    if screen_path.exists() {
+                        File::open(screen_path)
+                            .ok()
+                            .and_then(|file| match serde_json::from_reader(file) {
+                                Ok(calibration) => Some((i as u8, calibration)),
+                                Err(e) => {
+                                    error!("Failed to deserialize screen calibration: {}", e);
+                                    None
+                                }
+                            })
+                    } else {
+                        None
                     }
                 })
-            } else {
-                None
-            }
         })
-    }).collect();
+        .collect();
 
     let screen_calibrations = Arc::new(tokio::sync::Mutex::new(screen_calibrations));
 

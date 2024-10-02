@@ -8,7 +8,14 @@ use odyssey_hub_service::service::{run_service, Message};
 #[cfg(target_os = "windows")]
 use windows_service::define_windows_service;
 #[cfg(target_os = "windows")]
-use windows_service::{service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType}, service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle}, service_dispatcher};
+use windows_service::{
+    service::{
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceType,
+    },
+    service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
+    service_dispatcher,
+};
 
 #[cfg(target_os = "windows")]
 define_windows_service!(ffi_service_main, service_main);
@@ -106,7 +113,9 @@ async fn handle_service_status(
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(()))) => {
-                status_handle.set_service_status(running_status.clone()).unwrap();
+                status_handle
+                    .set_service_status(running_status.clone())
+                    .unwrap();
             }
             Some(Message::ServerInit(Err(_))) => {
                 break;

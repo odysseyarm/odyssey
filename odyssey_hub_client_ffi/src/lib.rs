@@ -13,7 +13,9 @@ pub extern "C" fn init() -> Box<Handle> {
 
 #[no_mangle]
 pub extern "C" fn free(handle: *mut Handle) {
-    unsafe { drop(Box::from_raw(handle)); };
+    unsafe {
+        drop(Box::from_raw(handle));
+    };
 }
 
 #[allow(unused)]

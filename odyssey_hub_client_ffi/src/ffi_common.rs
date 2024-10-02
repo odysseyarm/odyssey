@@ -14,7 +14,9 @@ impl From<odyssey_hub_common::device::Device> for Device {
                     udp: UdpDevice {
                         id: udp_device.id,
                         addr: SocketAddr {
-                            ip: std::ffi::CString::new(udp_device.addr.ip().to_string()).unwrap().into_raw(),
+                            ip: std::ffi::CString::new(udp_device.addr.ip().to_string())
+                                .unwrap()
+                                .into_raw(),
                             port: udp_device.addr.port(),
                         },
                         uuid: udp_device.uuid,
@@ -132,6 +134,7 @@ pub enum DeviceEventKindTag {
     ImpactEvent,
     ConnectEvent,
     DisconnectEvent,
+    PacketEvent,
 }
 
 #[repr(C)]
@@ -142,6 +145,7 @@ pub union DeviceEventKindU {
     impact_event: ImpactEvent,
     connect_event: ConnectEvent,
     disconnect_event: DisconnectEvent,
+    packet_event: PacketEvent,
 }
 
 #[repr(C)]
@@ -171,6 +175,13 @@ pub struct ImpactEvent {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+pub struct PacketEvent {
+    ty: u8,
+    data: PacketData,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct ConnectEvent {
     _unused: u8,
 }
@@ -188,6 +199,40 @@ pub struct Pose {
     translation: crate::funny::Matrix3x1f64,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct PacketData {
+    tag: PacketDataTag,
+    u: PacketDataU,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub enum PacketDataTag {
+    Unsupported,
+    VendorEvent,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union PacketDataU {
+    unsupported: UnsupportedPacketData,
+    vendor_event: VendorEventPacketData,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct UnsupportedPacketData {
+    _unused: u8,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VendorEventPacketData {
+    pub len: u8,
+    pub data: [u8; 98],
+}
+
 impl From<odyssey_hub_common::events::Pose> for Pose {
     fn from(pose: odyssey_hub_common::events::Pose) -> Self {
         Pose {
@@ -197,12 +242,31 @@ impl From<odyssey_hub_common::events::Pose> for Pose {
     }
 }
 
+impl From<ats_usb::packet::PacketData> for PacketData {
+    fn from(packet_data: ats_usb::packet::PacketData) -> Self {
+        match packet_data {
+            ats_usb::packet::PacketData::Vendor(_, (len, data)) => PacketData {
+                tag: PacketDataTag::VendorEvent,
+                u: PacketDataU {
+                    vendor_event: VendorEventPacketData { len, data },
+                },
+            },
+            _ => PacketData {
+                tag: PacketDataTag::Unsupported,
+                u: PacketDataU {
+                    unsupported: UnsupportedPacketData { _unused: 0 },
+                },
+            },
+        }
+    }
+}
+
 impl From<odyssey_hub_common::events::Event> for Event {
     fn from(event: odyssey_hub_common::events::Event) -> Self {
         match event {
             odyssey_hub_common::events::Event::None => Event {
                 tag: EventTag::None,
-                u: EventU { none: 0, },
+                u: EventU { none: 0 },
             },
             odyssey_hub_common::events::Event::DeviceEvent(device_event) => Event {
                 tag: EventTag::DeviceEvent,
@@ -211,14 +275,29 @@ impl From<odyssey_hub_common::events::Event> for Event {
                         device: device_event.device.into(),
                         kind: DeviceEventKind {
                             tag: match device_event.kind {
-                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(_) => DeviceEventKindTag::AccelerometerEvent,
-                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => DeviceEventKindTag::TrackingEvent,
-                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(_) => DeviceEventKindTag::ImpactEvent,
-                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent => DeviceEventKindTag::ConnectEvent,
-                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => DeviceEventKindTag::DisconnectEvent,
+                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(
+                                    _,
+                                ) => DeviceEventKindTag::AccelerometerEvent,
+                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(_) => {
+                                    DeviceEventKindTag::TrackingEvent
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(_) => {
+                                    DeviceEventKindTag::ImpactEvent
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent => {
+                                    DeviceEventKindTag::ConnectEvent
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
+                                    DeviceEventKindTag::DisconnectEvent
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::PacketEvent(_) => {
+                                    DeviceEventKindTag::PacketEvent
+                                }
                             },
                             u: match device_event.kind {
-                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(accelerometer_event) => DeviceEventKindU {
+                                odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(
+                                    accelerometer_event,
+                                ) => DeviceEventKindU {
                                     accelerometer_event: AccelerometerEvent {
                                         timestamp: accelerometer_event.timestamp,
                                         accel: accelerometer_event.accel.into(),
@@ -226,25 +305,45 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                         euler_angles: accelerometer_event.euler_angles.into(),
                                     },
                                 },
-                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(tracking_event) => DeviceEventKindU {
+                                odyssey_hub_common::events::DeviceEventKind::TrackingEvent(
+                                    tracking_event,
+                                ) => DeviceEventKindU {
                                     tracking_event: TrackingEvent {
                                         timestamp: tracking_event.timestamp,
                                         aimpoint: tracking_event.aimpoint.into(),
-                                        pose: if let Some(p) = tracking_event.pose { p.into() } else { Pose::default() },
+                                        pose: if let Some(p) = tracking_event.pose {
+                                            p.into()
+                                        } else {
+                                            Pose::default()
+                                        },
                                         pose_resolved: tracking_event.pose.is_some(),
                                         screen_id: tracking_event.screen_id,
                                     },
                                 },
-                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(impact_event) => DeviceEventKindU {
+                                odyssey_hub_common::events::DeviceEventKind::ImpactEvent(
+                                    impact_event,
+                                ) => DeviceEventKindU {
                                     impact_event: ImpactEvent {
                                         timestamp: impact_event.timestamp,
                                     },
                                 },
-                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent => DeviceEventKindU {
-                                    connect_event: ConnectEvent { _unused: 0 },
-                                },
-                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => DeviceEventKindU {
-                                    disconnect_event: DisconnectEvent { _unused: 0 },
+                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent => {
+                                    DeviceEventKindU {
+                                        connect_event: ConnectEvent { _unused: 0 },
+                                    }
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
+                                    DeviceEventKindU {
+                                        disconnect_event: DisconnectEvent { _unused: 0 },
+                                    }
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::PacketEvent(
+                                    packet_event,
+                                ) => DeviceEventKindU {
+                                    packet_event: PacketEvent {
+                                        ty: packet_event.ty().into(),
+                                        data: packet_event.data.into(),
+                                    },
                                 },
                             },
                         },

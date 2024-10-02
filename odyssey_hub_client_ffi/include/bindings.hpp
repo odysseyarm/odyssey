@@ -18,6 +18,7 @@ enum class DeviceEventKindTag {
   ImpactEvent,
   ConnectEvent,
   DisconnectEvent,
+  PacketEvent,
 };
 
 enum class DeviceTag {
@@ -29,6 +30,11 @@ enum class DeviceTag {
 enum class EventTag {
   None,
   DeviceEvent,
+};
+
+enum class PacketDataTag {
+  Unsupported,
+  VendorEvent,
 };
 
 template<typename T = void>
@@ -135,12 +141,37 @@ struct DisconnectEvent {
   uint8_t _unused;
 };
 
+struct UnsupportedPacketData {
+  uint8_t _unused;
+};
+
+struct VendorEventPacketData {
+  uint8_t len;
+  uint8_t data[98];
+};
+
+union PacketDataU {
+  UnsupportedPacketData unsupported;
+  VendorEventPacketData vendor_event;
+};
+
+struct PacketData {
+  PacketDataTag tag;
+  PacketDataU u;
+};
+
+struct PacketEvent {
+  uint8_t ty;
+  PacketData data;
+};
+
 union DeviceEventKindU {
   AccelerometerEvent accelerometer_event;
   TrackingEvent tracking_event;
   ImpactEvent impact_event;
   ConnectEvent connect_event;
   DisconnectEvent disconnect_event;
+  PacketEvent packet_event;
 };
 
 struct DeviceEventKind {
