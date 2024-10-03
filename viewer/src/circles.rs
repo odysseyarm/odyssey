@@ -180,7 +180,11 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
             sorted_centers = _centers;
         }
     } else {
-        find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID, None).unwrap();
+        let nullf2d;
+        unsafe {
+            nullf2d = Feature2D::from_raw(core::ptr::null_mut());
+        }
+        find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID, &Ptr::new(nullf2d)).unwrap();
     }
 
     if !sorted_centers.is_empty() {
