@@ -6,7 +6,7 @@ use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
 use core::panic;
 use nalgebra::{
-    ComplexField, Isometry3, Matrix3, Point2, Point3, RealField, Rotation3, Scalar, Translation3,
+    Matrix3, Point2, Rotation3, Translation3,
     UnitVector3, Vector3,
 };
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
@@ -435,7 +435,8 @@ async fn common_tasks(
                     restart_timeout
                 } else {
                     timeout
-            }) => {
+                }
+            ) => {
                 if no_response_count >= 5 {
                     tracing::info!(device=debug(&device), "no response, exiting");
                     break;
@@ -763,15 +764,75 @@ async fn device_cdc_stream_task(
         )))
         .await;
 
-    common_tasks(
-        d,
-        odyssey_hub_common::device::Device::Cdc(device),
-        message_channel,
-        config,
-        screen_calibrations.clone(),
-    )
-    .await;
+    tokio::select! {
+        _ = common_tasks(
+            d.clone(),
+            odyssey_hub_common::device::Device::Cdc(device.clone()),
+            message_channel.clone(),
+            config,
+            screen_calibrations.clone(),
+        ) => {}
+        _ = temp_boneless_hardcoded_vendor_stream_tasks(
+            d.clone(),
+            odyssey_hub_common::device::Device::Cdc(device.clone()),
+            message_channel.clone(),
+        ) => {}
+    }
+
     Ok(())
+}
+
+// stream generic from 0x81 to 0x84 VendorEvents
+async fn temp_boneless_hardcoded_vendor_stream_tasks(
+    d: UsbDevice,
+    device: Device,
+    message_channel: Sender<Message>,
+) {
+    loop {
+        let vendor_streams: Vec<_> = (0x81..=0x84).map(|i| {
+            let d = d.clone();
+            async move { d.stream(ats_usb::packet::PacketType::Vendor(i)).await }
+        }).collect();
+
+        let vendor_tasks: Vec<_> = vendor_streams.into_iter().map(|s| {
+            let message_channel = message_channel.clone();
+            let device = device.clone();
+            tokio::spawn(async move {
+                let mut stream = s.await.unwrap();
+                while let Some(data) = stream.next().await {
+                    let kind = odyssey_hub_common::events::DeviceEventKind::PacketEvent(ats_usb::packet::Packet {
+                        id: 255,
+                        data,
+                    });
+                    match device {
+                        Device::Udp(ref device) => {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: Device::Udp(device.clone()),
+                                    kind,
+                                }
+                            ))).await;
+                        },
+                        Device::Cdc(ref device) => {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: Device::Cdc(device.clone()),
+                                    kind,
+                                }
+                            ))).await;
+                        },
+                        Device::Hid(_) => {},
+                    }
+                }
+            })
+        }).collect();
+        match futures::future::select_all(vendor_tasks).await {
+            (Ok(_), _, _) => {},
+            (Err(e), _, _) => {
+                eprintln!("Error in vendor stream task: {}", e);
+            },
+        }
+    }
 }
 
 fn filter_and_create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f64>)> {

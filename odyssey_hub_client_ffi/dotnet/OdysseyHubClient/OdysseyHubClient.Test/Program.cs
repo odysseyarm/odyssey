@@ -113,6 +113,18 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                 case OdysseyHubClient.DeviceEvent.Disconnect _:
                     Console.WriteLine("Device disconnected");
                     break;
+                case OdysseyHubClient.DeviceEvent.Packet packet:
+                    switch (packet.data) {
+                        case OdysseyHubClient.DeviceEvent.Packet.UnsupportedPacketData _:
+                            Console.WriteLine("Unsupported packet");
+                            break;
+                        case OdysseyHubClient.DeviceEvent.Packet.VendorPacketData vendorPacketData:
+                            Console.WriteLine("Printing vendor packet:");
+                            Console.WriteLine("\ttype: {0}", packet.ty);
+                            Console.WriteLine("\tdata: {0}", BitConverter.ToString(vendorPacketData.data));
+                            break;
+                    }
+                    break;
                 default:
                     break;
             }

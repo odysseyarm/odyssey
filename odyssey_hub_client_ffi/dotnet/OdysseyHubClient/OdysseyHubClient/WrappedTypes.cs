@@ -1,4 +1,5 @@
-﻿using System;
+﻿using CsBindgen;
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -133,6 +134,9 @@ namespace Radiosity.OdysseyHubClient
                 case CsBindgen.DeviceEventKindTag.DisconnectEvent:
                     kind = new Disconnect();
                     break;
+                case CsBindgen.DeviceEventKindTag.PacketEvent:
+                    kind = new Packet(deviceEvent.kind.u.packet_event);
+                    break;
                 default:
                     throw new Exception("Unknown device tag");
             }
@@ -190,6 +194,42 @@ namespace Radiosity.OdysseyHubClient
         public class Disconnect : IKind
         {
             internal Disconnect() { }
+        }
+
+        public class Packet : IKind {
+            public interface IPacketData;
+
+            public class UnsupportedPacketData : IPacketData { }
+
+            public class VendorPacketData : IPacketData
+            {
+                public byte[] data;
+
+                internal VendorPacketData(CsBindgen.VendorEventPacketData vendorPacketData) {
+                    data = new byte[vendorPacketData.len];
+                    unsafe {
+                        for (int i = 0; i < vendorPacketData.len; i++) {
+                            data[i] = vendorPacketData.data[i];
+                        }
+                    }
+                }
+            }
+
+            public uint ty;
+            public IPacketData data;
+
+            internal Packet(CsBindgen.PacketEvent packet) {
+                switch (packet.data.tag) {
+                    case CsBindgen.PacketDataTag.Unsupported:
+                        data = new UnsupportedPacketData();
+                        break;
+                    case CsBindgen.PacketDataTag.VendorEvent:
+                        data = new VendorPacketData(packet.data.u.vendor_event);
+                        break;
+                    default:
+                        throw new Exception("Unknown packet data tag");
+                }
+            }
         }
     }
 
