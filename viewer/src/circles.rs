@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S, ROTATE_180}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S, ROTATE_180}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
 use crate::{chessboard::read_camara_params, Port, CALIBRATION_VERSION};
 
@@ -130,7 +130,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         unsafe {
             nullf2d = Feature2D::from_raw(core::ptr::null_mut());
         }
-        find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID, &Ptr::new(nullf2d)).unwrap();
+        find_circles_grid_1(&centers, board_size, &mut sorted_centers, CALIB_CB_SYMMETRIC_GRID | CALIB_CB_CLUSTERING, &Ptr::new(nullf2d)).unwrap();
     }
 
     if !sorted_centers.is_empty() {
