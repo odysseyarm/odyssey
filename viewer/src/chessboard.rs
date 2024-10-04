@@ -20,6 +20,7 @@ pub fn my_stereo_calibrate(
     nf: &[[u8; 98 * 98]],
     board_rows: u16,
     board_cols: u16,
+    upside_down: bool,
 ) {
     let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
         println!("Couldn't get nearfield intrinsics");
@@ -44,12 +45,12 @@ pub fn my_stereo_calibrate(
     let mut nf_corners_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
         let Some(wf_corners) =
-            get_chessboard_corners(wf_image, Port::Wf, board_rows, board_cols, false)
+            get_chessboard_corners(wf_image, Port::Wf, board_rows, board_cols, false, upside_down)
         else {
             continue;
         };
         let Some(nf_corners) =
-            get_chessboard_corners(nf_image, Port::Nf, board_rows, board_cols, false)
+            get_chessboard_corners(nf_image, Port::Nf, board_rows, board_cols, false, upside_down)
         else {
             continue;
         };
@@ -99,6 +100,7 @@ pub fn calibrate_single(
     port: Port,
     board_rows: u16,
     board_cols: u16,
+    upside_down: bool,
 ) {
     let mut board_points = Vector::<Point3f>::new();
     for y in 0..board_rows {
@@ -108,7 +110,7 @@ pub fn calibrate_single(
     }
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_chessboard_corners(image, port, board_rows, board_cols, false)
+        get_chessboard_corners(image, port, board_rows, board_cols, false, upside_down)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 
@@ -140,14 +142,23 @@ pub fn calibrate_single(
 }
 
 /// Returns None if there were no corners found.
-pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool) -> Option<Vector<Point2f>> {
+pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, upside_down: bool) -> Option<Vector<Point2f>> {
     let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     let mut im = Mat::default();
-    flip(&tmp, &mut im, 0).unwrap();
-    if port == Port::Wf {
-        let tmp = im;
-        im = Mat::default();
-        opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
+    if !upside_down {
+        flip(&tmp, &mut im, 0).unwrap();
+        if port == Port::Wf {
+            let tmp = im;
+            im = Mat::default();
+            opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
+        }
+    } else {
+        flip(&tmp, &mut im, 0).unwrap();
+        if port == Port::Nf {
+            let tmp = im;
+            im = Mat::default();
+            opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
+        }
     }
     get_chessboard_corners_cv(&im, port, board_rows, board_cols, show)
 }
