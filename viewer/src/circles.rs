@@ -2,71 +2,7 @@ use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_
 
 use crate::{chessboard::read_camara_params, Port, CALIBRATION_VERSION};
 
-fn find_circles_grid_special(
-    centers: &Vector<Point2f>,
-    board_size: Size
-) -> Option<Vector<Point2f>> {
-    let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
-
-    // Ensure that we have enough points to form the outer boundary
-    if centers.len() < expected_num_outer_points {
-        return None;
-    }
-
-    // Find the top-left corner by minimizing x+y
-    let mut top_left = Point2f::new(f32::MAX, f32::MAX);
-    for point in centers.iter() {
-        if point.x + point.y < top_left.x + top_left.y {
-            top_left = point;
-        }
-    }
-
-    let mut sorted_hull_points = vec![top_left];
-    let mut current = top_left;
-    let directions = vec![
-        Point2f::new(1.0, 0.0),  // Right
-        Point2f::new(0.0, 1.0),  // Down
-        Point2f::new(-1.0, 0.0), // Left
-        Point2f::new(0.0, -1.0), // Up
-    ];
-    let mut current_direction = 0;
-    let threshold_distance = 20.0 * 4094.0 / 97.0;
-
-    while sorted_hull_points.len() < expected_num_outer_points {
-        let mut best_point = None;
-        let mut best_distance = f32::MAX;
-
-        for point in centers.iter() {
-            let distance = (point - current).norm();
-            if distance < threshold_distance && distance > 0.0 {
-                let direction = point - current;
-                let dot_product = direction.dot(directions[current_direction]);
-
-                if dot_product > 0.9 && distance < best_distance.into() {
-                    best_distance = distance as f32;
-                    best_point = Some(point);
-                }
-            }
-        }
-
-        if let Some(best_point) = best_point {
-            current = best_point;
-            sorted_hull_points.push(current);
-        } else {
-            current_direction = (current_direction + 1) % 4;
-        }
-
-        if current_direction == 0 && best_point.is_none() {
-            break;
-        }
-    }
-
-    if sorted_hull_points.len() == expected_num_outer_points {
-        Some(Vector::from(sorted_hull_points))
-    } else {
-        None
-    }
-}
+pub mod special;
 
 // Helper function to calculate the perpendicular distance from a point to a line
 // fn point_line_distance(p: &Point2f, a: &Point2f, b: &Point2f) -> f32 {
@@ -183,7 +119,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     let mut sorted_centers = Vector::<Point2f>::default();
 
     if special {
-        if let Some(_centers) = find_circles_grid_special(&centers, board_size) {
+        if let Some(_centers) = special::find_circles_grid_special(centers.as_slice(), board_size) {
             if _centers.len() != (board_rows*2 + board_cols*2 - 4) as usize {
                 return None;
             }
