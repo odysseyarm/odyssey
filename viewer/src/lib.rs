@@ -633,7 +633,7 @@ fn reader_thread(
     }
 }
 
-fn opencv_thread(
+fn _opencv_thread(
     raw_image: Receiver<(Port, [u8; 98 * 98])>,
     detector_params: Arc<DetectorParams>,
     upside_down: bool,
