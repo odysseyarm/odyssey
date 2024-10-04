@@ -76,9 +76,8 @@ pub fn find_circles_grid_special(
     if centers.len() != expected_num_outer_points {
         return None;
     }
-    let mut hull = convex_hull(centers.to_vec())?;
+    let hull = convex_hull(centers.to_vec())?;
     let corners_ix = find_corners(&hull);
-    dbg!(&corners_ix);
     if corners_ix.len() != 4 {
         return None;
     }
@@ -111,7 +110,7 @@ pub fn convex_hull(
         return None;
     }
     let mut points = points.to_vec();
-    points.sort_by(|a, b| a.x.total_cmp(&b.x));
+    points.sort_by_key(|p| (TotalF32(p.x), TotalF32(p.y)));
 
     let mut hull = vec![points[0], points[1]];
 
@@ -128,8 +127,9 @@ pub fn convex_hull(
         hull.push(c);
     }
 
+    let hl = hull.len();
     for &c in points.iter().rev().skip(1) {
-        loop {
+        while hull.len() - hl + 1 >= 2 {
             let a = hull[hull.len() - 2];
             let b = hull[hull.len() - 1];
             if (b-a).cross(c-a) <= 0.0 {
