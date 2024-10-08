@@ -67,6 +67,8 @@ void PrintDevice(OdysseyHubClient.IDevice device) {
 
 foreach (var device in devices) {
     PrintDevice(device);
+    Task<OdysseyHubClient.ClientError> malfunction_zero_task = client.WriteVendor(handle, device, 0x84, [ 0x00 ]);
+    await malfunction_zero_task;
 }
 
 Console.WriteLine("Devices printed!");
@@ -85,28 +87,28 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                 //     Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
                 //     Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
                 //     break;
-                case OdysseyHubClient.DeviceEvent.Tracking tracking:
-                    // Console.WriteLine(tracking);
-                    Console.WriteLine("Printing tracking event:");
-                    Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
-                    Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
-                    if (tracking.pose != null) {
-                        Console.WriteLine("\tpose: ");
-                        Console.WriteLine("\t\trotation: ");
-                        Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
-                        Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
-                        Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
-                        Console.WriteLine("\t\ttranslation: ");
-                        Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
-                        Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
-                    } else {
-                        Console.WriteLine("\tpose: Not resolved");
-                    }
-                    break;
-                case OdysseyHubClient.DeviceEvent.Impact impact:
-                    Console.WriteLine("Printing impact event:");
-                    Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
-                    break;
+                // case OdysseyHubClient.DeviceEvent.Tracking tracking:
+                //     // Console.WriteLine(tracking);
+                //     Console.WriteLine("Printing tracking event:");
+                //     Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
+                //     Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
+                //     if (tracking.pose != null) {
+                //         Console.WriteLine("\tpose: ");
+                //         Console.WriteLine("\t\trotation: ");
+                //         Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
+                //         Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
+                //         Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
+                //         Console.WriteLine("\t\ttranslation: ");
+                //         Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
+                //         Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
+                //     } else {
+                //         Console.WriteLine("\tpose: Not resolved");
+                //     }
+                //     break;
+                // case OdysseyHubClient.DeviceEvent.Impact impact:
+                //     Console.WriteLine("Printing impact event:");
+                //     Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
+                //     break;
                 case OdysseyHubClient.DeviceEvent.Connect _:
                     Console.WriteLine("Device connected");
                     break;
@@ -128,7 +130,6 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                 default:
                     break;
             }
-            PrintDevice(deviceEvent.device);
             break;
         default:
             break;

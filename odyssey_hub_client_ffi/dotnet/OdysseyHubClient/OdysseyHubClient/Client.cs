@@ -43,13 +43,13 @@ namespace Radiosity.OdysseyHubClient
                         var device = devices[i];
                         switch (device.tag) {
                             case CsBindgen.DeviceTag.Udp:
-                                result[i] = new UdpDevice(device.u.udp);
+                                result[i] = new UdpDevice(device);
                                 break;
                             case CsBindgen.DeviceTag.Hid:
-                                result[i] = new HidDevice(device.u.hid);
+                                result[i] = new HidDevice(device);
                                 break;
                             case CsBindgen.DeviceTag.Cdc:
-                                result[i] = new CdcDevice(device.u.cdc);
+                                result[i] = new CdcDevice(device);
                                 break;
                         }
                     }
@@ -79,6 +79,22 @@ namespace Radiosity.OdysseyHubClient
                 };
                 var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(event_delegate));
                 CsBindgen.NativeMethods.start_stream(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(event_delegate));
+            }
+        }
+
+        public Task<ClientError> WriteVendor(Handle handle, IDevice device, byte tag, byte[] data) {
+            unsafe {
+                var completion_task_source = new TaskCompletionSource<ClientError>();
+                ClientErrorDelegate completion_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error) => {
+                    completion_task_source.SetResult(Helpers.BindgenClientErrToClientErr(error));
+                    GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
+                };
+                var ffi_device = device.device;
+                var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(completion_delegate));
+                fixed (byte* pData = data) {
+                    CsBindgen.NativeMethods.write_vendor(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, &ffi_device, tag, pData, (nuint)data.Length, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, void>)Marshal.GetFunctionPointerForDelegate(completion_delegate));
+                }
+                return completion_task_source.Task;
             }
         }
     }

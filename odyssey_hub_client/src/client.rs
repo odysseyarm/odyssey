@@ -70,4 +70,22 @@ impl Client {
             Err(anyhow::anyhow!("No service client")).into()
         }
     }
+
+    pub async fn write_vendor(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+        tag: u8,
+        data: Vec<u8>,
+    ) -> anyhow::Result<odyssey_hub_service_interface::WriteVendorReply> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_service_interface::WriteVendorRequest {
+                device: Some(device.into()),
+                tag: tag.into(),
+                data,
+            });
+            Ok(service_client.write_vendor(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
 }

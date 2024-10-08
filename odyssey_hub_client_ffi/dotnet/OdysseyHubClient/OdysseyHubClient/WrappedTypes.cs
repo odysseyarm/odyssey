@@ -6,7 +6,9 @@ using System.Text;
 
 namespace Radiosity.OdysseyHubClient
 {
-    public interface IDevice;
+    public abstract class IDevice {
+        internal CsBindgen.Device device;
+    }
 
     /// <summary>
     /// Device that is connected to Odyssey Hub through UDP.
@@ -16,7 +18,9 @@ namespace Radiosity.OdysseyHubClient
         public SocketAddr addr;
         public byte[] uuid;
 
-        internal UdpDevice(CsBindgen.UdpDevice udpDevice) {
+        internal UdpDevice(CsBindgen.Device device) {
+            this.device = device;
+            var udpDevice = device.u.udp;
             id = udpDevice.id;
             addr = new SocketAddr(udpDevice.addr);
             unsafe {
@@ -39,7 +43,9 @@ namespace Radiosity.OdysseyHubClient
         public string? path;
         public byte[] uuid;
 
-        internal HidDevice(CsBindgen.HidDevice hidDevice) {
+        internal HidDevice(CsBindgen.Device device) {
+            this.device = device;
+            var hidDevice = device.u.hid;
             unsafe { path = Marshal.PtrToStringAnsi((IntPtr)hidDevice.path); }
             unsafe {
                 uuid = [
@@ -63,7 +69,9 @@ namespace Radiosity.OdysseyHubClient
         /// <value>Property <c>uuid</c> is the 6-byte unique identifier of the device.</value>
         public byte[] uuid;
 
-        internal CdcDevice(CsBindgen.CdcDevice cdcDevice) {
+        internal CdcDevice(CsBindgen.Device device) {
+            this.device = device;
+            var cdcDevice = device.u.cdc;
             unsafe { path = Marshal.PtrToStringAnsi((IntPtr)cdcDevice.path); }
             unsafe {
                 uuid = [
@@ -107,13 +115,13 @@ namespace Radiosity.OdysseyHubClient
         internal DeviceEvent(CsBindgen.DeviceEvent deviceEvent) {
             switch (deviceEvent.device.tag) {
                 case CsBindgen.DeviceTag.Udp:
-                    device = new UdpDevice(deviceEvent.device.u.udp);
+                    device = new UdpDevice(deviceEvent.device);
                     break;
                 case CsBindgen.DeviceTag.Hid:
-                    device = new HidDevice(deviceEvent.device.u.hid);
+                    device = new HidDevice(deviceEvent.device);
                     break;
                 case CsBindgen.DeviceTag.Cdc:
-                    device = new CdcDevice(deviceEvent.device.u.cdc);
+                    device = new CdcDevice(deviceEvent.device);
                     break;
                 default:
                     throw new Exception("Unknown device type");

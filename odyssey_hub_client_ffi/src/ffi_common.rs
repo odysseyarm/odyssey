@@ -1,3 +1,5 @@
+use std::{ffi::{CStr}, net::IpAddr};
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Device {
@@ -40,6 +42,60 @@ impl From<odyssey_hub_common::device::Device> for Device {
                         uuid: cdc_device.uuid,
                     },
                 },
+            },
+        }
+    }
+}
+
+impl From<Device> for odyssey_hub_common::device::Device {
+    fn from(device: Device) -> Self {
+        match device.tag {
+            DeviceTag::Udp => unsafe {
+                // Access the `udp` field from the union
+                let udp = device.u.udp;
+
+                // Reconstruct the CString from the raw pointer to manage memory correctly
+                let ip_cstring = CStr::from_ptr(udp.addr.ip);
+                let ip_str = ip_cstring.to_str().unwrap();
+                let ip_addr: IpAddr = ip_str.parse().unwrap();
+
+                // Construct the standard SocketAddr
+                let socket_addr = std::net::SocketAddr::new(ip_addr, udp.addr.port);
+
+                // Create the UdpDevice
+                odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice {
+                    id: udp.id,
+                    addr: socket_addr,
+                    uuid: udp.uuid,
+                })
+            },
+            DeviceTag::Hid => unsafe {
+                // Access the `hid` field from the union
+                let hid = device.u.hid;
+
+                // Reconstruct the CString from the raw pointer
+                let path_cstring = CStr::from_ptr(hid.path);
+                let path_str = path_cstring.to_str().unwrap().to_string();
+
+                // Create the HidDevice
+                odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice {
+                    path: path_str,
+                    uuid: hid.uuid,
+                })
+            },
+            DeviceTag::Cdc => unsafe {
+                // Access the `cdc` field from the union
+                let cdc = device.u.cdc;
+
+                // Reconstruct the CString from the raw pointer
+                let path_cstring = CStr::from_ptr(cdc.path);
+                let path_str = path_cstring.to_str().unwrap().to_string();
+
+                // Create the CdcDevice
+                odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice {
+                    path: path_str,
+                    uuid: cdc.uuid,
+                })
             },
         }
     }

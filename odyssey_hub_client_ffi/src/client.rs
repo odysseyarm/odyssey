@@ -119,3 +119,33 @@ pub extern "C" fn start_stream(
         }
     });
 }
+
+#[no_mangle]
+pub extern "C" fn write_vendor(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    device: *const crate::ffi_common::Device,
+    tag: u8,
+    data: *const u8,
+    len: usize,
+    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+
+    let client = unsafe { &mut *client };
+    let device = unsafe { &*device }.clone().into();
+
+    let data = unsafe { std::slice::from_raw_parts(data, len) }
+        .iter()
+        .map(|&x| x as u8)
+        .collect::<Vec<u8>>();
+
+    tokio::spawn(async move {
+        match client.write_vendor(device, tag, data).await {
+            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
+            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
+        }
+    });
+}

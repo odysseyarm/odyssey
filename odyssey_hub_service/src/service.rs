@@ -26,7 +26,7 @@ use crate::device_tasks::{self, device_tasks};
 
 #[derive(Debug)]
 struct Server {
-    device_list: Arc<parking_lot::Mutex<Vec<odyssey_hub_common::device::Device>>>,
+    device_list: Arc<parking_lot::Mutex<Vec<(odyssey_hub_common::device::Device, ats_usb::device::UsbDevice)>>>,
     event_channel: broadcast::Receiver<odyssey_hub_common::events::Event>,
 }
 
@@ -42,7 +42,7 @@ impl Service for Server {
             .device_list
             .lock()
             .iter()
-            .map(|d| d.clone().into())
+            .map(|d| d.0.clone().into())
             .collect();
 
         let reply = DeviceListReply { device_list };
@@ -78,6 +78,36 @@ impl Service for Server {
             }
         });
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn write_vendor(
+        &self,
+        request: tonic::Request<odyssey_hub_service_interface::WriteVendorRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_service_interface::WriteVendorReply>, tonic::Status>
+    {
+        let odyssey_hub_service_interface::WriteVendorRequest { device, tag, data } =
+            request.into_inner();
+        
+        let device = device.unwrap().into();
+
+        let d: ats_usb::device::UsbDevice;
+
+        if let Some(_device) = self.device_list.lock().iter().find(|d| d.0 == device) {
+            d = _device.1.clone();
+        } else {
+            return Err(tonic::Status::not_found("Device not found in device list"));
+        }
+
+        match d.write_vendor(tag as u8, data.as_slice()).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(tonic::Status::aborted(format!("Failed to write vendor: {}", e)));
+            }
+        }
+
+        Ok(Response::new(
+            odyssey_hub_service_interface::WriteVendorReply {},
+        ))
     }
 }
 
@@ -200,12 +230,12 @@ pub async fn run_service(
         // Forward events from the device tasks to subscribed clients
         while let Some(message) = receiver.recv().await {
             match message {
-                device_tasks::Message::Connect(d) => {
-                    dl.lock().push(d.clone());
+                device_tasks::Message::Connect(d1, d2) => {
+                    dl.lock().push((d1.clone(), d2.clone()));
                     event_sender
                         .send(odyssey_hub_common::events::Event::DeviceEvent({
                             odyssey_hub_common::events::DeviceEvent {
-                                device: d.clone(),
+                                device: d1.clone(),
                                 kind: odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
                             }
                         }))
@@ -213,7 +243,7 @@ pub async fn run_service(
                 }
                 device_tasks::Message::Disconnect(d) => {
                     let mut dl = dl.lock();
-                    let i = dl.iter().position(|a| *a == d);
+                    let i = dl.iter().position(|a| (*a).0 == d);
                     if let Some(i) = i {
                         dl.remove(i);
                     }

@@ -215,3 +215,12 @@ void start_stream(const struct Handle *handle,
                   void (*callback)(struct UserObj userdata,
                                    enum ClientError error,
                                    struct Event reply));
+
+void write_vendor(const struct Handle *handle,
+                  struct UserObj userdata,
+                  struct Client *client,
+                  const struct Device *device,
+                  uint8_t tag,
+                  const uint8_t *data,
+                  uintptr_t len,
+                  void (*callback)(struct UserObj userdata, enum ClientError error));

@@ -5,10 +5,7 @@ use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, Scree
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
 use core::panic;
-use nalgebra::{
-    Matrix3, Point2, Rotation3, Translation3,
-    UnitVector3, Vector3,
-};
+use nalgebra::{Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -22,7 +19,7 @@ use tracing::field::debug;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Connect(odyssey_hub_common::device::Device),
+    Connect(odyssey_hub_common::device::Device, ats_usb::device::UsbDevice),
     Disconnect(odyssey_hub_common::device::Device),
     Event(odyssey_hub_common::events::Event),
 }
@@ -182,14 +179,15 @@ async fn device_hid_ping_task(
                         uuid: [0; 6],
                     },
                 )) {
-                    let _ = message_channel
-                        .send(Message::Connect(odyssey_hub_common::device::Device::Hid(
-                            odyssey_hub_common::device::HidDevice {
-                                path: device.path().to_str().unwrap().to_string(),
-                                uuid: [0; 6],
-                            },
-                        )))
-                        .await;
+                    // todo
+                    // let _ = message_channel
+                    //     .send(Message::Connect(odyssey_hub_common::device::Device::Hid(
+                    //         odyssey_hub_common::device::HidDevice {
+                    //             path: device.path().to_str().unwrap().to_string(),
+                    //             uuid: [0; 6],
+                    //         },
+                    //     )))
+                    //     .await;
                 }
                 new_list.push(odyssey_hub_common::device::Device::Hid(
                     odyssey_hub_common::device::HidDevice {
@@ -713,9 +711,10 @@ async fn device_udp_stream_task(
     device.uuid = params.uuid.clone();
 
     let _ = message_channel
-        .send(Message::Connect(odyssey_hub_common::device::Device::Udp(
-            device.clone(),
-        )))
+        .send(
+            Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()),
+            d.clone(),
+        ))
         .await;
 
     common_tasks(
@@ -759,9 +758,10 @@ async fn device_cdc_stream_task(
     device.uuid = props.uuid.clone();
 
     let _ = message_channel
-        .send(Message::Connect(odyssey_hub_common::device::Device::Cdc(
-            device.clone(),
-        )))
+        .send(Message::Connect(
+            odyssey_hub_common::device::Device::Cdc(device.clone()),
+            d.clone(),
+        ))
         .await;
 
     tokio::select! {
@@ -777,7 +777,7 @@ async fn device_cdc_stream_task(
             odyssey_hub_common::device::Device::Cdc(device.clone()),
             message_channel.clone(),
         ) => {}
-    }
+    };
 
     Ok(())
 }
@@ -788,49 +788,63 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
     device: Device,
     message_channel: Sender<Message>,
 ) {
-    loop {
-        let vendor_streams: Vec<_> = (0x81..=0x84).map(|i| {
+    let vendor_streams: Vec<_> = (0x81..=0x84)
+        .map(|i| {
             let d = d.clone();
             async move { d.stream(ats_usb::packet::PacketType::Vendor(i)).await }
-        }).collect();
+        })
+        .collect();
 
-        let vendor_tasks: Vec<_> = vendor_streams.into_iter().map(|s| {
+    let vendor_tasks: Vec<_> = vendor_streams
+        .into_iter()
+        .map(|s| {
             let message_channel = message_channel.clone();
             let device = device.clone();
             tokio::spawn(async move {
                 let mut stream = s.await.unwrap();
                 while let Some(data) = stream.next().await {
-                    let kind = odyssey_hub_common::events::DeviceEventKind::PacketEvent(ats_usb::packet::Packet {
-                        id: 255,
-                        data,
-                    });
+                    let kind = odyssey_hub_common::events::DeviceEventKind::PacketEvent(
+                        ats_usb::packet::Packet {
+                            id: 255,
+                            data: data.clone(),
+                        },
+                    );
                     match device {
                         Device::Udp(ref device) => {
-                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: Device::Udp(device.clone()),
-                                    kind,
-                                }
-                            ))).await;
-                        },
+                            let _ = message_channel
+                                .send(Message::Event(
+                                    odyssey_hub_common::events::Event::DeviceEvent(
+                                        odyssey_hub_common::events::DeviceEvent {
+                                            device: Device::Udp(device.clone()),
+                                            kind,
+                                        },
+                                    ),
+                                ))
+                                .await;
+                        }
                         Device::Cdc(ref device) => {
-                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: Device::Cdc(device.clone()),
-                                    kind,
-                                }
-                            ))).await;
-                        },
-                        Device::Hid(_) => {},
+                            let _ = message_channel
+                                .send(Message::Event(
+                                    odyssey_hub_common::events::Event::DeviceEvent(
+                                        odyssey_hub_common::events::DeviceEvent {
+                                            device: Device::Cdc(device.clone()),
+                                            kind,
+                                        },
+                                    ),
+                                ))
+                                .await;
+                        }
+                        Device::Hid(_) => {}
                     }
                 }
             })
-        }).collect();
-        match futures::future::select_all(vendor_tasks).await {
-            (Ok(_), _, _) => {},
-            (Err(e), _, _) => {
-                eprintln!("Error in vendor stream task: {}", e);
-            },
+        })
+        .collect();
+
+    match futures::future::select_all(vendor_tasks).await {
+        (Ok(_), _, _) => {}
+        (Err(e), _, _) => {
+            eprintln!("Error in vendor stream task: {}", e);
         }
     }
 }

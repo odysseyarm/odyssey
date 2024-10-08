@@ -220,4 +220,13 @@ void start_stream(const Handle *handle,
                   Client *client,
                   void (*callback)(UserObj userdata, ClientError error, Event reply));
 
+void write_vendor(const Handle *handle,
+                  UserObj userdata,
+                  Client *client,
+                  const Device *device,
+                  uint8_t tag,
+                  const uint8_t *data,
+                  uintptr_t len,
+                  void (*callback)(UserObj userdata, ClientError error));
+
 } // extern "C"

@@ -5,6 +5,7 @@ package odyssey.service_interface;
 service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
   rpc Poll (PollRequest) returns (stream PollReply) {}
+  rpc WriteVendor (WriteVendorRequest) returns (WriteVendorReply) {}
 }
 
 message UdpDevice {
@@ -115,3 +116,11 @@ message PollRequest {}
 message PollReply {
   Event event = 1;
 }
+
+message WriteVendorRequest {
+  Device device = 1;
+  uint32 tag = 2;
+  bytes data = 3;
+}
+
+message WriteVendorReply {}
