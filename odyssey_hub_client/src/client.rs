@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, Uri};
 use tower::service_fn;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Client {
     pub end_token: CancellationToken,
     pub service_client: Option<ServiceClient<tonic::transport::Channel>>,

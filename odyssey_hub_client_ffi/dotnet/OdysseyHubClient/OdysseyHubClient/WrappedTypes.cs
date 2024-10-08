@@ -172,7 +172,7 @@ namespace Radiosity.OdysseyHubClient
             public Matrix2x1<double> aimpoint;
             public Pose? pose;
 
-            /// <value>Property <c>screen_id</c> is 6 when the screen being aimed at is uncertain. Otherwise it will be 0-5 (6 screen ids).</value>
+            /// <value>Property <c>screen_id</c> is between 0 and 5 (inclusive). It corresponds to the calibration file of the screen being tracked</value>
             public uint screen_id;
 
             internal Tracking(CsBindgen.TrackingEvent tracking) {
@@ -204,6 +204,9 @@ namespace Radiosity.OdysseyHubClient
             internal Disconnect() { }
         }
 
+        /// <summary>
+        /// Only vendor packets are supported at the moment. The odyssey hub is currently hardcoded to subscribe to packets 0x81 through 0x83.
+        /// </summary>
         public class Packet : IKind {
             public interface IPacketData;
 

@@ -782,13 +782,13 @@ async fn device_cdc_stream_task(
     Ok(())
 }
 
-// stream generic from 0x81 to 0x84 VendorEvents
+// stream generic from 0x81 to 0x83 VendorEvents
 async fn temp_boneless_hardcoded_vendor_stream_tasks(
     d: UsbDevice,
     device: Device,
     message_channel: Sender<Message>,
 ) {
-    let vendor_streams: Vec<_> = (0x81..=0x84)
+    let vendor_streams: Vec<_> = (0x81..=0x83)
         .map(|i| {
             let d = d.clone();
             async move { d.stream(ats_usb::packet::PacketType::Vendor(i)).await }

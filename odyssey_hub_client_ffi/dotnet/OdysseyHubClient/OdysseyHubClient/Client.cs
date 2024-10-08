@@ -21,6 +21,13 @@ namespace Radiosity.OdysseyHubClient
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         unsafe delegate void EventDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev);
 
+        /// <summary>
+        /// This function connects to the hub.
+        /// </summary>
+        /// <param name="handle">
+        /// The handle of the tokio runtime.
+        /// </param>
+        /// <returns></returns>
         public Task<ClientError> Connect(Handle handle) {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<ClientError>();
@@ -34,6 +41,11 @@ namespace Radiosity.OdysseyHubClient
             }
         }
 
+        /// <summary>
+        /// This function retrieves a list of devices connected to the hub.
+        /// </summary>
+        /// <param name="handle"></param>
+        /// <returns></returns>
         public Task<(ClientError, IDevice[])> GetDeviceList(Handle handle) {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<(ClientError, IDevice[])>();
@@ -62,6 +74,11 @@ namespace Radiosity.OdysseyHubClient
             }
         }
 
+        /// <summary>
+        /// This function starts a stream of events from the device.
+        /// </summary>
+        /// <param name="handle"></param>
+        /// <param name="channelWriter"></param>
         public void StartStream(Handle handle, ChannelWriter<IEvent> channelWriter) {
             unsafe {
                 EventDelegate event_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev) => {
@@ -82,6 +99,14 @@ namespace Radiosity.OdysseyHubClient
             }
         }
 
+        /// <summary>
+        /// This function sends a vendor packet to the device.
+        /// </summary>
+        /// <param name="handle"></param>
+        /// <param name="device"></param>
+        /// <param name="tag"></param>
+        /// <param name="data"></param>
+        /// <returns></returns>
         public Task<ClientError> WriteVendor(Handle handle, IDevice device, byte tag, byte[] data) {
             unsafe {
                 var completion_task_source = new TaskCompletionSource<ClientError>();

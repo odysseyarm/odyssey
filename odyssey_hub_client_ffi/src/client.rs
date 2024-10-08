@@ -31,7 +31,7 @@ pub extern "C" fn client_connect(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &mut *client };
+    let mut client = unsafe { &*client }.clone();
 
     tokio::spawn(async move {
         match client.connect().await {
@@ -56,7 +56,8 @@ pub extern "C" fn client_get_device_list(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &mut *client };
+    let mut client = unsafe { &*client }.clone();
+
     tokio::spawn(async move {
         match client.get_device_list().await {
             Ok(dl) => {
@@ -95,7 +96,8 @@ pub extern "C" fn start_stream(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &mut *client };
+    let mut client = unsafe { &*client }.clone();
+
     tokio::spawn(async move {
         match client.poll().await {
             Ok(mut stream) => {
@@ -134,7 +136,8 @@ pub extern "C" fn write_vendor(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &mut *client };
+    let mut client = unsafe { &*client }.clone();
+
     let device = unsafe { &*device }.clone().into();
 
     let data = unsafe { std::slice::from_raw_parts(data, len) }
