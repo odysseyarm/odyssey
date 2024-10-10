@@ -3,6 +3,10 @@
 
 cmake_minimum_required (VERSION 3.8)
 
+if (CMAKE_C_COMPILER STREQUAL "cl.exe")
+	string(APPEND CMAKE_C_FLAGS " /experimental:c11atomics")
+endif()
+
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
@@ -23,7 +27,7 @@ add_executable(odyssey-hub-client
 )
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET odyssey-hub-client PROPERTY CXX_STANDARD 20)
+  set_property(TARGET odyssey-hub-client PROPERTY C_STANDARD 11)
 endif()
 
 # Define the platform-specific shared library extension
