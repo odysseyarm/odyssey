@@ -3,7 +3,7 @@ pub mod ffi_common;
 pub mod funny;
 
 #[no_mangle]
-pub extern "C" fn init() -> Box<Handle> {
+pub extern "C" fn odyssey_hub_client_init() -> Box<Handle> {
     let tokio_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -12,7 +12,7 @@ pub extern "C" fn init() -> Box<Handle> {
 }
 
 #[no_mangle]
-pub extern "C" fn free(handle: *mut Handle) {
+pub extern "C" fn odyssey_hub_client_free(handle: *mut Handle) {
     unsafe {
         drop(Box::from_raw(handle));
     };

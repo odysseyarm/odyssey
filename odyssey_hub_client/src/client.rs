@@ -30,13 +30,12 @@ impl Client {
                 async move {
                     let r = LocalSocketStream::connect(name).await?;
                     let r = odyssey_hub_service::service::LocalSocketStream::new(r);
-                    dbg!(std::io::Result::Ok(r))
+                    std::io::Result::Ok(r)
                 }
             }))
             .await?;
 
         self.service_client = Some(ServiceClient::new(channel));
-        println!("connected");
 
         Ok(())
     }
@@ -48,7 +47,6 @@ impl Client {
             let request = tonic::Request::new(DeviceListRequest {});
             // for whatever insane reason get_device_list requires mutable service_client
             let response = service_client.get_device_list(request).await.unwrap();
-            println!("RESPONSE={:?}", response);
             Ok(response
                 .into_inner()
                 .device_list

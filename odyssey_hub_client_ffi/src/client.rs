@@ -17,12 +17,12 @@ pub struct UserObj(*const std::ffi::c_void);
 unsafe impl Send for UserObj {}
 
 #[no_mangle]
-pub extern "C" fn client_new() -> Box<Client> {
+pub extern "C" fn odyssey_hub_client_client_new() -> Box<Client> {
     Box::new(Client::default())
 }
 
 #[no_mangle]
-pub extern "C" fn client_connect(
+pub extern "C" fn odyssey_hub_client_client_connect(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -31,7 +31,7 @@ pub extern "C" fn client_connect(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let mut client = unsafe { &*client }.clone();
+    let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
         match client.connect().await {
@@ -42,7 +42,7 @@ pub extern "C" fn client_connect(
 }
 
 #[no_mangle]
-pub extern "C" fn client_get_device_list(
+pub extern "C" fn odyssey_hub_client_client_get_device_list(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -87,7 +87,7 @@ pub extern "C" fn client_get_device_list(
 }
 
 #[no_mangle]
-pub extern "C" fn start_stream(
+pub extern "C" fn odyssey_hub_client_start_stream(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -123,7 +123,7 @@ pub extern "C" fn start_stream(
 }
 
 #[no_mangle]
-pub extern "C" fn write_vendor(
+pub extern "C" fn odyssey_hub_client_write_vendor(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
