@@ -141,14 +141,7 @@ pub fn calibrate_single(
 
 /// Returns None if there were no corners found.
 pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool) -> Option<Vector<Point2f>> {
-    let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
-    let mut im = Mat::default();
-    flip(&tmp, &mut im, 0).unwrap();
-    if port == Port::Wf {
-        let tmp = im;
-        im = Mat::default();
-        opencv::core::rotate(&tmp, &mut im, ROTATE_180).unwrap();
-    }
+    let im = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
     get_chessboard_corners_cv(&im, port, board_rows, board_cols, show)
 }
 

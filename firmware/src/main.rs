@@ -155,6 +155,12 @@ async fn main(spawner: Spawner) {
 
     // log_stuff();
 
+    #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
+    let v_flip = true;
+
+    #[cfg(any(feature = "vm2"))]
+    let v_flip = false;
+
     let mut wide = Paj7025::new(
         Spim::new(
             &mut pinout!(p.wf_spim),
@@ -166,6 +172,7 @@ async fn main(spawner: Spawner) {
         ),
         &mut pinout!(p.wf_cs),
         &mut pinout!(p.wf_fod),
+        v_flip,
     ).await;
     let mut near = Paj7025::new(
         Spim::new(
@@ -178,6 +185,7 @@ async fn main(spawner: Spawner) {
         ),
         &mut pinout!(p.nf_cs),
         &mut pinout!(p.nf_fod),
+        v_flip,
     ).await;
 
     wide.set_gain_1(0).await;

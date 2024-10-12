@@ -135,6 +135,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         mut spim: Spim<'d, T>,
         cs: impl Peripheral<P = P1> + 'd,
         fod: impl Peripheral<P = P2> + 'd,
+        v_flip: bool,
     ) -> Self {
         trace!("Paj7025::new");
         let cs = Output::new(cs.into_ref().map_into(), Level::High, OutputDrive::Standard);
@@ -171,8 +172,13 @@ impl<'d, T: Instance> Paj7025<'d, T> {
                 retry_cnt += 1;
             }
         }
-        paj.initialize_settings().await;
-        // paj.initialize_settings2();
+
+        if v_flip {
+            paj.initialize_settings(true).await;
+        } else {
+            paj.initialize_settings(false).await;
+        }
+
         paj
     }
 
@@ -184,7 +190,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x30, 0x01).await;
     }
 
-    pub async fn initialize_settings2(&mut self) {
+    pub async fn initialize_settings2(&mut self, v_flip: bool) {
         let mut bank = 0x00;
         self.write_register(0xef, bank).await; //Switching RegBank to Bank0
 
@@ -209,7 +215,11 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         bank = 0x01;
         self.write_register(0xef, bank).await; //Switching RegBank to Bank1
 
-        tmp_data = 0x00;
+        if v_flip {
+            tmp_data = 0x01;
+        } else {
+            tmp_data = 0x00;
+        }
         self.write_register(0x2d, tmp_data).await; //V flip
 
         bank = 0x0c;
@@ -270,7 +280,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         tmp_data = 0x01;
         self.write_register(0x01, tmp_data).await; //update flag enable
     }
-    async fn initialize_settings(&mut self) {
+    async fn initialize_settings(&mut self, v_flip: bool) {
         self.write_register(0xEF, 0x00).await;
         self.write_register(0xDC, 0x00).await;
         self.write_register(0xFB, 0x04).await;
@@ -280,7 +290,11 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x30, 0x01).await;
         self.write_register(0x1F, 0x00).await;
         self.write_register(0xEF, 0x01).await;
-        self.write_register(0x2D, 0x00).await;
+        if v_flip {
+            self.write_register(0x2D, 0x01).await;
+        } else {
+            self.write_register(0x2D, 0x00).await;
+        }
         self.write_register(0xEF, 0x0C).await;
         self.write_register(0x64, 0x00).await;
         self.write_register(0x65, 0x00).await;

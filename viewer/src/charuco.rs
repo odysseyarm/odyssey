@@ -1,5 +1,5 @@
 use opencv::{
-    core::{flip, no_array, Mat, Point2f, Scalar, Size, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector, ROTATE_180},
+    core::{no_array, Mat, Point2f, Scalar, Size, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector},
     highgui::{imshow, poll_key},
     imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC},
     objdetect::{
@@ -43,20 +43,9 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
     let mut marker_ids = Vector::<i32>::default();
 
     let new_size = Size::new(98, 98);
-    // let new_size = Size::new(273, 273);
-    // let mut flipped_resized = Mat::default();
-    // resize(&im, &mut flipped_resized, new_size, 0.0, 0.0, INTER_CUBIC).unwrap();
-    let flipped_resized = im;
-    let mut resized = Mat::default();
-    flip(&flipped_resized, &mut resized, 0).unwrap();
-    if name == "wf" {
-        let mut rotated = Mat::default();
-        opencv::core::rotate(&resized, &mut rotated, ROTATE_180).unwrap();
-        resized = rotated;
-    }
     detector
         .detect_board(
-            &resized,
+            &im,
             &mut charuco_corners,
             &mut charuco_ids,
             &mut marker_corners,
@@ -64,7 +53,7 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
         )
         .unwrap();
     if charuco_corners.len() > 0 {
-        corner_sub_pix(&resized, &mut charuco_corners, (5, 5).into(), (-1, -1).into(), opencv::core::TermCriteria {
+        corner_sub_pix(&im, &mut charuco_corners, (5, 5).into(), (-1, -1).into(), opencv::core::TermCriteria {
             typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
             max_count: 30,
             epsilon: 0.001,
@@ -84,7 +73,7 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
     // }
 
     let mut im_copy = Mat::default();
-    cvt_color(&resized, &mut im_copy, COLOR_GRAY2BGR, 0).unwrap();
+    cvt_color(&im, &mut im_copy, COLOR_GRAY2BGR, 0).unwrap();
     let tmp = im_copy;
     let mut im_copy = Mat::default();
     resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
