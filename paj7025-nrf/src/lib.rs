@@ -173,11 +173,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
             }
         }
 
-        if v_flip {
-            paj.initialize_settings(true).await;
-        } else {
-            paj.initialize_settings(false).await;
-        }
+        paj.initialize_settings(v_flip).await;
 
         paj
     }
@@ -290,11 +286,7 @@ impl<'d, T: Instance> Paj7025<'d, T> {
         self.write_register(0x30, 0x01).await;
         self.write_register(0x1F, 0x00).await;
         self.write_register(0xEF, 0x01).await;
-        if v_flip {
-            self.write_register(0x2D, 0x01).await;
-        } else {
-            self.write_register(0x2D, 0x00).await;
-        }
+        self.write_register(0x2D, if v_flip { 0x01 } else { 0x00 }).await;
         self.write_register(0xEF, 0x0C).await;
         self.write_register(0x64, 0x00).await;
         self.write_register(0x65, 0x00).await;

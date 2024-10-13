@@ -156,10 +156,10 @@ async fn main(spawner: Spawner) {
     // log_stuff();
 
     #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
-    let v_flip = true;
+    let nf_v_flip = false;
 
     #[cfg(any(feature = "vm2"))]
-    let v_flip = false;
+    let nf_v_flip = true;
 
     let mut wide = Paj7025::new(
         Spim::new(
@@ -172,7 +172,7 @@ async fn main(spawner: Spawner) {
         ),
         &mut pinout!(p.wf_cs),
         &mut pinout!(p.wf_fod),
-        v_flip,
+        !nf_v_flip,
     ).await;
     let mut near = Paj7025::new(
         Spim::new(
@@ -185,7 +185,7 @@ async fn main(spawner: Spawner) {
         ),
         &mut pinout!(p.nf_cs),
         &mut pinout!(p.nf_fod),
-        v_flip,
+        nf_v_flip,
     ).await;
 
     wide.set_gain_1(0).await;
@@ -262,8 +262,8 @@ async fn main(spawner: Spawner) {
     let [b0, b1] = shared_buffers;
     nf_free_buffers.try_send(b0).unwrap();
     wf_free_buffers.try_send(b1).unwrap();
-    let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender());
-    let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender());
+    let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender(), true);
+    let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender(), false);
     let buffer_mgmt_loop = async {
         loop {
             let buf = if let Ok(b) = image_buffers.try_receive() {
@@ -304,11 +304,32 @@ async fn main(spawner: Spawner) {
 //     info!("button pressed");
 // }
 
+/// Shift the data to the left n bits
+fn shiftl(d: &mut [u8], n: u8) {
+    d[0] <<= n;
+    for i in 1..d.len() {
+        d[i - 1] |= d[i] >> (8 - n);
+        d[i] <<= n;
+    }
+}
+
+/// Shift the data to the right n bits
+fn shiftr(d: &mut [u8], n: u8) {
+    let mut t = 0;
+    for i in 0..d.len() {
+        let t2 = d[i];
+        d[i] >>= n;
+        d[i] |= t << (8 - n);
+        t = t2;
+    }
+}
+
 async fn paj7025_image_loop<'b, T, M, const N: usize, const O: usize>(
     id: u8,
     mut spis: Spis<'_, T>,
     free_buffers: Receiver<'_, M, &'b mut [u8; 98*98 + 98*3], N>,
     image_buffers: Sender<'_, M, &'b mut [u8; 98*98 + 98*3], O>,
+    h_flip: bool,
 )
 where
     T: spis::Instance,
@@ -324,10 +345,30 @@ where
         if let Ok(len) = result {
             let len16 = len as u16;
             let len_bytes = len16.to_le_bytes();
+
+            if len == 9898 {
+                shiftl(buffer, 4);
+            } else {
+                if len < 9897 {
+                    buffer.rotate_right(9897 - len as usize);
+                    buffer[..9897 - len as usize].fill(0);
+                }
+                for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
+                    if buffer[buffer.len() - 6] == byte {
+                        shiftr(buffer, i as u8 + 1);
+                    }
+                }
+            }
+            
             // put the len bytes at the end because there is nothing there that we care about.
             buffer[98*98 + 98*3 - 3] = id;
             buffer[98*98 + 98*3 - 2] = len_bytes[0];
             buffer[98*98 + 98*3 - 1] = len_bytes[1];
+        }
+        if h_flip {
+            for i in 0..98 {
+                buffer[i*98..(i+1)*98].reverse();
+            }
         }
         image_buffers.try_send(buffer).unwrap();
     }

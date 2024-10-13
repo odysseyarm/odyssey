@@ -156,15 +156,11 @@ impl MainState {
             &wf_data.image,
             vec2(0.0, 0.0),
             image_scale,
-            false,  // Flip vertically
-            true,  // Flip horizontally
         );
         draw_image(
             &nf_data.image,
             vec2(image_size + spacing, 0.0),
             image_scale,
-            true,  // Flip vertically
-            false,  // Flip horizontally
         );
 
         // Draw FPS
@@ -214,8 +210,8 @@ impl MainState {
         );
 
         // Draw circles
-        draw_mot_data_circles(&wf_data.mot_data, wf_transform, false, true);
-        draw_mot_data_circles(&nf_data.mot_data, nf_transform, true, false);
+        draw_mot_data_circles(&wf_data.mot_data, wf_transform, true);
+        draw_mot_data_circles(&nf_data.mot_data, nf_transform, false);
 
         // Draw pattern points if available
         if let Some(pattern_points) = &wf_data.pattern_points {
@@ -241,20 +237,12 @@ fn draw_image(
     image: &[u8; 98 * 98 * 4],
     offset: Vec2,
     scale: f32,
-    flip_y: bool,
-    flip_x: bool,
 ) {
     for (i, pixel) in image.chunks(4).enumerate() {
         let ix = (i % 98) as f32;
         let iy = (i / 98) as f32;
-        let mut dest_x = ix * scale;
-        let mut dest_y = iy * scale;
-        if flip_x {
-            dest_x = 98.0 * scale - dest_x - scale; // Adjust for scale
-        }
-        if flip_y {
-            dest_y = 98.0 * scale - dest_y - scale; // Adjust for scale
-        }
+        let dest_x = ix * scale;
+        let dest_y = iy * scale;
         draw_rectangle(
             offset.x + dest_x,
             offset.y + dest_y,
@@ -268,7 +256,6 @@ fn draw_image(
 fn draw_mot_data_circles(
     mot_data: &[MotData],
     transform: Mat4,
-    flip_y: bool,
     flip_x: bool,
 ) {
     for data in mot_data {
@@ -280,9 +267,6 @@ fn draw_mot_data_circles(
             );
             if flip_x {
                 point.x = 98.0 - point.x;
-            }
-            if flip_y {
-                point.y = 98.0 - point.y;
             }
             let transformed_point = transform.transform_point3(point);
             draw_circle_lines(transformed_point.x, transformed_point.y, 4.0, 1.0, RED);
@@ -525,21 +509,7 @@ fn reader_thread(
             port.write(b"a").unwrap();
         }
         port.read_exact(&mut buf).unwrap();
-        let [.., id, len0, len1] = buf;
-        let len = u16::from_le_bytes([len0, len1]);
-        if len == 9898 {
-            shiftl(&mut buf, 4);
-        } else {
-            if len < 9897 {
-                buf.rotate_right(9897 - len as usize);
-                buf[..9897 - len as usize].fill(0);
-            }
-            for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
-                if buf[buf.len() - 6] == byte {
-                    shiftr(&mut buf, i as u8 + 1);
-                }
-            }
-        }
+        let [.., id, _, _] = buf;
 
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
@@ -654,26 +624,6 @@ fn _opencv_thread(
                 );
             }
         }
-    }
-}
-
-/// Shift the data to the left n bits
-fn shiftl(d: &mut [u8], n: u8) {
-    d[0] <<= n;
-    for i in 1..d.len() {
-        d[i - 1] |= d[i] >> (8 - n);
-        d[i] <<= n;
-    }
-}
-
-/// Shift the data to the right n bits
-fn shiftr(d: &mut [u8], n: u8) {
-    let mut t = 0;
-    for i in 0..d.len() {
-        let t2 = d[i];
-        d[i] >>= n;
-        d[i] |= t << (8 - n);
-        t = t2;
     }
 }
 

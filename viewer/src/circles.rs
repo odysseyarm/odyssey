@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, flip, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
 use crate::{chessboard::read_camara_params, Port, CALIBRATION_VERSION};
 
@@ -15,8 +15,7 @@ pub mod special;
 /// detect white blobs
 pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, _asymmetric: bool, invert: bool, special: bool) -> Option<Vector<Point2f>> {
     let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
-    let tmp = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
-    let mut im = Mat::default();
+    let im = Mat::new_rows_cols_with_data(98, 98, image).unwrap().clone_pointee();
 
     let mut thresholded = Mat::default();
     threshold(
