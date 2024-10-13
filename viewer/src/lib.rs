@@ -275,9 +275,6 @@ fn draw_mot_data_circles(
 }
 
 pub async fn main() {
-    // Manually set window dimensions
-    request_new_screen_size(98.0 * 10.0 + 40.0, 98.0 * 5.0 + 80.0);
-
     std::fs::create_dir_all("images").unwrap();
     let capture_count = (0..)
         .find(|i| !Path::new(&format!("images/nearfield_{:02}.png", i)).exists())
