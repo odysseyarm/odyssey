@@ -12,6 +12,12 @@ namespace Radiosity.OdysseyHubClient
             }
         }
 
+        ~Client() {
+            unsafe {
+                CsBindgen.NativeMethods.odyssey_hub_client_client_free(_handle);
+            }
+        }
+
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         delegate void ClientErrorDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error);
 

@@ -22,6 +22,13 @@ pub extern "C" fn odyssey_hub_client_client_new() -> Box<Client> {
 }
 
 #[no_mangle]
+pub extern "C" fn odyssey_hub_client_client_free(client: *mut Client) {
+    unsafe {
+        drop(Box::from_raw(client));
+    };
+}
+
+#[no_mangle]
 pub extern "C" fn odyssey_hub_client_client_connect(
     handle: *const crate::Handle,
     userdata: UserObj,

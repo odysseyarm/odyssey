@@ -47,6 +47,7 @@ int main() {
         msleep(10);
     }
 
+    odyssey_hub_client_client_free(client);
     odyssey_hub_client_free(handle);
     return 0;
 }
