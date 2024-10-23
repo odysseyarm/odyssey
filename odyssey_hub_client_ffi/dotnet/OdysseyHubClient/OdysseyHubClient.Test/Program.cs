@@ -73,10 +73,10 @@ foreach (var device in devices) {
 
 Console.WriteLine("Devices printed!");
 
-Channel<OdysseyHubClient.IEvent> eventChannel = Channel.CreateUnbounded<OdysseyHubClient.IEvent>();
+Channel<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string err_msg)> eventChannel = Channel.CreateUnbounded<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string err_msg)>();
 client.StartStream(handle, eventChannel.Writer);
 
-await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
+await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAllAsync()) {
     switch (@event) {
         case OdysseyHubClient.DeviceEvent deviceEvent:
             switch (deviceEvent.kind) {
@@ -130,6 +130,9 @@ await foreach (var @event in eventChannel.Reader.ReadAllAsync()) {
                 default:
                     break;
             }
+            break;
+        case OdysseyHubClient.NoneEvent:
+            Console.WriteLine("Error: {0}, message: {1}", err, err_msg);
             break;
         default:
             break;

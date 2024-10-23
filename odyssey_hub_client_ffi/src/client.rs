@@ -98,7 +98,7 @@ pub extern "C" fn odyssey_hub_client_start_stream(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
-    callback: extern "C" fn(userdata: UserObj, error: ClientError, reply: crate::ffi_common::Event),
+    callback: extern "C" fn(userdata: UserObj, error: ClientError, error_msg: *const std::ffi::c_char, reply: crate::ffi_common::Event),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -108,25 +108,60 @@ pub extern "C" fn odyssey_hub_client_start_stream(
     tokio::spawn(async move {
         match client.poll().await {
             Ok(mut stream) => {
-                while let Some(reply) = stream.message().await.unwrap() {
-                    let as_event: odyssey_hub_common::events::Event = reply.event.unwrap().into();
-                    callback(userdata, ClientError::ClientErrorNone, as_event.into());
+                loop {
+                    match stream.message().await {
+                        Ok(Some(reply)) => {
+                            let as_event: odyssey_hub_common::events::Event = reply.event.unwrap().into();
+                            let err_msg = std::ffi::CString::new("").unwrap();
+                            callback(userdata, ClientError::ClientErrorNone, err_msg.as_ptr(), as_event.into());
+                        }
+                        Ok(None) => {
+                            let err_msg = std::ffi::CString::new("Stream closed by sender").unwrap();
+                            callback(
+                                userdata,
+                                ClientError::ClientErrorStreamEnd,
+                                err_msg.as_ptr(),
+                                odyssey_hub_common::events::Event::None.into(),
+                            );
+                            continue;
+                        }
+                        Err(val) => {
+                            let err_msg = std::ffi::CString::new(val.message()).unwrap();
+                            callback(
+                                userdata,
+                                ClientError::ClientErrorStreamEnd,
+                                err_msg.as_ptr(),
+                                odyssey_hub_common::events::Event::None.into(),
+                            );
+                            break;
+                        }
+                    }
                 }
-                callback(
-                    userdata,
-                    ClientError::ClientErrorStreamEnd,
-                    odyssey_hub_common::events::Event::None.into(),
-                );
-            }
+            },
             Err(_) => {
+                let err_msg = std::ffi::CString::new("Client not connected").unwrap();
                 callback(
                     userdata,
                     ClientError::ClientErrorNotConnected,
+                    err_msg.as_ptr(),
                     odyssey_hub_common::events::Event::None.into(),
                 );
             }
         }
     });
+}
+
+#[no_mangle]
+pub extern "C" fn odyssey_hub_client_stop_stream(
+    handle: *const crate::Handle,
+    client: *mut Client,
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+
+    let client = unsafe { &*client };
+
+    client.end_token.cancel();
 }
 
 #[no_mangle]

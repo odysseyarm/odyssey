@@ -25,7 +25,7 @@ namespace Radiosity.OdysseyHubClient
         unsafe delegate void DeviceListDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Device* devices, nuint count);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        unsafe delegate void EventDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev);
+        unsafe delegate void EventDelegate(CsBindgen.UserObj userdata, CsBindgen.ClientError error, byte* err_msg, CsBindgen.Event ev);
 
         /// <summary>
         /// This function connects to the hub.
@@ -85,9 +85,15 @@ namespace Radiosity.OdysseyHubClient
         /// </summary>
         /// <param name="handle"></param>
         /// <param name="channelWriter"></param>
-        public void StartStream(Handle handle, ChannelWriter<IEvent> channelWriter) {
+        public void StartStream(Handle handle, ChannelWriter<(IEvent, ClientError, string)> channelWriter) {
             unsafe {
-                EventDelegate event_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, CsBindgen.Event ev) => {
+                EventDelegate event_delegate = (CsBindgen.UserObj userdata, CsBindgen.ClientError error, byte *err_msg, CsBindgen.Event ev) => {
+                    // convert err_msg to string
+                    var err_msg_string = Marshal.PtrToStringAnsi((IntPtr)err_msg);
+                    if (err_msg_string == null) {
+                        err_msg_string = "";
+                    }
+                    channelWriter.WriteAsync((Helpers.EventFactory(ev), (OdysseyHubClient.ClientError)error, err_msg_string));
                     switch (error) {
                         case CsBindgen.ClientError.ClientErrorNone:
                             break;
@@ -98,10 +104,9 @@ namespace Radiosity.OdysseyHubClient
                             GCHandle.FromIntPtr((IntPtr)userdata.Item1).Free();
                             return;
                     }
-                    channelWriter.WriteAsync(Helpers.EventFactory(ev));
                 };
                 var _gc_handle = GCHandle.ToIntPtr(GCHandle.Alloc(event_delegate));
-                CsBindgen.NativeMethods.odyssey_hub_client_start_stream(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(event_delegate));
+                CsBindgen.NativeMethods.odyssey_hub_client_start_stream(handle._handle, new CsBindgen.UserObj { Item1 = (void*)_gc_handle }, _handle, (delegate* unmanaged[Cdecl]<CsBindgen.UserObj, CsBindgen.ClientError, byte*, CsBindgen.Event, void>)Marshal.GetFunctionPointerForDelegate(event_delegate));
             }
         }
 
