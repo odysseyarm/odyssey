@@ -20,7 +20,7 @@ void msleep(unsigned int ms) {
 
 void client_connect_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClientError error);
 void start_streams(struct OdysseyHubClientHandle* handle, struct OdysseyHubClientClient* client);
-void stream_callback(struct OdysseyHubClientUserObj userdata, enum OdysseyHubClientClientError error, struct OdysseyHubClientEvent reply);
+void stream_callback(struct OdysseyHubClientUserObj userdata, enum OdysseyHubClientClientError error, const char *error_msg, struct OdysseyHubClientEvent reply);
 int handle_connect_event(void* state);
 int handle_stream_event(void* data);
 void handle_device_event(OdysseyHubClientDeviceEvent event);
@@ -72,7 +72,11 @@ void start_streams(struct OdysseyHubClientHandle *handle, struct OdysseyHubClien
     odyssey_hub_client_start_stream(handle, (struct OdysseyHubClientUserObj){._0 = NULL}, client, stream_callback);
 }
 
-void stream_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClientError error, struct OdysseyHubClientEvent reply) {
+void stream_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClientError error, const char *error_msg, struct OdysseyHubClientEvent reply) {
+    if (error != ODYSSEY_HUB_CLIENT_CLIENT_ERROR_CLIENT_ERROR_NONE) {
+        atomic_store(&end, true);
+        return;
+    }
     thrd_t event_thread;
     if (thrd_create(&event_thread, handle_stream_event, &reply) == thrd_success) {
         thrd_detach(event_thread);
