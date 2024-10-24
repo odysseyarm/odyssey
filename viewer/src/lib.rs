@@ -210,6 +210,7 @@ impl MainState {
         );
 
         // Draw circles
+        // fixme will look backwards for ats lite
         draw_mot_data_circles(&wf_data.mot_data, wf_transform, true);
         draw_mot_data_circles(&nf_data.mot_data, nf_transform, false);
 

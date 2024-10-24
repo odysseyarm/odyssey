@@ -157,9 +157,13 @@ async fn main(spawner: Spawner) {
 
     #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
     let nf_v_flip = false;
+    #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
+    let nf_h_flip = true;
 
     #[cfg(any(feature = "vm2"))]
     let nf_v_flip = true;
+    #[cfg(any(feature = "vm2"))]
+    let nf_h_flip = false;
 
     let mut wide = Paj7025::new(
         Spim::new(
@@ -262,8 +266,8 @@ async fn main(spawner: Spawner) {
     let [b0, b1] = shared_buffers;
     nf_free_buffers.try_send(b0).unwrap();
     wf_free_buffers.try_send(b1).unwrap();
-    let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender(), true);
-    let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender(), false);
+    let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender(), !nf_h_flip);
+    let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender(), nf_h_flip);
     let buffer_mgmt_loop = async {
         loop {
             let buf = if let Ok(b) = image_buffers.try_receive() {
