@@ -53,7 +53,7 @@ macro_rules! pinout {
     ($p:ident . nf_sck) => ($p.P1_11);
     ($p:ident . nf_mosi) => ($p.P1_12);
     ($p:ident . nf_miso) => ($p.P1_13);
-    ($p:ident . nf_cs) => ($p.P1_04);
+    ($p:ident . nf_cs) => ($p.P0_30);
     ($p:ident . nf_fod) => ($p.P0_10);
 
     ($p:ident . pwr_btn) => ($p.P1_08); // active low
