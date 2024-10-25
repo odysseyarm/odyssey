@@ -399,4 +399,10 @@ impl<'d, T: Instance> Paj7025<'d, T> {
     write_register_spec!(set_frame_period: u32 = 0x0c; [0x07, 0x08, 0x09]);
     write_register_spec!(set_bank1_sync_updated: u8 = 0x01; [0x01]);
     write_register_spec!(set_bank0_sync_updated: u8 = 0x00; [0x01]);
+
+    // Set the exposure time in ns. Must be a multiple of 200. Minimum is 20,000 ns (20 us).
+    pub async fn set_exposure_time_ns_image_mode(&mut self, exposure_time_ns: u32) {
+        let raw_value = exposure_time_ns / (200 * 4);
+        self.set_exposure_time(u16::try_from(raw_value).unwrap()).await
+    }
 }
