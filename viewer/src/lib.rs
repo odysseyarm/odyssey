@@ -234,24 +234,19 @@ impl MainState {
     }
 }
 
-fn draw_image(
-    image: &[u8; 98 * 98 * 4],
-    offset: Vec2,
-    scale: f32,
-) {
-    for (i, pixel) in image.chunks(4).enumerate() {
-        let ix = (i % 98) as f32;
-        let iy = (i / 98) as f32;
-        let dest_x = ix * scale;
-        let dest_y = iy * scale;
-        draw_rectangle(
-            offset.x + dest_x,
-            offset.y + dest_y,
-            scale,
-            scale,
-            Color::from_rgba(pixel[0], pixel[1], pixel[2], pixel[3]),
-        );
-    }
+fn draw_image(image: &[u8; 98 * 98 * 4], offset: Vec2, scale: f32) {
+    let texture = Texture2D::from_rgba8(98, 98, image);
+    texture.set_filter(FilterMode::Nearest);
+    draw_texture_ex(
+        &texture,
+        offset.x,
+        offset.y,
+        WHITE,
+        DrawTextureParams {
+            dest_size: Some((98.0 * scale, 98.0 * scale).into()),
+            ..Default::default()
+        },
+    );
 }
 
 fn draw_mot_data_circles(
