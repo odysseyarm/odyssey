@@ -3140,6 +3140,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "odyssey_hub"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "interprocess",
+ "odyssey_hub_service",
+ "odyssey_hub_service_interface",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "odyssey_hub_client"
 version = "0.1.0"
 dependencies = [
@@ -3188,21 +3203,6 @@ version = "0.1.0"
 dependencies = [
  "windows-service",
  "winres",
-]
-
-[[package]]
-name = "odyssey_hub_no_service"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "interprocess",
- "odyssey_hub_service",
- "odyssey_hub_service_interface",
- "serde",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

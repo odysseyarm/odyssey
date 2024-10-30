@@ -7,7 +7,7 @@ members = [
     "odyssey_hub_client_ffi",
     "odyssey_hub_service",
     "odyssey_hub_service_interface",
-    "odyssey_hub_no_service",
+    "odyssey_hub",
     "odyssey_hub_install_service",
     "odyssey_hub_common",
 ]

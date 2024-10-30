@@ -130,7 +130,7 @@ async fn device_udp_ping_task(
                     for ip in &broadcast_addrs {
                         match ip {
                             std::net::IpAddr::V4(broadcast_address) => {
-                                let broadcast_address = SocketAddrV4::new(*broadcast_address, 255);
+                                let broadcast_address = SocketAddrV4::new(*broadcast_address, 23456);
                                 socket.send_to(&[255, 1], broadcast_address).await.unwrap();
                             },
                             std::net::IpAddr::V6(_) => {
