@@ -54,7 +54,52 @@ async fn device_udp_ping_task(
         >,
     >,
 ) -> std::convert::Infallible {
-    let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, 23456);
+    use sysinfo::{
+        Components, Disks, Networks, System,
+    };
+
+    fn broadcast_address(ip: std::net::IpAddr, prefix: u8) -> Option<std::net::IpAddr> {
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                // Calculate the mask for IPv4 by shifting left
+                let mask = !((1 << (32 - prefix)) - 1);
+                let network = u32::from(ipv4) & mask;
+                let broadcast = network | !mask;
+                Some(std::net::IpAddr::V4(Ipv4Addr::from(broadcast)))
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                // IPv6 broadcast doesn't work the same way as IPv4. IPv6 relies on multicast addresses,
+                // so we can't really calculate a broadcast address in the same sense.
+                // But if you want the "last address" in the subnet, you could calculate it similarly:
+                let mut segments = ipv6.segments();
+                let mask = !(0xffff_u16 << (16 - (prefix % 16))); // Create a partial mask for the last segment
+    
+                for i in 0..(prefix / 16) as usize {
+                    segments[i] &= 0xffff; // Apply mask to full segments
+                }
+    
+                if (prefix % 16) > 0 {
+                    let last = (prefix / 16) as usize;
+                    segments[last] |= mask;
+                }
+                Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(segments)))
+            }
+        }
+    }
+
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let networks = Networks::new_with_refreshed_list();
+
+    let broadcast_addrs: Vec<_> = networks.iter().filter_map(|(_, data)| {
+        for ip_network in data.ip_networks() {
+            if let Some(broadcast) = broadcast_address(ip_network.addr, ip_network.prefix) {
+                return Some(broadcast);
+            }
+        }
+        None
+    }).collect();
 
     let socket = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -82,7 +127,17 @@ async fn device_udp_ping_task(
                 // 5 attempts
                 for _ in 0..5 {
                     // ping without add
-                    socket.send_to(&[255, 3], broadcast_addr).await.unwrap();
+                    for ip in &broadcast_addrs {
+                        match ip {
+                            std::net::IpAddr::V4(broadcast_address) => {
+                                let broadcast_address = SocketAddrV4::new(*broadcast_address, 255);
+                                socket.send_to(&[255, 1], broadcast_address).await.unwrap();
+                            },
+                            std::net::IpAddr::V6(_) => {
+                                // unsupported
+                            },
+                        }
+                    }
                     tokio::select! {
                         _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
                         _ = async {
@@ -372,6 +427,9 @@ fn raycast_update(
     >,
     fv_state: &FoveatedAimpointState,
 ) -> (Option<(Matrix3<f64>, Vector3<f64>)>, Option<Point2<f64>>) {
+    if !fv_state.init() {
+        return (None, None);
+    }
     let screen_id = fv_state.screen_id;
     if screen_id <= ats_cv::foveated::MAX_SCREEN_ID {
         if let Some(screen_calibration) =

@@ -27,12 +27,13 @@ ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 nalgebra = "0.32.5"
 cam-geom = "0.14.1"
 opencv-ros-camera = "0.14.1"
-ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git", rev = "771a635ae4d231681015ab2ebeef879c863c2422" }
+ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git", rev = "5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba" }
 sqpnp = { git = "https://github.com/0e4ef622/sqpnp.git" }
 socket2 = "0.5.7"
 arrayvec = "0.7.4"
 app_dirs2 = "2.5.5"
 serde_json = "1.0.128"
+sysinfo = "0.32.0"
 
 [dependencies.interprocess]
 git = "https://github.com/kotauskas/interprocess.git"
