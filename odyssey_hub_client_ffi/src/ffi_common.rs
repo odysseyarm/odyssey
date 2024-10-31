@@ -1,4 +1,4 @@
-use std::{ffi::{CStr}, net::IpAddr};
+use std::{ffi::CStr, net::IpAddr};
 
 #[repr(C)]
 #[derive(Copy, Clone)]

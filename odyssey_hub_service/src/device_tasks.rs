@@ -19,7 +19,10 @@ use tracing::field::debug;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Connect(odyssey_hub_common::device::Device, ats_usb::device::UsbDevice),
+    Connect(
+        odyssey_hub_common::device::Device,
+        ats_usb::device::UsbDevice,
+    ),
     Disconnect(odyssey_hub_common::device::Device),
     Event(odyssey_hub_common::events::Event),
 }
@@ -54,9 +57,7 @@ async fn device_udp_ping_task(
         >,
     >,
 ) -> std::convert::Infallible {
-    use sysinfo::{
-        Components, Disks, Networks, System,
-    };
+    use sysinfo::{Components, Disks, Networks, System};
 
     fn broadcast_address(ip: std::net::IpAddr, prefix: u8) -> Option<std::net::IpAddr> {
         match ip {
@@ -73,11 +74,11 @@ async fn device_udp_ping_task(
                 // But if you want the "last address" in the subnet, you could calculate it similarly:
                 let mut segments = ipv6.segments();
                 let mask = !(0xffff_u16 << (16 - (prefix % 16))); // Create a partial mask for the last segment
-    
+
                 for i in 0..(prefix / 16) as usize {
                     segments[i] &= 0xffff; // Apply mask to full segments
                 }
-    
+
                 if (prefix % 16) > 0 {
                     let last = (prefix / 16) as usize;
                     segments[last] |= mask;
@@ -92,14 +93,17 @@ async fn device_udp_ping_task(
 
     let networks = Networks::new_with_refreshed_list();
 
-    let broadcast_addrs: Vec<_> = networks.iter().filter_map(|(_, data)| {
-        for ip_network in data.ip_networks() {
-            if let Some(broadcast) = broadcast_address(ip_network.addr, ip_network.prefix) {
-                return Some(broadcast);
+    let broadcast_addrs: Vec<_> = networks
+        .iter()
+        .filter_map(|(_, data)| {
+            for ip_network in data.ip_networks() {
+                if let Some(broadcast) = broadcast_address(ip_network.addr, ip_network.prefix) {
+                    return Some(broadcast);
+                }
             }
-        }
-        None
-    }).collect();
+            None
+        })
+        .collect();
 
     let socket = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -131,7 +135,7 @@ async fn device_udp_ping_task(
                         match ip {
                             std::net::IpAddr::V4(broadcast_address) => {
                                 let broadcast_address = SocketAddrV4::new(*broadcast_address, 23456);
-                                socket.send_to(&[255, 1], broadcast_address).await.unwrap();
+                                socket.send_to(&[255, 3], broadcast_address).await.unwrap();
                             },
                             std::net::IpAddr::V6(_) => {
                                 // unsupported
@@ -471,9 +475,11 @@ async fn common_tasks(
     let timeout = Duration::from_secs(2);
     let restart_timeout = Duration::from_secs(1);
 
-    let mut prev_timestamp = None;
+    let mut prev_timestamp: Option<u32> = None;
     let mut wfnf_realign = true;
-    let orientation = Arc::new(tokio::sync::Mutex::new(nalgebra::Rotation3::identity()));
+    let orientation = Arc::new(tokio::sync::Mutex::<Rotation3<f32>>::new(
+        nalgebra::Rotation3::identity(),
+    ));
     let madgwick = Arc::new(tokio::sync::Mutex::new(ahrs::Madgwick::new(
         1. / config.accel_config.accel_odr as f32,
         0.1,
@@ -483,6 +489,8 @@ async fn common_tasks(
     let mut accel_stream = d.stream_accel().await.unwrap();
     let mut impact_stream = d.stream_impact().await.unwrap();
     let mut no_response_count = 0;
+
+    let mut test = 0;
 
     loop {
         tokio::select! {
@@ -637,6 +645,7 @@ async fn common_tasks(
             }
 
             item = accel_stream.next() => {
+                test += 1;
                 let Some(accel) = item else {
                     // this shouldn't ever happen
                     break;
@@ -769,8 +778,8 @@ async fn device_udp_stream_task(
     device.uuid = params.uuid.clone();
 
     let _ = message_channel
-        .send(
-            Message::Connect(odyssey_hub_common::device::Device::Udp(device.clone()),
+        .send(Message::Connect(
+            odyssey_hub_common::device::Device::Udp(device.clone()),
             d.clone(),
         ))
         .await;
@@ -783,6 +792,7 @@ async fn device_udp_stream_task(
         screen_calibrations.clone(),
     )
     .await;
+
     Ok(())
 }
 

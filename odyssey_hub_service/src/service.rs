@@ -26,7 +26,14 @@ use crate::device_tasks::{self, device_tasks};
 
 #[derive(Debug)]
 struct Server {
-    device_list: Arc<parking_lot::Mutex<Vec<(odyssey_hub_common::device::Device, ats_usb::device::UsbDevice)>>>,
+    device_list: Arc<
+        parking_lot::Mutex<
+            Vec<(
+                odyssey_hub_common::device::Device,
+                ats_usb::device::UsbDevice,
+            )>,
+        >,
+    >,
     event_channel: broadcast::Receiver<odyssey_hub_common::events::Event>,
 }
 
@@ -87,7 +94,7 @@ impl Service for Server {
     {
         let odyssey_hub_service_interface::WriteVendorRequest { device, tag, data } =
             request.into_inner();
-        
+
         let device = device.unwrap().into();
 
         let d: ats_usb::device::UsbDevice;
@@ -101,7 +108,10 @@ impl Service for Server {
         match d.write_vendor(tag as u8, data.as_slice()).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(tonic::Status::aborted(format!("Failed to write vendor: {}", e)));
+                return Err(tonic::Status::aborted(format!(
+                    "Failed to write vendor: {}",
+                    e
+                )));
             }
         }
 
