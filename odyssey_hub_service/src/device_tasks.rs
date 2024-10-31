@@ -490,8 +490,6 @@ async fn common_tasks(
     let mut impact_stream = d.stream_impact().await.unwrap();
     let mut no_response_count = 0;
 
-    let mut test = 0;
-
     loop {
         tokio::select! {
             _ = tokio::time::sleep(
@@ -645,7 +643,6 @@ async fn common_tasks(
             }
 
             item = accel_stream.next() => {
-                test += 1;
                 let Some(accel) = item else {
                     // this shouldn't ever happen
                     break;
