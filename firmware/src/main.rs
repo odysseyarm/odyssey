@@ -8,7 +8,7 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
 use embassy_nrf::{
-    config::{Config, HfclkSource}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
+    config::{Config, HfclkSource, Reg0Voltage}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
         self,
         vbus_detect::HardwareVbusDetect,
         Driver,
@@ -56,44 +56,6 @@ unsafe fn init_ramtext() {
     );
 }
 
-// this could go in pre_init, but it already works so /shrug
-#[cfg(feature = "vm2")]
-fn check_regout0() {
-    use embassy_nrf::pac::{self, power::mainregstatus::MAINREGSTATUS_A};
-    // if the ats_mot_nrf52840 board is powered from USB
-    // (high voltage mode), GPIO output voltage is set to 1.8 volts by
-    // default and that is not enough for the vision sensors.
-    // Increase GPIO voltage to 2.4 volts.
-
-    let mainregstatus = unsafe { &*pac::POWER::ptr() }
-        .mainregstatus
-        .read()
-        .mainregstatus()
-        .variant();
-    match mainregstatus {
-        MAINREGSTATUS_A::NORMAL => return,
-        MAINREGSTATUS_A::HIGH => (),
-    }
-
-    let regout0 = &unsafe { &*pac::UICR::ptr() }.regout0;
-    if !regout0.read().vout().is_default() {
-        return;
-    }
-
-    // Enable writing to flash
-    let nvmc = unsafe { &*pac::NVMC::ptr() };
-    nvmc.config.write(|w| w.wen().wen());
-    while !nvmc.ready.read().ready().is_ready() {}
-
-    // Set REGOUT0 to 2.4 volts
-    regout0.write(|w| w.vout()._2v4());
-
-    // Wait for write to finish
-    while !nvmc.ready.read().ready().is_ready() {}
-
-    pac::SCB::sys_reset()
-}
-
 #[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2", feature = "atslite-4-1"))]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -114,43 +76,22 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0 => spis::InterruptHandler<peripherals::TWISPI0>;
 });
 
-// fn log_stuff() {
-//     let pc = cortex_m::register::pc::read();
-//     info!("Hello from {:010x}", pc);
-//     let mainregstatus = unsafe { &*pac::POWER::ptr() }
-//         .mainregstatus
-//         .read()
-//         .mainregstatus()
-//         .variant();
-//     info!("MAINREGSTATUS is {}", Debug2Format(&mainregstatus));
-//     let regout0 = unsafe { &*pac::UICR::ptr() }
-//         .regout0
-//         .read()
-//         .vout()
-//         .variant();
-//     info!("REGOUT0 is {}", Debug2Format(&regout0));
-//     let hfclkstat = unsafe { &*pac::CLOCK::ptr() }.hfclkstat.read();
-//     info!(
-//         "HFCLKSTAT_SRC is {}",
-//         Debug2Format(&hfclkstat.src().variant())
-//     );
-//     info!(
-//         "HFCLKSTAT_STATE is {}",
-//         Debug2Format(&hfclkstat.state().variant())
-//     );
-// }
-
 const NUM_BUFFERS: usize = 2;
 static SHARED_BUFFERS: StaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = StaticCell::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    #[cfg(feature = "vm2")]
-    check_regout0();
-
     let shared_buffers = SHARED_BUFFERS.init_with(|| [[0; 98*98+98*3]; NUM_BUFFERS]);
     let mut config = Config::default();
     config.hfclk_source = HfclkSource::ExternalXtal;
+
+    // if the ats_mot_nrf52840 board is powered from USB
+    // (high voltage mode), GPIO output voltage is set to 1.8 volts by
+    // default and that is not enough for the vision sensors.
+    // Increase GPIO voltage to 2.4 volts.
+    if cfg!(feature = "vm2") {
+        config.dcdc.reg0_voltage = Some(Reg0Voltage::_2V4);
+    }
     let mut p = embassy_nrf::init(config);
 
     // log_stuff();
@@ -364,7 +305,7 @@ where
                     }
                 }
             }
-            
+
             // put the len bytes at the end because there is nothing there that we care about.
             buffer[98*98 + 98*3 - 3] = id;
             buffer[98*98 + 98*3 - 2] = len_bytes[0];
