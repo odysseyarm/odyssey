@@ -46,7 +46,7 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     for label in 1..num_seed_labels {
         // area
         let stats = *seed_stats.at_2d::<i32>(label, 4).unwrap();
-        if stats < 3 {
+        if stats < 1 {
             continue;
         }
 
