@@ -230,6 +230,7 @@ namespace Radiosity.OdysseyHubClient
             public IPacketData data;
 
             internal Packet(CsBindgen.PacketEvent packet) {
+                ty = packet.ty;
                 switch (packet.data.tag) {
                     case CsBindgen.PacketDataTag.Unsupported:
                         data = new UnsupportedPacketData();
