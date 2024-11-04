@@ -89,7 +89,8 @@ async fn main(spawner: Spawner) {
     // (high voltage mode), GPIO output voltage is set to 1.8 volts by
     // default and that is not enough for the vision sensors.
     // Increase GPIO voltage to 2.4 volts.
-    if cfg!(feature = "vm2") {
+    #[cfg(feature = "vm2")]
+    {
         config.dcdc.reg0_voltage = Some(Reg0Voltage::_2V4);
     }
     let mut p = embassy_nrf::init(config);
