@@ -7,8 +7,12 @@ mod pinout;
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
+
+#[cfg(feature = "vm2")]
+use embassy_nrf::config::Reg0Voltage;
+
 use embassy_nrf::{
-    config::{Config, HfclkSource, Reg0Voltage}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
+    config::{Config, HfclkSource}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
         self,
         vbus_detect::HardwareVbusDetect,
         Driver,
@@ -136,14 +140,15 @@ async fn main(spawner: Spawner) {
 
     wide.set_gain_1(0).await;
     wide.set_gain_2(0).await;
-    wide.set_frame_period(16384).await;
-    wide.set_exposure_time(2048).await;
+    // wide.set_frame_period(16384).await;
+    // wide.set_exposure_time(2048).await;
+    wide.set_exposure_time_ns_image_mode(900_000).await;
     wide.set_bank1_sync_updated(1).await;
     near.set_gain_1(0).await;
     near.set_gain_2(0).await;
     near.set_frame_period(16384).await;
     // near.set_exposure_time(2048).await;
-    near.set_exposure_time_ns_image_mode(80_000).await;
+    near.set_exposure_time_ns_image_mode(180_000).await;
     near.set_bank1_sync_updated(1).await;
     near.set_brightness_threshold(100).await;
     near.set_noise_threshold(15).await;
