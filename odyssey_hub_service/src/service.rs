@@ -279,7 +279,7 @@ pub async fn run_service(
     };
 
     let screen_calibrations: arrayvec::ArrayVec<
-        (u8, ScreenCalibration<f64>),
+        (u8, ScreenCalibration<f32>),
         { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
     > = (0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
         .filter_map(|i| {

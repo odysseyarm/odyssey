@@ -433,12 +433,12 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba#5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=da08517e38b4bfba3ae4167252a7f1693203905e#da08517e38b4bfba3ae4167252a7f1693203905e"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
  "cv",
- "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba)",
+ "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=da08517e38b4bfba3ae4167252a7f1693203905e)",
  "microfft",
  "nalgebra 0.32.6",
  "num",
@@ -446,7 +446,7 @@ dependencies = [
  "serde",
  "serde_json",
  "simba 0.8.1",
- "sqpnp",
+ "sqpnp 0.2.0 (git+https://github.com/0e4ef622/sqpnp.git?branch=f32)",
 ]
 
 [[package]]
@@ -465,7 +465,7 @@ dependencies = [
  "serde",
  "serde_json",
  "simba 0.8.1",
- "sqpnp",
+ "sqpnp 0.2.0 (git+https://github.com/0e4ef622/sqpnp.git)",
 ]
 
 [[package]]
@@ -1423,7 +1423,7 @@ checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba#5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=da08517e38b4bfba3ae4167252a7f1693203905e#da08517e38b4bfba3ae4167252a7f1693203905e"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -3203,7 +3203,7 @@ dependencies = [
  "anyhow",
  "app_dirs2",
  "arrayvec 0.7.6",
- "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=5ef183f90bfe6b58b70460fa17a7b63f4f4ebaba)",
+ "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=da08517e38b4bfba3ae4167252a7f1693203905e)",
  "ats_usb",
  "cam-geom",
  "futures",
@@ -3220,7 +3220,7 @@ dependencies = [
  "serial2",
  "serialport",
  "socket2",
- "sqpnp",
+ "sqpnp 0.2.0 (git+https://github.com/0e4ef622/sqpnp.git)",
  "sysinfo",
  "tokio",
  "tokio-stream",
@@ -4383,6 +4383,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eda41003dc44290527a59b13432d4a0379379fa074b70174882adfbdfd917844"
 dependencies = [
  "bitflags 2.6.0",
+]
+
+[[package]]
+name = "sqpnp"
+version = "0.2.0"
+source = "git+https://github.com/0e4ef622/sqpnp.git?branch=f32#515fb7ae3f9576c6c07430d4ef0dbfc5cb7ed374"
+dependencies = [
+ "nalgebra 0.32.6",
 ]
 
 [[package]]

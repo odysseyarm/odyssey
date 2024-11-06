@@ -80,6 +80,7 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
     switch (@event) {
         case OdysseyHubClient.DeviceEvent deviceEvent:
             switch (deviceEvent.kind) {
+                // uncomment what you want to see
                 case OdysseyHubClient.DeviceEvent.Accelerometer accelerometer:
                     // Console.WriteLine("Printing accelerometer event:");
                     // Console.WriteLine("\ttimestamp: {0}", accelerometer.timestamp);
@@ -91,19 +92,19 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
                     // Console.WriteLine("Printing tracking event:");
                     // Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
                     // Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
-                    if (tracking.pose != null) {
-                        // Console.WriteLine("\tpose: ");
-                        // Console.WriteLine("\t\trotation: ");
-                        // Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
-                        // Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
-                        // Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
-                        // Console.WriteLine("\t\ttranslation: ");
-                        // Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
-                        // Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
-                    } else {
-                        Console.WriteLine("\tpose: Not resolved");
-                    }
-                    break;
+                    // if (tracking.pose != null) {
+                    //     Console.WriteLine("\tpose: ");
+                    //     Console.WriteLine("\t\trotation: ");
+                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
+                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
+                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
+                    //     Console.WriteLine("\t\ttranslation: ");
+                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
+                    //     Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
+                    // } else {
+                    //     Console.WriteLine("\tpose: Not resolved");
+                    // }
+                    // break;
                 case OdysseyHubClient.DeviceEvent.Impact impact:
                     // Console.WriteLine("Printing impact event:");
                     // Console.WriteLine("\ttimestamp: {0}", impact.timestamp);

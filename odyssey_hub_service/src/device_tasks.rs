@@ -32,7 +32,7 @@ pub async fn device_tasks(
     screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -51,7 +51,7 @@ async fn device_udp_ping_task(
     screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -219,7 +219,7 @@ async fn device_hid_ping_task(
     _screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -272,7 +272,7 @@ async fn device_cdc_ping_task(
     screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -390,15 +390,15 @@ async fn device_cdc_ping_task(
 
 fn get_raycast_aimpoint(
     fv_state: &ats_cv::foveated::FoveatedAimpointState,
-    screen_calibration: &ScreenCalibration<f64>,
-) -> (Rotation3<f64>, Translation3<f64>, Option<Point2<f64>>) {
+    screen_calibration: &ScreenCalibration<f32>,
+) -> (Rotation3<f32>, Translation3<f32>, Option<Point2<f32>>) {
     let orientation = fv_state.filter.orientation.cast();
     let position = fv_state.filter.position.cast();
 
     let rot = orientation.to_rotation_matrix();
     let trans = Translation3::from(position);
 
-    let isometry = nalgebra::Isometry::<f64, Rotation3<f64>, 3>::from_parts(trans, rot);
+    let isometry = nalgebra::Isometry::<f32, Rotation3<f32>, 3>::from_parts(trans, rot);
 
     let fv_aimpoint = ats_cv::calculate_aimpoint(&isometry, screen_calibration);
 
@@ -413,7 +413,7 @@ fn get_raycast_aimpoint(
 pub struct Marker {
     pub mot_id: u8,
     pub pattern_id: Option<u8>,
-    pub normalized: Point2<f64>,
+    pub normalized: Point2<f32>,
 }
 
 impl Marker {
@@ -426,11 +426,11 @@ impl Marker {
 
 fn raycast_update(
     screen_calibrations: &ArrayVec<
-        (u8, ScreenCalibration<f64>),
+        (u8, ScreenCalibration<f32>),
         { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
     >,
     fv_state: &FoveatedAimpointState,
-) -> (Option<(Matrix3<f64>, Vector3<f64>)>, Option<Point2<f64>>) {
+) -> (Option<(Matrix3<f32>, Vector3<f32>)>, Option<Point2<f32>>) {
     if !fv_state.init() {
         return (None, None);
     }
@@ -465,7 +465,7 @@ async fn common_tasks(
     screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -609,14 +609,14 @@ async fn common_tasks(
                 }
 
                 if let Some(aimpoint) = aimpoint { if let Some(pose) = pose {
-                    let aimpoint_matrix = nalgebra::Matrix::<f64, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f64, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
+                    let aimpoint_matrix = nalgebra::Matrix::<f32, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f32, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
                     let device = device.clone();
                     let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
                         timestamp: prev_timestamp.unwrap_or(0),
-                        aimpoint: aimpoint_matrix,
+                        aimpoint: aimpoint_matrix.cast(),
                         pose: Some(odyssey_hub_common::events::Pose {
-                            rotation: pose.0,
-                            translation: pose.1,
+                            rotation: pose.0.cast(),
+                            translation: pose.1.cast(),
                         }),
                         screen_id,
                     });
@@ -741,7 +741,7 @@ async fn device_udp_stream_task(
     screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -800,7 +800,7 @@ async fn device_cdc_stream_task(
     screen_calibrations: Arc<
         tokio::sync::Mutex<
             ArrayVec<
-                (u8, ScreenCalibration<f64>),
+                (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
@@ -914,14 +914,14 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
     }
 }
 
-fn filter_and_create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f64>)> {
+fn filter_and_create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
     points
         .iter()
         .enumerate()
         .filter_map(|(id, pos)| {
             // screen id of 7 means there is no marker
             if (100..3996).contains(&pos.x) && (100..3996).contains(&pos.y) {
-                Some((id as u8, Point2::new(pos.x as f64, pos.y as f64)))
+                Some((id as u8, Point2::new(pos.x as f32, pos.y as f32)))
             } else {
                 None
             }
@@ -930,9 +930,9 @@ fn filter_and_create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f64
 }
 
 fn transform_points(
-    points: &[Point2<f64>],
+    points: &[Point2<f32>],
     camera_intrinsics: &RosOpenCvIntrinsics<f32>,
-) -> Vec<Point2<f64>> {
+) -> Vec<Point2<f32>> {
     let scaled_points = points
         .iter()
         .map(|p| Point2::new(p.x / 4095. * 98., p.y / 4095. * 98.))
