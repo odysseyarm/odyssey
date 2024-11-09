@@ -69,21 +69,7 @@ async fn device_udp_ping_task(
                 Some(std::net::IpAddr::V4(Ipv4Addr::from(broadcast)))
             }
             std::net::IpAddr::V6(ipv6) => {
-                // IPv6 broadcast doesn't work the same way as IPv4. IPv6 relies on multicast addresses,
-                // so we can't really calculate a broadcast address in the same sense.
-                // But if you want the "last address" in the subnet, you could calculate it similarly:
-                let mut segments = ipv6.segments();
-                let mask = !(0xffff_u16 << (16 - (prefix % 16))); // Create a partial mask for the last segment
-
-                for i in 0..(prefix / 16) as usize {
-                    segments[i] &= 0xffff; // Apply mask to full segments
-                }
-
-                if (prefix % 16) > 0 {
-                    let last = (prefix / 16) as usize;
-                    segments[last] |= mask;
-                }
-                Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(segments)))
+                None
             }
         }
     }
