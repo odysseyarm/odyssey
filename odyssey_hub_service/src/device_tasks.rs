@@ -415,7 +415,7 @@ fn raycast_update(
         (u8, ScreenCalibration<f32>),
         { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
     >,
-    fv_state: &FoveatedAimpointState,
+    fv_state: &mut FoveatedAimpointState,
 ) -> (Option<(Matrix3<f32>, Vector3<f32>)>, Option<Point2<f32>>) {
     if !fv_state.init() {
         return (None, None);
@@ -431,10 +431,14 @@ fn raycast_update(
                 get_raycast_aimpoint(&fv_state, screen_calibration);
 
             if let Some(_fv_aimpoint) = _fv_aimpoint {
-                return (
-                    Some((rotmat.matrix().cast(), transmat.vector.cast())),
-                    Some(_fv_aimpoint),
-                );
+                if _fv_aimpoint.x > 1.02 || _fv_aimpoint.x < -0.02 {
+                    fv_state.reset();
+                } else {
+                    return (
+                        Some((rotmat.matrix().cast(), transmat.vector.cast())),
+                        Some(_fv_aimpoint),
+                    );
+                }
             } else {
                 return (Some((rotmat.matrix().cast(), transmat.vector.cast())), None);
             }
@@ -586,7 +590,7 @@ async fn common_tasks(
                     let wf = &wf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
                     fv_state.observe_markers(nf, wf, gravity_vec.cast(), &screen_calibrations);
 
-                    let (_pose, _aimpoint) = raycast_update(&screen_calibrations, &fv_state);
+                    let (_pose, _aimpoint) = raycast_update(&screen_calibrations, &mut fv_state);
 
                     pose = _pose;
                     aimpoint = _aimpoint;
