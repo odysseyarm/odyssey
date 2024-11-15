@@ -68,9 +68,7 @@ async fn device_udp_ping_task(
                 let broadcast = network | !mask;
                 Some(std::net::IpAddr::V4(Ipv4Addr::from(broadcast)))
             }
-            std::net::IpAddr::V6(ipv6) => {
-                None
-            }
+            std::net::IpAddr::V6(ipv6) => None,
         }
     }
 
@@ -397,8 +395,6 @@ fn get_raycast_aimpoint(
 }
 
 pub struct Marker {
-    pub mot_id: u8,
-    pub pattern_id: Option<u8>,
     pub normalized: Point2<f32>,
 }
 
@@ -517,60 +513,52 @@ async fn common_tasks(
                 let pose;
                 let aimpoint;
 
-                let nf_point_tuples = filter_and_create_point_tuples(&nf_points);
-                let wf_point_tuples = filter_and_create_point_tuples(&wf_points);
+                // Helper closure to process points
+                let process_points = |points, camera_model, stereo_iso| {
+                    let point_tuples = filter_and_create_point_tuples(points);
+                    let points_raw: Vec<_> = point_tuples.iter().map(|&(_, p)| p).collect();
+                    let points_transformed = transform_points(&points_raw, camera_model);
+                    let intrinsics = ats_cv::ros_opencv_intrinsics_type_convert(camera_model);
+                    let normalized_points: ArrayVec<_, 16> = points_transformed
+                        .iter()
+                        .map(|&p| to_normalized_image_coordinates(p, &intrinsics, stereo_iso))
+                        .collect();
+                    let markers: Vec<_> = point_tuples
+                        .iter()
+                        .zip(&normalized_points)
+                        .map(|(&(_, _), &normalized)| Marker {
+                            normalized,
+                        })
+                        .collect();
+                    (point_tuples, points_transformed, normalized_points, markers)
+                };
 
-                let nf_points_slice = nf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-                let wf_points_slice = wf_point_tuples.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-
-                let nf_points_transformed = transform_points(&nf_points_slice, &config.camera_model_nf);
-                let wf_points_transformed = transform_points(&wf_points_slice, &config.camera_model_wf);
-
-                let nf_point_tuples = nf_point_tuples.iter().enumerate().map(|(i, (id, _))| (*id, nf_points_transformed[i])).collect::<Vec<_>>();
-                let wf_point_tuples = wf_point_tuples.iter().enumerate().map(|(i, (id, _))| (*id, wf_points_transformed[i])).collect::<Vec<_>>();
-
-                let wf_normalized: ArrayVec<_, 16> = wf_points_transformed.iter().map(|&p| {
-                    to_normalized_image_coordinates(
-                        p,
-                        &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_wf),
+                // Process nf_points and wf_points
+                let (_, _, nf_normalized, nf_markers2) =
+                    process_points(&nf_points, &config.camera_model_nf, None);
+                let (_, _, wf_normalized, wf_markers2) =
+                    process_points(
+                        &wf_points,
+                        &config.camera_model_wf,
                         Some(&config.stereo_iso.cast()),
-                    )
-                }).collect();
-                let nf_normalized: ArrayVec<_, 16> = nf_points_transformed.iter().map(|&p| {
-                    to_normalized_image_coordinates(
-                        p,
-                        &ats_cv::ros_opencv_intrinsics_type_convert(&config.camera_model_nf),
-                        None,
-                    )
-                }).collect();
-                let nf_markers2: Vec<_> = std::iter::zip(&nf_normalized, &nf_point_tuples)
-                    .map(|(&normalized, &(mot_id, _))| Marker {
-                        mot_id,
-                        pattern_id: None,
-                        normalized,
-                    })
-                    .collect();
-                let wf_markers2: Vec<_> = std::iter::zip(&wf_normalized, &wf_point_tuples)
-                    .map(|(&normalized, &(mot_id, _))| Marker {
-                        mot_id,
-                        pattern_id: None,
-                        normalized,
-                    })
-                    .collect();
+                    );
 
                 let gravity_vec = orientation.lock().await.inverse_transform_vector(&Vector3::z_axis());
                 let gravity_vec = UnitVector3::new_unchecked(gravity_vec.xzy());
+
+                // Re-alignment logic
                 if wfnf_realign {
-                    // Try to match widefield using brute force p3p, and then
-                    // using that to match nearfield
-
                     let screen_calibrations = screen_calibrations.lock().await;
-
-                    if let Some((wf_match_ix, _, _)) = ats_cv::foveated::identify_markers(&wf_normalized, gravity_vec.cast(), &screen_calibrations) {
+                    if let Some((wf_match_ix, _, _)) = ats_cv::foveated::identify_markers(
+                        &wf_normalized,
+                        gravity_vec.cast(),
+                        &screen_calibrations,
+                    ) {
                         let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
-                        let (nf_match_ix, _) = match3(&nf_normalized, &wf_match);
+                        let (nf_match_ix, _) = ats_cv::foveated::match3(&nf_normalized, &wf_match);
                         if nf_match_ix.iter().all(Option::is_some) {
-                            let nf_ordered = nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
+                            let nf_ordered =
+                                nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
                             let wf_ordered = wf_match_ix.map(|i| wf_normalized[i].coords.push(1.0));
                             let q = calculate_rotational_offset(&wf_ordered, &nf_ordered);
                             config.stereo_iso.rotation *= q.cast();
@@ -586,9 +574,20 @@ async fn common_tasks(
 
                     let screen_calibrations = screen_calibrations.lock().await;
 
-                    let nf = &nf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
-                    let wf = &wf_markers2.iter().map(|m| m.ats_cv_marker()).collect::<ArrayVec<_, 16>>();
-                    fv_state.observe_markers(nf, wf, gravity_vec.cast(), &screen_calibrations);
+                    let nf_markers_cv = nf_markers2
+                        .iter()
+                        .map(|m| m.ats_cv_marker())
+                        .collect::<ArrayVec<_, 16>>();
+                    let wf_markers_cv = wf_markers2
+                        .iter()
+                        .map(|m| m.ats_cv_marker())
+                        .collect::<ArrayVec<_, 16>>();
+                    fv_state.observe_markers(
+                        &nf_markers_cv,
+                        &wf_markers_cv,
+                        gravity_vec.cast(),
+                        &screen_calibrations,
+                    );
 
                     let (_pose, _aimpoint) = raycast_update(&screen_calibrations, &mut fv_state);
 
