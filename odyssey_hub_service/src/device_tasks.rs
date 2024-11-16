@@ -5,10 +5,11 @@ use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, Scree
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
 use core::panic;
+use std::iter::once;
 use nalgebra::{Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -82,12 +83,17 @@ async fn device_udp_ping_task(
         .filter_map(|(_, data)| {
             for ip_network in data.ip_networks() {
                 if let Some(broadcast) = broadcast_address(ip_network.addr, ip_network.prefix) {
-                    return Some(broadcast);
+                    if broadcast == Ipv4Addr::new(127, 255, 255, 255) {
+                        return Some([127, 31, 33, 7].into());
+                    } else {
+                        return Some(broadcast);
+                    }
                 }
             }
             None
         })
         .collect();
+    tracing::debug!(broadcast_addrs = debug(&broadcast_addrs));
 
     let socket = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -119,6 +125,7 @@ async fn device_udp_ping_task(
                         match ip {
                             std::net::IpAddr::V4(broadcast_address) => {
                                 let broadcast_address = SocketAddrV4::new(*broadcast_address, 23456);
+                                tracing::trace!("Sending ping to {broadcast_address}");
                                 socket.send_to(&[255, 3], broadcast_address).await.unwrap();
                             },
                             std::net::IpAddr::V6(_) => {
@@ -171,6 +178,7 @@ async fn device_udp_ping_task(
 
                 for (device, _) in stream_task_handles.lock().await.iter() {
                     if !devices_that_responded.contains(device) {
+                        tracing::info!("{device:?} didn't respond to pings");
                         let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
                     }
                 }
@@ -722,6 +730,7 @@ async fn common_tasks(
         }
         no_response_count = 0;
     }
+    tracing::debug!("common_tasks for {device:?} exiting");
 }
 
 async fn device_udp_stream_task(
@@ -798,7 +807,7 @@ async fn device_cdc_stream_task(
     let d = match UsbDevice::connect_serial(&device.path, wait_dsr).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Failed to connect to device {}: {}", device.path, e);
+            tracing::error!("Failed to connect to device {}: {}", device.path, e);
             return Ok(());
         }
     };
