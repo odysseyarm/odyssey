@@ -483,6 +483,13 @@ async fn common_tasks(
     let mut accel_stream = d.stream_accel().await.unwrap();
     let mut impact_stream = d.stream_impact().await.unwrap();
     let mut no_response_count = 0;
+    let is_localhost = match device {
+        Device::Udp(UdpDevice { addr, .. }) => match addr.ip() {
+            IpAddr::V4(ip) => ip.is_loopback(),
+            _ => false,
+        }
+        _ => false,
+    };
 
     loop {
         tokio::select! {
@@ -492,7 +499,7 @@ async fn common_tasks(
                 } else {
                     timeout
                 }
-            ) => {
+            ), if !is_localhost => {
                 if no_response_count >= 5 {
                     tracing::info!(device=debug(&device), "no response, exiting");
                     break;
@@ -597,11 +604,7 @@ async fn common_tasks(
                         &screen_calibrations,
                     );
 
-                    let (_pose, _aimpoint) = raycast_update(&screen_calibrations, &mut fv_state);
-
-                    pose = _pose;
-                    aimpoint = _aimpoint;
-
+                    (pose, aimpoint) = raycast_update(&screen_calibrations, &mut fv_state);
                     screen_id = fv_state.screen_id as u32;
                 }
 
@@ -664,9 +667,6 @@ async fn common_tasks(
                 {
                     let mut madgwick = madgwick.lock().await;
 
-                    let _ = madgwick.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
-                    _orientation = madgwick.quat.to_rotation_matrix();
-
                     if let Some(prev_timestamp) = prev_timestamp {
                         let elapsed = accel.timestamp as u64 - prev_timestamp as u64;
                         // println!("elapsed: {}", elapsed);
@@ -677,6 +677,9 @@ async fn common_tasks(
                     } else {
                         fv_state.lock().await.predict(-accel.accel.xzy(), -accel.gyro.xzy(), Duration::from_secs_f32(1./config.accel_config.accel_odr as f32));
                     }
+
+                    let _ = madgwick.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
+                    _orientation = madgwick.quat.to_rotation_matrix();
                 }
 
                 prev_timestamp = Some(accel.timestamp);
@@ -931,18 +934,10 @@ fn transform_points(
     points: &[Point2<f32>],
     camera_intrinsics: &RosOpenCvIntrinsics<f32>,
 ) -> Vec<Point2<f32>> {
-    let scaled_points = points
-        .iter()
-        .map(|p| Point2::new(p.x / 4095. * 98., p.y / 4095. * 98.))
-        .collect::<Vec<_>>();
-    let undistorted_points = ats_cv::undistort_points(
+    ats_cv::undistort_points(
         &ats_cv::ros_opencv_intrinsics_type_convert(camera_intrinsics),
-        &scaled_points,
-    );
-    undistorted_points
-        .iter()
-        .map(|p| Point2::new(p.x / 98. * 4095., p.y / 98. * 4095.))
-        .collect()
+        &points,
+    )
 }
 
 /// Retry an asynchronous operation up to `limit` times.
