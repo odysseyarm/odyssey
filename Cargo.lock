@@ -433,12 +433,12 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=bb8af69ef9dfa8f72d71a4bc61943da7077cae34#bb8af69ef9dfa8f72d71a4bc61943da7077cae34"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=7ab04c68446e13614697c35a47249a13b2a20a36#7ab04c68446e13614697c35a47249a13b2a20a36"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
  "cv",
- "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=bb8af69ef9dfa8f72d71a4bc61943da7077cae34)",
+ "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=7ab04c68446e13614697c35a47249a13b2a20a36)",
  "microfft",
  "nalgebra 0.32.6",
  "num",
@@ -1423,7 +1423,7 @@ checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=bb8af69ef9dfa8f72d71a4bc61943da7077cae34#bb8af69ef9dfa8f72d71a4bc61943da7077cae34"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=7ab04c68446e13614697c35a47249a13b2a20a36#7ab04c68446e13614697c35a47249a13b2a20a36"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -3203,7 +3203,7 @@ dependencies = [
  "anyhow",
  "app_dirs2",
  "arrayvec 0.7.6",
- "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=bb8af69ef9dfa8f72d71a4bc61943da7077cae34)",
+ "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=7ab04c68446e13614697c35a47249a13b2a20a36)",
  "ats_usb",
  "cam-geom",
  "futures",
