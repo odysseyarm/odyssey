@@ -83,6 +83,7 @@ void stream_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClie
     if (thrd_create(&event_thread, handle_stream_event, reply_ptr) == thrd_success) {
         thrd_detach(event_thread);
     } else {
+        free(reply_ptr);
         atomic_store(&end, true);
     }
 }
