@@ -78,7 +78,9 @@ void stream_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClie
         return;
     }
     thrd_t event_thread;
-    if (thrd_create(&event_thread, handle_stream_event, &reply) == thrd_success) {
+    struct OdysseyHubClientEvent* reply_ptr = malloc(sizeof(struct OdysseyHubClientEvent));
+    *reply_ptr = reply;
+    if (thrd_create(&event_thread, handle_stream_event, reply_ptr) == thrd_success) {
         thrd_detach(event_thread);
     } else {
         atomic_store(&end, true);
