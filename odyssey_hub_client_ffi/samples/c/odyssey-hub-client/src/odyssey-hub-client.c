@@ -94,6 +94,7 @@ int handle_stream_event(void* data) {
         OdysseyHubClientDeviceEvent event = reply->u.device_event;
         handle_device_event(event);
     }
+    free(data);
     return 0;
 }
 
