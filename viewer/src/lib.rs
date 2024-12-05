@@ -12,7 +12,7 @@ use std::{
 use draw_pattern_points::DrawPatternPoints;
 use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 use mot_data::MotData;
-use opencv::core::Point2f;
+use opencv::core::{FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Vector};
 use serialport::{ClearBuffer, SerialPort};
 
 pub mod mot_data;
@@ -59,10 +59,33 @@ struct MainState {
     capture_count: usize,
     captured_nf: Vec<[u8; 98 * 98]>,
     captured_wf: Vec<[u8; 98 * 98]>,
+    captured_nf_files: Vec<String>,
+    captured_wf_files: Vec<String>,
     detector_params: Arc<DetectorParams>,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
     draw_pattern_points: DrawPatternPoints,
+}
+
+impl MainState {
+    fn add_capture(&mut self, port: Port, image: [u8; 98 * 98], path: String) {
+        match port {
+            Port::Wf => {
+                self.captured_wf.push(image);
+                self.captured_wf_files.push(path);
+            }
+            Port::Nf => {
+                self.captured_nf.push(image);
+                self.captured_nf_files.push(path);
+            }
+        }
+    }
+    fn clear_captures(&mut self) {
+        self.captured_wf.clear();
+        self.captured_nf.clear();
+        self.captured_wf_files.clear();
+        self.captured_nf_files.clear();
+    }
 }
 
 #[derive(Debug)]
@@ -100,7 +123,7 @@ impl MainState {
         let reset = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
         let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
-        let binding = std::env::args().nth(2).unwrap_or("".into());
+        // let binding = std::env::args().nth(2).unwrap_or("".into());
 
         let main_state = MainState {
             wf_data: wf_data.clone(),
@@ -108,6 +131,8 @@ impl MainState {
             capture_count,
             captured_nf: vec![],
             captured_wf: vec![],
+            captured_nf_files: vec![],
+            captured_wf_files: vec![],
             detector_params: Arc::new(DetectorParams {
                 rows: 6.into(),
                 cols: 6.into(),
@@ -292,30 +317,33 @@ async fn handle_input(state: &mut MainState) {
     if is_key_pressed(KeyCode::Space) {
         // Capture and save image
         let wf_data = state.wf_data.lock().unwrap();
+        let path = format!("images/widefield_{:02}.png", state.capture_count);
         PngEncoder::new(BufWriter::new(
-            File::create(format!("images/widefield_{:02}.png", state.capture_count)).unwrap(),
+            File::create(&path).unwrap(),
         ))
         .write_image(&wf_data.gray, 98, 98, ColorType::L8)
         .unwrap();
-        state.captured_wf.push(wf_data.gray);
+        let wf_data_gray = wf_data.gray;
         drop(wf_data);
+        state.add_capture(Port::Wf, wf_data_gray, path);
         println!("Saved images/widefield_{:02}.png", state.capture_count);
 
         let nf_data = state.nf_data.lock().unwrap();
+        let path = format!("images/nearfield_{:02}.png", state.capture_count);
         PngEncoder::new(BufWriter::new(
-            File::create(format!("images/nearfield_{:02}.png", state.capture_count)).unwrap(),
+            File::create(&path).unwrap(),
         ))
         .write_image(&nf_data.gray, 98, 98, ColorType::L8)
         .unwrap();
-        state.captured_nf.push(nf_data.gray);
+        let nf_data_gray = nf_data.gray;
         drop(nf_data);
+        state.add_capture(Port::Nf, nf_data_gray, path);
         println!("Saved images/nearfield_{:02}.png", state.capture_count);
 
         state.capture_count += 1;
     }
     if is_key_pressed(KeyCode::Backspace) {
-        state.captured_nf.clear();
-        state.captured_wf.clear();
+        state.clear_captures();
     }
     if is_key_pressed(KeyCode::Key1) {
         println!(
@@ -323,6 +351,7 @@ async fn handle_input(state: &mut MainState) {
             state.captured_nf.len()
         );
         let captures = state.captured_nf.clone();
+        let captures_files = state.captured_nf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
@@ -330,6 +359,7 @@ async fn handle_input(state: &mut MainState) {
         std::thread::spawn(move || match pat {
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
+                &captures_files,
                 Port::Nf,
                 board_rows,
                 board_cols,
@@ -339,6 +369,7 @@ async fn handle_input(state: &mut MainState) {
             ),
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
+                &captures_files,
                 Port::Nf,
                 board_rows,
                 board_cols,
@@ -348,6 +379,7 @@ async fn handle_input(state: &mut MainState) {
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
+                &captures_files,
                 Port::Nf,
                 board_rows,
                 board_cols,
@@ -361,6 +393,7 @@ async fn handle_input(state: &mut MainState) {
             state.captured_wf.len()
         );
         let captures = state.captured_wf.clone();
+        let captures_files = state.captured_wf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
@@ -368,6 +401,7 @@ async fn handle_input(state: &mut MainState) {
         std::thread::spawn(move || match pat {
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
+                &captures_files,
                 Port::Wf,
                 board_rows,
                 board_cols,
@@ -377,6 +411,7 @@ async fn handle_input(state: &mut MainState) {
             ),
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
+                &captures_files,
                 Port::Wf,
                 board_rows,
                 board_cols,
@@ -386,6 +421,7 @@ async fn handle_input(state: &mut MainState) {
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
+                &captures_files,
                 Port::Wf,
                 board_rows,
                 board_cols,
@@ -400,6 +436,8 @@ async fn handle_input(state: &mut MainState) {
         );
         let wf = state.captured_wf.clone();
         let nf = state.captured_nf.clone();
+        let captures_nf_files = state.captured_nf_files.iter().map(|s| &**s).collect();
+        let captures_wf_files = state.captured_wf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
@@ -410,6 +448,8 @@ async fn handle_input(state: &mut MainState) {
                 &nf,
                 board_rows,
                 board_cols,
+                &captures_wf_files,
+                &captures_nf_files,
             ),
             DetectorPattern::AsymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
@@ -419,6 +459,8 @@ async fn handle_input(state: &mut MainState) {
                 true,
                 false,
                 special,
+                &captures_wf_files,
+                &captures_nf_files,
             ),
             DetectorPattern::SymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
@@ -428,6 +470,8 @@ async fn handle_input(state: &mut MainState) {
                 false,
                 true,
                 special,
+                &captures_wf_files,
+                &captures_nf_files,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -631,5 +675,56 @@ fn drain<T: SerialPort + ?Sized>(port: &mut T) -> u32 {
         } else {
             return drained;
         }
+    }
+}
+
+fn save_single_calibration(
+    port: Port,
+    pattern: &str,
+    camera_matrix: &Mat,
+    dist_coeffs: &Mat,
+    reproj_err: f64,
+    image_files: &Vector<String>,
+) {
+    let filename = match port {
+        Port::Nf => "nearfield.json",
+        Port::Wf => "widefield.json",
+    };
+    let mut fs =
+        FileStorage::new_def(filename, FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
+    if fs.is_opened().unwrap() {
+        fs.write_mat("camera_matrix", camera_matrix).unwrap();
+        fs.write_mat("dist_coeffs", dist_coeffs).unwrap();
+        fs.write_f64("rms_error", reproj_err).unwrap();
+        fs.write_str("method", &pattern.to_string()).unwrap();
+        fs.write_i32("version", CALIBRATION_VERSION).unwrap();
+        fs.write_str_vec("image_files", image_files).unwrap();
+        fs.release().unwrap();
+    } else {
+        println!("Failed to open {}", filename);
+    }
+}
+
+fn save_stereo_calibration(
+    pattern: &str,
+    r: Mat,
+    t: Mat,
+    reproj_err: f64,
+    wf_image_files: &Vector<String>,
+    nf_image_files: &Vector<String>,
+) {
+    let mut fs =
+        FileStorage::new_def("stereo.json", FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
+    if fs.is_opened().unwrap() {
+        fs.write_mat("r", &r).unwrap();
+        fs.write_mat("t", &t).unwrap();
+        fs.write_f64("rms_error", reproj_err).unwrap();
+        fs.write_i32("num_captures", wf_image_files.len() as i32).unwrap();
+        fs.write_str("method", &pattern.to_string()).unwrap();
+        fs.write_i32("version", CALIBRATION_VERSION).unwrap();
+        fs.write_str_vec("wf_image_files", wf_image_files).unwrap();
+        fs.write_str_vec("nf_image_files", nf_image_files).unwrap();
+    } else {
+        println!("Failed to open stereo.json");
     }
 }

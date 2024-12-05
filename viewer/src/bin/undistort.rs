@@ -1,4 +1,4 @@
-use opencv::{calib3d::{get_optimal_new_camera_matrix_def, undistort}, core::{FileStorage, FileStorage_READ, Mat, Size}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, IMREAD_COLOR}, imgproc::{resize, INTER_CUBIC}};
+use opencv::{calib3d::{get_optimal_new_camera_matrix_def, undistort}, core::{FileStorage, FileStorage_READ, Mat, Size}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, imwrite_def, IMREAD_COLOR}, imgproc::{resize, INTER_CUBIC}};
 use clap::Parser;
 
 #[derive(Parser)]
@@ -6,6 +6,8 @@ struct Cli {
     #[arg(short, long)]
     camera_params: String,
     image: String,
+    #[arg(short, long)]
+    out: Option<String>,
 }
 
 fn main() {
@@ -24,6 +26,9 @@ fn main() {
     imshow("distorted", &scaled_im).unwrap();
     imshow("undistorted", &scaled_unim).unwrap();
     wait_key_def().unwrap();
+    if let Some(out) = cli.out {
+        imwrite_def(&out, &unim).unwrap();
+    }
 }
 
 fn read_camara_params(path: &str) -> (Mat, Mat) {

@@ -1,6 +1,6 @@
 use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
-use crate::{chessboard::read_camara_params, Port, CALIBRATION_VERSION};
+use crate::{chessboard::read_camara_params, Port};
 
 pub mod special;
 
@@ -152,6 +152,7 @@ fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vec
 
 pub fn calibrate_single(
     images: &[[u8; 98 * 98]],
+    image_files: &Vector<String>,
     port: Port,
     board_rows: u16,
     board_cols: u16,
@@ -187,21 +188,13 @@ pub fn calibrate_single(
     ).unwrap();
     println!("RMS error: {}", reproj_err);
 
-    let filename = match port {
-        Port::Nf => "nearfield.json",
-        Port::Wf => "widefield.json",
+    let pattern = match (asymmetric, special) {
+        (false, false) => "circles",
+        (false, true) => "circles+special",
+        (true, false) => "acircles",
+        (true, true) => "acircles+special",
     };
-    let mut fs = FileStorage::new_def(filename, FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
-    if fs.is_opened().unwrap() {
-        fs.write_mat("camera_matrix", &camera_matrix).unwrap();
-        fs.write_mat("dist_coeffs", &dist_coeffs).unwrap();
-        fs.write_f64("rms_error", reproj_err).unwrap();
-        fs.write_i32("num_captures", images.len() as i32).unwrap();
-        fs.write_i32("version", CALIBRATION_VERSION).unwrap();
-        fs.release().unwrap();
-    } else {
-        println!("Failed to open {}", filename);
-    }
+    super::save_single_calibration(port, pattern, &camera_matrix, &dist_coeffs, reproj_err, image_files);
 }
 
 fn board_points(
@@ -276,6 +269,8 @@ pub fn my_stereo_calibrate(
     asymmetric: bool,
     invert: bool,
     special: bool,
+    wf_image_files: &Vector<String>,
+    nf_image_files: &Vector<String>,
 ) {
     let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
         println!("Couldn't get nearfield intrinsics");
@@ -333,13 +328,12 @@ pub fn my_stereo_calibrate(
     .unwrap();
     println!("RMS error: {}", reproj_err);
 
-    let mut fs = FileStorage::new_def("stereo.json", FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
-    if fs.is_opened().unwrap() {
-        fs.write_mat("r", &r).unwrap();
-        fs.write_mat("t", &t).unwrap();
-        fs.write_f64("rms_error", reproj_err).unwrap();
-        fs.write_i32("num_captures", wf.len() as i32).unwrap();
-    } else {
-        println!("Failed to open stereo.json");
-    }
+
+    let pattern = match (asymmetric, special) {
+        (false, false) => "circles",
+        (false, true) => "circles+special",
+        (true, false) => "acircles",
+        (true, true) => "acircles+special",
+    };
+    super::save_stereo_calibration(pattern, r, t, reproj_err, wf_image_files, nf_image_files);
 }
