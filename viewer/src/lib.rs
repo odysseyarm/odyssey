@@ -65,6 +65,7 @@ struct MainState {
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
     draw_pattern_points: DrawPatternPoints,
+    device_uuid: Arc<Mutex<[u8; 6]>>,
 }
 
 impl MainState {
@@ -120,6 +121,7 @@ impl MainState {
     fn new(capture_count: usize) -> MainState {
         let wf_data = Arc::new(Mutex::new(Default::default()));
         let nf_data = Arc::new(Mutex::new(Default::default()));
+        let device_uuid = Arc::new(Mutex::new([0; 6]));
         let reset = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
         let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
@@ -128,6 +130,7 @@ impl MainState {
         let main_state = MainState {
             wf_data: wf_data.clone(),
             nf_data: nf_data.clone(),
+            device_uuid: device_uuid.clone(),
             capture_count,
             captured_nf: vec![],
             captured_wf: vec![],
@@ -150,6 +153,7 @@ impl MainState {
                 path,
                 wf_data,
                 nf_data,
+                device_uuid,
                 detector_params,
                 reset,
                 quit,
@@ -217,6 +221,13 @@ impl MainState {
             "<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close",
             10.0,
             image_size + 60.0,
+            20.0,
+            WHITE,
+        );
+        draw_text(
+            &format!("Device ID: {}", DeviceId(*self.device_uuid.lock().unwrap())),
+            980.0-180.0,
+            image_size + 40.0,
             20.0,
             WHITE,
         );
@@ -522,6 +533,7 @@ fn reader_thread(
     path: String,
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
+    device_uuid: Arc<Mutex<[u8; 6]>>,
     detector_params: Arc<DetectorParams>,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
@@ -534,6 +546,11 @@ fn reader_thread(
     if drained > 0 {
         eprintln!("drained {drained} bytes");
     }
+
+    // read device uuid
+    port.write(b"i").unwrap();
+    port.flush().unwrap();
+    port.read_exact(&mut *device_uuid.lock().unwrap()).unwrap();
 
     let mut buf = [0; 9898];
     loop {
@@ -726,5 +743,21 @@ fn save_stereo_calibration(
         fs.write_str_vec("nf_image_files", nf_image_files).unwrap();
     } else {
         println!("Failed to open stereo.json");
+    }
+}
+
+struct DeviceId([u8; 6]);
+
+impl Display for DeviceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f,
+            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+            self.0[0],
+            self.0[1],
+            self.0[2],
+            self.0[3],
+            self.0[4],
+            self.0[5],
+        )
     }
 }

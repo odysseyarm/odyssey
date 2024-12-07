@@ -142,13 +142,17 @@ async fn main(spawner: Spawner) {
     wide.set_gain_2(0).await;
     // wide.set_frame_period(16384).await;
     // wide.set_exposure_time(2048).await;
-    wide.set_exposure_time_ns_image_mode(900_000).await;
+    wide.set_frame_period(524288).await;
+    wide.set_exposure_time(62160).await;
+    // wide.set_exposure_time_ns_image_mode(900_000).await;
     wide.set_bank1_sync_updated(1).await;
     near.set_gain_1(0).await;
     near.set_gain_2(0).await;
-    near.set_frame_period(16384).await;
+    // near.set_frame_period(16384).await;
     // near.set_exposure_time(2048).await;
-    near.set_exposure_time_ns_image_mode(180_000).await;
+    near.set_frame_period(524288).await;
+    near.set_exposure_time(62160).await;
+    // near.set_exposure_time_ns_image_mode(180_000).await;
     near.set_bank1_sync_updated(1).await;
     near.set_brightness_threshold(100).await;
     near.set_noise_threshold(15).await;
@@ -171,9 +175,10 @@ async fn main(spawner: Spawner) {
 
     // Wait for something to get sent
     let feature_buf: &mut [u8; 256] = shared_buffers[0][..256].as_mut().try_into().unwrap();
+    let mut cmd = 0;
     loop {
-        let v = wait_for_serial(&mut class).await;
-        if v == b'a' {
+        cmd = wait_for_serial(&mut class).await;
+        if cmd != b'w' {
             break;
         } else {
             // only read from wide because i'm lazy
@@ -218,22 +223,26 @@ async fn main(spawner: Spawner) {
     let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender(), nf_h_flip);
     let buffer_mgmt_loop = async {
         loop {
-            let buf = if let Ok(b) = image_buffers.try_receive() {
-                b
-            } else {
-                image_buffers.receive().await
-            };
-            let id = buf[buf.len()-3];
-            write_serial(&mut class, buf).await;
-            if id == 0 {
-                wf_free_buffers.try_send(buf).unwrap();
-            } else {
-                nf_free_buffers.try_send(buf).unwrap();
+            match cmd {
+                b'a' => {
+                    let buf = if let Ok(b) = image_buffers.try_receive() {
+                        b
+                    } else {
+                        image_buffers.receive().await
+                    };
+                    let id = buf[buf.len()-3];
+                    write_serial(&mut class, buf).await;
+                    if id == 0 {
+                        wf_free_buffers.try_send(buf).unwrap();
+                    } else {
+                        nf_free_buffers.try_send(buf).unwrap();
+                    }
+                }
+                b'r' => cortex_m::peripheral::SCB::sys_reset(),
+                b'i' => write_serial(&mut class, &device_id()).await,
+                _ => defmt::error!("Unknown command '{}'", cmd),
             }
-            let c = wait_for_serial(&mut class).await;
-            if c == b'r' {
-                cortex_m::peripheral::SCB::sys_reset();
-            }
+            cmd = wait_for_serial(&mut class).await;
         }
     };
 
@@ -414,4 +423,13 @@ impl From<EndpointError> for Disconnected {
             EndpointError::Disabled => Disconnected {},
         }
     }
+}
+
+fn device_id() -> [u8; 6] {
+    let ficr = unsafe { &*embassy_nrf::pac::FICR::PTR };
+    let low = ficr.deviceid[0].read().bits();
+    let high = ficr.deviceid[1].read().bits();
+    let [a, b, c, d] = low.to_le_bytes();
+    let [e, f, ..] = high.to_le_bytes();
+    [a, b, c, d, e, f]
 }
