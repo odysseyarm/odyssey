@@ -7,11 +7,15 @@ license = "MIT OR Apache-2.0"
 [features]
 default = ["vm2"]
 mcuboot = ["cortex-m-rt/set-sp", "cortex-m-rt/set-vtor"]
-vm2 = ["embassy-nrf/nrf52840"]
-vm3 = ["vm2"]
-atslite-1-1 = ["embassy-nrf/nrf5340-app-s"]
-atslite-2-2 = ["embassy-nrf/nrf5340-app-s"]
-atslite-4-1 = ["embassy-nrf/nrf5340-app-s"]
+vm2 = ["_nrf52840"]
+vm3 = ["vm2"]  # identical to vm2
+atslite-1-1 = ["_nrf5340"]
+atslite-2-2 = ["_nrf5340"]
+atslite-4-1 = ["_nrf5340"]
+
+# internal features
+_nrf52840 = ["embassy-nrf/nrf52840"]
+_nrf5340 = ["embassy-nrf/nrf5340-app-s"]
 
 
 [dependencies]

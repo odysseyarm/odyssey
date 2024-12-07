@@ -8,7 +8,7 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
 
-#[cfg(feature = "vm2")]
+#[cfg(feature = "_nrf52840")]
 use embassy_nrf::config::Reg0Voltage;
 
 use embassy_nrf::{
@@ -60,7 +60,7 @@ unsafe fn init_ramtext() {
     );
 }
 
-#[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2", feature = "atslite-4-1"))]
+#[cfg(feature = "_nrf5340")]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => usb::vbus_detect::InterruptHandler;
@@ -70,7 +70,7 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     SERIAL3 => spis::InterruptHandler<peripherals::SERIAL3>;
 });
 
-#[cfg(feature = "vm2")]
+#[cfg(feature = "_nrf52840")]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     POWER_CLOCK => usb::vbus_detect::InterruptHandler;
@@ -93,7 +93,7 @@ async fn main(spawner: Spawner) {
     // (high voltage mode), GPIO output voltage is set to 1.8 volts by
     // default and that is not enough for the vision sensors.
     // Increase GPIO voltage to 2.4 volts.
-    #[cfg(feature = "vm2")]
+    #[cfg(feature = "_nrf52840")]
     {
         config.dcdc.reg0_voltage = Some(Reg0Voltage::_2V4);
     }
@@ -175,7 +175,7 @@ async fn main(spawner: Spawner) {
 
     // Wait for something to get sent
     let feature_buf: &mut [u8; 256] = shared_buffers[0][..256].as_mut().try_into().unwrap();
-    let mut cmd = 0;
+    let mut cmd;
     loop {
         cmd = wait_for_serial(&mut class).await;
         if cmd != b'w' {
@@ -425,10 +425,21 @@ impl From<EndpointError> for Disconnected {
     }
 }
 
+#[cfg(feature = "_nrf52840")]
 fn device_id() -> [u8; 6] {
     let ficr = unsafe { &*embassy_nrf::pac::FICR::PTR };
     let low = ficr.deviceid[0].read().bits();
     let high = ficr.deviceid[1].read().bits();
+    let [a, b, c, d] = low.to_le_bytes();
+    let [e, f, ..] = high.to_le_bytes();
+    [a, b, c, d, e, f]
+}
+
+#[cfg(feature = "_nrf5340")]
+fn device_id() -> [u8; 6] {
+    let ficr = unsafe { &*embassy_nrf::pac::FICR::PTR };
+    let low = ficr.info.deviceid[0].read().bits();
+    let high = ficr.info.deviceid[1].read().bits();
     let [a, b, c, d] = low.to_le_bytes();
     let [e, f, ..] = high.to_le_bytes();
     [a, b, c, d, e, f]
