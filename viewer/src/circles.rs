@@ -1,6 +1,6 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
-use crate::{chessboard::read_camara_params, Port};
+use crate::{chessboard::read_camara_params, DeviceUuid, Port};
 
 pub mod special;
 
@@ -159,6 +159,7 @@ pub fn calibrate_single(
     asymmetric: bool,
     invert: bool,
     special: bool,
+    device_uuid: DeviceUuid,
 ) {
     let square_length = 1.0; // Specify the size of the squares between dots
     let board_points = board_points(board_rows, board_cols, square_length, asymmetric, special);
@@ -194,7 +195,15 @@ pub fn calibrate_single(
         (true, false) => "acircles",
         (true, true) => "acircles+special",
     };
-    super::save_single_calibration(port, pattern, &camera_matrix, &dist_coeffs, reproj_err, image_files);
+    super::save_single_calibration(
+        port,
+        pattern,
+        &camera_matrix,
+        &dist_coeffs,
+        reproj_err,
+        image_files,
+        device_uuid,
+    );
 }
 
 fn board_points(
@@ -271,12 +280,13 @@ pub fn my_stereo_calibrate(
     special: bool,
     wf_image_files: &Vector<String>,
     nf_image_files: &Vector<String>,
+    device_uuid: DeviceUuid,
 ) {
-    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
         println!("Couldn't get nearfield intrinsics");
         return;
     };
-    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params("widefield.json") else {
+    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
         println!("Couldn't get widefield intrinsics");
         return;
     };
@@ -335,5 +345,13 @@ pub fn my_stereo_calibrate(
         (true, false) => "acircles",
         (true, true) => "acircles+special",
     };
-    super::save_stereo_calibration(pattern, r, t, reproj_err, wf_image_files, nf_image_files);
+    super::save_stereo_calibration(
+        pattern,
+        r,
+        t,
+        reproj_err,
+        wf_image_files,
+        nf_image_files,
+        device_uuid,
+    );
 }

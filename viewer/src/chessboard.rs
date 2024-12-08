@@ -1,8 +1,8 @@
 use opencv::{
-    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_FORMAT_JSON, FileStorage_READ, FileStorage_WRITE, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTrait, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
+    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
 };
 
-use crate::Port;
+use crate::{DeviceUuid, Port};
 
 pub fn read_camara_params(path: &str) -> Option<(Mat, Mat)> {
     let fs = FileStorage::new_def(path, FileStorage_READ).unwrap();
@@ -22,12 +22,13 @@ pub fn my_stereo_calibrate(
     board_cols: u16,
     wf_image_files: &Vector<String>,
     nf_image_files: &Vector<String>,
+    device_uuid: DeviceUuid,
 ) {
-    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params("nearfield.json") else {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
         println!("Couldn't get nearfield intrinsics");
         return;
     };
-    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params("widefield.json") else {
+    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
         println!("Couldn't get widefield intrinsics");
         return;
     };
@@ -85,7 +86,15 @@ pub fn my_stereo_calibrate(
     .unwrap();
     println!("RMS error: {}", reproj_err);
 
-    super::save_stereo_calibration("chessboard", r, t, reproj_err, wf_image_files, nf_image_files);
+    super::save_stereo_calibration(
+        "chessboard",
+        r,
+        t,
+        reproj_err,
+        wf_image_files,
+        nf_image_files,
+        device_uuid,
+    );
 }
 
 pub fn calibrate_single(
@@ -94,6 +103,7 @@ pub fn calibrate_single(
     port: Port,
     board_rows: u16,
     board_cols: u16,
+    device_uuid: DeviceUuid,
 ) {
     let mut board_points = Vector::<Point3f>::new();
     for y in 0..board_rows {
@@ -117,7 +127,15 @@ pub fn calibrate_single(
     let reproj_err = calibrate_camera(&object_points, &corners_arr, (4095, 4095).into(), &mut camera_matrix, &mut dist_coeffs, &mut no_array(), &mut no_array(), 0, criteria).unwrap();
     println!("RMS error: {}", reproj_err);
 
-    super::save_single_calibration(port, "chessboard", &camera_matrix, &dist_coeffs, reproj_err, image_files);
+    super::save_single_calibration(
+        port,
+        "chessboard",
+        &camera_matrix,
+        &dist_coeffs,
+        reproj_err,
+        image_files,
+        device_uuid,
+    );
 }
 
 /// Returns None if there were no corners found.

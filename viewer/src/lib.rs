@@ -65,7 +65,7 @@ struct MainState {
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
     draw_pattern_points: DrawPatternPoints,
-    device_uuid: Arc<Mutex<[u8; 6]>>,
+    device_uuid: DeviceUuid,
 }
 
 impl MainState {
@@ -118,19 +118,17 @@ impl Display for DetectorPattern {
 }
 
 impl MainState {
-    fn new(capture_count: usize) -> MainState {
+    fn new(capture_count: usize, port: Box<dyn SerialPort>, device_uuid: DeviceUuid) -> MainState {
         let wf_data = Arc::new(Mutex::new(Default::default()));
         let nf_data = Arc::new(Mutex::new(Default::default()));
-        let device_uuid = Arc::new(Mutex::new([0; 6]));
         let reset = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
-        let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
         // let binding = std::env::args().nth(2).unwrap_or("".into());
 
         let main_state = MainState {
             wf_data: wf_data.clone(),
             nf_data: nf_data.clone(),
-            device_uuid: device_uuid.clone(),
+            device_uuid,
             capture_count,
             captured_nf: vec![],
             captured_wf: vec![],
@@ -150,10 +148,9 @@ impl MainState {
         let detector_params = main_state.detector_params.clone();
         std::thread::spawn(move || {
             reader_thread(
-                path,
+                port,
                 wf_data,
                 nf_data,
-                device_uuid,
                 detector_params,
                 reset,
                 quit,
@@ -225,7 +222,7 @@ impl MainState {
             WHITE,
         );
         draw_text(
-            &format!("Device ID: {}", DeviceId(*self.device_uuid.lock().unwrap())),
+            &format!("Device ID: {}", self.device_uuid),
             980.0-180.0,
             image_size + 40.0,
             20.0,
@@ -307,11 +304,28 @@ fn draw_mot_data_circles(
 }
 
 pub async fn main() {
-    std::fs::create_dir_all("images").unwrap();
-    let capture_count = (0..)
-        .find(|i| !Path::new(&format!("images/nearfield_{:02}.png", i)).exists())
+    let path = std::env::args().nth(1).unwrap_or("/dev/ttyACM1".into());
+    let mut port = serialport::new(path, 115200)
+        .timeout(Duration::from_secs(3))
+        .open()
         .unwrap();
-    let mut state = MainState::new(capture_count);
+    let drained = drain(&mut *port);
+    if drained > 0 {
+        eprintln!("drained {drained} bytes");
+    }
+
+    // read device uuid
+    port.write(b"i").unwrap();
+    port.flush().unwrap();
+    let mut device_uuid = DeviceUuid([0; 6]);
+    port.read_exact(&mut device_uuid.0).unwrap();
+
+    std::fs::create_dir_all(format!("calibrations/{device_uuid}/images")).unwrap();
+    let capture_count = (0..)
+        .find(|i| !Path::new(&format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", i)).exists())
+        .unwrap();
+
+    let mut state = MainState::new(capture_count, port, device_uuid);
 
     loop {
         state.update();
@@ -322,13 +336,14 @@ pub async fn main() {
 }
 
 async fn handle_input(state: &mut MainState) {
+    let device_uuid = state.device_uuid;
     if is_key_pressed(KeyCode::Escape) {
         state.quit.store(true, Ordering::Relaxed);
     }
     if is_key_pressed(KeyCode::Space) {
         // Capture and save image
         let wf_data = state.wf_data.lock().unwrap();
-        let path = format!("images/widefield_{:02}.png", state.capture_count);
+        let path = format!("calibrations/{device_uuid}/images/widefield_{:02}.png", state.capture_count);
         PngEncoder::new(BufWriter::new(
             File::create(&path).unwrap(),
         ))
@@ -337,10 +352,10 @@ async fn handle_input(state: &mut MainState) {
         let wf_data_gray = wf_data.gray;
         drop(wf_data);
         state.add_capture(Port::Wf, wf_data_gray, path);
-        println!("Saved images/widefield_{:02}.png", state.capture_count);
+        println!("Saved calibrations/{device_uuid}/images/widefield_{:02}.png", state.capture_count);
 
         let nf_data = state.nf_data.lock().unwrap();
-        let path = format!("images/nearfield_{:02}.png", state.capture_count);
+        let path = format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
         PngEncoder::new(BufWriter::new(
             File::create(&path).unwrap(),
         ))
@@ -349,7 +364,7 @@ async fn handle_input(state: &mut MainState) {
         let nf_data_gray = nf_data.gray;
         drop(nf_data);
         state.add_capture(Port::Nf, nf_data_gray, path);
-        println!("Saved images/nearfield_{:02}.png", state.capture_count);
+        println!("Saved calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
 
         state.capture_count += 1;
     }
@@ -377,6 +392,7 @@ async fn handle_input(state: &mut MainState) {
                 true,
                 false,
                 special,
+                device_uuid,
             ),
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
@@ -387,6 +403,7 @@ async fn handle_input(state: &mut MainState) {
                 false,
                 true,
                 special,
+                device_uuid,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
@@ -394,6 +411,7 @@ async fn handle_input(state: &mut MainState) {
                 Port::Nf,
                 board_rows,
                 board_cols,
+                device_uuid,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -419,6 +437,7 @@ async fn handle_input(state: &mut MainState) {
                 false,
                 true,
                 special,
+                device_uuid,
             ),
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
@@ -429,6 +448,7 @@ async fn handle_input(state: &mut MainState) {
                 true,
                 false,
                 special,
+                device_uuid,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
                 &captures,
@@ -436,6 +456,7 @@ async fn handle_input(state: &mut MainState) {
                 Port::Wf,
                 board_rows,
                 board_cols,
+                device_uuid,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -461,6 +482,7 @@ async fn handle_input(state: &mut MainState) {
                 board_cols,
                 &captures_wf_files,
                 &captures_nf_files,
+                device_uuid,
             ),
             DetectorPattern::AsymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
@@ -472,6 +494,7 @@ async fn handle_input(state: &mut MainState) {
                 special,
                 &captures_wf_files,
                 &captures_nf_files,
+                device_uuid,
             ),
             DetectorPattern::SymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
@@ -483,6 +506,7 @@ async fn handle_input(state: &mut MainState) {
                 special,
                 &captures_wf_files,
                 &captures_nf_files,
+                device_uuid,
             ),
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
@@ -530,27 +554,13 @@ async fn handle_input(state: &mut MainState) {
 }
 
 fn reader_thread(
-    path: String,
+    mut port: Box<dyn SerialPort>,
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
-    device_uuid: Arc<Mutex<[u8; 6]>>,
     detector_params: Arc<DetectorParams>,
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
 ) {
-    let mut port = serialport::new(path, 115200)
-        .timeout(Duration::from_secs(3))
-        .open()
-        .unwrap();
-    let drained = drain(&mut *port);
-    if drained > 0 {
-        eprintln!("drained {drained} bytes");
-    }
-
-    // read device uuid
-    port.write(b"i").unwrap();
-    port.flush().unwrap();
-    port.read_exact(&mut *device_uuid.lock().unwrap()).unwrap();
 
     let mut buf = [0; 9898];
     loop {
@@ -702,13 +712,14 @@ fn save_single_calibration(
     dist_coeffs: &Mat,
     reproj_err: f64,
     image_files: &Vector<String>,
+    device_uuid: DeviceUuid,
 ) {
     let filename = match port {
-        Port::Nf => "nearfield.json",
-        Port::Wf => "widefield.json",
+        Port::Nf => format!("calibrations/{device_uuid}/nearfield.json"),
+        Port::Wf => format!("calibrations/{device_uuid}/widefield.json"),
     };
     let mut fs =
-        FileStorage::new_def(filename, FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
+        FileStorage::new_def(&filename, FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
     if fs.is_opened().unwrap() {
         fs.write_mat("camera_matrix", camera_matrix).unwrap();
         fs.write_mat("dist_coeffs", dist_coeffs).unwrap();
@@ -729,9 +740,10 @@ fn save_stereo_calibration(
     reproj_err: f64,
     wf_image_files: &Vector<String>,
     nf_image_files: &Vector<String>,
+    device_uuid: DeviceUuid,
 ) {
     let mut fs =
-        FileStorage::new_def("stereo.json", FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
+        FileStorage::new_def(&format!("calibrations/{device_uuid}/stereo.json"), FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
     if fs.is_opened().unwrap() {
         fs.write_mat("r", &r).unwrap();
         fs.write_mat("t", &t).unwrap();
@@ -746,9 +758,10 @@ fn save_stereo_calibration(
     }
 }
 
-struct DeviceId([u8; 6]);
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct DeviceUuid([u8; 6]);
 
-impl Display for DeviceId {
+impl Display for DeviceUuid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f,
             "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
