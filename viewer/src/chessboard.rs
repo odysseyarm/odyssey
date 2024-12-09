@@ -33,7 +33,7 @@ pub fn my_stereo_calibrate(
         return;
     };
 
-    let square_length = 1.0; // 4x4 chessboard on my phone is barely above 1 cm
+    let square_length = 0.025; // 25 mm
     let mut object_points = Vector::<Point3f>::new();
     for y in 0..board_rows {
         for x in 0..board_cols {
