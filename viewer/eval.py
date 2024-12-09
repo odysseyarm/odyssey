@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from io import TextIOWrapper
-import json, sys, argparse
+import json, sys, argparse, os
 from pathlib import Path
 
 
@@ -21,6 +21,8 @@ def main():
     print(f"Writing to {outpath}")
     with open(outpath, "w") as outfile:
         run(nf_calib, wf_calib, stereo_calib, outfile)
+
+    print("file://" + str(Path(os.getcwd()) / outpath))
 
 
 def run(nf_calib: dict, wf_calib: dict, stereo_calib: dict, outfile: TextIOWrapper):
