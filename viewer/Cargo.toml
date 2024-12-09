@@ -13,4 +13,5 @@ clap = { version = "4.5.4", features = ["derive"] }
 image = { version = "0.24.8", default-features = false, features = ["png"] }
 macroquad = "0.4.11"
 opencv = "0.92.2"
+serde_json = "1.0.133"
 serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
