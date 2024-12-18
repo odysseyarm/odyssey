@@ -22,4 +22,3 @@ crate-type = ["cdylib"]
 [build-dependencies]
 cbindgen = "0.26.0"
 csbindgen = "1.8.0"
-uniffi = { version = "0.28", features = [ "build" ] }

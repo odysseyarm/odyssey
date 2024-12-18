@@ -155,6 +155,7 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                 timestamp,
                                 aimpoint,
                                 pose,
+                                distance,
                                 screen_id,
                             },
                         ) => proto::device_event::DeviceEventOneof::Tracking(
@@ -168,6 +169,7 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                     rotation: Some(pose.unwrap().rotation.into()),
                                     translation: Some(pose.unwrap().translation.into()),
                                 }),
+                                distance,
                                 screen_id,
                             },
                         ),
@@ -246,6 +248,7 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                                 timestamp,
                                 aimpoint,
                                 pose,
+                                distance,
                                 screen_id,
                             },
                         ) => odyssey_hub_common::events::DeviceEventKind::TrackingEvent(
@@ -263,6 +266,7 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                                 } else {
                                     None
                                 },
+                                distance,
                                 screen_id,
                             },
                         ),

@@ -172,6 +172,9 @@ namespace Radiosity.OdysseyHubClient
             public Matrix2x1<double> aimpoint;
             public Pose? pose;
 
+            /// <value>Property <c>distance</c> is the distance in meters from the aimpoint on the screen</value></value>
+            public double distance;
+
             /// <value>Property <c>screen_id</c> is between 0 and 5 (inclusive). It corresponds to the calibration file of the screen being tracked</value>
             public uint screen_id;
 
@@ -181,6 +184,7 @@ namespace Radiosity.OdysseyHubClient
                 if (tracking.pose_resolved) {
                     pose = new Pose(tracking.pose);
                 }
+                distance = tracking.distance;
                 screen_id = tracking.screen_id;
             }
         }

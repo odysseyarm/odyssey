@@ -220,6 +220,7 @@ pub struct TrackingEvent {
     aimpoint: crate::funny::Vector2f64,
     pose: Pose,
     pose_resolved: bool,
+    distance: f64,
     screen_id: u32,
 }
 
@@ -373,6 +374,7 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                             Pose::default()
                                         },
                                         pose_resolved: tracking_event.pose.is_some(),
+                                        distance: tracking_event.distance,
                                         screen_id: tracking_event.screen_id,
                                     },
                                 },

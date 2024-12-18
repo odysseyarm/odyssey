@@ -383,7 +383,7 @@ async fn device_cdc_ping_task(
 fn get_raycast_aimpoint(
     fv_state: &ats_cv::foveated::FoveatedAimpointState,
     screen_calibration: &ScreenCalibration<f32>,
-) -> (Rotation3<f32>, Translation3<f32>, Option<Point2<f32>>) {
+) -> (Rotation3<f32>, Translation3<f32>, Option<(Point2<f32>, f32)>) {
     let orientation = fv_state.filter.orientation.cast();
     let position = fv_state.filter.position.cast();
 
@@ -392,14 +392,14 @@ fn get_raycast_aimpoint(
 
     let isometry = nalgebra::Isometry::<f32, Rotation3<f32>, 3>::from_parts(trans, rot);
 
-    let fv_aimpoint = ats_cv::calculate_aimpoint(&isometry, screen_calibration);
+    let fv_aimpoint_and_d = ats_cv::calculate_aimpoint_and_distance(&isometry, screen_calibration);
 
     let flip_yz = Matrix3::new(1., 0., 0., 0., -1., 0., 0., 0., -1.);
 
     let rot = Rotation3::from_matrix_unchecked(flip_yz * rot * flip_yz);
     let trans = Translation3::from(flip_yz * trans.vector);
 
-    (rot, trans, fv_aimpoint)
+    (rot, trans, fv_aimpoint_and_d)
 }
 
 pub struct Marker {
@@ -420,7 +420,7 @@ fn raycast_update(
         { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
     >,
     fv_state: &mut FoveatedAimpointState,
-) -> (Option<(Matrix3<f32>, Vector3<f32>)>, Option<Point2<f32>>) {
+) -> (Option<(Matrix3<f32>, Vector3<f32>)>, Option<(Point2<f32>, f32)>) {
     if !fv_state.init() {
         return (None, None);
     }
@@ -434,13 +434,13 @@ fn raycast_update(
             let (rotmat, transmat, _fv_aimpoint) =
                 get_raycast_aimpoint(&fv_state, screen_calibration);
 
-            if let Some(_fv_aimpoint) = _fv_aimpoint {
+            if let Some((_fv_aimpoint, d)) = _fv_aimpoint {
                 if _fv_aimpoint.x > 1.02 || _fv_aimpoint.x < -0.02 {
                     fv_state.reset();
                 } else {
                     return (
                         Some((rotmat.matrix().cast(), transmat.vector.cast())),
-                        Some(_fv_aimpoint),
+                        Some((_fv_aimpoint, d)),
                     );
                 }
             } else {
@@ -526,7 +526,7 @@ async fn common_tasks(
                 let CombinedMarkersReport { nf_points, wf_points } = combined_markers;
 
                 let pose;
-                let aimpoint;
+                let aimpoint_and_d;
 
                 // Helper closure to process points
                 let process_points = |points, camera_model, stereo_iso| {
@@ -604,11 +604,11 @@ async fn common_tasks(
                         &screen_calibrations,
                     );
 
-                    (pose, aimpoint) = raycast_update(&screen_calibrations, &mut fv_state);
+                    (pose, aimpoint_and_d) = raycast_update(&screen_calibrations, &mut fv_state);
                     screen_id = fv_state.screen_id as u32;
                 }
 
-                if let Some(aimpoint) = aimpoint { if let Some(pose) = pose {
+                if let Some((aimpoint, d)) = aimpoint_and_d { if let Some(pose) = pose {
                     let aimpoint_matrix = nalgebra::Matrix::<f32, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f32, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
                     let device = device.clone();
                     let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
@@ -618,6 +618,7 @@ async fn common_tasks(
                             rotation: pose.0.cast(),
                             translation: pose.1.cast(),
                         }),
+                        distance: d as f64,
                         screen_id,
                     });
                     match device {

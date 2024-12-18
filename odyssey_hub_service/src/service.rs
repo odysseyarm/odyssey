@@ -9,8 +9,8 @@ use odyssey_hub_service_interface::{
     service_server::{Service, ServiceServer},
     DeviceListReply, DeviceListRequest, PollReply, PollRequest,
 };
-#[cfg(os = "windows")]
-use os::windows::{
+#[cfg(target_os = "windows")]
+use interprocess::os::windows::{
     local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor,
 };
 use tokio::{
@@ -207,13 +207,13 @@ pub async fn run_service(
     // existing socket file that has not been deleted for whatever reason,
     // ensure it's a socket file and not a normal file, and delete it.
     let listener_opts = ListenerOptions::new().name(name.clone());
-    #[cfg(os = "windows")]
+    #[cfg(target_os = "windows")]
     let listener_opts = {
         let mut sd = SecurityDescriptor::new()?;
         unsafe {
             sd.set_dacl(std::ptr::null_mut(), false)?;
         }
-        listener_opts.security_descriptor(sd);
+        listener_opts.security_descriptor(sd)
     };
     let listener = listener_opts.create_tokio().unwrap();
     let listener = futures::stream::unfold((), |()| async {

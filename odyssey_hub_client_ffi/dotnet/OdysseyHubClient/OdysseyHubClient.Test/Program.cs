@@ -104,7 +104,8 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
                     // } else {
                     //     Console.WriteLine("\tpose: Not resolved");
                     // }
-                    // break;
+                    // Console.WriteLine("\tdistance: {0}", tracking.distance);
+                    break;
                 case OdysseyHubClient.DeviceEvent.Impact impact:
                     // Console.WriteLine("Printing impact event:");
                     // Console.WriteLine("\ttimestamp: {0}", impact.timestamp);

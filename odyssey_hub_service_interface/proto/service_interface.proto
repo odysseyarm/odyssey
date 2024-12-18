@@ -79,7 +79,8 @@ message DeviceEvent {
     uint32 timestamp = 1;
     Vector2 aimpoint = 2;
     optional Pose pose = 3;
-    uint32 screen_id = 4;
+    double distance = 4;
+    uint32 screen_id = 5;
   }
   message ImpactEvent {
     uint32 timestamp = 1;
