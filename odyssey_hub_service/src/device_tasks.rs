@@ -1,12 +1,11 @@
 use ahrs::Ahrs;
 use arrayvec::ArrayVec;
-use ats_cv::foveated::{match3, FoveatedAimpointState};
+use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
 use core::panic;
-use std::iter::once;
-use nalgebra::{Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
+use nalgebra::{Point2, Rotation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
@@ -58,7 +57,7 @@ async fn device_udp_ping_task(
         >,
     >,
 ) -> std::convert::Infallible {
-    use sysinfo::{Components, Disks, Networks, System};
+    use sysinfo::{Networks, System};
 
     fn broadcast_address(ip: std::net::IpAddr, prefix: u8) -> Option<std::net::IpAddr> {
         match ip {
@@ -69,7 +68,7 @@ async fn device_udp_ping_task(
                 let broadcast = network | !mask;
                 Some(std::net::IpAddr::V4(Ipv4Addr::from(broadcast)))
             }
-            std::net::IpAddr::V6(ipv6) => None,
+            std::net::IpAddr::V6(_ipv6) => None,
         }
     }
 
@@ -380,28 +379,6 @@ async fn device_cdc_ping_task(
     }
 }
 
-fn get_raycast_aimpoint(
-    fv_state: &ats_cv::foveated::FoveatedAimpointState,
-    screen_calibration: &ScreenCalibration<f32>,
-) -> (Rotation3<f32>, Translation3<f32>, Option<(Point2<f32>, f32)>) {
-    let orientation = fv_state.filter.orientation.cast();
-    let position = fv_state.filter.position.cast();
-
-    let rot = orientation.to_rotation_matrix();
-    let trans = Translation3::from(position);
-
-    let isometry = nalgebra::Isometry::<f32, Rotation3<f32>, 3>::from_parts(trans, rot);
-
-    let fv_aimpoint_and_d = ats_cv::calculate_aimpoint_and_distance(&isometry, screen_calibration);
-
-    let flip_yz = Matrix3::new(1., 0., 0., 0., -1., 0., 0., 0., -1.);
-
-    let rot = Rotation3::from_matrix_unchecked(flip_yz * rot * flip_yz);
-    let trans = Translation3::from(flip_yz * trans.vector);
-
-    (rot, trans, fv_aimpoint_and_d)
-}
-
 pub struct Marker {
     pub normalized: Point2<f32>,
 }
@@ -412,43 +389,6 @@ impl Marker {
             position: self.normalized,
         }
     }
-}
-
-fn raycast_update(
-    screen_calibrations: &ArrayVec<
-        (u8, ScreenCalibration<f32>),
-        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
-    >,
-    fv_state: &mut FoveatedAimpointState,
-) -> (Option<(Matrix3<f32>, Vector3<f32>)>, Option<(Point2<f32>, f32)>) {
-    if !fv_state.init() {
-        return (None, None);
-    }
-    let screen_id = fv_state.screen_id;
-    if screen_id <= ats_cv::foveated::MAX_SCREEN_ID {
-        if let Some(screen_calibration) =
-            screen_calibrations
-                .iter()
-                .find_map(|(id, cal)| if *id == screen_id { Some(cal) } else { None })
-        {
-            let (rotmat, transmat, _fv_aimpoint) =
-                get_raycast_aimpoint(&fv_state, screen_calibration);
-
-            if let Some((_fv_aimpoint, d)) = _fv_aimpoint {
-                if _fv_aimpoint.x > 1.02 || _fv_aimpoint.x < -0.02 {
-                    fv_state.reset();
-                } else {
-                    return (
-                        Some((rotmat.matrix().cast(), transmat.vector.cast())),
-                        Some((_fv_aimpoint, d)),
-                    );
-                }
-            } else {
-                return (Some((rotmat.matrix().cast(), transmat.vector.cast())), None);
-            }
-        }
-    }
-    (None, None)
 }
 
 async fn common_tasks(
@@ -604,7 +544,7 @@ async fn common_tasks(
                         &screen_calibrations,
                     );
 
-                    (pose, aimpoint_and_d) = raycast_update(&screen_calibrations, &mut fv_state);
+                    (pose, aimpoint_and_d) = ats_cv::helpers::raycast_update(&screen_calibrations, &mut fv_state);
                     screen_id = fv_state.screen_id as u32;
                 }
 
