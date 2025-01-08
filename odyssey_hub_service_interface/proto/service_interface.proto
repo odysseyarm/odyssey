@@ -6,6 +6,8 @@ service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
   rpc Poll (PollRequest) returns (stream PollReply) {}
   rpc WriteVendor (WriteVendorRequest) returns (WriteVendorReply) {}
+  rpc ResetZero (Device) returns (ResetZeroReply) {}
+  rpc Zero (ZeroRequest) returns (ZeroReply) {}
 }
 
 message UdpDevice {
@@ -34,32 +36,32 @@ message Device {
 }
 
 message Matrix3x3 {
-  double m11 = 1;
-  double m12 = 2;
-  double m13 = 3;
-  double m21 = 4;
-  double m22 = 5;
-  double m23 = 6;
-  double m31 = 7;
-  double m32 = 8;
-  double m33 = 9;
+  float m11 = 1;
+  float m12 = 2;
+  float m13 = 3;
+  float m21 = 4;
+  float m22 = 5;
+  float m23 = 6;
+  float m31 = 7;
+  float m32 = 8;
+  float m33 = 9;
 }
 
 message Matrix3x1 {
-  double m11 = 1;
-  double m21 = 2;
-  double m31 = 3;
+  float m11 = 1;
+  float m21 = 2;
+  float m31 = 3;
 }
 
 message Vector2 {
-  double x = 1;
-  double y = 2;
+  float x = 1;
+  float y = 2;
 }
 
 message Vector3 {
-  double x = 1;
-  double y = 2;
-  double z = 3;
+  float x = 1;
+  float y = 2;
+  float z = 3;
 }
 
 message Pose {
@@ -79,7 +81,7 @@ message DeviceEvent {
     uint32 timestamp = 1;
     Vector2 aimpoint = 2;
     optional Pose pose = 3;
-    double distance = 4;
+    float distance = 4;
     uint32 screen_id = 5;
   }
   message ImpactEvent {
@@ -124,4 +126,14 @@ message WriteVendorRequest {
   bytes data = 3;
 }
 
+message ZeroRequest {
+  Device device = 1;
+  Vector3 translation = 2;
+  Vector2 target = 3;
+}
+
 message WriteVendorReply {}
+
+message ResetZeroReply {}
+
+message ZeroReply {}

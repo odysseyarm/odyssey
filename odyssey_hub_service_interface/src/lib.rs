@@ -6,8 +6,8 @@ mod proto {
 
 pub use proto::*;
 
-impl From<nalgebra::Matrix3x1<f64>> for proto::Matrix3x1 {
-    fn from(value: nalgebra::Matrix3x1<f64>) -> Self {
+impl From<nalgebra::Matrix3x1<f32>> for proto::Matrix3x1 {
+    fn from(value: nalgebra::Matrix3x1<f32>) -> Self {
         Self {
             m11: value.x,
             m21: value.y,
@@ -16,14 +16,14 @@ impl From<nalgebra::Matrix3x1<f64>> for proto::Matrix3x1 {
     }
 }
 
-impl Into<nalgebra::Matrix3x1<f64>> for proto::Matrix3x1 {
-    fn into(self) -> nalgebra::Matrix3x1<f64> {
+impl Into<nalgebra::Matrix3x1<f32>> for proto::Matrix3x1 {
+    fn into(self) -> nalgebra::Matrix3x1<f32> {
         nalgebra::Matrix3x1::new(self.m11, self.m21, self.m31)
     }
 }
 
-impl From<nalgebra::Matrix3<f64>> for proto::Matrix3x3 {
-    fn from(value: nalgebra::Matrix3<f64>) -> Self {
+impl From<nalgebra::Matrix3<f32>> for proto::Matrix3x3 {
+    fn from(value: nalgebra::Matrix3<f32>) -> Self {
         Self {
             m11: value.m11,
             m12: value.m12,
@@ -38,8 +38,8 @@ impl From<nalgebra::Matrix3<f64>> for proto::Matrix3x3 {
     }
 }
 
-impl Into<nalgebra::Matrix3<f64>> for proto::Matrix3x3 {
-    fn into(self) -> nalgebra::Matrix3<f64> {
+impl Into<nalgebra::Matrix3<f32>> for proto::Matrix3x3 {
+    fn into(self) -> nalgebra::Matrix3<f32> {
         nalgebra::Matrix3::new(
             self.m11, self.m12, self.m13, self.m21, self.m22, self.m23, self.m31, self.m32,
             self.m33,

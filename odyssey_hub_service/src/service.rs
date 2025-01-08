@@ -5,13 +5,13 @@ use ats_cv::ScreenCalibration;
 use interprocess::local_socket::{
     traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName,
 };
-use odyssey_hub_service_interface::{
-    service_server::{Service, ServiceServer},
-    DeviceListReply, DeviceListRequest, PollReply, PollRequest,
-};
 #[cfg(target_os = "windows")]
 use interprocess::os::windows::{
     local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor,
+};
+use odyssey_hub_service_interface::{
+    service_server::{Service, ServiceServer},
+    DeviceListReply, DeviceListRequest, PollReply, PollRequest,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -31,6 +31,7 @@ struct Server {
             Vec<(
                 odyssey_hub_common::device::Device,
                 ats_usb::device::UsbDevice,
+                tokio::sync::mpsc::Sender<device_tasks::DeviceTaskMessage>,
             )>,
         >,
     >,
@@ -118,6 +119,75 @@ impl Service for Server {
         Ok(Response::new(
             odyssey_hub_service_interface::WriteVendorReply {},
         ))
+    }
+
+    async fn reset_zero(
+        &self,
+        request: tonic::Request<odyssey_hub_service_interface::Device>,
+    ) -> Result<tonic::Response<odyssey_hub_service_interface::ResetZeroReply>, tonic::Status> {
+        let device = request.into_inner().into();
+
+        let s;
+
+        if let Some(_device) = self.device_list.lock().iter().find(|d| d.0 == device) {
+            s = _device.2.clone();
+        } else {
+            return Err(tonic::Status::not_found("Device not found in device list"));
+        }
+
+        match s.send(device_tasks::DeviceTaskMessage::ResetZero).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(tonic::Status::aborted(format!(
+                    "Failed to send reset zero device task message: {}",
+                    e
+                )));
+            }
+        }
+
+        Ok(Response::new(
+            odyssey_hub_service_interface::ResetZeroReply {},
+        ))
+    }
+
+    async fn zero(
+        &self,
+        request: tonic::Request<odyssey_hub_service_interface::ZeroRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_service_interface::ZeroReply>, tonic::Status> {
+        let odyssey_hub_service_interface::ZeroRequest {
+            device,
+            translation,
+            target,
+        } = request.into_inner();
+
+        let device = device.unwrap().into();
+        let translation = translation.unwrap();
+        let translation = nalgebra::Translation3::new(translation.x, translation.y, translation.z);
+        let target = target.unwrap();
+        let target = nalgebra::Point2::new(target.x, target.y);
+
+        let s;
+
+        if let Some(_device) = self.device_list.lock().iter().find(|d| d.0 == device) {
+            s = _device.2.clone();
+        } else {
+            return Err(tonic::Status::not_found("Device not found in device list"));
+        }
+
+        match s
+            .send(device_tasks::DeviceTaskMessage::Zero(translation, target))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(tonic::Status::aborted(format!(
+                    "Failed to send zero device task message: {}",
+                    e
+                )));
+            }
+        }
+
+        Ok(Response::new(odyssey_hub_service_interface::ZeroReply {}))
     }
 }
 
@@ -240,8 +310,8 @@ pub async fn run_service(
         // Forward events from the device tasks to subscribed clients
         while let Some(message) = receiver.recv().await {
             match message {
-                device_tasks::Message::Connect(d1, d2) => {
-                    dl.lock().push((d1.clone(), d2.clone()));
+                device_tasks::Message::Connect(d1, d2, sender) => {
+                    dl.lock().push((d1.clone(), d2.clone(), sender));
                     event_sender
                         .send(odyssey_hub_common::events::Event::DeviceEvent({
                             odyssey_hub_common::events::DeviceEvent {

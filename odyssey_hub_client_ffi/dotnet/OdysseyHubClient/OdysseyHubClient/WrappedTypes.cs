@@ -155,32 +155,32 @@ namespace Radiosity.OdysseyHubClient
         public class Accelerometer : IKind
         {
             public uint timestamp;
-            public Matrix3x1<double> acceleration;
-            public Matrix3x1<double> angular_velocity;
-            public Matrix3x1<double> euler_angles;
+            public Matrix3x1<float> acceleration;
+            public Matrix3x1<float> angular_velocity;
+            public Matrix3x1<float> euler_angles;
 
             internal Accelerometer(CsBindgen.AccelerometerEvent accelerometer) {
                 timestamp = accelerometer.timestamp;
-                acceleration = new Matrix3x1<double> { x = accelerometer.accel.x, y = accelerometer.accel.y, z = accelerometer.accel.z };
-                angular_velocity = new Matrix3x1<double> { x = accelerometer.gyro.x, y = accelerometer.gyro.y, z = accelerometer.gyro.z };
-                euler_angles = new Matrix3x1<double> { x = accelerometer.euler_angles.x, y = accelerometer.euler_angles.y, z = accelerometer.euler_angles.z };
+                acceleration = new Matrix3x1<float> { x = accelerometer.accel.x, y = accelerometer.accel.y, z = accelerometer.accel.z };
+                angular_velocity = new Matrix3x1<float> { x = accelerometer.gyro.x, y = accelerometer.gyro.y, z = accelerometer.gyro.z };
+                euler_angles = new Matrix3x1<float> { x = accelerometer.euler_angles.x, y = accelerometer.euler_angles.y, z = accelerometer.euler_angles.z };
             }
         }
 
         public class Tracking : IKind {
             public uint timestamp;
-            public Matrix2x1<double> aimpoint;
+            public Matrix2x1<float> aimpoint;
             public Pose? pose;
 
             /// <value>Property <c>distance</c> is the distance in meters from the aimpoint on the screen</value></value>
-            public double distance;
+            public float distance;
 
             /// <value>Property <c>screen_id</c> is between 0 and 5 (inclusive). It corresponds to the calibration file of the screen being tracked</value>
             public uint screen_id;
 
             internal Tracking(CsBindgen.TrackingEvent tracking) {
                 timestamp = tracking.timestamp;
-                aimpoint = new Matrix2x1<double> { x = tracking.aimpoint.x, y = tracking.aimpoint.y };
+                aimpoint = new Matrix2x1<float> { x = tracking.aimpoint.x, y = tracking.aimpoint.y };
                 if (tracking.pose_resolved) {
                     pose = new Pose(tracking.pose);
                 }
@@ -191,7 +191,7 @@ namespace Radiosity.OdysseyHubClient
 
         public class Impact : IKind {
             public uint timestamp;
-            public Matrix2x1<double> aimpoint;
+            public Matrix2x1<float> aimpoint;
 
             internal Impact(CsBindgen.ImpactEvent impact) {
                 timestamp = impact.timestamp;
@@ -253,12 +253,12 @@ namespace Radiosity.OdysseyHubClient
     /// The pose is relative to the screen being aimed at. The translation matrix is in meters based on the assumed screen height.
     /// </summary>
     public class Pose {
-        public Matrix3x1<double> translation;
-        public Matrix3<double> rotation;
+        public Matrix3x1<float> translation;
+        public Matrix3<float> rotation;
 
         internal Pose(CsBindgen.Pose pose) {
-            translation = new Matrix3x1<double> { x = pose.translation.x, y = pose.translation.y, z = pose.translation.z };
-            rotation = new Matrix3<double> {
+            translation = new Matrix3x1<float> { x = pose.translation.x, y = pose.translation.y, z = pose.translation.z };
+            rotation = new Matrix3<float> {
                 m11 = pose.rotation.m11,
                 m12 = pose.rotation.m12,
                 m13 = pose.rotation.m13,
@@ -299,6 +299,49 @@ namespace Radiosity.OdysseyHubClient
     {
         public T x;
         public T y;
+    }
+
+    public class Vector3
+    {
+        public float x;
+        public float y;
+        public float z;
+
+        public Vector3(float x, float y, float z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        internal Vector3(CsBindgen.Vector3f32 vector3) {
+            x = vector3.x;
+            y = vector3.y;
+            z = vector3.z;
+        }
+
+        internal CsBindgen.Vector3f32 ToFFI() {
+            return new CsBindgen.Vector3f32 { x = x, y = y, z = z };
+        }
+    }
+
+    public class Vector2
+    {
+        public float x;
+        public float y;
+
+        public Vector2(float x, float y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        internal Vector2(CsBindgen.Vector2f32 vector3) {
+            x = vector3.x;
+            y = vector3.y;
+        }
+
+        internal CsBindgen.Vector2f32 ToFFI() {
+            return new CsBindgen.Vector2f32 { x = x, y = y };
+        }
     }
 
     internal class Helpers

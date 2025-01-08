@@ -3,28 +3,28 @@ pub struct Client;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct Matrix3f64 {
-    pub m11: f64,
-    pub m12: f64,
-    pub m13: f64,
-    pub m21: f64,
-    pub m22: f64,
-    pub m23: f64,
-    pub m31: f64,
-    pub m32: f64,
-    pub m33: f64,
+pub struct Matrix3f32 {
+    pub m11: f32,
+    pub m12: f32,
+    pub m13: f32,
+    pub m21: f32,
+    pub m22: f32,
+    pub m23: f32,
+    pub m31: f32,
+    pub m32: f32,
+    pub m33: f32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct Matrix3x1f64 {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
+pub struct Matrix3x1f32 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
-impl From<nalgebra::Matrix3<f64>> for Matrix3f64 {
-    fn from(m: nalgebra::Matrix3<f64>) -> Self {
+impl From<nalgebra::Matrix3<f32>> for Matrix3f32 {
+    fn from(m: nalgebra::Matrix3<f32>) -> Self {
         Self {
             m11: m.m11,
             m12: m.m12,
@@ -39,8 +39,8 @@ impl From<nalgebra::Matrix3<f64>> for Matrix3f64 {
     }
 }
 
-impl From<nalgebra::Matrix3x1<f64>> for Matrix3x1f64 {
-    fn from(m: nalgebra::Matrix3x1<f64>) -> Self {
+impl From<nalgebra::Matrix3x1<f32>> for Matrix3x1f32 {
+    fn from(m: nalgebra::Matrix3x1<f32>) -> Self {
         Self {
             x: m.x,
             y: m.y,
@@ -51,14 +51,14 @@ impl From<nalgebra::Matrix3x1<f64>> for Matrix3x1f64 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct Vector3f64 {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
+pub struct Vector3f32 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
-impl From<nalgebra::Vector3<f64>> for Vector3f64 {
-    fn from(v: nalgebra::Vector3<f64>) -> Self {
+impl From<nalgebra::Vector3<f32>> for Vector3f32 {
+    fn from(v: nalgebra::Vector3<f32>) -> Self {
         Self {
             x: v.x,
             y: v.y,
@@ -69,13 +69,13 @@ impl From<nalgebra::Vector3<f64>> for Vector3f64 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct Vector2f64 {
-    pub x: f64,
-    pub y: f64,
+pub struct Vector2f32 {
+    pub x: f32,
+    pub y: f32,
 }
 
-impl From<nalgebra::Vector2<f64>> for Vector2f64 {
-    fn from(v: nalgebra::Vector2<f64>) -> Self {
+impl From<nalgebra::Vector2<f32>> for Vector2f32 {
+    fn from(v: nalgebra::Vector2<f32>) -> Self {
         Self { x: v.x, y: v.y }
     }
 }

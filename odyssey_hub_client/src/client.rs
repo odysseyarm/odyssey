@@ -86,4 +86,34 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+
+    pub async fn reset_zero(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+    ) -> anyhow::Result<odyssey_hub_service_interface::ResetZeroReply> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(device.into());
+            Ok(service_client.reset_zero(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn zero(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+        translation: odyssey_hub_service_interface::Vector3,
+        target: odyssey_hub_service_interface::Vector2,
+    ) -> anyhow::Result<odyssey_hub_service_interface::ZeroReply> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_service_interface::ZeroRequest {
+                device: Some(device.into()),
+                translation: Some(translation.into()),
+                target: Some(target.into()),
+            });
+            Ok(service_client.zero(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
 }

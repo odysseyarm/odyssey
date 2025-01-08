@@ -22,24 +22,24 @@ pub enum DeviceEventKind {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Pose {
-    pub rotation: nalgebra::Matrix3<f64>,
-    pub translation: nalgebra::Matrix3x1<f64>,
+    pub rotation: nalgebra::Matrix3<f32>,
+    pub translation: nalgebra::Matrix3x1<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct AccelerometerEvent {
     pub timestamp: u32,
-    pub accel: nalgebra::Vector3<f64>,
-    pub gyro: nalgebra::Vector3<f64>,
-    pub euler_angles: nalgebra::Vector3<f64>,
+    pub accel: nalgebra::Vector3<f32>,
+    pub gyro: nalgebra::Vector3<f32>,
+    pub euler_angles: nalgebra::Vector3<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct TrackingEvent {
     pub timestamp: u32,
-    pub aimpoint: nalgebra::Vector2<f64>,
+    pub aimpoint: nalgebra::Vector2<f32>,
     pub pose: Option<Pose>,
-    pub distance: f64,
+    pub distance: f32,
     pub screen_id: u32,
 }
 

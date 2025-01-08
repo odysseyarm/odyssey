@@ -49,7 +49,7 @@ pub extern "C" fn odyssey_hub_client_client_connect(
 }
 
 #[no_mangle]
-pub extern "C" fn odyssey_hub_client_client_get_device_list(
+pub extern "C" fn odyssey_hub_client_get_device_list(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -198,6 +198,66 @@ pub extern "C" fn odyssey_hub_client_write_vendor(
 
     tokio::spawn(async move {
         match client.write_vendor(device, tag, data).await {
+            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
+            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
+        }
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn odyssey_hub_client_reset_zero(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    device: *const crate::ffi_common::Device,
+    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+
+    let mut client = unsafe { &*client }.clone();
+
+    let device = unsafe { &*device }.clone().into();
+
+    tokio::spawn(async move {
+        match client.reset_zero(device).await {
+            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
+            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
+        }
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn odyssey_hub_client_zero(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    device: *const crate::ffi_common::Device,
+    translation: *const crate::funny::Vector3f32,
+    target: *const crate::funny::Vector2f32,
+    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+
+    let mut client = unsafe { &*client }.clone();
+
+    let device = unsafe { &*device }.clone().into();
+
+    let translation = unsafe { &*translation }.clone();
+    let translation = odyssey_hub_service_interface::Vector3 {
+        x: translation.x,
+        y: translation.y,
+        z: translation.z,
+    };
+    let target = unsafe { &*target }.clone();
+    let target = odyssey_hub_service_interface::Vector2 {
+        x: target.x,
+        y: target.y,
+    };
+
+    tokio::spawn(async move {
+        match client.zero(device, translation, target).await {
             Ok(_) => callback(userdata, ClientError::ClientErrorNone),
             Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
         }

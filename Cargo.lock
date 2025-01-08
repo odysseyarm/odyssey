@@ -155,6 +155,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
+
+[[package]]
 name = "argmin"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,12 +398,12 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=9dd94f071330568b936c50b0ac740de5032c120d#9dd94f071330568b936c50b0ac740de5032c120d"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3#260c1b444f974b16e3cf9c06bece1b15658faac3"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
  "cv",
- "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=9dd94f071330568b936c50b0ac740de5032c120d)",
+ "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3)",
  "microfft",
  "nalgebra 0.32.6",
  "num",
@@ -1332,7 +1338,7 @@ checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=9dd94f071330568b936c50b0ac740de5032c120d#9dd94f071330568b936c50b0ac740de5032c120d"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3#260c1b444f974b16e3cf9c06bece1b15658faac3"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -3058,8 +3064,9 @@ dependencies = [
  "ahrs",
  "anyhow",
  "app_dirs2",
+ "arc-swap",
  "arrayvec 0.7.6",
- "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=9dd94f071330568b936c50b0ac740de5032c120d)",
+ "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3)",
  "ats_usb",
  "cam-geom",
  "futures",

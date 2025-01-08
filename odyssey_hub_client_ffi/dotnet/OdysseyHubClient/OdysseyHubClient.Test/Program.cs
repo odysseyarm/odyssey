@@ -1,4 +1,6 @@
-﻿using System.Threading.Channels;
+﻿using System.Diagnostics;
+using System.Numerics;
+using System.Threading.Channels;
 
 using OdysseyHubClient = Radiosity.OdysseyHubClient;
 
@@ -91,7 +93,7 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
                 case OdysseyHubClient.DeviceEvent.Tracking tracking:
                     // Console.WriteLine("Printing tracking event:");
                     // Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
-                    // Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
+                    Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
                     // if (tracking.pose != null) {
                     //     Console.WriteLine("\tpose: ");
                     //     Console.WriteLine("\t\trotation: ");
@@ -112,6 +114,18 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
                     break;
                 case OdysseyHubClient.DeviceEvent.Connect _:
                     Console.WriteLine("Device connected");
+                    // Resetting on connect is currently redundant because the device zero isometry is the identity on connect
+                    await client.ResetZero(handle, deviceEvent.device);
+                    _ = Task.Run(async () => {
+                        await Task.Delay(5000);
+                        // negative Y is up, positive X is right
+                        // the following translation says the bore is 0.0381 meters above the device in the device's local coordinate system
+                        var translation = new OdysseyHubClient.Vector3(0.0f, -0.0381f, 0.0f);
+                        // zero target is middle of the screen
+                        var target = new OdysseyHubClient.Vector2(0.5f, 0.5f);
+                        await client.Zero(handle, deviceEvent.device, translation, target);
+                        Console.WriteLine("Zeroed device");
+                    });
                     break;
                 case OdysseyHubClient.DeviceEvent.Disconnect _:
                     Console.WriteLine("Device disconnected");

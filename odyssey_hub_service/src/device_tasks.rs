@@ -1,11 +1,12 @@
 use ahrs::Ahrs;
+use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
 use ats_usb::packet::CombinedMarkersReport;
 use core::panic;
-use nalgebra::{Point2, Rotation3, UnitVector3, Vector3};
+use nalgebra::{Isometry3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
@@ -18,10 +19,17 @@ use tokio_stream::StreamExt;
 use tracing::field::debug;
 
 #[derive(Debug, Clone)]
+pub enum DeviceTaskMessage {
+    ResetZero,
+    Zero(Translation3<f32>, Point2<f32>),
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     Connect(
         odyssey_hub_common::device::Device,
         ats_usb::device::UsbDevice,
+        Sender<DeviceTaskMessage>,
     ),
     Disconnect(odyssey_hub_common::device::Device),
     Event(odyssey_hub_common::events::Event),
@@ -404,6 +412,7 @@ async fn common_tasks(
             >,
         >,
     >,
+    mut rx: tokio::sync::mpsc::Receiver<DeviceTaskMessage>,
 ) {
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let timeout = Duration::from_secs(2);
@@ -418,6 +427,7 @@ async fn common_tasks(
         1. / config.accel_config.accel_odr as f32,
         0.1,
     )));
+    let fv_zero_offset = ArcSwap::from(Arc::new(None));
 
     let mut combined_markers_stream = d.stream_combined_markers().await.unwrap();
     let mut accel_stream = d.stream_accel().await.unwrap();
@@ -427,7 +437,7 @@ async fn common_tasks(
         Device::Udp(UdpDevice { addr, .. }) => match addr.ip() {
             IpAddr::V4(ip) => ip.is_loopback(),
             _ => false,
-        }
+        },
         _ => false,
     };
 
@@ -544,7 +554,7 @@ async fn common_tasks(
                         &screen_calibrations,
                     );
 
-                    (pose, aimpoint_and_d) = ats_cv::helpers::raycast_update(&screen_calibrations, &mut fv_state);
+                    (pose, aimpoint_and_d) = ats_cv::helpers::raycast_update(&screen_calibrations, &mut fv_state, **fv_zero_offset.load());
                     screen_id = fv_state.screen_id as u32;
                 }
 
@@ -558,7 +568,7 @@ async fn common_tasks(
                             rotation: pose.0.cast(),
                             translation: pose.1.cast(),
                         }),
-                        distance: d as f64,
+                        distance: d,
                         screen_id,
                     });
                     match device {
@@ -582,7 +592,6 @@ async fn common_tasks(
                     }
                 }}
             }
-
             item = accel_stream.next() => {
                 let Some(accel) = item else {
                     // this shouldn't ever happen
@@ -626,7 +635,7 @@ async fn common_tasks(
                 prev_timestamp = Some(accel.timestamp);
 
                 let euler_angles = _orientation.euler_angles();
-                let euler_angles = Vector3::new(euler_angles.0 as f64, euler_angles.1 as f64, euler_angles.2 as f64);
+                let euler_angles = Vector3::new(euler_angles.0, euler_angles.1, euler_angles.2);
                 *orientation.lock().await = _orientation;
                 {
                     let device = device.clone();
@@ -670,6 +679,32 @@ async fn common_tasks(
                         }),
                     }
                 ))).await;
+            }
+            item = rx.recv() => {
+                let Some(message) = item else {
+                    // this shouldn't ever happen
+                    break;
+                };
+                match message {
+                    DeviceTaskMessage::Zero(t, point) => {
+                        let quat = {
+                            let screen_calibrations = screen_calibrations.lock().await;
+                            let fv_state = fv_state.lock().await;
+                            ats_cv::helpers::calculate_zero_offset_quat(t, point, &screen_calibrations, &fv_state)
+                        };
+                        if let Some(quat) = quat {
+                            fv_zero_offset.store(Arc::new(Some(Isometry3::from_parts(
+                                t,
+                                quat,
+                            ))));
+                        } else {
+                            tracing::warn!("Failed to calculate zero offset quat");
+                        }
+                    },
+                    DeviceTaskMessage::ResetZero => {
+                        fv_zero_offset.store(Arc::new(None));
+                    },
+                }
             }
         }
         no_response_count = 0;
@@ -716,10 +751,13 @@ async fn device_udp_stream_task(
     let mut device = device.clone();
     device.uuid = params.uuid.clone();
 
+    let (tx, rx) = tokio::sync::mpsc::channel(5);
+
     let _ = message_channel
         .send(Message::Connect(
             odyssey_hub_common::device::Device::Udp(device.clone()),
             d.clone(),
+            tx,
         ))
         .await;
 
@@ -729,6 +767,7 @@ async fn device_udp_stream_task(
         message_channel,
         config,
         screen_calibrations.clone(),
+        rx,
     )
     .await;
 
@@ -764,10 +803,13 @@ async fn device_cdc_stream_task(
     let mut device = device.clone();
     device.uuid = props.uuid.clone();
 
+    let (tx, rx) = tokio::sync::mpsc::channel(5);
+
     let _ = message_channel
         .send(Message::Connect(
             odyssey_hub_common::device::Device::Cdc(device.clone()),
             d.clone(),
+            tx,
         ))
         .await;
 
@@ -778,6 +820,7 @@ async fn device_cdc_stream_task(
             message_channel.clone(),
             config,
             screen_calibrations.clone(),
+            rx,
         ) => {}
         _ = temp_boneless_hardcoded_vendor_stream_tasks(
             d.clone(),

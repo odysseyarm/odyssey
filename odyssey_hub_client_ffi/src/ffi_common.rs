@@ -208,19 +208,19 @@ pub union DeviceEventKindU {
 #[derive(Copy, Clone)]
 pub struct AccelerometerEvent {
     timestamp: u32,
-    accel: crate::funny::Vector3f64,
-    gyro: crate::funny::Vector3f64,
-    euler_angles: crate::funny::Vector3f64,
+    accel: crate::funny::Vector3f32,
+    gyro: crate::funny::Vector3f32,
+    euler_angles: crate::funny::Vector3f32,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TrackingEvent {
     timestamp: u32,
-    aimpoint: crate::funny::Vector2f64,
+    aimpoint: crate::funny::Vector2f32,
     pose: Pose,
     pose_resolved: bool,
-    distance: f64,
+    distance: f32,
     screen_id: u32,
 }
 
@@ -252,8 +252,8 @@ pub struct DisconnectEvent {
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Pose {
-    rotation: crate::funny::Matrix3f64,
-    translation: crate::funny::Matrix3x1f64,
+    rotation: crate::funny::Matrix3f32,
+    translation: crate::funny::Matrix3x1f32,
 }
 
 #[repr(C)]
