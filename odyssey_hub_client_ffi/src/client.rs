@@ -17,8 +17,8 @@ pub struct UserObj(*const std::ffi::c_void);
 unsafe impl Send for UserObj {}
 
 #[no_mangle]
-pub extern "C" fn odyssey_hub_client_client_new() -> Box<Client> {
-    Box::new(Client::default())
+pub extern "C" fn odyssey_hub_client_client_new() -> *mut Client {
+    Box::into_raw(Box::new(Client::default()))
 }
 
 #[no_mangle]
