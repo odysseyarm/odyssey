@@ -73,11 +73,11 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 #[cfg(feature = "_nrf52840")]
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
-    POWER_CLOCK => usb::vbus_detect::InterruptHandler;
+    CLOCK_POWER => usb::vbus_detect::InterruptHandler;
     SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
-    SPIM1_SPIS1_TWIM1_TWIS1_SPI1_TWI1 => spim::InterruptHandler<peripherals::TWISPI1>;
-    SPIM2_SPIS2_SPI2 => spis::InterruptHandler<peripherals::SPI2>;
-    SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0 => spis::InterruptHandler<peripherals::TWISPI0>;
+    TWISPI1 => spim::InterruptHandler<peripherals::TWISPI1>;
+    SPI2 => spis::InterruptHandler<peripherals::SPI2>;
+    TWISPI0 => spis::InterruptHandler<peripherals::TWISPI0>;
 });
 
 const NUM_BUFFERS: usize = 2;
@@ -143,7 +143,7 @@ async fn main(spawner: Spawner) {
     // wide.set_frame_period(16384).await;
     // wide.set_exposure_time(2048).await;
     wide.set_frame_period(524288).await;
-    wide.set_exposure_time(62160).await;
+    wide.set_exposure_time(50000).await;
     // wide.set_exposure_time_ns_image_mode(900_000).await;
     wide.set_bank1_sync_updated(1).await;
     near.set_gain_1(0).await;
@@ -151,7 +151,7 @@ async fn main(spawner: Spawner) {
     // near.set_frame_period(16384).await;
     // near.set_exposure_time(2048).await;
     near.set_frame_period(524288).await;
-    near.set_exposure_time(62160).await;
+    near.set_exposure_time(13000).await;
     // near.set_exposure_time_ns_image_mode(180_000).await;
     near.set_bank1_sync_updated(1).await;
     near.set_brightness_threshold(100).await;
@@ -427,9 +427,9 @@ impl From<EndpointError> for Disconnected {
 
 #[cfg(feature = "_nrf52840")]
 fn device_id() -> [u8; 6] {
-    let ficr = unsafe { &*embassy_nrf::pac::FICR::PTR };
-    let low = ficr.deviceid[0].read().bits();
-    let high = ficr.deviceid[1].read().bits();
+    let ficr = embassy_nrf::pac::FICR;
+    let low = ficr.deviceid(0).read();
+    let high = ficr.deviceid(1).read();
     let [a, b, c, d] = low.to_le_bytes();
     let [e, f, ..] = high.to_le_bytes();
     [a, b, c, d, e, f]
@@ -437,9 +437,9 @@ fn device_id() -> [u8; 6] {
 
 #[cfg(feature = "_nrf5340")]
 fn device_id() -> [u8; 6] {
-    let ficr = unsafe { &*embassy_nrf::pac::FICR::PTR };
-    let low = ficr.info.deviceid[0].read().bits();
-    let high = ficr.info.deviceid[1].read().bits();
+    let ficr = embassy_nrf::pac::FICR;
+    let low = ficr.info().deviceid(0).read();
+    let high = ficr.info().deviceid(1).read();
     let [a, b, c, d] = low.to_le_bytes();
     let [e, f, ..] = high.to_le_bytes();
     [a, b, c, d, e, f]
