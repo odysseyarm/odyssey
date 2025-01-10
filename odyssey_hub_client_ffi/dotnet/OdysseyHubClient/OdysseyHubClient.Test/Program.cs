@@ -75,7 +75,7 @@ foreach (var device in devices) {
 
 Console.WriteLine("Devices printed!");
 
-Channel<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string err_msg)> eventChannel = Channel.CreateUnbounded<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string err_msg)>();
+Channel<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)> eventChannel = Channel.CreateUnbounded<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)>();
 client.StartStream(handle, eventChannel.Writer);
 
 await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAllAsync()) {

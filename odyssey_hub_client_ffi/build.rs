@@ -9,6 +9,7 @@ fn main() {
         .with_crate(crate_dir.clone())
         .with_config(config)
         .with_include_guard("ODYSSEY_HUB_CLIENT_LIB_HPP")
+        .with_namespace("OdysseyHubClient")
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("include/odyssey_hub_client_lib.hpp");
