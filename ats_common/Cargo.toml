@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["std"]
-std = ["cam-geom", "serde", "serde_json", "cv"]
+std = ["cam-geom", "serde", "serde_json", "simba", "cv"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
