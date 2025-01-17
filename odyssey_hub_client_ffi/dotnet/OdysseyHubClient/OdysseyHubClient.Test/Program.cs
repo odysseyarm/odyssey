@@ -67,16 +67,18 @@ void PrintDevice(OdysseyHubClient.IDevice device) {
     }
 }
 
+Channel<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)> eventChannel = Channel.CreateUnbounded<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)>();
+client.StartStream(handle, eventChannel.Writer);
+
 foreach (var device in devices) {
     PrintDevice(device);
     Task<OdysseyHubClient.ClientError> malfunction_zero_task = client.WriteVendor(handle, device, 0x84, [ 0x00 ]);
     await malfunction_zero_task;
+    Task<OdysseyHubClient.ClientError> device_type_task = client.WriteVendor(handle, device, 0x90, []);
+    await device_type_task;
 }
 
 Console.WriteLine("Devices printed!");
-
-Channel<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)> eventChannel = Channel.CreateUnbounded<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)>();
-client.StartStream(handle, eventChannel.Writer);
 
 await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAllAsync()) {
     switch (@event) {
@@ -126,6 +128,10 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
                         await client.Zero(handle, deviceEvent.device, translation, target);
                         Console.WriteLine("Zeroed device");
                     });
+                    Task<OdysseyHubClient.ClientError> malfunction_zero_task = client.WriteVendor(handle, deviceEvent.device, 0x84, [ 0x00 ]);
+                    await malfunction_zero_task;
+                    Task<OdysseyHubClient.ClientError> device_type_task = client.WriteVendor(handle, deviceEvent.device, 0x90, []);
+                    await device_type_task;
                     break;
                 case OdysseyHubClient.DeviceEvent.Disconnect _:
                     Console.WriteLine("Device disconnected");
