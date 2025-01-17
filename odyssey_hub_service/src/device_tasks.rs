@@ -840,6 +840,7 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
 ) {
     let mut vendor_streams: Vec<_> = (0x81..=0x83).collect();
     vendor_streams.push(0x87);
+    vendor_streams.push(0x90);
 
     let vendor_streams: Vec<_> = vendor_streams.into_iter().map(|i| {
         let d = d.clone();

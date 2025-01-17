@@ -396,14 +396,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "ats_cv"
+name = "ats_common"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3#260c1b444f974b16e3cf9c06bece1b15658faac3"
+source = "git+https://github.com/odysseyarm/ats_common#0ee4557d57c7d0b496ec33eed842b8b2a866b28e"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
  "cv",
- "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3)",
  "microfft",
  "nalgebra 0.32.6",
  "num",
@@ -411,18 +410,17 @@ dependencies = [
  "serde",
  "serde_json",
  "simba 0.8.1",
- "sqpnp 0.2.0 (git+https://github.com/0e4ef622/sqpnp.git?branch=f32)",
 ]
 
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git#e21a697e8e56f1dcf88909402e246291c9869b0d"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3#260c1b444f974b16e3cf9c06bece1b15658faac3"
 dependencies = [
  "arrayvec 0.7.6",
  "cam-geom",
  "cv",
- "eskf 0.3.0 (git+https://github.com/odysseyarm/ats_cv.git)",
+ "eskf",
  "microfft",
  "nalgebra 0.32.6",
  "num",
@@ -439,7 +437,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argmin",
- "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git)",
+ "ats_common",
  "enumn",
  "nalgebra 0.32.6",
  "opencv-ros-camera",
@@ -1339,14 +1337,6 @@ checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 name = "eskf"
 version = "0.3.0"
 source = "git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3#260c1b444f974b16e3cf9c06bece1b15658faac3"
-dependencies = [
- "nalgebra 0.32.6",
-]
-
-[[package]]
-name = "eskf"
-version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git#e21a697e8e56f1dcf88909402e246291c9869b0d"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -3066,7 +3056,7 @@ dependencies = [
  "app_dirs2",
  "arc-swap",
  "arrayvec 0.7.6",
- "ats_cv 0.1.0 (git+https://github.com/odysseyarm/ats_cv.git?rev=260c1b444f974b16e3cf9c06bece1b15658faac3)",
+ "ats_cv",
  "ats_usb",
  "cam-geom",
  "futures",
