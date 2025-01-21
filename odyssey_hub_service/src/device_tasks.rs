@@ -483,7 +483,7 @@ async fn common_tasks(
                     let point_tuples = filter_and_create_point_tuples(points);
                     let points_raw: Vec<_> = point_tuples.iter().map(|&(_, p)| p).collect();
                     let points_transformed = transform_points(&points_raw, camera_model);
-                    let intrinsics = ats_cv::ros_opencv_intrinsics_type_convert(camera_model);
+                    let intrinsics = ats_common::ros_opencv_intrinsics_type_convert(camera_model);
                     let normalized_points: ArrayVec<_, 16> = points_transformed
                         .iter()
                         .map(|&p| to_normalized_image_coordinates(p, &intrinsics, stereo_iso))
@@ -922,7 +922,7 @@ fn transform_points(
     camera_intrinsics: &RosOpenCvIntrinsics<f32>,
 ) -> Vec<Point2<f32>> {
     ats_cv::undistort_points(
-        &ats_cv::ros_opencv_intrinsics_type_convert(camera_intrinsics),
+        &ats_common::ros_opencv_intrinsics_type_convert(camera_intrinsics),
         &points,
     )
 }
