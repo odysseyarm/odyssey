@@ -38,7 +38,7 @@ pub enum Message {
 pub async fn device_tasks(
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -57,7 +57,7 @@ pub async fn device_tasks(
 async fn device_udp_ping_task(
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -216,7 +216,7 @@ async fn device_udp_ping_task(
 async fn device_hid_ping_task(
     message_channel: Sender<Message>,
     _screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -269,7 +269,7 @@ async fn device_hid_ping_task(
 async fn device_cdc_ping_task(
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -405,7 +405,7 @@ async fn common_tasks(
     message_channel: Sender<Message>,
     mut config: ats_usb::packet::GeneralConfig,
     screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -513,7 +513,7 @@ async fn common_tasks(
 
                 // Re-alignment logic
                 if wfnf_realign {
-                    let screen_calibrations = screen_calibrations.lock().await;
+                    let screen_calibrations = screen_calibrations.load();
                     if let Some((wf_match_ix, _, _)) = ats_cv::foveated::identify_markers(
                         &wf_normalized,
                         gravity_vec.cast(),
@@ -537,7 +537,7 @@ async fn common_tasks(
                 {
                     let mut fv_state = fv_state.lock().await;
 
-                    let screen_calibrations = screen_calibrations.lock().await;
+                    let screen_calibrations = screen_calibrations.load();
 
                     let nf_markers_cv = nf_markers2
                         .iter()
@@ -688,7 +688,7 @@ async fn common_tasks(
                 match message {
                     DeviceTaskMessage::Zero(t, point) => {
                         let quat = {
-                            let screen_calibrations = screen_calibrations.lock().await;
+                            let screen_calibrations = screen_calibrations.load();
                             let fv_state = fv_state.lock().await;
                             ats_cv::helpers::calculate_zero_offset_quat(t, point, &screen_calibrations, &fv_state)
                         };
@@ -716,7 +716,7 @@ async fn device_udp_stream_task(
     device: UdpDevice,
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -779,7 +779,7 @@ async fn device_cdc_stream_task(
     wait_dsr: bool,
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
-        tokio::sync::Mutex<
+        ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
@@ -842,11 +842,13 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
     vendor_streams.push(0x87);
     vendor_streams.push(0x90);
 
-    let vendor_streams: Vec<_> = vendor_streams.into_iter().map(|i| {
-        let d = d.clone();
-        async move { d.stream(ats_usb::packet::PacketType::Vendor(i)).await }
-    })
-    .collect();
+    let vendor_streams: Vec<_> = vendor_streams
+        .into_iter()
+        .map(|i| {
+            let d = d.clone();
+            async move { d.stream(ats_usb::packet::PacketType::Vendor(i)).await }
+        })
+        .collect();
 
     let vendor_tasks: Vec<_> = vendor_streams
         .into_iter()

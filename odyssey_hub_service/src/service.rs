@@ -376,7 +376,29 @@ pub async fn run_service(
         })
         .collect();
 
-    let screen_calibrations = Arc::new(tokio::sync::Mutex::new(screen_calibrations));
+    let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
+
+    // let device_offsets: HashMap<[u8; 6], nalgebra::Isometry3<f32>> = get_app_root(AppDataType::UserConfig, &APP_INFO)
+    //     .ok()
+    //     .and_then(|config_dir| {
+    //         let device_offsets_path = config_dir.join("device_offsets.json");
+    //         if device_offsets_path.exists() {
+    //             File::open(device_offsets_path)
+    //                 .ok()
+    //                 .and_then(|file| match serde_json::from_reader(file) {
+    //                     Ok(offsets) => Some(offsets),
+    //                     Err(e) => {
+    //                         error!("Failed to deserialize device offsets: {}", e);
+    //                         None
+    //                     }
+    //                 })
+    //         } else {
+    //             None
+    //         }
+    //     })
+    //     .unwrap_or_default();
+
+    // let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
 
     tokio::select! {
         _ = device_tasks(sender, screen_calibrations.clone()) => {},
