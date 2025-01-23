@@ -141,7 +141,7 @@ async fn device_udp_ping_task(
                         }
                     }
                     tokio::select! {
-                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
                         _ = async {
                             let stream_task_handles = stream_task_handles.clone();
                             let message_channel = message_channel.clone();
