@@ -415,7 +415,7 @@ dependencies = [
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=9c09cf9aafa8cbad2b29a0a7cca543b52e3b4d90#9c09cf9aafa8cbad2b29a0a7cca543b52e3b4d90"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=335772e2ff0696c26517de94c8558a982e5a6445#335772e2ff0696c26517de94c8558a982e5a6445"
 dependencies = [
  "arrayvec 0.7.6",
  "ats_common",
@@ -1337,7 +1337,7 @@ checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=9c09cf9aafa8cbad2b29a0a7cca543b52e3b4d90#9c09cf9aafa8cbad2b29a0a7cca543b52e3b4d90"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=335772e2ff0696c26517de94c8558a982e5a6445#335772e2ff0696c26517de94c8558a982e5a6445"
 dependencies = [
  "nalgebra 0.32.6",
 ]
