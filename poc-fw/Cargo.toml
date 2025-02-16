@@ -1,0 +1,29 @@
+[package]
+name = "poc-fw"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embassy-executor = { version = "0.7.0", features = ["arch-cortex-m", "executor-thread"] }
+embassy-futures = "0.1.1"
+embassy-nrf = { version = "0.3.1", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
+embassy-sync = "0.6.2"
+embassy-time = "0.4.0"
+embassy-usb = "0.4.0"
+
+cortex-m-rt = "0.7.5"
+cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
+defmt-rtt = "0.4.1"
+panic-probe = { version = "0.3.1", features = ["print-defmt"] }
+defmt = "0.3.10"
+nrf-pac = { version = "0.1.0", features = ["defmt"] }
+embedded-hal = "1.0.0"
+pag7661qn = { version = "0.1.0", path = "../pag7661qn" }
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+
+# https://github.com/dustinblackman/cargo-run-bin
+[package.metadata.bin]
+probe-rs-tools = { version = "0.27.0", locked = true, bins = ["probe-rs"] }
+
+[profile.release]
+debug = 2

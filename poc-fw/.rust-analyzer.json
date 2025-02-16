@@ -1,0 +1,6 @@
+{
+    "cargo": {
+        "allFeatures": false,
+        "allTargets": false
+    }
+}
