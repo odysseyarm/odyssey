@@ -20,6 +20,7 @@ nrf-pac = { version = "0.1.0", features = ["defmt"] }
 embedded-hal = "1.0.0"
 pag7661qn = { version = "0.1.0", path = "../pag7661qn" }
 embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+static_cell = "2.1.0"
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]

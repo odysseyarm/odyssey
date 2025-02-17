@@ -4,7 +4,7 @@ mod sealed {
     pub trait Sealed {}
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, defmt::Format)]
 #[repr(u8)]
 pub enum Mode {
     Idle,

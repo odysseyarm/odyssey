@@ -10,15 +10,21 @@ fn main() -> ! {
     let a = uicr.approtect().read().pall();
     if a != ApprotectPall::UNPROTECTED {
         let nvmc = nrf_pac::NVMC_NS;
-        nvmc.config().write(|w| w.set_wen(nrf_pac::nvmc::vals::Wen::WEN));
+        nvmc.config()
+            .write(|w| w.set_wen(nrf_pac::nvmc::vals::Wen::WEN));
         while !nvmc.ready().read().ready() {}
-        uicr.approtect().write(|a| a.set_pall(ApprotectPall::UNPROTECTED));
+        uicr.approtect()
+            .write(|a| a.set_pall(ApprotectPall::UNPROTECTED));
         while !nvmc.ready().read().ready() {}
-        nvmc.config().write(|w| w.set_wen(nrf_pac::nvmc::vals::Wen::REN));
+        nvmc.config()
+            .write(|w| w.set_wen(nrf_pac::nvmc::vals::Wen::REN));
         while !nvmc.ready().read().ready() {}
         cortex_m::peripheral::SCB::sys_reset();
     }
-    nrf_pac::CTRLAP_NS.approtect().disable().write_value(ApprotectPall::UNPROTECTED.0);
+    nrf_pac::CTRLAP_NS
+        .approtect()
+        .disable()
+        .write_value(ApprotectPall::UNPROTECTED.0);
     loop {
         cortex_m::asm::wfi();
     }

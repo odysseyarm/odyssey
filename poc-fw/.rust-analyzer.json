@@ -1,6 +1,9 @@
 {
     "cargo": {
         "allFeatures": false,
-        "allTargets": false
+        "allTargets": false,
+        "extraEnv": {
+            "DEFMT_LOG": "trace"
+        }
     }
 }
