@@ -1,7 +1,7 @@
 use opencv::{
     core::{no_array, Mat, Point2f, Scalar, Size, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector},
     highgui::{imshow, poll_key},
-    imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC},
+    imgproc::{corner_sub_pix, cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC},
     objdetect::{
         draw_detected_corners_charuco, draw_detected_markers, get_predefined_dictionary,
         CharucoBoard, CharucoDetector, CharucoDetectorTraitConst, CharucoParameters,
@@ -73,7 +73,7 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
     // }
 
     let mut im_copy = Mat::default();
-    cvt_color(&im, &mut im_copy, COLOR_GRAY2BGR, 0).unwrap();
+    cvt_color_def(&im, &mut im_copy, COLOR_GRAY2BGR).unwrap();
     let tmp = im_copy;
     let mut im_copy = Mat::default();
     resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();

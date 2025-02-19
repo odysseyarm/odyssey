@@ -1,5 +1,5 @@
 use opencv::{
-    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}
+    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}
 };
 
 use crate::{DeviceUuid, Port};
@@ -168,8 +168,8 @@ pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_ro
     }
     // scale corners back down
     corners.as_mut_slice().iter_mut().for_each(|x| {
-        x.x = (x.x - 1.0) / ss as f32;
-        x.y = (x.y - 1.0) / ss as f32;
+        x.x = (x.x + 0.5) / ss as f32 - 0.5;
+        x.y = (x.y + 0.5) / ss as f32 - 0.5;
     });
     // let chessboard_found = find_chessboard_corners_sb_with_meta(
     //     &im,
@@ -182,12 +182,13 @@ pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_ro
 
     if show {
         let mut im_copy = Mat::default();
-        cvt_color(image, &mut im_copy, COLOR_GRAY2BGR, 0).unwrap();
+        cvt_color_def(image, &mut im_copy, COLOR_GRAY2BGR).unwrap();
         let tmp = im_copy;
         let mut im_copy = Mat::default();
         resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
         corners.as_mut_slice().iter_mut().for_each(|x| {
-            *x *= 512.0 / 98. as f32;
+            x.x = (x.x + 0.5) * 512.0 / 98.0 - 0.5;
+            x.y = (x.y + 0.5) * 512.0 / 98.0 - 0.5;
         });
 
         if corners.len() > 0 {
@@ -209,7 +210,7 @@ pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_ro
     }
     if corners.len() > 0 {
         for corner in corners.as_mut_slice() {
-            *corner *= 4095.0 / 97.0;
+            *corner *= 4094.0 / 97.0;
         }
         Some(corners)
     } else {
