@@ -4,6 +4,8 @@
 #[macro_use]
 mod pinout;
 
+const PROTOCOL_VERSION: u32 = 1;
+
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
@@ -23,7 +25,7 @@ use embassy_usb::{
     class::cdc_acm::{CdcAcmClass, State}, driver::EndpointError, Builder, UsbDevice
 };
 use paj7025_nrf::Paj7025;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 use {defmt_rtt as _, panic_probe as _};
 
 #[link_section = ".ramtextload"]
@@ -81,13 +83,13 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 });
 
 const NUM_BUFFERS: usize = 2;
-static SHARED_BUFFERS: StaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = StaticCell::new();
+static SHARED_BUFFERS: ConstStaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = ConstStaticCell::new([[0; 98*98+98*3]; NUM_BUFFERS]);
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let shared_buffers = SHARED_BUFFERS.init_with(|| [[0; 98*98+98*3]; NUM_BUFFERS]);
+    let shared_buffers = SHARED_BUFFERS.take();
     let mut config = Config::default();
-    config.hfclk_source = HfclkSource::ExternalXtal;
+    // config.hfclk_source = HfclkSource::ExternalXtal;
 
     // if the ats_mot_nrf52840 board is powered from USB
     // (high voltage mode), GPIO output voltage is set to 1.8 volts by
@@ -239,7 +241,15 @@ async fn main(spawner: Spawner) {
                     }
                 }
                 b'r' => cortex_m::peripheral::SCB::sys_reset(),
-                b'i' => write_serial(&mut class, &device_id()).await,
+                b'i' => {
+                    write_serial(&mut class, &PROTOCOL_VERSION.to_le_bytes()).await;
+                    write_serial(&mut class, &device_id()).await;
+                    let resolution = [98, 0, 98, 0]; // 2 u16's
+                    let object_resolution = 4095u32.to_le_bytes();
+                    write_serial(&mut class, &resolution).await;
+                    write_serial(&mut class, &object_resolution).await;
+                    write_serial(&mut class, &object_resolution).await;
+                }
                 _ => defmt::error!("Unknown command '{}'", cmd),
             }
             cmd = wait_for_serial(&mut class).await;
@@ -385,16 +395,16 @@ fn usb_device(p: impl Peripheral<P = peripherals::USBD> + 'static) -> (
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
-    static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static MSOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+    static CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+    static BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+    static MSOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+    static CONTROL_BUF: ConstStaticCell<[u8; 64]> = ConstStaticCell::new([0; 64]);
     static STATE: StaticCell<State> = StaticCell::new();
 
-    let config_descriptor = CONFIG_DESCRIPTOR.init_with(|| [0; 256]);
-    let bos_descriptor = BOS_DESCRIPTOR.init_with(|| [0; 256]);
-    let msos_descriptor = MSOS_DESCRIPTOR.init_with(|| [0; 256]);
-    let control_buf = CONTROL_BUF.init_with(|| [0; 64]);
+    let config_descriptor = CONFIG_DESCRIPTOR.take();
+    let bos_descriptor = BOS_DESCRIPTOR.take();
+    let msos_descriptor = MSOS_DESCRIPTOR.take();
+    let control_buf = CONTROL_BUF.take();
 
     let state = STATE.init_with(State::new);
     let mut builder = Builder::new(

@@ -15,7 +15,7 @@ fn main() {
     println!("# filename x y");
     for filename in cli.images {
         let im = imread(&filename, IMREAD_COLOR).unwrap();
-        let corners = get_chessboard_corners_cv(&im, Port::Nf, cli.grid_size, cli.grid_size, false);
+        let corners = get_chessboard_corners_cv(&im, Port::Nf, (4095, 4095), cli.grid_size, cli.grid_size, false);
         if let Some(corners) = corners {
             for corner in corners {
                 println!("{filename} {} {}", corner.x, corner.y);

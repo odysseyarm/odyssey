@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, highgui::{imshow, poll_key}, imgproc::{connected_components_with_stats, cvt_color_def, resize, threshold, COLOR_GRAY2BGR, INTER_CUBIC, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
+use opencv::{calib3d::{ calibrate_camera, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, imgproc::{connected_components_with_stats, threshold, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
 use crate::{chessboard::read_camara_params, DeviceUuid, Port};
 
@@ -13,9 +13,24 @@ pub mod special;
 
 /// Returns None if no circles were found. invert = false -> detect dark blobs, invert = true ->
 /// detect white blobs
-pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool, _asymmetric: bool, invert: bool, special: bool) -> Option<Vector<Point2f>> {
+pub fn get_circles_centers(
+    image: &[u8],
+    _port: Port,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
+    board_rows: u16,
+    board_cols: u16,
+    _show: bool,
+    _asymmetric: bool,
+    invert: bool,
+    special: bool,
+) -> Option<Vector<Point2f>> {
     let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
-    let im = Mat::new_rows_cols_with_data(98, 98, image).unwrap().clone_pointee();
+    let im = Mat::new_rows_cols_with_data(
+        resolution.1.into(),
+        resolution.0.into(),
+        image,
+    ).unwrap().clone_pointee();
 
     let mut thresholded = Mat::default();
     threshold(
@@ -79,16 +94,16 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
         let moments = opencv::imgproc::moments(&masked_region, false).unwrap();
         if moments.m00 > 0. {
             let center = Point2f::new(
-                (moments.m10 / moments.m00) as f32 * 4094.0 / 97.0,
-                (moments.m01 / moments.m00) as f32 * 4094.0 / 97.0,
+                (moments.m10 / moments.m00) as f32 * (object_resolution.0 - 1) as f32 / (resolution.0 - 1) as f32,
+                (moments.m01 / moments.m00) as f32 * (object_resolution.1 - 1) as f32 / (resolution.1 - 1) as f32,
             );
             centers.push(center);
         }
     }
 
-    if show {
-        display_found_circles(&im, board_size, &centers, true, port);
-    }
+    // if show {
+    //     display_found_circles(&im, board_size, &centers, true, port);
+    // }
 
     if !special {
         if centers.len() != (board_rows * board_cols) as usize {
@@ -120,40 +135,42 @@ pub fn get_circles_centers(image: &[u8; 98*98], port: Port, board_rows: u16, boa
     }
 }
 
-fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vector<Point2f>, pattern_was_found: bool, port: Port) {
-    let mut display_im = Mat::default();
-    cvt_color_def(&im, &mut display_im, COLOR_GRAY2BGR).unwrap();
-    let tmp = display_im;
-    let mut display_im = Mat::default();
-    resize(&tmp, &mut display_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
-
-    let mut centers = centers.clone();
-    centers.as_mut_slice().iter_mut().for_each(|x| {
-        *x += (0.5, 0.5).into();
-        *x *= 512.0 / 4095. as f32;
-        let half_pixel = (512.0 / 4095. as f32) / 2.;
-        *x += (half_pixel, half_pixel).into();
-    });
-
-    draw_chessboard_corners(
-        &mut display_im,
-        board_size,
-        &centers,
-        pattern_was_found,
-    ).unwrap();
-
-    let name = match port {
-        Port::Wf => "wf",
-        Port::Nf => "nf",
-    };
-    imshow(name, &display_im).unwrap();
-    poll_key().unwrap();
-}
+// fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vector<Point2f>, pattern_was_found: bool, port: Port) {
+//     let mut display_im = Mat::default();
+//     cvt_color_def(&im, &mut display_im, COLOR_GRAY2BGR).unwrap();
+//     let tmp = display_im;
+//     let mut display_im = Mat::default();
+//     resize(&tmp, &mut display_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
+//
+//     let mut centers = centers.clone();
+//     centers.as_mut_slice().iter_mut().for_each(|x| {
+//         *x += (0.5, 0.5).into();
+//         *x *= 512.0 / 4095. as f32;
+//         let half_pixel = (512.0 / 4095. as f32) / 2.;
+//         *x += (half_pixel, half_pixel).into();
+//     });
+//
+//     draw_chessboard_corners(
+//         &mut display_im,
+//         board_size,
+//         &centers,
+//         pattern_was_found,
+//     ).unwrap();
+//
+//     let name = match port {
+//         Port::Wf => "wf",
+//         Port::Nf => "nf",
+//     };
+//     imshow(name, &display_im).unwrap();
+//     poll_key().unwrap();
+// }
 
 pub fn calibrate_single(
-    images: &[[u8; 98 * 98]],
+    images: &[Vec<u8>],
     image_files: &Vector<String>,
     port: Port,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
     board_rows: u16,
     board_cols: u16,
     asymmetric: bool,
@@ -165,7 +182,7 @@ pub fn calibrate_single(
     let board_points = board_points(board_rows, board_cols, square_length, asymmetric, special);
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_circles_centers(image, port, board_rows, board_cols, false, asymmetric, invert, special)
+        get_circles_centers(image, port, resolution, object_resolution, board_rows, board_cols, false, asymmetric, invert, special)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 
@@ -179,7 +196,7 @@ pub fn calibrate_single(
     let reproj_err = calibrate_camera(
         &object_points,
         &corners_arr,
-        (4095, 4095).into(),
+        (object_resolution.0 as i32, object_resolution.1 as i32).into(),
         &mut camera_matrix,
         &mut dist_coeffs,
         &mut no_array(),
@@ -271,8 +288,10 @@ fn board_points(
 }
 
 pub fn my_stereo_calibrate(
-    wf: &[[u8; 98 * 98]],
-    nf: &[[u8; 98 * 98]],
+    wf: &[Vec<u8>],
+    nf: &[Vec<u8>],
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
     board_rows: u16,
     board_cols: u16,
     asymmetric: bool,
@@ -299,12 +318,12 @@ pub fn my_stereo_calibrate(
     let mut nf_points_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
         let Some(wf_points) =
-            get_circles_centers(wf_image, Port::Wf, board_rows, board_cols, false, asymmetric, invert, special)
+            get_circles_centers(wf_image, Port::Wf, resolution, object_resolution, board_rows, board_cols, false, asymmetric, invert, special)
         else {
             continue;
         };
         let Some(nf_points) =
-            get_circles_centers(nf_image, Port::Nf, board_rows, board_cols, false, asymmetric, invert, special)
+            get_circles_centers(nf_image, Port::Nf, resolution, object_resolution, board_rows, board_cols, false, asymmetric, invert, special)
         else {
             continue;
         };
@@ -327,7 +346,7 @@ pub fn my_stereo_calibrate(
         wf_dist_coeffs,
         nf_camera_matrix,
         nf_dist_coeffs,
-        (4095, 4095).into(),
+        (object_resolution.0 as i32, object_resolution.1 as i32).into(),
         &mut r,
         &mut t,
         &mut no_array(),

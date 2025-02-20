@@ -1,5 +1,5 @@
 use opencv::{
-    calib3d::{calibrate_camera, draw_chessboard_corners, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector}, highgui::{imshow, poll_key}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgproc::{corner_sub_pix, cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}
+    calib3d::{calibrate_camera, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector, _InputArrayTraitConst}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgproc::{corner_sub_pix, resize, INTER_CUBIC}
 };
 
 use crate::{DeviceUuid, Port};
@@ -16,8 +16,10 @@ pub fn read_camara_params(path: &str) -> Option<(Mat, Mat)> {
 }
 
 pub fn my_stereo_calibrate(
-    wf: &[[u8; 98 * 98]],
-    nf: &[[u8; 98 * 98]],
+    wf: &[Vec<u8>],
+    nf: &[Vec<u8>],
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
     board_rows: u16,
     board_cols: u16,
     wf_image_files: &Vector<String>,
@@ -47,12 +49,12 @@ pub fn my_stereo_calibrate(
     let mut nf_corners_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
         let Some(wf_corners) =
-            get_chessboard_corners(wf_image, Port::Wf, board_rows, board_cols, false)
+            get_chessboard_corners(wf_image, Port::Wf, resolution, object_resolution, board_rows, board_cols, false)
         else {
             continue;
         };
         let Some(nf_corners) =
-            get_chessboard_corners(nf_image, Port::Nf, board_rows, board_cols, false)
+            get_chessboard_corners(nf_image, Port::Nf, resolution, object_resolution, board_rows, board_cols, false)
         else {
             continue;
         };
@@ -75,7 +77,7 @@ pub fn my_stereo_calibrate(
         wf_dist_coeffs,
         nf_camera_matrix,
         nf_dist_coeffs,
-        (4095, 4095).into(),
+        (object_resolution.0 as i32, object_resolution.1 as i32).into(),
         &mut r,
         &mut t,
         &mut no_array(),
@@ -98,9 +100,11 @@ pub fn my_stereo_calibrate(
 }
 
 pub fn calibrate_single(
-    images: &[[u8; 98 * 98]],
+    images: &[Vec<u8>],
     image_files: &Vector<String>,
     port: Port,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
     board_rows: u16,
     board_cols: u16,
     device_uuid: DeviceUuid,
@@ -113,7 +117,7 @@ pub fn calibrate_single(
     }
 
     let corners_arr = images.iter().filter_map(|image| {
-        get_chessboard_corners(image, port, board_rows, board_cols, false)
+        get_chessboard_corners(image, port, resolution, object_resolution, board_rows, board_cols, false)
     }).collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
 
@@ -124,7 +128,17 @@ pub fn calibrate_single(
         max_count: 30,
         epsilon: f64::EPSILON,
     };
-    let reproj_err = calibrate_camera(&object_points, &corners_arr, (4095, 4095).into(), &mut camera_matrix, &mut dist_coeffs, &mut no_array(), &mut no_array(), 0, criteria).unwrap();
+    let reproj_err = calibrate_camera(
+        &object_points,
+        &corners_arr,
+        (object_resolution.0 as i32, object_resolution.1 as i32).into(),
+        &mut camera_matrix,
+        &mut dist_coeffs,
+        &mut no_array(),
+        &mut no_array(),
+        0,
+        criteria,
+    ).unwrap();
     println!("RMS error: {}", reproj_err);
 
     super::save_single_calibration(
@@ -139,12 +153,27 @@ pub fn calibrate_single(
 }
 
 /// Returns None if there were no corners found.
-pub fn get_chessboard_corners(image: &[u8; 98*98], port: Port, board_rows: u16, board_cols: u16, show: bool) -> Option<Vector<Point2f>> {
-    let im = Mat::new_rows_cols_with_data(98, 98, image).unwrap();
-    get_chessboard_corners_cv(&im, port, board_rows, board_cols, show)
+pub fn get_chessboard_corners(
+    image: &[u8],
+    port: Port,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
+    board_rows: u16,
+    board_cols: u16,
+    show: bool,
+) -> Option<Vector<Point2f>> {
+    let im = Mat::new_rows_cols_with_data(resolution.1.into(), resolution.0.into(), image).unwrap();
+    get_chessboard_corners_cv(&im, port, object_resolution, board_rows, board_cols, show)
 }
 
-pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_rows: u16, board_cols: u16, show: bool) -> Option<Vector<Point2f>> {
+pub fn get_chessboard_corners_cv(
+    image: &impl ToInputArray,
+    _port: Port,
+    object_resolution: (u32, u32),
+    board_rows: u16,
+    board_cols: u16,
+    _show: bool,
+) -> Option<Vector<Point2f>> {
     let board_rows = i32::from(board_rows);
     let board_cols = i32::from(board_cols);
 
@@ -180,37 +209,39 @@ pub fn get_chessboard_corners_cv(image: &impl ToInputArray, port: Port, board_ro
     // )
     // .unwrap();
 
-    if show {
-        let mut im_copy = Mat::default();
-        cvt_color_def(image, &mut im_copy, COLOR_GRAY2BGR).unwrap();
-        let tmp = im_copy;
-        let mut im_copy = Mat::default();
-        resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
-        corners.as_mut_slice().iter_mut().for_each(|x| {
-            x.x = (x.x + 0.5) * 512.0 / 98.0 - 0.5;
-            x.y = (x.y + 0.5) * 512.0 / 98.0 - 0.5;
-        });
-
-        if corners.len() > 0 {
-            draw_chessboard_corners(
-                &mut im_copy,
-                (board_cols, board_rows).into(),
-                &corners,
-                !corners.is_empty(),
-            )
-            .unwrap();
-        }
-
-        let name = match port {
-            Port::Wf => "wf",
-            Port::Nf => "nf",
-        };
-        imshow(name, &im_copy).unwrap();
-        poll_key().unwrap();
-    }
+    // if show {
+    //     let mut im_copy = Mat::default();
+    //     cvt_color_def(image, &mut im_copy, COLOR_GRAY2BGR).unwrap();
+    //     let tmp = im_copy;
+    //     let mut im_copy = Mat::default();
+    //     resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
+    //     corners.as_mut_slice().iter_mut().for_each(|x| {
+    //         x.x = (x.x + 0.5) * 512.0 / 98.0 - 0.5;
+    //         x.y = (x.y + 0.5) * 512.0 / 98.0 - 0.5;
+    //     });
+    //
+    //     if corners.len() > 0 {
+    //         draw_chessboard_corners(
+    //             &mut im_copy,
+    //             (board_cols, board_rows).into(),
+    //             &corners,
+    //             !corners.is_empty(),
+    //         )
+    //         .unwrap();
+    //     }
+    //
+    //     let name = match port {
+    //         Port::Wf => "wf",
+    //         Port::Nf => "nf",
+    //     };
+    //     imshow(name, &im_copy).unwrap();
+    //     poll_key().unwrap();
+    // }
     if corners.len() > 0 {
+        let size = image.input_array().unwrap().size(-1).unwrap();
         for corner in corners.as_mut_slice() {
-            *corner *= 4094.0 / 97.0;
+            corner.x *= (object_resolution.0 - 1) as f32 / (size.width - 1) as f32;
+            corner.y *= (object_resolution.1 - 1) as f32 / (size.height - 1) as f32;
         }
         Some(corners)
     } else {

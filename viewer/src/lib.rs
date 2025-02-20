@@ -24,6 +24,7 @@ pub mod draw_pattern_points;
 use macroquad::prelude::*;
 
 const CALIBRATION_VERSION: i32 = 1;
+const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Port {
@@ -32,8 +33,8 @@ pub enum Port {
 }
 
 struct PajData {
-    image: [u8; 98 * 98 * 4],
-    gray: [u8; 98 * 98],
+    image: Vec<u8>,
+    gray: Vec<u8>,
     mot_data: [MotData; 16],
     pattern_points: Option<Vec<Point2f>>,
     avg_frame_period: f64,
@@ -43,8 +44,8 @@ struct PajData {
 impl Default for PajData {
     fn default() -> Self {
         Self {
-            image: [255; 98 * 98 * 4],
-            gray: [255; 98 * 98],
+            image: vec![],
+            gray: vec![],
             mot_data: Default::default(),
             avg_frame_period: 1.0,
             last_frame: Instant::now(),
@@ -57,8 +58,8 @@ struct MainState {
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
     capture_count: usize,
-    captured_nf: Vec<[u8; 98 * 98]>,
-    captured_wf: Vec<[u8; 98 * 98]>,
+    captured_nf: Vec<Vec<u8>>,
+    captured_wf: Vec<Vec<u8>>,
     captured_nf_files: Vec<String>,
     captured_wf_files: Vec<String>,
     detector_params: Arc<DetectorParams>,
@@ -66,10 +67,12 @@ struct MainState {
     quit: Arc<AtomicBool>,
     draw_pattern_points: DrawPatternPoints,
     device_uuid: DeviceUuid,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
 }
 
 impl MainState {
-    fn add_capture(&mut self, port: Port, image: [u8; 98 * 98], path: String) {
+    fn add_capture(&mut self, port: Port, image: Vec<u8>, path: String) {
         match port {
             Port::Wf => {
                 self.captured_wf.push(image);
@@ -118,17 +121,24 @@ impl Display for DetectorPattern {
 }
 
 impl MainState {
-    fn new(capture_count: usize, port: Box<dyn SerialPort>, device_uuid: DeviceUuid) -> MainState {
+    fn new(
+        capture_count: usize,
+        port: Box<dyn SerialPort>,
+        device_uuid: DeviceUuid,
+        resolution: (u16, u16),
+        object_resolution: (u32, u32),
+    ) -> MainState {
         let wf_data = Arc::new(Mutex::new(Default::default()));
         let nf_data = Arc::new(Mutex::new(Default::default()));
         let reset = Arc::new(AtomicBool::new(false));
         let quit = Arc::new(AtomicBool::new(false));
-        // let binding = std::env::args().nth(2).unwrap_or("".into());
 
         let main_state = MainState {
             wf_data: wf_data.clone(),
             nf_data: nf_data.clone(),
             device_uuid,
+            resolution,
+            object_resolution,
             capture_count,
             captured_nf: vec![],
             captured_wf: vec![],
@@ -146,16 +156,22 @@ impl MainState {
         };
 
         let detector_params = main_state.detector_params.clone();
-        std::thread::spawn(move || {
-            reader_thread(
-                port,
-                wf_data,
-                nf_data,
-                detector_params,
-                reset,
-                quit,
-            );
-        });
+        // hack-ish
+        if resolution == (98, 98) {
+            std::thread::spawn(move || {
+                paj_reader_thread(
+                    port,
+                    object_resolution,
+                    wf_data,
+                    nf_data,
+                    detector_params,
+                    reset,
+                    quit,
+                );
+            });
+        } else {
+            panic!("Unsupported resolution");
+        }
 
         main_state
     }
@@ -173,29 +189,42 @@ impl MainState {
         let nf_data = self.nf_data.lock().unwrap();
 
         // Image scale factor
-        let image_scale = 5.0;
-        let image_size = 98.0 * image_scale;
+        let image_scale = if self.resolution == (98, 98) {
+            5.0
+        } else {
+            1.0
+        };
+        let rx = self.resolution.0 as f32;
+        let ry = self.resolution.1 as f32;
+        let image_width = rx * image_scale;
+        let image_height = ry * image_scale;
         let spacing = 20.0;
 
         // Draw images
-        draw_image(
-            &wf_data.image,
-            vec2(0.0, 0.0),
-            image_scale,
-        );
-        draw_image(
-            &nf_data.image,
-            vec2(image_size + spacing, 0.0),
-            image_scale,
-        );
+        if !wf_data.image.is_empty() {
+            draw_image(
+                &wf_data.image,
+                self.resolution,
+                vec2(0.0, 0.0),
+                image_scale,
+            );
+        }
+        if !nf_data.image.is_empty() {
+            draw_image(
+                &nf_data.image,
+                self.resolution,
+                vec2(image_width + spacing, 0.0),
+                image_scale,
+            );
+        }
 
         // Draw FPS
         let fps = 1.0 / wf_data.avg_frame_period;
-        draw_text(&format!("{:.1} fps", fps), 10.0, image_size + 20.0, 20.0, WHITE);
+        draw_text(&format!("{:.1} fps", fps), 10.0, image_height + 20.0, 20.0, WHITE);
         draw_text(
             &format!("{:.1} fps", fps),
-            image_size + spacing + 10.0,
-            image_size + 20.0,
+            image_width + spacing + 10.0,
+            image_height + 20.0,
             20.0,
             WHITE,
         );
@@ -210,21 +239,21 @@ impl MainState {
                 self.captured_wf.len()
             ),
             10.0,
-            image_size + 40.0,
+            image_height + 40.0,
             20.0,
             WHITE,
         );
         draw_text(
             "<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close",
             10.0,
-            image_size + 60.0,
+            image_height + 60.0,
             20.0,
             WHITE,
         );
         draw_text(
             &format!("Device ID: {}", self.device_uuid),
-            980.0-180.0,
-            image_size + 40.0,
+            image_width*2.0-180.0,
+            image_height + 40.0,
             20.0,
             WHITE,
         );
@@ -238,14 +267,14 @@ impl MainState {
         let nf_transform = draw_pattern_points::get_transform_matrix(
             vec2(image_scale, image_scale),
             0.,
-            vec2(image_size + spacing, 0.0),
+            vec2(image_width + spacing, 0.0),
             vec2(0., 0.),
         );
 
         // Draw circles
         // fixme will look backwards for ats lite
-        draw_mot_data_circles(&wf_data.mot_data, wf_transform, true);
-        draw_mot_data_circles(&nf_data.mot_data, nf_transform, false);
+        draw_mot_data_circles(&wf_data.mot_data, self.object_resolution, wf_transform, true);
+        draw_mot_data_circles(&nf_data.mot_data, self.object_resolution, nf_transform, false);
 
         // Draw pattern points if available
         if let Some(pattern_points) = &wf_data.pattern_points {
@@ -267,8 +296,13 @@ impl MainState {
     }
 }
 
-fn draw_image(image: &[u8; 98 * 98 * 4], offset: Vec2, scale: f32) {
-    let texture = Texture2D::from_rgba8(98, 98, image);
+fn draw_image(
+    image: &[u8],
+    resolution: (u16, u16),
+    offset: Vec2,
+    scale: f32,
+) {
+    let texture = Texture2D::from_rgba8(resolution.0, resolution.1, image);
     texture.set_filter(FilterMode::Nearest);
     draw_texture_ex(
         &texture,
@@ -276,7 +310,7 @@ fn draw_image(image: &[u8; 98 * 98 * 4], offset: Vec2, scale: f32) {
         offset.y,
         WHITE,
         DrawTextureParams {
-            dest_size: Some((98.0 * scale, 98.0 * scale).into()),
+            dest_size: Some((resolution.0 as f32 * scale, resolution.1 as f32 * scale).into()),
             ..Default::default()
         },
     );
@@ -284,14 +318,16 @@ fn draw_image(image: &[u8; 98 * 98 * 4], offset: Vec2, scale: f32) {
 
 fn draw_mot_data_circles(
     mot_data: &[MotData],
+    object_resolution: (u32, u32),
     transform: Mat4,
     flip_x: bool,
 ) {
+    // The PAG doesn't seem to support getting both object info and image data simultaneously...?
     for data in mot_data {
         if data.area > 0 {
             let mut point = vec3(
-                data.cx as f32 / 4094. * 97. + 0.5,
-                data.cy as f32 / 4094. * 97. + 0.5,
+                data.cx as f32 / object_resolution.0 as f32 * 97. + 0.5,
+                data.cy as f32 / object_resolution.1 as f32 * 97. + 0.5,
                 0.0,
             );
             if flip_x {
@@ -317,15 +353,41 @@ pub async fn main() {
     // read device uuid
     port.write(b"i").unwrap();
     port.flush().unwrap();
+    let mut version = [0; 4];
+    port.read_exact(&mut version).unwrap();
+    let version = u32::from_le_bytes(version);
+    if version != PROTOCOL_VERSION {
+        eprintln!("Protocol version mismatch!");
+        if version > 100 {
+            // Probably not a version number and is just old firmware returning the device uuid.
+            eprintln!("Device did not respond with a valid protocol version");
+            eprintln!("Please update the firmware");
+        } else {
+            eprintln!("Device protocol version {version} does not match expected protocol version {PROTOCOL_VERSION}");
+        }
+        return;
+    }
     let mut device_uuid = DeviceUuid([0; 6]);
     port.read_exact(&mut device_uuid.0).unwrap();
+    let mut r = [0; 12];
+    port.read_exact(&mut r).unwrap();
+    let resolution = (
+        u16::from_le_bytes([r[0], r[1]]),
+        u16::from_le_bytes([r[2], r[3]]),
+    );
+    let object_resolution = (
+        u32::from_le_bytes([r[4], r[5], r[6], r[7]]),
+        u32::from_le_bytes([r[8], r[9], r[10], r[11]]),
+    );
+    eprintln!("Resolution {}x{}", resolution.0, resolution.1);
+    eprintln!("Object resolution {}x{}", object_resolution.0, object_resolution.1);
 
     std::fs::create_dir_all(format!("calibrations/{device_uuid}/images")).unwrap();
     let capture_count = (0..)
         .find(|i| !Path::new(&format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", i)).exists())
         .unwrap();
 
-    let mut state = MainState::new(capture_count, port, device_uuid);
+    let mut state = MainState::new(capture_count, port, device_uuid, resolution, object_resolution);
 
     loop {
         state.update();
@@ -347,24 +409,24 @@ async fn handle_input(state: &mut MainState) {
         PngEncoder::new(BufWriter::new(
             File::create(&path).unwrap(),
         ))
-        .write_image(&wf_data.gray, 98, 98, ColorType::L8)
+        .write_image(&wf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
         .unwrap();
-        let wf_data_gray = wf_data.gray;
+        let wf_data_gray = wf_data.gray.clone();
         drop(wf_data);
-        state.add_capture(Port::Wf, wf_data_gray, path);
-        println!("Saved calibrations/{device_uuid}/images/widefield_{:02}.png", state.capture_count);
+        state.add_capture(Port::Wf, wf_data_gray, path.clone());
+        println!("Saved {path}");
 
         let nf_data = state.nf_data.lock().unwrap();
         let path = format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
         PngEncoder::new(BufWriter::new(
             File::create(&path).unwrap(),
         ))
-        .write_image(&nf_data.gray, 98, 98, ColorType::L8)
+        .write_image(&nf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
         .unwrap();
-        let nf_data_gray = nf_data.gray;
+        let nf_data_gray = nf_data.gray.clone();
         drop(nf_data);
-        state.add_capture(Port::Nf, nf_data_gray, path);
-        println!("Saved calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
+        state.add_capture(Port::Nf, nf_data_gray.clone(), path.clone());
+        println!("Saved {path}");
 
         state.capture_count += 1;
     }
@@ -382,11 +444,15 @@ async fn handle_input(state: &mut MainState) {
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
+        let resolution = state.resolution;
+        let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
                 &captures_files,
                 Port::Nf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 true,
@@ -398,6 +464,8 @@ async fn handle_input(state: &mut MainState) {
                 &captures,
                 &captures_files,
                 Port::Nf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 false,
@@ -409,6 +477,8 @@ async fn handle_input(state: &mut MainState) {
                 &captures,
                 &captures_files,
                 Port::Nf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 device_uuid,
@@ -427,11 +497,15 @@ async fn handle_input(state: &mut MainState) {
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
+        let resolution = state.resolution;
+        let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
                 &captures_files,
                 Port::Wf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 false,
@@ -443,6 +517,8 @@ async fn handle_input(state: &mut MainState) {
                 &captures,
                 &captures_files,
                 Port::Wf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 true,
@@ -454,6 +530,8 @@ async fn handle_input(state: &mut MainState) {
                 &captures,
                 &captures_files,
                 Port::Wf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 device_uuid,
@@ -474,10 +552,14 @@ async fn handle_input(state: &mut MainState) {
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
         let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
+        let resolution = state.resolution;
+        let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
             DetectorPattern::Chessboard => chessboard::my_stereo_calibrate(
                 &wf,
                 &nf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 &captures_wf_files,
@@ -487,6 +569,8 @@ async fn handle_input(state: &mut MainState) {
             DetectorPattern::AsymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
                 &nf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 true,
@@ -499,6 +583,8 @@ async fn handle_input(state: &mut MainState) {
             DetectorPattern::SymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
                 &nf,
+                resolution,
+                object_resolution,
                 board_rows,
                 board_cols,
                 false,
@@ -553,8 +639,9 @@ async fn handle_input(state: &mut MainState) {
     }
 }
 
-fn reader_thread(
+fn paj_reader_thread(
     mut port: Box<dyn SerialPort>,
+    object_resolution: (u32, u32),
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
     detector_params: Arc<DetectorParams>,
@@ -588,8 +675,10 @@ fn reader_thread(
             DetectorPattern::None => None,
             DetectorPattern::Chessboard => {
                 chessboard::get_chessboard_corners(
-                    &gray,
+                    gray,
                     port,
+                    (98, 98),
+                    object_resolution,
                     board_rows,
                     board_cols,
                     false,
@@ -597,8 +686,10 @@ fn reader_thread(
             }
             DetectorPattern::AsymmetricCircles => {
                 circles::get_circles_centers(
-                    &gray,
+                    gray,
                     port,
+                    (98, 98),
+                    object_resolution,
                     board_rows,
                     board_cols,
                     false,
@@ -609,8 +700,10 @@ fn reader_thread(
             }
             DetectorPattern::SymmetricCircles => {
                 circles::get_circles_centers(
-                    &gray,
+                    gray,
                     port,
+                    (98, 98),
+                    object_resolution,
                     board_rows,
                     board_cols,
                     false,
@@ -626,12 +719,13 @@ fn reader_thread(
         } else {
             nf_data.lock().unwrap()
         };
+        paj_data.image.resize(4*98*98, 255);
         for i in 0..98 * 98 {
             paj_data.image[4 * i] = buf[i];
             paj_data.image[4 * i + 1] = buf[i];
             paj_data.image[4 * i + 2] = buf[i];
         }
-        paj_data.gray = *gray;
+        paj_data.gray = gray.to_vec();
         for (i, mut raw_mot) in buf[98 * 98..][..256].chunks(16).enumerate() {
             paj_data.mot_data[i] = MotData::parse(&mut raw_mot);
         }
@@ -643,8 +737,10 @@ fn reader_thread(
 }
 
 fn _opencv_thread(
-    raw_image: Receiver<(Port, [u8; 98 * 98])>,
+    raw_image: Receiver<(Port, Vec<u8>)>,
     detector_params: Arc<DetectorParams>,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
 ) {
     loop {
         let (port, image) = raw_image.recv().unwrap();
@@ -658,6 +754,8 @@ fn _opencv_thread(
                 chessboard::get_chessboard_corners(
                     &image,
                     Port::Wf,
+                    resolution,
+                    object_resolution,
                     board_rows,
                     board_cols,
                     true,
@@ -667,6 +765,8 @@ fn _opencv_thread(
                 circles::get_circles_centers(
                     &image,
                     port,
+                    resolution,
+                    object_resolution,
                     board_rows,
                     board_cols,
                     true,
@@ -679,6 +779,8 @@ fn _opencv_thread(
                 circles::get_circles_centers(
                     &image,
                     port,
+                    resolution,
+                    object_resolution,
                     board_rows,
                     board_cols,
                     true,
