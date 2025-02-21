@@ -265,7 +265,7 @@ impl MainState {
         );
         draw_text(
             &format!("Device ID: {}", self.device_uuid),
-            image_width*2.0-180.0,
+            98.0*5.0*2.0-180.0,
             image_height + 40.0,
             20.0,
             WHITE,
@@ -401,7 +401,7 @@ pub async fn main() {
 
     std::fs::create_dir_all(format!("calibrations/{device_uuid}/images")).unwrap();
     let capture_count = (0..)
-        .find(|i| !Path::new(&format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", i)).exists())
+        .find(|i| !Path::new(&format!("calibrations/{device_uuid}/images/widefield_{:02}.png", i)).exists())
         .unwrap();
 
     let mut state = MainState::new(capture_count, port, device_uuid, resolution, object_resolution);
@@ -422,28 +422,36 @@ async fn handle_input(state: &mut MainState) {
     if is_key_pressed(KeyCode::Space) {
         // Capture and save image
         let wf_data = state.wf_data.lock().unwrap();
-        let path = format!("calibrations/{device_uuid}/images/widefield_{:02}.png", state.capture_count);
-        PngEncoder::new(BufWriter::new(
-            File::create(&path).unwrap(),
-        ))
-        .write_image(&wf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
-        .unwrap();
-        let wf_data_gray = wf_data.gray.clone();
-        drop(wf_data);
-        state.add_capture(Port::Wf, wf_data_gray, path.clone());
-        println!("Saved {path}");
+        if !wf_data.gray.is_empty() {
+            let path = format!("calibrations/{device_uuid}/images/widefield_{:02}.png", state.capture_count);
+            PngEncoder::new(BufWriter::new(
+                File::create(&path).unwrap(),
+            ))
+            .write_image(&wf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
+            .unwrap();
+            let wf_data_gray = wf_data.gray.clone();
+            drop(wf_data);
+            state.add_capture(Port::Wf, wf_data_gray, path.clone());
+            println!("Saved {path}");
+        } else {
+            drop(wf_data);
+        }
 
         let nf_data = state.nf_data.lock().unwrap();
-        let path = format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
-        PngEncoder::new(BufWriter::new(
-            File::create(&path).unwrap(),
-        ))
-        .write_image(&nf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
-        .unwrap();
-        let nf_data_gray = nf_data.gray.clone();
-        drop(nf_data);
-        state.add_capture(Port::Nf, nf_data_gray.clone(), path.clone());
-        println!("Saved {path}");
+        if !nf_data.gray.is_empty() {
+            let path = format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
+            PngEncoder::new(BufWriter::new(
+                File::create(&path).unwrap(),
+            ))
+            .write_image(&nf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
+            .unwrap();
+            let nf_data_gray = nf_data.gray.clone();
+            drop(nf_data);
+            state.add_capture(Port::Nf, nf_data_gray.clone(), path.clone());
+            println!("Saved {path}");
+        } else {
+            drop(nf_data);
+        }
 
         state.capture_count += 1;
     }
@@ -765,6 +773,7 @@ fn image_only_reader_thread(
     quit: Arc<AtomicBool>,
 ) {
 
+    port.write(b"a").unwrap();
     let mut gray = [0; 320*240];
     loop {
         if reset.load(Ordering::Relaxed) {
@@ -773,9 +782,9 @@ fn image_only_reader_thread(
             quit.store(true, Ordering::Relaxed);
             break;
         } else {
+            port.read_exact(&mut gray).unwrap();
             port.write(b"a").unwrap();
         }
-        port.read_exact(&mut gray).unwrap();
 
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);

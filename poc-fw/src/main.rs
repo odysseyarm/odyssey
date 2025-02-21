@@ -114,6 +114,10 @@ fn init() -> (cortex_m::Peripherals, Peripherals) {
     config.lfclk_source = LfclkSource::ExternalXtal;
 
     configure_internal_capacitors();
+    // Enable instruction cache
+    pac::CACHE.enable().write(|w| w.set_enable(true));
+    // Set clock to 128 MHz
+    pac::CLOCK.hfclkctrl().write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));
 
     let mut peripherals = embassy_nrf::init(config);
     if needs_reset {
@@ -209,6 +213,7 @@ async fn main(spawner: Spawner) {
         free_buffers.receiver(),
         image_buffers.sender(),
     ));
+
     loop {
         match wait_for_serial(cdc_acm_class).await {
             b'a' => {
@@ -251,6 +256,8 @@ async fn image_loop(
     loop {
         let buf = free_buffers.receive().await;
         pag.get_frame(buf).await.unwrap();
+        // the image is mirrored for some reason
+        buf.chunks_mut(320).for_each(|l| l.reverse());
         image_buffers.send(buf).await;
     }
 }

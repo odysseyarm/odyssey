@@ -4,3 +4,4 @@ runner = "cargo bin probe-rs run --chip nRF5340_xxAA"
 
 [build]
 target = "thumbv8m.main-none-eabihf"
+rustflags = "-C target-cpu=cortex-m33"
