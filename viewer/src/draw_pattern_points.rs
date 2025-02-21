@@ -13,6 +13,8 @@ impl DrawPatternPoints {
         points: &[Point2f],
         cols: usize,
         pattern_was_found: bool,
+        resolution: (u16, u16),
+        object_resolution: (u32, u32),
         transform: Mat4,
     ) {
         let colors = [
@@ -25,10 +27,14 @@ impl DrawPatternPoints {
             Color::from_rgba(255, 0, 255, 255),
         ];
 
+        let rx = resolution.0 as f32;
+        let ry = resolution.1 as f32;
+        let ox = object_resolution.0 as f32;
+        let oy = object_resolution.1 as f32;
         for (i, point) in points.iter().enumerate() {
             let point = vec3(
-                point.x as f32 / 4094. * 97. + 0.5,
-                point.y as f32 / 4094. * 97. + 0.5,
+                point.x as f32 / (ox - 1.0) * (rx - 1.0) + 0.5,
+                point.y as f32 / (oy - 1.0) * (ry - 1.0) + 0.5,
                 0.0,
             );
             let transformed_point = transform.transform_point3(point);
@@ -49,8 +55,8 @@ impl DrawPatternPoints {
             // Draw the line between points
             if pattern_was_found && i > 0 {
                 let prev_point = vec3(
-                    points[i-1].x as f32 / 4094. * 97. + 0.5,
-                    points[i-1].y as f32 / 4094. * 97. + 0.5,
+                    points[i-1].x as f32 / (ox - 1.0) * (rx - 1.0) + 0.5,
+                    points[i-1].y as f32 / (oy - 1.0) * (ry - 1.0) + 0.5,
                     0.0,
                 );
                 let prev_transformed_point = transform.transform_point3(prev_point);

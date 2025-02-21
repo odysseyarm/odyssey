@@ -169,6 +169,19 @@ impl MainState {
                     quit,
                 );
             });
+        } else if resolution == (320, 240) {
+            std::thread::spawn(move || {
+                image_only_reader_thread(
+                    port,
+                    resolution,
+                    object_resolution,
+                    wf_data,
+                    nf_data,
+                    detector_params,
+                    reset,
+                    quit,
+                );
+            });
         } else {
             panic!("Unsupported resolution");
         }
@@ -192,7 +205,7 @@ impl MainState {
         let image_scale = if self.resolution == (98, 98) {
             5.0
         } else {
-            1.0
+            2.0
         };
         let rx = self.resolution.0 as f32;
         let ry = self.resolution.1 as f32;
@@ -282,6 +295,8 @@ impl MainState {
                 pattern_points,
                 cols.into(),
                 true,
+                self.resolution,
+                self.object_resolution,
                 wf_transform,
             );
         }
@@ -290,6 +305,8 @@ impl MainState {
                 pattern_points,
                 cols.into(),
                 true,
+                self.resolution,
+                self.object_resolution,
                 nf_transform,
             );
         }
@@ -725,7 +742,8 @@ fn paj_reader_thread(
             paj_data.image[4 * i + 1] = buf[i];
             paj_data.image[4 * i + 2] = buf[i];
         }
-        paj_data.gray = gray.to_vec();
+        paj_data.gray.resize(gray.len(), 0);
+        paj_data.gray.copy_from_slice(gray);
         for (i, mut raw_mot) in buf[98 * 98..][..256].chunks(16).enumerate() {
             paj_data.mot_data[i] = MotData::parse(&mut raw_mot);
         }
@@ -733,6 +751,93 @@ fn paj_reader_thread(
             + paj_data.last_frame.elapsed().as_secs_f64() / 8.;
         paj_data.last_frame = Instant::now();
         paj_data.pattern_points = pattern_points.map(|v| v.into());
+    }
+}
+
+fn image_only_reader_thread(
+    mut port: Box<dyn SerialPort>,
+    resolution: (u16, u16),
+    object_resolution: (u32, u32),
+    wf_data: Arc<Mutex<PajData>>,
+    _nf_data: Arc<Mutex<PajData>>,
+    detector_params: Arc<DetectorParams>,
+    reset: Arc<AtomicBool>,
+    quit: Arc<AtomicBool>,
+) {
+
+    let mut gray = [0; 320*240];
+    loop {
+        if reset.load(Ordering::Relaxed) {
+            port.write(b"r").unwrap();
+            port.flush().unwrap();
+            quit.store(true, Ordering::Relaxed);
+            break;
+        } else {
+            port.write(b"a").unwrap();
+        }
+        port.read_exact(&mut gray).unwrap();
+
+        let board_cols = detector_params.cols.load(Ordering::Relaxed);
+        let board_rows = detector_params.rows.load(Ordering::Relaxed);
+        let special = detector_params.special.load(Ordering::Relaxed);
+        let pattern = detector_params.pattern.load(Ordering::Relaxed);
+        let port = Port::Wf;
+        let pattern_points = match pattern {
+            DetectorPattern::None => None,
+            DetectorPattern::Chessboard => {
+                chessboard::get_chessboard_corners(
+                    &gray,
+                    port,
+                    resolution,
+                    object_resolution,
+                    board_rows,
+                    board_cols,
+                    false,
+                )
+            }
+            DetectorPattern::AsymmetricCircles => {
+                circles::get_circles_centers(
+                    &gray,
+                    port,
+                    resolution,
+                    object_resolution,
+                    board_rows,
+                    board_cols,
+                    false,
+                    true,
+                    false,
+                    special,
+                )
+            }
+            DetectorPattern::SymmetricCircles => {
+                circles::get_circles_centers(
+                    &gray,
+                    port,
+                    resolution,
+                    object_resolution,
+                    board_rows,
+                    board_cols,
+                    false,
+                    false,
+                    true,
+                    special,
+                )
+            }
+        };
+
+        let mut wf_data = wf_data.lock().unwrap();
+        wf_data.image.resize(4*320*240, 255);
+        for (i, &v) in gray.iter().enumerate() {
+            wf_data.image[4 * i] = v;
+            wf_data.image[4 * i + 1] = v;
+            wf_data.image[4 * i + 2] = v;
+        }
+        wf_data.gray.resize(gray.len(), 0);
+        wf_data.gray.copy_from_slice(&gray);
+        wf_data.avg_frame_period = wf_data.avg_frame_period * 7. / 8.
+            + wf_data.last_frame.elapsed().as_secs_f64() / 8.;
+        wf_data.last_frame = Instant::now();
+        wf_data.pattern_points = pattern_points.map(|v| v.into());
     }
 }
 

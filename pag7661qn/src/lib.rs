@@ -20,10 +20,10 @@ pub struct Pag7661Qn<I, D, O, M> {
 }
 
 impl<S: SpiDevice, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<Pag7661QnSpi<S>, D, O, M> {
-    /// Creates a new PAG7661QN driver using SPI.
+    /// Creates a new PAG7661QN driver using SPI and perform initialization.
     ///
     /// Make sure `spi` is configured in mode 3 with MSB first bit order, max 20 MHz.
-    pub async fn new_spi(
+    pub async fn init_spi(
         spi: S,
         mut timer: D,
         int_o: O,
@@ -172,6 +172,7 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
         })
     }
 
+    /// Get the sensor FPS.
     pub async fn get_sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self.set_bank(0x00).await?;
         let mut value = [0];
@@ -181,6 +182,7 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
 }
 
 impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsIdle> Pag7661Qn<I, D, O, M> {
+    /// Set the sensor FPS.
     pub async fn set_sensor_fps(
         &mut self,
         value: u8,
@@ -188,6 +190,34 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsIdle> Pag7661Qn<I, D
         self.mode.is_idle().map_err(Error::ModeError)?;
         self.set_bank(0x00).await?;
         self.write(0x13, &[value]).await?;
+        Ok(())
+    }
+
+    /// Set the sensor's exposure time and led mode.
+    ///
+    /// `exposure_us` must be a multiple of 100 and cannot exceed 12700 µs.
+    pub async fn set_sensor_exposure_us(
+        &mut self,
+        led_always_on: bool,
+        exposure_us: u16,
+    ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
+        assert!(exposure_us % 100 == 0);
+        assert!(exposure_us <= 12700);
+        let value = (exposure_us / 100) as u8 | ((led_always_on as u8) << 7);
+        self.mode.is_idle().map_err(Error::ModeError)?;
+        self.set_bank(0x00).await?;
+        self.write(0x66, &[value]).await?;
+        Ok(())
+    }
+
+    /// Set the sensor gain.
+    pub async fn set_sensor_gain(
+        &mut self,
+        x: u8,
+    ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
+        self.mode.is_idle().map_err(Error::ModeError)?;
+        self.set_bank(0x00).await?;
+        self.write(0x67, &[x]).await?;
         Ok(())
     }
 }
