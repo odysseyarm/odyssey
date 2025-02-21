@@ -169,6 +169,12 @@ async fn main(spawner: Spawner) {
     let (ref mut cdc_acm_class, usb) = usb_device(peripherals.USBD);
     spawner.must_spawn(run_usb(usb));
 
+    // Reset the PAG
+    let mut vis_resetn = Output::new(peripherals.P1_06, Level::Low, OutputDrive::Standard);
+    // the datasheet doesn't say how long the reset pin needs to be asserted
+    embassy_time::Timer::after_micros(500).await;
+    vis_resetn.set_high();
+
     // Erratum 135
     unsafe {
         (0x5000ac04 as *mut u32).write_volatile(1);
