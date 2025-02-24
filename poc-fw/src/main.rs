@@ -3,12 +3,14 @@
 
 const PROTOCOL_VERSION: u32 = 1;
 
-mod usb;
+mod imu;
 mod init;
+mod usb;
 
 use core::str;
 
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_nrf::{
     gpio::{Input, Level, Output, OutputDrive, Pull},
     peripherals::{self, SPIM4},
@@ -18,13 +20,15 @@ use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
     channel::{Channel, Receiver, Sender},
 };
-use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
+use embassy_time::Delay;
+use embedded_hal_bus::spi::ExclusiveDevice;
 use pag7661qn::{Pag7661Qn, mode, spi::Pag7661QnSpi};
 use static_cell::ConstStaticCell;
 use usb::{wait_for_serial, write_serial};
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
+    SERIAL1 => spim::InterruptHandler<peripherals::SERIAL1>;
     SPIM4 => spim::InterruptHandler<peripherals::SPIM4>;
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
@@ -46,13 +50,13 @@ static IMAGE_BUFFERS: ConstStaticCell<ImageBufferChannel<1>> =
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let (_core_peripherals, peripherals) = init::init();
+    let (_core_peripherals, p) = init::init();
 
-    let (ref mut cdc_acm_class, usb) = usb::usb_device(peripherals.USBD);
+    let (ref mut cdc_acm_class, usb) = usb::usb_device(p.USBD);
     spawner.must_spawn(usb::run_usb(usb));
 
     // Reset the PAG
-    let mut vis_resetn = Output::new(peripherals.P1_06, Level::Low, OutputDrive::Standard);
+    let mut vis_resetn = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
     // the datasheet doesn't say how long the reset pin needs to be asserted
     embassy_time::Timer::after_micros(500).await;
     vis_resetn.set_high();
@@ -65,20 +69,10 @@ async fn main(spawner: Spawner) {
     spim_config.frequency = spim::Frequency::M16;
     spim_config.mode = spim::MODE_3;
     spim_config.bit_order = spim::BitOrder::MSB_FIRST;
-    spim_config.orc = 0;
-    spim_config.sck_drive = OutputDrive::HighDrive;
-    spim_config.mosi_drive = OutputDrive::HighDrive;
-    let spim = Spim::new(
-        peripherals.SPIM4,
-        Irqs,
-        peripherals.P0_08,
-        peripherals.P0_10,
-        peripherals.P0_09,
-        spim_config,
-    );
-    let cs = Output::new(peripherals.P0_11, Level::High, OutputDrive::Standard);
-    let int_o = Input::new(peripherals.P0_06, Pull::None);
-    let Ok(spi_device) = ExclusiveDevice::new_no_delay(spim, cs);
+    let spim = Spim::new(p.SPIM4, Irqs, p.P0_08, p.P0_10, p.P0_09, spim_config);
+    let cs = Output::new(p.P0_11, Level::High, OutputDrive::Standard);
+    let int_o = Input::new(p.P0_06, Pull::None);
+    let Ok(spi_device) = ExclusiveDevice::new(spim, cs, Delay);
     let mut pag = Pag7661Qn::init_spi(spi_device, embassy_time::Delay, int_o, mode::Idle)
         .await
         .unwrap();
@@ -102,7 +96,21 @@ async fn main(spawner: Spawner) {
         image_buffers.sender(),
     ));
 
-    loop {
+    join(
+    imu::init(
+        p.SERIAL1,
+        p.P0_15.into(),
+        p.P0_22.into(),
+        p.P1_04.into(),
+        p.P1_05.into(),
+        p.P0_07.into(),
+        p.P0_13.into(),
+        p.TIMER0,
+        p.PPI_CH0.into(),
+        p.GPIOTE_CH0.into(),
+    ),
+
+    async { loop {
         match wait_for_serial(cdc_acm_class).await {
             b'a' => {
                 let image = image_buffers.receive().await;
@@ -127,13 +135,14 @@ async fn main(spawner: Spawner) {
 
             cmd => defmt::error!("Unknown command '{=u8}'", cmd),
         }
-    }
+    }},
+    ).await;
 }
 
 #[embassy_executor::task]
 async fn image_loop(
     mut pag: Pag7661Qn<
-        Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, NoDelay>>,
+        Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, Delay>>,
         embassy_time::Delay,
         Input<'static>,
         mode::Image,
