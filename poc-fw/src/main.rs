@@ -3,28 +3,26 @@
 
 const PROTOCOL_VERSION: u32 = 1;
 
+mod usb;
+
 use core::str;
 
 use embassy_executor::Spawner;
 use embassy_nrf::{
+    Peripherals,
     gpio::{Input, Level, Output, OutputDrive, Pull},
     pac,
     peripherals::{self, SPIM4},
     spim::{self, Spim},
-    usb::{self, vbus_detect::HardwareVbusDetect, Driver},
-    Peripheral, Peripherals,
 };
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
     channel::{Channel, Receiver, Sender},
 };
-use embassy_usb::{
-    class::cdc_acm::{self, CdcAcmClass},
-    UsbDevice,
-};
 use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
-use pag7661qn::{mode, spi::Pag7661QnSpi, Pag7661Qn};
-use static_cell::{ConstStaticCell, StaticCell};
+use pag7661qn::{Pag7661Qn, mode, spi::Pag7661QnSpi};
+use static_cell::ConstStaticCell;
+use usb::{wait_for_serial, write_serial};
 use {defmt_rtt as _, panic_probe as _};
 
 fn start_network_core(delay: &mut cortex_m::delay::Delay) {
@@ -117,7 +115,9 @@ fn init() -> (cortex_m::Peripherals, Peripherals) {
     // Enable instruction cache
     pac::CACHE.enable().write(|w| w.set_enable(true));
     // Set clock to 128 MHz
-    pac::CLOCK.hfclkctrl().write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));
+    pac::CLOCK
+        .hfclkctrl()
+        .write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));
 
     let mut peripherals = embassy_nrf::init(config);
     if needs_reset {
@@ -144,8 +144,8 @@ fn init() -> (cortex_m::Peripherals, Peripherals) {
 
 embassy_nrf::bind_interrupts!(struct Irqs {
     SPIM4 => spim::InterruptHandler<peripherals::SPIM4>;
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    USBREGULATOR => usb::vbus_detect::InterruptHandler;
+    USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
+    USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
 });
 
 const NUM_BUFFERS: usize = 2;
@@ -166,8 +166,8 @@ static IMAGE_BUFFERS: ConstStaticCell<ImageBufferChannel<1>> =
 async fn main(spawner: Spawner) {
     let (_core_peripherals, peripherals) = init();
 
-    let (ref mut cdc_acm_class, usb) = usb_device(peripherals.USBD);
-    spawner.must_spawn(run_usb(usb));
+    let (ref mut cdc_acm_class, usb) = usb::usb_device(peripherals.USBD);
+    spawner.must_spawn(usb::run_usb(usb));
 
     // Reset the PAG
     let mut vis_resetn = Output::new(peripherals.P1_06, Level::Low, OutputDrive::Standard);
@@ -195,14 +195,14 @@ async fn main(spawner: Spawner) {
         spim_config,
     );
     let cs = Output::new(peripherals.P0_11, Level::High, OutputDrive::Standard);
-    let int_o = Input::new(peripherals.P0_06, Pull::Down);
+    let int_o = Input::new(peripherals.P0_06, Pull::None);
     let Ok(spi_device) = ExclusiveDevice::new_no_delay(spim, cs);
     let mut pag = Pag7661Qn::init_spi(spi_device, embassy_time::Delay, int_o, mode::Idle)
         .await
         .unwrap();
 
-    pag.set_sensor_fps(60).await.unwrap();
-    pag.set_sensor_exposure_us(true, 10000).await.unwrap();
+    pag.set_sensor_fps(30).await.unwrap();
+    pag.set_sensor_exposure_us(true, 12700).await.unwrap();
     pag.set_sensor_gain(1).await.unwrap();
     let pag = pag.switch_mode(mode::Image).await.unwrap();
 
@@ -266,91 +266,6 @@ async fn image_loop(
         buf.chunks_mut(320).for_each(|l| l.reverse());
         image_buffers.send(buf).await;
     }
-}
-
-async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    class: &mut CdcAcmClass<'d, D>,
-    data: &[u8],
-) {
-    let max_packet_size = usize::from(class.max_packet_size());
-    for chunk in data.chunks(max_packet_size) {
-        class.write_packet(chunk).await.unwrap();
-    }
-    if data.len() % max_packet_size == 0 {
-        class.write_packet(&[]).await.unwrap();
-    }
-}
-
-async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    class: &mut CdcAcmClass<'d, D>,
-) -> u8 {
-    loop {
-        let mut buf = [0; 64];
-        let Ok(_n) = class.read_packet(&mut buf).await else {
-            continue;
-        };
-        return buf[0];
-    }
-}
-
-#[embassy_executor::task]
-async fn run_usb(
-    mut device: UsbDevice<
-        'static,
-        embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>,
-    >,
-) -> ! {
-    device.run().await
-}
-
-/// Panics if called more than once.
-fn usb_device(
-    p: impl Peripheral<P = peripherals::USBD> + 'static,
-) -> (
-    CdcAcmClass<'static, Driver<'static, peripherals::USBD, HardwareVbusDetect>>,
-    UsbDevice<'static, usb::Driver<'static, peripherals::USBD, HardwareVbusDetect>>,
-) {
-    // Create the driver, from the HAL.
-    let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
-
-    // Create embassy-usb Config
-    let mut config = embassy_usb::Config::new(0x1915, 0x5211);
-    static SERIAL_NUMBER_BUFFER: ConstStaticCell<[u8; 16]> = ConstStaticCell::new([0; 16]);
-    config.manufacturer = Some("Applied Math");
-    config.product = Some("Thingo");
-    config.serial_number = Some(device_id_str(SERIAL_NUMBER_BUFFER.take()));
-    config.max_power = 100;
-    config.max_packet_size_0 = 64;
-
-    // Create embassy-usb DeviceBuilder using the driver and config.
-    // It needs some buffers for building the descriptors.
-    static CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
-    static BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
-    static MSOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
-    static CONTROL_BUF: ConstStaticCell<[u8; 64]> = ConstStaticCell::new([0; 64]);
-    static STATE: StaticCell<cdc_acm::State> = StaticCell::new();
-
-    let config_descriptor = CONFIG_DESCRIPTOR.take();
-    let bos_descriptor = BOS_DESCRIPTOR.take();
-    let msos_descriptor = MSOS_DESCRIPTOR.take();
-    let control_buf = CONTROL_BUF.take();
-
-    let state = STATE.init_with(cdc_acm::State::new);
-    let mut builder = embassy_usb::Builder::new(
-        driver,
-        config,
-        config_descriptor,
-        bos_descriptor,
-        msos_descriptor,
-        control_buf,
-    );
-
-    // Create classes on the builder.
-    let class = CdcAcmClass::new(&mut builder, state, 64);
-
-    // Build the builder.
-    let usb = builder.build();
-    (class, usb)
 }
 
 fn device_id() -> [u8; 8] {
