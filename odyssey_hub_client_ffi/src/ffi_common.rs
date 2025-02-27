@@ -299,10 +299,10 @@ impl From<odyssey_hub_common::events::Pose> for Pose {
     }
 }
 
-impl From<ats_usb::packet::PacketData> for PacketData {
-    fn from(packet_data: ats_usb::packet::PacketData) -> Self {
+impl From<ats_usb::packets::vm::PacketData> for PacketData {
+    fn from(packet_data: ats_usb::packets::vm::PacketData) -> Self {
         match packet_data {
-            ats_usb::packet::PacketData::Vendor(_, (len, data)) => PacketData {
+            ats_usb::packets::vm::PacketData::Vendor(_, (len, data)) => PacketData {
                 tag: PacketDataTag::VendorEvent,
                 u: PacketDataU {
                     vendor_event: VendorEventPacketData { len, data },

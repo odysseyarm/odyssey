@@ -4,7 +4,7 @@ use arrayvec::ArrayVec;
 use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
-use ats_usb::packet::CombinedMarkersReport;
+use ats_usb::packets::vm::CombinedMarkersReport;
 use core::panic;
 use nalgebra::{Isometry3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
@@ -403,7 +403,7 @@ async fn common_tasks(
     d: UsbDevice,
     device: Device,
     message_channel: Sender<Message>,
-    mut config: ats_usb::packet::GeneralConfig,
+    mut config: ats_usb::packets::vm::GeneralConfig,
     screen_calibrations: Arc<
         ArcSwap<
             ArrayVec<
@@ -480,7 +480,7 @@ async fn common_tasks(
 
                 // Helper closure to process points
                 let process_points = |points, camera_model, stereo_iso| {
-                    let point_tuples = filter_and_create_point_tuples(points);
+                    let point_tuples = create_point_tuples(points);
                     let points_raw: Vec<_> = point_tuples.iter().map(|&(_, p)| p).collect();
                     let points_transformed = transform_points(&points_raw, camera_model);
                     let intrinsics = ats_common::ros_opencv_intrinsics_type_convert(camera_model);
@@ -599,7 +599,7 @@ async fn common_tasks(
                 };
 
                 // correct accel and gyro bias and scale
-                let accel = ats_usb::packet::AccelReport {
+                let accel = ats_usb::packets::vm::AccelReport {
                     accel: accel.corrected_accel(&config.accel_config),
                     gyro: accel.corrected_gyro(&config.gyro_config),
                     timestamp: accel.timestamp,
@@ -846,7 +846,7 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
         .into_iter()
         .map(|i| {
             let d = d.clone();
-            async move { d.stream(ats_usb::packet::PacketType::Vendor(i)).await }
+            async move { d.stream(ats_usb::packets::vm::PacketType::Vendor(i)).await }
         })
         .collect();
 
@@ -859,7 +859,7 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
                 let mut stream = s.await.unwrap();
                 while let Some(data) = stream.next().await {
                     let kind = odyssey_hub_common::events::DeviceEventKind::PacketEvent(
-                        ats_usb::packet::Packet {
+                        ats_usb::packets::vm::Packet {
                             id: 255,
                             data: data.clone(),
                         },
@@ -904,17 +904,13 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
     }
 }
 
-fn filter_and_create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
+fn create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
     points
         .iter()
         .enumerate()
-        .filter_map(|(id, pos)| {
-            // screen id of 7 means there is no marker
-            if (100..3996).contains(&pos.x) && (100..3996).contains(&pos.y) {
-                Some((id as u8, Point2::new(pos.x as f32, pos.y as f32)))
-            } else {
-                None
-            }
+        .filter(|(_id, pos)| **pos != Point2::new(0, 0))
+        .map(|(id, pos)| {
+            (id as u8, Point2::new(pos.x as f32, pos.y as f32))
         })
         .collect()
 }

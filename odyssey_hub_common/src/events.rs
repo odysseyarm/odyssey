@@ -17,7 +17,7 @@ pub enum DeviceEventKind {
     ImpactEvent(ImpactEvent),
     ConnectEvent,
     DisconnectEvent,
-    PacketEvent(ats_usb::packet::Packet),
+    PacketEvent(ats_usb::packets::vm::Packet),
 }
 
 #[derive(Clone, Copy, Debug)]

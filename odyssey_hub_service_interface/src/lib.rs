@@ -286,7 +286,7 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                         ) => {
                             let mut bytes_slice: &[u8] = &bytes;
                             odyssey_hub_common::events::DeviceEventKind::PacketEvent(
-                                ats_usb::packet::Packet::parse(&mut bytes_slice).unwrap(),
+                                ats_usb::packets::vm::Packet::parse(&mut bytes_slice).unwrap(),
                             )
                         }
                     },
