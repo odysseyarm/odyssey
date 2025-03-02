@@ -170,6 +170,7 @@ pub fn calibrate_single(
         criteria,
     )
     .unwrap();
+    println!("RMS error: {}", reproj_err);
 
     super::save_single_calibration(
         port,
