@@ -98,7 +98,6 @@ struct DetectorParams {
     rows: AtomicU16,
     cols: AtomicU16,
     pattern: atomic::Atomic<DetectorPattern>,
-    special: AtomicBool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, bytemuck::NoUninit)]
@@ -151,7 +150,6 @@ impl MainState {
                 rows: 6.into(),
                 cols: 6.into(),
                 pattern: atomic::Atomic::new(DetectorPattern::AprilGrid),
-                special: false.into(),
             }),
             reset: reset.clone(),
             quit: quit.clone(),
@@ -247,11 +245,10 @@ impl MainState {
 
         let cols = self.detector_params.cols.load(Ordering::Relaxed);
         let rows = self.detector_params.rows.load(Ordering::Relaxed);
-        let special = self.detector_params.special.load(Ordering::Relaxed);
         let pat = self.detector_params.pattern.load(Ordering::Relaxed);
         draw_text(
             &format!(
-                "Captures (space): {}    Board (r, c, s): {rows}x{cols}x{special}    Detector (d): {pat}",
+                "Captures (space): {}    Board (r, c, s): {rows}x{cols}    Detector (d): {pat}",
                 self.captured_wf.len()
             ),
             10.0,
@@ -470,7 +467,6 @@ async fn handle_input(state: &mut MainState) {
         let captures_files = state.captured_nf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
-        let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
@@ -496,8 +492,6 @@ async fn handle_input(state: &mut MainState) {
                 board_rows,
                 board_cols,
                 true,
-                false,
-                special,
                 device_uuid,
             ),
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
@@ -509,8 +503,6 @@ async fn handle_input(state: &mut MainState) {
                 board_rows,
                 board_cols,
                 false,
-                true,
-                special,
                 device_uuid,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
@@ -535,7 +527,6 @@ async fn handle_input(state: &mut MainState) {
         let captures_files = state.captured_wf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
-        let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
@@ -560,9 +551,7 @@ async fn handle_input(state: &mut MainState) {
                 object_resolution,
                 board_rows,
                 board_cols,
-                false,
                 true,
-                special,
                 device_uuid,
             ),
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
@@ -573,9 +562,7 @@ async fn handle_input(state: &mut MainState) {
                 object_resolution,
                 board_rows,
                 board_cols,
-                true,
                 false,
-                special,
                 device_uuid,
             ),
             DetectorPattern::Chessboard => chessboard::calibrate_single(
@@ -602,7 +589,6 @@ async fn handle_input(state: &mut MainState) {
         let captures_wf_files = state.captured_wf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
-        let special = state.detector_params.special.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
@@ -628,8 +614,6 @@ async fn handle_input(state: &mut MainState) {
                 board_rows,
                 board_cols,
                 true,
-                false,
-                special,
                 &captures_wf_files,
                 &captures_nf_files,
                 device_uuid,
@@ -642,8 +626,6 @@ async fn handle_input(state: &mut MainState) {
                 board_rows,
                 board_cols,
                 false,
-                true,
-                special,
                 &captures_wf_files,
                 &captures_nf_files,
                 device_uuid,
@@ -676,9 +658,6 @@ async fn handle_input(state: &mut MainState) {
             state.detector_params.cols.fetch_add(1, Ordering::Relaxed);
         }
     }
-    if is_key_pressed(KeyCode::S) {
-        state.detector_params.special.store(!state.detector_params.special.load(Ordering::Relaxed), Ordering::Relaxed);
-    }
     if is_key_pressed(KeyCode::D) {
         use DetectorPattern as P;
         let pattern = state.detector_params.pattern.load(Ordering::Relaxed);
@@ -694,8 +673,8 @@ async fn handle_input(state: &mut MainState) {
             match pattern {
                 P::None => P::AprilGrid,
                 P::AprilGrid => P::AsymmetricCircles,
-                P::SymmetricCircles => P::AsymmetricCircles,
-                P::AsymmetricCircles => P::Chessboard,
+                P::AsymmetricCircles => P::SymmetricCircles,
+                P::SymmetricCircles => P::Chessboard,
                 P::Chessboard => P::None,
             }
         };
@@ -731,7 +710,6 @@ fn paj_reader_thread(
 
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
-        let special = detector_params.special.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         let port = match id {
             0 => Port::Wf,
@@ -772,10 +750,8 @@ fn paj_reader_thread(
                     object_resolution,
                     board_rows,
                     board_cols,
-                    false,
                     true,
                     false,
-                    special,
                 )
             }
             DetectorPattern::SymmetricCircles => {
@@ -788,8 +764,6 @@ fn paj_reader_thread(
                     board_cols,
                     false,
                     false,
-                    true,
-                    special,
                 )
             }
         };
@@ -843,7 +817,6 @@ fn image_only_reader_thread(
 
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
-        let special = detector_params.special.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         let port = Port::Wf;
         let pattern_points = match pattern {
@@ -869,10 +842,8 @@ fn image_only_reader_thread(
                     object_resolution,
                     board_rows,
                     board_cols,
-                    false,
                     true,
                     false,
-                    special,
                 )
             }
             DetectorPattern::SymmetricCircles => {
@@ -885,8 +856,6 @@ fn image_only_reader_thread(
                     board_cols,
                     false,
                     false,
-                    true,
-                    special,
                 )
             }
             DetectorPattern::Chessboard => {
@@ -928,7 +897,6 @@ fn _opencv_thread(
         let (port, image) = raw_image.recv().unwrap();
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
-        let special = detector_params.special.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         match pattern {
             DetectorPattern::None => (),
@@ -955,10 +923,8 @@ fn _opencv_thread(
                     object_resolution,
                     board_rows,
                     board_cols,
-                    true,
-                    true,
                     false,
-                    special,
+                    true,
                 );
             }
             DetectorPattern::SymmetricCircles => {
@@ -971,8 +937,6 @@ fn _opencv_thread(
                     board_cols,
                     true,
                     false,
-                    true,
-                    special,
                 );
             }
             DetectorPattern::Chessboard => {
