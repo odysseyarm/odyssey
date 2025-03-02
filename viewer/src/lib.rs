@@ -684,19 +684,19 @@ async fn handle_input(state: &mut MainState) {
         let pattern = state.detector_params.pattern.load(Ordering::Relaxed);
         let new_value = if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
             match pattern {
-                P::None => P::AsymmetricCircles,
-                P::AprilGrid => P::AprilGrid,
+                P::None => P::AprilGrid,
+                P::AprilGrid => P::AsymmetricCircles,
                 P::AsymmetricCircles => P::SymmetricCircles,
                 P::SymmetricCircles => P::Chessboard,
                 P::Chessboard => P::None,
             }
         } else {
             match pattern {
-                P::AprilGrid => P::AprilGrid,
-                P::Chessboard => P::SymmetricCircles,
+                P::None => P::AprilGrid,
+                P::AprilGrid => P::AsymmetricCircles,
                 P::SymmetricCircles => P::AsymmetricCircles,
-                P::None => P::Chessboard,
-                P::AsymmetricCircles => P::None,
+                P::AsymmetricCircles => P::Chessboard,
+                P::Chessboard => P::None,
             }
         };
         state.detector_params.pattern.store(new_value, Ordering::Relaxed);
