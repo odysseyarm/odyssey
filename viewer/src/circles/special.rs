@@ -34,7 +34,7 @@ pub fn _find_circles_grid_special_old(
 
     while sorted_hull_points.len() < expected_num_outer_points {
         let mut best_point = None;
-        let mut best_distance = f32::MAX;
+        let mut best_distance = f64::MAX;
 
         for point in centers.iter() {
             let distance = (point - current).norm();
@@ -42,8 +42,8 @@ pub fn _find_circles_grid_special_old(
                 let direction = point - current;
                 let dot_product = direction.dot(directions[current_direction]);
 
-                if dot_product > 0.9 && distance < best_distance.into() {
-                    best_distance = distance as f32;
+                if dot_product > 0.9 && distance < best_distance {
+                    best_distance = distance;
                     best_point = Some(point);
                 }
             }

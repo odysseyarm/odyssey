@@ -4,7 +4,7 @@ use opencv::{
 
 use crate::{DeviceUuid, Port};
 
-pub fn read_camara_params(path: &str) -> Option<(Mat, Mat)> {
+pub fn read_camera_params(path: &str) -> Option<(Mat, Mat)> {
     let fs = FileStorage::new_def(path, FileStorage_READ).unwrap();
     if !fs.is_opened().unwrap() {
         None
@@ -26,11 +26,11 @@ pub fn my_stereo_calibrate(
     nf_image_files: &Vector<String>,
     device_uuid: DeviceUuid,
 ) {
-    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
         println!("Couldn't get nearfield intrinsics");
         return;
     };
-    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
+    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
         println!("Couldn't get widefield intrinsics");
         return;
     };

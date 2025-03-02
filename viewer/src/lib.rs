@@ -10,12 +10,13 @@ use std::{
 };
 
 use draw_pattern_points::DrawPatternPoints;
-use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
+use image::{codecs::png::PngEncoder, ExtendedColorType, ImageEncoder};
 use mot_data::MotData;
 use opencv::core::{FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Vector};
 use serialport::{ClearBuffer, SerialPort};
 
 pub mod mot_data;
+pub mod aprilgrid;
 pub mod charuco;
 pub mod chessboard;
 pub mod circles;
@@ -104,18 +105,20 @@ struct DetectorParams {
 #[repr(u8)]
 enum DetectorPattern {
     None,
-    Chessboard,
+    AprilGrid,
     AsymmetricCircles,
     SymmetricCircles,
+    Chessboard,
 }
 
 impl Display for DetectorPattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DetectorPattern::None => write!(f, "off"),
-            DetectorPattern::Chessboard => write!(f, "chessboard"),
+            DetectorPattern::AprilGrid => write!(f, "april grid"),
             DetectorPattern::AsymmetricCircles => write!(f, "acircles"),
             DetectorPattern::SymmetricCircles => write!(f, "circles grid"),
+            DetectorPattern::Chessboard => write!(f, "chessboard"),
         }
     }
 }
@@ -147,7 +150,7 @@ impl MainState {
             detector_params: Arc::new(DetectorParams {
                 rows: 6.into(),
                 cols: 6.into(),
-                pattern: atomic::Atomic::new(DetectorPattern::Chessboard),
+                pattern: atomic::Atomic::new(DetectorPattern::AprilGrid),
                 special: false.into(),
             }),
             reset: reset.clone(),
@@ -427,7 +430,7 @@ async fn handle_input(state: &mut MainState) {
             PngEncoder::new(BufWriter::new(
                 File::create(&path).unwrap(),
             ))
-            .write_image(&wf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
+            .write_image(&wf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ExtendedColorType::L8)
             .unwrap();
             let wf_data_gray = wf_data.gray.clone();
             drop(wf_data);
@@ -443,7 +446,7 @@ async fn handle_input(state: &mut MainState) {
             PngEncoder::new(BufWriter::new(
                 File::create(&path).unwrap(),
             ))
-            .write_image(&nf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ColorType::L8)
+            .write_image(&nf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ExtendedColorType::L8)
             .unwrap();
             let nf_data_gray = nf_data.gray.clone();
             drop(nf_data);
@@ -472,6 +475,18 @@ async fn handle_input(state: &mut MainState) {
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
+            DetectorPattern::AprilGrid => {
+            let config = aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.);
+                aprilgrid::calibrate_single(
+                    &captures,
+                    &captures_files,
+                    Port::Nf,
+                    resolution,
+                    object_resolution,
+                    device_uuid,
+                    &config,
+                )
+            }
             DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
                 &captures_files,
@@ -525,6 +540,18 @@ async fn handle_input(state: &mut MainState) {
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
+            DetectorPattern::AprilGrid => {
+                let config = aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.);
+                aprilgrid::calibrate_single(
+                    &captures,
+                    &captures_files,
+                    Port::Wf,
+                    resolution,
+                    object_resolution,
+                    device_uuid,
+                    &config,
+                )
+            }
             DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
                 &captures_files,
@@ -580,17 +607,19 @@ async fn handle_input(state: &mut MainState) {
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
-            DetectorPattern::Chessboard => chessboard::my_stereo_calibrate(
-                &wf,
-                &nf,
-                resolution,
-                object_resolution,
-                board_rows,
-                board_cols,
-                &captures_wf_files,
-                &captures_nf_files,
-                device_uuid,
-            ),
+            DetectorPattern::AprilGrid => {
+                let config = aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.);
+                aprilgrid::my_stereo_calibrate(
+                    &wf,
+                    &nf,
+                    resolution,
+                    object_resolution,
+                    &captures_wf_files,
+                    &captures_nf_files,
+                    device_uuid,
+                    &config,
+                )
+            }
             DetectorPattern::AsymmetricCircles => circles::my_stereo_calibrate(
                 &wf,
                 &nf,
@@ -615,6 +644,17 @@ async fn handle_input(state: &mut MainState) {
                 false,
                 true,
                 special,
+                &captures_wf_files,
+                &captures_nf_files,
+                device_uuid,
+            ),
+            DetectorPattern::Chessboard => chessboard::my_stereo_calibrate(
+                &wf,
+                &nf,
+                resolution,
+                object_resolution,
+                board_rows,
+                board_cols,
                 &captures_wf_files,
                 &captures_nf_files,
                 device_uuid,
@@ -645,15 +685,17 @@ async fn handle_input(state: &mut MainState) {
         let new_value = if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
             match pattern {
                 P::None => P::AsymmetricCircles,
+                P::AprilGrid => P::AprilGrid,
                 P::AsymmetricCircles => P::SymmetricCircles,
                 P::SymmetricCircles => P::Chessboard,
                 P::Chessboard => P::None,
             }
         } else {
             match pattern {
-                P::None => P::Chessboard,
+                P::AprilGrid => P::AprilGrid,
                 P::Chessboard => P::SymmetricCircles,
                 P::SymmetricCircles => P::AsymmetricCircles,
+                P::None => P::Chessboard,
                 P::AsymmetricCircles => P::None,
             }
         };
@@ -698,6 +740,19 @@ fn paj_reader_thread(
         let gray: &[u8; 98 * 98] = &buf[..98 * 98].try_into().unwrap();
         let pattern_points = match pattern {
             DetectorPattern::None => None,
+            DetectorPattern::AprilGrid => {
+                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.));
+                match grid.get_corner_and_object_points(
+                    gray,
+                    (98, 98),
+                    object_resolution,
+                ) {
+                    Some((pattern_points, _)) => Some(pattern_points),
+                    None => {
+                        None
+                    }
+                }
+            }
             DetectorPattern::Chessboard => {
                 chessboard::get_chessboard_corners(
                     gray,
@@ -793,16 +848,18 @@ fn image_only_reader_thread(
         let port = Port::Wf;
         let pattern_points = match pattern {
             DetectorPattern::None => None,
-            DetectorPattern::Chessboard => {
-                chessboard::get_chessboard_corners(
+            DetectorPattern::AprilGrid => {
+                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.));
+                match grid.get_corner_and_object_points(
                     &gray,
-                    port,
                     resolution,
                     object_resolution,
-                    board_rows,
-                    board_cols,
-                    false,
-                )
+                ) {
+                    Some((pattern_points, _)) => Some(pattern_points),
+                    None => {
+                        None
+                    }
+                }
             }
             DetectorPattern::AsymmetricCircles => {
                 circles::get_circles_centers(
@@ -830,6 +887,17 @@ fn image_only_reader_thread(
                     false,
                     true,
                     special,
+                )
+            }
+            DetectorPattern::Chessboard => {
+                chessboard::get_chessboard_corners(
+                    &gray,
+                    port,
+                    resolution,
+                    object_resolution,
+                    board_rows,
+                    board_cols,
+                    false,
                 )
             }
         };
@@ -864,16 +932,20 @@ fn _opencv_thread(
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         match pattern {
             DetectorPattern::None => (),
-            DetectorPattern::Chessboard => {
-                chessboard::get_chessboard_corners(
+            DetectorPattern::AprilGrid => {
+                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.));
+                match grid.get_corner_and_object_points(
                     &image,
-                    Port::Wf,
                     resolution,
                     object_resolution,
-                    board_rows,
-                    board_cols,
-                    true,
-                );
+                ) {
+                    Some((pattern_points, _)) => {
+                        println!("AprilGrid: {:?}", pattern_points);
+                    }
+                    None => {
+                        println!("AprilGrid: None");
+                    }
+                }
             }
             DetectorPattern::AsymmetricCircles => {
                 circles::get_circles_centers(
@@ -901,6 +973,17 @@ fn _opencv_thread(
                     false,
                     true,
                     special,
+                );
+            }
+            DetectorPattern::Chessboard => {
+                chessboard::get_chessboard_corners(
+                    &image,
+                    Port::Wf,
+                    resolution,
+                    object_resolution,
+                    board_rows,
+                    board_cols,
+                    true,
                 );
             }
         }

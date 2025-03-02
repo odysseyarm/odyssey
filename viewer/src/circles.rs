@@ -1,6 +1,6 @@
 use opencv::{calib3d::{ calibrate_camera, find_circles_grid_1, stereo_calibrate, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CALIB_FIX_INTRINSIC }, core::{bitwise_and, no_array, Mat, MatTraitConst, Point2f, Point3f, Ptr, Scalar, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, Vector, CV_32S}, features2d::Feature2D, imgproc::{connected_components_with_stats, threshold, THRESH_BINARY, THRESH_BINARY_INV}, traits::Boxed};
 
-use crate::{chessboard::read_camara_params, DeviceUuid, Port};
+use crate::{chessboard::read_camera_params, DeviceUuid, Port};
 
 pub mod special;
 
@@ -301,11 +301,11 @@ pub fn my_stereo_calibrate(
     nf_image_files: &Vector<String>,
     device_uuid: DeviceUuid,
 ) {
-    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
         println!("Couldn't get nearfield intrinsics");
         return;
     };
-    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camara_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
+    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
         println!("Couldn't get widefield intrinsics");
         return;
     };
