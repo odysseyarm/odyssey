@@ -181,8 +181,14 @@ pub fn get_chessboard_corners_cv(
     let use_sb = true;
     let mut im_upscaled = Mat::default();
     // super resolution scale
-    let ss = 4.;
-    resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+    let ss;
+    if image.input_array().unwrap().size_def().unwrap() == (98, 98).into() {
+        ss = 4.;
+        resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+    } else {
+        ss = 1.;
+        im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
+    }
     if use_sb {
         let _chessboard_found = find_chessboard_corners_sb(&im_upscaled, (board_cols, board_rows).into(), &mut corners, 0).unwrap();
     } else {

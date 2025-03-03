@@ -11,6 +11,7 @@ use embassy_nrf::{
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{fifo::FifoPacket4, ICM42688};
+use static_cell::ConstStaticCell;
 
 pub async fn init<'d, T>(
     spim_instance: impl Peripheral<P = T> + 'd,
@@ -63,11 +64,12 @@ pub async fn init<'d, T>(
         imu_config.fifo_watermark = 1;
     }
     let mut imu = imu.initialize(Delay, imu_config).await.unwrap();
-    let mut buffer = [0u32; 521];
+    static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
+    let buffer = BUFFER.take();
     loop {
         int1.wait_for_low().await;
-        let items = imu.read_fifo(&mut buffer).await.unwrap();
-        let pkt = from_bytes::<FifoPacket4>(&cast_slice(&buffer)[4..24]);
+        let items = imu.read_fifo(buffer).await.unwrap();
+        let pkt = from_bytes::<FifoPacket4>(&cast_slice(buffer)[4..24]);
         let ts = pkt.timestamp();
         let ax = pkt.accel_data_x();
         let ay = pkt.accel_data_y();

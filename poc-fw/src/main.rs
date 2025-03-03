@@ -79,6 +79,7 @@ async fn main(spawner: Spawner) {
 
     pag.set_sensor_fps(30).await.unwrap();
     pag.set_sensor_exposure_us(true, 12700).await.unwrap();
+    // pag.set_sensor_exposure_us(true, 4000).await.unwrap();
     pag.set_sensor_gain(1).await.unwrap();
     let pag = pag.switch_mode(mode::Image).await.unwrap();
 

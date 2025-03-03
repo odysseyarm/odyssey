@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray as _, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, MatTraitConst as _, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray as _, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
 use crate::{chessboard::read_camera_params, DeviceUuid, Port};
 
@@ -19,8 +19,14 @@ pub fn get_circles_centers(
 
     let mut im_upscaled = Mat::default();
     // super resolution scale
-    let ss = 4.;
-    resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+    let ss;
+    if resolution == (98, 98) {
+        ss = 4.;
+        resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+    } else {
+        ss = 1.;
+        im_upscaled = im.try_clone().unwrap();
+    }
 
     let mut centers = Vector::<Point2f>::default();
 
@@ -79,7 +85,7 @@ pub fn get_circles_centers(
 
 fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut Vector<Point2f>, pattern_was_found: bool, port: Port) {
     let mut display_im = Mat::default();
-    cvt_color(&im, &mut display_im, COLOR_GRAY2BGR, 0).unwrap();
+    cvt_color_def(&im, &mut display_im, COLOR_GRAY2BGR).unwrap();
     let tmp = display_im;
     let mut display_im = Mat::default();
     resize(&tmp, &mut display_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();

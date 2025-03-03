@@ -70,8 +70,14 @@ impl AprilGrid {
         object_resolution: (u32, u32),
     ) -> Option<(Vector<Point2f>, Vector<Point3f>)> {
         let mut im_upscaled = Mat::default();
-        let ss = 4.0;
-        resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+        let ss;
+        if image.input_array().unwrap().size_def().unwrap() == (98, 98).into() {
+            ss = 4.;
+            resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+        } else {
+            ss = 1.;
+            im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
+        }
 
         let (width, height) = (im_upscaled.cols(), im_upscaled.rows());
         let buffer = im_upscaled.data_typed::<u8>().unwrap().to_vec();

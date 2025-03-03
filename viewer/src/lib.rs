@@ -55,6 +55,33 @@ impl Default for PajData {
     }
 }
 
+#[derive(Copy, Clone)]
+enum Orientation {
+    _0 = 0,
+    _90 = 90,
+    _180 = 180,
+    _270 = 270,
+}
+
+impl Orientation {
+    fn next(self) -> Self {
+        match self {
+            Self::_0 => Self::_90,
+            Self::_90 => Self::_180,
+            Self::_180 => Self::_270,
+            Self::_270 => Self::_0,
+        }
+    }
+    fn prev(self) -> Self {
+        match self {
+            Self::_0 => Self::_270,
+            Self::_90 => Self::_0,
+            Self::_180 => Self::_90,
+            Self::_270 => Self::_180,
+        }
+    }
+}
+
 struct MainState {
     wf_data: Arc<Mutex<PajData>>,
     nf_data: Arc<Mutex<PajData>>,
@@ -70,6 +97,7 @@ struct MainState {
     device_uuid: DeviceUuid,
     resolution: (u16, u16),
     object_resolution: (u32, u32),
+    orientation: Orientation,
 }
 
 impl MainState {
@@ -154,6 +182,7 @@ impl MainState {
             reset: reset.clone(),
             quit: quit.clone(),
             draw_pattern_points: DrawPatternPoints::new(),
+            orientation: Orientation::_0,
         };
 
         let detector_params = main_state.detector_params.clone();
@@ -208,37 +237,45 @@ impl MainState {
         } else {
             2.0
         };
-        let rx = self.resolution.0 as f32;
-        let ry = self.resolution.1 as f32;
-        let image_width = rx * image_scale;
-        let image_height = ry * image_scale;
-        let spacing = 20.0;
+        let res = vec2(self.resolution.0 as f32, self.resolution.1 as f32);
+        let image_width = res.x * image_scale;
+        let image_height = res.y * image_scale;
+        let padding = 10.0;
+        let image_area_side_len = image_width.max(image_height) + 2.0*padding;
+        let image_area_size = vec2(image_area_side_len, image_area_side_len);
+        let image_hpad = (image_area_size.x - image_width) / 2.0;
+        let image_vpad = (image_area_size.y - image_height) / 2.0;
+        let image_pad = vec2(image_hpad, image_vpad);
+        let spacing = -10.0;
+        let rotation_rad = self.orientation as u32 as f32 / 180.0 * std::f32::consts::PI;
 
         // Draw images
         if !wf_data.image.is_empty() {
             draw_image(
                 &wf_data.image,
                 self.resolution,
-                vec2(0.0, 0.0),
+                image_pad,
                 image_scale,
+                rotation_rad,
             );
         }
         if !nf_data.image.is_empty() {
             draw_image(
                 &nf_data.image,
                 self.resolution,
-                vec2(image_width + spacing, 0.0),
+                vec2(image_area_size.x + spacing, 0.0) + image_pad,
                 image_scale,
+                rotation_rad,
             );
         }
 
         // Draw FPS
         let fps = 1.0 / wf_data.avg_frame_period;
-        draw_text(&format!("{:.1} fps", fps), 10.0, image_height + 20.0, 20.0, WHITE);
+        draw_text(&format!("{:.1} fps", fps), padding, image_area_size.y + 20.0, 20.0, WHITE);
         draw_text(
             &format!("{:.1} fps", fps),
-            image_width + spacing + 10.0,
-            image_height + 20.0,
+            image_area_size.x + spacing + padding,
+            image_area_size.y + 20.0,
             20.0,
             WHITE,
         );
@@ -252,37 +289,38 @@ impl MainState {
                 self.captured_wf.len()
             ),
             10.0,
-            image_height + 40.0,
+            image_area_size.y + 40.0,
             20.0,
             WHITE,
         );
         draw_text(
             "<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close",
             10.0,
-            image_height + 60.0,
+            image_area_size.y + 60.0,
             20.0,
             WHITE,
         );
         draw_text(
             &format!("Device ID: {}", self.device_uuid),
             98.0*5.0*2.0-180.0,
-            image_height + 40.0,
+            image_area_size.y + 40.0,
             20.0,
             WHITE,
         );
 
-        let wf_transform = draw_pattern_points::get_transform_matrix(
-            vec2(image_scale, image_scale),
-            0.,
-            vec2(0., 0.),
-            vec2(0., 0.),
-        );
-        let nf_transform = draw_pattern_points::get_transform_matrix(
-            vec2(image_scale, image_scale),
-            0.,
-            vec2(image_width + spacing, 0.0),
-            vec2(0., 0.),
-        );
+        let wf_transform = Mat3::from_translation(image_pad)
+            * Mat3::from_scale(vec2(image_scale, image_scale))
+            * Mat3::from_translation(res/2.0)
+            * Mat3::from_angle((self.orientation as u32 as f32).to_radians())
+            * Mat3::from_translation(-res/2.0);
+        let nf_transform = Mat3::from_translation(
+            vec2(image_area_size.x + spacing, 0.0) + image_pad,
+        )
+            * Mat3::from_scale(vec2(image_scale, image_scale))
+            * Mat3::from_translation(res/2.0)
+            * Mat3::from_angle((self.orientation as u32 as f32).to_radians())
+            * Mat3::from_translation(-res/2.0);
+
 
         // Draw circles
         // fixme will look backwards for ats lite
@@ -318,6 +356,7 @@ fn draw_image(
     resolution: (u16, u16),
     offset: Vec2,
     scale: f32,
+    rotation_rad: f32,
 ) {
     let texture = Texture2D::from_rgba8(resolution.0, resolution.1, image);
     texture.set_filter(FilterMode::Nearest);
@@ -328,6 +367,7 @@ fn draw_image(
         WHITE,
         DrawTextureParams {
             dest_size: Some((resolution.0 as f32 * scale, resolution.1 as f32 * scale).into()),
+            rotation: rotation_rad,
             ..Default::default()
         },
     );
@@ -336,21 +376,20 @@ fn draw_image(
 fn draw_mot_data_circles(
     mot_data: &[MotData],
     object_resolution: (u32, u32),
-    transform: Mat4,
+    transform: Mat3,
     flip_x: bool,
 ) {
     // The PAG doesn't seem to support getting both object info and image data simultaneously...?
     for data in mot_data {
         if data.area > 0 {
-            let mut point = vec3(
+            let mut point = vec2(
                 data.cx as f32 / object_resolution.0 as f32 * 97. + 0.5,
                 data.cy as f32 / object_resolution.1 as f32 * 97. + 0.5,
-                0.0,
             );
             if flip_x {
                 point.x = 98.0 - point.x;
             }
-            let transformed_point = transform.transform_point3(point);
+            let transformed_point = transform.transform_point2(point);
             draw_circle_lines(transformed_point.x, transformed_point.y, 4.0, 1.0, RED);
         }
     }
@@ -671,14 +710,22 @@ async fn handle_input(state: &mut MainState) {
             }
         } else {
             match pattern {
-                P::None => P::AprilGrid,
-                P::AprilGrid => P::AsymmetricCircles,
-                P::AsymmetricCircles => P::SymmetricCircles,
-                P::SymmetricCircles => P::Chessboard,
-                P::Chessboard => P::None,
+                P::None => P::Chessboard,
+                P::AprilGrid => P::None,
+                P::AsymmetricCircles => P::AprilGrid,
+                P::SymmetricCircles => P::AsymmetricCircles,
+                P::Chessboard => P::SymmetricCircles,
             }
         };
         state.detector_params.pattern.store(new_value, Ordering::Relaxed);
+    }
+    if is_key_pressed(KeyCode::O) {
+        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        if shift {
+            state.orientation = state.orientation.prev();
+        } else {
+            state.orientation = state.orientation.next();
+        }
     }
     if is_key_pressed(KeyCode::F1) {
         state.reset.store(true, Ordering::Relaxed);
@@ -802,7 +849,6 @@ fn image_only_reader_thread(
     quit: Arc<AtomicBool>,
 ) {
 
-    port.write(b"a").unwrap();
     let mut gray = [0; 320*240];
     loop {
         if reset.load(Ordering::Relaxed) {
@@ -811,8 +857,8 @@ fn image_only_reader_thread(
             quit.store(true, Ordering::Relaxed);
             break;
         } else {
-            port.read_exact(&mut gray).unwrap();
             port.write(b"a").unwrap();
+            port.read_exact(&mut gray).unwrap();
         }
 
         let board_cols = detector_params.cols.load(Ordering::Relaxed);
