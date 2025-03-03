@@ -40,14 +40,14 @@ impl DrawPatternPoints {
             let color = if pattern_was_found {
                 colors[i / cols % colors.len()]
             } else {
-                Color::from_rgba(0, 0, 255, 255)
+                Color::from_rgba(255, 0, 0, 255)
             };
 
             draw_circle_lines(
                 transformed_point.x,
                 transformed_point.y,
                 6.0,
-                1.0,
+                2.0,
                 color,
             );
 

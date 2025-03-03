@@ -75,8 +75,9 @@ impl AprilGrid {
             ss = 4.;
             resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
         } else {
-            ss = 1.;
-            im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
+            ss = 2.;
+            resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+            // im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
         }
 
         let (width, height) = (im_upscaled.cols(), im_upscaled.rows());
@@ -108,13 +109,17 @@ impl AprilGrid {
             return None;
         }
 
+        let mut image_points_object_points = std::iter::zip(image_points, object_points).collect::<Vec<_>>();
+        image_points_object_points.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let (mut image_points, object_points): (Vec<_>, Vec<_>) = image_points_object_points.into_iter().unzip();
+
         let size = image.input_array().unwrap().size(-1).unwrap();
         for p in image_points.as_mut_slice() {
             p.x *= (object_resolution.0 - 1) as f32 / (size.width - 1) as f32;
             p.y *= (object_resolution.1 - 1) as f32 / (size.height - 1) as f32;
         }
 
-        Some((image_points, object_points))
+        Some((image_points.into(), object_points.into()))
     }
 
     fn generate_3d_points(&self, tag_id: u32) -> Option<Vec<Point3f>> {

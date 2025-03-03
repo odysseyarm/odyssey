@@ -1,6 +1,6 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, MatTraitConst as _, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray as _, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, MatTraitConst as _, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray as _, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
-use crate::{chessboard::read_camera_params, DeviceUuid, Port};
+use crate::{chessboard::read_camera_params, DeviceUuid, PatternPoints, Port};
 
 /// Returns None if no circles were found.
 pub fn get_circles_centers(
@@ -12,7 +12,7 @@ pub fn get_circles_centers(
     board_cols: u16,
     asymmetric: bool,
     show: bool,
-) -> Option<Vector<Point2f>> {
+) -> PatternPoints {
     let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
 
     let im = Mat::new_rows_cols_with_data(resolution.1.into(), resolution.0.into(), image).unwrap();
@@ -25,14 +25,15 @@ pub fn get_circles_centers(
         resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
     } else {
         ss = 1.;
+        // resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
         im_upscaled = im.try_clone().unwrap();
     }
 
     let mut centers = Vector::<Point2f>::default();
 
     let mut params = SimpleBlobDetector_Params::default().unwrap();
-    params.min_threshold = 0.0;
-    params.max_threshold = 255.0;
+    params.min_threshold = 50.0;
+    params.max_threshold = 150.0;
     params.min_area = 10.0;
     params.max_area = 10000.0;
     params.filter_by_area = true;
@@ -57,7 +58,7 @@ pub fn get_circles_centers(
         &im_upscaled,
         board_size,
         &mut centers,
-        if asymmetric { CALIB_CB_ASYMMETRIC_GRID } else { CALIB_CB_SYMMETRIC_GRID },
+        if asymmetric { CALIB_CB_ASYMMETRIC_GRID } else { CALIB_CB_SYMMETRIC_GRID } | CALIB_CB_CLUSTERING,
         &feature2d_detector,
         circle_grid_finder_params,
     ).unwrap();
@@ -71,19 +72,19 @@ pub fn get_circles_centers(
         display_found_circles(&im_upscaled, board_size, &mut centers, pattern_was_found, port);
     }
 
-    if pattern_was_found {
-        let size = im.input_array().unwrap().size(-1).unwrap();
-        for center in centers.as_mut_slice() {
-            center.x *= (object_resolution.0 - 1) as f32 / (size.width - 1) as f32;
-            center.y *= (object_resolution.1 - 1) as f32 / (size.height - 1) as f32;
-        }
-        Some(centers)
-    } else {
-        None
+    let size = im.input_array().unwrap().size(-1).unwrap();
+    for center in centers.as_mut_slice() {
+        center.x *= (object_resolution.0 - 1) as f32 / (size.width - 1) as f32;
+        center.y *= (object_resolution.1 - 1) as f32 / (size.height - 1) as f32;
+    }
+    PatternPoints {
+        points: centers,
+        pattern_found: pattern_was_found,
     }
 }
 
-fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut Vector<Point2f>, pattern_was_found: bool, port: Port) {
+fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vector<Point2f>, pattern_was_found: bool, port: Port) {
+    let mut centers = centers.clone();
     let mut display_im = Mat::default();
     cvt_color_def(&im, &mut display_im, COLOR_GRAY2BGR).unwrap();
     let tmp = display_im;
@@ -98,7 +99,7 @@ fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &mut
     draw_chessboard_corners(
         &mut display_im,
         board_size,
-        centers,
+        &centers,
         pattern_was_found,
     ).unwrap();
 
@@ -127,7 +128,7 @@ pub fn calibrate_single(
     let corners_arr = images
         .iter()
         .filter_map(|image| {
-            get_circles_centers(
+            let r = get_circles_centers(
                 image,
                 port,
                 resolution,
@@ -136,7 +137,8 @@ pub fn calibrate_single(
                 board_cols,
                 asymmetric,
                 false,
-            )
+            );
+            r.pattern_found.then_some(r.points)
         })
         .collect::<Vector<Vector<Point2f>>>();
     let object_points: Vector<Vector<Point3f>> =
@@ -235,7 +237,7 @@ pub fn my_stereo_calibrate(
     let mut wf_points_arr = Vector::<Vector<Point2f>>::new();
     let mut nf_points_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
-        let Some(wf_points) = get_circles_centers(
+        let PatternPoints { points: wf_points, pattern_found: true } = get_circles_centers(
             wf_image,
             Port::Wf,
             resolution,
@@ -247,7 +249,7 @@ pub fn my_stereo_calibrate(
         ) else {
             continue;
         };
-        let Some(nf_points) = get_circles_centers(
+        let PatternPoints { points: nf_points, pattern_found: true } = get_circles_centers(
             nf_image,
             Port::Nf,
             resolution,

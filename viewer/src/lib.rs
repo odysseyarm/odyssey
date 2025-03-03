@@ -33,11 +33,16 @@ pub enum Port {
     Nf,
 }
 
+pub struct PatternPoints {
+    points: Vector<Point2f>,
+    pattern_found: bool,
+}
+
 struct PajData {
     image: Vec<u8>,
     gray: Vec<u8>,
     mot_data: [MotData; 16],
-    pattern_points: Option<Vec<Point2f>>,
+    pattern_points: Option<PatternPoints>,
     avg_frame_period: f64,
     last_frame: Instant,
 }
@@ -235,7 +240,7 @@ impl MainState {
         let image_scale = if self.resolution == (98, 98) {
             5.0
         } else {
-            2.0
+            5.0
         };
         let res = vec2(self.resolution.0 as f32, self.resolution.1 as f32);
         let image_width = res.x * image_scale;
@@ -330,9 +335,9 @@ impl MainState {
         // Draw pattern points if available
         if let Some(pattern_points) = &wf_data.pattern_points {
             self.draw_pattern_points.draw(
-                pattern_points,
+                pattern_points.points.as_slice(),
                 cols.into(),
-                true,
+                pattern_points.pattern_found,
                 self.resolution,
                 self.object_resolution,
                 wf_transform,
@@ -340,9 +345,9 @@ impl MainState {
         }
         if let Some(pattern_points) = &nf_data.pattern_points {
             self.draw_pattern_points.draw(
-                pattern_points,
+                pattern_points.points.as_slice(),
                 cols.into(),
-                true,
+                pattern_points.pattern_found,
                 self.resolution,
                 self.object_resolution,
                 nf_transform,
@@ -582,7 +587,7 @@ async fn handle_input(state: &mut MainState) {
                     &config,
                 )
             }
-            DetectorPattern::SymmetricCircles => circles::calibrate_single(
+            DetectorPattern::AsymmetricCircles => circles::calibrate_single(
                 &captures,
                 &captures_files,
                 Port::Wf,
@@ -593,7 +598,7 @@ async fn handle_input(state: &mut MainState) {
                 true,
                 device_uuid,
             ),
-            DetectorPattern::AsymmetricCircles => circles::calibrate_single(
+            DetectorPattern::SymmetricCircles => circles::calibrate_single(
                 &captures,
                 &captures_files,
                 Port::Wf,
@@ -763,6 +768,7 @@ fn paj_reader_thread(
             _ => Port::Nf,
         };
         let gray: &[u8; 98 * 98] = &buf[..98 * 98].try_into().unwrap();
+        let mut pattern_found = true;
         let pattern_points = match pattern {
             DetectorPattern::None => None,
             DetectorPattern::AprilGrid => {
@@ -790,7 +796,7 @@ fn paj_reader_thread(
                 )
             }
             DetectorPattern::AsymmetricCircles => {
-                circles::get_circles_centers(
+                let r = circles::get_circles_centers(
                     gray,
                     port,
                     (98, 98),
@@ -799,10 +805,12 @@ fn paj_reader_thread(
                     board_cols,
                     true,
                     false,
-                )
+                );
+                pattern_found = r.pattern_found;
+                Some(r.points)
             }
             DetectorPattern::SymmetricCircles => {
-                circles::get_circles_centers(
+                let r = circles::get_circles_centers(
                     gray,
                     port,
                     (98, 98),
@@ -811,7 +819,9 @@ fn paj_reader_thread(
                     board_cols,
                     false,
                     false,
-                )
+                );
+                pattern_found = r.pattern_found;
+                Some(r.points)
             }
         };
 
@@ -834,7 +844,14 @@ fn paj_reader_thread(
         paj_data.avg_frame_period = paj_data.avg_frame_period * 7. / 8.
             + paj_data.last_frame.elapsed().as_secs_f64() / 8.;
         paj_data.last_frame = Instant::now();
-        paj_data.pattern_points = pattern_points.map(|v| v.into());
+        if let Some(points) = pattern_points {
+            paj_data.pattern_points = Some(PatternPoints {
+                points,
+                pattern_found,
+            });
+        } else {
+            paj_data.pattern_points = None;
+        }
     }
 }
 
@@ -865,6 +882,7 @@ fn image_only_reader_thread(
         let board_rows = detector_params.rows.load(Ordering::Relaxed);
         let pattern = detector_params.pattern.load(Ordering::Relaxed);
         let port = Port::Wf;
+        let mut pattern_found = true;
         let pattern_points = match pattern {
             DetectorPattern::None => None,
             DetectorPattern::AprilGrid => {
@@ -881,7 +899,7 @@ fn image_only_reader_thread(
                 }
             }
             DetectorPattern::AsymmetricCircles => {
-                circles::get_circles_centers(
+                let r = circles::get_circles_centers(
                     &gray,
                     port,
                     resolution,
@@ -890,10 +908,12 @@ fn image_only_reader_thread(
                     board_cols,
                     true,
                     false,
-                )
+                );
+                pattern_found = r.pattern_found;
+                Some(r.points)
             }
             DetectorPattern::SymmetricCircles => {
-                circles::get_circles_centers(
+                let r = circles::get_circles_centers(
                     &gray,
                     port,
                     resolution,
@@ -902,7 +922,9 @@ fn image_only_reader_thread(
                     board_cols,
                     false,
                     false,
-                )
+                );
+                pattern_found = r.pattern_found;
+                Some(r.points)
             }
             DetectorPattern::Chessboard => {
                 chessboard::get_chessboard_corners(
@@ -929,7 +951,13 @@ fn image_only_reader_thread(
         wf_data.avg_frame_period = wf_data.avg_frame_period * 7. / 8.
             + wf_data.last_frame.elapsed().as_secs_f64() / 8.;
         wf_data.last_frame = Instant::now();
-        wf_data.pattern_points = pattern_points.map(|v| v.into());
+        if let Some(points) = pattern_points {
+            wf_data.pattern_points = Some(PatternPoints {
+                points, pattern_found
+            });
+        } else {
+            wf_data.pattern_points = None;
+        }
     }
 }
 
@@ -970,7 +998,7 @@ fn _opencv_thread(
                     board_rows,
                     board_cols,
                     false,
-                    true,
+                    false,
                 );
             }
             DetectorPattern::SymmetricCircles => {
