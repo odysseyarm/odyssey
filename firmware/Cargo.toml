@@ -36,6 +36,8 @@ paj7025-nrf = { version = "0.1.0", path = "../paj7025-nrf" }
 
 [profile.release]
 debug = 2
+lto = "fat"
+opt-level = "s"
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
