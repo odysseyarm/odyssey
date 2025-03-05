@@ -1,6 +1,6 @@
 use embassy_nrf::{
-    Peripheral, peripherals,
-    usb::{self, Driver, vbus_detect::HardwareVbusDetect},
+    Peripheral, peripherals::USBD,
+    usb::{Driver, vbus_detect::HardwareVbusDetect},
 };
 use embassy_usb::{
     UsbDevice,
@@ -35,23 +35,20 @@ pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     }
 }
 
+type StaticUsbDevice = UsbDevice<'static, Driver<'static, USBD, HardwareVbusDetect>>;
+type StaticCdcAcmClass = CdcAcmClass<'static, Driver<'static, USBD, HardwareVbusDetect>>;
+
 #[embassy_executor::task]
 pub async fn run_usb(
-    mut device: UsbDevice<
-        'static,
-        embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>,
-    >,
+    mut device: StaticUsbDevice,
 ) -> ! {
     device.run().await
 }
 
 /// Panics if called more than once.
 pub fn usb_device(
-    p: impl Peripheral<P = peripherals::USBD> + 'static,
-) -> (
-    CdcAcmClass<'static, Driver<'static, peripherals::USBD, HardwareVbusDetect>>,
-    UsbDevice<'static, usb::Driver<'static, peripherals::USBD, HardwareVbusDetect>>,
-) {
+    p: impl Peripheral<P = USBD> + 'static,
+) -> (StaticCdcAcmClass, StaticUsbDevice) {
     // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 

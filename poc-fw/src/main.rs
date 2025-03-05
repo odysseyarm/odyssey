@@ -78,8 +78,8 @@ async fn main(spawner: Spawner) {
         .unwrap();
 
     pag.set_sensor_fps(30).await.unwrap();
-    pag.set_sensor_exposure_us(true, 12700).await.unwrap();
-    // pag.set_sensor_exposure_us(true, 4000).await.unwrap();
+    // pag.set_sensor_exposure_us(true, 12700).await.unwrap();
+    pag.set_sensor_exposure_us(true, 8000).await.unwrap();
     pag.set_sensor_gain(1).await.unwrap();
     let pag = pag.switch_mode(mode::Image).await.unwrap();
 
@@ -98,56 +98,60 @@ async fn main(spawner: Spawner) {
     ));
 
     join(
-    imu::init(
-        p.SERIAL1,
-        p.P0_15.into(),
-        p.P0_22.into(),
-        p.P1_04.into(),
-        p.P1_05.into(),
-        p.P0_07.into(),
-        p.P0_13.into(),
-        p.TIMER0,
-        p.PPI_CH0.into(),
-        p.GPIOTE_CH0.into(),
-    ),
+        imu::init(
+            p.SERIAL1,
+            p.P0_15.into(),
+            p.P0_22.into(),
+            p.P1_04.into(),
+            p.P1_05.into(),
+            p.P0_07.into(),
+            p.P0_13.into(),
+            p.TIMER0,
+            p.PPI_CH0.into(),
+            p.GPIOTE_CH0.into(),
+        ),
+        async {
+            loop {
+                match wait_for_serial(cdc_acm_class).await {
+                    b'a' => {
+                        let image = image_buffers.receive().await;
+                        write_serial(cdc_acm_class, image).await;
+                        free_buffers.send(image).await;
+                    }
 
-    async { loop {
-        match wait_for_serial(cdc_acm_class).await {
-            b'a' => {
-                let image = image_buffers.receive().await;
-                write_serial(cdc_acm_class, image).await;
-                free_buffers.send(image).await;
+                    b'i' => {
+                        write_serial(cdc_acm_class, &PROTOCOL_VERSION.to_le_bytes()).await;
+                        write_serial(cdc_acm_class, &device_id()[..6]).await;
+                        // sensor resolution
+                        let [a, b] = 320u16.to_le_bytes(); // width
+                        let [c, d] = 240u16.to_le_bytes(); // height
+
+                        // object resolution
+                        let [e, f, g, h] = (320u32 * (1 << 6)).to_le_bytes();
+                        let [i, j, k, l] = (240u32 * (1 << 6)).to_le_bytes();
+
+                        let buf = [a, b, c, d, e, f, g, h, i, j, k, l];
+                        write_serial(cdc_acm_class, &buf).await;
+                    }
+
+                    cmd => defmt::error!("Unknown command '{=u8}'", cmd),
+                }
             }
-
-            b'i' => {
-                write_serial(cdc_acm_class, &PROTOCOL_VERSION.to_le_bytes()).await;
-                write_serial(cdc_acm_class, &device_id()[..6]).await;
-                // sensor resolution
-                let [a, b] = 320u16.to_le_bytes(); // width
-                let [c, d] = 240u16.to_le_bytes(); // height
-
-                // object resolution
-                let [e, f, g, h] = (320u32 * (1 << 6)).to_le_bytes();
-                let [i, j, k, l] = (240u32 * (1 << 6)).to_le_bytes();
-
-                let buf = [a, b, c, d, e, f, g, h, i, j, k, l];
-                write_serial(cdc_acm_class, &buf).await;
-            }
-
-            cmd => defmt::error!("Unknown command '{=u8}'", cmd),
-        }
-    }},
-    ).await;
+        },
+    )
+    .await;
 }
+
+type Pag = Pag7661Qn<
+    Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, Delay>>,
+    embassy_time::Delay,
+    Input<'static>,
+    mode::Image,
+>;
 
 #[embassy_executor::task]
 async fn image_loop(
-    mut pag: Pag7661Qn<
-        Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, Delay>>,
-        embassy_time::Delay,
-        Input<'static>,
-        mode::Image,
-    >,
+    mut pag: Pag,
     free_buffers: ImageBufferReceiver<2>,
     image_buffers: ImageBufferSender<1>,
 ) {

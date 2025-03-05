@@ -2,6 +2,8 @@ use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_
 
 use crate::{chessboard::read_camera_params, DeviceUuid, PatternPoints, Port};
 
+pub mod special;
+
 /// Returns None if no circles were found.
 pub fn get_circles_centers(
     image: &[u8],
@@ -59,7 +61,7 @@ pub fn get_circles_centers(
         board_size,
         &mut centers,
         if asymmetric { CALIB_CB_ASYMMETRIC_GRID } else { CALIB_CB_SYMMETRIC_GRID } | CALIB_CB_CLUSTERING,
-        &feature2d_detector,
+        Some(&feature2d_detector),
         circle_grid_finder_params,
     ).unwrap();
 

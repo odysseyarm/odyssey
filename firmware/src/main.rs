@@ -14,7 +14,7 @@ use embassy_futures::join::{join, join3};
 use embassy_nrf::config::Reg0Voltage;
 
 use embassy_nrf::{
-    config::{Config, HfclkSource}, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
+    config::Config, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
         self,
         vbus_detect::HardwareVbusDetect,
         Driver,
@@ -108,9 +108,9 @@ async fn main(spawner: Spawner) {
     #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
     let nf_h_flip = true;
 
-    #[cfg(any(feature = "vm2"))]
+    #[cfg(feature = "vm2")]
     let nf_v_flip = true;
-    #[cfg(any(feature = "vm2"))]
+    #[cfg(feature = "vm2")]
     let nf_h_flip = false;
 
     let mut wide = Paj7025::new(
@@ -287,10 +287,10 @@ fn shiftl(d: &mut [u8], n: u8) {
 /// Shift the data to the right n bits
 fn shiftr(d: &mut [u8], n: u8) {
     let mut t = 0;
-    for i in 0..d.len() {
-        let t2 = d[i];
-        d[i] >>= n;
-        d[i] |= t << (8 - n);
+    for v in d {
+        let t2 = *v;
+        *v >>= n;
+        *v |= t << (8 - n);
         t = t2;
     }
 }
@@ -321,8 +321,8 @@ where
                 shiftl(buffer, 4);
             } else {
                 if len < 9897 {
-                    buffer.rotate_right(9897 - len as usize);
-                    buffer[..9897 - len as usize].fill(0);
+                    buffer.rotate_right(9897 - len);
+                    buffer[..9897 - len].fill(0);
                 }
                 for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
                     if buffer[buffer.len() - 6] == byte {
@@ -350,7 +350,7 @@ async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(class: &mut CdcAcm
     for chunk in data.chunks(max_packet_size) {
         class.write_packet(chunk).await.unwrap();
     }
-    if data.len() % usize::from(max_packet_size) == 0 {
+    if data.len() % max_packet_size == 0 {
         class.write_packet(&[]).await.unwrap();
     }
 }
@@ -358,8 +358,8 @@ async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(class: &mut CdcAcm
 async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(class: &mut CdcAcmClass<'d, D>) -> u8 {
     loop {
         let mut buf = [0; 64];
-        loop {
-            let Ok(_n) = class.read_packet(&mut buf).await else { break };
+        'a: {
+            let Ok(_n) = class.read_packet(&mut buf).await else { break 'a };
             return buf[0];
         }
     }
@@ -370,10 +370,13 @@ async fn run_usb(mut device: UsbDevice<'static, embassy_nrf::usb::Driver<'static
     device.run().await
 }
 
+type StaticCdcAcmClass = CdcAcmClass<'static, Driver<'static, peripherals::USBD, HardwareVbusDetect>>;
+type StaticUsbDevice = UsbDevice<'static, usb::Driver<'static, peripherals::USBD, HardwareVbusDetect>>;
+
 /// Panics if called more than once.
 fn usb_device(p: impl Peripheral<P = peripherals::USBD> + 'static) -> (
-    CdcAcmClass<'static, Driver<'static, peripherals::USBD, HardwareVbusDetect>>,
-    UsbDevice<'static, usb::Driver<'static, peripherals::USBD, HardwareVbusDetect>>,
+    StaticCdcAcmClass,
+    StaticUsbDevice,
 ) {
     // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));

@@ -10,9 +10,10 @@ use embassy_nrf::{
 };
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use icm426xx::{fifo::FifoPacket4, ICM42688};
+use icm426xx::{ICM42688, fifo::FifoPacket4};
 use static_cell::ConstStaticCell;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn init<'d, T>(
     spim_instance: impl Peripheral<P = T> + 'd,
     cs: AnyPin,
@@ -54,7 +55,7 @@ pub async fn init<'d, T>(
     let imu = ICM42688::new(spi_device);
     let mut imu_config = icm426xx::Config::default();
     {
-        use icm426xx::config::{AccelOdr, AccelMode, Drive, GyroOdr, Pin9Function, Polarity};
+        use icm426xx::config::{AccelMode, AccelOdr, Drive, GyroOdr, Pin9Function, Polarity};
         imu_config.gyro.odr = GyroOdr::_200Hz;
         imu_config.accel.odr = AccelOdr::_200Hz;
         imu_config.accel.mode = AccelMode::LowNoise;
@@ -68,16 +69,16 @@ pub async fn init<'d, T>(
     let buffer = BUFFER.take();
     loop {
         int1.wait_for_low().await;
-        let items = imu.read_fifo(buffer).await.unwrap();
+        let _items = imu.read_fifo(buffer).await.unwrap();
         let pkt = from_bytes::<FifoPacket4>(&cast_slice(buffer)[4..24]);
-        let ts = pkt.timestamp();
-        let ax = pkt.accel_data_x();
-        let ay = pkt.accel_data_y();
-        let az = pkt.accel_data_z();
-        let gx = pkt.gyro_data_x();
-        let gy = pkt.gyro_data_y();
-        let gz = pkt.gyro_data_z();
-        defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
-        defmt::info!("ts={} ax={} ay={} az={} gx={} gy={} gz={}", ts, ax, ay, az, gx, gy, gz);
+        let _ts = pkt.timestamp();
+        let _ax = pkt.accel_data_x();
+        let _ay = pkt.accel_data_y();
+        let _az = pkt.accel_data_z();
+        let _gx = pkt.gyro_data_x();
+        let _gy = pkt.gyro_data_y();
+        let _gz = pkt.gyro_data_z();
+        // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
+        // defmt::info!("ts={} ax={} ay={} az={} gx={} gy={} gz={}", ts, ax, ay, az, gx, gy, gz);
     }
 }
