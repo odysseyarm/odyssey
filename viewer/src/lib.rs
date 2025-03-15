@@ -240,7 +240,7 @@ impl MainState {
         let image_scale = if self.resolution == (98, 98) {
             5.0
         } else {
-            5.0
+            4.0
         };
         let res = vec2(self.resolution.0 as f32, self.resolution.1 as f32);
         let image_width = res.x * image_scale;

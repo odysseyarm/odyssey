@@ -2,10 +2,14 @@
 name = "ccalib"
 version = "0.1.0"
 edition = "2024"
+default-run = "ccalib"
 
 [dependencies]
-argmin = { git = "https://github.com/argmin-rs/argmin", version = "0.10.0" }
-argmin-math = { git = "https://github.com/argmin-rs/argmin", version = "0.4.0", features = ["nalgebra_v0_33"] }
+argmin = { git = "https://github.com/argmin-rs/argmin" }
+argmin-math = { git = "https://github.com/argmin-rs/argmin", features = ["nalgebra_v0_33"] }
+argmin-observer-slog = { git = "https://github.com/argmin-rs/argmin" }
+cam-geom = "0.15.2"
+dlt = "0.13.0"
 nalgebra = "0.33.2"
 num-dual = "0.11.0"
 opencv = "0.94.2"
