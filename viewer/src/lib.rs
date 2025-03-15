@@ -180,9 +180,9 @@ impl MainState {
             captured_nf_files: vec![],
             captured_wf_files: vec![],
             detector_params: Arc::new(DetectorParams {
-                rows: 6.into(),
-                cols: 6.into(),
-                pattern: atomic::Atomic::new(DetectorPattern::AprilGrid),
+                rows: 3.into(),
+                cols: 5.into(),
+                pattern: atomic::Atomic::new(DetectorPattern::AsymmetricCircles),
             }),
             reset: reset.clone(),
             quit: quit.clone(),

@@ -166,10 +166,11 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     }
     // let trust_region = TrustRegion::new(Dogleg::new());
     let trust_region = TrustRegion::new(Steihaug::new().with_max_iters(20));
+    // let trust_region = TrustRegion::new(CauchyPoint::new());
     let result = Executor::new(problem, trust_region)
         .configure(|state| state
             .param(initial_params.into())
-            .max_iters(10000)
+            .max_iters(100_000)
             .target_cost(0.0)
         )
         .add_observer(SlogLogger::term(), ObserverMode::Every(1000))
@@ -177,39 +178,39 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         .expect("optimization failed");
 
     // refine with angular error
-    let cost2 = |v: OVector<DualVec<f64, f64, Dyn>, Dyn>| {
-        let mut residuals = dvector![];
-        let [fx, fy, cx, cy, extrinsics @ ..] = v.as_slice() else { unreachable!() };
-        for (image_points, e) in zip(images_points, extrinsics.chunks_exact(6)) {
-            for (obj_p, img_p) in zip(object_points, image_points.column_iter()) {
-                let fx = fx.clone();
-                let fy = fy.clone();
-                let cx = cx.clone();
-                let cy = cy.clone();
-                let r = Vector3::new(e[0].clone(), e[1].clone(), e[2].clone());
-                let t = Vector3::new(e[3].clone(), e[4].clone(), e[5].clone());
-                let res = angular_reprojection_error(fx, fy, cx, cy, r, t, *obj_p, img_p.into(), circle_radius);
-                residuals = residuals.push(res);
-            }
-        }
-        residuals
-    };
-    let problem2 = Problem2 {
-        f: cost2,
-        last_param: None.into(),
-        last_value: None.into(),
-        last_gradient: None.into(),
-        last_hessian: None.into(),
-    };
-    let result = Executor::new(problem2, TrustRegion::new(Steihaug::new().with_max_iters(20)))
-        .configure(|state| state
-            .param(result.state.best_param.unwrap())
-            .max_iters(10000)
-            .target_cost(0.0)
-        )
-        .add_observer(SlogLogger::term(), ObserverMode::NewBest)
-        .run()
-        .expect("optimization failed");
+    // let cost2 = |v: OVector<DualVec<f64, f64, Dyn>, Dyn>| {
+    //     let mut residuals = dvector![];
+    //     let [fx, fy, cx, cy, extrinsics @ ..] = v.as_slice() else { unreachable!() };
+    //     for (image_points, e) in zip(images_points, extrinsics.chunks_exact(6)) {
+    //         for (obj_p, img_p) in zip(object_points, image_points.column_iter()) {
+    //             let fx = fx.clone();
+    //             let fy = fy.clone();
+    //             let cx = cx.clone();
+    //             let cy = cy.clone();
+    //             let r = Vector3::new(e[0].clone(), e[1].clone(), e[2].clone());
+    //             let t = Vector3::new(e[3].clone(), e[4].clone(), e[5].clone());
+    //             let res = angular_reprojection_error(fx, fy, cx, cy, r, t, *obj_p, img_p.into(), circle_radius);
+    //             residuals = residuals.push(res);
+    //         }
+    //     }
+    //     residuals
+    // };
+    // let problem2 = Problem2 {
+    //     f: cost2,
+    //     last_param: None.into(),
+    //     last_value: None.into(),
+    //     last_gradient: None.into(),
+    //     last_hessian: None.into(),
+    // };
+    // let result = Executor::new(problem2, TrustRegion::new(Steihaug::new().with_max_iters(20)))
+    //     .configure(|state| state
+    //         .param(result.state.best_param.unwrap())
+    //         .max_iters(10000)
+    //         .target_cost(0.0)
+    //     )
+    //     .add_observer(SlogLogger::term(), ObserverMode::NewBest)
+    //     .run()
+    //     .expect("optimization failed");
 
     let status = result.state.get_termination_status().clone();
     let best_param = result.state.best_param.unwrap();

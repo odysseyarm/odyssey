@@ -15,7 +15,7 @@ pub fn get_circles_centers(
     asymmetric: bool,
     show: bool,
 ) -> PatternPoints {
-    let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
+    let board_size = opencv::core::Size::new(board_rows as i32, board_cols as i32);
 
     let im = Mat::new_rows_cols_with_data(resolution.1.into(), resolution.0.into(), image).unwrap();
 
@@ -34,18 +34,6 @@ pub fn get_circles_centers(
     let mut centers = Vector::<Point2f>::default();
 
     let mut params = SimpleBlobDetector_Params::default().unwrap();
-    params.min_threshold = 50.0;
-    params.max_threshold = 150.0;
-    params.min_area = 10.0;
-    params.max_area = 10000.0;
-    params.filter_by_area = true;
-    params.filter_by_convexity = true;
-    params.min_convexity = 0.87;
-    params.min_circularity = 0.1;
-    params.filter_by_circularity = true;
-    params.min_inertia_ratio = 0.01;
-    params.filter_by_inertia = true;
-
     let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
     if asymmetric {
         circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
