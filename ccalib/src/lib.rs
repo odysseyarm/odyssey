@@ -101,7 +101,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     initial_cx: f64,
     initial_cy: f64,
     initial_target_pos: Vector3<f64>, // initial guess for the target's position in camera space
-    estimate_radial_distortion: bool,
+    flags: Flags,
 ) -> CalibrationResult<f64> {
     for img_p in images_points {
         assert_eq!(object_points.len(), img_p.ncols());
@@ -125,7 +125,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         last_value: None.into(),
         last_gradient: None.into(),
         last_hessian: None.into(),
-        estimate_radial_distortion: false,
+        flags: flags - Flags::RADIAL_DISTORTION,
     };
 
     let mut initial_params = CalibrationResult::default();
@@ -153,8 +153,11 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         .expect("optimization failed");
 
     // Dogleg seems to converge faster
-    let mut best_param = CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), false);
-    if estimate_radial_distortion {
+    let mut best_param = CalibrationResult::decode(
+        result.state.best_param.as_ref().unwrap(),
+        flags - Flags::RADIAL_DISTORTION,
+    );
+    if flags.contains(Flags::RADIAL_DISTORTION) {
         best_param.intrinsics.distortion = Some([0.0; 5]);
     }
     let problem = Problem {
@@ -163,7 +166,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         last_value: None.into(),
         last_gradient: None.into(),
         last_hessian: None.into(),
-        estimate_radial_distortion,
+        flags,
     };
     let trust_region = TrustRegion::new(Dogleg::new());
     let result = Executor::new(problem, trust_region)
@@ -176,45 +179,8 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         .run()
         .expect("optimization failed");
 
-    // refine with angular error
-    // let cost2 = |v: OVector<DualVec<f64, f64, Dyn>, Dyn>| {
-    //     let mut residuals = dvector![];
-    //     let [fx, fy, cx, cy, extrinsics @ ..] = v.as_slice() else { unreachable!() };
-    //     for (image_points, e) in zip(images_points, extrinsics.chunks_exact(6)) {
-    //         for (obj_p, img_p) in zip(object_points, image_points.column_iter()) {
-    //             let fx = fx.clone();
-    //             let fy = fy.clone();
-    //             let cx = cx.clone();
-    //             let cy = cy.clone();
-    //             let r = Vector3::new(e[0].clone(), e[1].clone(), e[2].clone());
-    //             let t = Vector3::new(e[3].clone(), e[4].clone(), e[5].clone());
-    //             let [[x, y, z]] = angular_reprojection_error(fx, fy, cx, cy, r, t, *obj_p, img_p.into(), circle_radius).data.0;
-    //             residuals = residuals.push(x);
-    //             residuals = residuals.push(y);
-    //             residuals = residuals.push(z);
-    //         }
-    //     }
-    //     residuals
-    // };
-    // let problem2 = Problem2 {
-    //     f: cost2,
-    //     last_param: None.into(),
-    //     last_value: None.into(),
-    //     last_gradient: None.into(),
-    //     last_hessian: None.into(),
-    // };
-    // let result = Executor::new(problem2, TrustRegion::new(Steihaug::new().with_max_iters(20)))
-    //     .configure(|state| state
-    //         .param(result.state.best_param.unwrap())
-    //         .max_iters(100000)
-    //         .target_cost(0.0)
-    //     )
-    //     .add_observer(SlogLogger::term(), ObserverMode::Every(1000))
-    //     .run()
-    //     .expect("optimization failed");
-
     let status = result.state.get_termination_status().clone();
-    let best_param = CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), estimate_radial_distortion);
+    let best_param = CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), flags);
     let cost = result.state.best_cost;
     println!("Converged after {} iterations", result.state.iter);
     println!("Termination status: {status}");
@@ -238,7 +204,7 @@ where
     DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<N, N> + Allocator<nalgebra::Const<1>, N>,
 {
     f: G,
-    estimate_radial_distortion: bool,
+    flags: Flags,
     last_param: RefCell<Option<OVector<f64, N>>>,
     last_value: RefCell<Option<f64>>,
     last_gradient: RefCell<Option<OVector<f64, N>>>,
@@ -257,7 +223,7 @@ where
         let mut last_param = self.last_param.borrow_mut();
         if last_param.as_ref() != Some(param) {
             let (value, jacobian) = num_dual::jacobian(
-                |v| (self.f)(CalibrationResult::decode(&v, self.estimate_radial_distortion)),
+                |v| (self.f)(CalibrationResult::decode(&v, self.flags)),
                 param.clone(),
             );
 
@@ -376,7 +342,7 @@ impl<D: Scalar + Zero + One> CameraIntrinsics<D> {
 impl<D: Scalar + Zero> CalibrationResult<D> {
     fn decode<R: Dim, S: Storage<D, R, U1>>(
         v: &Vector<D, R, S>,
-        with_distortion: bool,
+        flags: Flags,
     ) -> Self {
         let fx = v[0].clone();
         let fy = v[1].clone();
@@ -385,7 +351,7 @@ impl<D: Scalar + Zero> CalibrationResult<D> {
 
         let start;
         let distortion;
-        if with_distortion {
+        if flags.contains(Flags::RADIAL_DISTORTION) {
             distortion = Some([
                 v[4].clone(),
                 v[5].clone(),
@@ -436,5 +402,14 @@ impl<D: Scalar + Zero> CalibrationResult<D> {
             values.extend(ex.t.iter().cloned());
         }
         values.into()
+    }
+}
+
+bitflags::bitflags! {
+    #[derive(Copy, Clone)]
+    pub struct Flags: u8 {
+        const RADIAL_DISTORTION = 0x1;
+        // TODO
+        // const INTRINSICS = 0x2;
     }
 }

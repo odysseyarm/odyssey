@@ -1,6 +1,6 @@
 use std::iter::zip;
 
-use ccalib::{make_extrinsics, utils::{distort_image, imshow_multi, stroke_circle}, CameraIntrinsics};
+use ccalib::{make_extrinsics, utils::{distort_image, imshow_multi, stroke_circle}, CameraIntrinsics, Flags};
 use nalgebra::{matrix, vector, Dyn, Matrix3, OMatrix, U2};
 use opencv::{
     calib3d::{find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING}, core::{KeyPointTraitConst as _, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size, ToInputArray, Vec3b, Vector, _InputArrayTraitConst as _, CV_8UC1}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, imgcodecs::imread_def, imgproc::{resize, INTER_NEAREST}, prelude::Feature2DTrait
@@ -145,7 +145,7 @@ fn main() {
         160.0,
         120.0,
         [0., 0., 0.50].into(),
-        true,
+        Flags::RADIAL_DISTORTION,
     );
     for (i, c) in result.extrinsics.iter().enumerate() {
         println!("e{i}: {:.6?}", c);

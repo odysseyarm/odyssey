@@ -1,6 +1,6 @@
 use std::iter::zip;
 
-use ccalib::{make_extrinsics, utils::{distort_image, imshow_multi, stroke_circle}, CameraIntrinsics};
+use ccalib::{make_extrinsics, utils::{distort_image, imshow_multi, stroke_circle}, CameraIntrinsics, Flags};
 use nalgebra::{matrix, vector, Dyn, Matrix3, OMatrix, U2};
 use opencv::{
     calib3d::{find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING}, core::{KeyPointTraitConst as _, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size, ToInputArray, Vec3b, Vector, _InputArrayTraitConst as _, CV_8UC1}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, imgcodecs::imread_def, imgproc::{resize, INTER_NEAREST}, prelude::Feature2DTrait
@@ -87,9 +87,6 @@ fn overlay_circles(
         0.0, 97.0/4094.0, 0.0;
         0.0, 0.0, 1.0;
     ];
-    // let mat = (output_scale_mat*k*e*canvas_scale_mat).transpose(); // nalgebra is column major
-    // let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice()).unwrap();
-    // warp_perspective(&im, &mut cam, &mat, output_size, INTER_LINEAR, BORDER_CONSTANT, [0.; 4].into()).unwrap();
     let mut cam = Mat::default();
     distort_image(
         &im,
@@ -148,6 +145,10 @@ fn main() {
     imshow_multi(&imgs, "Input");
 
     // ===== calibration =====
+    let mut flags = Flags::empty();
+    if calib_distortion {
+        flags |= Flags::RADIAL_DISTORTION;
+    }
     let result = ccalib::calibrate(
         &circle_centers.iter().copied().map(|p| vector![p.0, p.1, 0.0]).collect::<Vec<_>>(),
         &images_points,
@@ -156,7 +157,7 @@ fn main() {
         45.0,
         45.0,
         [0., 0., 0.50].into(),
-        true,
+        flags,
     );
     for (i, c) in result.extrinsics.iter().enumerate() {
         println!("e{i}: {:.6?}", c);

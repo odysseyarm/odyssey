@@ -8,8 +8,8 @@ default-run = "ccalib"
 argmin = { git = "https://github.com/argmin-rs/argmin" }
 argmin-math = { git = "https://github.com/argmin-rs/argmin", features = ["nalgebra_v0_33"] }
 argmin-observer-slog = { git = "https://github.com/argmin-rs/argmin" }
+bitflags = "2.9.0"
 cam-geom = "0.15.2"
-dlt = "0.13.0"
 nalgebra = "0.33.2"
 num-dual = "0.11.0"
 num-traits = "0.2.19"
