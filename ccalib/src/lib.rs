@@ -1,8 +1,15 @@
 use std::{cell::RefCell, iter::zip};
 
-use argmin::{core::{observers::ObserverMode, Executor, State}, solver::trustregion::{Dogleg, Steihaug, TrustRegion}};
+use argmin::{
+    core::{Executor, State, observers::ObserverMode},
+    solver::trustregion::{Dogleg, Steihaug, TrustRegion},
+};
 use argmin_observer_slog::SlogLogger;
-use nalgebra::{allocator::Allocator, dvector, matrix, vector, Const, DVector, DefaultAllocator, Dim, Dyn, Matrix, Matrix3, Matrix4, OMatrix, OVector, RealField, Rotation3, Scalar, Storage, Unit, Vector, Vector2, Vector3, U1, U3};
+use nalgebra::{
+    Const, DVector, DefaultAllocator, Dim, Dyn, Matrix, Matrix3, Matrix4, OMatrix, OVector,
+    RealField, Rotation3, Scalar, Storage, U1, U3, Unit, Vector, Vector2, Vector3,
+    allocator::Allocator, dvector, matrix, vector,
+};
 use num_dual::{DualNum, DualVec};
 use num_traits::{One, Zero};
 
@@ -20,16 +27,19 @@ pub fn estimate_center<D: DualNum<f64> + RealField>(
     let mut pn = pn.xy() / pn.z.clone();
     if let Some(d) = &intrinsics.distortion {
         let r2 = pn.norm_squared();
-        let r4 = r2.clone()*r2.clone();
-        let r6 = r4.clone()*r2.clone();
-        pn.x *= d[0].clone()*r2.clone() + d[1].clone()*r4.clone() + d[4].clone()*r6.clone() + 1.0;
-        pn.y *= d[0].clone()*r2.clone() + d[1].clone()*r4.clone() + d[4].clone()*r6.clone() + 1.0;
+        let r4 = r2.clone() * r2.clone();
+        let r6 = r4.clone() * r2.clone();
+        pn.x *=
+            d[0].clone() * r2.clone() + d[1].clone() * r4.clone() + d[4].clone() * r6.clone() + 1.0;
+        pn.y *=
+            d[0].clone() * r2.clone() + d[1].clone() * r4.clone() + d[4].clone() * r6.clone() + 1.0;
     }
     let [[pnx, pny]] = pn.data.0;
     [
         intrinsics.fx.clone() * pnx + intrinsics.cx.clone(),
         intrinsics.fy.clone() * pny + intrinsics.cy.clone(),
-    ].into()
+    ]
+    .into()
 }
 
 pub fn make_extrinsics<D: DualNum<f64> + RealField>(r: Vector3<D>, t: Vector3<D>) -> Matrix3<D> {
@@ -37,8 +47,7 @@ pub fn make_extrinsics<D: DualNum<f64> + RealField>(r: Vector3<D>, t: Vector3<D>
     let mut e = Matrix3::identity();
     e.fixed_view_mut::<3, 2>(0, 0)
         .copy_from(&r.matrix().fixed_view::<3, 2>(0, 0));
-    e.fixed_view_mut::<3, 1>(0, 2)
-        .copy_from(&t);
+    e.fixed_view_mut::<3, 1>(0, 2).copy_from(&t);
     e
 }
 
@@ -60,11 +69,13 @@ pub fn reproject<D: DualNum<f64> + RealField>(
 ) -> Vector2<D> {
     let _0 = || D::zero();
     let _1 = || D::one();
-    let e = make_extrinsics(r, t) * matrix![
-        circle_radius, 0., object_point.x;
-        0., circle_radius, object_point.y;
-        0., 0., 1.;
-    ].cast();
+    let e = make_extrinsics(r, t)
+        * matrix![
+            circle_radius, 0., object_point.x;
+            0., circle_radius, object_point.y;
+            0., 0., 1.;
+        ]
+        .cast();
     let q_inv = Matrix3::from_diagonal(&[1., 1., -1.].into());
     estimate_center(intrinsics, e, q_inv.cast())
 }
@@ -112,7 +123,15 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         for (image_points, e) in zip(images_points, &v.extrinsics) {
             for (obj_p, img_p) in zip(object_points, image_points.column_iter()) {
                 let [[x, y]] = reprojection_error(
-                    &v.intrinsics, e.r.clone(), e.t.clone(), *obj_p, img_p.into(), circle_radius).data.0;
+                    &v.intrinsics,
+                    e.r.clone(),
+                    e.t.clone(),
+                    *obj_p,
+                    img_p.into(),
+                    circle_radius,
+                )
+                .data
+                .0;
                 residuals = residuals.push(x);
                 residuals = residuals.push(y);
             }
@@ -143,11 +162,12 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     // TODO: do something to get a better initial guess
     let trust_region = TrustRegion::new(Steihaug::new().with_max_iters(20));
     let result = Executor::new(problem, trust_region)
-        .configure(|state| state
-            .param(initial_params.encode())
-            .max_iters(1_000)
-            .target_cost(0.0)
-        )
+        .configure(|state| {
+            state
+                .param(initial_params.encode())
+                .max_iters(1_000)
+                .target_cost(0.0)
+        })
         .add_observer(SlogLogger::term(), ObserverMode::Every(200))
         .run()
         .expect("optimization failed");
@@ -170,11 +190,12 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     };
     let trust_region = TrustRegion::new(Dogleg::new());
     let result = Executor::new(problem, trust_region)
-        .configure(|state| state
-            .param(best_param.encode())
-            .max_iters(1_000)
-            .target_cost(0.0)
-        )
+        .configure(|state| {
+            state
+                .param(best_param.encode())
+                .max_iters(1_000)
+                .target_cost(0.0)
+        })
         .add_observer(SlogLogger::term(), ObserverMode::Every(100))
         .run()
         .expect("optimization failed");
@@ -190,7 +211,10 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     println!("cy: {}", best_param.intrinsics.cy);
     println!("d: {:?}", best_param.intrinsics.distortion);
     println!("cost: {cost}");
-    println!("RMSE: {}", f64::sqrt(cost / (object_points.len() * images_points.len()) as f64));
+    println!(
+        "RMSE: {}",
+        f64::sqrt(cost / (object_points.len() * images_points.len()) as f64)
+    );
     println!();
     best_param
 }
@@ -201,7 +225,8 @@ where
     M: Dim,
     N: Dim,
     G: Fn(CalibrationResult<DualVec<f64, f64, N>>) -> OVector<DualVec<f64, f64, N>, M>,
-    DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<N, N> + Allocator<nalgebra::Const<1>, N>,
+    DefaultAllocator:
+        Allocator<M> + Allocator<N> + Allocator<N, N> + Allocator<nalgebra::Const<1>, N>,
 {
     f: G,
     flags: Flags,
@@ -211,13 +236,17 @@ where
     last_hessian: RefCell<Option<OMatrix<f64, N, N>>>,
 }
 
-
 impl<G, M, N> Problem<G, M, N>
 where
     M: Dim,
     N: Dim,
     G: Fn(CalibrationResult<DualVec<f64, f64, N>>) -> OVector<DualVec<f64, f64, N>, M>,
-    DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<M, N> + Allocator<N, M> + Allocator<N, N> + Allocator<U1, N>,
+    DefaultAllocator: Allocator<M>
+        + Allocator<N>
+        + Allocator<M, N>
+        + Allocator<N, M>
+        + Allocator<N, N>
+        + Allocator<U1, N>,
 {
     fn evaluate(&self, param: &OVector<f64, N>) {
         let mut last_param = self.last_param.borrow_mut();
@@ -228,7 +257,7 @@ where
             );
 
             let jacobian_t = jacobian.transpose();
-            let gradient = 2.0*jacobian_t.clone()*value.clone();
+            let gradient = 2.0 * jacobian_t.clone() * value.clone();
             let hessian = 2.0 * jacobian_t * jacobian;
             *last_param = Some(param.clone());
             *self.last_value.borrow_mut() = Some(value.norm_squared());
@@ -243,7 +272,12 @@ where
     M: Dim,
     N: Dim,
     G: Fn(CalibrationResult<DualVec<f64, f64, N>>) -> OVector<DualVec<f64, f64, N>, M>,
-    DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<M, N> + Allocator<N, M> + Allocator<N, N> + Allocator<U1, N>,
+    DefaultAllocator: Allocator<M>
+        + Allocator<N>
+        + Allocator<M, N>
+        + Allocator<N, M>
+        + Allocator<N, N>
+        + Allocator<U1, N>,
 {
     type Param = OVector<f64, N>;
     type Output = f64;
@@ -259,7 +293,12 @@ where
     M: Dim,
     N: Dim,
     G: Fn(CalibrationResult<DualVec<f64, f64, N>>) -> OVector<DualVec<f64, f64, N>, M>,
-    DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<M, N> + Allocator<N, M> + Allocator<N, N> + Allocator<U1, N>,
+    DefaultAllocator: Allocator<M>
+        + Allocator<N>
+        + Allocator<M, N>
+        + Allocator<N, M>
+        + Allocator<N, N>
+        + Allocator<U1, N>,
 {
     type Param = OVector<f64, N>;
     type Gradient = OVector<f64, N>;
@@ -275,7 +314,12 @@ where
     M: Dim,
     N: Dim,
     G: Fn(CalibrationResult<DualVec<f64, f64, N>>) -> OVector<DualVec<f64, f64, N>, M>,
-    DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<M, N> + Allocator<N, M> + Allocator<N, N> + Allocator<U1, N>,
+    DefaultAllocator: Allocator<M>
+        + Allocator<N>
+        + Allocator<M, N>
+        + Allocator<N, M>
+        + Allocator<N, N>
+        + Allocator<U1, N>,
 {
     type Param = OVector<f64, N>;
     type Hessian = OMatrix<f64, N, N>;
@@ -291,7 +335,6 @@ pub fn rotation_from_scaled_axis<T, SB>(axisangle: Vector<T, U3, SB>) -> Rotatio
 where
     T: nalgebra::SimdRealField,
     T::Element: nalgebra::SimdRealField,
-
     SB: Storage<T, U3>,
 {
     let a = axisangle.into_owned();
@@ -340,10 +383,7 @@ impl<D: Scalar + Zero + One> CameraIntrinsics<D> {
 }
 
 impl<D: Scalar + Zero> CalibrationResult<D> {
-    fn decode<R: Dim, S: Storage<D, R, U1>>(
-        v: &Vector<D, R, S>,
-        flags: Flags,
-    ) -> Self {
+    fn decode<R: Dim, S: Storage<D, R, U1>>(v: &Vector<D, R, S>, flags: Flags) -> Self {
         let fx = v[0].clone();
         let fy = v[1].clone();
         let cx = v[2].clone();
@@ -368,25 +408,31 @@ impl<D: Scalar + Zero> CalibrationResult<D> {
         let mut extrinsics = vec![];
         for i in (start..v.len()).step_by(6) {
             let rx = v[i].clone();
-            let ry = v[i+1].clone();
-            let rz = v[i+2].clone();
-            let tx = v[i+3].clone();
-            let ty = v[i+4].clone();
-            let tz = v[i+5].clone();
+            let ry = v[i + 1].clone();
+            let rz = v[i + 2].clone();
+            let tx = v[i + 3].clone();
+            let ty = v[i + 4].clone();
+            let tz = v[i + 5].clone();
             extrinsics.push(Extrinsic {
                 r: vector![rx, ry, rz],
                 t: vector![tx, ty, tz],
             });
         }
         Self {
-            intrinsics: CameraIntrinsics { fx, fy, cx, cy, distortion },
+            intrinsics: CameraIntrinsics {
+                fx,
+                fy,
+                cx,
+                cy,
+                distortion,
+            },
             extrinsics,
         }
     }
 
     fn encode(&self) -> DVector<D> {
         let mut values = Vec::with_capacity(
-            4 + 6*self.extrinsics.len() + 5*(self.intrinsics.distortion.is_some() as usize)
+            4 + 6 * self.extrinsics.len() + 5 * (self.intrinsics.distortion.is_some() as usize),
         );
         values.push(self.intrinsics.fx.clone());
         values.push(self.intrinsics.fy.clone());
