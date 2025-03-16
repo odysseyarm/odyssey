@@ -2735,9 +2735,11 @@ dependencies = [
  "clap",
  "image 0.25.5",
  "macroquad",
+ "nalgebra 0.33.2",
  "opencv",
  "serde_json",
  "serialport",
+ "simba 0.9.0",
 ]
 
 [[package]]

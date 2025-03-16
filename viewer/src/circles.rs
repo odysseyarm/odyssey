@@ -1,6 +1,7 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, MatTraitConst as _, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use nalgebra::{Dyn, OMatrix, RowVector5, Vector3, U2};
+use opencv::{calib3d::{draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
-use crate::{chessboard::read_camera_params, DeviceUuid, PatternPoints, Port};
+use crate::{chessboard::read_camera_params, utils::nalg_to_mat, DeviceUuid, PatternPoints, Port};
 
 pub mod special;
 
@@ -31,7 +32,7 @@ pub fn get_circles_centers(
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
     let mut centers = Vector::<Point2f>::default();
 
-    let pattern_was_found = find_circles_grid(
+    let pattern_found = find_circles_grid(
         &im,
         board_size,
         &mut centers,
@@ -41,7 +42,7 @@ pub fn get_circles_centers(
     ).unwrap();
 
     if show {
-        display_found_circles(&im, board_size, &mut centers, pattern_was_found, port);
+        display_found_circles(&im, board_size, &mut centers, pattern_found, port);
     }
 
     let size = im.input_array().unwrap().size(-1).unwrap();
@@ -51,7 +52,7 @@ pub fn get_circles_centers(
     }
     PatternPoints {
         points: centers,
-        pattern_found: pattern_was_found,
+        pattern_found,
     }
 }
 
@@ -91,11 +92,17 @@ pub fn calibrate_single(
     object_resolution: (u32, u32),
     board_rows: u16,
     board_cols: u16,
+    spacing_mm: u16,
+    diameter_mm: u16,
     asymmetric: bool,
     device_uuid: DeviceUuid,
 ) {
-    let square_length = 1.0; // Specify the size of the squares between dots.
-    let board_points = board_points(board_rows, board_cols, square_length, asymmetric);
+    let spacing = spacing_mm as f32 / 1000.0;
+    let radius = diameter_mm as f64 / 1000.0 / 2.0;
+    let board_points = board_points(board_rows, board_cols, spacing, asymmetric)
+        .into_iter()
+        .map(|p| Vector3::new(p.x, p.y, p.z).cast::<f64>())
+        .collect::<Vec<_>>();
 
     let corners_arr = images
         .iter()
@@ -110,32 +117,40 @@ pub fn calibrate_single(
                 asymmetric,
                 false,
             );
-            r.pattern_found.then_some(r.points)
+            if r.pattern_found {
+                let pts = OMatrix::<f64, U2, Dyn>::from_iterator(
+                    r.points.len(),
+                    r.points.into_iter().flat_map(|p| [p.x as f64, p.y as f64]),
+                );
+                Some(pts)
+            } else {
+                None
+            }
         })
-        .collect::<Vector<Vector<Point2f>>>();
-    let object_points: Vector<Vector<Point3f>> =
-        std::iter::repeat(board_points).take(corners_arr.len()).collect();
-
-    let mut camera_matrix = Mat::default();
-    let mut dist_coeffs = Mat::default();
-    let criteria = TermCriteria {
-        typ: TermCriteria_EPS + TermCriteria_COUNT,
-        max_count: 30,
-        epsilon: f64::EPSILON,
+        .collect::<Vec<_>>();
+    let initial_focal_length = if port == Port::Nf {
+        6000.0
+    } else if resolution == (98, 98) {
+        1500.0
+    } else if resolution == (320, 240) {
+        13_000.0
+    } else {
+        println!("Missing initial guess for focal length!");
+        object_resolution.0.min(object_resolution.1) as f64
     };
-    let reproj_err = calibrate_camera(
-        &object_points,
+    let mut flags = ccalib::Flags::empty();
+    flags.set(ccalib::Flags::RADIAL_DISTORTION, port == Port::Wf);
+    let result = ccalib::calibrate(
+        &board_points,
         &corners_arr,
-        (object_resolution.0 as i32, object_resolution.1 as i32).into(),
-        &mut camera_matrix,
-        &mut dist_coeffs,
-        &mut no_array(),
-        &mut no_array(),
-        0,
-        criteria,
-    )
-    .unwrap();
-    println!("RMS error: {}", reproj_err);
+        radius,
+        initial_focal_length,
+        object_resolution.0 as f64 / 2.0,
+        object_resolution.1 as f64 / 2.0,
+        Vector3::new(0.0, 0.0, radius * 10.0),
+        flags,
+    );
+    println!("RMS error: {}", result.rmse);
 
     let pattern = match asymmetric {
         true => "acircles",
@@ -144,9 +159,9 @@ pub fn calibrate_single(
     super::save_single_calibration(
         port,
         pattern,
-        &camera_matrix,
-        &dist_coeffs,
-        reproj_err,
+        &nalg_to_mat(&result.intrinsics.matrix()),
+        &nalg_to_mat(&RowVector5::from(result.intrinsics.distortion())),
+        result.rmse,
         image_files,
         device_uuid,
     );
@@ -155,17 +170,20 @@ pub fn calibrate_single(
 fn board_points(
     board_rows: u16,
     board_cols: u16,
-    square_length: f32,
+    spacing: f32,
     asymmetric: bool,
 ) -> Vector<opencv::core::Point3_<f32>> {
     let mut board_points = Vector::<Point3f>::new();
 
     if asymmetric {
-        for row in 0..board_rows {
-            for col in 0..board_cols {
+        // spacing is diagonal spacing for asymmetric grids
+        let diag_sp = spacing;
+        let spacing = (2.0 * diag_sp * diag_sp).sqrt() / 2.0;
+        for col in 0..board_cols {
+            for row in 0..board_rows {
                 board_points.push(Point3f::new(
-                    (2 * col + row % 2) as f32 * square_length,
-                    row as f32 * square_length,
+                    (2 * row + col % 2) as f32 * spacing,
+                    col as f32 * spacing,
                     0.0,
                 ));
             }
@@ -173,7 +191,7 @@ fn board_points(
     } else {
         for row in 0..board_rows {
             for col in 0..board_cols {
-                board_points.push(Point3f::new(col as f32 * square_length, row as f32 * square_length, 0.0));
+                board_points.push(Point3f::new(col as f32 * spacing, row as f32 * spacing, 0.0));
             }
         }
     }

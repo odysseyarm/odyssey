@@ -156,7 +156,6 @@ fn main() {
             ));
         }
     }
-    println!("{circle_centers:?}");
 
     let mut imgs = vec![];
     let mut images_points: Vec<OMatrix<f64, U2, Dyn>> = vec![];
@@ -190,9 +189,9 @@ fn main() {
             .collect::<Vec<_>>(),
         &images_points,
         radius.into(),
-        100.0,
-        45.0,
-        45.0,
+        6000.0,
+        2047.0,
+        2047.0,
         [0., 0., 0.50].into(),
         flags,
     );

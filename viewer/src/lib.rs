@@ -21,6 +21,7 @@ pub mod charuco;
 pub mod chessboard;
 pub mod circles;
 pub mod draw_pattern_points;
+pub mod utils;
 
 use macroquad::prelude::*;
 
@@ -130,6 +131,8 @@ impl MainState {
 struct DetectorParams {
     rows: AtomicU16,
     cols: AtomicU16,
+    spacing_mm: AtomicU16,
+    diameter_mm: AtomicU16,
     pattern: atomic::Atomic<DetectorPattern>,
 }
 
@@ -182,6 +185,8 @@ impl MainState {
             detector_params: Arc::new(DetectorParams {
                 rows: 3.into(),
                 cols: 5.into(),
+                spacing_mm: 12.into(),
+                diameter_mm: 9.into(),
                 pattern: atomic::Atomic::new(DetectorPattern::AsymmetricCircles),
             }),
             reset: reset.clone(),
@@ -287,10 +292,12 @@ impl MainState {
 
         let cols = self.detector_params.cols.load(Ordering::Relaxed);
         let rows = self.detector_params.rows.load(Ordering::Relaxed);
+        let grid_spacing = self.detector_params.spacing_mm.load(Ordering::Relaxed);
+        let diameter = self.detector_params.diameter_mm.load(Ordering::Relaxed);
         let pat = self.detector_params.pattern.load(Ordering::Relaxed);
         draw_text(
             &format!(
-                "Captures (space): {}    Board (r, c, s): {rows}x{cols}    Detector (d): {pat}",
+                "Captures (space): {:<4} Board (r, c): {rows}x{cols}    Detector (d): {pat}",
                 self.captured_wf.len()
             ),
             10.0,
@@ -299,16 +306,25 @@ impl MainState {
             WHITE,
         );
         draw_text(
-            "<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close",
-            10.0,
-            image_area_size.y + 60.0,
-            16.0,
-            WHITE,
-        );
-        draw_text(
             &format!("Device ID: {}", self.device_uuid),
             98.0*5.0*2.0-180.0,
             image_area_size.y + 40.0,
+            16.0,
+            WHITE,
+        );
+        if pat == DetectorPattern::AsymmetricCircles {
+            draw_text(
+                &format!("{:23}spacing (i): {grid_spacing} mm    diameter (a): {diameter} mm", ""),
+                10.0,
+                image_area_size.y + 60.0,
+                16.0,
+                WHITE,
+            );
+        }
+        draw_text(
+            "<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close",
+            10.0,
+            image_area_size.y + 80.0,
             16.0,
             WHITE,
         );
@@ -511,6 +527,8 @@ async fn handle_input(state: &mut MainState) {
         let captures_files = state.captured_nf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
+        let spacing_mm = state.detector_params.spacing_mm.load(Ordering::Relaxed);
+        let diameter_mm = state.detector_params.diameter_mm.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
@@ -535,6 +553,8 @@ async fn handle_input(state: &mut MainState) {
                 object_resolution,
                 board_rows,
                 board_cols,
+                spacing_mm,
+                diameter_mm,
                 true,
                 device_uuid,
             ),
@@ -546,6 +566,8 @@ async fn handle_input(state: &mut MainState) {
                 object_resolution,
                 board_rows,
                 board_cols,
+                spacing_mm,
+                diameter_mm,
                 false,
                 device_uuid,
             ),
@@ -571,6 +593,8 @@ async fn handle_input(state: &mut MainState) {
         let captures_files = state.captured_wf_files.iter().map(|s| &**s).collect();
         let board_cols = state.detector_params.cols.load(Ordering::Relaxed);
         let board_rows = state.detector_params.rows.load(Ordering::Relaxed);
+        let spacing_mm = state.detector_params.spacing_mm.load(Ordering::Relaxed);
+        let diameter_mm = state.detector_params.diameter_mm.load(Ordering::Relaxed);
         let pat = state.detector_params.pattern.load(Ordering::Relaxed);
         let resolution = state.resolution;
         let object_resolution = state.object_resolution;
@@ -595,6 +619,8 @@ async fn handle_input(state: &mut MainState) {
                 object_resolution,
                 board_rows,
                 board_cols,
+                spacing_mm,
+                diameter_mm,
                 true,
                 device_uuid,
             ),
@@ -606,6 +632,8 @@ async fn handle_input(state: &mut MainState) {
                 object_resolution,
                 board_rows,
                 board_cols,
+                spacing_mm,
+                diameter_mm,
                 false,
                 device_uuid,
             ),
@@ -688,24 +716,39 @@ async fn handle_input(state: &mut MainState) {
             DetectorPattern::None => eprintln!("No pattern selected"),
         });
     }
+    let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
     if is_key_pressed(KeyCode::R) {
-        if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
+        if shift {
             state.detector_params.rows.fetch_sub(1, Ordering::Relaxed);
         } else {
             state.detector_params.rows.fetch_add(1, Ordering::Relaxed);
         }
     }
     if is_key_pressed(KeyCode::C) {
-        if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
+        if shift {
             state.detector_params.cols.fetch_sub(1, Ordering::Relaxed);
         } else {
             state.detector_params.cols.fetch_add(1, Ordering::Relaxed);
         }
     }
+    if is_key_pressed(KeyCode::I) {
+        if shift {
+            state.detector_params.spacing_mm.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            state.detector_params.spacing_mm.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    if is_key_pressed(KeyCode::A) {
+        if shift {
+            state.detector_params.diameter_mm.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            state.detector_params.diameter_mm.fetch_add(1, Ordering::Relaxed);
+        }
+    }
     if is_key_pressed(KeyCode::D) {
         use DetectorPattern as P;
         let pattern = state.detector_params.pattern.load(Ordering::Relaxed);
-        let new_value = if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
+        let new_value = if shift {
             match pattern {
                 P::None => P::AprilGrid,
                 P::AprilGrid => P::AsymmetricCircles,
@@ -725,7 +768,6 @@ async fn handle_input(state: &mut MainState) {
         state.detector_params.pattern.store(new_value, Ordering::Relaxed);
     }
     if is_key_pressed(KeyCode::O) {
-        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
         if shift {
             state.orientation = state.orientation.prev();
         } else {

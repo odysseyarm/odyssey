@@ -14,9 +14,11 @@ ccalib = { version = "0.1.0", path = "../ccalib" }
 clap = { version = "4.5.4", features = ["derive"] }
 image = { version = "0.25.5", default-features = false, features = ["png"] }
 macroquad = "0.4.11"
+nalgebra = "0.33.2"
 opencv = "0.94.2"
 serde_json = "1.0.133"
 serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
+simba = "0.9.0"
 
 # Enable optimizations for dependencies in dev profile
 [profile.dev.package."*"]

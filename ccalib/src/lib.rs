@@ -114,6 +114,13 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     initial_target_pos: Vector3<f64>, // initial guess for the target's position in camera space
     flags: Flags,
 ) -> CalibrationResult<f64> {
+    // dbg!(&object_points);
+    // dbg!(&images_points);
+    // dbg!(&circle_radius);
+    // dbg!(&initial_cx);
+    // dbg!(&initial_cy);
+    // dbg!(&initial_target_pos);
+    // dbg!(&flags);
     for img_p in images_points {
         assert_eq!(object_points.len(), img_p.ncols());
     }
@@ -201,8 +208,9 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         .expect("optimization failed");
 
     let status = result.state.get_termination_status().clone();
-    let best_param = CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), flags);
+    let mut best_param = CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), flags);
     let cost = result.state.best_cost;
+    let rmse = f64::sqrt(cost / (object_points.len() * images_points.len()) as f64);
     println!("Converged after {} iterations", result.state.iter);
     println!("Termination status: {status}");
     println!("fx: {}", best_param.intrinsics.fx);
@@ -213,9 +221,10 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     println!("cost: {cost}");
     println!(
         "RMSE: {}",
-        f64::sqrt(cost / (object_points.len() * images_points.len()) as f64)
+        rmse
     );
     println!();
+    best_param.rmse = rmse;
     best_param
 }
 
@@ -355,6 +364,7 @@ where
 pub struct CalibrationResult<D: Scalar> {
     pub intrinsics: CameraIntrinsics<D>,
     pub extrinsics: Vec<Extrinsic<D>>,
+    pub rmse: f64,
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -379,6 +389,16 @@ impl<D: Scalar + Zero + One> CameraIntrinsics<D> {
             D::zero(), self.fy.clone(), self.cy.clone();
             D::zero(), D::zero(), D::one();
         ]
+    }
+
+    pub fn distortion(&self) -> [D; 5] {
+        self.distortion.clone().unwrap_or([
+            D::zero(),
+            D::zero(),
+            D::zero(),
+            D::zero(),
+            D::zero(),
+        ])
     }
 }
 
@@ -427,6 +447,7 @@ impl<D: Scalar + Zero> CalibrationResult<D> {
                 distortion,
             },
             extrinsics,
+            rmse: -1.0,
         }
     }
 
@@ -452,7 +473,7 @@ impl<D: Scalar + Zero> CalibrationResult<D> {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug)]
     pub struct Flags: u8 {
         const RADIAL_DISTORTION = 0x1;
         // TODO
