@@ -1,4 +1,4 @@
-use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, MatTraitConst as _, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray as _, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
+use opencv::{calib3d::{ calibrate_camera, draw_chessboard_corners, find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID }, core::{no_array, Mat, MatTraitConst as _, Point2f, Point3f, Ptr, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray, Vector, _InputArrayTraitConst as _}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{imshow, poll_key}, imgproc::{cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC}};
 
 use crate::{chessboard::read_camera_params, DeviceUuid, PatternPoints, Port};
 
@@ -19,21 +19,7 @@ pub fn get_circles_centers(
 
     let im = Mat::new_rows_cols_with_data(resolution.1.into(), resolution.0.into(), image).unwrap();
 
-    let mut im_upscaled = Mat::default();
-    // super resolution scale
-    let ss;
-    if resolution == (98, 98) {
-        ss = 4.;
-        resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
-    } else {
-        ss = 1.;
-        // resize(&im, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
-        im_upscaled = im.try_clone().unwrap();
-    }
-
-    let mut centers = Vector::<Point2f>::default();
-
-    let mut params = SimpleBlobDetector_Params::default().unwrap();
+    let params = SimpleBlobDetector_Params::default().unwrap();
     let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
     if asymmetric {
         circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
@@ -43,9 +29,10 @@ pub fn get_circles_centers(
 
     let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
+    let mut centers = Vector::<Point2f>::default();
 
     let pattern_was_found = find_circles_grid(
-        &im_upscaled,
+        &im,
         board_size,
         &mut centers,
         if asymmetric { CALIB_CB_ASYMMETRIC_GRID } else { CALIB_CB_SYMMETRIC_GRID } | CALIB_CB_CLUSTERING,
@@ -53,13 +40,8 @@ pub fn get_circles_centers(
         circle_grid_finder_params,
     ).unwrap();
 
-    centers.as_mut_slice().iter_mut().for_each(|x| {
-        x.x = (x.x + 0.5) / ss as f32 - 0.5;
-        x.y = (x.y + 0.5) / ss as f32 - 0.5;
-    });
-
     if show {
-        display_found_circles(&im_upscaled, board_size, &mut centers, pattern_was_found, port);
+        display_found_circles(&im, board_size, &mut centers, pattern_was_found, port);
     }
 
     let size = im.input_array().unwrap().size(-1).unwrap();
@@ -73,10 +55,10 @@ pub fn get_circles_centers(
     }
 }
 
-fn display_found_circles(im: &Mat, board_size: opencv::core::Size, centers: &Vector<Point2f>, pattern_was_found: bool, port: Port) {
+fn display_found_circles(im: &impl ToInputArray, board_size: opencv::core::Size, centers: &Vector<Point2f>, pattern_was_found: bool, port: Port) {
     let mut centers = centers.clone();
     let mut display_im = Mat::default();
-    cvt_color_def(&im, &mut display_im, COLOR_GRAY2BGR).unwrap();
+    cvt_color_def(im, &mut display_im, COLOR_GRAY2BGR).unwrap();
     let tmp = display_im;
     let mut display_im = Mat::default();
     resize(&tmp, &mut display_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();

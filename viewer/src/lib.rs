@@ -276,12 +276,12 @@ impl MainState {
 
         // Draw FPS
         let fps = 1.0 / wf_data.avg_frame_period;
-        draw_text(&format!("{:.1} fps", fps), padding, image_area_size.y + 20.0, 20.0, WHITE);
+        draw_text(&format!("{:.1} fps", fps), padding, image_area_size.y + 20.0, 16.0, WHITE);
         draw_text(
             &format!("{:.1} fps", fps),
             image_area_size.x + spacing + padding,
             image_area_size.y + 20.0,
-            20.0,
+            16.0,
             WHITE,
         );
 
@@ -295,21 +295,21 @@ impl MainState {
             ),
             10.0,
             image_area_size.y + 40.0,
-            20.0,
+            16.0,
             WHITE,
         );
         draw_text(
             "<1> calib nf    <2> calib wf    <3> stereo calib    <Backspace> clear    <Esc> close",
             10.0,
             image_area_size.y + 60.0,
-            20.0,
+            16.0,
             WHITE,
         );
         draw_text(
             &format!("Device ID: {}", self.device_uuid),
             98.0*5.0*2.0-180.0,
             image_area_size.y + 40.0,
-            20.0,
+            16.0,
             WHITE,
         );
 
