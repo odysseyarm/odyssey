@@ -1,112 +1,18 @@
 use std::iter::zip;
 
-use ccalib::make_extrinsics;
-use nalgebra::{matrix, vector, Const, Dyn, Matrix3, OMatrix, U2};
+use ccalib::{make_extrinsics, utils::{distort_image, imshow_multi, stroke_circle}, CameraIntrinsics};
+use nalgebra::{matrix, vector, Dyn, Matrix3, OMatrix, U2};
 use opencv::{
-    calib3d::{find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID}, core::{KeyPointTraitConst as _, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size, ToInputArray, ToInputOutputArray, Vec3b, Vector, _InputArrayTraitConst as _, BORDER_CONSTANT, CV_8UC1}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{
-        destroy_window, get_window_property, imshow, set_window_title, wait_key, WND_PROP_VISIBLE
-    }, imgcodecs::imread_def, imgproc::{ellipse, resize, resize_def, warp_perspective, INTER_LINEAR, INTER_NEAREST, LINE_AA}, prelude::Feature2DTrait
+    calib3d::{find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING}, core::{KeyPointTraitConst as _, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size, ToInputArray, Vec3b, Vector, _InputArrayTraitConst as _, CV_8UC1}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, imgcodecs::imread_def, imgproc::{resize, INTER_NEAREST}, prelude::Feature2DTrait
 };
-
-fn imshow_multi<T: ToInputArray>(imgs: &[T], title: &str) {
-    let mut i = 0;
-    let mut current_title = format!("{title} (Image {} of {})", i+1, imgs.len());
-    imshow("imshow_multi", &imgs[0]).unwrap();
-    set_window_title("imshow_multi", &current_title).unwrap();
-    loop {
-        let c = wait_key(100).unwrap();
-        // println!("{} {:?}", c, char::from_u32(c as u32));
-        if c == b'q'.into()
-            || c == 0x1b // esc
-            || get_window_property(&"imshow_multi", WND_PROP_VISIBLE).unwrap() == 0.
-        {
-            break;
-        }
-
-        'change_image: {
-            // left arrow
-            if c == 81 || c == b'h'.into() || c == b','.into() {
-                i = (i + imgs.len() - 1) % imgs.len();
-            } else if c == 83 || c == b'l'.into() || c == b'.'.into() {
-                i = (i + 1) % imgs.len();
-            } else {
-                break 'change_image;
-            }
-            imshow(&"imshow_multi", &imgs[i].input_array().unwrap()).unwrap();
-            current_title = format!("{title} (Image {} of {})", i+1, imgs.len());
-            set_window_title("imshow_multi", &current_title).unwrap();
-        }
-    }
-    destroy_window("imshow_multi").unwrap();
-}
-
-fn fill_circle(
-    im: &mut impl ToInputOutputArray,
-    center: (f64, f64),
-    radius: f64,
-    color: [f64; 4],
-) -> opencv::Result<()> {
-    let cx = (center.0 * 1024.0).round() as i32;
-    let cy = (center.1 * 1024.0).round() as i32;
-    let r = (radius * 1024.0).round() as i32;
-    ellipse(
-        im,
-        (cx, cy).into(),
-        (r, r).into(),
-        0.0,
-        0.0,
-        360.0,
-        color.into(),
-        -1,
-        LINE_AA,
-        10,
-    )
-}
-
-fn stroke_circle(
-    im: &mut impl ToInputOutputArray,
-    center: (f64, f64),
-    radius: f64,
-    color: [f64; 4],
-    thickness: i32,
-) -> opencv::Result<()> {
-    let cx = (center.0 * 1024.0).round() as i32;
-    let cy = (center.1 * 1024.0).round() as i32;
-    let r = (radius * 1024.0).round() as i32;
-    ellipse(
-        im,
-        (cx, cy).into(),
-        (r, r).into(),
-        0.0,
-        0.0,
-        360.0,
-        color.into(),
-        thickness,
-        LINE_AA,
-        10,
-    )
-}
 
 fn get_circle_centers(im: &impl ToInputArray, rows: usize, cols: usize) -> Vector<Point2f> {
     let mut centers = Vector::<Point2f>::default();
 
-    let mut params = SimpleBlobDetector_Params::default().unwrap();
-    // params.min_threshold = 125.0;
-    // params.max_threshold = 127.0;
-    // params.threshold_step = 1.0;
-    // params.min_area = 80.0;
-    // params.max_area = 10000.0;
-    // params.filter_by_area = false;
-    // params.filter_by_convexity = false;
-    // params.min_convexity = 0.87;
-    // params.min_circularity = 0.2;
-    // params.filter_by_circularity = false;
-    // params.min_inertia_ratio = 0.1;
-    // params.filter_by_inertia = false;
-
+    let params = SimpleBlobDetector_Params::default().unwrap();
     let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
     circle_grid_finder_params.grid_type = opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
-    let mut simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
+    let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
 
     let pattern_was_found = find_circles_grid(
@@ -123,6 +29,23 @@ fn get_circle_centers(im: &impl ToInputArray, rows: usize, cols: usize) -> Vecto
         }
         centers
     } else {
+        {
+            let mut simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
+            let mut keypoints = Vector::default();
+            simple_blob_detector.detect_def(im, &mut keypoints).unwrap();
+            let new_im = im.input_array().unwrap().get_mat_def().unwrap().clone();
+            let mut new_im = {
+                let mut tmp = Mat::default();
+                resize(&new_im, &mut tmp, (500, 500).into(), 0.0, 0.0, INTER_NEAREST).unwrap();
+                tmp
+            };
+            keypoints.iter().for_each(|kp| {
+                let pt = (kp.pt() + (0.5, 0.5).into()) * 500.0 / 98.0 - (0.5, 0.5).into();
+                let size = (kp.size() * 500.0 / 98.0) as f64;
+                stroke_circle(&mut new_im, (pt.x as f64, pt.y as f64), size / 2.0, [0.0, 0.0, 255.0, 255.0], 1).unwrap();
+            });
+            imshow_multi(&[&new_im], "fail");
+        }
         panic!("failed to find circle grid");
     }
 }
@@ -131,7 +54,7 @@ fn overlay_circles(
     dst: &mut Mat,
     circle_centers: &[(f64, f64)],
     radius: f64,
-    k: Matrix3<f64>,
+    intrinsics: &CameraIntrinsics<f64>,
     e: Matrix3<f64>,
 ) {
     let canvas_scale = 10_000.0;
@@ -145,7 +68,7 @@ fn overlay_circles(
         stroke_circle(&mut im, cc, radius * canvas_scale, [255.; 4], 2).unwrap();
     }
 
-    let mut cam = Mat::default();
+    let k = intrinsics.matrix();
     let canvas_scale_mat = Matrix3::from_diagonal(&[1.0/canvas_scale, 1.0/canvas_scale, 1.0].into());
     let output_scale_mat = matrix![
         1.0, 0.0, -0.5;
@@ -164,11 +87,20 @@ fn overlay_circles(
         0.0, 97.0/4094.0, 0.0;
         0.0, 0.0, 1.0;
     ];
-    let mat = (output_scale_mat*k*e*canvas_scale_mat).transpose(); // nalgebra is column major
-    let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice()).unwrap();
-    resize(&dst.clone(), dst, output_size, 0.0, 0.0, INTER_NEAREST).unwrap();
-    warp_perspective(&im, &mut cam, &mat, output_size, INTER_LINEAR, BORDER_CONSTANT, [0.; 4].into()).unwrap();
+    // let mat = (output_scale_mat*k*e*canvas_scale_mat).transpose(); // nalgebra is column major
+    // let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice()).unwrap();
+    // warp_perspective(&im, &mut cam, &mat, output_size, INTER_LINEAR, BORDER_CONSTANT, [0.; 4].into()).unwrap();
+    let mut cam = Mat::default();
+    distort_image(
+        &im,
+        &mut cam,
+        &(output_scale_mat*k),
+        intrinsics.distortion.as_ref().unwrap_or(&[0.0; 5]),
+        output_size,
+        &(e*canvas_scale_mat).try_inverse().unwrap(),
+    );
 
+    resize(&dst.clone(), dst, output_size, 0.0, 0.0, INTER_NEAREST).unwrap();
     let cam_data = cam.data_bytes().unwrap();
     let dst_data = dst.data_typed_mut::<Vec3b>().unwrap();
     for (cam_p, dst_p) in zip(cam_data, dst_data) {
@@ -182,10 +114,10 @@ fn overlay_circles(
 fn main() {
     // ===== read images =====
     let mut circle_centers = vec![];
-    let radius = 0.006; // 6 mm
-    let diag_sp = 0.015; // 15 mm
-    let board_rows = 5;
-    let board_cols = 2;
+    let radius = 0.0045; // 9 mm
+    let diag_sp = 0.012; // 12 mm
+    let board_rows = 3;
+    let board_cols = 5;
     let vert_len = (2.0f64*diag_sp*diag_sp).sqrt() / 2.0;
     for c in 0..board_cols {
         for r in 0..board_rows {
@@ -199,7 +131,13 @@ fn main() {
 
     let mut imgs = vec![];
     let mut images_points: Vec<OMatrix<f64, U2, Dyn>> = vec![];
-    for arg in std::env::args().skip(1) {
+    let args: Vec<_> = std::env::args().collect();
+    let mut args = &args[1..];
+    let calib_distortion = args[0] == "-d";
+    if calib_distortion {
+        args = &args[1..];
+    }
+    for arg in args {
         let im = imread_def(&arg).unwrap();
         let cc = get_circle_centers(&im, board_rows, board_cols);
         images_points.push(
@@ -214,32 +152,21 @@ fn main() {
         &circle_centers.iter().copied().map(|p| vector![p.0, p.1, 0.0]).collect::<Vec<_>>(),
         &images_points,
         radius.into(),
-        6000.0,
-        2047.0,
-        2047.0,
+        100.0,
+        45.0,
+        45.0,
         [0., 0., 0.50].into(),
+        true,
     );
-    let estimated_extrinsics = result.index((4.., ..)).reshape_generic(Const::<6>, Dyn((result.len()-4)/6));
-    for (i, c) in estimated_extrinsics.column_iter().enumerate() {
-        println!("e{i}: {:.6?}", c.as_slice());
+    for (i, c) in result.extrinsics.iter().enumerate() {
+        println!("e{i}: {:.6?}", c);
     }
-    let fx = result[0];
-    let fy = result[1];
-    let cx = result[2];
-    let cy = result[3];
-    let k = matrix![
-        fx, 0., cx;
-        0., fy, cy;
-        0., 0., 1.;
-    ];
 
 
     // ===== draw estimated extrinsics =====
-    for (e, im) in estimated_extrinsics.column_iter().zip(&mut imgs) {
-        let r = e.fixed_view::<3, 1>(0, 0).into_owned();
-        let t = e.fixed_view::<3, 1>(3, 0).into_owned();
-        let e = make_extrinsics(r, t);
-        overlay_circles(im, &circle_centers, radius, k, e);
+    for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
+        let e = make_extrinsics(e.r, e.t);
+        overlay_circles(im, &circle_centers, radius, &result.intrinsics, e);
     }
     imshow_multi(&imgs, "Estimates");
 }

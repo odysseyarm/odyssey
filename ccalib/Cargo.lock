@@ -132,6 +132,7 @@ dependencies = [
  "dlt",
  "nalgebra",
  "num-dual",
+ "num-traits",
  "opencv",
 ]
 

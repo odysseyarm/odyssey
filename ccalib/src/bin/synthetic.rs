@@ -1,91 +1,10 @@
 use std::iter::zip;
 
-use ccalib::{make_extrinsics, make_extrinsics_from_mat4};
-use nalgebra::{matrix, stack, vector, Const, Dyn, Matrix3, OMatrix, Rotation3, SMatrix, Translation3, Vector3, U2};
+use ccalib::{make_extrinsics, make_extrinsics_from_mat4, utils::{fill_circle, imshow_multi, stroke_circle}};
+use nalgebra::{matrix, stack, vector, Dyn, Matrix3, OMatrix, Rotation3, Translation3, U2};
 use opencv::{
-    calib3d::{find_circles_grid, CirclesGridFinderParameters, CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID}, core::{Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size, ToInputArray, ToInputOutputArray, Vec3b, Vec4b, Vec4f, Vector, BORDER_CONSTANT, CV_8UC1, CV_8UC3, CV_8UC4}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, highgui::{
-        destroy_all_windows, destroy_window, get_window_property, imshow, poll_key, set_window_title, wait_key, WND_PROP_VISIBLE
-    }, imgproc::{ellipse, warp_perspective, INTER_LINEAR, LINE_AA}
+    calib3d::{find_circles_grid, CirclesGridFinderParameters, CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID}, core::{Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, ToInputArray, Vec3b, Vector, BORDER_CONSTANT, CV_8UC1, CV_8UC3}, features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params}, imgproc::{warp_perspective, INTER_LINEAR}
 };
-
-fn imshow_multi<T: ToInputArray>(imgs: &[T], title: &str) {
-    let mut i = 0;
-    let mut current_title = format!("{title} (Image {i})");
-    imshow("imshow_multi", &imgs[0]).unwrap();
-    set_window_title("imshow_multi", &current_title).unwrap();
-    loop {
-        let c = wait_key(100).unwrap();
-        // println!("{} {:?}", c, char::from_u32(c as u32));
-        if c == b'q'.into()
-            || c == 0x1b // esc
-            || get_window_property(&"imshow_multi", WND_PROP_VISIBLE).unwrap() == 0.
-        {
-            break;
-        }
-
-        'change_image: {
-            // left arrow
-            if c == 81 || c == b'h'.into() || c == b','.into() {
-                i = (i + imgs.len() - 1) % imgs.len();
-            } else if c == 83 || c == b'l'.into() || c == b'.'.into() {
-                i = (i + 1) % imgs.len();
-            } else {
-                break 'change_image;
-            }
-            imshow(&"imshow_multi", &imgs[i].input_array().unwrap()).unwrap();
-            current_title = format!("{title} (Image {i})");
-            set_window_title("imshow_multi", &current_title).unwrap();
-        }
-    }
-    destroy_window("imshow_multi").unwrap();
-}
-
-fn fill_circle(
-    im: &mut impl ToInputOutputArray,
-    center: (f64, f64),
-    radius: f64,
-    color: [f64; 4],
-) -> opencv::Result<()> {
-    let cx = (center.0 * 1024.0).round() as i32;
-    let cy = (center.1 * 1024.0).round() as i32;
-    let r = (radius * 1024.0).round() as i32;
-    ellipse(
-        im,
-        (cx, cy).into(),
-        (r, r).into(),
-        0.0,
-        0.0,
-        360.0,
-        color.into(),
-        -1,
-        LINE_AA,
-        10,
-    )
-}
-
-fn stroke_circle(
-    im: &mut impl ToInputOutputArray,
-    center: (f64, f64),
-    radius: f64,
-    color: [f64; 4],
-    thickness: i32,
-) -> opencv::Result<()> {
-    let cx = (center.0 * 1024.0).round() as i32;
-    let cy = (center.1 * 1024.0).round() as i32;
-    let r = (radius * 1024.0).round() as i32;
-    ellipse(
-        im,
-        (cx, cy).into(),
-        (r, r).into(),
-        0.0,
-        0.0,
-        360.0,
-        color.into(),
-        thickness,
-        LINE_AA,
-        10,
-    )
-}
 
 fn get_circle_centers(im: &impl ToInputArray) -> Vector<Point2f> {
     let mut centers = Vector::<Point2f>::default();
@@ -228,10 +147,10 @@ fn main() {
         250.0,
         250.0,
         [0., 0., 1000.].into(),
+        false,
     );
-    let estimated_extrinsics = result.index((4.., ..)).reshape_generic(Const::<6>, Dyn((result.len()-4)/6));
-    for (i, c) in estimated_extrinsics.column_iter().enumerate() {
-        println!("e{i}: {:.6?}", c.as_slice());
+    for (i, c) in result.extrinsics.iter().enumerate() {
+        println!("e{i}: {:.6?}", c);
     }
 
 
@@ -244,10 +163,8 @@ fn main() {
     }
 
     // ===== draw estimated extrinsics =====
-    for (e, im) in estimated_extrinsics.column_iter().zip(&mut imgs) {
-        let r = e.fixed_view::<3, 1>(0, 0).into_owned();
-        let t = e.fixed_view::<3, 1>(3, 0).into_owned();
-        let e = make_extrinsics(r, t);
+    for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
+        let e = make_extrinsics(e.r, e.t);
         overlay_circles(im, &circle_centers, radius, k, e);
     }
     imshow_multi(&imgs, "Estimates");
