@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["std"]
-std = ["cam-geom", "serde", "serde_json", "simba", "cv"]
+std = ["serde", "serde_json", "simba"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,11 +13,6 @@ std = ["cam-geom", "serde", "serde_json", "simba", "cv"]
 nalgebra = { version = "0.32.3", default-features = false, features = [ "libm", "macros", "serde-serialize" ] }
 num = { version = "0.4.1", default-features = false, features = [ "libm" ] }
 opencv-ros-camera = { version = "0.14.1", default-features = false }
-cam-geom = { version = "0.14.1", optional = true }
-sqpnp = { git = "https://github.com/0e4ef622/sqpnp.git", branch="f32", optional = true }
 serde = { version = "1.0.198", features = [ "derive" ], optional = true }
 serde_json = { version = "1.0.116", optional = true }
 simba = { version = "0.8.1", optional = true }
-arrayvec = { version = "0.7.4", default-features = false }
-cv = { version = "0.6.0", default-features = false, features = ["cv-pinhole", "lambda-twist"], optional = true }
-microfft = "0.6.0"
