@@ -311,7 +311,6 @@ impl<R: RealField> From<MinimalCameraCalibrationParams<R>> for CameraCalibration
     }
 }
 
-#[cfg(feature = "std")]
 impl<R: RealField> From<MinimalStereoCalibrationParams<R>> for StereoCalibrationParams<R> {
     fn from(minimal: MinimalStereoCalibrationParams<R>) -> Self {
         StereoCalibrationParams {
@@ -415,11 +414,10 @@ impl<R: RealField> From<StereoCalibrationParams<R>> for Isometry3<R> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<R: RealField> From<Isometry3<R>> for MinimalStereoCalibrationParams<R> {
     fn from(isometry: Isometry3<R>) -> Self {
         let binding = isometry.rotation.to_rotation_matrix();
-        let r = binding.matrix().to_owned();
+        let r = binding.matrix().clone();
         let t = isometry.translation.vector;
 
         MinimalStereoCalibrationParams {

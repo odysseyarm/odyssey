@@ -1,15 +1,13 @@
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 
-use nalgebra::{
-    Isometry3, RealField,
-    Scalar,
+use nalgebra::Scalar;
+#[cfg(feature = "std")]
+use {
+    opencv_ros_camera::{Distortion, RosOpenCvIntrinsics},
+    nalgebra::{Isometry3, RealField},
+    std::error::Error,
+    std::io::Read,
 };
-#[cfg(feature = "std")]
-use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
-#[cfg(feature = "std")]
-use std::error::Error;
-#[cfg(feature = "std")]
-use std::io::Read;
 use num::{
     traits::Float,
     FromPrimitive,
@@ -89,7 +87,8 @@ where
     RosOpenCvIntrinsics::from_params_with_distortion(fx, _0, fy, cx, cy, distortion)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy)]
 pub struct Plane<F: Float + FromPrimitive + Scalar> {
     pub origin: nalgebra::Point3<F>,
     pub normal: nalgebra::Vector3<F>,

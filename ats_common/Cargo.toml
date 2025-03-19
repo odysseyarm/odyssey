@@ -5,14 +5,15 @@ edition = "2021"
 
 [features]
 default = ["std"]
-std = ["serde", "serde_json", "simba"]
-
+std = ["serde", "serde_json", "simba/std"]
+serde_json = ["dep:serde_json", "serde"]
+serde = ["dep:serde", "nalgebra/serde-serialize"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nalgebra = { version = "0.32.3", default-features = false, features = [ "libm", "macros", "serde-serialize" ] }
+nalgebra = { version = "0.32.3", default-features = false, features = [ "libm", "macros" ] }
 num = { version = "0.4.1", default-features = false, features = [ "libm" ] }
 opencv-ros-camera = { version = "0.14.1", default-features = false }
 serde = { version = "1.0.198", features = [ "derive" ], optional = true }
 serde_json = { version = "1.0.116", optional = true }
-simba = { version = "0.8.1", optional = true }
+simba = { version = "0.8.1", default-features = false }
