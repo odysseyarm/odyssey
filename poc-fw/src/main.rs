@@ -3,11 +3,11 @@
 
 const PROTOCOL_VERSION: u32 = 1;
 
+mod image_mode;
 mod imu;
 mod init;
 mod usb;
-
-use core::str;
+mod utils;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -15,16 +15,14 @@ use embassy_nrf::{
     gpio::{Input, Level, Output, OutputDrive, Pull},
     peripherals::{self, SPIM4},
     spim::{self, Spim},
-};
-use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex,
-    channel::{Channel, Receiver, Sender},
+    usb::vbus_detect::HardwareVbusDetect,
 };
 use embassy_time::Delay;
+use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use pag7661qn::{Pag7661Qn, mode, spi::Pag7661QnSpi};
+use image_mode::image_mode;
+use pag7661qn::{Pag7661Qn, mode, spi::Pag7661QnSpi, types};
 use static_cell::ConstStaticCell;
-use usb::{wait_for_serial, write_serial};
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
@@ -37,22 +35,12 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 const NUM_BUFFERS: usize = 2;
 static SHARED_BUFFERS: ConstStaticCell<[[u8; 320 * 240]; NUM_BUFFERS]> =
     ConstStaticCell::new([[0; 320 * 240]; NUM_BUFFERS]);
-type ImageBufferReceiver<const N: usize = NUM_BUFFERS> =
-    Receiver<'static, NoopRawMutex, &'static mut [u8; 320 * 240], N>;
-type ImageBufferSender<const N: usize = NUM_BUFFERS> =
-    Sender<'static, NoopRawMutex, &'static mut [u8; 320 * 240], N>;
-type ImageBufferChannel<const N: usize = NUM_BUFFERS> =
-    Channel<NoopRawMutex, &'static mut [u8; 320 * 240], N>;
-static FREE_BUFFERS: ConstStaticCell<ImageBufferChannel<2>> =
-    ConstStaticCell::new(ImageBufferChannel::new());
-static IMAGE_BUFFERS: ConstStaticCell<ImageBufferChannel<1>> =
-    ConstStaticCell::new(ImageBufferChannel::new());
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let (_core_peripherals, p) = init::init();
 
-    let (ref mut cdc_acm_class, usb) = usb::usb_device(p.USBD);
+    let (mut cdc_acm_class, usb) = usb::usb_device(p.USBD);
     spawner.must_spawn(usb::run_usb(usb));
 
     // Reset the PAG
@@ -78,24 +66,36 @@ async fn main(spawner: Spawner) {
         .unwrap();
 
     pag.set_sensor_fps(30).await.unwrap();
-    // pag.set_sensor_exposure_us(true, 12700).await.unwrap();
-    pag.set_sensor_exposure_us(true, 8000).await.unwrap();
+    pag.set_sensor_exposure_us(true, 100).await.unwrap();
     pag.set_sensor_gain(1).await.unwrap();
-    let pag = pag.switch_mode(mode::Image).await.unwrap();
+    pag.set_area_lower_bound(10).await.unwrap();
+    pag.set_area_upper_bound(200).await.unwrap();
+    pag.set_light_threshold(120).await.unwrap();
+    let mut pag = pag.switch_mode(mode::Mode::Object).await.unwrap();
+    let mut objs = [types::Object::DEFAULT; 16];
+    let objcnt = pag.get_objects(&mut objs).await.unwrap();
+    defmt::info!("Got {=u8} objects", objcnt);
+    for (i, obj) in objs[..objcnt as usize].iter().enumerate() {
+        defmt::info!("Object {=u8}:", i as u8);
+        defmt::info!("    id = {}", obj.id());
+        defmt::info!("    avg = {}", obj.avg());
+        defmt::info!("    x = {}", obj.x());
+        defmt::info!("    y = {}", obj.y());
+        defmt::info!("    area = {}", obj.area());
+    }
 
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
-    let [b0, b1] = SHARED_BUFFERS.take();
-    let free_buffers = FREE_BUFFERS.take();
-    let image_buffers = IMAGE_BUFFERS.take();
-    free_buffers.try_send(b0).unwrap();
-    free_buffers.try_send(b1).unwrap();
-    spawner.must_spawn(image_loop(
+    let shared_image_buffers = SHARED_BUFFERS.take();
+    let (usb_snd, usb_rcv, usb_ctl) = cdc_acm_class.split_with_control();
+    let ctx = Context {
+        usb_snd,
+        usb_rcv,
+        usb_ctl,
         pag,
-        free_buffers.receiver(),
-        image_buffers.sender(),
-    ));
+        shared_image_buffers,
+    };
 
     join(
         imu::init(
@@ -110,58 +110,29 @@ async fn main(spawner: Spawner) {
             p.PPI_CH0.into(),
             p.GPIOTE_CH0.into(),
         ),
-        async {
-            loop {
-                match wait_for_serial(cdc_acm_class).await {
-                    b'a' => {
-                        let image = image_buffers.receive().await;
-                        write_serial(cdc_acm_class, image).await;
-                        free_buffers.send(image).await;
-                    }
-
-                    b'i' => {
-                        write_serial(cdc_acm_class, &PROTOCOL_VERSION.to_le_bytes()).await;
-                        write_serial(cdc_acm_class, &device_id()[..6]).await;
-                        // sensor resolution
-                        let [a, b] = 320u16.to_le_bytes(); // width
-                        let [c, d] = 240u16.to_le_bytes(); // height
-
-                        // object resolution
-                        let [e, f, g, h] = (320u32 * (1 << 6)).to_le_bytes();
-                        let [i, j, k, l] = (240u32 * (1 << 6)).to_le_bytes();
-
-                        let buf = [a, b, c, d, e, f, g, h, i, j, k, l];
-                        write_serial(cdc_acm_class, &buf).await;
-                    }
-
-                    cmd => defmt::error!("Unknown command '{=u8}'", cmd),
-                }
-            }
-        },
+        image_mode(ctx),
     )
     .await;
 }
 
-type Pag = Pag7661Qn<
+type Pag<M> = Pag7661Qn<
     Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, Delay>>,
     embassy_time::Delay,
     Input<'static>,
-    mode::Image,
+    M,
 >;
+type UsbDriver =
+    embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>;
 
-#[embassy_executor::task]
-async fn image_loop(
-    mut pag: Pag,
-    free_buffers: ImageBufferReceiver<2>,
-    image_buffers: ImageBufferSender<1>,
-) {
-    loop {
-        let buf = free_buffers.receive().await;
-        pag.get_frame(buf).await.unwrap();
-        // the image is mirrored for some reason
-        buf.chunks_mut(320).for_each(|l| l.reverse());
-        image_buffers.send(buf).await;
-    }
+struct Context {
+    usb_snd: cdc_acm::Sender<'static, UsbDriver>,
+    usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
+    #[expect(dead_code, reason = "remove when actually used")]
+    usb_ctl: cdc_acm::ControlChanged<'static>,
+    pag: Pag<mode::Mode>,
+
+    // used by image mode
+    shared_image_buffers: &'static mut [[u8; 320 * 240]; NUM_BUFFERS],
 }
 
 fn device_id() -> [u8; 8] {
@@ -180,5 +151,5 @@ fn device_id_str(buf: &mut [u8; 16]) -> &str {
         b[0] = CHARACTERS[(a >> 4) as usize];
         b[1] = CHARACTERS[(a % 16) as usize];
     }
-    unsafe { str::from_utf8_unchecked(buf) }
+    unsafe { core::str::from_utf8_unchecked(buf) }
 }

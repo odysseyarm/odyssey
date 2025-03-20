@@ -3,10 +3,51 @@
 version = 4
 
 [[package]]
+name = "arbitrary-int"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "825297538d77367557b912770ca3083f778a196054b3ee63b22673c4a3cae0a5"
+dependencies = [
+ "defmt",
+]
+
+[[package]]
+name = "bitbybit"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d317eeca82e7d88d606419a430590d83552bdceb899cb29904f63d694344b7fc"
+dependencies = [
+ "arbitrary-int",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bytemuck"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d35fadd3de6c82a550b136427123552b401efdab9859130f1cf485fbdea40af"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "defmt"
@@ -59,6 +100,9 @@ dependencies = [
 name = "pag7661qn"
 version = "0.1.0"
 dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "bytemuck",
  "defmt",
  "embedded-hal",
  "embedded-hal-async",

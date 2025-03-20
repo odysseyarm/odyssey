@@ -120,4 +120,3 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
 
     (core_peripherals, peripherals)
 }
-

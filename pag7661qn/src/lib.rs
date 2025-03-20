@@ -6,6 +6,7 @@ use embedded_hal_async::{delay::DelayNs, digital, spi::SpiDevice};
 
 pub mod mode;
 pub mod spi;
+pub mod types;
 
 use mode::{Mode, ModeT};
 use spi::Pag7661QnSpi;
@@ -161,8 +162,8 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
                     break;
                 }
             }
+            defmt::debug!("Switched mode to {}", new_mode.mode());
         }
-        defmt::debug!("Switched mode to {}", new_mode.mode());
         Ok(Pag7661Qn {
             mode: new_mode,
             bus: self.bus,
@@ -170,6 +171,16 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
             int_o: self.int_o,
             bank: self.bank,
         })
+    }
+
+    pub fn as_dynamic_mode(self) -> Pag7661Qn<I, D, O, Mode> {
+        Pag7661Qn {
+            mode: self.mode.mode(),
+            bus: self.bus,
+            timer: self.timer,
+            int_o: self.int_o,
+            bank: self.bank,
+        }
     }
 
     /// Get the sensor FPS.
@@ -220,9 +231,43 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsIdle> Pag7661Qn<I, D
         self.write(0x67, &[x]).await?;
         Ok(())
     }
+
+    /// Set the area lower bound
+    pub async fn set_area_lower_bound(
+        &mut self,
+        x: u16,
+    ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
+        self.mode.is_idle().map_err(Error::ModeError)?;
+        self.set_bank(0x00).await?;
+        self.write(0x68, &x.to_le_bytes()).await?;
+        Ok(())
+    }
+
+    /// Set the area upper bound
+    pub async fn set_area_upper_bound(
+        &mut self,
+        x: u16,
+    ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
+        self.mode.is_idle().map_err(Error::ModeError)?;
+        self.set_bank(0x00).await?;
+        self.write(0x6A, &x.to_le_bytes()).await?;
+        Ok(())
+    }
+
+    /// Set the light threshold
+    pub async fn set_light_threshold(
+        &mut self,
+        x: u8,
+    ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
+        self.mode.is_idle().map_err(Error::ModeError)?;
+        self.set_bank(0x00).await?;
+        self.write(0x6C, &x.to_le_bytes()).await?;
+        Ok(())
+    }
 }
 
 impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsImage> Pag7661Qn<I, D, O, M> {
+    /// Get a frame of image data.
     pub async fn get_frame(
         &mut self,
         image: &mut [u8; 320 * 240],
@@ -251,6 +296,53 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsImage> Pag7661Qn<I, 
             }
         }
         Ok(())
+    }
+}
+
+impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsObject> Pag7661Qn<I, D, O, M> {
+    /// Get a frame of object data. Returns the number of objects that were detected.
+    pub async fn get_objects(
+        &mut self,
+        obj: &mut [types::Object; 16],
+    ) -> Result<u8, Error<I::Error, O::Error, M::Error>> {
+        self.mode.is_object().map_err(Error::ModeError)?;
+        self.set_bank(0x00).await?;
+        let obj_bytes = bytemuck::bytes_of_mut(obj);
+
+        let mut done = false;
+        let mut flag = false;
+        let mut count = 0;
+        loop {
+            self.int_o.wait_for_high().await.map_err(Error::IntOError)?;
+            // Check frame ready
+            let status = self.read_byte(0x04).await?;
+            if status & 0x2 != 0 {
+                // Read object count
+                count = self.read_byte(0x25).await?;
+
+                // Read object output
+                if count > 8 {
+                    self.read(0x26, &mut obj_bytes[..8 * 8]).await?;
+                    flag = true;
+                } else if count > 0 {
+                    self.read(0x26, &mut obj_bytes[..count as usize * 8])
+                        .await?;
+                    done = true;
+                } else if flag {
+                    // Read 2nd frame
+                    self.read(0x26, &mut obj_bytes[8 * 8..count as usize * 8])
+                        .await?;
+                    done = true;
+                } else {
+                    done = true;
+                }
+            }
+            self.write(0x04, &[0]).await?;
+            if done {
+                break;
+            }
+        }
+        Ok(count)
     }
 }
 

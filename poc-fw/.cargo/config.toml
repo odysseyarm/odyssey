@@ -5,3 +5,9 @@ runner = "cargo bin probe-rs run --chip nRF5340_xxAA"
 [build]
 target = "thumbv8m.main-none-eabihf"
 rustflags = "-C target-cpu=cortex-m33"
+
+# [patch."https://github.com/odysseyarm/ats_common"]
+# ats_common = { path = "../../ats_common/ats_common" }
+#
+# [patch."https://github.com/odysseyarm/protodonge-rs"]
+# protodongers = { path = "../../protodonge-rs" }

@@ -1,37 +1,43 @@
 use embassy_nrf::{
-    Peripheral, peripherals::USBD,
+    Peripheral,
+    peripherals::USBD,
     usb::{Driver, vbus_detect::HardwareVbusDetect},
 };
 use embassy_usb::{
     UsbDevice,
     class::cdc_acm::{self, CdcAcmClass},
+    driver::EndpointError,
 };
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::{Irqs, device_id_str};
 
 pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    class: &mut CdcAcmClass<'d, D>,
+    snd: &mut cdc_acm::Sender<'d, D>,
     data: &[u8],
 ) {
-    let max_packet_size = usize::from(class.max_packet_size());
+    let max_packet_size = usize::from(snd.max_packet_size());
     for chunk in data.chunks(max_packet_size) {
-        class.write_packet(chunk).await.unwrap();
+        snd.write_packet(chunk).await.unwrap();
     }
     if data.len() % max_packet_size == 0 {
-        class.write_packet(&[]).await.unwrap();
+        snd.write_packet(&[]).await.unwrap();
     }
 }
 
 pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    class: &mut CdcAcmClass<'d, D>,
+    rcv: &mut cdc_acm::Receiver<'d, D>,
 ) -> u8 {
     loop {
         let mut buf = [0; 64];
-        let Ok(_n) = class.read_packet(&mut buf).await else {
-            continue;
-        };
-        return buf[0];
+        let r = rcv.read_packet(&mut buf).await;
+        match r {
+            Ok(_) => return buf[0],
+            Err(EndpointError::Disabled) => {
+                rcv.wait_connection().await;
+            }
+            Err(EndpointError::BufferOverflow) => unreachable!(),
+        }
     }
 }
 
@@ -39,16 +45,12 @@ type StaticUsbDevice = UsbDevice<'static, Driver<'static, USBD, HardwareVbusDete
 type StaticCdcAcmClass = CdcAcmClass<'static, Driver<'static, USBD, HardwareVbusDetect>>;
 
 #[embassy_executor::task]
-pub async fn run_usb(
-    mut device: StaticUsbDevice,
-) -> ! {
+pub async fn run_usb(mut device: StaticUsbDevice) -> ! {
     device.run().await
 }
 
 /// Panics if called more than once.
-pub fn usb_device(
-    p: impl Peripheral<P = USBD> + 'static,
-) -> (StaticCdcAcmClass, StaticUsbDevice) {
+pub fn usb_device(p: impl Peripheral<P = USBD> + 'static) -> (StaticCdcAcmClass, StaticUsbDevice) {
     // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
