@@ -282,6 +282,7 @@ impl Default for GeneralConfig {
 #[derive(Clone, Copy, Debug, Default, NoUninit, AnyBitPattern)]
 pub struct Props {
     pub uuid: [u8; 6],
+    pub product_id: u16,
 }
 
 impl Delegated for Props {
