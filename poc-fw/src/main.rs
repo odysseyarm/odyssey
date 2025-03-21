@@ -3,11 +3,13 @@
 
 const PROTOCOL_VERSION: u32 = 1;
 
+#[macro_use]
+mod utils;
 mod image_mode;
+mod object_mode;
 mod imu;
 mod init;
 mod usb;
-mod utils;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
@@ -20,9 +22,7 @@ use embassy_nrf::{
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use image_mode::image_mode;
 use pag7661qn::{Pag7661Qn, mode, spi::Pag7661QnSpi, types};
-use static_cell::ConstStaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
@@ -31,10 +31,6 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
 });
-
-const NUM_BUFFERS: usize = 2;
-static SHARED_BUFFERS: ConstStaticCell<[[u8; 320 * 240]; NUM_BUFFERS]> =
-    ConstStaticCell::new([[0; 320 * 240]; NUM_BUFFERS]);
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -71,30 +67,30 @@ async fn main(spawner: Spawner) {
     pag.set_area_lower_bound(10).await.unwrap();
     pag.set_area_upper_bound(200).await.unwrap();
     pag.set_light_threshold(120).await.unwrap();
-    let mut pag = pag.switch_mode(mode::Mode::Object).await.unwrap();
-    let mut objs = [types::Object::DEFAULT; 16];
-    let objcnt = pag.get_objects(&mut objs).await.unwrap();
-    defmt::info!("Got {=u8} objects", objcnt);
-    for (i, obj) in objs[..objcnt as usize].iter().enumerate() {
-        defmt::info!("Object {=u8}:", i as u8);
-        defmt::info!("    id = {}", obj.id());
-        defmt::info!("    avg = {}", obj.avg());
-        defmt::info!("    x = {}", obj.x());
-        defmt::info!("    y = {}", obj.y());
-        defmt::info!("    area = {}", obj.area());
-    }
+    // let mut pag = pag.switch_mode(mode::Mode::Object).await.unwrap();
+    // let mut objs = [types::Object::DEFAULT; 16];
+    // let objcnt = pag.get_objects(&mut objs).await.unwrap();
+    // defmt::info!("Got {=u8} objects", objcnt);
+    // for (i, obj) in objs[..objcnt as usize].iter().enumerate() {
+    //     defmt::info!("Object {=u8}:", i as u8);
+    //     defmt::info!("    id = {}", obj.id());
+    //     defmt::info!("    avg = {}", obj.avg());
+    //     defmt::info!("    x = {}", obj.x());
+    //     defmt::info!("    y = {}", obj.y());
+    //     defmt::info!("    area = {}", obj.area());
+    // }
 
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
-    let shared_image_buffers = SHARED_BUFFERS.take();
     let (usb_snd, usb_rcv, usb_ctl) = cdc_acm_class.split_with_control();
-    let ctx = Context {
+    let ctx = CommonContext {
         usb_snd,
         usb_rcv,
         usb_ctl,
-        pag,
-        shared_image_buffers,
+        pag: pag.as_dynamic_mode(),
+        img: image_mode::Context::take(),
+        obj: object_mode::Context::take(),
     };
 
     join(
@@ -110,7 +106,8 @@ async fn main(spawner: Spawner) {
             p.PPI_CH0.into(),
             p.GPIOTE_CH0.into(),
         ),
-        image_mode(ctx),
+        // image_mode::image_mode(ctx),
+        object_mode::object_mode(ctx),
     )
     .await;
 }
@@ -124,15 +121,15 @@ type Pag<M> = Pag7661Qn<
 type UsbDriver =
     embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>;
 
-struct Context {
+struct CommonContext {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,
     usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
     #[expect(dead_code, reason = "remove when actually used")]
     usb_ctl: cdc_acm::ControlChanged<'static>,
     pag: Pag<mode::Mode>,
 
-    // used by image mode
-    shared_image_buffers: &'static mut [[u8; 320 * 240]; NUM_BUFFERS],
+    img: image_mode::Context,
+    obj: object_mode::Context,
 }
 
 fn device_id() -> [u8; 8] {

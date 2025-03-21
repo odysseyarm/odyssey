@@ -21,10 +21,15 @@ embedded-hal = "1.0.0"
 pag7661qn = { version = "0.1.0", path = "../pag7661qn" }
 embedded-hal-bus = { version = "0.3.0", features = ["async"] }
 static_cell = "2.1.0"
-icm426xx = { version = "0.3.2", git = "https://github.com/0e4ef622/icm426xx/", features = ["async"] }
+icm426xx = { version = "0.3.2", git = "https://github.com/0e4ef622/icm426xx", features = ["async"] }
 bytemuck = "1.21.0"
-protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", version = "0.1.0", default-features = false }
 futures = { version = "0.3.31", default-features = false, features = ["async-await"] }
+
+[dependencies.protodongers]
+version = "0.1.0"
+git = "https://github.com/odysseyarm/protodonge-rs"
+default-features = false
+features = ["defmt"]
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
@@ -33,4 +38,4 @@ probe-rs-tools = { version = "0.27.0", locked = true, bins = ["probe-rs"] }
 [profile.release]
 debug = 2
 lto = "fat"
-opt-level = "s"
+opt-level = "z"

@@ -6,9 +6,10 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Duration;
 use embassy_usb::class::cdc_acm;
 use pag7661qn::mode;
+use static_cell::ConstStaticCell;
 
 use crate::{
-    Context, PROTOCOL_VERSION, Pag, UsbDriver, device_id,
+    CommonContext, PROTOCOL_VERSION, Pag, UsbDriver, device_id,
     usb::{wait_for_serial, write_serial},
 };
 
@@ -17,10 +18,10 @@ type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMu
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 type Img<'a> = &'a mut [u8; 320 * 240];
 
-pub async fn image_mode(mut ctx: Context) -> Context {
+pub async fn image_mode(mut ctx: CommonContext) -> CommonContext {
     defmt::info!("Entering Image Mode");
     let mut pag = ctx.pag.switch_mode(mode::Image).await.unwrap();
-    let [b1, b2] = &mut ctx.shared_image_buffers;
+    let [b1, b2] = &mut ctx.img.shared_image_buffers;
     let image_buffers = Channel::<_, 1>::new();
     let free_buffers = Channel::<_, 2>::new();
     let cancel = Channel::<(), 1>::new();
@@ -50,7 +51,6 @@ pub async fn image_mode(mut ctx: Context) -> Context {
     drop(free_buffers);
     drop(image_buffers);
     ctx.pag = pag.as_dynamic_mode();
-
     ctx
 }
 
@@ -59,7 +59,7 @@ async fn serial_loop<'a>(
     snd: &mut cdc_acm::Sender<'static, UsbDriver>,
     image_buffers: Receiver<'_, Img<'a>, 1>,
     free_buffers: Sender<'_, Img<'a>, 2>,
-    cancel_snd: Sender<'_, (), 1>,
+    cancel: Sender<'_, (), 1>,
 ) {
     loop {
         match wait_for_serial(rcv).await {
@@ -89,7 +89,7 @@ async fn serial_loop<'a>(
 
             b'r' => {
                 defmt::info!("exiting image mode");
-                cancel_snd.send(()).await;
+                cancel.send(()).await;
                 break;
             }
 
@@ -116,4 +116,22 @@ async fn image_loop<'a>(
         };
     }
     defmt::info!("exiting inner image loop");
+}
+
+const NUM_BUFFERS: usize = 2;
+
+/// Singleton to hold static resources.
+pub struct Context {
+    shared_image_buffers: &'static mut [[u8; 320 * 240]; NUM_BUFFERS],
+}
+
+impl Context {
+    /// Can only be called once
+    pub fn take() -> Self {
+        static SHARED_BUFFERS: ConstStaticCell<[[u8; 320 * 240]; NUM_BUFFERS]> =
+            ConstStaticCell::new([[0; 320 * 240]; NUM_BUFFERS]);
+        Self {
+            shared_image_buffers: SHARED_BUFFERS.take()
+        }
+    }
 }

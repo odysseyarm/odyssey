@@ -698,7 +698,7 @@ dependencies = [
 [[package]]
 name = "icm426xx"
 version = "0.3.2"
-source = "git+https://github.com/0e4ef622/icm426xx/#ba7252c534826c84cae9a3fddc34b9126da1182e"
+source = "git+https://github.com/0e4ef622/icm426xx#65c21936a4579122683e3b8ea48afe96009c4bc5"
 dependencies = [
  "bilge",
  "bytemuck",
@@ -1000,13 +1000,15 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs#edbc9dc33500634e526ca06052a56f91afc4df4f"
+source = "git+https://github.com/odysseyarm/protodonge-rs#dc89e056e122af530aff7730247cfdb3dd59faf5"
 dependencies = [
  "ats_common",
  "bytemuck",
+ "defmt",
  "enumn",
  "nalgebra",
  "opencv-ros-camera",
+ "thiserror",
 ]
 
 [[package]]
