@@ -6,9 +6,9 @@ const PROTOCOL_VERSION: u32 = 1;
 #[macro_use]
 mod utils;
 mod image_mode;
-mod object_mode;
 mod imu;
 mod init;
+mod object_mode;
 mod usb;
 
 use embassy_executor::Spawner;
@@ -22,7 +22,7 @@ use embassy_nrf::{
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use pag7661qn::{mode, spi::Pag7661QnSpi, types, Pag7661Qn, Pag7661QnInterrupt};
+use pag7661qn::{Pag7661Qn, Pag7661QnInterrupt, mode, spi::Pag7661QnSpi, types};
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
@@ -57,9 +57,10 @@ async fn main(spawner: Spawner) {
     let cs = Output::new(p.P0_11, Level::High, OutputDrive::Standard);
     let int_o = Input::new(p.P0_06, Pull::None);
     let Ok(spi_device) = ExclusiveDevice::new(spim, cs, Delay);
-    let (mut pag, pag_int) = Pag7661Qn::init_spi(spi_device, embassy_time::Delay, int_o, mode::Idle)
-        .await
-        .unwrap();
+    let (mut pag, pag_int) =
+        Pag7661Qn::init_spi(spi_device, embassy_time::Delay, int_o, mode::Idle)
+            .await
+            .unwrap();
 
     pag.set_sensor_fps(30).await.unwrap();
     pag.set_sensor_exposure_us(true, 100).await.unwrap();

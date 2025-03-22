@@ -9,7 +9,8 @@ use pag7661qn::mode;
 use static_cell::ConstStaticCell;
 
 use crate::{
-    device_id, usb::{wait_for_serial, write_serial}, CommonContext, Pag, PagInt, UsbDriver, PROTOCOL_VERSION
+    CommonContext, PROTOCOL_VERSION, Pag, PagInt, UsbDriver, device_id,
+    usb::{wait_for_serial, write_serial},
 };
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
@@ -132,7 +133,7 @@ impl Context {
         static SHARED_BUFFERS: ConstStaticCell<[[u8; 320 * 240]; NUM_BUFFERS]> =
             ConstStaticCell::new([[0; 320 * 240]; NUM_BUFFERS]);
         Self {
-            shared_image_buffers: SHARED_BUFFERS.take()
+            shared_image_buffers: SHARED_BUFFERS.take(),
         }
     }
 }

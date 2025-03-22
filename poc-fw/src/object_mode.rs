@@ -5,11 +5,12 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use pag7661qn::mode;
 use protodongers::{
-    slip::{encode_slip_frame, SlipDecodeError}, GeneralConfig, Packet, PacketData as P, Props, ReadRegisterResponse
+    GeneralConfig, Packet, PacketData as P, Props, ReadRegisterResponse,
+    slip::{SlipDecodeError, encode_slip_frame},
 };
 use static_cell::ConstStaticCell;
 
-use crate::{device_id, usb::write_serial, CommonContext, UsbDriver};
+use crate::{CommonContext, UsbDriver, device_id, usb::write_serial};
 
 #[allow(unreachable_code)]
 pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
@@ -41,7 +42,7 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
                     bank: register.bank,
                     address: register.address,
                     data: 0,
-                })
+                }),
             }),
             P::WriteConfig(_) => todo!(),
             P::ReadConfig() => Some(Packet {
@@ -53,7 +54,7 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
                 data: P::ReadPropsResponse(Props {
                     uuid: device_id()[..6].try_into().unwrap(),
                     product_id: crate::usb::PID,
-                })
+                }),
             }),
             P::ObjectReportRequest() => todo!(),
             P::StreamUpdate(_) => None, // TODO

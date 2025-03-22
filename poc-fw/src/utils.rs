@@ -5,12 +5,12 @@ macro_rules! impl_from {
                 Self::$variant(t)
             }
         }
-    }
+    };
 }
 
 macro_rules! static_byte_buffer {
     ($size:expr) => {{
         static BUFFER: ConstStaticCell<[u8; $size]> = ConstStaticCell::new([0; $size]);
         BUFFER.take()
-    }}
+    }};
 }
