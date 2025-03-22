@@ -1,6 +1,7 @@
 use core::mem::{MaybeUninit, transmute};
 
 use defmt::Format;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex};
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use pag7661qn::mode;
 use protodongers::{
@@ -14,6 +15,7 @@ use crate::{device_id, usb::write_serial, CommonContext, UsbDriver};
 pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
     defmt::info!("Entering Object Mode");
     let pag = ctx.pag.switch_mode(mode::Object).await.unwrap();
+    let pag = AsyncMutex::<NoopRawMutex, _>::new(pag);
 
     let mut pkt_rcv = PacketReceiver::new(&mut ctx.usb_rcv, ctx.obj.packet_receive_buffer);
     loop {
@@ -49,11 +51,13 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
             P::ReadProps() => Some(Packet {
                 id: pkt.id,
                 data: P::ReadPropsResponse(Props {
-                    uuid: device_id()[..6].try_into().unwrap()
+                    uuid: device_id()[..6].try_into().unwrap(),
+                    product_id: crate::usb::PID,
                 })
             }),
             P::ObjectReportRequest() => todo!(),
             P::StreamUpdate(_) => None, // TODO
+            P::Ack() => None,
             P::ReadConfigResponse(_) => None,
             P::ReadPropsResponse(_) => None,
             P::ObjectReport(_) => None,
@@ -76,7 +80,7 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
         }
     }
 
-    ctx.pag = pag.as_dynamic_mode();
+    ctx.pag = pag.into_inner().as_dynamic_mode();
     ctx
 }
 

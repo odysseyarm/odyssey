@@ -12,6 +12,9 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::{Irqs, device_id_str};
 
+pub const VID: u16 = 0x1915;
+pub const PID: u16 = 0x5211;
+
 pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     snd: &mut cdc_acm::Sender<'d, D>,
     data: &[u8],
@@ -55,7 +58,7 @@ pub fn usb_device(p: impl Peripheral<P = USBD> + 'static) -> (StaticCdcAcmClass,
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
     // Create embassy-usb Config
-    let mut config = embassy_usb::Config::new(0x1915, 0x5211);
+    let mut config = embassy_usb::Config::new(VID, PID);
     static SERIAL_NUMBER_BUFFER: ConstStaticCell<[u8; 16]> = ConstStaticCell::new([0; 16]);
     config.manufacturer = Some("Applied Math");
     config.product = Some("Thingo");
