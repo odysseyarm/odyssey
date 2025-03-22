@@ -115,6 +115,7 @@ pub enum PacketData {
     ObjectReportRequest(),
     ObjectReport(ObjectReport),
     CombinedMarkersReport(CombinedMarkersReport),
+    PocMarkersReport(PocMarkersReport),
     AccelReport(AccelReport),
     ImpactReport(ImpactReport),
     StreamUpdate(StreamUpdate),
@@ -329,6 +330,27 @@ pub struct CombinedMarkersReport {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, NoUninit, AnyBitPattern)]
+pub struct PocMarkersReport {
+    pub points: [Point2<u16>; 16],
+}
+
+impl Delegated for PocMarkersReport {
+    type Wire = Self;
+    const PACKET_TYPE: Option<PacketType> = Some(PacketType::PocMarkersReport());
+}
+
+impl From<PocMarkersReport> for CombinedMarkersReport {
+    fn from(t: PocMarkersReport) -> Self {
+        CombinedMarkersReport {
+            nf_points: t.points,
+            wf_points: Default::default(),
+        }
+    }
+}
+
+#[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AccelReport {
     pub timestamp: u32,
@@ -433,6 +455,7 @@ pub enum PacketType {
     StreamUpdate(),
     FlashSettings(),
     Ack(),
+    PocMarkersReport(),
     End(),
     VendorStart(),
     Vendor(u8),
@@ -459,7 +482,8 @@ impl TryFrom<u8> for PacketType {
             0x0d => Ok(Self::StreamUpdate()),
             0x0e => Ok(Self::FlashSettings()),
             0x0f => Ok(Self::Ack()),
-            0x10 => Ok(Self::End()),
+            0x10 => Ok(Self::PocMarkersReport()),
+            0x11 => Ok(Self::End()),
             0x80 => Ok(Self::VendorStart()),
             0xff => Ok(Self::VendorEnd()),
             n if (PacketType::VendorStart().into()..PacketType::VendorEnd().into())
@@ -491,7 +515,8 @@ impl From<PacketType> for u8 {
             PacketType::StreamUpdate() => 0x0d,
             PacketType::FlashSettings() => 0x0e,
             PacketType::Ack() => 0x0f,
-            PacketType::End() => 0x10,
+            PacketType::PocMarkersReport() => 0x10,
+            PacketType::End() => 0x11,
             PacketType::VendorStart() => 0x80,
             PacketType::VendorEnd() => 0xff,
             PacketType::Vendor(n) => n,
@@ -513,6 +538,7 @@ impl Packet {
             PacketData::ObjectReportRequest() => PacketType::ObjectReportRequest(),
             PacketData::ObjectReport(_) => PacketType::ObjectReport(),
             PacketData::CombinedMarkersReport(_) => PacketType::CombinedMarkersReport(),
+            PacketData::PocMarkersReport(_) => PacketType::PocMarkersReport(),
             PacketData::AccelReport(_) => PacketType::AccelReport(),
             PacketData::ImpactReport(_) => PacketType::ImpactReport(),
             PacketData::StreamUpdate(_) => PacketType::StreamUpdate(),
@@ -588,6 +614,7 @@ impl Packet {
             PacketData::ObjectReportRequest() => 0,
             PacketData::ObjectReport(_) => ObjectReport::SIZE as u16,
             PacketData::CombinedMarkersReport(_) => CombinedMarkersReport::SIZE as u16,
+            PacketData::PocMarkersReport(_) => PocMarkersReport::SIZE as u16,
             PacketData::AccelReport(_) => AccelReport::SIZE as u16,
             PacketData::ImpactReport(_) => 4,
             PacketData::StreamUpdate(_) => 2,
@@ -617,6 +644,7 @@ impl Packet {
             PacketData::ObjectReportRequest() => (),
             PacketData::ObjectReport(x) => x.serialize_to_vec(buf),
             PacketData::CombinedMarkersReport(x) => x.serialize_to_vec(buf),
+            PacketData::PocMarkersReport(x) => x.serialize_to_vec(buf),
             PacketData::AccelReport(x) => x.serialize_to_vec(buf),
             PacketData::ImpactReport(x) => x.serialize_to_vec(buf),
             PacketData::StreamUpdate(x) => {
@@ -634,7 +662,8 @@ impl Packet {
         }
     }
 
-    pub fn serialize_raw(&self, buf: &mut &mut [MaybeUninit<u8>]) {
+    pub fn serialize_raw(&self, mut buf: &mut [MaybeUninit<u8>]) -> usize {
+        let orig_buf_len = buf.len();
         let len = match &self.data {
             PacketData::WriteRegister(_) => WriteRegister::SIZE as u16,
             PacketData::ReadRegister(_) => Register::SIZE as u16,
@@ -647,6 +676,7 @@ impl Packet {
             PacketData::ObjectReportRequest() => 0,
             PacketData::ObjectReport(_) => ObjectReport::SIZE as u16,
             PacketData::CombinedMarkersReport(_) => CombinedMarkersReport::SIZE as u16,
+            PacketData::PocMarkersReport(_) => PocMarkersReport::SIZE as u16,
             PacketData::AccelReport(_) => AccelReport::SIZE as u16,
             PacketData::ImpactReport(_) => 4,
             PacketData::StreamUpdate(_) => 2,
@@ -662,32 +692,42 @@ impl Packet {
         };
         let words = u16::to_le_bytes((len + 4) / 2);
         let ty = self.ty();
-        push(buf, &[words[0], words[1], ty.into(), self.id]);
+        push(&mut buf, &[words[0], words[1], ty.into(), self.id]);
         match &self.data {
-            PacketData::WriteRegister(x) => x.serialize(buf),
-            PacketData::ReadRegister(x) => x.serialize(buf),
-            PacketData::ReadRegisterResponse(x) => x.serialize(buf),
-            PacketData::WriteConfig(x) => x.serialize(buf),
+            PacketData::WriteRegister(x) => x.serialize(&mut buf),
+            PacketData::ReadRegister(x) => x.serialize(&mut buf),
+            PacketData::ReadRegisterResponse(x) => x.serialize(&mut buf),
+            PacketData::WriteConfig(x) => x.serialize(&mut buf),
             PacketData::ReadConfig() => (),
-            PacketData::ReadConfigResponse(x) => x.serialize(buf),
+            PacketData::ReadConfigResponse(x) => x.serialize(&mut buf),
             PacketData::ReadProps() => (),
-            PacketData::ReadPropsResponse(x) => x.serialize(buf),
+            PacketData::ReadPropsResponse(x) => x.serialize(&mut buf),
             PacketData::ObjectReportRequest() => (),
-            PacketData::ObjectReport(x) => x.serialize(buf),
-            PacketData::CombinedMarkersReport(x) => x.serialize(buf),
-            PacketData::AccelReport(x) => x.serialize(buf),
-            PacketData::ImpactReport(x) => x.serialize(buf),
-            PacketData::StreamUpdate(x) => push(buf, &[x.packet_id.into(), x.action as u8]),
+            PacketData::ObjectReport(x) => x.serialize(&mut buf),
+            PacketData::CombinedMarkersReport(x) => x.serialize(&mut buf),
+            PacketData::PocMarkersReport(x) => x.serialize(&mut buf),
+            PacketData::AccelReport(x) => x.serialize(&mut buf),
+            PacketData::ImpactReport(x) => x.serialize(&mut buf),
+            PacketData::StreamUpdate(x) => push(&mut buf, &[x.packet_id.into(), x.action as u8]),
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
             PacketData::Vendor(_, (len, data)) => {
-                push(buf, &[*len]);
-                push(buf, &data[..*len as usize]);
+                push(&mut buf, &[*len]);
+                push(&mut buf, &data[..*len as usize]);
                 if len % 2 == 0 {
-                    push(buf, &[0]);
+                    push(&mut buf, &[0]);
                 }
             }
         }
+        orig_buf_len - buf.len()
+    }
+
+    pub fn serialize_parts<D: Serialize>(id: u8, ty: PacketType, data: &D, mut buf: &mut [MaybeUninit<u8>]) -> usize {
+        let orig_buf_len = buf.len();
+        let words = u16::to_le_bytes((D::SIZE as u16 + 4) / 2);
+        push(&mut buf, &[words[0], words[1], ty.into(), id]);
+        data.serialize(&mut buf);
+        orig_buf_len - buf.len()
     }
 }
 
