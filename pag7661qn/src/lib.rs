@@ -10,38 +10,42 @@ pub mod types;
 
 use mode::{Mode, ModeT};
 use spi::Pag7661QnSpi;
+use types::IntOStatus;
 
 /// PAG7661QN driver
-pub struct Pag7661Qn<I, D, O, M> {
+pub struct Pag7661Qn<I, D, M> {
     bus: I,
     timer: D,
-    int_o: O,
     mode: M,
     bank: u8,
 }
 
-impl<S: SpiDevice, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<Pag7661QnSpi<S>, D, O, M> {
+/// PAG7661QN interrupt pin
+pub struct Pag7661QnInterrupt<O> {
+    int_o: O,
+}
+
+impl<S: SpiDevice, D: DelayNs, M: ModeT> Pag7661Qn<Pag7661QnSpi<S>, D, M> {
     /// Creates a new PAG7661QN driver using SPI and perform initialization.
     ///
     /// Make sure `spi` is configured in mode 3 with MSB first bit order, max 20 MHz.
-    pub async fn init_spi(
+    pub async fn init_spi<O: digital::Wait>(
         spi: S,
         mut timer: D,
         int_o: O,
         initial_mode: M,
-    ) -> Result<Self, InitError<S::Error>> {
+    ) -> Result<(Self, Pag7661QnInterrupt<O>), InitError<S::Error>> {
         defmt::trace!("Pag7661QnSpi::new");
         let mut bus = Pag7661QnSpi::new(spi);
 
         initialize(&mut bus, &mut timer, initial_mode.mode()).await?;
 
-        Ok(Self {
+        Ok((Self {
             bus,
             timer,
-            int_o,
             mode: initial_mode,
             bank: 0,
-        })
+        }, Pag7661QnInterrupt { int_o }))
     }
 }
 
@@ -93,7 +97,7 @@ async fn initialize<I: Interface, D: DelayNs>(
     Ok(())
 }
 
-impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M> {
+impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
     /// Wrapper to convert errors.
     async fn read<EO, EM>(
         &mut self,
@@ -138,7 +142,7 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
     pub async fn switch_mode<N: ModeT>(
         mut self,
         new_mode: N,
-    ) -> Result<Pag7661Qn<I, D, O, N>, Error<I::Error, Infallible, Infallible>> {
+    ) -> Result<Pag7661Qn<I, D, N>, Error<I::Error, Infallible, Infallible>> {
         if new_mode.mode() != self.mode.mode() {
             defmt::debug!("Switching mode to {}", new_mode.mode());
             self.set_bank(0x00).await?;
@@ -168,23 +172,32 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
             mode: new_mode,
             bus: self.bus,
             timer: self.timer,
-            int_o: self.int_o,
             bank: self.bank,
         })
     }
 
-    pub fn as_dynamic_mode(self) -> Pag7661Qn<I, D, O, Mode> {
+    pub fn as_dynamic_mode(self) -> Pag7661Qn<I, D, Mode> {
         Pag7661Qn {
             mode: self.mode.mode(),
             bus: self.bus,
             timer: self.timer,
-            int_o: self.int_o,
             bank: self.bank,
         }
     }
 
+    async fn int_o_status<EO, EM>(&mut self) -> Result<IntOStatus, Error<I::Error, EO, EM>> {
+        self.set_bank(0x00).await?;
+        self.bus.int_o_status().await
+            .map_err(Error::InterfaceError)
+    }
+
+    async fn set_int_o_status<EO, EM>(&mut self, value: IntOStatus) -> Result<(), Error<I::Error, EO, EM>> {
+        self.set_bank(0x00).await?;
+        self.bus.set_int_o_status(value).await.map_err(Error::InterfaceError)
+    }
+
     /// Get the sensor FPS.
-    pub async fn get_sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
+    pub async fn sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self.set_bank(0x00).await?;
         let mut value = [0];
         self.read(0x13, &mut value).await?;
@@ -192,7 +205,7 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: ModeT> Pag7661Qn<I, D, O, M>
     }
 }
 
-impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsIdle> Pag7661Qn<I, D, O, M> {
+impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
     /// Set the sensor FPS.
     pub async fn set_sensor_fps(
         &mut self,
@@ -266,20 +279,20 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsIdle> Pag7661Qn<I, D
     }
 }
 
-impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsImage> Pag7661Qn<I, D, O, M> {
-    /// Get a frame of image data.
-    pub async fn get_frame(
+impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7661Qn<I, D, M> {
+    /// Wait for and get a frame of image data.
+    pub async fn wait_for_image<O: digital::Wait>(
         &mut self,
+        interrupt: &mut Pag7661QnInterrupt<O>,
         image: &mut [u8; 320 * 240],
     ) -> Result<(), Error<I::Error, O::Error, M::Error>> {
         self.mode.is_image().map_err(Error::ModeError)?;
         self.set_bank(0x00).await?;
 
         loop {
-            self.int_o.wait_for_high().await.map_err(Error::IntOError)?;
-            // Check frame ready
-            let status = self.read_byte(0x04).await?;
-            if status & 0x2 != 0 {
+            interrupt.wait().await.map_err(Error::IntOError)?;
+            let status = self.int_o_status().await?;
+            if status.frame_ready() {
                 // Lock frame buffer
                 self.write(0x0E, &[1]).await?;
                 // Read-back check
@@ -291,7 +304,7 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsImage> Pag7661Qn<I, 
                 // Unlock frame buffer
                 self.write(0x0E, &[0]).await?;
                 // Clear frame ready
-                self.write(0x04, &[0]).await?;
+                self.set_int_o_status(IntOStatus::ZERO).await?;
                 break;
             }
         }
@@ -299,12 +312,27 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsImage> Pag7661Qn<I, 
     }
 }
 
-impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsObject> Pag7661Qn<I, D, O, M> {
-    /// Get a frame of object data. Returns the number of objects that were detected.
-    pub async fn get_objects(
+impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
+    /// Wait for and get a frame of object data. Returns the number of objects that were detected.
+    pub async fn wait_for_objects<O: digital::Wait>(
         &mut self,
+        interrupt: &mut Pag7661QnInterrupt<O>,
         obj: &mut [types::Object; 16],
     ) -> Result<u8, Error<I::Error, O::Error, M::Error>> {
+        loop {
+            interrupt.wait().await.map_err(Error::IntOError)?;
+            let Some(n) = self.try_get_objects(obj).await? else { continue };
+            return Ok(n)
+        }
+    }
+
+    /// Get a frame of object data if ready. Returns the number of objects that were detected, or
+    /// `Ok(None)` if no object data was ready. Use [`Pag7661QnInterrupt::wait`] to wait until a
+    /// frame is ready.
+    pub async fn try_get_objects<EO>(
+        &mut self,
+        obj: &mut [types::Object; 16],
+    ) -> Result<Option<u8>, Error<I::Error, EO, M::Error>> {
         self.mode.is_object().map_err(Error::ModeError)?;
         self.set_bank(0x00).await?;
         let obj_bytes = bytemuck::bytes_of_mut(obj);
@@ -313,10 +341,8 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsObject> Pag7661Qn<I,
         let mut flag = false;
         let mut count = 0;
         loop {
-            self.int_o.wait_for_high().await.map_err(Error::IntOError)?;
-            // Check frame ready
-            let status = self.read_byte(0x04).await?;
-            if status & 0x2 != 0 {
+            let status = self.int_o_status().await?;
+            if status.frame_ready() {
                 // Read object count
                 count = self.read_byte(0x25).await?;
 
@@ -336,13 +362,22 @@ impl<I: Interface, D: DelayNs, O: digital::Wait, M: mode::IsObject> Pag7661Qn<I,
                 } else {
                     done = true;
                 }
+            } else if !flag {
+                self.set_int_o_status(IntOStatus::ZERO).await?;
+                return Ok(None);
             }
-            self.write(0x04, &[0]).await?;
+            self.set_int_o_status(IntOStatus::ZERO).await?;
             if done {
                 break;
             }
         }
-        Ok(count)
+        Ok(Some(count))
+    }
+}
+
+impl<O: digital::Wait> Pag7661QnInterrupt<O> {
+    pub async fn wait(&mut self) -> Result<(), O::Error> {
+        self.int_o.wait_for_high().await
     }
 }
 
@@ -351,10 +386,27 @@ pub trait Interface {
     type Error;
     async fn write(&mut self, address: u8, data: &[u8]) -> Result<(), Self::Error>;
     async fn read(&mut self, address: u8, data: &mut [u8]) -> Result<(), Self::Error>;
+
     async fn read_byte(&mut self, address: u8) -> Result<u8, Self::Error> {
         let mut value = [0];
         self.read(address, &mut value).await?;
         Ok(value[0])
+    }
+
+    /// Get the value of the INTO_Status register. Make sure the bank is set to 0x00.
+    async fn int_o_status(&mut self) -> Result<IntOStatus, Self::Error> {
+        let value = self.read_byte(0x04).await?;
+        let status = IntOStatus::new_with_raw_value(value);
+        if status.error() {
+            defmt::error!("INTO_Error");
+        }
+        Ok(status)
+    }
+
+    /// Set the value of the INTO_Status register. Make sure the bank is set to 0x00.
+    async fn set_int_o_status(&mut self, value: IntOStatus) -> Result<(), Self::Error> {
+        self.write(0x04, &[value.raw_value()]).await?;
+        Ok(())
     }
 }
 

@@ -22,7 +22,7 @@ use embassy_nrf::{
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use pag7661qn::{Pag7661Qn, mode, spi::Pag7661QnSpi, types};
+use pag7661qn::{mode, spi::Pag7661QnSpi, types, Pag7661Qn, Pag7661QnInterrupt};
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
@@ -57,7 +57,7 @@ async fn main(spawner: Spawner) {
     let cs = Output::new(p.P0_11, Level::High, OutputDrive::Standard);
     let int_o = Input::new(p.P0_06, Pull::None);
     let Ok(spi_device) = ExclusiveDevice::new(spim, cs, Delay);
-    let mut pag = Pag7661Qn::init_spi(spi_device, embassy_time::Delay, int_o, mode::Idle)
+    let (mut pag, pag_int) = Pag7661Qn::init_spi(spi_device, embassy_time::Delay, int_o, mode::Idle)
         .await
         .unwrap();
 
@@ -67,9 +67,10 @@ async fn main(spawner: Spawner) {
     pag.set_area_lower_bound(10).await.unwrap();
     pag.set_area_upper_bound(200).await.unwrap();
     pag.set_light_threshold(120).await.unwrap();
-    // let mut pag = pag.switch_mode(mode::Mode::Object).await.unwrap();
+    // let mut pag = pag.switch_mode(mode::Object).await.unwrap();
+    // let mut pag_int = pag_int;
     // let mut objs = [types::Object::DEFAULT; 16];
-    // let objcnt = pag.get_objects(&mut objs).await.unwrap();
+    // let objcnt = pag.wait_for_objects(&mut pag_int, &mut objs).await.unwrap();
     // defmt::info!("Got {=u8} objects", objcnt);
     // for (i, obj) in objs[..objcnt as usize].iter().enumerate() {
     //     defmt::info!("Object {=u8}:", i as u8);
@@ -89,6 +90,7 @@ async fn main(spawner: Spawner) {
         usb_rcv,
         usb_ctl,
         pag: pag.as_dynamic_mode(),
+        pag_int,
         img: image_mode::Context::take(),
         obj: object_mode::Context::take(),
     };
@@ -115,9 +117,9 @@ async fn main(spawner: Spawner) {
 type Pag<M> = Pag7661Qn<
     Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, Delay>>,
     embassy_time::Delay,
-    Input<'static>,
     M,
 >;
+type PagInt = Pag7661QnInterrupt<Input<'static>>;
 type UsbDriver =
     embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>;
 
@@ -127,6 +129,7 @@ struct CommonContext {
     #[expect(dead_code, reason = "remove when actually used")]
     usb_ctl: cdc_acm::ControlChanged<'static>,
     pag: Pag<mode::Mode>,
+    pag_int: PagInt,
 
     img: image_mode::Context,
     obj: object_mode::Context,

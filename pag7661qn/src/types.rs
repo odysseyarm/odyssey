@@ -6,14 +6,24 @@ use bytemuck::{Pod, Zeroable};
 #[derive(Pod, Zeroable, Debug)]
 pub struct Object {
     #[bits(4..=7, rw)]
-    id: u4,
+    pub id: u4,
     /// Brightness
     #[bits(8..=15, rw)]
-    avg: u8,
+    pub avg: u8,
     #[bits(16..=31, rw)]
-    x: u16,
+    pub x: u16,
     #[bits(32..=47, rw)]
-    y: u16,
+    pub y: u16,
     #[bits([48..=63, 0], rw)]
-    area: u17,
+    pub area: u17,
+}
+
+#[bitfield(u8, default = 0)]
+pub struct IntOStatus {
+    #[bit(0, rw)]
+    pub power_on_ready: bool,
+    #[bit(1, rw)]
+    pub frame_ready: bool,
+    #[bit(7, rw)]
+    pub error: bool,
 }

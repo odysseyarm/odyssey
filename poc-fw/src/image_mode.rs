@@ -9,8 +9,7 @@ use pag7661qn::mode;
 use static_cell::ConstStaticCell;
 
 use crate::{
-    CommonContext, PROTOCOL_VERSION, Pag, UsbDriver, device_id,
-    usb::{wait_for_serial, write_serial},
+    device_id, usb::{wait_for_serial, write_serial}, CommonContext, Pag, PagInt, UsbDriver, PROTOCOL_VERSION
 };
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
@@ -40,6 +39,7 @@ pub async fn image_mode(mut ctx: CommonContext) -> CommonContext {
         ),
         image_loop(
             &mut pag,
+            &mut ctx.pag_int,
             free_buffers.receiver(),
             image_buffers.sender(),
             cancel.receiver(),
@@ -100,6 +100,7 @@ async fn serial_loop<'a>(
 
 async fn image_loop<'a>(
     pag: &mut Pag<mode::Image>,
+    pag_int: &mut PagInt,
     free_buffers: Receiver<'_, Img<'a>, 2>,
     image_buffers: Sender<'_, Img<'a>, 1>,
     exit: Receiver<'_, (), 1>,
@@ -108,7 +109,7 @@ async fn image_loop<'a>(
         let Either::First(buf) = select(free_buffers.receive(), exit.receive()).await else {
             break;
         };
-        pag.get_frame(buf).await.unwrap();
+        pag.wait_for_image(pag_int, buf).await.unwrap();
         // the image is mirrored for some reason
         buf.chunks_mut(320).for_each(|l| l.reverse());
         let Either::First(_) = select(image_buffers.send(buf), exit.receive()).await else {
