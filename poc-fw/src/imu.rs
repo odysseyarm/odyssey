@@ -1,35 +1,30 @@
-use bytemuck::{cast_slice, from_bytes};
 use embassy_nrf::{
-    Peripheral,
-    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull},
-    gpiote::{self, OutputChannelPolarity},
-    interrupt,
-    ppi::{self, Ppi},
-    spim,
-    timer::{self, Timer},
+    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull}, gpiote::{self, OutputChannelPolarity}, interrupt, peripherals::SERIAL1, ppi::{self, Ppi}, spim, timer::{self, Timer}, Peripheral
 };
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use icm426xx::{ICM42688, fifo::FifoPacket4};
-use static_cell::ConstStaticCell;
+use icm426xx::{Ready, ICM42688};
+
+pub type Imu = ICM42688<ExclusiveDevice<spim::Spim<'static, SERIAL1>, Output<'static>, Delay>, Ready>;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn init<'d, T>(
-    spim_instance: impl Peripheral<P = T> + 'd,
+pub async fn init(
+    spim_instance: impl Peripheral<P = SERIAL1> + 'static,
     cs: AnyPin,
     sck: AnyPin,
     miso: AnyPin,
     mosi: AnyPin,
     int1: AnyPin,
     clkin: AnyPin,
-    clkin_timer_instance: impl Peripheral<P: timer::Instance>,
+    clkin_timer_instance: impl Peripheral<P: timer::Instance> + 'static,
     clkin_ppi_ch: ppi::AnyConfigurableChannel,
     clkin_gpiote_ch: gpiote::AnyChannel,
-) where
-    T: spim::Instance,
-    crate::Irqs: interrupt::typelevel::Binding<T::Interrupt, spim::InterruptHandler<T>> + 'd,
+)
+-> (Imu, ImuInterrupt)
+where
+    crate::Irqs: interrupt::typelevel::Binding<<SERIAL1 as spim::Instance>::Interrupt, spim::InterruptHandler<SERIAL1>>,
 {
-    let mut int1 = Input::new(int1, Pull::None);
+    let int1 = Input::new(int1, Pull::None);
     let clkin = Output::new(clkin, Level::Low, OutputDrive::Standard);
     let cs = Output::new(cs, Level::High, OutputDrive::Standard);
     let clkin_ch =
@@ -44,6 +39,10 @@ pub async fn init<'d, T>(
     let mut ppi_ch = Ppi::new_one_to_one(clkin_ppi_ch, cc.event_compare(), clkin_ch.task_out());
     ppi_ch.enable();
     timer.start();
+    // Let the timer run forever
+    core::mem::forget(timer);
+    core::mem::forget(ppi_ch);
+    core::mem::forget(clkin_ch);
 
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M8;
@@ -64,21 +63,16 @@ pub async fn init<'d, T>(
         imu_config.pin9.function = Pin9Function::CLKIN;
         imu_config.fifo_watermark = 1;
     }
-    let mut imu = imu.initialize(Delay, imu_config).await.unwrap();
-    static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
-    let buffer = BUFFER.take();
-    loop {
-        int1.wait_for_low().await;
-        let _items = imu.read_fifo(buffer).await.unwrap();
-        let pkt = from_bytes::<FifoPacket4>(&cast_slice(buffer)[4..24]);
-        let _ts = pkt.timestamp();
-        let _ax = pkt.accel_data_x();
-        let _ay = pkt.accel_data_y();
-        let _az = pkt.accel_data_z();
-        let _gx = pkt.gyro_data_x();
-        let _gy = pkt.gyro_data_y();
-        let _gz = pkt.gyro_data_z();
-        // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
-        // defmt::info!("ts={} ax={} ay={} az={} gx={} gy={} gz={}", ts, ax, ay, az, gx, gy, gz);
+    let imu = imu.initialize(Delay, imu_config).await.unwrap();
+    (imu, ImuInterrupt { int1 })
+}
+
+pub struct ImuInterrupt {
+    int1: Input<'static>,
+}
+
+impl ImuInterrupt {
+    pub fn wait(&mut self) -> impl Future<Output = ()> {
+        self.int1.wait_for_low()
     }
 }

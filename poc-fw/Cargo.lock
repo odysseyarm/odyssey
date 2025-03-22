@@ -748,6 +748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b5c17de023a86f59ed79891b2e5d5a94c705dbe904a5b5c9c952ea6221b03e4"
 dependencies = [
  "approx",
+ "bytemuck",
  "nalgebra-macros",
  "num-complex",
  "num-rational",
@@ -930,6 +931,7 @@ dependencies = [
  "embedded-hal-bus",
  "futures",
  "icm426xx",
+ "nalgebra",
  "nrf-pac",
  "pag7661qn",
  "panic-probe",
@@ -1000,7 +1002,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs#d2b79a1ecfcf2c16c1d3be9183422d42d0e832b4"
+source = "git+https://github.com/odysseyarm/protodonge-rs#42573fd903686471f906b989eb98a0e72d7ee87d"
 dependencies = [
  "ats_common",
  "bytemuck",

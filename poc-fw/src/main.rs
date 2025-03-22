@@ -22,7 +22,8 @@ use embassy_nrf::{
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use pag7661qn::{Pag7661Qn, Pag7661QnInterrupt, mode, spi::Pag7661QnSpi, types};
+use imu::{Imu, ImuInterrupt};
+use pag7661qn::{Pag7661Qn, Pag7661QnInterrupt, mode, spi::Pag7661QnSpi};
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
@@ -82,6 +83,18 @@ async fn main(spawner: Spawner) {
     //     defmt::info!("    area = {}", obj.area());
     // }
 
+    let (imu, imu_int) = imu::init(
+        p.SERIAL1,
+        p.P0_15.into(),
+        p.P0_22.into(),
+        p.P1_04.into(),
+        p.P1_05.into(),
+        p.P0_07.into(),
+        p.P0_13.into(),
+        p.TIMER0,
+        p.PPI_CH0.into(),
+        p.GPIOTE_CH0.into(),
+    ).await;
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
@@ -92,27 +105,14 @@ async fn main(spawner: Spawner) {
         usb_ctl,
         pag: pag.as_dynamic_mode(),
         pag_int,
+        imu,
+        imu_int,
         img: image_mode::Context::take(),
         obj: object_mode::Context::take(),
     };
 
-    join(
-        imu::init(
-            p.SERIAL1,
-            p.P0_15.into(),
-            p.P0_22.into(),
-            p.P1_04.into(),
-            p.P1_05.into(),
-            p.P0_07.into(),
-            p.P0_13.into(),
-            p.TIMER0,
-            p.PPI_CH0.into(),
-            p.GPIOTE_CH0.into(),
-        ),
-        // image_mode::image_mode(ctx),
-        object_mode::object_mode(ctx),
-    )
-    .await;
+    // image_mode::image_mode(ctx).await;
+    object_mode::object_mode(ctx).await;
 }
 
 type Pag<M> = Pag7661Qn<
@@ -127,10 +127,12 @@ type UsbDriver =
 struct CommonContext {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,
     usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
-    #[expect(dead_code, reason = "remove when actually used")]
+    #[expect(dead_code)]
     usb_ctl: cdc_acm::ControlChanged<'static>,
     pag: Pag<mode::Mode>,
     pag_int: PagInt,
+    imu: Imu,
+    imu_int: ImuInterrupt,
 
     img: image_mode::Context,
     obj: object_mode::Context,
