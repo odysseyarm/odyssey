@@ -1,11 +1,19 @@
 use embassy_nrf::{
-    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull}, gpiote::{self, OutputChannelPolarity}, interrupt, peripherals::SERIAL1, ppi::{self, Ppi}, spim, timer::{self, Timer}, Peripheral
+    Peripheral,
+    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull},
+    gpiote::{self, OutputChannelPolarity},
+    interrupt,
+    peripherals::SERIAL1,
+    ppi::{self, Ppi},
+    spim,
+    timer::{self, Timer},
 };
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use icm426xx::{Ready, ICM42688};
+use icm426xx::{ICM42688, Ready};
 
-pub type Imu = ICM42688<ExclusiveDevice<spim::Spim<'static, SERIAL1>, Output<'static>, Delay>, Ready>;
+pub type Imu =
+    ICM42688<ExclusiveDevice<spim::Spim<'static, SERIAL1>, Output<'static>, Delay>, Ready>;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init(
@@ -19,10 +27,12 @@ pub async fn init(
     clkin_timer_instance: impl Peripheral<P: timer::Instance> + 'static,
     clkin_ppi_ch: ppi::AnyConfigurableChannel,
     clkin_gpiote_ch: gpiote::AnyChannel,
-)
--> (Imu, ImuInterrupt)
+) -> (Imu, ImuInterrupt)
 where
-    crate::Irqs: interrupt::typelevel::Binding<<SERIAL1 as spim::Instance>::Interrupt, spim::InterruptHandler<SERIAL1>>,
+    crate::Irqs: interrupt::typelevel::Binding<
+            <SERIAL1 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SERIAL1>,
+        >,
 {
     let int1 = Input::new(int1, Pull::None);
     let clkin = Output::new(clkin, Level::Low, OutputDrive::Standard);

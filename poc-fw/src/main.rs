@@ -9,13 +9,16 @@ mod image_mode;
 mod imu;
 mod init;
 mod object_mode;
+mod settings;
 mod usb;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
 use embassy_nrf::{
+    Peripheral,
     gpio::{Input, Level, Output, OutputDrive, Pull},
-    peripherals::{self, SPIM4},
+    into_ref,
+    nvmc::Nvmc,
+    peripherals::{self, NVMC, SPIM4},
     spim::{self, Spim},
     usb::vbus_detect::HardwareVbusDetect,
 };
@@ -24,6 +27,7 @@ use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use imu::{Imu, ImuInterrupt};
 use pag7661qn::{Pag7661Qn, Pag7661QnInterrupt, mode, spi::Pag7661QnSpi};
+use settings::{Settings, init_settings};
 use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
@@ -94,7 +98,12 @@ async fn main(spawner: Spawner) {
         p.TIMER0,
         p.PPI_CH0.into(),
         p.GPIOTE_CH0.into(),
-    ).await;
+    )
+    .await;
+
+    let mut nvmc = Nvmc::new(p.NVMC);
+    let settings = init_settings(&mut nvmc, &mut pag).await;
+
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
@@ -107,6 +116,8 @@ async fn main(spawner: Spawner) {
         pag_int,
         imu,
         imu_int,
+        settings,
+        nvmc,
         img: image_mode::Context::take(),
         obj: object_mode::Context::take(),
     };
@@ -133,6 +144,8 @@ struct CommonContext {
     pag_int: PagInt,
     imu: Imu,
     imu_int: ImuInterrupt,
+    settings: &'static mut Settings,
+    nvmc: Nvmc<'static>,
 
     img: image_mode::Context,
     obj: object_mode::Context,

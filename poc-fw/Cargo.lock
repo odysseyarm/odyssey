@@ -929,6 +929,7 @@ dependencies = [
  "embassy-usb",
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
+ "embedded-storage",
  "futures",
  "icm426xx",
  "nalgebra",
@@ -1002,7 +1003,6 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs#42573fd903686471f906b989eb98a0e72d7ee87d"
 dependencies = [
  "ats_common",
  "bytemuck",

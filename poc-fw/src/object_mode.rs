@@ -5,19 +5,27 @@ use core::{
 
 use bytemuck::{cast_slice, from_bytes};
 use defmt::Format;
-use embassy_futures::{join::join3, select::{select, Either}};
+use embassy_futures::{
+    join::join3,
+    select::{Either, select},
+};
+use embassy_nrf::nvmc::Nvmc;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex, watch::Watch};
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use icm426xx::fifo::FifoPacket4;
 use nalgebra::Vector3;
-use pag7661qn::mode;
+use pag7661qn::{Interface, mode};
 use protodongers::{
-    slip::{encode_slip_frame, SlipDecodeError}, GeneralConfig, Packet, PacketData as P, PacketType, Props, ReadRegisterResponse
+    Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
+    slip::{SlipDecodeError, encode_slip_frame},
 };
 use static_cell::ConstStaticCell;
 
 use crate::{
-    device_id, imu::{Imu, ImuInterrupt}, usb::write_serial, CommonContext, Pag, UsbDriver
+    CommonContext, Pag, UsbDriver, device_id,
+    imu::{Imu, ImuInterrupt},
+    settings::{PagSettings, Settings},
+    usb::write_serial,
 };
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
@@ -28,7 +36,7 @@ type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 #[allow(unreachable_code)]
 pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
     defmt::info!("Entering Object Mode");
-    let pag = ctx.pag.switch_mode(mode::Mode::Object).await.unwrap();
+    let pag = ctx.pag.switch_mode(mode::Mode::Idle).await.unwrap();
     let pag = AsyncMutex::<NoopRawMutex, _>::new(pag);
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -49,6 +57,8 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
         &stream_infos,
         pkt_channel.sender(),
         &mut pkt_rcv,
+        ctx.settings,
+        &mut ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
     let c = imu_loop(
@@ -70,6 +80,8 @@ async fn usb_rcv_loop(
     stream_infos: &StreamInfos,
     pkt_snd: Sender<'_, Packet, 4>,
     pkt_rcv: &mut PacketReader<'_>,
+    settings: &mut Settings,
+    nvmc: &mut Nvmc<'static>,
 ) -> ! {
     loop {
         let pkt = match pkt_rcv.wait_for_packet().await {
@@ -85,20 +97,54 @@ async fn usb_rcv_loop(
         };
 
         let response = match pkt.data {
-            P::WriteRegister(_) => todo!(),
-            P::ReadRegister(register) => Some(Packet {
-                id: pkt.id,
-                data: P::ReadRegisterResponse(ReadRegisterResponse {
-                    bank: register.bank,
-                    address: register.address,
-                    data: 0,
-                }),
-            }),
-            P::WriteConfig(_) => todo!(),
+            P::WriteRegister(register) => {
+                let mut pag = pag.lock().await;
+                pag.set_bank(register.bank).await.unwrap();
+                pag.bus_unchecked()
+                    .write(register.address, &[register.data])
+                    .await
+                    .unwrap();
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::Ack(),
+                })
+            }
+            P::ReadRegister(register) => {
+                let mut pag = pag.lock().await;
+                pag.set_bank(register.bank).await.unwrap();
+                let data = pag
+                    .bus_unchecked()
+                    .read_byte(register.address)
+                    .await
+                    .unwrap();
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::ReadRegisterResponse(ReadRegisterResponse {
+                        bank: register.bank,
+                        address: register.address,
+                        data,
+                    }),
+                })
+            }
+            P::WriteConfig(config) => {
+                settings.general.set_general_config(&config.into());
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::Ack(),
+                })
+            }
             P::ReadConfig() => Some(Packet {
                 id: pkt.id,
-                data: P::ReadConfigResponse(GeneralConfig::default()),
+                data: P::ReadConfigResponse((*settings.general.general_config()).into()),
             }),
+            P::FlashSettings() => {
+                settings.pag = PagSettings::read_from_pag(&mut *pag.lock().await).await;
+                settings.write(&mut *nvmc);
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::Ack(),
+                })
+            }
             P::ReadProps() => Some(Packet {
                 id: pkt.id,
                 data: P::ReadPropsResponse(Props {
@@ -113,7 +159,10 @@ async fn usb_rcv_loop(
                     S::Disable => stream_infos.disable(s.packet_id),
                     S::DisableAll => stream_infos.disable_all(),
                 }
-                None
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::Ack(),
+                })
             }
             P::ObjectReportRequest() => None,
             P::Ack() => None,
@@ -124,13 +173,14 @@ async fn usb_rcv_loop(
             P::PocMarkersReport(_) => None,
             P::AccelReport(_) => None,
             P::ImpactReport(_) => None,
-            P::FlashSettings() => None,
             P::Vendor(_, _) => None,
             P::ReadRegisterResponse(_) => None,
         };
 
         if let Some(r) = response {
-            pkt_snd.send(r).await;
+            if r.id != 255 {
+                pkt_snd.send(r).await;
+            }
         }
     }
 }
@@ -141,7 +191,9 @@ async fn usb_snd_loop(
     mut exit: ExitReceiver<'_>,
 ) -> ! {
     loop {
-        let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else { break };
+        let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
+            break;
+        };
         pkt_writer.write_packet(&pkt).await;
     }
     todo!()
@@ -156,9 +208,10 @@ async fn imu_loop(
     static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
     let buffer = BUFFER.take();
     let mut ts_micros = 0;
+    // TODO handle ODR change and impact stream
     loop {
         imu_int.wait().await;
-        let items = imu.read_fifo(buffer).await.unwrap();
+        let _items = imu.read_fifo(buffer).await.unwrap();
         let pkt = from_bytes::<FifoPacket4>(&cast_slice(buffer)[4..24]);
         // CLKIN ticks (32 kHz)
         ts_micros += 1000 * (pkt.timestamp() as u32) / 32;

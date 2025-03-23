@@ -1,7 +1,8 @@
 #![no_std]
 
-use core::convert::Infallible;
+use core::{convert::Infallible, future::Future};
 
+use bytemuck::bytes_of_mut;
 use embedded_hal_async::{delay::DelayNs, digital, spi::SpiDevice};
 
 pub mod mode;
@@ -40,12 +41,15 @@ impl<S: SpiDevice, D: DelayNs, M: ModeT> Pag7661Qn<Pag7661QnSpi<S>, D, M> {
 
         initialize(&mut bus, &mut timer, initial_mode.mode()).await?;
 
-        Ok((Self {
-            bus,
-            timer,
-            mode: initial_mode,
-            bank: 0,
-        }, Pag7661QnInterrupt { int_o }))
+        Ok((
+            Self {
+                bus,
+                timer,
+                mode: initial_mode,
+                bank: 0,
+            },
+            Pag7661QnInterrupt { int_o },
+        ))
     }
 }
 
@@ -98,6 +102,29 @@ async fn initialize<I: Interface, D: DelayNs>(
 }
 
 impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
+    /// Get the low level driver
+    ///
+    /// WARNING: using the low level driver can cause the device to become inconsistent with the
+    /// high level driver's state such as mode and bank.
+    pub fn bus_unchecked(&mut self) -> &mut I {
+        &mut self.bus
+    }
+
+    /// Set the bank in the driver state without sending any commands to the underlying device.
+    pub fn set_bank_unchecked(&mut self, bank: u8) {
+        self.bank = bank
+    }
+
+    /// Set the mode in the driver state without sending any commands to the underlying device.
+    pub fn set_mode_unchecked<N: ModeT>(self, mode: N) -> Pag7661Qn<I, D, N> {
+        Pag7661Qn {
+            bus: self.bus,
+            timer: self.timer,
+            mode,
+            bank: self.bank,
+        }
+    }
+
     /// Wrapper to convert errors.
     async fn read<EO, EM>(
         &mut self,
@@ -130,13 +157,27 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    async fn set_bank<EO, EM>(&mut self, value: u8) -> Result<(), Error<I::Error, EO, EM>> {
-        if self.bank == value {
+    /// Wrapper to convert errors.
+    async fn _set_bank<EO, EM>(&mut self, bank: u8) -> Result<(), Error<I::Error, EO, EM>> {
+        if self.bank == bank {
             return Ok(());
         }
-        self.write(0x7F, &[value]).await?;
-        self.bank = value;
+        self.write(0x7F, &[bank]).await?;
+        self.bank = bank;
         Ok(())
+    }
+
+    /// Set the bank
+    pub fn set_bank(
+        &mut self,
+        bank: u8,
+    ) -> impl Future<Output = Result<(), Error<I::Error, Infallible, Infallible>>> + use<'_, I, D, M>
+    {
+        self._set_bank(bank)
+    }
+
+    pub fn mode(&self) -> mode::Mode {
+        self.mode.mode()
     }
 
     pub async fn switch_mode<N: ModeT>(
@@ -145,7 +186,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
     ) -> Result<Pag7661Qn<I, D, N>, Error<I::Error, Infallible, Infallible>> {
         if new_mode.mode() != self.mode.mode() {
             defmt::debug!("Switching mode to {}", new_mode.mode());
-            self.set_bank(0x00).await?;
+            self._set_bank(0x00).await?;
             if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
                 // switch to idle first
                 self.write(0x10, &[Mode::Idle as u8]).await?;
@@ -186,22 +227,70 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
     }
 
     async fn int_o_status<EO, EM>(&mut self) -> Result<IntOStatus, Error<I::Error, EO, EM>> {
-        self.set_bank(0x00).await?;
-        self.bus.int_o_status().await
-            .map_err(Error::InterfaceError)
+        self._set_bank(0x00).await?;
+        self.bus.int_o_status().await.map_err(Error::InterfaceError)
     }
 
-    async fn set_int_o_status<EO, EM>(&mut self, value: IntOStatus) -> Result<(), Error<I::Error, EO, EM>> {
-        self.set_bank(0x00).await?;
-        self.bus.set_int_o_status(value).await.map_err(Error::InterfaceError)
+    async fn set_int_o_status<EO, EM>(
+        &mut self,
+        value: IntOStatus,
+    ) -> Result<(), Error<I::Error, EO, EM>> {
+        self._set_bank(0x00).await?;
+        self.bus
+            .set_int_o_status(value)
+            .await
+            .map_err(Error::InterfaceError)
     }
 
     /// Get the sensor FPS.
     pub async fn sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         let mut value = [0];
         self.read(0x13, &mut value).await?;
         Ok(value[0])
+    }
+
+    /// Get the sensor's exposure time and led mode.
+    pub async fn sensor_exposure_us(
+        &mut self,
+    ) -> Result<(bool, u16), Error<I::Error, Infallible, Infallible>> {
+        self._set_bank(0x00).await?;
+        let value = self.read_byte(0x66).await?;
+        let led_always_on = value & (1 << 7) != 0;
+        let exposure_us = u16::from(value & !(1 << 7)) * 100;
+        Ok((led_always_on, exposure_us))
+    }
+
+    /// Set the sensor gain.
+    pub async fn sensor_gain(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
+        self._set_bank(0x00).await?;
+        self.read_byte(0x67).await
+    }
+
+    /// Set the area lower bound
+    pub async fn area_lower_bound(
+        &mut self,
+    ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
+        self._set_bank(0x00).await?;
+        let mut value = 0u16;
+        self.read(0x68, bytes_of_mut(&mut value)).await?;
+        Ok(value)
+    }
+
+    /// Set the area upper bound
+    pub async fn area_upper_bound(
+        &mut self,
+    ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
+        self._set_bank(0x00).await?;
+        let mut value = 0u16;
+        self.read(0x6A, bytes_of_mut(&mut value)).await?;
+        Ok(value)
+    }
+
+    /// Set the light threshold
+    pub async fn light_threshold(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
+        self._set_bank(0x00).await?;
+        self.read_byte(0x6C).await
     }
 }
 
@@ -212,7 +301,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         value: u8,
     ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         self.write(0x13, &[value]).await?;
         Ok(())
     }
@@ -229,7 +318,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         assert!(exposure_us <= 12700);
         let value = (exposure_us / 100) as u8 | ((led_always_on as u8) << 7);
         self.mode.is_idle().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         self.write(0x66, &[value]).await?;
         Ok(())
     }
@@ -240,7 +329,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         x: u8,
     ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         self.write(0x67, &[x]).await?;
         Ok(())
     }
@@ -251,7 +340,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         x: u16,
     ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         self.write(0x68, &x.to_le_bytes()).await?;
         Ok(())
     }
@@ -262,7 +351,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         x: u16,
     ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         self.write(0x6A, &x.to_le_bytes()).await?;
         Ok(())
     }
@@ -273,7 +362,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         x: u8,
     ) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         self.write(0x6C, &x.to_le_bytes()).await?;
         Ok(())
     }
@@ -287,7 +376,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7661Qn<I, D, M> {
         image: &mut [u8; 320 * 240],
     ) -> Result<(), Error<I::Error, O::Error, M::Error>> {
         self.mode.is_image().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
 
         loop {
             interrupt.wait().await.map_err(Error::IntOError)?;
@@ -321,8 +410,10 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
     ) -> Result<u8, Error<I::Error, O::Error, M::Error>> {
         loop {
             interrupt.wait().await.map_err(Error::IntOError)?;
-            let Some(n) = self.try_get_objects(obj).await? else { continue };
-            return Ok(n)
+            let Some(n) = self.try_get_objects(obj).await? else {
+                continue;
+            };
+            return Ok(n);
         }
     }
 
@@ -334,7 +425,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
         obj: &mut [types::Object; 16],
     ) -> Result<Option<u8>, Error<I::Error, EO, M::Error>> {
         self.mode.is_object().map_err(Error::ModeError)?;
-        self.set_bank(0x00).await?;
+        self._set_bank(0x00).await?;
         let obj_bytes = bytemuck::bytes_of_mut(obj);
 
         let mut done = false;

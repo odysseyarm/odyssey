@@ -25,6 +25,7 @@ icm426xx = { version = "0.3.2", git = "https://github.com/0e4ef622/icm426xx", fe
 bytemuck = "1.21.0"
 futures = { version = "0.3.31", default-features = false, features = ["async-await"] }
 nalgebra = { version = "0.32.6", default-features = false }
+embedded-storage = "0.3.1"
 
 [dependencies.protodongers]
 version = "0.1.0"
