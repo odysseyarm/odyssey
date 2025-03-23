@@ -19,7 +19,7 @@ use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 
 #[cfg(test)]
 mod tests;
-mod wire;
+pub mod wire;
 pub mod slip;
 
 pub trait Parse: Sized {

@@ -6,14 +6,28 @@ use nalgebra::ComplexField;
 
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C, packed)]
-struct AccelConfig {
-    accel_odr: u16,
-    b_x: f32,
-    b_y: f32,
-    b_z: f32,
-    s_x: f32,
-    s_y: f32,
-    s_z: f32,
+pub struct AccelConfig {
+    pub accel_odr: u16,
+    pub b_x: f32,
+    pub b_y: f32,
+    pub b_z: f32,
+    pub s_x: f32,
+    pub s_y: f32,
+    pub s_z: f32,
+}
+
+impl Default for AccelConfig {
+    fn default() -> Self {
+        Self {
+            accel_odr: 200,
+            b_x: 0.0,
+            b_y: 0.0,
+            b_z: 0.0,
+            s_x: 1.0,
+            s_y: 1.0,
+            s_z: 1.0,
+        }
+    }
 }
 
 impl From<super::AccelConfig> for AccelConfig {
@@ -44,11 +58,12 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C)]
-struct CameraCalibrationParams {
-    camera_matrix: [f32; 9],
-    dist_coeffs: [f32; 5],
+pub struct CameraCalibrationParams {
+    pub camera_matrix: [f32; 9],
+    pub dist_coeffs: [f32; 5],
 }
 
 impl From<CameraCalibrationParams> for RosOpenCvIntrinsics<f32> {
@@ -70,11 +85,21 @@ impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C)]
-struct StereoCalibrationParams {
-    r: [f32; 9],
-    t: [f32; 3],
+pub struct StereoCalibrationParams {
+    pub r: [f32; 9],
+    pub t: [f32; 3],
+}
+
+impl Default for StereoCalibrationParams {
+    fn default() -> Self {
+        Self {
+            r: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            t: [0.0, 0.0, 0.0],
+        }
+    }
 }
 
 impl From<StereoCalibrationParams> for nalgebra::Isometry3<f32> {
@@ -97,15 +122,16 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams{
 }
 
 
+// This is also the format the POC uses on flash
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C, packed)]
-pub(super) struct GeneralConfig {
-    impact_threshold: u8,
-    accel_config: AccelConfig,
-    gyro_config: super::GyroConfig,
-    camera_model_nf: CameraCalibrationParams,
-    camera_model_wf: CameraCalibrationParams,
-    stereo_iso: StereoCalibrationParams,
+pub struct GeneralConfig {
+    pub impact_threshold: u8,
+    pub accel_config: AccelConfig,
+    pub gyro_config: super::GyroConfig,
+    pub camera_model_nf: CameraCalibrationParams,
+    pub camera_model_wf: CameraCalibrationParams,
+    pub stereo_iso: StereoCalibrationParams,
 }
 
 impl From<super::GeneralConfig> for GeneralConfig {
