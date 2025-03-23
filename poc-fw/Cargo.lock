@@ -1003,6 +1003,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
+source = "git+https://github.com/odysseyarm/protodonge-rs#56536554ea248efbda3b2a272043ebd9e82e5086"
 dependencies = [
  "ats_common",
  "bytemuck",
