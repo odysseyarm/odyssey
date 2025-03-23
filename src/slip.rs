@@ -5,7 +5,6 @@ const SLIP_FRAME_ESC: u8 = 0xdb;
 const SLIP_FRAME_ESC_END: u8 = 0xdc;
 const SLIP_FRAME_ESC_ESC: u8 = 0xdd;
 
-
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Error, Debug)]
 pub enum SlipDecodeError {
@@ -54,7 +53,6 @@ pub fn decode_slip_frame(buf: &mut [u8]) -> Result<usize, SlipDecodeError> {
     Ok(j)
 }
 
-
 #[derive(Error, Debug)]
 pub enum SlipEncodeError {
     #[error("not enough capacity")]
@@ -68,12 +66,14 @@ pub fn encode_slip_frame<'a>(data: &[u8], out: &'a mut [u8]) -> Result<&'a [u8],
         match byte {
             SLIP_FRAME_END => {
                 *out.get_mut(i).ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_ESC;
-                *out.get_mut(i+1).ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_ESC_END;
+                *out.get_mut(i + 1)
+                    .ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_ESC_END;
                 i += 2;
             }
             SLIP_FRAME_ESC => {
                 *out.get_mut(i).ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_ESC;
-                *out.get_mut(i+1).ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_ESC_ESC;
+                *out.get_mut(i + 1)
+                    .ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_ESC_ESC;
                 i += 2;
             }
             x => {
@@ -83,5 +83,5 @@ pub fn encode_slip_frame<'a>(data: &[u8], out: &'a mut [u8]) -> Result<&'a [u8],
         }
     }
     *out.get_mut(i).ok_or(SlipEncodeError::NotEnoughCapacity)? = SLIP_FRAME_END;
-    Ok(&out[..i+1])
+    Ok(&out[..i + 1])
 }

@@ -1,8 +1,11 @@
-use ats_common::ocv_types::{MinimalCameraCalibrationParams, MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1, OpenCVMatrix5x1};
+use ats_common::ocv_types::{
+    MinimalCameraCalibrationParams, MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1,
+    OpenCVMatrix5x1,
+};
 use bytemuck::{AnyBitPattern, NoUninit};
-use opencv_ros_camera::RosOpenCvIntrinsics;
 #[allow(unused_imports)]
 use nalgebra::ComplexField;
+use opencv_ros_camera::RosOpenCvIntrinsics;
 
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C, packed)]
@@ -69,9 +72,14 @@ pub struct CameraCalibrationParams {
 impl From<CameraCalibrationParams> for RosOpenCvIntrinsics<f32> {
     fn from(value: CameraCalibrationParams) -> Self {
         MinimalCameraCalibrationParams {
-            camera_matrix: OpenCVMatrix3 { data: value.camera_matrix },
-            dist_coeffs: OpenCVMatrix5x1 { data: value.dist_coeffs },
-        }.into()
+            camera_matrix: OpenCVMatrix3 {
+                data: value.camera_matrix,
+            },
+            dist_coeffs: OpenCVMatrix5x1 {
+                data: value.dist_coeffs,
+            },
+        }
+        .into()
     }
 }
 
@@ -107,11 +115,12 @@ impl From<StereoCalibrationParams> for nalgebra::Isometry3<f32> {
         MinimalStereoCalibrationParams {
             r: OpenCVMatrix3 { data: value.r },
             t: OpenCVMatrix3x1 { data: value.t },
-        }.into()
+        }
+        .into()
     }
 }
 
-impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams{
+impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
     fn from(value: nalgebra::Isometry3<f32>) -> Self {
         let value = MinimalStereoCalibrationParams::from(value);
         Self {
@@ -120,7 +129,6 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams{
         }
     }
 }
-
 
 // This is also the format the POC uses on flash
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]

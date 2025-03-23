@@ -5,11 +5,7 @@
 extern crate std;
 
 #[cfg(feature = "std")]
-use std::{
-    error::Error as StdError,
-    fmt::Display,
-    vec::Vec,
-};
+use std::{error::Error as StdError, fmt::Display, vec::Vec};
 
 use core::mem::MaybeUninit;
 
@@ -17,10 +13,10 @@ use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit};
 use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 
+pub mod slip;
 #[cfg(test)]
 mod tests;
 pub mod wire;
-pub mod slip;
 
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
@@ -67,7 +63,8 @@ impl<T: Delegated> Serialize for T {
         unsafe {
             let ptr = <[_]>::as_mut_ptr(buf) as *mut u8;
             ptr.copy_from_nonoverlapping(wire_bytes.as_ptr(), wire_bytes.len());
-            ptr.add(wire_bytes.len()).write_bytes(0, T::SIZE - wire_bytes.len());
+            ptr.add(wire_bytes.len())
+                .write_bytes(0, T::SIZE - wire_bytes.len());
         }
         *buf = &mut core::mem::take(buf)[T::SIZE..];
     }
@@ -77,7 +74,9 @@ impl<T: Delegated> Parse for T {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
         let size_with_padding = T::SIZE;
         if bytes.len() < size_with_padding {
-            Err(Error::UnexpectedEof { packet_type: Self::PACKET_TYPE })
+            Err(Error::UnexpectedEof {
+                packet_type: Self::PACKET_TYPE,
+            })
         } else {
             let size = core::mem::size_of::<T::Wire>();
             match bytemuck::checked::try_pod_read_unaligned(&bytes[..size]) {
@@ -85,7 +84,9 @@ impl<T: Delegated> Parse for T {
                     *bytes = &bytes[size_with_padding..];
                     Ok(Self::from(v))
                 }
-                Err(bytemuck::checked::CheckedCastError::InvalidBitPattern) => Err(Error::InvalidBitPattern),
+                Err(bytemuck::checked::CheckedCastError::InvalidBitPattern) => {
+                    Err(Error::InvalidBitPattern)
+                }
                 Err(_) => unreachable!(),
             }
         }
@@ -575,9 +576,7 @@ impl Packet {
                 PacketData::ReadConfigResponse(GeneralConfig::parse(bytes)?)
             }
             PacketType::ReadProps() => PacketData::ReadProps(),
-            PacketType::ReadPropsResponse() => {
-                PacketData::ReadPropsResponse(Props::parse(bytes)?)
-            }
+            PacketType::ReadPropsResponse() => PacketData::ReadPropsResponse(Props::parse(bytes)?),
             PacketType::ObjectReportRequest() => PacketData::ObjectReportRequest(),
             PacketType::ObjectReport() => PacketData::ObjectReport(ObjectReport::parse(bytes)?),
             PacketType::CombinedMarkersReport() => {
@@ -722,7 +721,12 @@ impl Packet {
         orig_buf_len - buf.len()
     }
 
-    pub fn serialize_parts<D: Serialize>(id: u8, ty: PacketType, data: &D, mut buf: &mut [MaybeUninit<u8>]) -> usize {
+    pub fn serialize_parts<D: Serialize>(
+        id: u8,
+        ty: PacketType,
+        data: &D,
+        mut buf: &mut [MaybeUninit<u8>],
+    ) -> usize {
         let orig_buf_len = buf.len();
         let words = u16::to_le_bytes((D::SIZE as u16 + 4) / 2);
         push(&mut buf, &[words[0], words[1], ty.into(), id]);
