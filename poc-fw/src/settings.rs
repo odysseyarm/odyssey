@@ -12,6 +12,7 @@ mod settings_region {
     }
 }
 
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use bytemuck::{AnyBitPattern, NoUninit, bytes_of, bytes_of_mut};
@@ -28,12 +29,12 @@ use crate::Pag;
 static SETTINGS: StaticCell<Settings> = StaticCell::new();
 
 pub async fn init_settings(
-    flash: impl NorFlash,
+    flash: &RefCell<impl NorFlash>,
     pag: &mut Pag<mode::Idle>,
 ) -> &'static mut Settings {
     let region = get_settings_region();
     assert!(region.len() >= 2 * PAGE_SIZE);
-    let s = Settings::init(flash, region.start as u32);
+    let s = Settings::init(&flash, region.start as u32);
     s.apply(pag).await;
     let s = SETTINGS.init(s);
     s
@@ -47,11 +48,11 @@ pub struct Settings {
 }
 
 impl Settings {
-    fn init(mut flash: impl NorFlash, start: u32) -> Self {
+    fn init(flash: &RefCell<impl NorFlash>, start: u32) -> Self {
         let pag_start = start;
         let general_start = start + PAGE_SIZE as u32;
-        let pag = PagSettings::init(&mut flash, pag_start);
-        let general = GeneralSettings::init(&mut flash, general_start);
+        let pag = PagSettings::init(&flash, pag_start);
+        let general = GeneralSettings::init(&flash, general_start);
         Self {
             pag,
             general,
@@ -66,9 +67,9 @@ impl Settings {
     }
 
     /// Write the settings to flash
-    pub fn write(&self, mut flash: impl NorFlash) {
-        self.pag.write(&mut flash, self.pag_start);
-        self.general.write(&mut flash, self.general_start);
+    pub fn write(&self, flash: &RefCell<impl NorFlash>) {
+        self.pag.write(&flash, self.pag_start);
+        self.general.write(&flash, self.general_start);
     }
 }
 
@@ -109,21 +110,22 @@ impl PagSettings {
         assert!(size_of::<Self>() <= PAGE_SIZE);
     };
 
-    fn init(mut flash: impl NorFlash, start: u32) -> Self {
+    fn init(flash: &RefCell<impl NorFlash>, start: u32) -> Self {
         let mut magic = Self::MAGIC;
-        flash.read(start, &mut magic).unwrap();
+        flash.borrow_mut().read(start, &mut magic).unwrap();
         let mut r = Self::default();
         if magic != Self::MAGIC {
             r.write(flash, start);
         } else {
-            flash
+            flash.borrow_mut()
                 .read(start + Self::OFFSET, bytes_of_mut(&mut r))
                 .unwrap();
         }
         r
     }
 
-    fn write(&self, mut flash: impl NorFlash, start: u32) {
+    fn write(&self, flash: &RefCell<impl NorFlash>, start: u32) {
+        let mut flash = flash.borrow_mut();
         flash.erase(start, start + PAGE_SIZE as u32).unwrap();
         flash.write(start, &Self::MAGIC).unwrap();
         flash
@@ -224,21 +226,22 @@ impl GeneralSettings {
         assert!(size_of::<Self>() <= PAGE_SIZE);
     };
 
-    fn init(mut flash: impl NorFlash, start: u32) -> Self {
+    fn init(flash: &RefCell<impl NorFlash>, start: u32) -> Self {
         let mut magic = Self::MAGIC;
-        flash.read(start, &mut magic).unwrap();
+        flash.borrow_mut().read(start, &mut magic).unwrap();
         let mut r = Self::default();
         if magic != Self::MAGIC {
             r.write(flash, start);
         } else {
-            flash
+            flash.borrow_mut()
                 .read(start + Self::OFFSET, bytes_of_mut(&mut r.general_config))
                 .unwrap();
         }
         r
     }
 
-    fn write(&self, mut flash: impl NorFlash, start: u32) {
+    fn write(&self, flash: &RefCell<impl NorFlash>, start: u32) {
+        let mut flash = flash.borrow_mut();
         flash.erase(start, start + PAGE_SIZE as u32).unwrap();
         flash.write(start, &Self::MAGIC).unwrap();
         flash

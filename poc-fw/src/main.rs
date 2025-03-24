@@ -12,6 +12,8 @@ mod object_mode;
 mod settings;
 mod usb;
 
+use core::cell::RefCell;
+
 use embassy_executor::Spawner;
 use embassy_nrf::{
     Peripheral,
@@ -22,6 +24,7 @@ use embassy_nrf::{
     spim::{self, Spim},
     usb::vbus_detect::HardwareVbusDetect,
 };
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -41,7 +44,11 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 async fn main(spawner: Spawner) {
     let (_core_peripherals, p) = init::init();
 
-    let (mut cdc_acm_class, usb) = usb::usb_device(p.USBD);
+    static NVMC: static_cell::StaticCell<Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>> = static_cell::StaticCell::new();
+    let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
+    let nvmc = &*nvmc;
+
+    let (mut cdc_acm_class, usb) = usb::usb_device(p.USBD, nvmc);
     spawner.must_spawn(usb::run_usb(usb));
 
     // Reset the PAG
@@ -101,8 +108,9 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    let mut nvmc = Nvmc::new(p.NVMC);
-    let settings = init_settings(&mut nvmc, &mut pag).await;
+    let mut nvmc = nvmc.borrow();
+
+    let settings = init_settings(&nvmc, &mut pag).await;
 
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
@@ -145,7 +153,7 @@ struct CommonContext {
     imu: Imu,
     imu_int: ImuInterrupt,
     settings: &'static mut Settings,
-    nvmc: Nvmc<'static>,
+    nvmc: &'static RefCell<Nvmc<'static>>,
 
     img: image_mode::Context,
     obj: object_mode::Context,

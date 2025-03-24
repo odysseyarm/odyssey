@@ -1,14 +1,24 @@
+use core::cell::RefCell;
+
 use embassy_nrf::{
     Peripheral,
     peripherals::USBD,
     usb::{Driver, vbus_detect::HardwareVbusDetect},
+    nvmc::Nvmc,
 };
+use embassy_time::Duration;
 use embassy_usb::{
     UsbDevice,
     class::cdc_acm::{self, CdcAcmClass},
     driver::EndpointError,
 };
+use embassy_boot::{AlignedBuffer, BlockingFirmwareState, FirmwareUpdaterConfig};
+use embassy_usb::{msos, Builder};
+use embassy_usb_dfu::consts::DfuAttributes;
+use embassy_usb_dfu::{usb_dfu, Control, ResetImmediate};
 use static_cell::{ConstStaticCell, StaticCell};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 
 use crate::{Irqs, device_id_str};
 
@@ -53,7 +63,7 @@ pub async fn run_usb(mut device: StaticUsbDevice) -> ! {
 }
 
 /// Panics if called more than once.
-pub fn usb_device(p: impl Peripheral<P = USBD> + 'static) -> (StaticCdcAcmClass, StaticUsbDevice) {
+pub fn usb_device(p: impl Peripheral<P = USBD> + 'static, flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc>>) -> (StaticCdcAcmClass, StaticUsbDevice) {
     // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
@@ -91,6 +101,19 @@ pub fn usb_device(p: impl Peripheral<P = USBD> + 'static) -> (StaticCdcAcmClass,
 
     // Create classes on the builder.
     let class = CdcAcmClass::new(&mut builder, state, 64);
+
+    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash, flash);
+
+    static MAGIC: StaticCell<AlignedBuffer<4>> = StaticCell::new();
+
+    let magic = MAGIC.init_with(|| AlignedBuffer([0; 4usize]));
+
+    let mut firmware_state = BlockingFirmwareState::from_config(config, &mut magic.0);
+    firmware_state.mark_booted().expect("Failed to mark booted");
+
+    static FIRMWARE_STATE: StaticCell<embassy_usb_dfu::Control<'_, embassy_embedded_hal::flash::partition::BlockingPartition<'_, NoopRawMutex, Nvmc>, ResetImmediate>> = StaticCell::new();
+    let state = FIRMWARE_STATE.init_with(|| Control::new(firmware_state, DfuAttributes::CAN_DOWNLOAD));
+    usb_dfu::<_, _, ResetImmediate>(&mut builder, state, Duration::from_millis(2500));
 
     // Build the builder.
     let usb = builder.build();

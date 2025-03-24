@@ -1,6 +1,5 @@
 use core::{
-    mem::{MaybeUninit, transmute},
-    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+    cell::RefCell, mem::{transmute, MaybeUninit}, sync::atomic::{AtomicBool, AtomicU8, Ordering}
 };
 
 use bytemuck::{cast_slice, from_bytes};
@@ -58,7 +57,7 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        &mut ctx.nvmc,
+        &ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
     let c = imu_loop(
@@ -81,7 +80,7 @@ async fn usb_rcv_loop(
     pkt_snd: Sender<'_, Packet, 4>,
     pkt_rcv: &mut PacketReader<'_>,
     settings: &mut Settings,
-    nvmc: &mut Nvmc<'static>,
+    nvmc: &RefCell<Nvmc<'static>>,
 ) -> ! {
     loop {
         let pkt = match pkt_rcv.wait_for_packet().await {
@@ -139,7 +138,7 @@ async fn usb_rcv_loop(
             }),
             P::FlashSettings() => {
                 settings.pag = PagSettings::read_from_pag(&mut *pag.lock().await).await;
-                settings.write(&mut *nvmc);
+                settings.write(nvmc);
                 Some(Packet {
                     id: pkt.id,
                     data: P::Ack(),

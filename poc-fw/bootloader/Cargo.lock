@@ -59,9 +59,12 @@ dependencies = [
  "cortex-m-rt",
  "defmt",
  "defmt-rtt",
- "embassy-boot-nrf",
+ "embassy-boot",
+ "embassy-futures",
  "embassy-nrf",
  "embassy-sync",
+ "embassy-usb",
+ "embassy-usb-dfu",
 ]
 
 [[package]]
@@ -213,22 +216,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embassy-boot-nrf"
-version = "0.4.0"
-source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
-dependencies = [
- "cfg-if",
- "cortex-m",
- "cortex-m-rt",
- "defmt",
- "embassy-boot",
- "embassy-nrf",
- "embassy-sync",
- "embedded-storage",
- "embedded-storage-async",
-]
-
-[[package]]
 name = "embassy-embedded-hal"
 version = "0.3.0"
 source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
@@ -260,6 +247,21 @@ dependencies = [
  "critical-section",
  "defmt",
  "num-traits",
+]
+
+[[package]]
+name = "embassy-net-driver"
+version = "0.2.0"
+source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
+
+[[package]]
+name = "embassy-net-driver-channel"
+version = "0.3.0"
+source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
+dependencies = [
+ "embassy-futures",
+ "embassy-net-driver",
+ "embassy-sync",
 ]
 
 [[package]]
@@ -325,6 +327,33 @@ version = "0.2.0"
 source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
 dependencies = [
  "document-features",
+]
+
+[[package]]
+name = "embassy-usb"
+version = "0.4.0"
+source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
+dependencies = [
+ "embassy-futures",
+ "embassy-net-driver-channel",
+ "embassy-sync",
+ "embassy-usb-driver",
+ "heapless",
+]
+
+[[package]]
+name = "embassy-usb-dfu"
+version = "0.1.0"
+source = "git+https://github.com/Abrahamh08/embassy.git#2541f9cb840a115471145093f0e60090afc64632"
+dependencies = [
+ "bitflags 2.9.0",
+ "cortex-m",
+ "embassy-boot",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-storage",
 ]
 
 [[package]]
