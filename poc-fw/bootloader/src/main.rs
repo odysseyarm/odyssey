@@ -73,18 +73,6 @@ fn main() -> ! {
             &mut control_buf,
         );
 
-        // We add MSOS headers so that the device automatically gets assigned the WinUSB driver on Windows.
-        // Otherwise users need to do this manually using a tool like Zadig.
-        //
-        // It seems it is important for the DFU class that these headers be on the Device level.
-        //
-        builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
-        builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
-        builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
-            "DeviceInterfaceGUIDs",
-            msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
-        ));
-
         usb_dfu::<_, _, _, ResetImmediate, 4096>(&mut builder, &mut state);
 
         let mut dev = builder.build();
