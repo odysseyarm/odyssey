@@ -593,6 +593,7 @@ impl Packet {
                 *bytes = &bytes[len as usize + 1..];
                 PacketData::Vendor(n, (len, data))
             }
+            PacketType::Ack() => PacketData::Ack(),
             p => unimplemented!("{:?}", p),
         };
         Ok(Self { id, data })
