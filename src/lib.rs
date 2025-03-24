@@ -582,6 +582,9 @@ impl Packet {
             PacketType::CombinedMarkersReport() => {
                 PacketData::CombinedMarkersReport(CombinedMarkersReport::parse(bytes)?)
             }
+            PacketType::PocMarkersReport() => {
+                PacketData::PocMarkersReport(PocMarkersReport::parse(bytes)?)
+            }
             PacketType::AccelReport() => PacketData::AccelReport(AccelReport::parse(bytes)?),
             PacketType::ImpactReport() => PacketData::ImpactReport(ImpactReport::parse(bytes)?),
             PacketType::StreamUpdate() => PacketData::StreamUpdate(StreamUpdate::parse(bytes)?),
