@@ -771,6 +771,13 @@ impl PacketData {
         }
     }
 
+    pub fn poc_markers_report(self) -> Option<PocMarkersReport> {
+        match self {
+            PacketData::PocMarkersReport(x) => Some(x),
+            _ => None,
+        }
+    }
+
     pub fn accel_report(self) -> Option<AccelReport> {
         match self {
             PacketData::AccelReport(x) => Some(x),
