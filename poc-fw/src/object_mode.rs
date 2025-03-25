@@ -116,7 +116,6 @@ async fn usb_rcv_loop(
             }
             P::ReadRegister(register) => {
                 let mut pag = pag.lock().await;
-                pag.switch_mode_mut(mode::Mode::Idle).await.unwrap();
                 pag.set_bank(register.bank).await.unwrap();
                 let data = pag
                     .bus_unchecked()
@@ -267,14 +266,21 @@ async fn obj_loop(
     loop {
         if stream_infos.marker.enabled() {
             let mut objs = [pag7661qn::types::Object::DEFAULT; 16];
+
             {
                 let mut pag = pag.lock().await;
                 pag.switch_mode_mut(mode::Object.mode()).await.unwrap();
-                let n = pag.wait_for_objects(pag_int, &mut objs).await.unwrap();
-                if n == 0 {
+            }
+            match embassy_time::with_timeout(embassy_time::Duration::from_millis(100), pag_int.wait()).await {
+                Ok(_) => {},
+                Err(embassy_time::TimeoutError) => {
                     continue;
                 }
             }
+            let mut pag = pag.lock().await;
+            let Some(n) = pag.try_get_objects::<core::convert::Infallible>(&mut objs).await.unwrap() else {
+                continue;
+            };
 
             let id = stream_infos.marker.req_id();
             let pkt = Packet {

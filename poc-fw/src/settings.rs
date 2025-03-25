@@ -88,12 +88,12 @@ pub struct PagSettings {
 impl Default for PagSettings {
     fn default() -> Self {
         Self {
-            sensor_fps: 200,
+            sensor_fps: 30,
             sensor_gain: 1,
-            sensor_exposure_us: 100,
-            area_lower_bound: 10,
-            area_upper_bound: 500,
-            light_threshold: 120,
+            sensor_exposure_us: 500,
+            area_lower_bound: 5,
+            area_upper_bound: 65535,
+            light_threshold: 80,
             _padding: [0; 3],
         }
     }

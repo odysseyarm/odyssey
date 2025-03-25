@@ -74,12 +74,6 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap();
 
-    pag.set_sensor_fps(30).await.unwrap();
-    pag.set_sensor_exposure_us(true, 100).await.unwrap();
-    pag.set_sensor_gain(1).await.unwrap();
-    pag.set_area_lower_bound(10).await.unwrap();
-    pag.set_area_upper_bound(200).await.unwrap();
-    pag.set_light_threshold(120).await.unwrap();
     // let mut pag = pag.switch_mode(mode::Object).await.unwrap();
     // let mut pag_int = pag_int;
     // let mut objs = [pag7661qn::types::Object::DEFAULT; 16];
