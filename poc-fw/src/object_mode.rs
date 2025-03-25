@@ -271,13 +271,12 @@ async fn obj_loop(
                 let mut pag = pag.lock().await;
                 pag.switch_mode_mut(mode::Object.mode()).await.unwrap();
                 let n = pag.wait_for_objects(pag_int, &mut objs).await.unwrap();
-                defmt::info!("objects: {}", n);
                 if n == 0 {
                     continue;
                 }
             }
 
-            let id = stream_infos.imu.req_id();
+            let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
                 data: P::PocMarkersReport(protodongers::PocMarkersReport {
@@ -286,7 +285,7 @@ async fn obj_loop(
             };
             let r = pkt_snd.try_send(pkt);
             if r.is_err() {
-                defmt::warn!("Failed to send IMU data due to full channel");
+                defmt::warn!("Failed to send marker data due to full channel");
             }
         } else {
             embassy_time::Timer::after_millis(50).await;
