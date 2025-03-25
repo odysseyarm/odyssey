@@ -447,7 +447,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
                     done = true;
                 } else if flag {
                     // Read 2nd frame
-                    self.read(0x26, &mut obj_bytes[8 * 8..count as usize * 8])
+                    self.read(0x26, &mut obj_bytes[8 * 8..8 * 8 + count as usize * 8])
                         .await?;
                     done = true;
                 } else {
