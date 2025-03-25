@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-executor = { version = "0.7.0", git = "https://github.com/Abrahamh08/embassy.git", features = ["arch-cortex-m", "executor-thread", "task-arena-size-8192"] }
+embassy-executor = { version = "0.7.0", git = "https://github.com/Abrahamh08/embassy.git", features = ["arch-cortex-m", "executor-thread", "task-arena-size-10240"] }
 embassy-embedded-hal = { version = "0.3.0", git = "https://github.com/Abrahamh08/embassy.git", features = [] }
 embassy-futures = { version = "0.1.1", git = "https://github.com/Abrahamh08/embassy.git" }
 embassy-nrf = { version = "0.3.1", git = "https://github.com/Abrahamh08/embassy.git", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }

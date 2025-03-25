@@ -5,7 +5,7 @@ use core::{
 use bytemuck::{cast_slice, from_bytes};
 use defmt::Format;
 use embassy_futures::{
-    join::join3,
+    join::join4,
     select::{Either, select},
 };
 use embassy_nrf::nvmc::Nvmc;
@@ -13,7 +13,7 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use icm426xx::fifo::FifoPacket4;
 use nalgebra::Vector3;
-use pag7661qn::{Interface, mode};
+use pag7661qn::{mode::{self, ModeT}, Interface};
 use protodongers::{
     Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
     slip::{SlipDecodeError, encode_slip_frame},
@@ -35,8 +35,7 @@ type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 #[allow(unreachable_code)]
 pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
     defmt::info!("Entering Object Mode");
-    let pag = ctx.pag.switch_mode(mode::Mode::Idle).await.unwrap();
-    let pag = AsyncMutex::<NoopRawMutex, _>::new(pag);
+    let pag = AsyncMutex::<NoopRawMutex, _>::new(ctx.pag);
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
         packet_serialize_buffer: ctx.obj.packet_serialize_buffer,
@@ -66,8 +65,14 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
         pkt_channel.sender(),
         &stream_infos,
     );
+    let d = obj_loop(
+        &pag,
+        &mut ctx.pag_int,
+        pkt_channel.sender(),
+        &stream_infos,
+    );
     // TODO turn these into tasks
-    let r = join3(a, b, c).await;
+    let r = join4(a, b, c, d).await;
 
     r.0
     // ctx.pag = pag.into_inner().as_dynamic_mode();
@@ -98,6 +103,7 @@ async fn usb_rcv_loop(
         let response = match pkt.data {
             P::WriteRegister(register) => {
                 let mut pag = pag.lock().await;
+                pag.switch_mode_mut(mode::Mode::Idle).await.unwrap();
                 pag.set_bank(register.bank).await.unwrap();
                 pag.bus_unchecked()
                     .write(register.address, &[register.data])
@@ -110,6 +116,7 @@ async fn usb_rcv_loop(
             }
             P::ReadRegister(register) => {
                 let mut pag = pag.lock().await;
+                pag.switch_mode_mut(mode::Mode::Idle).await.unwrap();
                 pag.set_bank(register.bank).await.unwrap();
                 let data = pag
                     .bus_unchecked()
@@ -247,6 +254,42 @@ async fn imu_loop(
             if r.is_err() {
                 defmt::warn!("Failed to send IMU data due to full channel");
             }
+        }
+    }
+}
+
+async fn obj_loop(
+    pag: &AsyncMutex<NoopRawMutex, Pag<mode::Mode>>,
+    pag_int: &mut crate::PagInt,
+    pkt_snd: Sender<'_, Packet, 4>,
+    stream_infos: &StreamInfos,
+) {
+    loop {
+        if stream_infos.marker.enabled() {
+            let mut objs = [pag7661qn::types::Object::DEFAULT; 16];
+            {
+                let mut pag = pag.lock().await;
+                pag.switch_mode_mut(mode::Object.mode()).await.unwrap();
+                let n = pag.wait_for_objects(pag_int, &mut objs).await.unwrap();
+                defmt::info!("objects: {}", n);
+                if n == 0 {
+                    continue;
+                }
+            }
+
+            let id = stream_infos.imu.req_id();
+            let pkt = Packet {
+                id,
+                data: P::PocMarkersReport(protodongers::PocMarkersReport {
+                    points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
+                }),
+            };
+            let r = pkt_snd.try_send(pkt);
+            if r.is_err() {
+                defmt::warn!("Failed to send IMU data due to full channel");
+            }
+        } else {
+            embassy_time::Timer::after_millis(50).await;
         }
     }
 }

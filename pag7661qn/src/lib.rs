@@ -466,6 +466,41 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
     }
 }
 
+impl<I: Interface, D: DelayNs> Pag7661Qn<I, D, Mode> {
+    pub async fn switch_mode_mut(
+        &mut self,
+        new_mode: Mode,
+    ) -> Result<(), Error<I::Error, Infallible, Infallible>> {
+        if new_mode.mode() != self.mode.mode() {
+            defmt::debug!("Switching mode to {}", new_mode.mode());
+            self._set_bank(0x00).await?;
+            if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
+                // switch to idle first
+                self.write(0x10, &[Mode::Idle as u8]).await?;
+                loop {
+                    let mut current_mode = [0];
+                    self.read(0x14, &mut current_mode).await?;
+                    if current_mode[0] == Mode::Idle as u8 {
+                        break;
+                    }
+                }
+            }
+
+            self.write(0x10, &[new_mode.mode() as u8]).await?;
+            loop {
+                let mut current_mode = [0];
+                self.read(0x14, &mut current_mode).await?;
+                if current_mode[0] == new_mode.mode() as u8 {
+                    break;
+                }
+            }
+            defmt::debug!("Switched mode to {}", new_mode.mode());
+        }
+        self.mode = new_mode;
+        Ok(())
+    }
+}
+
 impl<O: digital::Wait> Pag7661QnInterrupt<O> {
     pub async fn wait(&mut self) -> Result<(), O::Error> {
         self.int_o.wait_for_high().await

@@ -82,7 +82,7 @@ async fn main(spawner: Spawner) {
     pag.set_light_threshold(120).await.unwrap();
     // let mut pag = pag.switch_mode(mode::Object).await.unwrap();
     // let mut pag_int = pag_int;
-    // let mut objs = [types::Object::DEFAULT; 16];
+    // let mut objs = [pag7661qn::types::Object::DEFAULT; 16];
     // let objcnt = pag.wait_for_objects(&mut pag_int, &mut objs).await.unwrap();
     // defmt::info!("Got {=u8} objects", objcnt);
     // for (i, obj) in objs[..objcnt as usize].iter().enumerate() {
@@ -93,6 +93,7 @@ async fn main(spawner: Spawner) {
     //     defmt::info!("    y = {}", obj.y());
     //     defmt::info!("    area = {}", obj.area());
     // }
+    // let mut pag = pag.switch_mode(mode::Idle).await.unwrap();
 
     let (imu, imu_int) = imu::init(
         p.SERIAL1,
@@ -108,7 +109,7 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    let mut nvmc = nvmc.borrow();
+    let nvmc = nvmc.borrow();
 
     let settings = init_settings(&nvmc, &mut pag).await;
 
