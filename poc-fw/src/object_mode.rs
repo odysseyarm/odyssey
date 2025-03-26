@@ -286,9 +286,15 @@ async fn obj_loop(
             //     }
             // }
             let mut pag = pag.lock().await;
-            let Some(_) = pag.try_get_objects::<core::convert::Infallible>(&mut objs).await.unwrap() else {
+            let Some(n) = pag.try_get_objects::<core::convert::Infallible>(&mut objs).await.unwrap() else {
                 continue;
             };
+
+            // x and image are both mirrored to be similar to paj
+            for obj in objs[..n as usize].iter_mut() {
+                const RANGE: u16 = 319*u16::pow(2, 6);
+                obj.set_x(RANGE - obj.x());
+            }
 
             let id = stream_infos.marker.req_id();
             let pkt = Packet {

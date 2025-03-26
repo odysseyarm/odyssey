@@ -111,7 +111,7 @@ async fn image_loop<'a>(
             break;
         };
         pag.wait_for_image(pag_int, buf).await.unwrap();
-        // the image is mirrored for some reason
+        // x and image are both mirrored to be similar to paj
         buf.chunks_mut(320).for_each(|l| l.reverse());
         let Either::First(_) = select(image_buffers.send(buf), exit.receive()).await else {
             break;
