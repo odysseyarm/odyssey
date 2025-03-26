@@ -793,9 +793,9 @@ checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
 
 [[package]]
 name = "log"
-version = "0.4.26"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "nalgebra"
@@ -1062,7 +1062,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs#56536554ea248efbda3b2a272043ebd9e82e5086"
+source = "git+https://github.com/odysseyarm/protodonge-rs#53ca8b198db356a514d991dcaa3c01a1b468be4e"
 dependencies = [
  "ats_common",
  "bytemuck",

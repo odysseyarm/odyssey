@@ -53,7 +53,6 @@ async fn main(spawner: Spawner) {
 
     // Reset the PAG
     let mut vis_resetn = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
-    // the datasheet doesn't say how long the reset pin needs to be asserted
     embassy_time::Timer::after_micros(500).await;
     vis_resetn.set_high();
 

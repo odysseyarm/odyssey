@@ -23,7 +23,7 @@ pub struct Pag7661Qn<I, D, M> {
 
 /// PAG7661QN interrupt pin
 pub struct Pag7661QnInterrupt<O> {
-    int_o: O,
+    pub int_o: O,
 }
 
 impl<S: SpiDevice, D: DelayNs, M: ModeT> Pag7661Qn<Pag7661QnSpi<S>, D, M> {
