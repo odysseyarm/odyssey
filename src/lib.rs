@@ -122,6 +122,7 @@ pub enum PacketData {
     StreamUpdate(StreamUpdate),
     FlashSettings(),
     Ack(),
+    WriteMode(Mode),
     Vendor(u8, (u8, [u8; 98])),
 }
 
@@ -139,6 +140,19 @@ impl TryFrom<u8> for StreamUpdateAction {
     fn try_from(n: u8) -> Result<Self, Self::Error> {
         Self::n(n).ok_or(Error::UnrecognizedStreamUpdateAction(n))
     }
+}
+
+#[repr(u8)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+pub enum Mode {
+    Object,
+    Image,
+}
+
+impl Delegated for Mode {
+    type Wire = Self;
+    const PACKET_TYPE: Option<PacketType> = Some(PacketType::WriteMode());
 }
 
 #[repr(C)]
@@ -457,6 +471,7 @@ pub enum PacketType {
     FlashSettings(),
     Ack(),
     PocMarkersReport(),
+    WriteMode(),
     End(),
     VendorStart(),
     Vendor(u8),
@@ -484,7 +499,8 @@ impl TryFrom<u8> for PacketType {
             0x0e => Ok(Self::FlashSettings()),
             0x0f => Ok(Self::Ack()),
             0x10 => Ok(Self::PocMarkersReport()),
-            0x11 => Ok(Self::End()),
+            0x11 => Ok(Self::WriteMode()),
+            0x12 => Ok(Self::End()),
             0x80 => Ok(Self::VendorStart()),
             0xff => Ok(Self::VendorEnd()),
             n if (PacketType::VendorStart().into()..PacketType::VendorEnd().into())
@@ -517,7 +533,8 @@ impl From<PacketType> for u8 {
             PacketType::FlashSettings() => 0x0e,
             PacketType::Ack() => 0x0f,
             PacketType::PocMarkersReport() => 0x10,
-            PacketType::End() => 0x11,
+            PacketType::WriteMode() => 0x11,
+            PacketType::End() => 0x12,
             PacketType::VendorStart() => 0x80,
             PacketType::VendorEnd() => 0xff,
             PacketType::Vendor(n) => n,
@@ -545,6 +562,7 @@ impl Packet {
             PacketData::StreamUpdate(_) => PacketType::StreamUpdate(),
             PacketData::FlashSettings() => PacketType::FlashSettings(),
             PacketData::Ack() => PacketType::Ack(),
+            PacketData::WriteMode(_) => PacketType::WriteMode(),
             PacketData::Vendor(n, _) => PacketType::Vendor(n),
         }
     }
@@ -597,6 +615,7 @@ impl Packet {
                 PacketData::Vendor(n, (len, data))
             }
             PacketType::Ack() => PacketData::Ack(),
+            PacketType::WriteMode() => PacketData::WriteMode(Mode::parse(bytes)?),
             p => unimplemented!("{:?}", p),
         };
         Ok(Self { id, data })
@@ -623,6 +642,7 @@ impl Packet {
             PacketData::StreamUpdate(_) => 2,
             PacketData::FlashSettings() => 0,
             PacketData::Ack() => 0,
+            PacketData::WriteMode(_) => Mode::SIZE as u16,
             PacketData::Vendor(_, (len, _)) => {
                 if *len % 2 != 0 {
                     (*len + 1) as u16
@@ -655,6 +675,7 @@ impl Packet {
             }
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
+            PacketData::WriteMode(x) => x.serialize_to_vec(buf),
             PacketData::Vendor(_, (len, data)) => {
                 buf.push(*len);
                 buf.extend_from_slice(&data[..*len as usize]);
@@ -685,6 +706,7 @@ impl Packet {
             PacketData::StreamUpdate(_) => 2,
             PacketData::FlashSettings() => 0,
             PacketData::Ack() => 0,
+            PacketData::WriteMode(_) => Mode::SIZE as u16,
             PacketData::Vendor(_, (len, _)) => {
                 if *len % 2 != 0 {
                     (*len + 1) as u16
@@ -714,6 +736,7 @@ impl Packet {
             PacketData::StreamUpdate(x) => push(&mut buf, &[x.packet_id.into(), x.action as u8]),
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
+            PacketData::WriteMode(x) => x.serialize(&mut buf),
             PacketData::Vendor(_, (len, data)) => {
                 push(&mut buf, &[*len]);
                 push(&mut buf, &data[..*len as usize]);
