@@ -17,6 +17,7 @@ pub enum DeviceEventKind {
     ImpactEvent(ImpactEvent),
     ConnectEvent,
     DisconnectEvent,
+    ZeroResult(bool),
     PacketEvent(ats_usb::packets::vm::Packet),
 }
 

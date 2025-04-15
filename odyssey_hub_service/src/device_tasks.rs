@@ -4,7 +4,7 @@ use arrayvec::ArrayVec;
 use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
-use ats_usb::packets::vm::CombinedMarkersReport;
+use ats_usb::packets::vm::{CombinedMarkersReport, PocMarkersReport};
 use core::panic;
 use nalgebra::{Isometry3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
-use tokio_stream::StreamExt;
+use tokio_stream::{Stream, StreamExt};
+use std::pin::Pin;
 #[allow(unused_imports)]
 use tracing::field::debug;
 
@@ -297,7 +298,7 @@ async fn device_cdc_ping_task(
             match &port.port_type {
                 serialport::SerialPortType::UsbPort(port_info) => {
                     if port_info.vid != 0x1915
-                        || !(port_info.pid == 0x520f || port_info.pid == 0x5210)
+                        || !(port_info.pid == 0x520f || port_info.pid == 0x5210 || port_info.pid == 0x5211)
                     {
                         return None;
                     }
@@ -429,7 +430,20 @@ async fn common_tasks(
     )));
     let fv_zero_offset = ArcSwap::from(Arc::new(None));
 
-    let mut combined_markers_stream = d.stream_combined_markers().await.unwrap();
+    type MarkerStream = Pin<Box<dyn Stream<Item = CombinedMarkersReport> + Send>>;
+
+    fn to_stream<C, P>(c: C, p: P) -> MarkerStream
+    where
+        C: Stream<Item = CombinedMarkersReport> + Send + 'static,
+        P: Stream<Item = PocMarkersReport> + Send + 'static,
+    {
+        Box::pin(c.merge(p.map(|x| x.into())))
+    }
+
+    let combined_markers_stream = d.stream_combined_markers().await.unwrap();
+    let poc_markers_stream = d.stream_poc_markers().await.unwrap();
+    let mut markers_stream = to_stream(combined_markers_stream, poc_markers_stream);
+
     let mut accel_stream = d.stream_accel().await.unwrap();
     let mut impact_stream = d.stream_impact().await.unwrap();
     let mut no_response_count = 0;
@@ -456,11 +470,13 @@ async fn common_tasks(
                 }
                 // nothing received after timeout, try restarting streams
                 tracing::debug!(device=debug(&device), "common streams timed out, restarting streams");
-                drop(combined_markers_stream);
+                drop(markers_stream);
                 drop(accel_stream);
                 drop(impact_stream);
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                combined_markers_stream = d.stream_combined_markers().await.unwrap();
+                let combined_markers_stream = d.stream_combined_markers().await.unwrap();
+                let poc_markers_stream = d.stream_poc_markers().await.unwrap();
+                markers_stream = to_stream(combined_markers_stream, poc_markers_stream);
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 accel_stream = d.stream_accel().await.unwrap();
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -468,12 +484,12 @@ async fn common_tasks(
                 no_response_count += 1;
                 continue;
             }
-            item = combined_markers_stream.next() => {
-                let Some(combined_markers) = item else {
+            item = markers_stream.next() => {
+                let Some(report) = item else {
                     // this shouldn't ever happen
                     break;
                 };
-                let CombinedMarkersReport { nf_points, wf_points } = combined_markers;
+                let CombinedMarkersReport { nf_points, wf_points } = report;
 
                 let pose;
                 let aimpoint_and_d;
@@ -697,8 +713,19 @@ async fn common_tasks(
                                 t,
                                 quat,
                             ))));
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: device.clone(),
+                                    kind: odyssey_hub_common::events::DeviceEventKind::ZeroResult(true),
+                                }
+                            ))).await;
                         } else {
-                            tracing::warn!("Failed to calculate zero offset quat");
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: device.clone(),
+                                    kind: odyssey_hub_common::events::DeviceEventKind::ZeroResult(false),
+                                }
+                            ))).await;
                         }
                     },
                     DeviceTaskMessage::ResetZero => {

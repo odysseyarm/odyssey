@@ -190,6 +190,7 @@ pub enum DeviceEventKindTag {
     ImpactEvent,
     ConnectEvent,
     DisconnectEvent,
+    ZeroResult,
     PacketEvent,
 }
 
@@ -201,6 +202,7 @@ pub union DeviceEventKindU {
     impact_event: ImpactEvent,
     connect_event: ConnectEvent,
     disconnect_event: DisconnectEvent,
+    zero_result: bool,
     packet_event: PacketEvent,
 }
 
@@ -347,6 +349,9 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                 odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
                                     DeviceEventKindTag::DisconnectEvent
                                 }
+                                odyssey_hub_common::events::DeviceEventKind::ZeroResult(_) => {
+                                    DeviceEventKindTag::ZeroResult
+                                }
                                 odyssey_hub_common::events::DeviceEventKind::PacketEvent(_) => {
                                     DeviceEventKindTag::PacketEvent
                                 }
@@ -393,6 +398,11 @@ impl From<odyssey_hub_common::events::Event> for Event {
                                 odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
                                     DeviceEventKindU {
                                         disconnect_event: DisconnectEvent { _unused: 0 },
+                                    }
+                                }
+                                odyssey_hub_common::events::DeviceEventKind::ZeroResult(success) => {
+                                    DeviceEventKindU {
+                                        zero_result: success,
                                     }
                                 }
                                 odyssey_hub_common::events::DeviceEventKind::PacketEvent(

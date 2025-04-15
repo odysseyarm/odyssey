@@ -142,6 +142,9 @@ namespace Radiosity.OdysseyHubClient
                 case CsBindgen.DeviceEventKindTag.DisconnectEvent:
                     kind = new Disconnect();
                     break;
+                case CsBindgen.DeviceEventKindTag.ZeroResult:
+                    kind = new ZeroResult(deviceEvent.kind.u.zero_result);
+                    break;
                 case CsBindgen.DeviceEventKindTag.PacketEvent:
                     kind = new Packet(deviceEvent.kind.u.packet_event);
                     break;
@@ -206,6 +209,15 @@ namespace Radiosity.OdysseyHubClient
         public class Disconnect : IKind
         {
             internal Disconnect() { }
+        }
+
+        public class ZeroResult : IKind
+        {
+            public bool success;
+
+            internal ZeroResult(bool success) {
+                this.success = success;
+            }
         }
 
         /// <summary>

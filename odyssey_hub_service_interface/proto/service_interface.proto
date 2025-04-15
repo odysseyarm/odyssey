@@ -92,6 +92,9 @@ message DeviceEvent {
   message PacketEvent {
     bytes bytes = 1;
   }
+  message ZeroResultEvent {
+    bool success = 1;
+  }
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
     TrackingEvent tracking = 3;
@@ -99,6 +102,7 @@ message DeviceEvent {
     ConnectEvent connect = 5;
     DisconnectEvent disconnect = 6;
     PacketEvent packet = 7;
+    ZeroResultEvent zero_result = 8;
   }
 }
 

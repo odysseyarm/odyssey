@@ -136,6 +136,13 @@ await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAll
                 case OdysseyHubClient.DeviceEvent.Disconnect _:
                     Console.WriteLine("Device disconnected");
                     break;
+                case OdysseyHubClient.DeviceEvent.ZeroResult zeroResult:
+                    if (zeroResult.success) {
+                        Console.WriteLine("Zero result: success");
+                    } else {
+                        Console.WriteLine("Zero result: failure");
+                    }
+                    break;
                 case OdysseyHubClient.DeviceEvent.Packet packet:
                     switch (packet.data) {
                         case OdysseyHubClient.DeviceEvent.Packet.UnsupportedPacketData _:
