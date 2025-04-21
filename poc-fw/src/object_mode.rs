@@ -169,6 +169,14 @@ async fn usb_rcv_loop(
                     data: P::Ack(),
                 })
             }
+            P::WriteMode(mode) => {
+                settings.transient.mode = mode;
+                settings.transient_write(nvmc);
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::Ack(),
+                })
+            }
             P::ObjectReportRequest() => None,
             P::Ack() => None,
             P::ReadConfigResponse(_) => None,

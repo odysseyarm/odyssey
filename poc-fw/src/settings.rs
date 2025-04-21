@@ -15,7 +15,8 @@ mod settings_region {
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use bytemuck::{AnyBitPattern, NoUninit, bytes_of, bytes_of_mut};
+use bytemuck::{bytes_of, bytes_of_mut, AnyBitPattern, CheckedBitPattern, NoUninit};
+use bytemuck::checked;
 use defmt::Format;
 use embassy_nrf::nvmc::PAGE_SIZE;
 use embedded_storage::nor_flash::NorFlash;
@@ -43,21 +44,27 @@ pub async fn init_settings(
 pub struct Settings {
     pub pag: PagSettings,
     pub general: GeneralSettings,
+    pub transient: TransientSettings,
     pag_start: u32,
     general_start: u32,
+    transient_start: u32,
 }
 
 impl Settings {
     fn init(flash: &RefCell<impl NorFlash>, start: u32) -> Self {
         let pag_start = start;
         let general_start = start + PAGE_SIZE as u32;
+        let transient_start = start + PAGE_SIZE as u32 * 2;
         let pag = PagSettings::init(&flash, pag_start);
         let general = GeneralSettings::init(&flash, general_start);
+        let transient = TransientSettings::init(&flash, transient_start);
         Self {
             pag,
             general,
+            transient,
             pag_start,
             general_start,
+            transient_start,
         }
     }
 
@@ -70,6 +77,11 @@ impl Settings {
     pub fn write(&self, flash: &RefCell<impl NorFlash>) {
         self.pag.write(&flash, self.pag_start);
         self.general.write(&flash, self.general_start);
+    }
+
+    /// Transient settings are written to flash independently of the others
+    pub fn transient_write(&self, flash: &RefCell<impl NorFlash>) {
+        self.transient.write(&flash, self.transient_start);
     }
 }
 
@@ -89,10 +101,12 @@ impl Default for PagSettings {
     fn default() -> Self {
         Self {
             sensor_fps: 180,
-            sensor_gain: 1,
-            sensor_exposure_us: 4000,
+            // Xavier says do not go below 3
+            sensor_gain: 3,
+            // Xavier says do not go above 5300
+            sensor_exposure_us: 2000,
             area_lower_bound: 10,
-            area_upper_bound: 65535,
+            area_upper_bound: 500,
             light_threshold: 120,
             _padding: [0; 3],
         }
@@ -259,5 +273,64 @@ impl GeneralSettings {
             self.general_config.inner.accel_config.accel_odr,
             Ordering::Relaxed,
         );
+    }
+}
+
+#[repr(C, align(4))]
+#[derive(Clone, Copy, CheckedBitPattern, NoUninit)]
+pub struct TransientSettings {
+    pub mode: protodongers::Mode,
+    _padding: [u8; 3],
+}
+
+impl Default for TransientSettings {
+    fn default() -> Self {
+        Self {
+            mode: protodongers::Mode::Object,
+            _padding: [0; 3],
+        }
+    }
+}
+
+impl TransientSettings {
+    const MAGIC: [u8; 4] = 0x42006969_u32.to_le_bytes();
+    const MAGIC_SIZE: u32 = size_of_val(&Self::MAGIC) as u32;
+    const OFFSET: u32 = max(align_of::<Self>() as u32, Self::MAGIC_SIZE);
+    const __: () = {
+        assert!(size_of::<Self>() <= PAGE_SIZE);
+    };
+
+    fn init(flash: &RefCell<impl NorFlash>, start: u32) -> Self {
+        let mut magic = Self::MAGIC;
+        flash.borrow_mut().read(start, &mut magic).unwrap();
+        let mut r = Self::default();
+        if magic != Self::MAGIC {
+            r.write(flash, start);
+        } else {
+            let mut buf = [0u8; core::mem::size_of::<Self>()];
+            flash.borrow_mut()
+                .read(start + Self::OFFSET, &mut buf)
+                .unwrap();
+
+            r = match checked::try_from_bytes::<TransientSettings>(&buf) {
+                Ok(v) => *v,
+                Err(_) => {
+                    defmt::info!("Failed to read TransientSettings, using default");
+                    Self::default()
+                }
+            };
+
+            defmt::info!("Mode is read as {}", r.mode as u8);
+        }
+        r
+    }
+
+    fn write(&self, flash: &RefCell<impl NorFlash>, start: u32) {
+        let mut flash = flash.borrow_mut();
+        flash.erase(start, start + PAGE_SIZE as u32).unwrap();
+        flash.write(start, &Self::MAGIC).unwrap();
+        flash
+            .write(start + Self::OFFSET, bytes_of(self))
+            .unwrap();
     }
 }

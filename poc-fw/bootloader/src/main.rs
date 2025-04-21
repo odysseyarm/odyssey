@@ -31,11 +31,9 @@ fn main() -> ! {
 
     // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
     // as it prevents a hard fault when accessing flash 'too early' after boot.
-    /*
-        for i in 0..10000000 {
-            cortex_m::asm::nop();
-        }
-    */
+    //    for _ in 0..10000000 {
+    //        cortex_m::asm::nop();
+    //    }
 
     let flash = Nvmc::new(p.NVMC);
     let flash = Mutex::new(RefCell::new(flash));
@@ -73,7 +71,7 @@ fn main() -> ! {
             &mut control_buf,
         );
 
-        usb_dfu::<_, _, _, ResetImmediate, 4096>(&mut builder, &mut state);
+        usb_dfu::<_, _, _, DfuPrinter, 4096>(&mut builder, &mut state);
 
         let mut dev = builder.build();
         embassy_futures::block_on(dev.run());
@@ -81,6 +79,8 @@ fn main() -> ! {
 
     unsafe {
         let mut p = cortex_m::Peripherals::steal();
+        cortex_m::interrupt::disable();
+        cortex_m::interrupt::enable();
         p.SCB.invalidate_icache();
         p.SCB.vtor.write(active_offset);
         cortex_m::asm::bootload(active_offset as *const u32)
@@ -104,4 +104,47 @@ unsafe fn DefaultHandler(_: i16) -> ! {
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     cortex_m::asm::udf();
+}
+
+// pub fn crc32_simple(mut data: &[u8]) -> u32 {
+//     let mut crc = 0xFFFF_FFFFu32;
+// 
+//     while let Some((&byte, rest)) = data.split_first() {
+//         let mut curr = byte as u32;
+//         for _ in 0..8 {
+//             let mix = (crc ^ curr) & 1;
+//             crc >>= 1;
+//             if mix != 0 {
+//                 crc ^= 0xEDB88320;
+//             }
+//             curr >>= 1;
+//         }
+//         data = rest;
+//     }
+// 
+//     !crc
+// }
+
+pub struct DfuPrinter;
+
+unsafe extern "C" {
+    static __bootloader_dfu_start: u8;
+    static __bootloader_dfu_end: u8;
+}
+
+impl embassy_usb_dfu::Reset for DfuPrinter {
+    fn sys_reset() -> ! {
+        unsafe {
+            let start = &__bootloader_dfu_start as *const u8;
+            let end = &__bootloader_dfu_end as *const u8;
+            let len = end.offset_from(start) as usize;
+
+            let dfu_data: &[u8] = core::slice::from_raw_parts(start, len);
+
+            // let crc = crc32_simple(dfu_data);
+            // defmt::info!("DFU partition checksum (CRC32): 0x{:08x} ({} bytes)", crc, len);
+        }
+
+        loop {}
+    }
 }

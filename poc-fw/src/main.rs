@@ -16,11 +16,9 @@ use core::cell::RefCell;
 
 use embassy_executor::Spawner;
 use embassy_nrf::{
-    Peripheral,
     gpio::{Input, Level, Output, OutputDrive, Pull},
-    into_ref,
     nvmc::Nvmc,
-    peripherals::{self, NVMC, SPIM4},
+    peripherals::{self, SPIM4},
     spim::{self, Spim},
     usb::vbus_detect::HardwareVbusDetect,
 };
@@ -124,8 +122,16 @@ async fn main(spawner: Spawner) {
         obj: object_mode::Context::take(),
     };
 
-    // image_mode::image_mode(ctx).await;
-    object_mode::object_mode(ctx).await;
+    match ctx.settings.transient.mode {
+        protodongers::Mode::Image => {
+            ctx.settings.transient.mode = protodongers::Mode::Object;
+            ctx.settings.transient_write(nvmc);
+            image_mode::image_mode(ctx).await;
+        }
+        protodongers::Mode::Object => {
+            object_mode::object_mode(ctx).await;
+        }
+    }
 }
 
 type Pag<M> = Pag7661Qn<

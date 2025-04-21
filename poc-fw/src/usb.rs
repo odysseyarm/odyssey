@@ -13,7 +13,6 @@ use embassy_usb::{
     driver::EndpointError,
 };
 use embassy_boot::{AlignedBuffer, BlockingFirmwareState, FirmwareUpdaterConfig};
-use embassy_usb::{msos, Builder};
 use embassy_usb_dfu::consts::DfuAttributes;
 use embassy_usb_dfu::{usb_dfu, Control, ResetImmediate};
 use static_cell::{ConstStaticCell, StaticCell};

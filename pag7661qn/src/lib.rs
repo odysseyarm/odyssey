@@ -430,24 +430,26 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
 
         let mut done = false;
         let mut flag = false;
-        let mut count = 0;
+        let mut total_count = 0;
         loop {
             let status = self.int_o_status().await?;
             if status.frame_ready() {
                 // Read object count
-                count = self.read_byte(0x25).await?;
+                let count = self.read_byte(0x25).await?;
 
                 // Read object output
                 if count > 8 {
+                    total_count = count;
                     self.read(0x26, &mut obj_bytes[..8 * 8]).await?;
                     flag = true;
                 } else if count > 0 {
+                    total_count = count;
                     self.read(0x26, &mut obj_bytes[..count as usize * 8])
                         .await?;
                     done = true;
                 } else if flag {
                     // Read 2nd frame
-                    self.read(0x26, &mut obj_bytes[8 * 8..8 * 8 + count as usize * 8])
+                    self.read(0x26, &mut obj_bytes[8 * 8..total_count as usize * 8])
                         .await?;
                     done = true;
                 } else {
@@ -462,7 +464,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
                 break;
             }
         }
-        Ok(Some(count))
+        Ok(Some(total_count))
     }
 }
 
