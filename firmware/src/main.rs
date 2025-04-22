@@ -87,6 +87,7 @@ static SHARED_BUFFERS: ConstStaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = Cons
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    info!("Starting up");
     let shared_buffers = SHARED_BUFFERS.take();
     let mut config = Config::default();
     // config.hfclk_source = HfclkSource::ExternalXtal;
@@ -100,6 +101,7 @@ async fn main(spawner: Spawner) {
         config.dcdc.reg0_voltage = Some(Reg0Voltage::_2V4);
     }
     let mut p = embassy_nrf::init(config);
+    info!("Embassy nrf init done");
 
     // log_stuff();
 
@@ -382,7 +384,7 @@ fn usb_device(p: impl Peripheral<P = peripherals::USBD> + 'static) -> (
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
     // Create embassy-usb Config
-    let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
+    let mut config = embassy_usb::Config::new(0x1915, 0x530F);
     config.manufacturer = Some("Embassy");
     config.product = Some("USB-serial example");
     config.serial_number = Some("12345678");

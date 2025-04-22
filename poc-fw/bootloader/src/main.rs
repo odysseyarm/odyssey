@@ -48,7 +48,7 @@ fn main() -> ! {
     if state == embassy_boot::State::DfuDetach {
         // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-        let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
+        let mut config = embassy_usb::Config::new(0x1915, 0x5211);
         config.manufacturer = Some("Nordic");
         config.product = Some("USB-DFU Bootloader");
         config.serial_number = Some("1235678");
