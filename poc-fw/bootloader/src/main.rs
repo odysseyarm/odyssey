@@ -9,11 +9,11 @@ use defmt_rtt as _;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::nvmc::PAGE_SIZE;
 use embassy_nrf::{
-    peripherals::self,
+    peripherals,
     usb::{vbus_detect::HardwareVbusDetect, Driver},
 };
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_usb::{msos, Builder};
+use embassy_usb::Builder;
 use embassy_usb_dfu::consts::DfuAttributes;
 use embassy_usb_dfu::{usb_dfu, Control, ResetImmediate};
 
@@ -21,9 +21,6 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
 });
-
-// This is a randomly generated GUID to allow clients on Windows to find our device
-const DEVICE_INTERFACE_GUIDS: &[&str] = &["{EAA9A5DC-30BA-44BC-9232-606CDC875321}"];
 
 #[entry]
 fn main() -> ! {
@@ -55,13 +52,13 @@ fn main() -> ! {
 
         let fw_config =
             embassy_boot::FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
-        let mut buffer = embassy_boot::AlignedBuffer([0; 4usize]);
+        let mut buffer = embassy_boot::AlignedBuffer([0; 4]);
         let updater = embassy_boot::BlockingFirmwareUpdater::new(fw_config, &mut buffer.0[..]);
 
         let mut config_descriptor = [0; 256];
         let mut bos_descriptor = [0; 256];
         let mut control_buf = [0; 4096];
-        let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD);
+        let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH);
         let mut builder = Builder::new(
             driver,
             config,
@@ -71,7 +68,7 @@ fn main() -> ! {
             &mut control_buf,
         );
 
-        usb_dfu::<_, _, _, DfuPrinter, 4096>(&mut builder, &mut state);
+        usb_dfu::<_, _, _, ResetImmediate, 4096>(&mut builder, &mut state);
 
         let mut dev = builder.build();
         embassy_futures::block_on(dev.run());

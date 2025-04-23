@@ -111,7 +111,7 @@ pub fn usb_device(p: impl Peripheral<P = USBD> + 'static, flash: &'static Mutex<
     firmware_state.mark_booted().expect("Failed to mark booted");
 
     static FIRMWARE_STATE: StaticCell<embassy_usb_dfu::Control<'_, embassy_embedded_hal::flash::partition::BlockingPartition<'_, NoopRawMutex, Nvmc>, ResetImmediate>> = StaticCell::new();
-    let state = FIRMWARE_STATE.init_with(|| Control::new(firmware_state, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH | DfuAttributes::MANIFESTATION_TOLERANT));
+    let state = FIRMWARE_STATE.init_with(|| Control::new(firmware_state, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH));
     usb_dfu::<_, _, ResetImmediate>(&mut builder, state, Duration::from_millis(2500));
 
     // Build the builder.
