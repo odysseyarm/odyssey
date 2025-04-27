@@ -47,9 +47,6 @@ async fn main(spawner: Spawner) {
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     let nvmc = &*nvmc;
 
-    let (mut cdc_acm_class, usb) = usb::usb_device(p.USBD, nvmc);
-    spawner.must_spawn(usb::run_usb(usb));
-
     // Reset the PAG
     let mut vis_resetn = Output::new(p.P1_06, Level::Low, OutputDrive::Standard);
     embassy_time::Timer::after_micros(500).await;
@@ -101,10 +98,12 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
+    let (mut cdc_acm_class, usb) = usb::usb_device(p.USBD, nvmc);
     let nvmc = nvmc.borrow();
 
     let settings = init_settings(&nvmc, &mut pag).await;
 
+    spawner.must_spawn(usb::run_usb(usb));
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
