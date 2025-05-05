@@ -6,8 +6,11 @@ using System.Text;
 
 namespace Radiosity.OdysseyHubClient
 {
-    public abstract class IDevice {
+    public abstract class IDevice: IEquatable<IDevice> {
         internal CsBindgen.Device device;
+        public abstract byte[] UUID { get; }
+
+        public abstract bool Equals(IDevice? other);
     }
 
     /// <summary>
@@ -17,6 +20,11 @@ namespace Radiosity.OdysseyHubClient
         public byte id;
         public SocketAddr addr;
         public byte[] uuid;
+
+        public override byte[] UUID
+        {
+            get => uuid;
+        }
 
         internal UdpDevice(CsBindgen.Device device) {
             this.device = device;
@@ -34,6 +42,11 @@ namespace Radiosity.OdysseyHubClient
                 ];
             }
         }
+
+        public override bool Equals(IDevice? other) {
+            if (other == null) return false;
+            return this.uuid.SequenceEqual(other.UUID);
+        }
     }
 
     /// <summary>
@@ -42,6 +55,11 @@ namespace Radiosity.OdysseyHubClient
     public class HidDevice: IDevice {
         public string? path;
         public byte[] uuid;
+
+        public override byte[] UUID
+        {
+            get => uuid;
+        }
 
         internal HidDevice(CsBindgen.Device device) {
             this.device = device;
@@ -58,6 +76,11 @@ namespace Radiosity.OdysseyHubClient
                 ];
             }
         }
+
+        public override bool Equals(IDevice? other) {
+            if (other == null) return false;
+            return this.uuid.SequenceEqual(other.UUID);
+        }
     }
 
     /// <summary>
@@ -68,6 +91,11 @@ namespace Radiosity.OdysseyHubClient
         public string? path;
         /// <value>Property <c>uuid</c> is the 6-byte unique identifier of the device.</value>
         public byte[] uuid;
+
+        public override byte[] UUID
+        {
+            get => uuid;
+        }
 
         internal CdcDevice(CsBindgen.Device device) {
             this.device = device;
@@ -83,6 +111,11 @@ namespace Radiosity.OdysseyHubClient
                     cdcDevice.uuid[5],
                 ];
             }
+        }
+
+        public override bool Equals(IDevice? other) {
+            if (other == null) return false;
+            return this.uuid.SequenceEqual(other.UUID);
         }
     }
 
