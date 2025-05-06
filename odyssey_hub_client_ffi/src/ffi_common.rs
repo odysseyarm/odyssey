@@ -421,3 +421,25 @@ impl From<odyssey_hub_common::events::Event> for Event {
         }
     }
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct ScreenInfo {
+    pub id: u8,
+    pub tl: crate::funny::Vector2f32,
+    pub tr: crate::funny::Vector2f32,
+    pub bl: crate::funny::Vector2f32,
+    pub br: crate::funny::Vector2f32,
+}
+
+impl From<odyssey_hub_common::ScreenInfo> for ScreenInfo {
+    fn from(screen_info: odyssey_hub_common::ScreenInfo) -> Self {
+        ScreenInfo {
+            id: screen_info.id,
+            tl: screen_info.bounds[0].into(),
+            tr: screen_info.bounds[1].into(),
+            bl: screen_info.bounds[2].into(),
+            br: screen_info.bounds[3].into(),
+        }
+    }
+}

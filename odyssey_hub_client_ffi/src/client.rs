@@ -263,3 +263,45 @@ pub extern "C" fn odyssey_hub_client_zero(
         }
     });
 }
+
+#[no_mangle]
+pub extern "C" fn odyssey_hub_client_get_screen_info_by_id(
+    handle: *const crate::Handle,
+    userdata: UserObj,
+    client: *mut Client,
+    screen_id: u8,
+    callback: extern "C" fn(
+        userdata: UserObj,
+        error: ClientError,
+        error_msg: *const std::ffi::c_char,
+        reply: crate::ffi_common::ScreenInfo,
+    ),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+
+    let mut client = unsafe { &*client }.clone();
+
+    tokio::spawn(async move {
+        match client.get_screen_info_by_id(screen_id).await {
+            Ok(reply) => {
+                let err_msg = std::ffi::CString::new("").unwrap();
+                callback(
+                    userdata,
+                    ClientError::ClientErrorNone,
+                    err_msg.as_ptr(),
+                    reply.into(),
+                );
+            }
+            Err(_) => {
+                let err_msg = std::ffi::CString::new("Client not connected").unwrap();
+                callback(
+                    userdata,
+                    ClientError::ClientErrorNotConnected,
+                    err_msg.as_ptr(),
+                    odyssey_hub_common::ScreenInfo::default().into(),
+                );
+            }
+        }
+    });
+}

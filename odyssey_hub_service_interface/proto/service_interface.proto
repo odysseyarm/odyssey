@@ -8,6 +8,7 @@ service Service {
   rpc WriteVendor (WriteVendorRequest) returns (WriteVendorReply) {}
   rpc ResetZero (Device) returns (ResetZeroReply) {}
   rpc Zero (ZeroRequest) returns (ZeroReply) {}
+  rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoResponse) {}
 }
 
 message UdpDevice {
@@ -141,3 +142,19 @@ message WriteVendorReply {}
 message ResetZeroReply {}
 
 message ZeroReply {}
+
+message ScreenBounds {
+  Vector2 tl = 1;
+  Vector2 tr = 2;
+  Vector2 bl = 4;
+  Vector2 br = 3;
+}
+
+message ScreenInfoByIdRequest {
+  uint32 id = 1;
+}
+
+message ScreenInfoResponse {
+  uint32 id = 1;
+  ScreenBounds bounds = 2;
+}

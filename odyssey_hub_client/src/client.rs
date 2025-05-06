@@ -116,4 +116,18 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+
+    pub async fn get_screen_info_by_id(
+        &mut self,
+        id: u8,
+    ) -> anyhow::Result<odyssey_hub_common::ScreenInfo> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_service_interface::ScreenInfoByIdRequest {
+                id: id.into(),
+            });
+            Ok(service_client.get_screen_info_by_id(request).await?.into_inner().into())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
 }

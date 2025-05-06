@@ -1,6 +1,8 @@
 use std::{fs::File, pin::Pin, sync::Arc};
 
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
+use arc_swap::ArcSwap;
+use arrayvec::ArrayVec;
 use ats_cv::ScreenCalibration;
 use interprocess::local_socket::{
     traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName,
@@ -11,7 +13,7 @@ use interprocess::os::windows::{
 };
 use odyssey_hub_service_interface::{
     service_server::{Service, ServiceServer},
-    DeviceListReply, DeviceListRequest, PollReply, PollRequest,
+    DeviceListReply, DeviceListRequest, PollReply, PollRequest, Vector2,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -36,6 +38,14 @@ struct Server {
         >,
     >,
     event_channel: broadcast::Receiver<odyssey_hub_common::events::Event>,
+    screen_calibrations: Arc<
+        ArcSwap<
+            ArrayVec<
+                (u8, ScreenCalibration<f32>),
+                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+            >,
+        >,
+    >,
 }
 
 #[tonic::async_trait]
@@ -189,6 +199,49 @@ impl Service for Server {
 
         Ok(Response::new(odyssey_hub_service_interface::ZeroReply {}))
     }
+
+    async fn get_screen_info_by_id(
+        &self,
+        request: tonic::Request<odyssey_hub_service_interface::ScreenInfoByIdRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_service_interface::ScreenInfoResponse>, tonic::Status>
+    {
+        let odyssey_hub_service_interface::ScreenInfoByIdRequest { id } =
+            request.into_inner();
+
+        let screen_calibrations = self.screen_calibrations.load();
+
+        let screen_calibration = screen_calibrations
+            .iter()
+            .find(|(i, _)| *i as u32 == id)
+            .map(|(_, calibration)| calibration.clone());
+
+        let reply = odyssey_hub_service_interface::ScreenInfoResponse {
+            id,
+            bounds: {
+                if let Some(screen_calibration) = screen_calibration {
+                    let bounds = screen_calibration.bounds();
+                    Some(odyssey_hub_service_interface::ScreenBounds {
+                        tl: Some({
+                            Vector2 { x: bounds[0].x, y: bounds[0].y }
+                        }),
+                        tr: Some({
+                            Vector2 { x: bounds[1].x, y: bounds[1].y }
+                        }),
+                        bl: Some({
+                            Vector2 { x: bounds[2].x, y: bounds[2].y }
+                        }),
+                        br: Some({
+                            Vector2 { x: bounds[3].x, y: bounds[3].y }
+                        }),
+                    })
+                } else {
+                    None
+                }
+            }
+        };
+
+        Ok(Response::new(reply))
+    }
 }
 
 pub enum Message {
@@ -299,9 +352,44 @@ pub async fn run_service(
 
     let (event_sender, event_receiver) = broadcast::channel(12);
 
+    pub const APP_INFO: AppInfo = AppInfo {
+        name: "odyssey",
+        author: "odysseyarm",
+    };
+
+    let screen_calibrations: arrayvec::ArrayVec<
+        (u8, ScreenCalibration<f32>),
+        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+    > = (0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
+        .filter_map(|i| {
+            get_app_root(AppDataType::UserConfig, &APP_INFO)
+                .ok()
+                .and_then(|config_dir| {
+                    let screen_path = config_dir
+                        .join("screens")
+                        .join(std::format!("screen_{}.json", i));
+                    if screen_path.exists() {
+                        File::open(screen_path)
+                            .ok()
+                            .and_then(|file| match serde_json::from_reader(file) {
+                                Ok(calibration) => Some((i as u8, calibration)),
+                                Err(e) => {
+                                    error!("Failed to deserialize screen calibration: {}", e);
+                                    None
+                                }
+                            })
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
+
+    let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
     let server = Server {
         device_list: Default::default(),
         event_channel: event_receiver,
+        screen_calibrations: screen_calibrations.clone(),
     };
 
     let dl = server.device_list.clone();
@@ -342,41 +430,6 @@ pub async fn run_service(
             }
         }
     };
-
-    pub const APP_INFO: AppInfo = AppInfo {
-        name: "odyssey",
-        author: "odysseyarm",
-    };
-
-    let screen_calibrations: arrayvec::ArrayVec<
-        (u8, ScreenCalibration<f32>),
-        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
-    > = (0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
-        .filter_map(|i| {
-            get_app_root(AppDataType::UserConfig, &APP_INFO)
-                .ok()
-                .and_then(|config_dir| {
-                    let screen_path = config_dir
-                        .join("screens")
-                        .join(std::format!("screen_{}.json", i));
-                    if screen_path.exists() {
-                        File::open(screen_path)
-                            .ok()
-                            .and_then(|file| match serde_json::from_reader(file) {
-                                Ok(calibration) => Some((i as u8, calibration)),
-                                Err(e) => {
-                                    error!("Failed to deserialize screen calibration: {}", e);
-                                    None
-                                }
-                            })
-                    } else {
-                        None
-                    }
-                })
-        })
-        .collect();
-
-    let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
 
     // let device_offsets: HashMap<[u8; 6], nalgebra::Isometry3<f32>> = get_app_root(AppDataType::UserConfig, &APP_INFO)
     //     .ok()

@@ -47,6 +47,21 @@ impl Into<nalgebra::Matrix3<f32>> for proto::Matrix3x3 {
     }
 }
 
+impl From<nalgebra::Vector2<f32>> for proto::Vector2 {
+    fn from(value: nalgebra::Vector2<f32>) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+        }
+    }
+}
+
+impl Into<nalgebra::Vector2<f32>> for proto::Vector2 {
+    fn into(self) -> nalgebra::Vector2<f32> {
+        nalgebra::Vector2::new(self.x, self.y)
+    }
+}
+
 impl From<odyssey_hub_common::device::Device> for proto::Device {
     fn from(value: odyssey_hub_common::device::Device) -> Self {
         match value {
@@ -300,6 +315,21 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                     },
                 },
             ),
+        }
+    }
+}
+
+impl From<proto::ScreenInfoResponse> for odyssey_hub_common::ScreenInfo {
+    fn from(value: proto::ScreenInfoResponse) -> Self {
+        let bounds = value.bounds.unwrap();
+        odyssey_hub_common::ScreenInfo {
+            id: value.id as u8,
+            bounds: [
+                bounds.tl.unwrap().into(),
+                bounds.tr.unwrap().into(),
+                bounds.bl.unwrap().into(),
+                bounds.br.unwrap().into(),
+            ],
         }
     }
 }
