@@ -367,6 +367,10 @@ namespace Radiosity.OdysseyHubClient
         internal CsBindgen.Vector3f32 ToFFI() {
             return new CsBindgen.Vector3f32 { x = x, y = y, z = z };
         }
+
+        public override string ToString() {
+            return $"[{x}, {y}, {z}]";
+        }
     }
 
     public class Vector2
@@ -386,6 +390,27 @@ namespace Radiosity.OdysseyHubClient
 
         internal CsBindgen.Vector2f32 ToFFI() {
             return new CsBindgen.Vector2f32 { x = x, y = y };
+        }
+
+        public override string ToString() {
+            return $"[{x}, {y}]";
+        }
+    }
+
+    public class ScreenInfo
+    {
+        public byte id;
+        public Vector2 tl;
+        public Vector2 tr;
+        public Vector2 bl;
+        public Vector2 br;
+
+        internal ScreenInfo(CsBindgen.ScreenInfo screenInfo) {
+            id = screenInfo.id;
+            tl = new Vector2(screenInfo.tl);
+            tr = new Vector2(screenInfo.tr);
+            bl = new Vector2(screenInfo.bl);
+            br = new Vector2(screenInfo.br);
         }
     }
 

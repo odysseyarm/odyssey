@@ -80,6 +80,18 @@ foreach (var device in devices) {
 
 Console.WriteLine("Devices printed!");
 
+{
+    Console.WriteLine("Attempting to print screen_0 info");
+    var (err, err_msg, screen_info) = await client.GetScreenInfoById(handle, 0);
+    Console.WriteLine("Screen info:");
+    Console.WriteLine("\tID: {0}", screen_info.id);
+    Console.WriteLine("\tBounds:");
+    Console.WriteLine("\t\tTop Left: \t{0}", screen_info.tl);
+    Console.WriteLine("\t\tTop Right: \t{0}", screen_info.tr);
+    Console.WriteLine("\t\tBottom Left: \t{0}", screen_info.bl);
+    Console.WriteLine("\t\tBottom Right: \t{0}", screen_info.br);
+}
+
 await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAllAsync()) {
     switch (@event) {
         case OdysseyHubClient.DeviceEvent deviceEvent:
