@@ -1,5 +1,7 @@
 use core::{
-    cell::RefCell, mem::{transmute, MaybeUninit}, sync::atomic::{AtomicBool, AtomicU8, Ordering}
+    cell::RefCell,
+    mem::{MaybeUninit, transmute},
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
 };
 
 use bytemuck::{cast_slice, from_bytes};
@@ -13,7 +15,10 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use icm426xx::fifo::FifoPacket4;
 use nalgebra::Vector3;
-use pag7661qn::{mode::{self, ModeT}, Interface};
+use pag7661qn::{
+    Interface,
+    mode::{self, ModeT},
+};
 use protodongers::{
     Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
     slip::{SlipDecodeError, encode_slip_frame},
@@ -65,12 +70,7 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
         pkt_channel.sender(),
         &stream_infos,
     );
-    let d = obj_loop(
-        &pag,
-        &mut ctx.pag_int,
-        pkt_channel.sender(),
-        &stream_infos,
-    );
+    let d = obj_loop(&pag, &mut ctx.pag_int, pkt_channel.sender(), &stream_infos);
     // TODO turn these into tasks
     let r = join4(a, b, c, d).await;
 
@@ -294,13 +294,17 @@ async fn obj_loop(
             //     }
             // }
             let mut pag = pag.lock().await;
-            let Some(n) = pag.try_get_objects::<core::convert::Infallible>(&mut objs).await.unwrap() else {
+            let Some(n) = pag
+                .try_get_objects::<core::convert::Infallible>(&mut objs)
+                .await
+                .unwrap()
+            else {
                 continue;
             };
 
             // x and image are both mirrored to be similar to paj
             for obj in objs[..n as usize].iter_mut() {
-                const RANGE: u16 = 319*u16::pow(2, 6);
+                const RANGE: u16 = 319 * u16::pow(2, 6);
                 obj.set_x(RANGE - obj.x());
             }
 

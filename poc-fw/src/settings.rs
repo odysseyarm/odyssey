@@ -15,8 +15,8 @@ mod settings_region {
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use bytemuck::{bytes_of, bytes_of_mut, AnyBitPattern, CheckedBitPattern, NoUninit};
 use bytemuck::checked;
+use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit, bytes_of, bytes_of_mut};
 use defmt::Format;
 use embassy_nrf::nvmc::PAGE_SIZE;
 use embedded_storage::nor_flash::NorFlash;
@@ -131,7 +131,8 @@ impl PagSettings {
         if magic != Self::MAGIC {
             r.write(flash, start);
         } else {
-            flash.borrow_mut()
+            flash
+                .borrow_mut()
                 .read(start + Self::OFFSET, bytes_of_mut(&mut r))
                 .unwrap();
         }
@@ -247,7 +248,8 @@ impl GeneralSettings {
         if magic != Self::MAGIC {
             r.write(flash, start);
         } else {
-            flash.borrow_mut()
+            flash
+                .borrow_mut()
                 .read(start + Self::OFFSET, bytes_of_mut(&mut r.general_config))
                 .unwrap();
         }
@@ -308,7 +310,8 @@ impl TransientSettings {
             r.write(flash, start);
         } else {
             let mut buf = [0u8; core::mem::size_of::<Self>()];
-            flash.borrow_mut()
+            flash
+                .borrow_mut()
                 .read(start + Self::OFFSET, &mut buf)
                 .unwrap();
 
@@ -329,8 +332,6 @@ impl TransientSettings {
         let mut flash = flash.borrow_mut();
         flash.erase(start, start + PAGE_SIZE as u32).unwrap();
         flash.write(start, &Self::MAGIC).unwrap();
-        flash
-            .write(start + Self::OFFSET, bytes_of(self))
-            .unwrap();
+        flash.write(start + Self::OFFSET, bytes_of(self)).unwrap();
     }
 }

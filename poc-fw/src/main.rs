@@ -43,7 +43,9 @@ async fn main(spawner: Spawner) {
     let (_core_peripherals, p) = init::init();
     defmt::info!("Initialized");
 
-    static NVMC: static_cell::StaticCell<Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>> = static_cell::StaticCell::new();
+    static NVMC: static_cell::StaticCell<
+        Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>,
+    > = static_cell::StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     let nvmc = &*nvmc;
 
