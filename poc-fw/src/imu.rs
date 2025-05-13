@@ -1,5 +1,5 @@
 use embassy_nrf::{
-    Peripheral,
+    Peri,
     gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull},
     gpiote::{self, OutputChannelPolarity},
     interrupt,
@@ -16,17 +16,17 @@ pub type Imu =
     ICM42688<ExclusiveDevice<spim::Spim<'static, SERIAL1>, Output<'static>, Delay>, Ready>;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn init(
-    spim_instance: impl Peripheral<P = SERIAL1> + 'static,
-    cs: AnyPin,
-    sck: AnyPin,
-    miso: AnyPin,
-    mosi: AnyPin,
-    int1: AnyPin,
-    clkin: AnyPin,
-    clkin_timer_instance: impl Peripheral<P: timer::Instance> + 'static,
-    clkin_ppi_ch: ppi::AnyConfigurableChannel,
-    clkin_gpiote_ch: gpiote::AnyChannel,
+pub async fn init<T: timer::Instance>(
+    spim_instance: Peri<'static, SERIAL1>,
+    cs: Peri<'static, AnyPin>,
+    sck: Peri<'static, AnyPin>,
+    miso: Peri<'static, AnyPin>,
+    mosi: Peri<'static, AnyPin>,
+    int1: Peri<'static, AnyPin>,
+    clkin: Peri<'static, AnyPin>,
+    clkin_timer_instance: Peri<'static, T>,
+    clkin_ppi_ch: Peri<'static, ppi::AnyConfigurableChannel>,
+    clkin_gpiote_ch: Peri<'static, gpiote::AnyChannel>,
 ) -> (Imu, ImuInterrupt)
 where
     crate::Irqs: interrupt::typelevel::Binding<

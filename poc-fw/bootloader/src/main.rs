@@ -58,7 +58,7 @@ fn main() -> ! {
         let mut config_descriptor = [0; 256];
         let mut bos_descriptor = [0; 256];
         let mut control_buf = [0; 4096];
-        let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH);
+        let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH, ResetImmediate);
         let mut builder = Builder::new(
             driver,
             config,
@@ -68,7 +68,7 @@ fn main() -> ! {
             &mut control_buf,
         );
 
-        usb_dfu::<_, _, _, ResetImmediate, 4096>(&mut builder, &mut state);
+        usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state);
 
         let mut dev = builder.build();
         embassy_futures::block_on(dev.run());

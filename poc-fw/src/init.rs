@@ -112,8 +112,8 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     core_peripherals.SYST = systick_delay.free();
 
     {
-        let hwid_b0 = Input::new(&mut peripherals.P1_12, Pull::None);
-        let hwid_b1 = Input::new(&mut peripherals.P1_11, Pull::None);
+        let hwid_b0 = Input::new(peripherals.P1_12.reborrow(), Pull::None);
+        let hwid_b1 = Input::new(peripherals.P1_11.reborrow(), Pull::None);
         let hwid = ((hwid_b1.is_high() as u8) << 1) | (hwid_b0.is_high() as u8);
         defmt::info!("HWID = {=u8}", hwid);
     }

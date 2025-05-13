@@ -4,21 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-executor = { version = "0.7.0", git = "https://github.com/Abrahamh08/embassy.git", features = ["arch-cortex-m", "executor-thread", "task-arena-size-10240"] }
-embassy-embedded-hal = { version = "0.3.0", git = "https://github.com/Abrahamh08/embassy.git", features = [] }
-embassy-futures = { version = "0.1.1", git = "https://github.com/Abrahamh08/embassy.git" }
-embassy-nrf = { version = "0.3.1", git = "https://github.com/Abrahamh08/embassy.git", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
-embassy-boot = { version = "0.4.0", git = "https://github.com/Abrahamh08/embassy.git" }
-embassy-sync = { version = "0.6.2", git = "https://github.com/Abrahamh08/embassy.git" }
-embassy-time = { version = "0.4.0", git = "https://github.com/Abrahamh08/embassy.git" }
-embassy-usb = { version = "0.4.0", git = "https://github.com/Abrahamh08/embassy.git", features = ["defmt"] }
-embassy-usb-dfu = { version = "0.1.0", git = "https://github.com/Abrahamh08/embassy.git", features = ["application", "cortex-m", "defmt"] }
+embassy-executor = { version = "0.7.0", git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread"] }
+embassy-embedded-hal = { version = "0.3.0", git = "https://github.com/embassy-rs/embassy.git", features = [] }
+embassy-futures = { version = "0.1.1", git = "https://github.com/embassy-rs/embassy.git" }
+embassy-nrf = { version = "0.3.1", git = "https://github.com/embassy-rs/embassy.git", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
+embassy-boot = { version = "0.4.0", git = "https://github.com/embassy-rs/embassy.git" }
+embassy-sync = { version = "0.6.2", git = "https://github.com/embassy-rs/embassy.git" }
+embassy-time = { version = "0.4.0", git = "https://github.com/embassy-rs/embassy.git" }
+embassy-usb = { version = "0.4.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt"] }
+embassy-usb-dfu = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", features = ["application", "cortex-m", "defmt"] }
 
 cortex-m-rt = "0.7.5"
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
-defmt-rtt = "0.4.1"
+defmt-rtt = "1"
 panic-probe = { version = "0.3.1", features = ["print-defmt"] }
-defmt = "0.3.10"
+defmt = "1"
 nrf-pac = { version = "0.1.0", features = ["defmt"] }
 embedded-hal = "1.0.0"
 pag7661qn = { version = "0.1.0", path = "../pag7661qn" }

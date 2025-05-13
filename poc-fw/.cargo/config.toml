@@ -6,8 +6,9 @@ runner = "cargo bin probe-rs run --chip nRF5340_xxAA"
 target = "thumbv8m.main-none-eabihf"
 rustflags = "-C target-cpu=cortex-m33"
 
-[env]
-RUSTC_LOG = "rustc_codegen_ssa::back::link=info"
+# Uncomment to see flash/memory usage report
+# [env]
+# RUSTC_LOG = "rustc_codegen_ssa::back::link=info"
 
 # [patch."https://github.com/odysseyarm/ats_common"]
 # ats_common = { path = "../../ats_common/ats_common" }

@@ -1,10 +1,8 @@
 use core::cell::RefCell;
 
+use embassy_embedded_hal::flash::partition::BlockingPartition;
 use embassy_nrf::{
-    Peripheral,
-    peripherals::USBD,
-    usb::{Driver, vbus_detect::HardwareVbusDetect},
-    nvmc::Nvmc,
+    nvmc::Nvmc, peripherals::USBD, usb::{vbus_detect::HardwareVbusDetect, Driver}, Peri
 };
 use embassy_time::Duration;
 use embassy_usb::{
@@ -62,7 +60,7 @@ pub async fn run_usb(mut device: StaticUsbDevice) -> ! {
 }
 
 /// Panics if called more than once.
-pub fn usb_device(p: impl Peripheral<P = USBD> + 'static, flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc>>) -> (StaticCdcAcmClass, StaticUsbDevice) {
+pub fn usb_device(p: Peri<'static, USBD>, flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc>>) -> (StaticCdcAcmClass, StaticUsbDevice) {
     // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
@@ -110,9 +108,9 @@ pub fn usb_device(p: impl Peripheral<P = USBD> + 'static, flash: &'static Mutex<
     let mut firmware_state = BlockingFirmwareState::from_config(config, &mut magic.0);
     firmware_state.mark_booted().expect("Failed to mark booted");
 
-    static FIRMWARE_STATE: StaticCell<embassy_usb_dfu::Control<'_, embassy_embedded_hal::flash::partition::BlockingPartition<'_, NoopRawMutex, Nvmc>, ResetImmediate>> = StaticCell::new();
-    let state = FIRMWARE_STATE.init_with(|| Control::new(firmware_state, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH));
-    usb_dfu::<_, _, ResetImmediate>(&mut builder, state, Duration::from_millis(2500));
+    static FIRMWARE_STATE: StaticCell<embassy_usb_dfu::Control<BlockingFirmwareState<'_, BlockingPartition<'_, NoopRawMutex, Nvmc<'_>>>, ResetImmediate>> = StaticCell::new();
+    let state = FIRMWARE_STATE.init_with(|| Control::new(firmware_state, DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH, ResetImmediate));
+    usb_dfu(&mut builder, state, Duration::from_millis(2500));
 
     // Build the builder.
     let usb = builder.build();
