@@ -5,17 +5,24 @@ use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
 use ats_usb::packets::vm::{CombinedMarkersReport, PocMarkersReport};
+use socket2::{Domain, Protocol, Socket, Type};
+use sysinfo::{Networks, System};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use core::panic;
 use nalgebra::{Isometry3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc::Sender, Mutex};
+use serialport::SerialPortType;
 use tokio_stream::{Stream, StreamExt};
 use std::pin::Pin;
+use tokio::time::sleep;
 #[allow(unused_imports)]
 use tracing::field::debug;
 
@@ -48,169 +55,138 @@ pub async fn device_tasks(
     >,
 ) -> anyhow::Result<()> {
     tokio::select! {
-        _ = device_udp_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
+        _ = device_udp_manager(message_channel.clone(), screen_calibrations.clone()) => {},
         _ = device_hid_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
-        _ = device_cdc_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
+        _ = device_cdc_manager(message_channel.clone(), screen_calibrations.clone()) => {},
     }
     Ok(())
 }
 
-async fn device_udp_ping_task(
-    message_channel: Sender<Message>,
+pub async fn device_udp_manager(
+    outer_tx: mpsc::Sender<Message>,
     screen_calibrations: Arc<
-        ArcSwap<
-            ArrayVec<
+        arc_swap::ArcSwap<
+            arrayvec::ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
-) -> std::convert::Infallible {
-    use sysinfo::{Networks, System};
+) {
+    // internal channel for events from stream tasks
+    let (ev_tx, mut ev_rx) = mpsc::channel::<Message>(32);
 
-    fn broadcast_address(ip: std::net::IpAddr, prefix: u8) -> Option<std::net::IpAddr> {
-        match ip {
-            std::net::IpAddr::V4(ipv4) => {
-                // Calculate the mask for IPv4 by shifting left
-                let mask = !((1 << (32 - prefix)) - 1);
-                let network = u32::from(ipv4) & mask;
-                let broadcast = network | !mask;
-                Some(std::net::IpAddr::V4(Ipv4Addr::from(broadcast)))
-            }
-            std::net::IpAddr::V6(_ipv6) => None,
-        }
-    }
+    // Map from port-string → (shared device, its task handle)
+    let mut handles: HashMap<String, (Arc<Mutex<UdpDevice>>, tokio::task::JoinHandle<()>)> =
+        HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
+    // prepare broadcast socket once
     let mut sys = System::new_all();
     sys.refresh_all();
-
     let networks = Networks::new_with_refreshed_list();
-
-    let broadcast_addrs: Vec<_> = networks
+    let broadcast_addrs: Vec<Ipv4Addr> = networks
         .iter()
         .filter_map(|(_, data)| {
-            for ip_network in data.ip_networks() {
-                if let Some(broadcast) = broadcast_address(ip_network.addr, ip_network.prefix) {
-                    if broadcast == Ipv4Addr::new(127, 255, 255, 255) {
-                        return Some([127, 31, 33, 7].into());
-                    } else {
-                        return Some(broadcast);
-                    }
+            data.ip_networks().iter().find_map(|ipn| {
+                if let std::net::IpAddr::V4(a) = ipn.addr {
+                    let mask = !((1 << (32 - ipn.prefix)) - 1);
+                    let net = u32::from(a) & mask;
+                    Some(Ipv4Addr::from(net | !mask))
+                } else {
+                    None
                 }
-            }
-            None
+            })
         })
         .collect();
-    tracing::debug!(broadcast_addrs = debug(&broadcast_addrs));
 
-    let socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
+    let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+    sock.set_nonblocking(true).unwrap();
+    sock.set_broadcast(true).unwrap();
+    sock.set_ttl(5).unwrap();
+    sock.bind(
+        &"0.0.0.0:0"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into(),
     )
     .unwrap();
-    let addr = std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
-    socket.set_nonblocking(true).unwrap();
-    socket.set_ttl(5).unwrap();
-    socket.set_broadcast(true).unwrap();
-    socket.bind(&socket2::SockAddr::from(addr)).unwrap();
-    let socket = UdpSocket::from_std(socket.into()).unwrap();
+    let socket = UdpSocket::from_std(sock.into()).unwrap();
+    let mut buf = [0u8; 1472];
 
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(12);
+    loop {
+        // 1) Ping phase
+        let mut responders = HashSet::new();
+        for _ in 0..5 {
+            for &bcast in &broadcast_addrs {
+                let _ = socket.send_to(&[255, 3], (bcast, 23456)).await;
+            }
+            let timeout = sleep(Duration::from_secs(1));
+            tokio::pin!(timeout);
 
-    let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-
-    tokio::select! {
-        _ = async {
             loop {
-                let mut buf = [0; 1472];
-                let mut devices_that_responded = Vec::new();
+                tokio::select! {
+                    _ = &mut timeout => break,
+                    Ok((len, addr)) = socket.recv_from(&mut buf) => {
+                        if len >= 2 && buf[0] == 255 && buf[1] != 1 {
+                            let id = buf[1];
+                            let key = addr.to_string();
+                            responders.insert(key.clone());
 
-                // 5 attempts
-                for _ in 0..5 {
-                    // ping without add
-                    for ip in &broadcast_addrs {
-                        match ip {
-                            std::net::IpAddr::V4(broadcast_address) => {
-                                let broadcast_address = SocketAddrV4::new(*broadcast_address, 23456);
-                                tracing::trace!("Sending ping to {broadcast_address}");
-                                socket.send_to(&[255, 3], broadcast_address).await.unwrap();
-                            },
-                            std::net::IpAddr::V6(_) => {
-                                // unsupported
-                            },
-                        }
-                    }
-                    tokio::select! {
-                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
-                        _ = async {
-                            let stream_task_handles = stream_task_handles.clone();
-                            let message_channel = message_channel.clone();
-                            let screen_calibrations = screen_calibrations.clone();
-                            loop {
-                                let (_len, addr) = socket.recv_from(&mut buf).await.unwrap();
-                                if buf[0] == 255 || buf[1] != 1 /* Ping */ { continue; }
-                                let device = odyssey_hub_common::device::UdpDevice { id: buf[1], addr, uuid: [0; 6]};
-                                let mut stream_task_handles = stream_task_handles.lock().await;
-                                let message_channel = message_channel.clone();
-                                let sender = sender.clone();
-                                let screen_calibrations = screen_calibrations.clone();
+                            if !seen.contains(&key) {
+                                seen.insert(key.clone());
 
-                                if !devices_that_responded.contains(&device) {
-                                    devices_that_responded.push(device.clone());
-                                }
+                                let dev = Arc::new(Mutex::new(UdpDevice { id, addr, uuid: [0;6] }));
+                                let ev_tx_cloned = ev_tx.clone();
+                                let sc = screen_calibrations.clone();
 
-                                let i = stream_task_handles.iter().position(|(a, _)| *a == device);
-                                if let None = i {
-                                    stream_task_handles.push((
-                                        device.clone(),
-                                        tokio::spawn({
-                                            async move {
-                                                match device_udp_stream_task(device.clone(), message_channel.clone(), screen_calibrations.clone()).await {
-                                                    Ok(_) => {
-                                                        println!("UDP device stream task finished");
-                                                    },
-                                                    Err(e) => {
-                                                        eprintln!("Error in device stream task: {}", e);
-                                                    }
-                                                }
-                                                let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
-                                            }
-                                        })
-                                    ));
-                                }
+                                let handle = tokio::spawn({
+                                    let dev = dev.clone();
+                                    async move {
+                                        let _ = device_udp_stream_task(
+                                            dev.clone(),
+                                            ev_tx_cloned.clone(),
+                                            sc.clone(),
+                                        )
+                                        .await;
+
+                                        let final_dev = dev.lock().await.clone();
+                                        let _ = ev_tx_cloned
+                                            .send(Message::Disconnect(Device::Udp(final_dev)))
+                                            .await;
+                                    }
+                                });
+
+                                handles.insert(key.clone(), (dev.clone(), handle));
                             }
-                        } => {},
-                    }
-                }
-
-                for (device, _) in stream_task_handles.lock().await.iter() {
-                    if !devices_that_responded.contains(device) {
-                        tracing::info!("{device:?} didn't respond to pings");
-                        let _ = sender.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(device.clone()))).await;
+                        }
                     }
                 }
             }
-        } => panic!("UDP ping loop is supposed to be infallible"),
-        _ = async {
-            while let Some(message) = receiver.recv().await {
-                match message {
-                    Message::Disconnect(d) => {
-                        if let Device::Udp(d) = d {
-                            tracing::info!("Disconnecting {:?}", d);
-                            let mut stream_task_handles = stream_task_handles.lock().await;
-                            let i = stream_task_handles.iter().position(|(a, _)| *a == d);
-                            if let Some(i) = i {
-                                stream_task_handles[i].1.abort();
-                                stream_task_handles.remove(i);
-                                message_channel.send(Message::Disconnect(odyssey_hub_common::device::Device::Udp(d.clone()))).await.unwrap();
-                            }
-                        }
-                    },
-                    _ => {},
-                }
+        }
+
+        let gone: Vec<String> = handles
+            .keys()
+            .filter(|k| !responders.contains(*k))
+            .cloned()
+            .collect();
+        for key in gone {
+            if let Some((dev_arc, h)) = handles.remove(&key) {
+                h.abort();
+
+                let final_dev = dev_arc.lock().await.clone();
+                let _ = ev_tx
+                    .send(Message::Disconnect(Device::Udp(final_dev)))
+                    .await;
+                seen.remove(&key);
             }
-        } => panic!("UDP ping receiver is supposed to be infallible"),
+        }
+
+        while let Ok(msg) = ev_rx.try_recv() {
+            let _ = outer_tx.send(msg.clone()).await;
+        }
+
+        sleep(Duration::from_secs(2)).await;
     }
 }
 
@@ -267,124 +243,103 @@ async fn device_hid_ping_task(
     }
 }
 
-async fn device_cdc_ping_task(
-    message_channel: Sender<Message>,
+async fn device_cdc_manager(
+    outer_tx: mpsc::Sender<Message>,
     screen_calibrations: Arc<
-        ArcSwap<
-            ArrayVec<
+        arc_swap::ArcSwap<
+            arrayvec::ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
-) -> std::convert::Infallible {
-    let stream_task_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let old_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+) {
+    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<Message>(32);
+
+    let mut handles: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut devices: HashMap<String, CdcDevice> = HashMap::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
+
     loop {
-        let new_list = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let stream_task_handles = stream_task_handles.clone();
-
-        let ports = serialport::available_ports();
-        let ports: Vec<_> = match ports {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("Failed to list serial ports {}", &e.to_string());
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                continue;
-            }
-        }
-        .into_iter()
-        .filter_map(|port| {
-            match &port.port_type {
-                serialport::SerialPortType::UsbPort(port_info) => {
-                    if port_info.vid != 0x1915
-                        || !(port_info.pid == 0x520f || port_info.pid == 0x5210 || port_info.pid == 0x5211)
-                    {
-                        return None;
-                    }
-                    if let Some(i) = port_info.interface {
-                        // interface 0: cdc acm module
-                        // interface 1: cdc acm module functional subordinate interface
-                        // interface 2: cdc acm dfu
-                        // interface 3: cdc acm dfu subordinate interface
-                        if i == 0 {
-                            Some((port.clone(), port_info.clone()))
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some((port.clone(), port_info.clone()))
-                    }
+        let ports = serialport::available_ports().unwrap_or_default();
+        let mut matching_paths = HashSet::new();
+        for p in &ports {
+            if let SerialPortType::UsbPort(pi) = &p.port_type {
+                if pi.vid == 0x1915
+                    && matches!(pi.pid, 0x520f | 0x5210 | 0x5211)
+                    && pi.interface.unwrap_or(0) == 0
+                {
+                    matching_paths.insert(p.port_name.clone());
                 }
-                _ => None,
             }
-        })
-        .collect();
-        for (port, port_info) in ports {
-            let device = odyssey_hub_common::device::CdcDevice {
-                path: port.port_name.clone(),
-                uuid: [0; 6],
-            };
-            let old_list_arc_clone = old_list.clone();
-            let old_list = old_list.lock().await;
-            if !old_list.contains(&device) {
-                stream_task_handles.lock().await.push((
-                    device.clone(),
-                    tokio::spawn({
-                        let stream_task_handles = stream_task_handles.clone();
-                        let old_list_arc_clone = old_list_arc_clone.clone();
-                        let message_channel = message_channel.clone();
-                        let device = device.clone();
-                        let screen_calibrations = screen_calibrations.clone();
-                        async move {
-                            {
-                                let message_channel = message_channel.clone();
-                                match device_cdc_stream_task(
-                                    device.clone(),
-                                    port_info.pid == 0x5210,
-                                    message_channel,
-                                    screen_calibrations.clone(),
-                                )
-                                .await
-                                {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        eprintln!("Error in device stream task: {}", e);
-                                    }
-                                }
-                            }
-                            stream_task_handles
-                                .lock()
-                                .await
-                                .retain(|&(ref x, _)| x != &device);
-                            let _ = message_channel
-                                .send(Message::Disconnect(Device::Cdc(device.clone())))
-                                .await;
-                            old_list_arc_clone.lock().await.retain(|x| x != &device);
-                        }
-                    }),
-                ));
-            }
-            new_list.lock().await.push(device);
         }
 
-        // dbg!(&new_list);
-        let new_list = new_list.lock().await;
-        for v in old_list.lock().await.iter() {
-            if !new_list.contains(v) {
-                let _ = message_channel
-                    .send(Message::Disconnect(Device::Cdc(v.clone())))
+        let unplugged: Vec<String> = handles
+            .keys()
+            .filter(|path| !matching_paths.contains(*path))
+            .cloned()
+            .collect();
+        for path in unplugged {
+            if let Some(h) = handles.remove(&path) {
+                h.abort();
+            }
+            if let Some(dev) = devices.remove(&path) {
+                let _ = outer_tx
+                    .send(Message::Disconnect(Device::Cdc(dev)))
                     .await;
-                let mut stream_task_handles = stream_task_handles.lock().await;
-                if let Some((_, handle)) = stream_task_handles.iter().find(|x| x.0 == *v) {
-                    handle.abort();
-                    stream_task_handles.retain(|x| x.0 != *v);
+            }
+            seen_paths.remove(&path);
+        }
+
+        for p in &ports {
+            if let SerialPortType::UsbPort(pi) = &p.port_type {
+                if pi.vid == 0x1915
+                    && matches!(pi.pid, 0x520f | 0x5210 | 0x5211)
+                    && pi.interface.unwrap_or(0) == 0
+                {
+                    let path = p.port_name.clone();
+                    if seen_paths.insert(path.clone()) {
+                        let device = Arc::new(Mutex::new(CdcDevice {
+                            path: path.clone(),
+                            uuid: [0; 6],
+                        }));
+                        let ev_tx = ev_tx.clone();
+                        let sc = screen_calibrations.clone();
+                        let pid_is_5210 = pi.pid == 0x5210;
+
+                        let handle = tokio::spawn({
+                            let device = device.clone();
+                            async move {
+                                let _ = device_cdc_stream_task(
+                                    device.clone(),
+                                    pid_is_5210,
+                                    ev_tx.clone(),
+                                    sc,
+                                    None,
+                                )
+                                .await;
+                                let final_dev = device.lock().await.clone();
+                                let _ = ev_tx
+                                    .send(Message::Disconnect(Device::Cdc(final_dev)))
+                                    .await;
+                            }
+                        });
+
+                        handles.insert(path.clone(), handle);
+                    }
                 }
             }
         }
-        *old_list.lock().await = new_list.to_vec();
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        while let Ok(msg) = ev_rx.try_recv() {
+            let _ = outer_tx.send(msg.clone()).await;
+
+            if let Message::Connect(Device::Cdc(dev), _, _) = msg {
+                devices.insert(dev.path.clone(), dev);
+            }
+        }
+
+        sleep(Duration::from_secs(2)).await;
     }
 }
 
@@ -739,50 +694,56 @@ async fn common_tasks(
     tracing::debug!("common_tasks for {device:?} exiting");
 }
 
-async fn device_udp_stream_task(
-    device: UdpDevice,
-    message_channel: Sender<Message>,
+pub async fn device_udp_stream_task(
+    device: Arc<Mutex<UdpDevice>>,
+    event_tx: Sender<Message>,
     screen_calibrations: Arc<
-        ArcSwap<
-            ArrayVec<
+        arc_swap::ArcSwap<
+            arrayvec::ArrayVec<
                 (u8, ScreenCalibration<f32>),
                 { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
 ) -> anyhow::Result<()> {
-    let d = match UsbDevice::connect_hub("0.0.0.0:0", device.addr.to_string().as_str()).await {
+    let addr = { device.lock().await.addr.clone() };
+
+    let d = match UsbDevice::connect_hub("0.0.0.0:0", &addr.to_string()).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Failed to connect to device {}: {}", device.addr, e);
+            tracing::error!("Failed to connect to device {}: {}", addr, e);
             return Ok(());
         }
     };
 
-    tracing::info!("Connected to device {}", device.addr);
+    tracing::info!("Connected to device {}", addr);
 
     let timeout = tokio::time::Duration::from_millis(500);
+
     let config = match retry(|| d.read_config(), timeout, 3).await {
         Some(x) => x?,
         None => {
             return Err(anyhow::Error::msg("Failed to read config"));
         }
     };
-    let params = match retry(|| d.read_props(), timeout, 3).await {
+    let props = match retry(|| d.read_props(), timeout, 3).await {
         Some(x) => x?,
         None => {
             return Err(anyhow::Error::msg("Failed to read props"));
         }
     };
 
-    let mut device = device.clone();
-    device.uuid = params.uuid.clone();
+    {
+        let mut dev = device.lock().await;
+        dev.uuid = props.uuid.clone();
+    }
 
     let (tx, rx) = tokio::sync::mpsc::channel(5);
 
-    let _ = message_channel
+    let full_dev = device.lock().await.clone();
+    let _ = event_tx
         .send(Message::Connect(
-            odyssey_hub_common::device::Device::Udp(device.clone()),
+            Device::Udp(full_dev),
             d.clone(),
             tx,
         ))
@@ -790,10 +751,10 @@ async fn device_udp_stream_task(
 
     common_tasks(
         d,
-        odyssey_hub_common::device::Device::Udp(device),
-        message_channel,
+        Device::Udp(device.lock().await.clone()),
+        event_tx.clone(),
         config,
-        screen_calibrations.clone(),
+        screen_calibrations,
         rx,
     )
     .await;
@@ -801,8 +762,8 @@ async fn device_udp_stream_task(
     Ok(())
 }
 
-async fn device_cdc_stream_task(
-    device: CdcDevice,
+pub async fn device_cdc_stream_task(
+    device: Arc<Mutex<CdcDevice>>,
     wait_dsr: bool,
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
@@ -813,37 +774,37 @@ async fn device_cdc_stream_task(
             >,
         >,
     >,
+    connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
-    let d = match UsbDevice::connect_serial(&device.path, wait_dsr).await {
+    let path = device.lock().await.path.clone();
+
+    let d = match UsbDevice::connect_serial(&path, wait_dsr).await {
         Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to connect to device {}: {}", device.path, e);
-            return Ok(());
-        }
+        Err(_) => return Ok(()),
     };
 
-    tracing::info!("Connected to device {}", device.path);
-
     let config = d.read_config().await?;
-    let props = d.read_props().await?;
+    let props  = d.read_props().await?;
 
-    let mut device = device.clone();
-    device.uuid = props.uuid.clone();
+    {
+        let mut dev = device.lock().await;
+        dev.uuid = props.uuid;
+    }
 
     let (tx, rx) = tokio::sync::mpsc::channel(5);
 
-    let _ = message_channel
-        .send(Message::Connect(
-            odyssey_hub_common::device::Device::Cdc(device.clone()),
-            d.clone(),
-            tx,
-        ))
-        .await;
+    message_channel
+        .send(Message::Connect(Device::Cdc(device.lock().await.clone()), d.clone(), tx))
+        .await?;
+
+    if let Some(tx) = connected_tx {
+        let _ = tx.send(());
+    }
 
     tokio::select! {
         _ = common_tasks(
             d.clone(),
-            odyssey_hub_common::device::Device::Cdc(device.clone()),
+            Device::Cdc(device.lock().await.clone()),
             message_channel.clone(),
             config,
             screen_calibrations.clone(),
@@ -851,7 +812,7 @@ async fn device_cdc_stream_task(
         ) => {}
         _ = temp_boneless_hardcoded_vendor_stream_tasks(
             d.clone(),
-            odyssey_hub_common::device::Device::Cdc(device.clone()),
+            Device::Cdc(device.lock().await.clone()),
             message_channel.clone(),
         ) => {}
     };
