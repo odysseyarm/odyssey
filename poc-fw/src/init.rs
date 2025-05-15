@@ -1,5 +1,6 @@
 use embassy_nrf::{
     Peripherals,
+    config::{Config, HfclkSource, HfxoCapacitance, LfclkSource, LfxoCapacitance, ReghVoltage},
     gpio::{Input, Pull},
     pac,
 };
@@ -29,58 +30,7 @@ fn start_network_core(delay: &mut cortex_m::delay::Delay) {
     }
 }
 
-fn configure_internal_capacitors() {
-    use pac::oscillators::vals::Intcap;
-    // HFXO
-    const CAPACITANCE: f32 = 15.5; // pF
-    let mut slope = pac::FICR.xosc32mtrim().read().slope() as i32;
-    let offset = pac::FICR.xosc32mtrim().read().offset() as i32;
-    if slope >= 16 {
-        slope -= 32;
-    }
-    defmt::trace!("XOSC32MTRIM.SLOPE = {=i32}", slope);
-    defmt::trace!("XOSC32MTRIM.OFFSET = {=i32}", offset);
-    let m = const { (CAPACITANCE * 2.0) as i32 - 14 };
-    let capvalue = (((slope + 56) * m) + ((offset - 8) << 4) + 32) >> 6;
-    defmt::trace!("XOSC32MCAPS.CAPVALUE = {=i32}", capvalue);
-    pac::OSCILLATORS.xosc32mcaps().write(|w| {
-        w.set_capvalue(capvalue as u8);
-        w.set_enable(true);
-    });
-
-    // LFXO
-    // 7 pF
-    pac::OSCILLATORS
-        .xosc32ki()
-        .intcap()
-        .write(|w| w.set_intcap(Intcap::C7PF));
-}
-
 pub fn init() -> (cortex_m::Peripherals, Peripherals) {
-    use embassy_nrf::{
-        config::{Config, HfclkSource, LfclkSource},
-        pac::uicr::vals::Vreghvout,
-    };
-
-    let mut needs_reset = false;
-    // Configure VDD to 3.3V
-    let uicr = pac::UICR;
-    let v = uicr.vreghvout().read().vreghvout();
-    defmt::info!("VREGHVOUT = {}", v);
-    if v != Vreghvout::_3V3 {
-        defmt::info!("Changing to _3V3");
-        let nvmc = pac::NVMC;
-        nvmc.config()
-            .write(|w| w.set_wen(pac::nvmc::vals::Wen::WEN));
-        while !nvmc.ready().read().ready() {}
-        uicr.vreghvout().write(|v| v.set_vreghvout(Vreghvout::_3V3));
-        while !nvmc.ready().read().ready() {}
-        nvmc.config()
-            .write(|w| w.set_wen(pac::nvmc::vals::Wen::REN));
-        while !nvmc.ready().read().ready() {}
-        needs_reset = true;
-    }
-
     let mut config = Config::default();
     // The BC40C has the hardware to support this, but I don't want to think about erratum 160
     // Hopefully erratum 166 doesn't show up, the workaround increases power usage ;-;
@@ -89,8 +39,11 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     // config.dcdc.regradio = true;
     config.hfclk_source = HfclkSource::ExternalXtal;
     config.lfclk_source = LfclkSource::ExternalXtal;
+    config.internal_capacitors.hfxo = Some(HfxoCapacitance::_15_5pF);
+    config.internal_capacitors.lfxo = Some(LfxoCapacitance::_7pF);
+    // Configure VDD to 3.3V
+    config.dcdc.regh_voltage = Some(ReghVoltage::_3v3);
 
-    configure_internal_capacitors();
     // Enable instruction cache
     pac::CACHE.enable().write(|w| w.set_enable(true));
     // Set clock to 128 MHz
@@ -99,10 +52,6 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
         .write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));
 
     let mut peripherals = embassy_nrf::init(config);
-    if needs_reset {
-        defmt::info!("Resetting...");
-        cortex_m::peripheral::SCB::sys_reset();
-    }
 
     // probe-rs complains if network core is locked or off
     // https://github.com/probe-rs/probe-rs/issues/3053
