@@ -8,13 +8,12 @@ use ats_usb::packets::vm::{CombinedMarkersReport, PocMarkersReport};
 use socket2::{Domain, Protocol, Socket, Type};
 use sysinfo::{Networks, System};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use core::panic;
 use nalgebra::{Isometry3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -137,21 +136,23 @@ pub async fn device_udp_manager(
                                 seen.insert(key.clone());
 
                                 let dev = Arc::new(Mutex::new(UdpDevice { id, addr, uuid: [0;6] }));
-                                let ev_tx_cloned = ev_tx.clone();
+                                let ev_tx = ev_tx.clone();
                                 let sc = screen_calibrations.clone();
 
                                 let handle = tokio::spawn({
                                     let dev = dev.clone();
+                                    let outer_tx = outer_tx.clone();
                                     async move {
                                         let _ = device_udp_stream_task(
                                             dev.clone(),
-                                            ev_tx_cloned.clone(),
+                                            ev_tx.clone(),
+                                            outer_tx.clone(),
                                             sc.clone(),
                                         )
                                         .await;
 
                                         let final_dev = dev.lock().await.clone();
-                                        let _ = ev_tx_cloned
+                                        let _ = ev_tx
                                             .send(Message::Disconnect(Device::Udp(final_dev)))
                                             .await;
                                     }
@@ -309,13 +310,14 @@ async fn device_cdc_manager(
 
                         let handle = tokio::spawn({
                             let device = device.clone();
+                            let outer_tx = outer_tx.clone();
                             async move {
                                 let _ = device_cdc_stream_task(
                                     device.clone(),
                                     pid_is_5210,
                                     ev_tx.clone(),
+                                    outer_tx,
                                     sc,
-                                    None,
                                 )
                                 .await;
                                 let final_dev = device.lock().await.clone();
@@ -370,6 +372,8 @@ async fn common_tasks(
     >,
     mut rx: tokio::sync::mpsc::Receiver<DeviceTaskMessage>,
 ) {
+    println!("starting common_tasks for {device:?}");
+
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let timeout = Duration::from_secs(2);
     let restart_timeout = Duration::from_secs(1);
@@ -696,7 +700,8 @@ async fn common_tasks(
 
 pub async fn device_udp_stream_task(
     device: Arc<Mutex<UdpDevice>>,
-    event_tx: Sender<Message>,
+    slow_message_channel: Sender<Message>,
+    message_channel: Sender<Message>,
     screen_calibrations: Arc<
         arc_swap::ArcSwap<
             arrayvec::ArrayVec<
@@ -740,10 +745,11 @@ pub async fn device_udp_stream_task(
 
     let (tx, rx) = tokio::sync::mpsc::channel(5);
 
-    let full_dev = device.lock().await.clone();
-    let _ = event_tx
+    let device = device.lock().await.clone();
+
+    let _ = slow_message_channel
         .send(Message::Connect(
-            Device::Udp(full_dev),
+            Device::Udp(device),
             d.clone(),
             tx,
         ))
@@ -751,8 +757,8 @@ pub async fn device_udp_stream_task(
 
     common_tasks(
         d,
-        Device::Udp(device.lock().await.clone()),
-        event_tx.clone(),
+        Device::Udp(device.clone()),
+        message_channel.clone(),
         config,
         screen_calibrations,
         rx,
@@ -765,6 +771,7 @@ pub async fn device_udp_stream_task(
 pub async fn device_cdc_stream_task(
     device: Arc<Mutex<CdcDevice>>,
     wait_dsr: bool,
+    slow_message_channel: Sender<Message>,
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
         ArcSwap<
@@ -774,7 +781,6 @@ pub async fn device_cdc_stream_task(
             >,
         >,
     >,
-    connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
     let path = device.lock().await.path.clone();
 
@@ -793,18 +799,16 @@ pub async fn device_cdc_stream_task(
 
     let (tx, rx) = tokio::sync::mpsc::channel(5);
 
-    message_channel
-        .send(Message::Connect(Device::Cdc(device.lock().await.clone()), d.clone(), tx))
-        .await?;
+    let device = device.lock().await.clone();
 
-    if let Some(tx) = connected_tx {
-        let _ = tx.send(());
-    }
+    slow_message_channel
+        .send(Message::Connect(Device::Cdc(device.clone()), d.clone(), tx))
+        .await?;
 
     tokio::select! {
         _ = common_tasks(
             d.clone(),
-            Device::Cdc(device.lock().await.clone()),
+            Device::Cdc(device.clone()),
             message_channel.clone(),
             config,
             screen_calibrations.clone(),
@@ -812,10 +816,12 @@ pub async fn device_cdc_stream_task(
         ) => {}
         _ = temp_boneless_hardcoded_vendor_stream_tasks(
             d.clone(),
-            Device::Cdc(device.lock().await.clone()),
+            Device::Cdc(device.clone()),
             message_channel.clone(),
         ) => {}
     };
+
+    println!("Exiting device_cdc_stream_task");
 
     Ok(())
 }
