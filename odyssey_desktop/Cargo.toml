@@ -13,3 +13,6 @@ serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 iced = "0.13.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.1", features = ["Win32", "Win32_System", "Win32_System_Services"] }
