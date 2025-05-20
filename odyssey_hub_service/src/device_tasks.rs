@@ -52,6 +52,7 @@ pub async fn device_tasks(
             >,
         >,
     >,
+    device_offsets: HashMap<[u8; 6], Isometry3<f32>>,
 ) -> anyhow::Result<()> {
     tokio::select! {
         _ = device_udp_manager(message_channel.clone(), screen_calibrations.clone()) => {},

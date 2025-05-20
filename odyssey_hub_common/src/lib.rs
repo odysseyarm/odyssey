@@ -1,5 +1,6 @@
 pub mod device;
 pub mod events;
+pub mod config;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]

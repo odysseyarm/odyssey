@@ -1,6 +1,5 @@
 use std::{fs::File, pin::Pin, sync::Arc};
 
-use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use ats_cv::ScreenCalibration;
@@ -22,7 +21,6 @@ use tokio::{
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::server::Connected, Response};
-use tracing::error;
 
 use crate::device_tasks::{self, device_tasks};
 
@@ -352,39 +350,8 @@ pub async fn run_service(
 
     let (event_sender, event_receiver) = broadcast::channel(12);
 
-    pub const APP_INFO: AppInfo = AppInfo {
-        name: "odyssey",
-        author: "odysseyarm",
-    };
-
-    let screen_calibrations: arrayvec::ArrayVec<
-        (u8, ScreenCalibration<f32>),
-        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
-    > = (0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
-        .filter_map(|i| {
-            get_app_root(AppDataType::UserConfig, &APP_INFO)
-                .ok()
-                .and_then(|config_dir| {
-                    let screen_path = config_dir
-                        .join("screens")
-                        .join(std::format!("screen_{}.json", i));
-                    if screen_path.exists() {
-                        File::open(screen_path)
-                            .ok()
-                            .and_then(|file| match serde_json::from_reader(file) {
-                                Ok(calibration) => Some((i as u8, calibration)),
-                                Err(e) => {
-                                    error!("Failed to deserialize screen calibration: {}", e);
-                                    None
-                                }
-                            })
-                    } else {
-                        None
-                    }
-                })
-        })
-        .collect();
-
+    let screen_calibrations = odyssey_hub_common::config::screen_calibrations()
+        .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))?;
     let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
     let server = Server {
         device_list: Default::default(),
@@ -431,30 +398,11 @@ pub async fn run_service(
         }
     };
 
-    // let device_offsets: HashMap<[u8; 6], nalgebra::Isometry3<f32>> = get_app_root(AppDataType::UserConfig, &APP_INFO)
-    //     .ok()
-    //     .and_then(|config_dir| {
-    //         let device_offsets_path = config_dir.join("device_offsets.json");
-    //         if device_offsets_path.exists() {
-    //             File::open(device_offsets_path)
-    //                 .ok()
-    //                 .and_then(|file| match serde_json::from_reader(file) {
-    //                     Ok(offsets) => Some(offsets),
-    //                     Err(e) => {
-    //                         error!("Failed to deserialize device offsets: {}", e);
-    //                         None
-    //                     }
-    //                 })
-    //         } else {
-    //             None
-    //         }
-    //     })
-    //     .unwrap_or_default();
-
-    // let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
+    let device_offsets = odyssey_hub_common::config::device_offsets()
+        .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))?;
 
     tokio::select! {
-        _ = device_tasks(sender, screen_calibrations.clone()) => {},
+        _ = device_tasks(sender, screen_calibrations.clone(), device_offsets) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))

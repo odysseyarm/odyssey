@@ -412,7 +412,6 @@ dependencies = [
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=60a7e0d18154927c8c4e2534599fd4b1a5897ef9#60a7e0d18154927c8c4e2534599fd4b1a5897ef9"
 dependencies = [
  "arrayvec 0.7.6",
  "ats_common",
@@ -1293,7 +1292,6 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git?rev=60a7e0d18154927c8c4e2534599fd4b1a5897ef9#60a7e0d18154927c8c4e2534599fd4b1a5897ef9"
 dependencies = [
  "nalgebra 0.32.6",
 ]
@@ -3043,8 +3041,13 @@ dependencies = [
 name = "odyssey_hub_common"
 version = "0.1.0"
 dependencies = [
+ "app_dirs2",
+ "arrayvec 0.7.6",
+ "ats_cv",
  "ats_usb",
  "nalgebra 0.32.6",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -3063,7 +3066,6 @@ version = "0.1.0"
 dependencies = [
  "ahrs",
  "anyhow",
- "app_dirs2",
  "arc-swap",
  "arrayvec 0.7.6",
  "ats_common",
