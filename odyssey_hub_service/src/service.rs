@@ -1,4 +1,4 @@
-use std::{fs::File, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
@@ -44,6 +44,7 @@ struct Server {
             >,
         >,
     >,
+    device_offsets: Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], nalgebra::Isometry3<f32>>>>,
 }
 
 #[tonic::async_trait]
@@ -350,13 +351,23 @@ pub async fn run_service(
 
     let (event_sender, event_receiver) = broadcast::channel(12);
 
-    let screen_calibrations = odyssey_hub_common::config::screen_calibrations()
-        .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))?;
+    let screen_calibrations = tokio::task::spawn_blocking(|| {
+        odyssey_hub_common::config::screen_calibrations()
+        .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))
+    }).await??;
     let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
+
+    let device_offsets = tokio::task::spawn_blocking(|| {
+        odyssey_hub_common::config::device_offsets()
+        .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
+    }).await??;
+    let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
+
     let server = Server {
         device_list: Default::default(),
         event_channel: event_receiver,
         screen_calibrations: screen_calibrations.clone(),
+        device_offsets: device_offsets.clone(),
     };
 
     let dl = server.device_list.clone();
@@ -398,11 +409,8 @@ pub async fn run_service(
         }
     };
 
-    let device_offsets = odyssey_hub_common::config::device_offsets()
-        .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))?;
-
     tokio::select! {
-        _ = device_tasks(sender, screen_calibrations.clone(), device_offsets) => {},
+        _ = device_tasks(sender, screen_calibrations.clone(), device_offsets.clone()) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))

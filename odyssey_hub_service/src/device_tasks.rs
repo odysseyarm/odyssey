@@ -28,6 +28,7 @@ use tracing::field::debug;
 #[derive(Debug, Clone)]
 pub enum DeviceTaskMessage {
     ResetZero,
+    SaveZero,
     Zero(Translation3<f32>, Point2<f32>),
 }
 
@@ -52,12 +53,11 @@ pub async fn device_tasks(
             >,
         >,
     >,
-    device_offsets: HashMap<[u8; 6], Isometry3<f32>>,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 ) -> anyhow::Result<()> {
     tokio::select! {
-        _ = device_udp_manager(message_channel.clone(), screen_calibrations.clone()) => {},
-        _ = device_hid_ping_task(message_channel.clone(), screen_calibrations.clone()) => {},
-        _ = device_cdc_manager(message_channel.clone(), screen_calibrations.clone()) => {},
+        _ = device_udp_manager(message_channel.clone(), screen_calibrations.clone(), device_offsets.clone()) => {},
+        _ = device_cdc_manager(message_channel.clone(), screen_calibrations.clone(), device_offsets.clone()) => {},
     }
     Ok(())
 }
@@ -72,6 +72,7 @@ pub async fn device_udp_manager(
             >,
         >,
     >,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
 ) {
     // internal channel for events from stream tasks
     let (ev_tx, mut ev_rx) = mpsc::channel::<Message>(32);
@@ -139,6 +140,7 @@ pub async fn device_udp_manager(
                                 let dev = Arc::new(Mutex::new(UdpDevice { id, addr, uuid: [0;6] }));
                                 let ev_tx = ev_tx.clone();
                                 let sc = screen_calibrations.clone();
+                                let dev_o = device_offsets.clone();
 
                                 let handle = tokio::spawn({
                                     let dev = dev.clone();
@@ -149,6 +151,7 @@ pub async fn device_udp_manager(
                                             ev_tx.clone(),
                                             outer_tx.clone(),
                                             sc.clone(),
+                                            dev_o.clone(),
                                         )
                                         .await;
 
@@ -192,59 +195,6 @@ pub async fn device_udp_manager(
     }
 }
 
-async fn device_hid_ping_task(
-    message_channel: Sender<Message>,
-    _screen_calibrations: Arc<
-        ArcSwap<
-            ArrayVec<
-                (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
-            >,
-        >,
-    >,
-) -> std::convert::Infallible {
-    let api = hidapi::HidApi::new().unwrap();
-
-    let mut old_list = vec![];
-    loop {
-        let mut new_list = vec![];
-        for device in api.device_list() {
-            if device.vendor_id() == 0x1915 && device.product_id() == 0x48AB {
-                if !old_list.contains(&odyssey_hub_common::device::Device::Hid(
-                    odyssey_hub_common::device::HidDevice {
-                        path: device.path().to_str().unwrap().to_string(),
-                        uuid: [0; 6],
-                    },
-                )) {
-                    // todo
-                    // let _ = message_channel
-                    //     .send(Message::Connect(odyssey_hub_common::device::Device::Hid(
-                    //         odyssey_hub_common::device::HidDevice {
-                    //             path: device.path().to_str().unwrap().to_string(),
-                    //             uuid: [0; 6],
-                    //         },
-                    //     )))
-                    //     .await;
-                }
-                new_list.push(odyssey_hub_common::device::Device::Hid(
-                    odyssey_hub_common::device::HidDevice {
-                        path: device.path().to_str().unwrap().to_string(),
-                        uuid: [0; 6],
-                    },
-                ));
-            }
-        }
-        // dbg!(&new_list);
-        for v in &old_list {
-            if !new_list.contains(v) {
-                let _ = message_channel.send(Message::Disconnect(v.clone())).await;
-            }
-        }
-        old_list = new_list;
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
-}
-
 async fn device_cdc_manager(
     outer_tx: mpsc::Sender<Message>,
     screen_calibrations: Arc<
@@ -255,6 +205,7 @@ async fn device_cdc_manager(
             >,
         >,
     >,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
 ) {
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<Message>(32);
 
@@ -307,6 +258,7 @@ async fn device_cdc_manager(
                         }));
                         let ev_tx = ev_tx.clone();
                         let sc = screen_calibrations.clone();
+                        let dev_o = device_offsets.clone();
                         let pid_is_5210 = pi.pid == 0x5210;
 
                         let handle = tokio::spawn({
@@ -319,6 +271,7 @@ async fn device_cdc_manager(
                                     ev_tx.clone(),
                                     outer_tx,
                                     sc,
+                                    dev_o,
                                 )
                                 .await;
                                 let final_dev = device.lock().await.clone();
@@ -371,9 +324,22 @@ async fn common_tasks(
             >,
         >,
     >,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
     mut rx: tokio::sync::mpsc::Receiver<DeviceTaskMessage>,
 ) {
     println!("starting common_tasks for {device:?}");
+
+    let uuid = match device {
+        Device::Udp(ref device) => device.uuid,
+        Device::Cdc(ref device) => device.uuid,
+        Device::Hid(_) => unimplemented!(),
+    };
+
+    let mut init_fv_zero_offset = device_offsets
+        .lock()
+        .await
+        .get(&uuid)
+        .cloned();
 
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let timeout = Duration::from_secs(2);
@@ -388,7 +354,7 @@ async fn common_tasks(
         1. / config.accel_config.accel_odr as f32,
         0.1,
     )));
-    let fv_zero_offset = ArcSwap::from(Arc::new(None));
+    let fv_zero_offset = ArcSwap::from(Arc::new(init_fv_zero_offset));
 
     type MarkerStream = Pin<Box<dyn Stream<Item = CombinedMarkersReport> + Send>>;
 
@@ -662,6 +628,28 @@ async fn common_tasks(
                     break;
                 };
                 match message {
+                    DeviceTaskMessage::ResetZero => {
+                        fv_zero_offset.store(Arc::new(init_fv_zero_offset));
+                    },
+                    DeviceTaskMessage::SaveZero => {
+                        init_fv_zero_offset = *fv_zero_offset.load().clone();
+                        if let Some(offset) = init_fv_zero_offset {
+                            device_offsets.lock().await.insert(uuid, offset);
+                        } else {
+                            device_offsets.lock().await.remove(&uuid);
+                        }
+                        let device_offsets = device_offsets.lock().await.clone();
+                        tokio::task::spawn_blocking(move || {
+                            match odyssey_hub_common::config::save_device_offsets(&device_offsets) {
+                                Ok(_) => {
+                                    tracing::info!("Saved device offsets");
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to save device offsets: {}", e);
+                                }
+                            }
+                        });
+                    },
                     DeviceTaskMessage::Zero(t, point) => {
                         let quat = {
                             let screen_calibrations = screen_calibrations.load();
@@ -688,9 +676,6 @@ async fn common_tasks(
                             ))).await;
                         }
                     },
-                    DeviceTaskMessage::ResetZero => {
-                        fv_zero_offset.store(Arc::new(None));
-                    },
                 }
             }
         }
@@ -711,6 +696,7 @@ pub async fn device_udp_stream_task(
             >,
         >,
     >,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
 ) -> anyhow::Result<()> {
     let addr = { device.lock().await.addr.clone() };
 
@@ -762,6 +748,7 @@ pub async fn device_udp_stream_task(
         message_channel.clone(),
         config,
         screen_calibrations,
+        device_offsets,
         rx,
     )
     .await;
@@ -782,6 +769,7 @@ pub async fn device_cdc_stream_task(
             >,
         >,
     >,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
 ) -> anyhow::Result<()> {
     let path = device.lock().await.path.clone();
 
@@ -812,7 +800,8 @@ pub async fn device_cdc_stream_task(
             Device::Cdc(device.clone()),
             message_channel.clone(),
             config,
-            screen_calibrations.clone(),
+            screen_calibrations,
+            device_offsets,
             rx,
         ) => {}
         _ = temp_boneless_hardcoded_vendor_stream_tasks(

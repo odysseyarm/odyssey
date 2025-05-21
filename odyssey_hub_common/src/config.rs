@@ -45,3 +45,11 @@ pub fn screen_calibrations() -> Result<arrayvec::ArrayVec<(u8, ScreenCalibration
         })
         .collect())
 }
+
+pub fn save_device_offsets(device_offsets: &HashMap<[u8; 6], nalgebra::Isometry3<f32>>) -> Result<(), Box<dyn std::error::Error>> {
+    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+    let device_offsets_path = config_dir.join("device_offsets.json");
+    let file = File::create(device_offsets_path)?;
+    serde_json::to_writer_pretty(file, device_offsets)?;
+    Ok(())
+}
