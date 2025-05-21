@@ -1,4 +1,4 @@
-use iced::{widget::{column, text}, Element, Task};
+use iced::{widget::{button, column, pick_list, row, text}, Element, Task};
 
 #[cfg(windows)]
 use windows::{
@@ -16,10 +16,33 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 
 #[derive(Default)]
-struct Odyssey {}
+struct Odyssey {
+    selected_display: Option<DisplaySelection>,
+}
 
 #[derive(Debug, Clone)]
-enum Message {}
+enum Message {
+    GoButtonPressed,
+    DisplayOptionSelected(DisplaySelection),
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplaySelection {
+    #[default]
+    Display1,
+    Display2,
+    Display3,
+}
+
+impl std::fmt::Display for DisplaySelection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisplaySelection::Display1 => write!(f, "Option 1"),
+            DisplaySelection::Display2 => write!(f, "Option 2"),
+            DisplaySelection::Display3 => write!(f, "Option 3"),
+        }
+    }
+}
 
 fn main() -> iced::Result {
     start_service("OdysseyService").unwrap();
@@ -30,12 +53,34 @@ fn main() -> iced::Result {
         .run_with(|| (Odyssey::default(), Task::none()))
 }
 
-fn update(_state: &mut Odyssey, _message: Message) -> Task<Message> {
+fn update(state: &mut Odyssey, message: Message) -> Task<Message> {
+    match message {
+        Message::DisplayOptionSelected(display) => {
+            state.selected_display = Some(display);
+        },
+        Message::GoButtonPressed => {
+            if let Some(display) = state.selected_display {
+                println!("Selected display: {:?}", display);
+            } else {
+                println!("No display selected.");
+            }
+        },
+    }
     Task::none()
 }
 
-fn view(_state: &Odyssey) -> Element<Message> {
-    column![text("Welcome!")].spacing(20).padding(20).into()
+fn view(state: &Odyssey) -> Element<Message> {
+    column![
+        text("Welcome!"),
+        row![
+            pick_list(
+                vec![DisplaySelection::Display1, DisplaySelection::Display2, DisplaySelection::Display3],
+                state.selected_display,
+                Message::DisplayOptionSelected,
+            ).placeholder("Select an option"),
+            button("Go").on_press_maybe(state.selected_display.map(|_| Message::GoButtonPressed)),
+        ].spacing(20),
+    ].spacing(20).padding(20).into()
 }
 
 #[cfg(windows)]
