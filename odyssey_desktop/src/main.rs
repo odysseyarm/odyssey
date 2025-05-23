@@ -1,12 +1,11 @@
-use iced::{widget::{button, column, pick_list, row, text}, Element, Task};
-
+use dioxus::prelude::*;
 #[cfg(windows)]
 use windows::{
     core::PCWSTR,
     Win32::Foundation::GetLastError,
     Win32::System::Services::{
-        CloseServiceHandle, OpenSCManagerW, OpenServiceW, StartServiceW, SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS,
-        SERVICE_START,
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, StartServiceW,
+        SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS, SERVICE_START,
     },
 };
 
@@ -15,20 +14,8 @@ use std::ffi::OsStr;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
-#[derive(Default)]
-struct Odyssey {
-    selected_display: Option<DisplaySelection>,
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    GoButtonPressed,
-    DisplayOptionSelected(DisplaySelection),
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DisplaySelection {
-    #[default]
     Display1,
     Display2,
     Display3,
@@ -44,49 +31,62 @@ impl std::fmt::Display for DisplaySelection {
     }
 }
 
-fn main() -> iced::Result {
-    start_service("OdysseyService").unwrap();
-
-    iced::application("Odyssey", update, view)
-        .window_size(iced::Size::new(800.0, 600.0))
-        .decorations(true)
-        .run_with(|| (Odyssey::default(), Task::none()))
-}
-
-fn update(state: &mut Odyssey, message: Message) -> Task<Message> {
-    match message {
-        Message::DisplayOptionSelected(display) => {
-            state.selected_display = Some(display);
-        },
-        Message::GoButtonPressed => {
-            if let Some(display) = state.selected_display {
-                println!("Selected display: {:?}", display);
-            } else {
-                println!("No display selected.");
-            }
-        },
+fn main() {
+    #[cfg(windows)]
+    {
+        if let Err(e) = start_service("OdysseyService") {
+            eprintln!("Service start error: {:?}", e);
+        }
     }
-    Task::none()
+
+    launch(app);
 }
 
-fn view(state: &Odyssey) -> Element<Message> {
-    column![
-        text("Welcome!"),
-        row![
-            pick_list(
-                vec![DisplaySelection::Display1, DisplaySelection::Display2, DisplaySelection::Display3],
-                state.selected_display,
-                Message::DisplayOptionSelected,
-            ).placeholder("Select an option"),
-            button("Go").on_press_maybe(state.selected_display.map(|_| Message::GoButtonPressed)),
-        ].spacing(20),
-    ].spacing(20).padding(20).into()
+fn app() -> Element {
+    let mut selected = use_signal(|| None);
+
+    rsx! {
+        div {
+            style: "padding: 2rem; font-size: 1.2rem;",
+            h1 { "Welcome!" }
+
+            div {
+                select {
+                    onchange: move |evt| {
+                        let value = evt.value().clone();
+                        let sel = match value.as_str() {
+                            "Display1" => Some(DisplaySelection::Display1),
+                            "Display2" => Some(DisplaySelection::Display2),
+                            "Display3" => Some(DisplaySelection::Display3),
+                            _ => None,
+                        };
+                        selected.set(sel);
+                    },
+                    option { value: "", disabled: true, selected: selected().is_none(), "Select an option" }
+                    option { value: "Display1", "Option 1" }
+                    option { value: "Display2", "Option 2" }
+                    option { value: "Display3", "Option 3" }
+                }
+
+                button {
+                    style: "margin-left: 1rem;",
+                    onclick: move |_| {
+                        if let Some(sel) = selected() {
+                            println!("Selected display: {:?}", sel);
+                        } else {
+                            println!("No display selected.");
+                        }
+                    },
+                    "Go"
+                }
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
 fn to_pcwstr(s: &str) -> Vec<u16> {
-    let wide: Vec<u16> = OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect();
-    wide
+    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(windows)]
@@ -94,12 +94,7 @@ fn start_service(service_name: &str) -> windows::core::Result<()> {
     use windows::Win32::Foundation::ERROR_SERVICE_ALREADY_RUNNING;
 
     unsafe {
-        let scm = OpenSCManagerW(
-            None,
-            None,
-            SC_MANAGER_CONNECT,
-        )?;
-
+        let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
         let service_name_w = to_pcwstr(service_name);
         let service = OpenServiceW(
             scm,
@@ -108,7 +103,6 @@ fn start_service(service_name: &str) -> windows::core::Result<()> {
         )?;
 
         let result = StartServiceW(service, Some(&[]));
-
         if !result.is_ok() {
             let error = GetLastError();
             if error == ERROR_SERVICE_ALREADY_RUNNING {
