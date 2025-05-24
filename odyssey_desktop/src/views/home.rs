@@ -2,7 +2,15 @@ use dioxus::prelude::*;
 
 #[component]
 pub fn Home() -> Element {
-    let mut selected = use_signal(|| None);
+    let window = dioxus::desktop::use_window();
+    let options = use_memo(move || {
+        window.available_monitors().collect::<Vec<_>>()
+    });
+
+    let mut selected_index = use_signal(|| 0_usize);
+    let selected_value = use_memo(move || {
+        options().get(selected_index()).cloned()
+    });
 
     rsx! {
         div {
@@ -30,26 +38,26 @@ pub fn Home() -> Element {
                         select {
                             class: "bg-gray-50 border border-gray-300 text-gray-900 text-base rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500",
                             onchange: move |evt| {
-                                let value = evt.value().clone();
-                                let sel = match value.as_str() {
-                                    "Display1" => Some(DisplaySelection::Display1),
-                                    "Display2" => Some(DisplaySelection::Display2),
-                                    "Display3" => Some(DisplaySelection::Display3),
-                                    _ => None,
-                                };
-                                selected.set(sel);
+                                if let Ok(index) = evt.value().parse::<usize>() {
+                                    if index < options().len() {
+                                        selected_index.set(index);
+                                    }
+                                }
                             },
-                            option { value: "", disabled: true, selected: selected().is_none(), "Select an option" }
-                            option { value: "Display1", "Option 1" }
-                            option { value: "Display2", "Option 2" }
-                            option { value: "Display3", "Option 3" }
+                            option { value: "", disabled: true, selected: selected_value().is_none(), "Select an option" },
+                            for (i, display) in options().iter().enumerate() {
+                                option {
+                                    value: "{i}",
+                                    "{display.name().unwrap_or(\"Unknown Display\".to_string())}",
+                                }
+                            }
                         }
 
                         button {
                             class: "w-12 shrink-0 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-base p-2.5 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800",
                             r#type: "button",
                             onclick: move |_| {
-                                if let Some(sel) = selected() {
+                                if let Some(sel) = selected_value() {
                                     println!("Selected display: {:?}", sel);
                                 } else {
                                     println!("No display selected.");
@@ -60,23 +68,6 @@ pub fn Home() -> Element {
                     }
                 }
             }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DisplaySelection {
-    Display1,
-    Display2,
-    Display3,
-}
-
-impl std::fmt::Display for DisplaySelection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DisplaySelection::Display1 => write!(f, "Option 1"),
-            DisplaySelection::Display2 => write!(f, "Option 2"),
-            DisplaySelection::Display3 => write!(f, "Option 3"),
         }
     }
 }
