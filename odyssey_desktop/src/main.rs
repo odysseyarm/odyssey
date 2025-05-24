@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use dioxus_router::prelude::*;
+
 #[cfg(windows)]
 use windows::{
     core::PCWSTR,
@@ -14,22 +16,11 @@ use std::ffi::OsStr;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DisplaySelection {
-    Display1,
-    Display2,
-    Display3,
-}
+use components::Navbar;
+use views::Home;
 
-impl std::fmt::Display for DisplaySelection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DisplaySelection::Display1 => write!(f, "Option 1"),
-            DisplaySelection::Display2 => write!(f, "Option 2"),
-            DisplaySelection::Display3 => write!(f, "Option 3"),
-        }
-    }
-}
+mod components;
+mod views;
 
 fn main() {
     #[cfg(windows)]
@@ -42,44 +33,23 @@ fn main() {
     launch(app);
 }
 
+#[derive(Debug, Clone, Routable, PartialEq)]
+#[rustfmt::skip]
+enum Route {
+    #[layout(Navbar)]
+    #[route("/")]
+    Home {},
+}
+
+const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+
+#[component]
 fn app() -> Element {
-    let mut selected = use_signal(|| None);
-
     rsx! {
+        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+
         div {
-            style: "padding: 2rem; font-size: 1.2rem;",
-            h1 { "Welcome!" }
-
-            div {
-                select {
-                    onchange: move |evt| {
-                        let value = evt.value().clone();
-                        let sel = match value.as_str() {
-                            "Display1" => Some(DisplaySelection::Display1),
-                            "Display2" => Some(DisplaySelection::Display2),
-                            "Display3" => Some(DisplaySelection::Display3),
-                            _ => None,
-                        };
-                        selected.set(sel);
-                    },
-                    option { value: "", disabled: true, selected: selected().is_none(), "Select an option" }
-                    option { value: "Display1", "Option 1" }
-                    option { value: "Display2", "Option 2" }
-                    option { value: "Display3", "Option 3" }
-                }
-
-                button {
-                    style: "margin-left: 1rem;",
-                    onclick: move |_| {
-                        if let Some(sel) = selected() {
-                            println!("Selected display: {:?}", sel);
-                        } else {
-                            println!("No display selected.");
-                        }
-                    },
-                    "Go"
-                }
-            }
+            Router::<Route> {}
         }
     }
 }

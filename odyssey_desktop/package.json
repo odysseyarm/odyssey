@@ -1,0 +1,11 @@
+{
+  "name": "dioxus-tailwindcss",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/odysseyarm/odyssey-desktop",
+  "author": "Abraham Hamidi <abraham.hamidi01@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "tailwindcss": "^4.1.7"
+  }
+}
