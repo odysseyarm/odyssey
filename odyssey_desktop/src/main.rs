@@ -1,4 +1,4 @@
-use dioxus::prelude::*;
+use dioxus::{desktop::{Config, WindowBuilder}, prelude::*};
 use dioxus_router::prelude::*;
 
 #[cfg(windows)]
@@ -30,7 +30,15 @@ fn main() {
         }
     }
 
-    launch(app);
+    dioxus::LaunchBuilder::new()
+    .with_cfg(
+        Config::default().with_menu(None).with_window(
+            WindowBuilder::new()
+                .with_maximized(true)
+                .with_title("Catchy title")
+            )
+        )
+    .launch(app);
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
