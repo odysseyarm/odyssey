@@ -7,9 +7,8 @@ pub fn Navbar() -> Element {
     rsx! {
         div {
             class: "flex",
-            // Sidebar
             aside {
-                class: "fixed top-0 left-0 z-40 w-32 h-screen transition-transform sm:translate-x-0 bg-gray-50 dark:bg-gray-900",
+                class: "fixed top-0 left-0 z-40 w-32 h-screen transition-transform sm:translate-x-0 bg-gray-100 dark:bg-gray-900",
                 nav {
                     class: "h-full px-3 py-4 overflow-y-auto",
                     ul {
