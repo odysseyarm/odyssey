@@ -1,4 +1,7 @@
-use dioxus::{desktop::{Config, WindowBuilder}, prelude::*};
+use dioxus::{
+    desktop::{Config, WindowBuilder},
+    prelude::*,
+};
 use dioxus_router::prelude::*;
 
 #[cfg(windows)]
@@ -6,8 +9,8 @@ use windows::{
     core::PCWSTR,
     Win32::Foundation::GetLastError,
     Win32::System::Services::{
-        CloseServiceHandle, OpenSCManagerW, OpenServiceW, StartServiceW,
-        SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS, SERVICE_START,
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, StartServiceW, SC_MANAGER_CONNECT,
+        SERVICE_QUERY_STATUS, SERVICE_START,
     },
 };
 
@@ -31,14 +34,12 @@ fn main() {
     }
 
     dioxus::LaunchBuilder::new()
-    .with_cfg(
-        Config::default().with_menu(None).with_window(
-            WindowBuilder::new()
-                .with_maximized(true)
-                .with_title("Catchy title")
-            )
+        .with_cfg(
+            Config::default()
+                .with_menu(None)
+                .with_window(WindowBuilder::new().with_title("Catchy title")),
         )
-    .launch(app);
+        .launch(app);
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -64,7 +65,10 @@ fn app() -> Element {
 
 #[cfg(windows)]
 fn to_pcwstr(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(windows)]

@@ -1,16 +1,15 @@
-use dioxus::prelude::*;
+use dioxus::{
+    desktop::{tao::window::Fullscreen, WindowBuilder},
+    prelude::*,
+};
 
 #[component]
 pub fn Home() -> Element {
     let window = dioxus::desktop::use_window();
-    let options = use_memo(move || {
-        window.available_monitors().collect::<Vec<_>>()
-    });
+    let options = use_memo(move || window.available_monitors().collect::<Vec<_>>());
 
     let mut selected_index = use_signal(|| 0_usize);
-    let selected_value = use_memo(move || {
-        options().get(selected_index()).cloned()
-    });
+    let selected_value = use_memo(move || options().get(selected_index()).cloned());
 
     rsx! {
         div {
@@ -57,10 +56,13 @@ pub fn Home() -> Element {
                             class: "w-12 shrink-0 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-base p-2.5 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800",
                             r#type: "button",
                             onclick: move |_| {
-                                if let Some(sel) = selected_value() {
-                                    println!("Selected display: {:?}", sel);
-                                } else {
-                                    println!("No display selected.");
+                                // why is async necessary?
+                                async move {
+                                    if let Some(sel) = selected_value() {
+                                        let dom = VirtualDom::new(crate::views::Zero);
+                                        let config = dioxus::desktop::Config::default().with_menu(None).with_window(WindowBuilder::new().with_fullscreen(Some(Fullscreen::Borderless(Some(sel)))));
+                                        dioxus::desktop::window().new_window(dom, config);
+                                    }
                                 }
                             },
                             "Go"
