@@ -13,7 +13,7 @@ serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 tracing-subscriber = "0.3.19"
-dioxus = { version = "0.6.3", features = ["desktop"] }
+dioxus = { version = "0.6.3", features = ["desktop", "signals"] }
 dioxus-router = "0.6.3"
 js-sys = "0.3.77"
 dioxus-sdk = { version = "0.7.0-alpha.1", features = ["storage", "window"] }

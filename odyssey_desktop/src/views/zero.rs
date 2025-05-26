@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use crate::components::crosshair_manager::CrosshairManager;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
@@ -33,6 +34,7 @@ pub fn Zero() -> Element {
 
             div {
                 class: "flex-1 flex items-center justify-center max-h-full max-w-full",
+                CrosshairManager {},
                 img {
                     class: "w-96",
                     src: asset!("/assets/images/target.avif"),
