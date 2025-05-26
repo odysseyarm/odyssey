@@ -5,23 +5,23 @@ use ats_cv::foveated::FoveatedAimpointState;
 use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
 use ats_usb::device::UsbDevice;
 use ats_usb::packets::vm::{CombinedMarkersReport, PocMarkersReport};
-use socket2::{Domain, Protocol, Socket, Type};
-use sysinfo::{Networks, System};
-use tokio::sync::mpsc;
 use core::panic;
 use nalgebra::{Isometry3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_hub_common::device::{CdcDevice, Device, UdpDevice};
 use opencv_ros_camera::RosOpenCvIntrinsics;
+use serialport::SerialPortType;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::{Networks, System};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 use tokio::sync::{mpsc::Sender, Mutex};
-use serialport::SerialPortType;
-use tokio_stream::{Stream, StreamExt};
-use std::pin::Pin;
 use tokio::time::sleep;
+use tokio_stream::{Stream, StreamExt};
 #[allow(unused_imports)]
 use tracing::field::debug;
 
@@ -72,14 +72,27 @@ pub async fn device_udp_manager(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 ) {
+    fn broadcast_address(ip: std::net::IpAddr, prefix: u8) -> Option<std::net::Ipv4Addr> {
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                // Calculate the mask for IPv4 by shifting left
+                let mask = !((1 << (32 - prefix)) - 1);
+                let network = u32::from(ipv4) & mask;
+                let broadcast = network | !mask;
+                Some(Ipv4Addr::from(broadcast))
+            }
+            std::net::IpAddr::V6(_ipv6) => None,
+        }
+    }
+
     // internal channel for events from stream tasks
     let (ev_tx, mut ev_rx) = mpsc::channel::<Message>(32);
 
-    // Map from port-string → (shared device, its task handle)
-    let mut handles: HashMap<String, (Arc<Mutex<UdpDevice>>, tokio::task::JoinHandle<()>)> =
-        HashMap::new();
+    // Map from port-string → task handle
+    let mut handles: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut devices: HashMap<String, UdpDevice> = HashMap::new();
     let mut seen: HashSet<String> = HashSet::new();
 
     // prepare broadcast socket once
@@ -90,10 +103,12 @@ pub async fn device_udp_manager(
         .iter()
         .filter_map(|(_, data)| {
             data.ip_networks().iter().find_map(|ipn| {
-                if let std::net::IpAddr::V4(a) = ipn.addr {
-                    let mask = !((1 << (32 - ipn.prefix)) - 1);
-                    let net = u32::from(a) & mask;
-                    Some(Ipv4Addr::from(net | !mask))
+                if let Some(broadcast) = broadcast_address(ipn.addr, ipn.prefix) {
+                    if broadcast == Ipv4Addr::new(127, 255, 255, 255) {
+                        Some(Ipv4Addr::new(127, 31, 33, 7))
+                    } else {
+                        Some(broadcast)
+                    }
                 } else {
                     None
                 }
@@ -102,16 +117,12 @@ pub async fn device_udp_manager(
         .collect();
 
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+    let addr = std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
     sock.set_nonblocking(true).unwrap();
-    sock.set_broadcast(true).unwrap();
     sock.set_ttl(5).unwrap();
-    sock.bind(
-        &"0.0.0.0:0"
-            .parse::<std::net::SocketAddr>()
-            .unwrap()
-            .into(),
-    )
-    .unwrap();
+    sock.set_broadcast(true).unwrap();
+    sock.bind(&socket2::SockAddr::from(addr)).unwrap();
+
     let socket = UdpSocket::from_std(sock.into()).unwrap();
     let mut buf = [0u8; 1472];
 
@@ -162,7 +173,7 @@ pub async fn device_udp_manager(
                                     }
                                 });
 
-                                handles.insert(key.clone(), (dev.clone(), handle));
+                                handles.insert(key.clone(), handle);
                             }
                         }
                     }
@@ -176,19 +187,22 @@ pub async fn device_udp_manager(
             .cloned()
             .collect();
         for key in gone {
-            if let Some((dev_arc, h)) = handles.remove(&key) {
+            if let Some(h) = handles.remove(&key) {
                 h.abort();
 
-                let final_dev = dev_arc.lock().await.clone();
-                let _ = ev_tx
-                    .send(Message::Disconnect(Device::Udp(final_dev)))
-                    .await;
+                if let Some(dev) = devices.remove(&key) {
+                    let _ = outer_tx.send(Message::Disconnect(Device::Udp(dev))).await;
+                }
                 seen.remove(&key);
             }
         }
 
         while let Ok(msg) = ev_rx.try_recv() {
             let _ = outer_tx.send(msg.clone()).await;
+
+            if let Message::Connect(Device::Udp(dev), _, _) = msg {
+                devices.insert(dev.addr.to_string(), dev);
+            }
         }
 
         sleep(Duration::from_secs(2)).await;
@@ -205,7 +219,7 @@ async fn device_cdc_manager(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 ) {
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<Message>(32);
 
@@ -237,9 +251,7 @@ async fn device_cdc_manager(
                 h.abort();
             }
             if let Some(dev) = devices.remove(&path) {
-                let _ = outer_tx
-                    .send(Message::Disconnect(Device::Cdc(dev)))
-                    .await;
+                let _ = outer_tx.send(Message::Disconnect(Device::Cdc(dev))).await;
             }
             seen_paths.remove(&path);
         }
@@ -335,11 +347,7 @@ async fn common_tasks(
         Device::Hid(_) => unimplemented!(),
     };
 
-    let mut init_fv_zero_offset = device_offsets
-        .lock()
-        .await
-        .get(&uuid)
-        .cloned();
+    let mut init_fv_zero_offset = device_offsets.lock().await.get(&uuid).cloned();
 
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let timeout = Duration::from_secs(2);
@@ -696,7 +704,7 @@ pub async fn device_udp_stream_task(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 ) -> anyhow::Result<()> {
     let addr = { device.lock().await.addr.clone() };
 
@@ -734,13 +742,9 @@ pub async fn device_udp_stream_task(
 
     let device = device.lock().await.clone();
 
-    let _ = slow_message_channel
-        .send(Message::Connect(
-            Device::Udp(device),
-            d.clone(),
-            tx,
-        ))
-        .await;
+    slow_message_channel
+        .send(Message::Connect(Device::Udp(device.clone()), d.clone(), tx))
+        .await?;
 
     common_tasks(
         d,
@@ -769,7 +773,7 @@ pub async fn device_cdc_stream_task(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 ) -> anyhow::Result<()> {
     let path = device.lock().await.path.clone();
 
@@ -779,7 +783,7 @@ pub async fn device_cdc_stream_task(
     };
 
     let config = d.read_config().await?;
-    let props  = d.read_props().await?;
+    let props = d.read_props().await?;
 
     {
         let mut dev = device.lock().await;
@@ -893,9 +897,7 @@ fn create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
         .iter()
         .enumerate()
         .filter(|(_id, pos)| **pos != Point2::new(0, 0))
-        .map(|(id, pos)| {
-            (id as u8, Point2::new(pos.x as f32, pos.y as f32))
-        })
+        .map(|(id, pos)| (id as u8, Point2::new(pos.x as f32, pos.y as f32)))
         .collect()
 }
 

@@ -44,7 +44,8 @@ struct Server {
             >,
         >,
     >,
-    device_offsets: Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], nalgebra::Isometry3<f32>>>>,
+    device_offsets:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], nalgebra::Isometry3<f32>>>>,
 }
 
 #[tonic::async_trait]
@@ -204,8 +205,7 @@ impl Service for Server {
         request: tonic::Request<odyssey_hub_service_interface::ScreenInfoByIdRequest>,
     ) -> Result<tonic::Response<odyssey_hub_service_interface::ScreenInfoResponse>, tonic::Status>
     {
-        let odyssey_hub_service_interface::ScreenInfoByIdRequest { id } =
-            request.into_inner();
+        let odyssey_hub_service_interface::ScreenInfoByIdRequest { id } = request.into_inner();
 
         let screen_calibrations = self.screen_calibrations.load();
 
@@ -221,22 +221,34 @@ impl Service for Server {
                     let bounds = screen_calibration.bounds();
                     Some(odyssey_hub_service_interface::ScreenBounds {
                         tl: Some({
-                            Vector2 { x: bounds[0].x, y: bounds[0].y }
+                            Vector2 {
+                                x: bounds[0].x,
+                                y: bounds[0].y,
+                            }
                         }),
                         tr: Some({
-                            Vector2 { x: bounds[1].x, y: bounds[1].y }
+                            Vector2 {
+                                x: bounds[1].x,
+                                y: bounds[1].y,
+                            }
                         }),
                         bl: Some({
-                            Vector2 { x: bounds[2].x, y: bounds[2].y }
+                            Vector2 {
+                                x: bounds[2].x,
+                                y: bounds[2].y,
+                            }
                         }),
                         br: Some({
-                            Vector2 { x: bounds[3].x, y: bounds[3].y }
+                            Vector2 {
+                                x: bounds[3].x,
+                                y: bounds[3].y,
+                            }
                         }),
                     })
                 } else {
                     None
                 }
-            }
+            },
         };
 
         Ok(Response::new(reply))
@@ -353,14 +365,16 @@ pub async fn run_service(
 
     let screen_calibrations = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::screen_calibrations()
-        .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))
-    }).await??;
+            .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))
+    })
+    .await??;
     let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
 
     let device_offsets = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::device_offsets()
-        .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
-    }).await??;
+            .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
+    })
+    .await??;
     let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
 
     let server = Server {
