@@ -15,8 +15,9 @@ ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 tracing-subscriber = "0.3.19"
 dioxus = { version = "0.6.3", features = ["desktop", "signals"] }
 dioxus-router = "0.6.3"
-js-sys = "0.3.77"
 dioxus-sdk = { version = "0.7.0-alpha.1", features = ["storage", "window"] }
+odyssey_hub_client = { path = "../odyssey_hub_client" }
+odyssey_hub_common = { path = "../odyssey_hub_common" }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.1", features = ["Win32", "Win32_System", "Win32_System_Services"] }

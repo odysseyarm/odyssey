@@ -7,6 +7,16 @@ pub enum Device {
     Cdc(CdcDevice),
 }
 
+impl Device {
+    pub fn uuid(&self) -> [u8; 6] {
+        match self {
+            Device::Udp(d) => d.uuid,
+            Device::Cdc(d) => d.uuid,
+            Device::Hid(d) => d.uuid,
+        }
+    }
+}
+
 impl PartialEq for Device {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

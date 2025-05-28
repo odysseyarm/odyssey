@@ -23,6 +23,7 @@ use components::Navbar;
 use views::Home;
 
 mod components;
+mod hub;
 mod views;
 
 fn main() {
@@ -54,6 +55,9 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 #[component]
 fn app() -> Element {
+    let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
+    use_future(move || hub().run());
+
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
 

@@ -3,8 +3,12 @@ use dioxus::{
     prelude::*,
 };
 
+use crate::hub;
+
 #[component]
 pub fn Home() -> Element {
+    let hub = use_context::<Signal<hub::HubContext>>();
+
     let window = dioxus::desktop::use_window();
     let options = use_memo(move || window.available_monitors().collect::<Vec<_>>());
 
@@ -59,7 +63,7 @@ pub fn Home() -> Element {
                                 // why is async necessary?
                                 async move {
                                     if let Some(sel) = selected_value() {
-                                        let dom = VirtualDom::new(crate::views::Zero);
+                                        let dom = VirtualDom::new_with_props(crate::views::Zero, crate::views::zero::ZeroProps { hub });
                                         let config = dioxus::desktop::Config::default().with_menu(None).with_window(WindowBuilder::new().with_fullscreen(Some(Fullscreen::Borderless(Some(sel)))));
                                         dioxus::desktop::window().new_window(dom, config);
                                     }
