@@ -23,8 +23,12 @@ const CROSSHAIRS: [Asset; 6] = [
 #[component]
 pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
     // 1) players + seen
+    // debug
+    // let mut players = use_signal(|| vec![Player { id: [0; 6], pos: (0.0, 0.0) }]);
     let mut players = use_signal(Vec::new);
     let mut seen = use_signal(HashSet::new);
+
+    let mut root_div = use_signal(|| None);
 
     // 2) signal to hold the container's Rect
     let container_rect = use_signal(Rect::zero);
@@ -80,17 +84,37 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
 
     rsx! {
         div {
-            class: "absolute inset-0 overflow-hidden",
+            class: "w-full h-full",
             onmounted: move |cx| async move {
-                // todo cheap trick
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 let cx_data = cx.data();
                 let client_rect = cx_data.as_ref().get_client_rect();
                 if let Ok(rect) = client_rect.await {
                     rect_signal.set(rect);
                 }
+                root_div.set(Some(cx_data));
             },
-            {children}
+            onresize: move |_| async move {
+                if let Some(root_div) = root_div() {
+                    let client_rect = root_div.as_ref().get_client_rect();
+                    if let Ok(rect) = client_rect.await {
+                        rect_signal.set(rect);
+                    }
+                }
+            },
+            div {
+                class: "absolute inset-0 overflow-hidden",
+                // debug
+                // onmousemove: move |evt: MouseEvent| {
+                //     let coords = evt.data;
+                //     let mut list = players.write();
+                //     if let Some(p) = list.get_mut(0) {
+                //         let ec = coords.element_coordinates();
+                //         p.pos = (ec.x, ec.y);
+                //     }
+                // },
+                // end debug
+                {children}
+            }
         }
     }
 }
