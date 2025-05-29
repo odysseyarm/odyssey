@@ -1,6 +1,6 @@
+use dioxus::prelude::*;
 use crate::components::crosshair_manager::CrosshairManager;
 use crate::hub;
-use dioxus::prelude::*;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
