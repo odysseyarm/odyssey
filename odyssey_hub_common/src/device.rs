@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub enum Device {
     Udp(UdpDevice),
     Hid(HidDevice),
@@ -28,7 +28,7 @@ impl PartialEq for Device {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq)]
+#[derive(Clone, Copy, Debug, Eq, Hash)]
 pub struct UdpDevice {
     pub id: u8,
     pub addr: SocketAddr,
@@ -43,13 +43,13 @@ impl PartialEq for UdpDevice {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HidDevice {
     pub path: String,
     pub uuid: [u8; 6],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CdcDevice {
     pub path: String,
     pub uuid: [u8; 6],

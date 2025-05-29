@@ -1,13 +1,10 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use dioxus::{html::geometry::euclid::Rect, prelude::*};
 use odyssey_hub_common::events as oe;
 
-pub type PlayerId = [u8; 6];
-
 #[derive(Clone)]
 pub struct Player {
-    pub id: PlayerId,
     pub pos: (f64, f64),
 }
 
@@ -25,8 +22,7 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
     // 1) players + seen
     // debug
     // let mut players = use_signal(|| vec![Player { id: [0; 6], pos: (0.0, 0.0) }]);
-    let mut players = use_signal(Vec::new);
-    let mut seen = use_signal(HashSet::new);
+    let mut players = use_signal(HashMap::<odyssey_hub_common::device::Device, Player>::new);
 
     let mut root_div = use_signal(|| None);
 
@@ -41,44 +37,57 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
         let rect = container_rect.read();
         let width = rect.width() as f64;
         let height = rect.height() as f64;
-        dioxus::logger::tracing::info!("rect: {:?}", rect);
         let origin_x = rect.origin.x as f64;
         let origin_y = rect.origin.y as f64;
 
-        for event in hub().events.read().iter() {
-            if let oe::Event::DeviceEvent(oe::DeviceEvent {
+        match (hub().latest_event)() {
+            oe::Event::DeviceEvent(oe::DeviceEvent {
                 device,
                 kind: oe::DeviceEventKind::TrackingEvent(oe::TrackingEvent { aimpoint, .. }),
-            }) = event
+            }) =>
             {
                 let x = origin_x + (aimpoint.x as f64) * width;
                 let y = origin_y + (aimpoint.y as f64) * height;
 
-                let id = device.uuid();
-                if seen.write().insert(id) {
-                    players.push(Player { id, pos: (x, y) });
-                } else if let Some(mut p) = players.iter_mut().find(|p| p.id == id) {
-                    p.pos = (x, y);
+                if players.peek().contains_key(&device) {
+                    players.write().get_mut(&device).unwrap().pos = (x, y);
+                } else {
+                    players.write().insert(
+                        device,
+                        Player {
+                            pos: (x, y),
+                        }
+                    );
                 }
             }
+            oe::Event::DeviceEvent(oe::DeviceEvent {
+                device,
+                kind: oe::DeviceEventKind::DisconnectEvent
+            }) => {
+                players.write().remove(&device);
+            }
+            _ => {}
         }
     });
 
-    let children = players.iter().enumerate().map(|(i, player)| {
-        let key = player
-            .id
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
-        rsx! {
-            img {
-                key: "{key}",
-                class: "absolute pointer-events-none translate-x-[-50%] translate-y-[-50%]",
-                transform_origin: "center",
-                transform: format!("translate({:.0}px, {:.0}px)", player.pos.0, player.pos.1),
-                src: CROSSHAIRS[i.min(CROSSHAIRS.len() - 1)],
-                alt: "crosshair"
-            }
+    let hub_peek = hub.peek();
+    let devices_peek = hub_peek.devices.peek();
+    let children = devices_peek.iter().filter_map(|(key, device)| {
+        let players = players();
+        let player = players.get(&device);
+        if let Some(player) = player {
+            Some(rsx! {
+                img {
+                    key: "{key}",
+                    class: "absolute pointer-events-none translate-x-[-50%] translate-y-[-50%]",
+                    transform_origin: "center",
+                    transform: format!("translate({:.0}px, {:.0}px)", player.pos.0, player.pos.1),
+                    src: CROSSHAIRS[key.min(CROSSHAIRS.len() - 1)],
+                    alt: "crosshair"
+                }
+            })
+        } else {
+            None
         }
     });
 

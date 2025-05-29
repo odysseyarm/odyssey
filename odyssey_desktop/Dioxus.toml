@@ -1,0 +1,8 @@
+[application]
+name = "odyssey_desktop"
+asset_dir = "assets"
+
+[web.resource]
+style = ["/assets/tailwind.css"]
+
+[web.resource.dev]

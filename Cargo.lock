@@ -3779,6 +3779,7 @@ dependencies = [
  "odyssey_hub_common",
  "serial2",
  "serialport",
+ "slab",
  "tokio",
  "tracing-subscriber",
  "windows 0.61.1",
