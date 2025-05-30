@@ -35,7 +35,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
 
             div {
                 class: "flex-1 flex items-center justify-center h-full w-full bg-[url(/assets/images/target.avif)] bg-center bg-no-repeat",
-                style: "background-size: clamp(0in, 11in, 100%) auto;",
+                style: "background-size: clamp(0in, 11in, 40%) auto;",
                 CrosshairManager { hub },
             }
         }

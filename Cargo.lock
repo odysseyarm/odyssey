@@ -324,6 +324,7 @@ dependencies = [
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=60a7e0d18154927c8c4e2534599fd4b1a5897ef9#60a7e0d18154927c8c4e2534599fd4b1a5897ef9"
 dependencies = [
  "arrayvec 0.7.6",
  "ats_common",
@@ -1808,6 +1809,7 @@ dependencies = [
 [[package]]
 name = "eskf"
 version = "0.3.0"
+source = "git+https://github.com/odysseyarm/ats_cv.git?rev=60a7e0d18154927c8c4e2534599fd4b1a5897ef9#60a7e0d18154927c8c4e2534599fd4b1a5897ef9"
 dependencies = [
  "nalgebra 0.32.6",
 ]
