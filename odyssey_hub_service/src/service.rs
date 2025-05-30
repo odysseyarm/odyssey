@@ -200,6 +200,35 @@ impl Service for Server {
         Ok(Response::new(odyssey_hub_service_interface::ZeroReply {}))
     }
 
+    async fn clear_zero(
+        &self,
+        request: tonic::Request<odyssey_hub_service_interface::Device>,
+    ) -> Result<tonic::Response<odyssey_hub_service_interface::ClearZeroReply>, tonic::Status> {
+        let device = request.into_inner().into();
+
+        let s;
+
+        if let Some(_device) = self.device_list.lock().iter().find(|d| d.0 == device) {
+            s = _device.2.clone();
+        } else {
+            return Err(tonic::Status::not_found("Device not found in device list"));
+        }
+
+        match s.send(device_tasks::DeviceTaskMessage::ClearZero).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(tonic::Status::aborted(format!(
+                    "Failed to send clear zero device task message: {}",
+                    e
+                )));
+            }
+        }
+
+        Ok(Response::new(
+            odyssey_hub_service_interface::ClearZeroReply {},
+        ))
+    }
+
     async fn get_screen_info_by_id(
         &self,
         request: tonic::Request<odyssey_hub_service_interface::ScreenInfoByIdRequest>,

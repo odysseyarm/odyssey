@@ -30,6 +30,7 @@ pub enum DeviceTaskMessage {
     ResetZero,
     SaveZero,
     Zero(Translation3<f32>, Point2<f32>),
+    ClearZero,
 }
 
 #[derive(Debug, Clone)]
@@ -683,6 +684,9 @@ async fn common_tasks(
                                 }
                             ))).await;
                         }
+                    },
+                    DeviceTaskMessage::ClearZero => {
+                        fv_zero_offset.store(Arc::new(None));
                     },
                 }
             }

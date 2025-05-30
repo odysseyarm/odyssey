@@ -6,6 +6,7 @@ service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
   rpc Poll (PollRequest) returns (stream PollReply) {}
   rpc WriteVendor (WriteVendorRequest) returns (WriteVendorReply) {}
+  rpc ClearZero (Device) returns (ClearZeroReply) {}
   rpc ResetZero (Device) returns (ResetZeroReply) {}
   rpc Zero (ZeroRequest) returns (ZeroReply) {}
   rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoResponse) {}
@@ -138,6 +139,8 @@ message ZeroRequest {
 }
 
 message WriteVendorReply {}
+
+message ClearZeroReply {}
 
 message ResetZeroReply {}
 
