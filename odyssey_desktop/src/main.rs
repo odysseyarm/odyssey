@@ -1,23 +1,10 @@
 use dioxus::{
-    desktop::{Config, WindowBuilder},
-    prelude::*,
+    desktop::{Config, WindowBuilder}, logger::tracing, prelude::*
 };
 use dioxus_router::prelude::*;
+use odyssey_hub_server::Message;
 
-#[cfg(windows)]
-use windows::{
-    core::PCWSTR,
-    Win32::Foundation::GetLastError,
-    Win32::System::Services::{
-        CloseServiceHandle, OpenSCManagerW, OpenServiceW, StartServiceW, SC_MANAGER_CONNECT,
-        SERVICE_QUERY_STATUS, SERVICE_START,
-    },
-};
-
-#[cfg(windows)]
-use std::ffi::OsStr;
-#[cfg(windows)]
-use std::os::windows::ffi::OsStrExt;
+use tokio_util::sync::CancellationToken;
 
 use components::Navbar;
 use views::Home;
@@ -27,13 +14,6 @@ mod hub;
 mod views;
 
 fn main() {
-    #[cfg(windows)]
-    {
-        if let Err(e) = start_service("OdysseyService") {
-            eprintln!("Service start error: {:?}", e);
-        }
-    }
-
     dioxus::LaunchBuilder::new()
         .with_cfg(
             Config::default()
@@ -55,6 +35,18 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 #[component]
 fn app() -> Element {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let cancel_token = CancellationToken::new();
+
+    tokio::spawn(
+        async {
+            tokio::select! {
+                _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
+                _ = tokio::spawn(handle_server_status(receiver)) => {},
+            }
+        }
+    );
+
     let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
     use_future(move || hub().run());
 
@@ -67,42 +59,24 @@ fn app() -> Element {
     }
 }
 
-#[cfg(windows)]
-fn to_pcwstr(s: &str) -> Vec<u16> {
-    OsStr::new(s)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
-
-#[cfg(windows)]
-fn start_service(service_name: &str) -> windows::core::Result<()> {
-    use windows::Win32::Foundation::ERROR_SERVICE_ALREADY_RUNNING;
-
-    unsafe {
-        let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-        let service_name_w = to_pcwstr(service_name);
-        let service = OpenServiceW(
-            scm,
-            PCWSTR(service_name_w.as_ptr()),
-            SERVICE_START | SERVICE_QUERY_STATUS,
-        )?;
-
-        let result = StartServiceW(service, Some(&[]));
-        if !result.is_ok() {
-            let error = GetLastError();
-            if error == ERROR_SERVICE_ALREADY_RUNNING {
-                println!("Service is already running.");
-            } else {
-                println!("StartService failed with error: {}", error.0);
+async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>) {
+    loop {
+        match receiver.recv().await {
+            Some(Message::ServerInit(Ok(()))) => {
+                tracing::info!("Server started");
             }
-        } else {
-            println!("Service started successfully.");
+            Some(Message::ServerInit(Err(_))) => {
+                tracing::error!("Server start error");
+                break;
+            }
+            Some(Message::Stop) => {
+                tracing::info!("Server stopped");
+                break;
+            }
+            None => {
+                tracing::info!("Server channel closed");
+                break;
+            }
         }
-
-        let _ = CloseServiceHandle(service);
-        let _ = CloseServiceHandle(scm);
     }
-
-    Ok(())
 }

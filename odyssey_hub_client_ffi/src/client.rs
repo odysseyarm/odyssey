@@ -245,13 +245,13 @@ pub extern "C" fn odyssey_hub_client_zero(
     let device = unsafe { &*device }.clone().into();
 
     let translation = unsafe { &*translation }.clone();
-    let translation = odyssey_hub_service_interface::Vector3 {
+    let translation = odyssey_hub_server_interface::Vector3 {
         x: translation.x,
         y: translation.y,
         z: translation.z,
     };
     let target = unsafe { &*target }.clone();
-    let target = odyssey_hub_service_interface::Vector2 {
+    let target = odyssey_hub_server_interface::Vector2 {
         x: target.x,
         y: target.y,
     };

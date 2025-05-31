@@ -1,7 +1,7 @@
 use interprocess::local_socket::{
     tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName,
 };
-use odyssey_hub_service_interface::{service_client::ServiceClient, DeviceListRequest};
+use odyssey_hub_server_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, Uri};
 use tower::service_fn;
@@ -29,7 +29,7 @@ impl Client {
                 let name = name.clone();
                 async move {
                     let r = LocalSocketStream::connect(name).await?;
-                    let r = odyssey_hub_service::service::LocalSocketStream::new(r);
+                    let r = odyssey_hub_server::LocalSocketStream::new(r);
                     std::io::Result::Ok(r)
                 }
             }))
@@ -60,9 +60,9 @@ impl Client {
 
     pub async fn poll(
         &mut self,
-    ) -> anyhow::Result<tonic::Streaming<odyssey_hub_service_interface::PollReply>> {
+    ) -> anyhow::Result<tonic::Streaming<odyssey_hub_server_interface::PollReply>> {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_service_interface::PollRequest {});
+            let request = tonic::Request::new(odyssey_hub_server_interface::PollRequest {});
             Ok(service_client.poll(request).await?.into_inner())
         } else {
             Err(anyhow::anyhow!("No service client")).into()
@@ -74,9 +74,9 @@ impl Client {
         device: odyssey_hub_common::device::Device,
         tag: u8,
         data: Vec<u8>,
-    ) -> anyhow::Result<odyssey_hub_service_interface::WriteVendorReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::WriteVendorReply> {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_service_interface::WriteVendorRequest {
+            let request = tonic::Request::new(odyssey_hub_server_interface::WriteVendorRequest {
                 device: Some(device.into()),
                 tag: tag.into(),
                 data,
@@ -90,7 +90,7 @@ impl Client {
     pub async fn reset_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_service_interface::ResetZeroReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::ResetZeroReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             Ok(service_client.reset_zero(request).await?.into_inner())
@@ -102,11 +102,11 @@ impl Client {
     pub async fn zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-        translation: odyssey_hub_service_interface::Vector3,
-        target: odyssey_hub_service_interface::Vector2,
-    ) -> anyhow::Result<odyssey_hub_service_interface::ZeroReply> {
+        translation: odyssey_hub_server_interface::Vector3,
+        target: odyssey_hub_server_interface::Vector2,
+    ) -> anyhow::Result<odyssey_hub_server_interface::ZeroReply> {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_service_interface::ZeroRequest {
+            let request = tonic::Request::new(odyssey_hub_server_interface::ZeroRequest {
                 device: Some(device.into()),
                 translation: Some(translation.into()),
                 target: Some(target.into()),
@@ -120,7 +120,7 @@ impl Client {
     pub async fn clear_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_service_interface::ClearZeroReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::ClearZeroReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             Ok(service_client.clear_zero(request).await?.into_inner())
@@ -134,7 +134,7 @@ impl Client {
         id: u8,
     ) -> anyhow::Result<odyssey_hub_common::ScreenInfo> {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_service_interface::ScreenInfoByIdRequest {
+            let request = tonic::Request::new(odyssey_hub_server_interface::ScreenInfoByIdRequest {
                 id: id.into(),
             });
             Ok(service_client.get_screen_info_by_id(request).await?.into_inner().into())

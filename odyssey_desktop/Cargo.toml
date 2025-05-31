@@ -18,7 +18,6 @@ dioxus-router = "0.6.3"
 dioxus-sdk = { version = "0.7.0-alpha.1", features = ["storage", "window"] }
 odyssey_hub_client = { path = "../odyssey_hub_client" }
 odyssey_hub_common = { path = "../odyssey_hub_common" }
+odyssey_hub_server = { version = "0.1.0", path = "../odyssey_hub_server" }
 slab = "0.4.9"
-
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.61.1", features = ["Win32", "Win32_System", "Win32_System_Services"] }
+tokio-util = "0.7.15"

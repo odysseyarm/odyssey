@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1.0.81"
 odyssey_hub_common = { path = "../odyssey_hub_common" }
 odyssey_hub_client = { path = "../odyssey_hub_client" }
-odyssey_hub_service_interface = { path = "../odyssey_hub_service_interface" }
+odyssey_hub_server_interface = { path = "../odyssey_hub_server_interface" }
 tokio = "1.37.0"
 tokio-util = "0.7.10"
 tonic = "0.11.0"

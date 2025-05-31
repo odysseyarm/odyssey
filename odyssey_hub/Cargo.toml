@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.81"
-odyssey_hub_service = { version = "0.1.0", path = "../odyssey_hub_service" }
-odyssey_hub_service_interface = { version = "0.1.0", path = "../odyssey_hub_service_interface" }
+odyssey_hub_server = { version = "0.1.0", path = "../odyssey_hub_server" }
+odyssey_hub_server_interface = { version = "0.1.0", path = "../odyssey_hub_server_interface" }
 serde = { version = "1.0.197", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 tokio-util = "0.7.10"

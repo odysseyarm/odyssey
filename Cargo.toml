@@ -5,10 +5,9 @@ members = [
     "odyssey_desktop",
     "odyssey_hub_client",
     "odyssey_hub_client_ffi",
-    "odyssey_hub_service",
-    "odyssey_hub_service_interface",
+    "odyssey_hub_server",
+    "odyssey_hub_server_interface",
     "odyssey_hub",
-    "odyssey_hub_install_service",
     "odyssey_hub_common",
 ]
 

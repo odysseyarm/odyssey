@@ -1,3 +1,5 @@
+mod device_tasks;
+
 use std::{pin::Pin, sync::Arc};
 
 use arc_swap::ArcSwap;
@@ -10,7 +12,7 @@ use interprocess::local_socket::{
 use interprocess::os::windows::{
     local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor,
 };
-use odyssey_hub_service_interface::{
+use odyssey_hub_server_interface::{
     service_server::{Service, ServiceServer},
     DeviceListReply, DeviceListRequest, PollReply, PollRequest, Vector2,
 };
@@ -22,7 +24,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::server::Connected, Response};
 
-use crate::device_tasks::{self, device_tasks};
+use crate::device_tasks::device_tasks;
 
 #[derive(Debug)]
 struct Server {
@@ -100,10 +102,10 @@ impl Service for Server {
 
     async fn write_vendor(
         &self,
-        request: tonic::Request<odyssey_hub_service_interface::WriteVendorRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_service_interface::WriteVendorReply>, tonic::Status>
+        request: tonic::Request<odyssey_hub_server_interface::WriteVendorRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::WriteVendorReply>, tonic::Status>
     {
-        let odyssey_hub_service_interface::WriteVendorRequest { device, tag, data } =
+        let odyssey_hub_server_interface::WriteVendorRequest { device, tag, data } =
             request.into_inner();
 
         let device = device.unwrap().into();
@@ -127,14 +129,14 @@ impl Service for Server {
         }
 
         Ok(Response::new(
-            odyssey_hub_service_interface::WriteVendorReply {},
+            odyssey_hub_server_interface::WriteVendorReply {},
         ))
     }
 
     async fn reset_zero(
         &self,
-        request: tonic::Request<odyssey_hub_service_interface::Device>,
-    ) -> Result<tonic::Response<odyssey_hub_service_interface::ResetZeroReply>, tonic::Status> {
+        request: tonic::Request<odyssey_hub_server_interface::Device>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::ResetZeroReply>, tonic::Status> {
         let device = request.into_inner().into();
 
         let s;
@@ -156,15 +158,15 @@ impl Service for Server {
         }
 
         Ok(Response::new(
-            odyssey_hub_service_interface::ResetZeroReply {},
+            odyssey_hub_server_interface::ResetZeroReply {},
         ))
     }
 
     async fn zero(
         &self,
-        request: tonic::Request<odyssey_hub_service_interface::ZeroRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_service_interface::ZeroReply>, tonic::Status> {
-        let odyssey_hub_service_interface::ZeroRequest {
+        request: tonic::Request<odyssey_hub_server_interface::ZeroRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::ZeroReply>, tonic::Status> {
+        let odyssey_hub_server_interface::ZeroRequest {
             device,
             translation,
             target,
@@ -197,13 +199,13 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_service_interface::ZeroReply {}))
+        Ok(Response::new(odyssey_hub_server_interface::ZeroReply {}))
     }
 
     async fn clear_zero(
         &self,
-        request: tonic::Request<odyssey_hub_service_interface::Device>,
-    ) -> Result<tonic::Response<odyssey_hub_service_interface::ClearZeroReply>, tonic::Status> {
+        request: tonic::Request<odyssey_hub_server_interface::Device>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::ClearZeroReply>, tonic::Status> {
         let device = request.into_inner().into();
 
         let s;
@@ -225,16 +227,16 @@ impl Service for Server {
         }
 
         Ok(Response::new(
-            odyssey_hub_service_interface::ClearZeroReply {},
+            odyssey_hub_server_interface::ClearZeroReply {},
         ))
     }
 
     async fn get_screen_info_by_id(
         &self,
-        request: tonic::Request<odyssey_hub_service_interface::ScreenInfoByIdRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_service_interface::ScreenInfoResponse>, tonic::Status>
+        request: tonic::Request<odyssey_hub_server_interface::ScreenInfoByIdRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::ScreenInfoResponse>, tonic::Status>
     {
-        let odyssey_hub_service_interface::ScreenInfoByIdRequest { id } = request.into_inner();
+        let odyssey_hub_server_interface::ScreenInfoByIdRequest { id } = request.into_inner();
 
         let screen_calibrations = self.screen_calibrations.load();
 
@@ -243,12 +245,12 @@ impl Service for Server {
             .find(|(i, _)| *i as u32 == id)
             .map(|(_, calibration)| calibration.clone());
 
-        let reply = odyssey_hub_service_interface::ScreenInfoResponse {
+        let reply = odyssey_hub_server_interface::ScreenInfoResponse {
             id,
             bounds: {
                 if let Some(screen_calibration) = screen_calibration {
                     let bounds = screen_calibration.bounds();
-                    Some(odyssey_hub_service_interface::ScreenBounds {
+                    Some(odyssey_hub_server_interface::ScreenBounds {
                         tl: Some({
                             Vector2 {
                                 x: bounds[0].x,
@@ -355,7 +357,7 @@ impl AsyncRead for LocalSocketStream {
     }
 }
 
-pub async fn run_service(
+pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
 ) -> anyhow::Result<()> {
