@@ -12,13 +12,15 @@ use views::Home;
 mod components;
 mod hub;
 mod views;
+mod tray;
 
 fn main() {
     dioxus::LaunchBuilder::new()
         .with_cfg(
             Config::default()
                 .with_menu(None)
-                .with_window(WindowBuilder::new().with_title("Catchy title")),
+                .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
+                .with_window(WindowBuilder::new().with_title("Odyssey"))
         )
         .launch(app);
 }
@@ -35,6 +37,8 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 #[component]
 fn app() -> Element {
+    tray::init();
+
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let cancel_token = CancellationToken::new();
 
