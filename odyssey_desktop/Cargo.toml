@@ -22,3 +22,4 @@ odyssey_hub_server = { version = "0.1.0", path = "../odyssey_hub_server" }
 slab = "0.4.9"
 tokio-util = "0.7.15"
 image = "0.25.6"
+hex = "0.4.3"
