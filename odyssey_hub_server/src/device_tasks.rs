@@ -390,6 +390,44 @@ async fn common_tasks(
         _ => false,
     };
 
+    async fn process_raycast_update(aimpoint_and_d: Option<(Point2<f32>, f32)>, pose: Option<(nalgebra::Matrix3<f32>, Vector3<f32>)>, screen_id: u32, device: &Device, message_channel: &Sender<Message>, prev_timestamp: Option<u32>) {
+        if let Some((aimpoint, d)) = aimpoint_and_d {
+            if let Some(pose) = pose {
+                let aimpoint_matrix = nalgebra::Matrix::<f32, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f32, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
+                let device = device.clone();
+                let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
+                    timestamp: prev_timestamp.unwrap_or(0),
+                    aimpoint: aimpoint_matrix.cast(),
+                    pose: Some(odyssey_hub_common::events::Pose {
+                        rotation: pose.0.cast(),
+                        translation: pose.1.cast(),
+                    }),
+                    distance: d,
+                    screen_id,
+                });
+                match device {
+                    Device::Udp(device) => {
+                        let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                            odyssey_hub_common::events::DeviceEvent {
+                                device: Device::Udp(device.clone()),
+                                kind,
+                            }
+                        ))).await;
+                    },
+                    Device::Cdc(device) => {
+                        let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                            odyssey_hub_common::events::DeviceEvent {
+                                device: Device::Cdc(device.clone()),
+                                kind,
+                            }
+                        ))).await;
+                    },
+                    Device::Hid(_) => {},
+                }
+            }
+        }
+    }
+
     loop {
         tokio::select! {
             _ = tokio::time::sleep(
@@ -483,8 +521,6 @@ async fn common_tasks(
                     }
                 }
 
-                let screen_id: u32;
-
                 {
                     let mut fv_state = fv_state.lock().await;
 
@@ -506,43 +542,10 @@ async fn common_tasks(
                     );
 
                     (pose, aimpoint_and_d) = ats_cv::helpers::raycast_update(&screen_calibrations, &mut fv_state, **fv_zero_offset.load());
-                    screen_id = fv_state.screen_id as u32;
+                    process_raycast_update(aimpoint_and_d, pose, fv_state.screen_id as u32, &device, &message_channel, prev_timestamp).await;
                 }
-
-                if let Some((aimpoint, d)) = aimpoint_and_d { if let Some(pose) = pose {
-                    let aimpoint_matrix = nalgebra::Matrix::<f32, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f32, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
-                    let device = device.clone();
-                    let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                        timestamp: prev_timestamp.unwrap_or(0),
-                        aimpoint: aimpoint_matrix.cast(),
-                        pose: Some(odyssey_hub_common::events::Pose {
-                            rotation: pose.0.cast(),
-                            translation: pose.1.cast(),
-                        }),
-                        distance: d,
-                        screen_id,
-                    });
-                    match device {
-                        Device::Udp(device) => {
-                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: Device::Udp(device.clone()),
-                                    kind,
-                                }
-                            ))).await;
-                        },
-                        Device::Cdc(device) => {
-                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: Device::Cdc(device.clone()),
-                                    kind,
-                                }
-                            ))).await;
-                        },
-                        Device::Hid(_) => {},
-                    }
-                }}
             }
+
             item = accel_stream.next() => {
                 let Some(accel) = item else {
                     // this shouldn't ever happen
@@ -581,6 +584,10 @@ async fn common_tasks(
 
                     let _ = madgwick.update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
                     _orientation = madgwick.quat.to_rotation_matrix();
+
+                    let mut fv_state = fv_state.lock().await;
+                    let (pose, aimpoint_and_d) = ats_cv::helpers::raycast_update(&screen_calibrations.load(), &mut fv_state, **fv_zero_offset.load());
+                    process_raycast_update(aimpoint_and_d, pose, fv_state.screen_id as u32, &device, &message_channel, prev_timestamp).await;
                 }
 
                 prev_timestamp = Some(accel.timestamp);
