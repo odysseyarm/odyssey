@@ -201,8 +201,16 @@ pub async fn device_udp_manager(
         while let Ok(msg) = ev_rx.try_recv() {
             let _ = outer_tx.send(msg.clone()).await;
 
-            if let Message::Connect(Device::Udp(dev), _, _) = msg {
-                devices.insert(dev.addr.to_string(), dev);
+            match msg {
+                Message::Connect(Device::Udp(dev), _, _) => {
+                    devices.insert(dev.addr.to_string(), dev);
+                }
+                Message::Disconnect(Device::Udp(dev)) => {
+                    handles.remove(&dev.addr.to_string());
+                    devices.remove(&dev.addr.to_string());
+                    seen.remove(&dev.addr.to_string());
+                }
+                _ => {}
             }
         }
 
@@ -303,8 +311,16 @@ async fn device_cdc_manager(
         while let Ok(msg) = ev_rx.try_recv() {
             let _ = outer_tx.send(msg.clone()).await;
 
-            if let Message::Connect(Device::Cdc(dev), _, _) = msg {
-                devices.insert(dev.path.clone(), dev);
+            match msg {
+                Message::Connect(Device::Cdc(dev), _, _) => {
+                    devices.insert(dev.path.clone(), dev);
+                }
+                Message::Disconnect(Device::Cdc(dev)) => {
+                    handles.remove(&dev.path);
+                    devices.remove(&dev.path);
+                    seen_paths.remove(&dev.path);
+                }
+                _ => {}
             }
         }
 
