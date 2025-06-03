@@ -70,10 +70,10 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
         }
     });
 
+    let players = players();
     let hub_peek = hub.peek();
     let devices_peek = hub_peek.devices.peek();
     let children = devices_peek.iter().filter_map(|(key, device)| {
-        let players = players();
         let player = players.get(&device);
         if let Some(player) = player {
             Some(rsx! {
