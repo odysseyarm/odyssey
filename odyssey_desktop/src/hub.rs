@@ -60,4 +60,8 @@ impl HubContext {
             self.latest_event.set(evt);
         }
     }
+
+    pub fn device_key(&self, device: &Device) -> Option<usize> {
+        self.device_keys.get(device).cloned()
+    }
 }

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use dioxus::{html::geometry::euclid::Rect, prelude::*};
-use dioxus_sdk::window::size::{use_window_size, ReadableWindowSizeExt as _};
 use odyssey_hub_common::events as oe;
 
 #[derive(Clone)]

@@ -24,6 +24,22 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
 
     dioxus::logger::tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
 
+    let mut shooting_devices = use_signal(|| Vec::<Signal<bool>>::new());
+
+    fn creative_get(vec: &mut Vec<Signal<bool>>, index: usize) -> bool {
+        if index >= vec.len() {
+            vec.resize(index + 1, use_signal(|| false));
+        }
+        vec[index]()
+    }
+
+    fn creative_write(vec: &mut Vec<Signal<bool>>, index: usize, value: bool) {
+        if index >= vec.len() {
+            vec.resize(index + 1, use_signal(|| false));
+        }
+        vec[index].set(value);
+    }
+
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         div {
@@ -38,21 +54,44 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                         li {
                             button {
                                 class: "py-2.5 px-5 ms-3 text-base text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700",
-                                "Reset"
+                                "Reset All"
                             }
                         }
                         li {
                             button {
                                 class: "ms-3 py-2.5 px-5 text-base text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700",
-                                "Clear"
+                                "Clear All"
                             }
                         }
-                        for (_slot, device) in devices {
+                        for (slot, device) in devices {
                             li {
                                 class: "flex items-center",
                                 span {
                                     class: "text-gray-900 dark:text-white",
                                     "{hex::encode(device.uuid())}"
+                                }
+                                ul {
+                                    class: "space-y-2 font-medium",
+                                    li {
+                                        class: "flex items-center",
+                                        if creative_get(&mut shooting_devices.write(), slot) {
+                                            button {
+                                                class: "py-2.5 px-5 ms-3 text-sm text-gray-900 focus:outline-none bg-white rounded-lg border border-red-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-red-600 dark:hover:text-white dark:hover:bg-gray-700",
+                                                onclick: move |_| {
+                                                    creative_write(&mut shooting_devices.write(), slot, false);
+                                                },
+                                                "Cancel"
+                                            }
+                                        } else {
+                                            button {
+                                                class: "py-2.5 px-5 ms-3 text-sm text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700",
+                                                onclick: move |_| {
+                                                    creative_write(&mut shooting_devices.write(), slot, true);
+                                                },
+                                                "Zero on shot"
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
