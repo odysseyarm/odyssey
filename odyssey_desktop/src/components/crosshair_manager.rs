@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use dioxus::{html::geometry::euclid::Rect, prelude::*};
+use dioxus_sdk::window::size::{use_window_size, ReadableWindowSizeExt as _};
 use odyssey_hub_common::events as oe;
 
 #[derive(Clone)]
@@ -27,16 +28,14 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
     let mut root_div = use_signal(|| None);
 
     // 2) signal to hold the container's Rect
-    let container_rect = use_signal(Rect::zero);
+    let mut rect_signal = use_signal(Rect::zero);
 
-    // 3) onmounted on root <div> to measure once
-    let mut rect_signal = container_rect.clone();
+    let window = dioxus::desktop::use_window();
+    let window_size = window.inner_size().to_logical::<f64>(window.scale_factor());
 
     // 4) event loop: read new events, map normalized aimpoint → pixel coords
     use_effect(move || {
-        let rect = container_rect.read();
-        let width = rect.width() as f64;
-        let height = rect.height() as f64;
+        let rect = rect_signal.read();
         let origin_x = rect.origin.x as f64;
         let origin_y = rect.origin.y as f64;
 
@@ -46,8 +45,8 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
                 kind: oe::DeviceEventKind::TrackingEvent(oe::TrackingEvent { aimpoint, .. }),
             }) =>
             {
-                let x = origin_x + (aimpoint.x as f64) * width;
-                let y = origin_y + (aimpoint.y as f64) * height;
+                let x = aimpoint.x as f64 * window_size.width - origin_x;
+                let y = aimpoint.y as f64 * window_size.height - origin_y;
 
                 if players.peek().contains_key(&device) {
                     players.write().get_mut(&device).unwrap().pos = (x, y);

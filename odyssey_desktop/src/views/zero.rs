@@ -1,4 +1,4 @@
-use dioxus::prelude::*;
+use dioxus::{html::geometry::euclid::Rect, prelude::*};
 use crate::components::crosshair_manager::CrosshairManager;
 use crate::hub;
 
@@ -7,6 +7,22 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 #[component]
 pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
     let devices = (hub().devices)();
+
+    let mut crosshair_manager_div = use_signal(|| None);
+    let mut rect_signal = use_signal(Rect::zero);
+    let window = dioxus::desktop::use_window();
+
+    let zero_screen_ratio = use_memo(move || {
+        let window_size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let center = rect_signal().center();
+        let (win_w, win_h) = (window_size.width, window_size.height);
+        (
+            center.x / win_w,
+            center.y / win_h,
+        )
+    });
+
+    dioxus::logger::tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -47,6 +63,22 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
             div {
                 class: "flex-1 flex items-center justify-center h-full w-full bg-[url(/assets/images/target.avif)] bg-center bg-no-repeat",
                 style: "background-size: clamp(0in, 11in, 40%) auto;",
+                onmounted: move |cx| async move {
+                    let cx_data = cx.data();
+                    let client_rect = cx_data.as_ref().get_client_rect();
+                    if let Ok(rect) = client_rect.await {
+                        rect_signal.set(rect);
+                    }
+                    crosshair_manager_div.set(Some(cx_data));
+                },
+                onresize: move |_| async move {
+                    if let Some(crosshair_manager_div) = crosshair_manager_div() {
+                        let client_rect = crosshair_manager_div.as_ref().get_client_rect();
+                        if let Ok(rect) = client_rect.await {
+                            rect_signal.set(rect);
+                        }
+                    }
+                },
                 CrosshairManager { hub },
             }
         }
