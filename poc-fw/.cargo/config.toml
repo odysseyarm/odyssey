@@ -11,7 +11,10 @@ rustflags = "-C target-cpu=cortex-m33"
 # RUSTC_LOG = "rustc_codegen_ssa::back::link=info"
 
 # [patch."https://github.com/odysseyarm/ats_common"]
-# ats_common = { path = "../../ats_common/ats_common" }
+# ats_common = { path = "patch/ats_common" }
 #
 # [patch."https://github.com/odysseyarm/protodonge-rs"]
-# protodongers = { path = "../../protodonge-rs" }
+# protodongers = { path = "patch/protodonge-rs" }
+
+# [patch."https://github.com/0e4ef622/icm426xx"]
+# icm426xx = { path = "patch/icm426xx" }

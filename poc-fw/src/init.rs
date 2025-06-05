@@ -42,7 +42,7 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     config.internal_capacitors.hfxo = Some(HfxoCapacitance::_15_5pF);
     config.internal_capacitors.lfxo = Some(LfxoCapacitance::_7pF);
     // Configure VDD to 3.3V
-    config.dcdc.regh_voltage = Some(ReghVoltage::_3v3);
+    config.dcdc.regh_voltage = Some(ReghVoltage::_3V3);
 
     // Enable instruction cache
     pac::CACHE.enable().write(|w| w.set_enable(true));

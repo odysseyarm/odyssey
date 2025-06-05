@@ -81,18 +81,14 @@ pub fn usb_device(
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
-    static CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
-    static BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
-    static MSOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
-    static CONTROL_BUF: ConstStaticCell<[u8; 64]> = ConstStaticCell::new([0; 64]);
-    static STATE: StaticCell<cdc_acm::State> = StaticCell::new();
+    static STATE: ConstStaticCell<cdc_acm::State> = ConstStaticCell::new(cdc_acm::State::new());
 
-    let config_descriptor = CONFIG_DESCRIPTOR.take();
-    let bos_descriptor = BOS_DESCRIPTOR.take();
-    let msos_descriptor = MSOS_DESCRIPTOR.take();
-    let control_buf = CONTROL_BUF.take();
+    let config_descriptor = static_byte_buffer!(256);
+    let bos_descriptor = static_byte_buffer!(256);
+    let msos_descriptor = static_byte_buffer!(256);
+    let control_buf = static_byte_buffer!(64);
 
-    let state = STATE.init_with(cdc_acm::State::new);
+    let state = STATE.take();
     let mut builder = embassy_usb::Builder::new(
         driver,
         config,
@@ -127,7 +123,7 @@ pub fn usb_device(
             ResetImmediate,
         )
     });
-    usb_dfu(&mut builder, state, Duration::from_millis(2500));
+    usb_dfu(&mut builder, state, Duration::from_millis(2500), |_| ());
 
     // Build the builder.
     let usb = builder.build();
