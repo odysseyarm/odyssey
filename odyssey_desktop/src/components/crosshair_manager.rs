@@ -42,25 +42,19 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
             oe::Event::DeviceEvent(oe::DeviceEvent {
                 device,
                 kind: oe::DeviceEventKind::TrackingEvent(oe::TrackingEvent { aimpoint, .. }),
-            }) =>
-            {
+            }) => {
                 let x = aimpoint.x as f64 * window_size.width - origin_x;
                 let y = aimpoint.y as f64 * window_size.height - origin_y;
 
                 if players.peek().contains_key(&device) {
                     players.write().get_mut(&device).unwrap().pos = (x, y);
                 } else {
-                    players.write().insert(
-                        device,
-                        Player {
-                            pos: (x, y),
-                        }
-                    );
+                    players.write().insert(device, Player { pos: (x, y) });
                 }
             }
             oe::Event::DeviceEvent(oe::DeviceEvent {
                 device,
-                kind: oe::DeviceEventKind::DisconnectEvent
+                kind: oe::DeviceEventKind::DisconnectEvent,
             }) => {
                 players.write().remove(&device);
             }

@@ -37,23 +37,22 @@ impl HubContext {
         while let Some(evt) = stream.next().await {
             let evt = evt.unwrap().event.unwrap().into();
             match &evt {
-                oe::Event::DeviceEvent(de) => {
-                    match de {
-                        oe::DeviceEvent { device, kind } => {
-                            match kind {
-                                oe::DeviceEventKind::ConnectEvent => {
-                                    self.device_keys.write().insert(device.clone(), self.devices.write().insert(device.clone()));
-                                }
-                                oe::DeviceEventKind::DisconnectEvent => {
-                                    if let Some(device_key) = self.device_keys.write().remove(device) {
-                                        self.devices.write().remove(device_key);
-                                    }
-                                }
-                                _ => {}
+                oe::Event::DeviceEvent(de) => match de {
+                    oe::DeviceEvent { device, kind } => match kind {
+                        oe::DeviceEventKind::ConnectEvent => {
+                            self.device_keys.write().insert(
+                                device.clone(),
+                                self.devices.write().insert(device.clone()),
+                            );
+                        }
+                        oe::DeviceEventKind::DisconnectEvent => {
+                            if let Some(device_key) = self.device_keys.write().remove(device) {
+                                self.devices.write().remove(device_key);
                             }
                         }
-                    }
-                }
+                        _ => {}
+                    },
+                },
                 oe::Event::None => {}
             }
             self.latest_event.set(evt);

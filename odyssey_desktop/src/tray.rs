@@ -7,8 +7,7 @@ use dioxus::{
             menu::{Menu, MenuItem},
             Icon, TrayIconBuilder,
         },
-        use_tray_menu_event_handler, use_wry_event_handler,
-        WindowEvent,
+        use_tray_menu_event_handler, use_wry_event_handler, WindowEvent,
     },
     prelude::*,
 };
@@ -20,8 +19,9 @@ macro_rules! icon_from_bytes {
             .expect(concat!("Failed to load image from: ", $rel_path))
             .into_rgba8();
         let (icon_width, icon_height) = image.dimensions();
-        let icon_rgba  = image.into_raw();
-        Icon::from_rgba(icon_rgba, icon_width, icon_height).expect(concat!("Failed to build icon from: ", $rel_path))
+        let icon_rgba = image.into_raw();
+        Icon::from_rgba(icon_rgba, icon_width, icon_height)
+            .expect(concat!("Failed to build icon from: ", $rel_path))
     }};
 }
 

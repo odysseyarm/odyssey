@@ -224,6 +224,11 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                 proto::device_event::ZeroResultEvent { success },
                             )
                         }
+                        odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(success) => {
+                            proto::device_event::DeviceEventOneof::SaveZeroResult(
+                                proto::device_event::SaveZeroResultEvent { success },
+                            )
+                        }
                         odyssey_hub_common::events::DeviceEventKind::PacketEvent(packet) => {
                             proto::device_event::DeviceEventOneof::Packet(
                                 proto::device_event::PacketEvent {
@@ -319,6 +324,9 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                         }
                         proto::device_event::DeviceEventOneof::ZeroResult(proto::device_event::ZeroResultEvent { success }) => {
                             odyssey_hub_common::events::DeviceEventKind::ZeroResult(success)
+                        }
+                        proto::device_event::DeviceEventOneof::SaveZeroResult(proto::device_event::SaveZeroResultEvent { success }) => {
+                            odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(success)
                         }
                         proto::device_event::DeviceEventOneof::Packet(
                             proto::device_event::PacketEvent { bytes },

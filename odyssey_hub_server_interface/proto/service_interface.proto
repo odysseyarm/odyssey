@@ -6,6 +6,7 @@ service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
   rpc Poll (PollRequest) returns (stream PollReply) {}
   rpc WriteVendor (WriteVendorRequest) returns (WriteVendorReply) {}
+  rpc SaveZero (Device) returns (SaveZeroReply) {}
   rpc ClearZero (Device) returns (ClearZeroReply) {}
   rpc ResetZero (Device) returns (ResetZeroReply) {}
   rpc Zero (ZeroRequest) returns (ZeroReply) {}
@@ -97,6 +98,9 @@ message DeviceEvent {
   message ZeroResultEvent {
     bool success = 1;
   }
+  message SaveZeroResultEvent {
+    bool success = 1;
+  }
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
     TrackingEvent tracking = 3;
@@ -105,6 +109,7 @@ message DeviceEvent {
     DisconnectEvent disconnect = 6;
     PacketEvent packet = 7;
     ZeroResultEvent zero_result = 8;
+    SaveZeroResultEvent save_zero_result = 9;
   }
 }
 
@@ -139,6 +144,8 @@ message ZeroRequest {
 }
 
 message WriteVendorReply {}
+
+message SaveZeroReply {}
 
 message ClearZeroReply {}
 

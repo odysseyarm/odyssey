@@ -663,25 +663,6 @@ async fn common_tasks(
                     DeviceTaskMessage::ResetZero => {
                         fv_zero_offset.store(Arc::new(init_fv_zero_offset));
                     },
-                    DeviceTaskMessage::SaveZero => {
-                        init_fv_zero_offset = *fv_zero_offset.load().clone();
-                        if let Some(offset) = init_fv_zero_offset {
-                            device_offsets.lock().await.insert(uuid, offset);
-                        } else {
-                            device_offsets.lock().await.remove(&uuid);
-                        }
-                        let device_offsets = device_offsets.lock().await.clone();
-                        tokio::task::spawn_blocking(move || {
-                            match odyssey_hub_common::config::save_device_offsets(&device_offsets) {
-                                Ok(_) => {
-                                    tracing::info!("Saved device offsets");
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to save device offsets: {}", e);
-                                }
-                            }
-                        });
-                    },
                     DeviceTaskMessage::Zero(t, point) => {
                         let quat = {
                             let screen_calibrations = screen_calibrations.load();
@@ -704,6 +685,41 @@ async fn common_tasks(
                                 odyssey_hub_common::events::DeviceEvent {
                                     device: device.clone(),
                                     kind: odyssey_hub_common::events::DeviceEventKind::ZeroResult(false),
+                                }
+                            ))).await;
+                        }
+                    },
+                    DeviceTaskMessage::SaveZero => {
+                        init_fv_zero_offset = *fv_zero_offset.load().clone();
+                        if let Some(offset) = init_fv_zero_offset {
+                            device_offsets.lock().await.insert(uuid, offset);
+                        } else {
+                            device_offsets.lock().await.remove(&uuid);
+                        }
+                        let device_offsets = device_offsets.lock().await.clone();
+                        if tokio::task::spawn_blocking(move || {
+                            match odyssey_hub_common::config::save_device_offsets(&device_offsets) {
+                                Ok(_) => {
+                                    tracing::info!("Saved device offsets");
+                                    true
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to save device offsets: {}", e);
+                                    false
+                                }
+                            }
+                        }).await.unwrap_or(false) {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: device.clone(),
+                                    kind: odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(true),
+                                }
+                            ))).await;
+                        } else {
+                            let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
+                                odyssey_hub_common::events::DeviceEvent {
+                                    device: device.clone(),
+                                    kind: odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(false),
                                 }
                             ))).await;
                         }

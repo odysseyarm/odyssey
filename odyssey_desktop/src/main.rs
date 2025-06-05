@@ -1,5 +1,7 @@
 use dioxus::{
-    desktop::{Config, WindowBuilder}, logger::tracing, prelude::*
+    desktop::{Config, WindowBuilder},
+    logger::tracing,
+    prelude::*,
 };
 use dioxus_router::prelude::*;
 use odyssey_hub_server::Message;
@@ -11,8 +13,8 @@ use views::Home;
 
 mod components;
 mod hub;
-mod views;
 mod tray;
+mod views;
 
 fn main() {
     dioxus::LaunchBuilder::new()
@@ -20,7 +22,7 @@ fn main() {
             Config::default()
                 .with_menu(None)
                 .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
-                .with_window(WindowBuilder::new().with_title("Odyssey"))
+                .with_window(WindowBuilder::new().with_title("Odyssey")),
         )
         .launch(app);
 }
@@ -42,14 +44,12 @@ fn app() -> Element {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let cancel_token = CancellationToken::new();
 
-    tokio::spawn(
-        async {
-            tokio::select! {
-                _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
-                _ = tokio::spawn(handle_server_status(receiver)) => {},
-            }
+    tokio::spawn(async {
+        tokio::select! {
+            _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
+            _ = tokio::spawn(handle_server_status(receiver)) => {},
         }
-    );
+    });
 
     let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
     use_future(move || {

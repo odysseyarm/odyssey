@@ -117,6 +117,18 @@ impl Client {
         }
     }
 
+    pub async fn save_zero(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+    ) -> anyhow::Result<odyssey_hub_server_interface::SaveZeroReply> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(device.into());
+            Ok(service_client.save_zero(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn clear_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,

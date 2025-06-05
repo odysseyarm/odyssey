@@ -202,6 +202,35 @@ impl Service for Server {
         Ok(Response::new(odyssey_hub_server_interface::ZeroReply {}))
     }
 
+    async fn save_zero(
+        &self,
+        request: tonic::Request<odyssey_hub_server_interface::Device>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::SaveZeroReply>, tonic::Status> {
+        let device = request.into_inner().into();
+
+        let s;
+
+        if let Some(_device) = self.device_list.lock().iter().find(|d| d.0 == device) {
+            s = _device.2.clone();
+        } else {
+            return Err(tonic::Status::not_found("Device not found in device list"));
+        }
+
+        match s.send(device_tasks::DeviceTaskMessage::SaveZero).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(tonic::Status::aborted(format!(
+                    "Failed to send save zero device task message: {}",
+                    e
+                )));
+            }
+        }
+
+        Ok(Response::new(
+            odyssey_hub_server_interface::SaveZeroReply {},
+        ))
+    }
+
     async fn clear_zero(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device>,
@@ -400,6 +429,8 @@ pub async fn run_server(
     })
     .await??;
     let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
+
+    println!("Screen calibrations loaded: {:?}", screen_calibrations);
 
     let device_offsets = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::device_offsets()

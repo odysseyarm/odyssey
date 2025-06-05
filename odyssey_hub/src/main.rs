@@ -25,7 +25,9 @@ async fn main() {
         }
     });
     tokio::select! {
-        _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
+        result = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {
+            println!("Server exited with: {:?}", result);
+        },
         _ = tokio::spawn(handle_server_status(receiver)) => {},
     };
 }
