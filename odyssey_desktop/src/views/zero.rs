@@ -206,8 +206,11 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
             }
 
             div {
-                class: "flex-1 flex items-center justify-center h-full w-full bg-[url(/assets/images/target.avif)] bg-center bg-no-repeat",
-                style: "background-size: clamp(0in, 11in, 40%) auto;",
+                class: "flex-1 flex items-center justify-center h-full w-full bg-center bg-no-repeat",
+                style: format!(
+                    "background-image: {}; background-size: clamp(0in, 11in, 40%) auto;",
+                    format!("url({})", asset!("/assets/images/target.avif")),
+                ),
                 onmounted: move |cx| async move {
                     let cx_data = cx.data();
                     let client_rect = cx_data.as_ref().get_client_rect();

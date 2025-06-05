@@ -2,6 +2,10 @@
 name = "odyssey_desktop"
 asset_dir = "assets"
 
+[bundle]
+identifier = "com.odysseyarm.odyssey"
+publisher = "OdysseyArm"
+
 [web.resource]
 style = ["/assets/tailwind.css"]
 

@@ -17,14 +17,27 @@ mod tray;
 mod views;
 
 fn main() {
-    dioxus::LaunchBuilder::new()
-        .with_cfg(
-            Config::default()
-                .with_menu(None)
-                .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
-                .with_window(WindowBuilder::new().with_title("Odyssey")),
-        )
-        .launch(app);
+    if cfg!(target_os = "windows") {
+        let user_data_dir = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
+        dioxus::LaunchBuilder::new()
+            .with_cfg(
+                Config::default()
+                    .with_data_directory(user_data_dir)
+                    .with_menu(None)
+                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
+                    .with_window(WindowBuilder::new().with_title("Odyssey")),
+            )
+            .launch(app);
+    } else {
+        dioxus::LaunchBuilder::new()
+            .with_cfg(
+                Config::default()
+                    .with_menu(None)
+                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
+                    .with_window(WindowBuilder::new().with_title("Odyssey")),
+            )
+            .launch(app);
+    }
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
