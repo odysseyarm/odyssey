@@ -30,7 +30,7 @@ macro_rules! icon_from_bytes {
 /// **Needs to be called after the app is launched**
 ///
 /// I have found that a reliable and simple way is to us just the main App component as the entry point
-pub fn init() {
+pub fn init(cancellation_token: tokio_util::sync::CancellationToken) {
     // Loading the image we are going to use as the tray icon
     let icon = icon_from_bytes!("/assets/images/tray-icon.png");
 
@@ -68,13 +68,17 @@ pub fn init() {
     {
         let toggle_arc_clone = toggle_arc.clone();
         use_tray_menu_event_handler(move |event| {
+            dioxus::logger::tracing::info!("Tray event happened: {:?}", event);
             // Potentially there is a better way to do this.
             // The `0` is the id of the menu item
             match event.id.0.as_str() {
                 "quit" => {
+                    dioxus::logger::tracing::info!("Quitting the application...");
+                    cancellation_token.cancel();
                     std::process::exit(0);
                 }
                 "toggle" => {
+                    dioxus::logger::tracing::info!("Toggle");
                     // According to the examples the correct way to access the context of the app
                     // https://github.com/DioxusLabs/dioxus/blob/a729968ee47b066e6d55dd9e0f8c2a1f1aef79e0/examples/window_zoom.rs#L23
                     let service = dioxus::desktop::window();
@@ -105,7 +109,7 @@ pub fn init() {
                 ..
             } = event
             {
-                // Additionall events could be handled here to improve experience when minimizing for example
+                // Additional events could be handled here to improve experience when minimizing for example
                 match event {
                     WindowEvent::CloseRequested => {
                         toggle_arc_clone.set_text("Open");

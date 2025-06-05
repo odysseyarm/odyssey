@@ -14,11 +14,12 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
     let window = dioxus::desktop::use_window();
 
     let zero_screen_ratio = use_memo(move || {
-        let window_size = window.inner_size().to_logical::<f32>(window.scale_factor());
-        let center = rect_signal().center();
-        let (win_w, win_h) = (window_size.width, window_size.height);
-        (center.x / win_w, center.y / win_h)
-    });
+            let window_size = window.inner_size().to_logical::<f32>(window.scale_factor());
+            let center = rect_signal.read().center();
+            let (win_w, win_h) = (window_size.width, window_size.height);
+            (center.x / win_w, center.y / win_h)
+        }
+    );
 
     dioxus::logger::tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
 
@@ -26,14 +27,14 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
 
     fn creative_get(vec: &mut Vec<Signal<bool>>, index: usize) -> bool {
         if index >= vec.len() {
-            vec.resize(index + 1, use_signal(|| false));
+            vec.resize(index + 1, Signal::new(false));
         }
         vec[index]()
     }
 
     fn creative_write(vec: &mut Vec<Signal<bool>>, index: usize, value: bool) {
         if index >= vec.len() {
-            vec.resize(index + 1, use_signal(|| false));
+            vec.resize(index + 1, Signal::new(false));
         }
         vec[index].set(value);
     }
@@ -229,6 +230,13 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                 },
                 CrosshairManager { hub },
             }
+            button {
+                class: "fixed z-50 top-4 right-4 text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-4 focus:ring-red-300 font-medium rounded-full text-sm px-5 py-2.5 text-center dark:bg-red-600 dark:hover:bg-red-700 dark:focus:ring-red-900",
+                onclick: move |_| {
+                    dioxus::desktop::window().close();
+                },
+                "Close"
+            },
         }
     }
 }

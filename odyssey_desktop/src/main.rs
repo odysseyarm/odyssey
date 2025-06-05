@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use dioxus::{
     desktop::{Config, WindowBuilder},
     logger::tracing,
@@ -13,7 +15,7 @@ use views::Home;
 
 mod components;
 mod hub;
-mod tray;
+// mod tray;
 mod views;
 
 fn main() {
@@ -24,7 +26,7 @@ fn main() {
                 Config::default()
                     .with_data_directory(user_data_dir)
                     .with_menu(None)
-                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
+                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowExitsApp)
                     .with_window(WindowBuilder::new().with_title("Odyssey")),
             )
             .launch(app);
@@ -33,7 +35,7 @@ fn main() {
             .with_cfg(
                 Config::default()
                     .with_menu(None)
-                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowHides)
+                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowExitsApp)
                     .with_window(WindowBuilder::new().with_title("Odyssey")),
             )
             .launch(app);
@@ -52,15 +54,22 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 #[component]
 fn app() -> Element {
-    tray::init();
-
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let cancel_token = CancellationToken::new();
+    // tray::init(cancel_token.clone());
 
-    tokio::spawn(async {
-        tokio::select! {
-            _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
-            _ = tokio::spawn(handle_server_status(receiver)) => {},
+    use_future({
+        let cancel_token = cancel_token.clone();
+        move || {
+            let cancel_token = cancel_token.clone();
+            tokio::spawn({
+                async move {
+                    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+                    tokio::select! {
+                        _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
+                        _ = tokio::spawn(handle_server_status(receiver)) => {},
+                    }
+                }
+            })
         }
     });
 
