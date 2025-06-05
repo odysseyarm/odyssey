@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ahrs = { git = "https://github.com/jmagnuson/ahrs-rs", rev = "f833f8706ed5e21a2fe9e06922373bc50bc2a2c6", default-features = false, features = ["field_access"] }
+ahrs = { version = "0.7", features = ["field_access"] }
 anyhow = "1.0.81"
 futures = { version = "0.3.30", default-features = false, features = ["alloc", "async-await", "std"] }
 odyssey_hub_server_interface = { version = "0.1.0", path = "../odyssey_hub_server_interface" }
@@ -23,9 +23,9 @@ parking_lot = "0.12.1"
 tokio-util = "0.7.10"
 pin-project = "1.1.5"
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
-nalgebra = "0.32.5"
-cam-geom = "0.14.1"
-opencv-ros-camera = "0.14.1"
+nalgebra = "0.33"
+cam-geom = "0.15"
+opencv-ros-camera = "0.15"
 ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git", rev = "60a7e0d18154927c8c4e2534599fd4b1a5897ef9" }
 ats_common = { git = "https://github.com/odysseyarm/ats_common.git" }
 sqpnp = { git = "https://github.com/0e4ef622/sqpnp.git" }

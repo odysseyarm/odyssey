@@ -52,7 +52,10 @@ fn app() -> Element {
     );
 
     let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
-    use_future(move || hub().run());
+    use_future(move || {
+        let mut hub = hub();
+        async move { hub.run().await }
+    });
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }

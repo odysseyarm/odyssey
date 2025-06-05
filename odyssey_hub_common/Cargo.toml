@@ -9,7 +9,7 @@ edition = "2021"
 arrayvec = "0.7.4"
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git", rev = "60a7e0d18154927c8c4e2534599fd4b1a5897ef9" }
-nalgebra = "0.32.5"
+nalgebra = "0.33.2"
 app_dirs2 = "2.5.5"
 serde_json = "1.0.128"
 tracing = "0.1.41"

@@ -62,6 +62,22 @@ impl Into<nalgebra::Vector2<f32>> for proto::Vector2 {
     }
 }
 
+impl From<nalgebra::Vector3<f32>> for proto::Vector3 {
+    fn from(value: nalgebra::Vector3<f32>) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            z: value.z,
+        }
+    }
+}
+
+impl Into<nalgebra::Vector3<f32>> for proto::Vector3 {
+    fn into(self) -> nalgebra::Vector3<f32> {
+        nalgebra::Vector3::new(self.x, self.y, self.z)
+    }
+}
+
 impl From<odyssey_hub_common::device::Device> for proto::Device {
     fn from(value: odyssey_hub_common::device::Device) -> Self {
         match value {

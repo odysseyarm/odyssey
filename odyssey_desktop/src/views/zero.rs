@@ -1,4 +1,5 @@
 use dioxus::{html::geometry::euclid::Rect, prelude::*};
+use odyssey_hub_common::events as oe;
 use crate::components::crosshair_manager::CrosshairManager;
 use crate::hub;
 
@@ -9,11 +10,11 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
     let devices = (hub().devices)();
 
     let mut crosshair_manager_div = use_signal(|| None);
-    let mut rect_signal = use_signal(Rect::zero);
+    let mut rect_signal = use_signal(Rect::<f32, _>::zero);
     let window = dioxus::desktop::use_window();
 
     let zero_screen_ratio = use_memo(move || {
-        let window_size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let window_size = window.inner_size().to_logical::<f32>(window.scale_factor());
         let center = rect_signal().center();
         let (win_w, win_h) = (window_size.width, window_size.height);
         (
@@ -39,6 +40,50 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
         }
         vec[index].set(value);
     }
+
+    use_effect(move || {
+        let hub_snapshot = hub();
+        match (hub_snapshot.latest_event)() {
+            oe::Event::DeviceEvent(oe::DeviceEvent {
+                device,
+                kind: oe::DeviceEventKind::ImpactEvent(oe::ImpactEvent { timestamp: _ })
+            }) =>
+            {
+                let device_key = hub_snapshot.device_key(&device);
+                if let Some(key) = device_key {
+                    if creative_get(&mut shooting_devices.write(), key) {
+                        spawn(
+                            async move {
+                                match (hub_snapshot.client)().zero(
+                                    device.clone(),
+                                    nalgebra::Vector3::<f32>::new(0., -0.0635, 0.).into(),
+                                    {
+                                        let (a, b) = *zero_screen_ratio.peek();
+                                        nalgebra::Vector2::new(a, b).into()
+                                    }
+                                ).await {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        dioxus::logger::tracing::error!("Failed to zero device {}: {}", hex::encode(device.uuid()), e);
+                                    }
+                                }
+                            }
+                        );
+                        creative_write(&mut shooting_devices.write(), key, false);
+                    }
+                }
+            }
+            oe::Event::DeviceEvent(oe::DeviceEvent {
+                device,
+                kind: oe::DeviceEventKind::DisconnectEvent
+            }) => {
+                if let Some(key) = hub.peek().device_key(&device) {
+                    creative_write(&mut shooting_devices.write(), key, false);
+                }
+            }
+            _ => {}
+        }
+    });
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -106,7 +151,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                     let cx_data = cx.data();
                     let client_rect = cx_data.as_ref().get_client_rect();
                     if let Ok(rect) = client_rect.await {
-                        rect_signal.set(rect);
+                        rect_signal.set(rect.cast());
                     }
                     crosshair_manager_div.set(Some(cx_data));
                 },
@@ -114,7 +159,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                     if let Some(crosshair_manager_div) = crosshair_manager_div() {
                         let client_rect = crosshair_manager_div.as_ref().get_client_rect();
                         if let Ok(rect) = client_rect.await {
-                            rect_signal.set(rect);
+                            rect_signal.set(rect.cast());
                         }
                     }
                 },
