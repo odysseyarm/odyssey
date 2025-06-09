@@ -64,7 +64,8 @@ pub fn Home() -> Element {
                                 async move {
                                     if let Some(sel) = selected_value() {
                                         let dom = VirtualDom::new_with_props(crate::views::Zero, crate::views::zero::ZeroProps { hub });
-                                        let config = dioxus::desktop::Config::default().with_menu(None).with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowExitsApp).with_window(WindowBuilder::new().with_fullscreen(Some(Fullscreen::Borderless(Some(sel)))));
+                                        // HACK: with_position is necessary for reading the correct scale factor off the window
+                                        let config = dioxus::desktop::Config::default().with_menu(None).with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowExitsApp).with_window(WindowBuilder::new().with_position(sel.position()).with_fullscreen(Some(Fullscreen::Borderless(Some(sel)))));
                                         dioxus::desktop::window().new_window(dom, config);
                                     }
                                 }
