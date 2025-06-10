@@ -250,6 +250,7 @@ pub struct GyroConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GeneralConfig {
     pub impact_threshold: u8,
+    pub suppress_ms: u8,
     pub accel_config: AccelConfig,
     pub gyro_config: GyroConfig,
     pub camera_model_nf: RosOpenCvIntrinsics<f32>,
@@ -266,6 +267,7 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             impact_threshold: 5,
+            suppress_ms: 100,
             accel_config: Default::default(),
             gyro_config: Default::default(),
             camera_model_nf: RosOpenCvIntrinsics::from_params(

@@ -6,6 +6,7 @@ use bytemuck::{AnyBitPattern, NoUninit};
 #[allow(unused_imports)]
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsics;
+use static_assertions::assert_eq_size;
 
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C, packed)]
@@ -135,22 +136,28 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 #[repr(C, packed)]
 pub struct GeneralConfig {
     pub impact_threshold: u8,
+    pub suppress_ms: u8,
     pub accel_config: AccelConfig,
     pub gyro_config: super::GyroConfig,
     pub camera_model_nf: CameraCalibrationParams,
     pub camera_model_wf: CameraCalibrationParams,
     pub stereo_iso: StereoCalibrationParams,
+    _padding: [u8; 52],
 }
+
+assert_eq_size!(GeneralConfig, [u8; 252]);
 
 impl From<super::GeneralConfig> for GeneralConfig {
     fn from(value: super::GeneralConfig) -> Self {
         Self {
             impact_threshold: value.impact_threshold,
+            suppress_ms: value.suppress_ms,
             accel_config: value.accel_config.into(),
             gyro_config: value.gyro_config,
             camera_model_nf: value.camera_model_nf.into(),
             camera_model_wf: value.camera_model_wf.into(),
             stereo_iso: value.stereo_iso.into(),
+            _padding: [0; 52],
         }
     }
 }
@@ -158,6 +165,7 @@ impl From<super::GeneralConfig> for GeneralConfig {
 impl From<GeneralConfig> for super::GeneralConfig {
     fn from(value: GeneralConfig) -> Self {
         let mut r = Self {
+            suppress_ms: value.suppress_ms,
             impact_threshold: value.impact_threshold,
             accel_config: value.accel_config.into(),
             gyro_config: value.gyro_config,
