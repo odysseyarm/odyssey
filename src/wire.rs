@@ -142,10 +142,10 @@ pub struct GeneralConfig {
     pub camera_model_nf: CameraCalibrationParams,
     pub camera_model_wf: CameraCalibrationParams,
     pub stereo_iso: StereoCalibrationParams,
-    _padding: [u8; 46],
+    _padding: [u8; 40],
 }
 
-assert_eq_size!(GeneralConfig, [u8; 246]);
+assert_eq_size!(GeneralConfig, [u8; 240]);
 
 impl From<super::GeneralConfig> for GeneralConfig {
     fn from(value: super::GeneralConfig) -> Self {
@@ -157,7 +157,7 @@ impl From<super::GeneralConfig> for GeneralConfig {
             camera_model_nf: value.camera_model_nf.into(),
             camera_model_wf: value.camera_model_wf.into(),
             stereo_iso: value.stereo_iso.into(),
-            _padding: [0; 46],
+            _padding: [0; 40],
         }
     }
 }
@@ -165,8 +165,8 @@ impl From<super::GeneralConfig> for GeneralConfig {
 impl From<GeneralConfig> for super::GeneralConfig {
     fn from(value: GeneralConfig) -> Self {
         let mut r = Self {
-            suppress_ms: value.suppress_ms,
             impact_threshold: value.impact_threshold,
+            suppress_ms: value.suppress_ms,
             accel_config: value.accel_config.into(),
             gyro_config: value.gyro_config,
             camera_model_nf: value.camera_model_nf.into(),
