@@ -1,7 +1,9 @@
+use interoptopus::ffi_type;
+
 #[allow(unused)]
 pub struct Client;
 
-#[repr(C)]
+#[ffi_type]
 #[derive(Clone, Copy, Default)]
 pub struct Matrix3f32 {
     pub m11: f32,
@@ -15,7 +17,7 @@ pub struct Matrix3f32 {
     pub m33: f32,
 }
 
-#[repr(C)]
+#[ffi_type]
 #[derive(Clone, Copy, Default)]
 pub struct Matrix3x1f32 {
     pub x: f32,
@@ -49,7 +51,7 @@ impl From<nalgebra::Matrix3x1<f32>> for Matrix3x1f32 {
     }
 }
 
-#[repr(C)]
+#[ffi_type]
 #[derive(Clone, Copy, Default)]
 pub struct Vector3f32 {
     pub x: f32,
@@ -67,7 +69,7 @@ impl From<nalgebra::Vector3<f32>> for Vector3f32 {
     }
 }
 
-#[repr(C)]
+#[ffi_type]
 #[derive(Clone, Copy, Default)]
 pub struct Vector2f32 {
     pub x: f32,

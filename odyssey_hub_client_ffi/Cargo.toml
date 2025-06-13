@@ -3,8 +3,6 @@ name = "odyssey_hub_client_ffi"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow = "1.0.81"
 odyssey_hub_common = { path = "../odyssey_hub_common" }
@@ -15,10 +13,4 @@ tokio-util = "0.7.10"
 tonic = "0.11.0"
 nalgebra = "0.33"
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
-
-[lib]
-crate-type = ["cdylib"]
-
-[build-dependencies]
-cbindgen = "0.26.0"
-csbindgen = "1.8.0"
+interoptopus = "0.15.0-alpha.6"

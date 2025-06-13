@@ -1,6 +1,12 @@
-use odyssey_hub_client::client::Client;
+use interoptopus::{ffi_function, ffi_type};
 
-#[repr(C)]
+#[ffi_type(skip(inner))]
+#[derive(Default, Clone)]
+pub struct Client {
+    inner: odyssey_hub_client::client::Client,
+}
+
+#[ffi_type]
 pub enum ClientError {
     ClientErrorNone,
     ClientErrorConnectFailure,
@@ -9,27 +15,27 @@ pub enum ClientError {
     ClientErrorEnd,
 }
 
-#[repr(C)]
+#[ffi_type]
 #[derive(Clone, Copy)]
 pub struct UserObj(*const std::ffi::c_void);
 
 // SAFETY: Any user data object must be safe to send between threads.
 unsafe impl Send for UserObj {}
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_client_new() -> *mut Client {
+#[ffi_function]
+pub extern "C" fn ohc_c_new() -> *mut Client {
     Box::into_raw(Box::new(Client::default()))
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_client_free(client: *mut Client) {
+#[ffi_function]
+pub extern "C" fn ohc_c_free(client: *mut Client) {
     unsafe {
         drop(Box::from_raw(client));
     };
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_client_connect(
+#[ffi_function]
+pub extern "C" fn ohc_c_connect(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -41,15 +47,15 @@ pub extern "C" fn odyssey_hub_client_client_connect(
     let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
-        match client.connect().await {
+        match client.inner.connect().await {
             Ok(_) => callback(userdata, ClientError::ClientErrorNone),
             Err(_) => callback(userdata, ClientError::ClientErrorConnectFailure),
         }
     });
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_get_device_list(
+#[ffi_function]
+pub extern "C" fn ohc_c_get_device_list(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -66,7 +72,7 @@ pub extern "C" fn odyssey_hub_client_get_device_list(
     let mut client = unsafe { &*client }.clone();
 
     tokio::spawn(async move {
-        match client.get_device_list().await {
+        match client.inner.get_device_list().await {
             Ok(dl) => {
                 // allocate memory for the device list, and copy the device list into it, and set len to the length of the device list
                 let device_list = dl
@@ -93,8 +99,8 @@ pub extern "C" fn odyssey_hub_client_get_device_list(
     });
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_start_stream(
+#[ffi_function]
+pub extern "C" fn ohc_c_start_stream(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -111,7 +117,7 @@ pub extern "C" fn odyssey_hub_client_start_stream(
     let mut client = unsafe { &*client }.clone();
 
     tokio::spawn(async move {
-        match client.poll().await {
+        match client.inner.poll().await {
             Ok(mut stream) => loop {
                 match stream.message().await {
                     Ok(Some(reply)) => {
@@ -160,8 +166,8 @@ pub extern "C" fn odyssey_hub_client_start_stream(
     });
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_stop_stream(
+#[ffi_function]
+pub extern "C" fn ohc_c_stop_stream(
     handle: *const crate::Handle,
     client: *mut Client,
 ) {
@@ -170,11 +176,11 @@ pub extern "C" fn odyssey_hub_client_stop_stream(
 
     let client = unsafe { &*client };
 
-    client.end_token.cancel();
+    client.inner.end_token.cancel();
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_write_vendor(
+#[ffi_function]
+pub extern "C" fn ohc_c_write_vendor(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -197,15 +203,15 @@ pub extern "C" fn odyssey_hub_client_write_vendor(
         .collect::<Vec<u8>>();
 
     tokio::spawn(async move {
-        match client.write_vendor(device, tag, data).await {
+        match client.inner.write_vendor(device, tag, data).await {
             Ok(_) => callback(userdata, ClientError::ClientErrorNone),
             Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
         }
     });
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_reset_zero(
+#[ffi_function]
+pub extern "C" fn ohc_c_reset_zero(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -220,15 +226,15 @@ pub extern "C" fn odyssey_hub_client_reset_zero(
     let device = unsafe { &*device }.clone().into();
 
     tokio::spawn(async move {
-        match client.reset_zero(device).await {
+        match client.inner.reset_zero(device).await {
             Ok(_) => callback(userdata, ClientError::ClientErrorNone),
             Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
         }
     });
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_zero(
+#[ffi_function]
+pub extern "C" fn ohc_c_zero(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -257,15 +263,15 @@ pub extern "C" fn odyssey_hub_client_zero(
     };
 
     tokio::spawn(async move {
-        match client.zero(device, translation, target).await {
+        match client.inner.zero(device, translation, target).await {
             Ok(_) => callback(userdata, ClientError::ClientErrorNone),
             Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
         }
     });
 }
 
-#[no_mangle]
-pub extern "C" fn odyssey_hub_client_get_screen_info_by_id(
+#[ffi_function]
+pub extern "C" fn ohc_c_get_screen_info_by_id(
     handle: *const crate::Handle,
     userdata: UserObj,
     client: *mut Client,
@@ -283,7 +289,7 @@ pub extern "C" fn odyssey_hub_client_get_screen_info_by_id(
     let mut client = unsafe { &*client }.clone();
 
     tokio::spawn(async move {
-        match client.get_screen_info_by_id(screen_id).await {
+        match client.inner.get_screen_info_by_id(screen_id).await {
             Ok(reply) => {
                 let err_msg = std::ffi::CString::new("").unwrap();
                 callback(
