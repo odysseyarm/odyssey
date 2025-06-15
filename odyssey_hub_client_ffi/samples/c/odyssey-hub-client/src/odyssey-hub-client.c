@@ -18,23 +18,23 @@ void msleep(unsigned int ms) {
 #endif
 #include <odyssey_hub_client_lib.h>
 
-void client_connect_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClientError error);
-void start_streams(struct OdysseyHubClientHandle* handle, struct OdysseyHubClientClient* client);
-void stream_callback(struct OdysseyHubClientUserObj userdata, enum OdysseyHubClientClientError error, const char *error_msg, struct OdysseyHubClientEvent reply);
+void client_connect_callback(struct ohc_user_obj _, enum OHC_CLIENT_ERROR error);
+void start_streams(struct handle* handle, struct client* client);
+void stream_callback(struct ohc_user_obj userdata, enum OHC_CLIENT_ERROR error, const char *error_msg, struct ohc_client_event reply);
 int handle_connect_event(void* state);
 int handle_stream_event(void* data);
-void handle_device_event(OdysseyHubClientDeviceEvent event);
+void handle_device_event(ohc_device_event event);
 
 atomic_bool end = false;
 
 struct State {
-    struct OdysseyHubClientHandle* handle;
-    struct OdysseyHubClientClient* client;
+    struct ohc_handle *handle;
+    struct ohc_client *client;
 };
 
 int main() {
-    struct OdysseyHubClientHandle* handle = odyssey_hub_client_init();
-    struct OdysseyHubClientClient* client = odyssey_hub_client_client_new();
+    struct OdysseyHubClientHandle *handle = ohc_init();
+    struct OdysseyHubClientClient *client = ohc_c_new();
 
     struct State state = {.handle = handle, .client = client};
 
@@ -47,38 +47,38 @@ int main() {
         msleep(10);
     }
 
-    odyssey_hub_client_client_free(client);
-    odyssey_hub_client_free(handle);
+    ohc_c_free(client);
+    ohc_free(handle);
     return 0;
 }
 
 int handle_connect_event(void* data) {
     struct State* state = (struct State*)data;
-    odyssey_hub_client_client_connect(state->handle, (struct OdysseyHubClientUserObj){._0 = state}, state->client, client_connect_callback);
+    ohc_c_connect(state->handle, (struct ohc_user_obj){.x0 = state}, state->client, client_connect_callback);
     return 0;
 }
 
-void client_connect_callback(struct OdysseyHubClientUserObj userdata, enum OdysseyHubClientClientError error) {
+void client_connect_callback(struct ohc_user_obj userdata, enum OHC_CLIENT_ERROR error) {
     struct State *state = (struct State*)userdata._0;
 
-    if (error == ODYSSEY_HUB_CLIENT_CLIENT_ERROR_CLIENT_ERROR_NONE) {
+    if (error == OHC_CLIENT_ERROR_CLIENT_ERROR_NONE) {
         start_streams(state->handle, state->client);
     } else {
         atomic_store(&end, true);
     }
 }
 
-void start_streams(struct OdysseyHubClientHandle *handle, struct OdysseyHubClientClient *client) {
-    odyssey_hub_client_start_stream(handle, (struct OdysseyHubClientUserObj){._0 = NULL}, client, stream_callback);
+void start_streams(struct ohc_handle *handle, struct ohc_c *client) {
+    odyssey_hub_client_start_stream(handle, (struct ohc_user_obj){.x0 = NULL}, client, stream_callback);
 }
 
-void stream_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClientError error, const char *error_msg, struct OdysseyHubClientEvent reply) {
-    if (error != ODYSSEY_HUB_CLIENT_CLIENT_ERROR_CLIENT_ERROR_NONE) {
+void stream_callback(struct ohc_user_obj _, enum OHC_CLIENT_ERROR error, const char *error_msg, struct ohc_event reply) {
+    if (error != OHC_CLIENT_ERROR_CLIENT_ERROR_NONE) {
         atomic_store(&end, true);
         return;
     }
     thrd_t event_thread;
-    struct OdysseyHubClientEvent* reply_ptr = malloc(sizeof(struct OdysseyHubClientEvent));
+    struct ohc_event* reply_ptr = malloc(sizeof(struct ohc_event));
     *reply_ptr = reply;
     if (thrd_create(&event_thread, handle_stream_event, reply_ptr) == thrd_success) {
         thrd_detach(event_thread);
@@ -89,9 +89,9 @@ void stream_callback(struct OdysseyHubClientUserObj _, enum OdysseyHubClientClie
 }
 
 int handle_stream_event(void* data) {
-    struct OdysseyHubClientEvent* reply = (struct OdysseyHubClientEvent*)data;
+    struct ohc_event *reply = (struct ohc_event*)data;
 
-    if (reply->tag == ODYSSEY_HUB_CLIENT_EVENT_TAG_DEVICE_EVENT) {
+    if (reply == OHC_EVENT_TAG_DEVICE_EVENT) {
         OdysseyHubClientDeviceEvent event = reply->u.device_event;
         handle_device_event(event);
     }

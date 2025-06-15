@@ -47,7 +47,7 @@ struct Server {
         >,
     >,
     device_offsets:
-        Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], nalgebra::Isometry3<f32>>>>,
+        Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
 }
 
 #[tonic::async_trait]
@@ -456,10 +456,10 @@ pub async fn run_server(
                     dl.lock().push((d1.clone(), d2.clone(), sender));
                     event_sender
                         .send(odyssey_hub_common::events::Event::DeviceEvent({
-                            odyssey_hub_common::events::DeviceEvent {
-                                device: d1.clone(),
-                                kind: odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
-                            }
+                            odyssey_hub_common::events::DeviceEvent(
+                                d1.clone(),
+                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
+                            )
                         }))
                         .unwrap();
                 }
@@ -471,10 +471,10 @@ pub async fn run_server(
                     }
                     event_sender
                         .send(odyssey_hub_common::events::Event::DeviceEvent({
-                            odyssey_hub_common::events::DeviceEvent {
-                                device: d.clone(),
-                                kind: odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
-                            }
+                            odyssey_hub_common::events::DeviceEvent(
+                                d.clone(),
+                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
+                            )
                         }))
                         .unwrap();
                 }

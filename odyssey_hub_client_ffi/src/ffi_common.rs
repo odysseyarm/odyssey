@@ -28,21 +28,21 @@ pub enum Device {
 pub struct UdpDevice {
     pub id: u8,
     pub addr: String, // e.g., "192.168.0.1:1234"
-    pub uuid: [u8; 6],
+    pub uuid: u64,
 }
 
 #[ffi_type]
 #[derive(Clone)]
 pub struct HidDevice {
     pub path: String,
-    pub uuid: [u8; 6],
+    pub uuid: u64,
 }
 
 #[ffi_type]
 #[derive(Clone)]
 pub struct CdcDevice {
     pub path: String,
-    pub uuid: [u8; 6],
+    pub uuid: u64,
 }
 
 #[ffi_type]
@@ -60,10 +60,7 @@ pub enum EventKind {
 
 #[ffi_type]
 #[derive(Clone)]
-pub struct DeviceEvent {
-    pub device: Device,
-    pub kind: DeviceEventKind,
-}
+pub struct DeviceEvent(Device, DeviceEventKind);
 
 #[ffi_type]
 #[derive(Clone)]

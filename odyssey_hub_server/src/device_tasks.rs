@@ -54,7 +54,7 @@ pub async fn device_tasks(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
 ) -> anyhow::Result<()> {
     tokio::select! {
         _ = device_udp_manager(message_channel.clone(), screen_calibrations.clone(), device_offsets.clone()) => {},
@@ -73,7 +73,7 @@ pub async fn device_udp_manager(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
 ) {
     fn broadcast_address(ip: std::net::IpAddr, prefix: u8) -> Option<std::net::Ipv4Addr> {
         match ip {
@@ -149,7 +149,7 @@ pub async fn device_udp_manager(
                             if !seen.contains(&key) {
                                 seen.insert(key.clone());
 
-                                let dev = Arc::new(Mutex::new(UdpDevice { id, addr, uuid: [0;6] }));
+                                let dev = Arc::new(Mutex::new(UdpDevice { uuid: 0, id, addr }));
                                 let ev_tx = ev_tx.clone();
                                 let sc = screen_calibrations.clone();
                                 let dev_o = device_offsets.clone();
@@ -228,7 +228,7 @@ async fn device_cdc_manager(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
 ) {
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<Message>(32);
 
@@ -275,7 +275,7 @@ async fn device_cdc_manager(
                     if seen_paths.insert(path.clone()) {
                         let device = Arc::new(Mutex::new(CdcDevice {
                             path: path.clone(),
-                            uuid: [0; 6],
+                            uuid: 0,
                         }));
                         let ev_tx = ev_tx.clone();
                         let sc = screen_calibrations.clone();
@@ -353,18 +353,12 @@ async fn common_tasks(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
     mut rx: tokio::sync::mpsc::Receiver<DeviceTaskMessage>,
 ) {
     println!("starting common_tasks for {device:?}");
 
-    let uuid = match device {
-        Device::Udp(ref device) => device.uuid,
-        Device::Cdc(ref device) => device.uuid,
-        Device::Hid(_) => unimplemented!(),
-    };
-
-    let mut init_fv_zero_offset = device_offsets.lock().await.get(&uuid).cloned();
+    let mut init_fv_zero_offset = device_offsets.lock().await.get(&device.uuid()).cloned();
 
     let fv_state = Arc::new(tokio::sync::Mutex::new(FoveatedAimpointState::new()));
     let timeout = Duration::from_secs(2);
@@ -424,18 +418,18 @@ async fn common_tasks(
                 match device {
                     Device::Udp(device) => {
                         let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                            odyssey_hub_common::events::DeviceEvent {
-                                device: Device::Udp(device.clone()),
+                            odyssey_hub_common::events::DeviceEvent(
+                                Device::Udp(device.clone()),
                                 kind,
-                            }
+                            )
                         ))).await;
                     },
                     Device::Cdc(device) => {
                         let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                            odyssey_hub_common::events::DeviceEvent {
-                                device: Device::Cdc(device.clone()),
+                            odyssey_hub_common::events::DeviceEvent(
+                                Device::Cdc(device.clone()),
                                 kind,
-                            }
+                            )
                         ))).await;
                     },
                     Device::Hid(_) => {},
@@ -622,18 +616,18 @@ async fn common_tasks(
                     match device {
                         Device::Udp(device) => {
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: Device::Udp(device.clone()),
+                                odyssey_hub_common::events::DeviceEvent(
+                                    Device::Udp(device.clone()),
                                     kind,
-                                }
+                                )
                             ))).await;
                         },
                         Device::Cdc(device) => {
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: Device::Cdc(device.clone()),
+                                odyssey_hub_common::events::DeviceEvent(
+                                    Device::Cdc(device.clone()),
                                     kind,
-                                }
+                                )
                             ))).await;
                         },
                         Device::Hid(_) => {},
@@ -646,12 +640,12 @@ async fn common_tasks(
                     break;
                 };
                 let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                    odyssey_hub_common::events::DeviceEvent {
-                        device: device.clone(),
-                        kind: odyssey_hub_common::events::DeviceEventKind::ImpactEvent(odyssey_hub_common::events::ImpactEvent {
+                    odyssey_hub_common::events::DeviceEvent(
+                        device.clone(),
+                        odyssey_hub_common::events::DeviceEventKind::ImpactEvent(odyssey_hub_common::events::ImpactEvent {
                             timestamp: impact.timestamp,
                         }),
-                    }
+                    )
                 ))).await;
             }
             item = rx.recv() => {
@@ -675,26 +669,26 @@ async fn common_tasks(
                                 quat,
                             ))));
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: device.clone(),
-                                    kind: odyssey_hub_common::events::DeviceEventKind::ZeroResult(true),
-                                }
+                                odyssey_hub_common::events::DeviceEvent(
+                                    device.clone(),
+                                    odyssey_hub_common::events::DeviceEventKind::ZeroResult(true),
+                                )
                             ))).await;
                         } else {
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: device.clone(),
-                                    kind: odyssey_hub_common::events::DeviceEventKind::ZeroResult(false),
-                                }
+                                odyssey_hub_common::events::DeviceEvent(
+                                    device.clone(),
+                                    odyssey_hub_common::events::DeviceEventKind::ZeroResult(false),
+                                )
                             ))).await;
                         }
                     },
                     DeviceTaskMessage::SaveZero => {
                         init_fv_zero_offset = *fv_zero_offset.load().clone();
                         if let Some(offset) = init_fv_zero_offset {
-                            device_offsets.lock().await.insert(uuid, offset);
+                            device_offsets.lock().await.insert(device.uuid(), offset);
                         } else {
-                            device_offsets.lock().await.remove(&uuid);
+                            device_offsets.lock().await.remove(&device.uuid());
                         }
                         let device_offsets = device_offsets.lock().await.clone();
                         if tokio::task::spawn_blocking(move || {
@@ -710,17 +704,17 @@ async fn common_tasks(
                             }
                         }).await.unwrap_or(false) {
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: device.clone(),
-                                    kind: odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(true),
-                                }
+                                odyssey_hub_common::events::DeviceEvent(
+                                    device.clone(),
+                                    odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(true),
+                                )
                             ))).await;
                         } else {
                             let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                                odyssey_hub_common::events::DeviceEvent {
-                                    device: device.clone(),
-                                    kind: odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(false),
-                                }
+                                odyssey_hub_common::events::DeviceEvent(
+                                    device.clone(),
+                                    odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(false),
+                                )
                             ))).await;
                         }
                     },
@@ -747,7 +741,7 @@ pub async fn device_udp_stream_task(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
 ) -> anyhow::Result<()> {
     let addr = { device.lock().await.addr.clone() };
 
@@ -778,7 +772,9 @@ pub async fn device_udp_stream_task(
 
     {
         let mut dev = device.lock().await;
-        dev.uuid = props.uuid.clone();
+        let mut padded = [0u8; 8];
+        padded[..6].copy_from_slice(&props.uuid);
+        dev.uuid = u64::from_le_bytes(padded)
     }
 
     let (tx, rx) = tokio::sync::mpsc::channel(5);
@@ -816,7 +812,7 @@ pub async fn device_cdc_stream_task(
             >,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
 ) -> anyhow::Result<()> {
     let path = device.lock().await.path.clone();
 
@@ -830,7 +826,9 @@ pub async fn device_cdc_stream_task(
 
     {
         let mut dev = device.lock().await;
-        dev.uuid = props.uuid;
+        let mut padded = [0u8; 8];
+        padded[..6].copy_from_slice(&props.uuid);
+        dev.uuid = u64::from_le_bytes(padded)
     }
 
     let (tx, rx) = tokio::sync::mpsc::channel(5);
@@ -900,10 +898,10 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
                             let _ = message_channel
                                 .send(Message::Event(
                                     odyssey_hub_common::events::Event::DeviceEvent(
-                                        odyssey_hub_common::events::DeviceEvent {
-                                            device: Device::Udp(device.clone()),
+                                        odyssey_hub_common::events::DeviceEvent(
+                                            Device::Udp(device.clone()),
                                             kind,
-                                        },
+                                        ),
                                     ),
                                 ))
                                 .await;
@@ -912,10 +910,10 @@ async fn temp_boneless_hardcoded_vendor_stream_tasks(
                             let _ = message_channel
                                 .send(Message::Event(
                                     odyssey_hub_common::events::Event::DeviceEvent(
-                                        odyssey_hub_common::events::DeviceEvent {
-                                            device: Device::Cdc(device.clone()),
+                                        odyssey_hub_common::events::DeviceEvent(
+                                            Device::Cdc(device.clone()),
                                             kind,
-                                        },
+                                        ),
                                     ),
                                 ))
                                 .await;

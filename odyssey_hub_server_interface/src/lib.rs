@@ -81,37 +81,24 @@ impl Into<nalgebra::Vector3<f32>> for proto::Vector3 {
 impl From<odyssey_hub_common::device::Device> for proto::Device {
     fn from(value: odyssey_hub_common::device::Device) -> Self {
         match value {
-            odyssey_hub_common::device::Device::Udp(udp_device) => proto::Device {
+            odyssey_hub_common::device::Device::Udp(d) => proto::Device {
                 device_oneof: Some(proto::device::DeviceOneof::UdpDevice(proto::UdpDevice {
-                    id: udp_device.id as i32,
-                    ip: udp_device.addr.ip().to_string(),
-                    port: udp_device.addr.port() as i32,
-                    uuid: u64::from_le_bytes([
-                        udp_device.uuid[0],
-                        udp_device.uuid[1],
-                        udp_device.uuid[2],
-                        udp_device.uuid[3],
-                        udp_device.uuid[4],
-                        udp_device.uuid[5],
-                        0,
-                        0,
-                    ]),
+                    id: d.id as i32,
+                    ip: d.addr.ip().to_string(),
+                    port: d.addr.port() as i32,
+                    uuid: d.uuid,
                 })),
             },
             odyssey_hub_common::device::Device::Hid(d) => proto::Device {
                 device_oneof: Some(proto::device::DeviceOneof::HidDevice(proto::HidDevice {
                     path: d.path,
-                    uuid: u64::from_le_bytes([
-                        d.uuid[0], d.uuid[1], d.uuid[2], d.uuid[3], d.uuid[4], d.uuid[5], 0, 0,
-                    ]),
+                    uuid: d.uuid,
                 })),
             },
             odyssey_hub_common::device::Device::Cdc(d) => proto::Device {
                 device_oneof: Some(proto::device::DeviceOneof::CdcDevice(proto::CdcDevice {
                     path: d.path,
-                    uuid: u64::from_le_bytes([
-                        d.uuid[0], d.uuid[1], d.uuid[2], d.uuid[3], d.uuid[4], d.uuid[5], 0, 0,
-                    ]),
+                    uuid: d.uuid,
                 })),
             },
         }
@@ -123,21 +110,21 @@ impl From<proto::Device> for odyssey_hub_common::device::Device {
         match value.device_oneof.unwrap() {
             proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port, uuid }) => {
                 odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice {
+                    uuid,
                     id: id as u8,
                     addr: SocketAddr::new(ip.parse().unwrap(), port as u16),
-                    uuid: uuid.to_le_bytes()[0..6].try_into().unwrap(),
                 })
             }
             proto::device::DeviceOneof::HidDevice(proto::HidDevice { path, uuid }) => {
                 odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice {
+                    uuid,
                     path,
-                    uuid: uuid.to_le_bytes()[0..6].try_into().unwrap(),
                 })
             }
             proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path, uuid }) => {
                 odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice {
+                    uuid,
                     path,
-                    uuid: uuid.to_le_bytes()[0..6].try_into().unwrap(),
                 })
             }
         }
@@ -147,9 +134,8 @@ impl From<proto::Device> for odyssey_hub_common::device::Device {
 impl From<odyssey_hub_common::events::Event> for proto::Event {
     fn from(value: odyssey_hub_common::events::Event) -> Self {
         match value {
-            odyssey_hub_common::events::Event::None => proto::Event { event_oneof: None },
             odyssey_hub_common::events::Event::DeviceEvent(
-                odyssey_hub_common::events::DeviceEvent { device, kind },
+                odyssey_hub_common::events::DeviceEvent(device, kind),
             ) => proto::Event {
                 event_oneof: Some(proto::event::EventOneof::Device(proto::DeviceEvent {
                     device: Some(device.into()),
@@ -254,9 +240,9 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                 device,
                 device_event_oneof,
             }) => odyssey_hub_common::events::Event::DeviceEvent(
-                odyssey_hub_common::events::DeviceEvent {
-                    device: device.unwrap().into(),
-                    kind: match device_event_oneof.unwrap() {
+                odyssey_hub_common::events::DeviceEvent(
+                    device.unwrap().into(),
+                    match device_event_oneof.unwrap() {
                         proto::device_event::DeviceEventOneof::Accelerometer(
                             proto::device_event::AccelerometerEvent {
                                 timestamp,
@@ -337,7 +323,7 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                             )
                         }
                     },
-                },
+                ),
             ),
         }
     }

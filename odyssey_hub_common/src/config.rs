@@ -8,27 +8,13 @@ pub const APP_INFO: AppInfo = AppInfo {
     author: "odysseyarm",
 };
 
-pub fn device_offsets() -> Result<HashMap<[u8; 6], nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>> {
+pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let device_offsets_path = config_dir.join("device_offsets.json");
 
     if device_offsets_path.exists() {
         tracing::info!("Loading device offsets from {}", device_offsets_path.display());
-        let raw: HashMap<String, nalgebra::Isometry3<f32>> =
-            json5::from_str(&std::fs::read_to_string(&device_offsets_path)?)?;
-
-        let mut parsed = HashMap::new();
-        for (key_str, value) in raw {
-            if key_str.len() != 12 || !key_str.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(format!("Invalid key format: {}", key_str).into());
-            }
-            let mut key_bytes = [0u8; 6];
-            for i in 0..6 {
-                key_bytes[i] = u8::from_str_radix(&key_str[i * 2..i * 2 + 2], 16)?;
-            }
-            parsed.insert(key_bytes, value);
-        }
-        Ok(parsed)
+        Ok(json5::from_str(&std::fs::read_to_string(&device_offsets_path)?)?)
     } else {
         tracing::warn!("Device offsets file not found, using default values");
         Ok(Default::default())
@@ -59,7 +45,7 @@ pub fn screen_calibrations() -> Result<arrayvec::ArrayVec<(u8, ScreenCalibration
 }
 
 pub fn save_device_offsets(
-    device_offsets: &HashMap<[u8; 6], nalgebra::Isometry3<f32>>,
+    device_offsets: &HashMap<u64, nalgebra::Isometry3<f32>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let device_offsets_path = config_dir.join("device_offsets.json");
@@ -67,7 +53,7 @@ pub fn save_device_offsets(
     let converted: HashMap<String, &nalgebra::Isometry3<f32>> = device_offsets
         .iter()
         .map(|(k, v)| {
-            let key_str = k.iter().map(|b| format!("{:02X}", b)).collect::<String>();
+            let key_str = format!("{:02x}", k);
             (key_str, v)
         })
         .collect();

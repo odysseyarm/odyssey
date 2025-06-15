@@ -1,14 +1,10 @@
 #[derive(Clone, Debug)]
 pub enum Event {
-    None,
     DeviceEvent(DeviceEvent),
 }
 
 #[derive(Clone, Debug)]
-pub struct DeviceEvent {
-    pub device: crate::device::Device,
-    pub kind: DeviceEventKind,
-}
+pub struct DeviceEvent(pub crate::device::Device, pub DeviceEventKind);
 
 #[derive(Clone, Debug)]
 pub enum DeviceEventKind {
