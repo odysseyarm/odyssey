@@ -36,9 +36,10 @@ pub struct Client {
     inner: Arc<RwLock<odyssey_hub_client::client::Client>>,
 }
 
-#[uniffi::export]
-pub trait EventCallback: Send + Sync {
-    fn on_event(&self, event: Option<Event>, error: Option<ClientError>);
+#[derive(uniffi::Record)]
+pub struct PollEventResult {
+    pub event: Option<Event>,
+    pub error: Option<ClientError>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -71,40 +72,53 @@ impl Client {
             .map(|dl| dl.into_iter().map(|d| d.into()).collect())
     }
 
-    pub async fn run_stream(&self, callback: Arc<dyn EventCallback>) -> Result<(), ClientError> {
+    #[uniffi::method]
+    pub async fn poll_event(&self) -> Result<PollEventResult, ClientError> {
         let mut client = self.inner.read().await.clone();
 
         match client.poll().await {
             Ok(mut stream) => {
-                while let Ok(msg) = stream.message().await {
+                if let Ok(msg) = stream.message().await {
                     match msg {
                         Some(reply) => {
                             if let Some(event) = reply.event {
-                                callback.on_event(
-                                    Some(odyssey_hub_common::events::Event::from(event).into()),
-                                    None,
-                                );
+                                Ok(PollEventResult {
+                                    event: Some(odyssey_hub_common::events::Event::from(event).into()),
+                                    error: None,
+                                })
+                            } else {
+                                Ok(PollEventResult {
+                                    event: None,
+                                    error: None,
+                                })
                             }
                         }
                         None => {
-                            callback.on_event(None, Some(ClientError::StreamEnd));
-                            break;
+                            Ok(PollEventResult {
+                                event: None,
+                                error: Some(ClientError::StreamEnd),
+                            })
                         }
                     }
+                } else {
+                    Ok(PollEventResult {
+                        event: None,
+                        error: Some(ClientError::StreamEnd),
+                    })
                 }
             }
             Err(_) => {
-                callback.on_event(None, Some(ClientError::NotConnected));
+                Err(ClientError::NotConnected)
             }
         }
-
-        Ok(())
     }
 
+    #[uniffi::method]
     pub async fn stop_stream(&self) {
         self.inner.write().await.end_token.cancel();
     }
 
+    #[uniffi::method]
     pub async fn write_vendor(
         &self,
         device: DeviceRecord,
@@ -120,6 +134,7 @@ impl Client {
             .map(|_| ())
     }
 
+    #[uniffi::method]
     pub async fn reset_zero(&self, device: DeviceRecord) -> Result<(), ClientError> {
         self.inner
             .write()
@@ -130,6 +145,7 @@ impl Client {
             .map(|_| ())
     }
 
+    #[uniffi::method]
     pub async fn zero(
         &self,
         device: DeviceRecord,
@@ -155,6 +171,7 @@ impl Client {
             .map(|_| ())
     }
 
+    #[uniffi::method]
     pub async fn get_screen_info_by_id(&self, screen_id: u8) -> Result<ScreenInfo, ClientError> {
         self.inner
             .write()

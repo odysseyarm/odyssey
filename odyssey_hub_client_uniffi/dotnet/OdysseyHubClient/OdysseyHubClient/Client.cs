@@ -43,40 +43,25 @@ namespace Radiosity.OdysseyHubClient
             return _inner.GetDeviceList();
         }
 
-        private class MyEventCallback: uniffi.IEventCallback {
-            private ChannelWriter<(uniffi.Event, uniffi.ClientException)> channelWriter;
-
-            public MyEventCallback(ChannelWriter<(uniffi.Event, uniffi.ClientException)> channelWriter) {
-                this.channelWriter = channelWriter;
-            }
-
-            public void OnEvent(uniffi.Event? @event, uniffi.ClientException? @error) {
-                Console.WriteLine("Event received: {0}, Error: {1}", @event, @error);
-                if (@event != null) {
-                    channelWriter.WriteAsync((@event, @error));
-                }
-                if (error != null) {
-                    switch (error) {
-                        case uniffi.ClientException.NotConnected:
-                        case uniffi.ClientException.StreamEnd:
-                        default:
-                            channelWriter.Complete();
-                            return;
-                    }
-                }
-            }
-        }
-
         /// <summary>
         /// This function starts a stream of events from the device.
         /// </summary>
         /// <param name="channelWriter"></param>
-        public Task RunStream(ChannelWriter<(uniffi.Event, uniffi.ClientException)> channelWriter) {
+        public Task RunStream(ChannelWriter<(uniffi.Event?, uniffi.ClientException?)> channelWriter) {
             return Task.Run(async () => {
-                var myEventCallback = new MyEventCallback(channelWriter);
-                GCHandle handle = GCHandle.Alloc(myEventCallback);
-                await _inner.RunStream(new uniffi.EventCallback(((IntPtr)handle)));
-                handle.Free();
+                while (true) {
+                    var (@event, error) = await _inner.PollEvent();
+                    await channelWriter.WriteAsync((@event, @error));
+                    if (error != null) {
+                        switch (error) {
+                            case uniffi.ClientException.NotConnected:
+                            case uniffi.ClientException.StreamEnd:
+                            default:
+                                channelWriter.Complete();
+                                return;
+                        }
+                    }
+                }
             });
         }
 
