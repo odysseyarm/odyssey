@@ -1,80 +1,60 @@
 ﻿using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
-using OdysseyHubClient = Radiosity.OdysseyHubClient;
+using Ohc = Radiosity.OdysseyHubClient;
 
-OdysseyHubClient.Handle handle = new OdysseyHubClient.Handle();
+Ohc.Client client = new Ohc.Client();
 
-OdysseyHubClient.Client client = new OdysseyHubClient.Client();
-
-Task<OdysseyHubClient.ClientError> connectTask = client.Connect(handle);
-
-switch (await connectTask) {
-    case OdysseyHubClient.ClientError.None:
-        Console.WriteLine("Connected!");
-        break;
-    case OdysseyHubClient.ClientError.ConnectFailure:
-        Console.WriteLine("Failed to connect!");
-        break;
-    default:
-        Environment.Exit(1);
-        break;
+Task connectTask = client.Connect();
+try {
+    await connectTask;
+    Console.WriteLine("Connected!");
+} catch (Ohc.uniffi.AnyhowException ex) {
+    Console.WriteLine(ex.AnyhowMessage());
+    Environment.Exit(1);
 }
 
-Task<(OdysseyHubClient.ClientError, OdysseyHubClient.IDevice[])> deviceListTask = client.GetDeviceList(handle);
-
-var (error, devices) = await deviceListTask;
-
-switch (error) {
-    case OdysseyHubClient.ClientError.None:
-        break;
-    case OdysseyHubClient.ClientError.ConnectFailure:
-        Console.WriteLine("Failed to connect!");
-        break;
-    case OdysseyHubClient.ClientError.NotConnected:
-        Console.WriteLine("Not connected!");
-        break;
-    default:
-        Console.Error.WriteLine("This shouldn't be possible");
-        Environment.Exit(1);
-        break;
+Task<List<Ohc.uniffi.DeviceRecord>> deviceListTask = client.GetDeviceList();
+List<Ohc.uniffi.DeviceRecord> devices = new List<Ohc.uniffi.DeviceRecord>();
+try {
+    devices = await deviceListTask;
+    Console.WriteLine("Devices (count: {0}):", devices.Count);
+} catch (Ohc.uniffi.AnyhowException ex) {
+    Console.WriteLine(ex.AnyhowMessage());
+    Environment.Exit(1);
 }
 
-Console.WriteLine("Devices (count: {0}):", devices.Length);
-
-void PrintDevice(OdysseyHubClient.IDevice device) {
+void PrintDevice(Ohc.uniffi.DeviceRecord deviceR) {
     Console.WriteLine("\tDevice:");
-    switch (device) {
-        case OdysseyHubClient.UdpDevice udpDevice:
+    switch (deviceR) {
+        case Ohc.uniffi.DeviceRecord.Udp udpDevice:
             Console.WriteLine("\t\tType: UDP");
             Console.WriteLine("\t\tID: {0}", udpDevice.id);
-            Console.WriteLine("\t\tAddr: {0}", udpDevice.addr.ip + ":" + udpDevice.addr.port);
+            Console.WriteLine("\t\tAddr: {0}", udpDevice.addr);
             break;
-        case OdysseyHubClient.CdcDevice cdcDevice:
+        case Ohc.uniffi.DeviceRecord.Cdc cdcDevice:
             Console.WriteLine("\t\tType: CDC");
             Console.WriteLine("\t\tPath: {0}", cdcDevice.path);
-            Console.WriteLine("\t\tUUID: {0}", BitConverter.ToString(cdcDevice.uuid));
             break;
-        case OdysseyHubClient.HidDevice hidDevice:
+        case Ohc.uniffi.DeviceRecord.Hid hidDevice:
             Console.WriteLine("\t\tType: HID");
             Console.WriteLine("\t\tPath: {0}", hidDevice.path);
-            Console.WriteLine("\t\tUUID: {0}", BitConverter.ToString(hidDevice.uuid));
             break;
         default:
             break;
 
     }
+    var device = new Ohc.uniffi.Device(deviceR);
+    Console.WriteLine("\t\tUUID: 0x{0:X}", device.Uuid());
 }
-
-Channel<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)> eventChannel = Channel.CreateUnbounded<(OdysseyHubClient.IEvent, OdysseyHubClient.ClientError, string)>();
-client.StartStream(handle, eventChannel.Writer);
 
 foreach (var device in devices) {
     PrintDevice(device);
-    Task<OdysseyHubClient.ClientError> malfunction_zero_task = client.WriteVendor(handle, device, 0x84, [ 0x00 ]);
+    Task malfunction_zero_task = client.WriteVendor(device, 0x84, [ 0x00 ]);
     await malfunction_zero_task;
-    Task<OdysseyHubClient.ClientError> device_type_task = client.WriteVendor(handle, device, 0x90, []);
+    Task device_type_task = client.WriteVendor(device, 0x90, []);
     await device_type_task;
 }
 
@@ -82,7 +62,7 @@ Console.WriteLine("Devices printed!");
 
 {
     Console.WriteLine("Attempting to print screen_0 info");
-    var (err, err_msg, screen_info) = await client.GetScreenInfoById(handle, 0);
+    var screen_info = await client.GetScreenInfoById(0);
     Console.WriteLine("Screen info:");
     Console.WriteLine("\tID: {0}", screen_info.id);
     Console.WriteLine("\tBounds:");
@@ -92,89 +72,99 @@ Console.WriteLine("Devices printed!");
     Console.WriteLine("\t\tBottom Right: \t{0}", screen_info.br);
 }
 
-await foreach ((var @event, var err, var err_msg) in eventChannel.Reader.ReadAllAsync()) {
-    switch (@event) {
-        case OdysseyHubClient.DeviceEvent deviceEvent:
-            switch (deviceEvent.kind) {
-                // uncomment what you want to see
-                case OdysseyHubClient.DeviceEvent.Accelerometer accelerometer:
-                    // Console.WriteLine("Printing accelerometer event:");
-                    // Console.WriteLine("\ttimestamp: {0}", accelerometer.timestamp);
-                    // Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.acceleration.x, accelerometer.acceleration.y, accelerometer.acceleration.z);
-                    // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
-                    // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
-                    break;
-                case OdysseyHubClient.DeviceEvent.Tracking tracking:
-                    // Console.WriteLine("Printing tracking event:");
-                    // Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
-                    Console.WriteLine("\taimpoint: {0} {1}", tracking.aimpoint.x, tracking.aimpoint.y);
-                    // if (tracking.pose != null) {
-                    //     Console.WriteLine("\tpose: ");
-                    //     Console.WriteLine("\t\trotation: ");
-                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
-                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
-                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
-                    //     Console.WriteLine("\t\ttranslation: ");
-                    //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
-                    //     Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
-                    // } else {
-                    //     Console.WriteLine("\tpose: Not resolved");
-                    // }
-                    // Console.WriteLine("\tdistance: {0}", tracking.distance);
-                    break;
-                case OdysseyHubClient.DeviceEvent.Impact impact:
-                    // Console.WriteLine("Printing impact event:");
-                    // Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
-                    break;
-                case OdysseyHubClient.DeviceEvent.Connect _:
-                    Console.WriteLine("Device connected");
-                    // Resetting on connect is currently redundant because the device zero isometry is the identity on connect
-                    await client.ResetZero(handle, deviceEvent.device);
-                    _ = Task.Run(async () => {
-                        await Task.Delay(5000);
-                        // negative Y is up, positive X is right
-                        // the following translation says the bore is 0.0381 meters above the device in the device's local coordinate system
-                        var translation = new OdysseyHubClient.Vector3(0.0f, -0.0381f, 0.0f);
-                        // zero target is middle of the screen
-                        var target = new OdysseyHubClient.Vector2(0.5f, 0.5f);
-                        await client.Zero(handle, deviceEvent.device, translation, target);
-                        Console.WriteLine("Zeroed device");
-                    });
-                    Task<OdysseyHubClient.ClientError> malfunction_zero_task = client.WriteVendor(handle, deviceEvent.device, 0x84, [ 0x00 ]);
-                    await malfunction_zero_task;
-                    Task<OdysseyHubClient.ClientError> device_type_task = client.WriteVendor(handle, deviceEvent.device, 0x90, []);
-                    await device_type_task;
-                    break;
-                case OdysseyHubClient.DeviceEvent.Disconnect _:
-                    Console.WriteLine("Device disconnected");
-                    break;
-                case OdysseyHubClient.DeviceEvent.ZeroResult zeroResult:
-                    if (zeroResult.success) {
-                        Console.WriteLine("Zero result: success");
-                    } else {
-                        Console.WriteLine("Zero result: failure");
-                    }
-                    break;
-                case OdysseyHubClient.DeviceEvent.Packet packet:
-                    switch (packet.data) {
-                        case OdysseyHubClient.DeviceEvent.Packet.UnsupportedPacketData _:
-                            Console.WriteLine("Unsupported packet");
-                            break;
-                        case OdysseyHubClient.DeviceEvent.Packet.VendorPacketData vendorPacketData:
-                            Console.WriteLine("Printing vendor packet:");
-                            Console.WriteLine("\ttype: {0}", packet.ty);
-                            Console.WriteLine("\tdata: {0}", BitConverter.ToString(vendorPacketData.data));
-                            break;
-                    }
-                    break;
-                default:
-                    break;
+Channel<(Ohc.uniffi.Event, Ohc.uniffi.ClientException)> eventChannel = Channel.CreateUnbounded<(Ohc.uniffi.Event, Ohc.uniffi.ClientException)>();
+await Task.WhenAny(
+    client.RunStream(eventChannel.Writer),
+    Task.Run(async () => {
+        Console.WriteLine("Starting event loop");
+        await foreach ((var @event, var err) in eventChannel.Reader.ReadAllAsync()) {
+            Console.WriteLine("Received event:");
+            if (err == null) {
+                switch (@event) {
+                    case Ohc.uniffi.Event.DeviceEvent deviceEvent:
+                        switch (deviceEvent.v1.kind) {
+                            // uncomment desired behavior
+                            case Ohc.uniffi.DeviceEventKind.AccelerometerEvent accelerometer:
+                                Console.WriteLine("Printing accelerometer event:");
+                                Console.WriteLine("\ttimestamp: {0}", accelerometer.v1.timestamp);
+                                Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.v1.accel.x, accelerometer.v1.accel.y, accelerometer.v1.accel.z);
+                                // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
+                                // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
+                                break;
+                            case Ohc.uniffi.DeviceEventKind.TrackingEvent tracking:
+                                // Console.WriteLine("Printing tracking event:");
+                                // Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
+                                Console.WriteLine("\taimpoint: {0} {1}", tracking.v1.aimpoint.x, tracking.v1.aimpoint.y);
+                                // if (tracking.pose != null) {
+                                //     Console.WriteLine("\tpose: ");
+                                //     Console.WriteLine("\t\trotation: ");
+                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
+                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
+                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
+                                //     Console.WriteLine("\t\ttranslation: ");
+                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
+                                //     Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
+                                // } else {
+                                //     Console.WriteLine("\tpose: Not resolved");
+                                // }
+                                // Console.WriteLine("\tdistance: {0}", tracking.distance);
+                                break;
+                            case Ohc.uniffi.DeviceEventKind.ImpactEvent impact:
+                                // Console.WriteLine("Printing impact event:");
+                                // Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
+                                break;
+                            case Ohc.uniffi.DeviceEventKind.ConnectEvent _:
+                                Console.WriteLine("Device connected");
+                                // Resetting on connect is currently redundant because the device zero isometry is the identity on connect
+                                // await client.ResetZero(deviceEvent.v1.device);
+                                // _ = Task.Run(async () => {
+                                //     await Task.Delay(5000);
+                                //     // negative Y is up, positive X is right
+                                //     // the following translation says the bore is 0.0381 meters above the device in the device's local coordinate system
+                                //     var translation = new Ohc.uniffi.Vector3f32(0, -0.0381f, 0);
+                                //     // zero target is middle of the screen
+                                //     var target = new Ohc.uniffi.Vector2f32(0.5f, 0.5f);
+                                //     await client.Zero(deviceEvent.v1.device, translation, target);
+                                //     Console.WriteLine("Zeroed device");
+                                // });
+                                Task malfunction_zero_task = client.WriteVendor(deviceEvent.v1.device, 0x84, [0x00]);
+                                await malfunction_zero_task;
+                                Task device_type_task = client.WriteVendor(deviceEvent.v1.device, 0x90, []);
+                                await device_type_task;
+                                break;
+                            case Ohc.uniffi.DeviceEventKind.DisconnectEvent _:
+                                Console.WriteLine("Device disconnected");
+                                break;
+                            case Ohc.uniffi.DeviceEventKind.ZeroResult zeroResult:
+                                if (zeroResult.v1) {
+                                    Console.WriteLine("Zero result: success");
+                                } else {
+                                    Console.WriteLine("Zero result: failure");
+                                }
+                                break;
+                            case Ohc.uniffi.DeviceEventKind.PacketEvent packet:
+                                switch (packet.v1.data) {
+                                    case Ohc.uniffi.PacketData.Unsupported _:
+                                        Console.WriteLine("Unsupported packet");
+                                        break;
+                                    case Ohc.uniffi.PacketData.VendorEvent vendorPacketData:
+                                        Console.WriteLine("Printing vendor packet:");
+                                        Console.WriteLine("\ttype: {0}", packet.v1.ty);
+                                        Console.WriteLine("\tdata: {0}", BitConverter.ToString(vendorPacketData.v1.data));
+                                        break;
+                                }
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            } else {
+                Console.WriteLine(err.Message);
             }
-            break;
-        case OdysseyHubClient.NoneEvent:
-            Console.WriteLine("Error: {0}, message: {1}", err, err_msg);
-            break;
-        default:
-            break;
-    }
-}
+        }
+    })
+);
+

@@ -4,11 +4,17 @@ use tokio::sync::RwLock;
 
 use crate::ffi_common::*;
 
-#[derive(uniffi::Object)]
-#[derive(Debug, thiserror::Error)]
+#[derive(uniffi::Object, Debug, thiserror::Error)]
 #[error("{e:?}")] // default message is from anyhow.
 pub struct AnyhowError {
     e: uniffi::deps::anyhow::Error,
+}
+
+#[uniffi::export]
+impl AnyhowError {
+    fn anyhow_message(&self) -> String {
+        self.to_string()
+    }
 }
 
 impl From<uniffi::deps::anyhow::Error> for AnyhowError {
@@ -17,8 +23,7 @@ impl From<uniffi::deps::anyhow::Error> for AnyhowError {
     }
 }
 
-#[derive(uniffi::Enum)]
-#[derive(Debug, thiserror::Error)]
+#[derive(uniffi::Enum, Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("Not connected to the server")]
     NotConnected,
@@ -36,7 +41,7 @@ pub trait EventCallback: Send + Sync {
     fn on_event(&self, event: Option<Event>, error: Option<ClientError>);
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl Client {
     #[uniffi::constructor]
     pub fn new() -> Self {
@@ -47,18 +52,23 @@ impl Client {
 
     #[uniffi::method]
     pub async fn connect(&self) -> Result<(), Arc<AnyhowError>> {
-        self.inner.write().await.connect().await.map_err(|e| {
-            Arc::new(e.into())
-        })
+        self.inner
+            .write()
+            .await
+            .connect()
+            .await
+            .map_err(|e| Arc::new(e.into()))
     }
 
     #[uniffi::method]
     pub async fn get_device_list(&self) -> Result<Vec<DeviceRecord>, Arc<AnyhowError>> {
-        self.inner.write().await.get_device_list().await.map_err(|e| {
-            Arc::new(e.into())
-        }).map(|dl| {
-            dl.into_iter().map(|d| d.into()).collect()
-        })
+        self.inner
+            .write()
+            .await
+            .get_device_list()
+            .await
+            .map_err(|e| Arc::new(e.into()))
+            .map(|dl| dl.into_iter().map(|d| d.into()).collect())
     }
 
     pub async fn run_stream(&self, callback: Arc<dyn EventCallback>) -> Result<(), ClientError> {
@@ -70,7 +80,10 @@ impl Client {
                     match msg {
                         Some(reply) => {
                             if let Some(event) = reply.event {
-                                callback.on_event(Some(odyssey_hub_common::events::Event::from(event).into()), None);
+                                callback.on_event(
+                                    Some(odyssey_hub_common::events::Event::from(event).into()),
+                                    None,
+                                );
                             }
                         }
                         None => {
@@ -98,11 +111,23 @@ impl Client {
         tag: u8,
         data: Vec<u8>,
     ) -> Result<(), ClientError> {
-        self.inner.write().await.write_vendor(device.into(), tag, data).await.map_err(|_| ClientError::NotConnected).map(|_| ())
+        self.inner
+            .write()
+            .await
+            .write_vendor(device.into(), tag, data)
+            .await
+            .map_err(|_| ClientError::NotConnected)
+            .map(|_| ())
     }
 
     pub async fn reset_zero(&self, device: DeviceRecord) -> Result<(), ClientError> {
-        self.inner.write().await.reset_zero(device.into()).await.map_err(|_| ClientError::NotConnected).map(|_| ())
+        self.inner
+            .write()
+            .await
+            .reset_zero(device.into())
+            .await
+            .map_err(|_| ClientError::NotConnected)
+            .map(|_| ())
     }
 
     pub async fn zero(
@@ -121,13 +146,22 @@ impl Client {
             y: target.y,
         };
 
-        self.inner.write().await.zero(device.into(), translation, target).await.map_err(|_| ClientError::NotConnected).map(|_| ())
+        self.inner
+            .write()
+            .await
+            .zero(device.into(), translation, target)
+            .await
+            .map_err(|_| ClientError::NotConnected)
+            .map(|_| ())
     }
 
-    pub async fn get_screen_info_by_id(
-        &self,
-        screen_id: u8,
-    ) -> Result<ScreenInfo, ClientError> {
-        self.inner.write().await.get_screen_info_by_id(screen_id).await.map_err(|_| ClientError::NotConnected).map(|info| info.into())
+    pub async fn get_screen_info_by_id(&self, screen_id: u8) -> Result<ScreenInfo, ClientError> {
+        self.inner
+            .write()
+            .await
+            .get_screen_info_by_id(screen_id)
+            .await
+            .map_err(|_| ClientError::NotConnected)
+            .map(|info| info.into())
     }
 }

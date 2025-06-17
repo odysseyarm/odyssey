@@ -26,8 +26,7 @@ impl Device {
     }
 }
 
-#[derive(uniffi::Enum)]
-#[derive(Clone)]
+#[derive(uniffi::Enum, Clone)]
 pub enum DeviceRecord {
     Udp {
         uuid: u64,
@@ -55,21 +54,18 @@ impl Device {
     }
 }
 
-#[derive(uniffi::Enum)]
-#[derive(Clone)]
+#[derive(uniffi::Enum, Clone)]
 pub enum Event {
     DeviceEvent(DeviceEvent),
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct DeviceEvent {
     device: DeviceRecord,
     kind: DeviceEventKind,
 }
 
-#[derive(uniffi::Enum)]
-#[derive(Clone)]
+#[derive(uniffi::Enum, Clone)]
 pub enum DeviceEventKind {
     AccelerometerEvent(AccelerometerEvent),
     TrackingEvent(TrackingEvent),
@@ -81,8 +77,7 @@ pub enum DeviceEventKind {
     PacketEvent(PacketEvent),
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct AccelerometerEvent {
     pub timestamp: u32,
     pub accel: crate::funny::Vector3f32,
@@ -90,8 +85,7 @@ pub struct AccelerometerEvent {
     pub euler_angles: crate::funny::Vector3f32,
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct TrackingEvent {
     pub timestamp: u32,
     pub aimpoint: crate::funny::Vector2f32,
@@ -100,42 +94,36 @@ pub struct TrackingEvent {
     pub screen_id: u32,
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct ImpactEvent {
     pub timestamp: u32,
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct PacketEvent {
     pub ty: u8,
     pub data: PacketData,
 }
 
-#[derive(uniffi::Enum)]
-#[derive(Clone)]
+#[derive(uniffi::Enum, Clone)]
 pub enum PacketData {
     Unsupported,
     VendorEvent(VendorEventPacketData),
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct VendorEventPacketData {
     pub len: u8,
     pub data: Vec<u8>,
 }
 
-#[derive(uniffi::Record)]
-#[derive(Clone, Default)]
+#[derive(uniffi::Record, Clone, Default)]
 pub struct Pose {
     pub rotation: crate::funny::Matrix3f32,
     pub translation: crate::funny::Matrix3x1f32,
 }
 
-#[derive(uniffi::Object)]
-#[derive(Clone)]
+#[derive(uniffi::Record, Clone)]
 pub struct ScreenInfo {
     pub id: u8,
     pub tl: crate::funny::Vector2f32,
@@ -178,12 +166,12 @@ impl From<odyssey_hub_common::events::TrackingEvent> for TrackingEvent {
 impl From<ats_usb::packets::vm::PacketData> for PacketData {
     fn from(packet_data: ats_usb::packets::vm::PacketData) -> Self {
         match packet_data {
-            ats_usb::packets::vm::PacketData::Vendor(_, (len, data)) => PacketData::VendorEvent(
-                VendorEventPacketData {
+            ats_usb::packets::vm::PacketData::Vendor(_, (len, data)) => {
+                PacketData::VendorEvent(VendorEventPacketData {
                     len,
                     data: data.to_vec(),
-                }
-            ),
+                })
+            }
             _ => PacketData::Unsupported,
         }
     }
@@ -212,25 +200,25 @@ impl From<odyssey_hub_common::device::Device> for DeviceRecord {
 impl From<DeviceRecord> for odyssey_hub_common::device::Device {
     fn from(device: DeviceRecord) -> Self {
         match device {
-            DeviceRecord::Udp { uuid, id, addr } => odyssey_hub_common::device::Device::Udp(
-                odyssey_hub_common::device::UdpDevice {
+            DeviceRecord::Udp { uuid, id, addr } => {
+                odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice {
                     uuid,
                     id,
                     addr: addr.to_string().parse().unwrap(),
-                },
-            ),
-            DeviceRecord::Hid { path, uuid } => odyssey_hub_common::device::Device::Hid(
-                odyssey_hub_common::device::HidDevice {
+                })
+            }
+            DeviceRecord::Hid { path, uuid } => {
+                odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice {
                     uuid,
                     path: path.into(),
-                },
-            ),
-            DeviceRecord::Cdc { path, uuid } => odyssey_hub_common::device::Device::Cdc(
-                odyssey_hub_common::device::CdcDevice {
+                })
+            }
+            DeviceRecord::Cdc { path, uuid } => {
+                odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice {
                     uuid,
                     path: path.into(),
-                },
-            ),
+                })
+            }
         }
     }
 }
@@ -238,49 +226,49 @@ impl From<DeviceRecord> for odyssey_hub_common::device::Device {
 impl From<odyssey_hub_common::events::Event> for Event {
     fn from(event: odyssey_hub_common::events::Event) -> Self {
         match event {
-            odyssey_hub_common::events::Event::DeviceEvent(odyssey_hub_common::events::DeviceEvent(d, evt)) => Event::DeviceEvent(
-                DeviceEvent {
-                    device: d.into(),
-                    kind: match evt {
-                        odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(e) => {
-                            DeviceEventKind::AccelerometerEvent(e.into())
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::TrackingEvent(e) => {
-                            DeviceEventKind::TrackingEvent(TrackingEvent {
-                                timestamp: e.timestamp,
-                                aimpoint: e.aimpoint.into(),
-                                pose: match e.pose {
-                                    Some(p) => Option::Some(p.into()),
-                                    None => Option::None,
-                                },
-                                distance: e.distance,
-                                screen_id: e.screen_id,
-                            })
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::ImpactEvent(e) => {
-                            DeviceEventKind::ImpactEvent(e.into())
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::ConnectEvent => {
-                            DeviceEventKind::ConnectEvent
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
-                            DeviceEventKind::DisconnectEvent
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::ZeroResult(b) => {
-                            DeviceEventKind::ZeroResult(b)
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(b) => {
-                            DeviceEventKind::SaveZeroResult(b)
-                        }
-                        odyssey_hub_common::events::DeviceEventKind::PacketEvent(p) => {
-                            DeviceEventKind::PacketEvent(PacketEvent {
-                                ty: p.ty().into(),
-                                data: p.data.into(),
-                            })
-                        }
-                    },
+            odyssey_hub_common::events::Event::DeviceEvent(
+                odyssey_hub_common::events::DeviceEvent(d, evt),
+            ) => Event::DeviceEvent(DeviceEvent {
+                device: d.into(),
+                kind: match evt {
+                    odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(e) => {
+                        DeviceEventKind::AccelerometerEvent(e.into())
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::TrackingEvent(e) => {
+                        DeviceEventKind::TrackingEvent(TrackingEvent {
+                            timestamp: e.timestamp,
+                            aimpoint: e.aimpoint.into(),
+                            pose: match e.pose {
+                                Some(p) => Option::Some(p.into()),
+                                None => Option::None,
+                            },
+                            distance: e.distance,
+                            screen_id: e.screen_id,
+                        })
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::ImpactEvent(e) => {
+                        DeviceEventKind::ImpactEvent(e.into())
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::ConnectEvent => {
+                        DeviceEventKind::ConnectEvent
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
+                        DeviceEventKind::DisconnectEvent
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::ZeroResult(b) => {
+                        DeviceEventKind::ZeroResult(b)
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(b) => {
+                        DeviceEventKind::SaveZeroResult(b)
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::PacketEvent(p) => {
+                        DeviceEventKind::PacketEvent(PacketEvent {
+                            ty: p.ty().into(),
+                            data: p.data.into(),
+                        })
+                    }
                 },
-            ),
+            }),
         }
     }
 }

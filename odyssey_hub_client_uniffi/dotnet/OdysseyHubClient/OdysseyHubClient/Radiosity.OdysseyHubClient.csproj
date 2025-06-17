@@ -18,6 +18,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <Compile Remove="generated\ohc_uniffi_original.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Folder Include="generated\" />
     </ItemGroup>
 
@@ -27,7 +31,8 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+        <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+        <PackageReference Include="System.Threading.Channels" Version="9.0.6" />
     </ItemGroup>
 
     <ItemGroup>
