@@ -5147,6 +5147,7 @@ dependencies = [
  "ats_usb",
  "json5",
  "nalgebra 0.33.2",
+ "serde",
  "serde_json",
  "tracing",
 ]

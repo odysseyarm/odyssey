@@ -1,6 +1,7 @@
 pub mod device;
 pub mod events;
 pub mod config;
+mod hexkeymap;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]

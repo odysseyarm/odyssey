@@ -42,10 +42,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
     use_effect(move || {
         let hub_snapshot = hub();
         match (hub_snapshot.latest_event)() {
-            oe::Event::DeviceEvent(oe::DeviceEvent {
+            Some(oe::Event::DeviceEvent(oe::DeviceEvent(
                 device,
-                kind: oe::DeviceEventKind::ImpactEvent(oe::ImpactEvent { timestamp: _ }),
-            }) => {
+                oe::DeviceEventKind::ImpactEvent(oe::ImpactEvent { timestamp: _ }),
+            ))) => {
                 let device_key = hub_snapshot.device_key(&device);
                 if let Some(key) = device_key {
                     if creative_get(&mut shooting_devices.write(), key) {
@@ -64,8 +64,8 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                 Ok(_) => {}
                                 Err(e) => {
                                     dioxus::logger::tracing::error!(
-                                        "Failed to zero device {}: {}",
-                                        hex::encode(device.uuid()),
+                                        "Failed to zero device {:x}: {}",
+                                        device.uuid(),
                                         e
                                     );
                                 }
@@ -75,10 +75,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                     }
                 }
             }
-            oe::Event::DeviceEvent(oe::DeviceEvent {
+            Some(oe::Event::DeviceEvent(oe::DeviceEvent(
                 device,
-                kind: oe::DeviceEventKind::DisconnectEvent,
-            }) => {
+                oe::DeviceEventKind::DisconnectEvent,
+            ))) => {
                 if let Some(key) = hub.peek().device_key(&device) {
                     creative_write(&mut shooting_devices.write(), key, false);
                 }
@@ -115,7 +115,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                 class: "flex flex-col",
                                 span {
                                     class: "text-gray-900 dark:text-white",
-                                    "0x{hex::encode(device.uuid())}"
+                                    {format!("0x{:x}", device.uuid())},
                                 }
                                 ul {
                                     class: "flex justify-start",
@@ -147,10 +147,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     async move {
                                                         match (hub().client)().reset_zero(device.clone()).await {
                                                             Ok(_) => {
-                                                                dioxus::logger::tracing::info!("Cleared zero for device {}", hex::encode(device.uuid()));
+                                                                dioxus::logger::tracing::info!("Cleared zero for device {:x}", device.uuid());
                                                             }
                                                             Err(e) => {
-                                                                dioxus::logger::tracing::error!("Failed to reset zero for device {}: {}", hex::encode(device.uuid()), e);
+                                                                dioxus::logger::tracing::error!("Failed to reset zero for device {:x}: {}", device.uuid(), e);
                                                             }
                                                         }
                                                     }
@@ -167,10 +167,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     async move {
                                                         match (hub().client)().clear_zero(device.clone()).await {
                                                             Ok(_) => {
-                                                                dioxus::logger::tracing::info!("Cleared zero for device {}", hex::encode(device.uuid()));
+                                                                dioxus::logger::tracing::info!("Cleared zero for device {:x}", device.uuid());
                                                             }
                                                             Err(e) => {
-                                                                dioxus::logger::tracing::error!("Failed to clear zero for device {}: {}", hex::encode(device.uuid()), e);
+                                                                dioxus::logger::tracing::error!("Failed to clear zero for device {:x}: {}", device.uuid(), e);
                                                             }
                                                         }
                                                     }
@@ -187,10 +187,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     async move {
                                                         match (hub().client)().save_zero(device.clone()).await {
                                                             Ok(_) => {
-                                                                dioxus::logger::tracing::info!("Saved zero for device {}", hex::encode(device.uuid()));
+                                                                dioxus::logger::tracing::info!("Saved zero for device {:x}", device.uuid());
                                                             }
                                                             Err(e) => {
-                                                                dioxus::logger::tracing::error!("Failed to save zero for device {}: {}", hex::encode(device.uuid()), e);
+                                                                dioxus::logger::tracing::error!("Failed to save zero for device {:x}: {}", device.uuid(), e);
                                                             }
                                                         }
                                                     }

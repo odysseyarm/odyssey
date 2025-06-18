@@ -39,10 +39,10 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
         let origin_y = rect.origin.y as f64;
 
         match (hub().latest_event)() {
-            oe::Event::DeviceEvent(oe::DeviceEvent {
+            Some(oe::Event::DeviceEvent(oe::DeviceEvent(
                 device,
-                kind: oe::DeviceEventKind::TrackingEvent(oe::TrackingEvent { aimpoint, .. }),
-            }) => {
+                oe::DeviceEventKind::TrackingEvent(oe::TrackingEvent { aimpoint, .. }),
+            ))) => {
                 let x = aimpoint.x as f64 * window_size.width - origin_x;
                 let y = aimpoint.y as f64 * window_size.height - origin_y;
 
@@ -52,10 +52,10 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
                     players.write().insert(device, Player { pos: (x, y) });
                 }
             }
-            oe::Event::DeviceEvent(oe::DeviceEvent {
+            Some(oe::Event::DeviceEvent(oe::DeviceEvent(
                 device,
-                kind: oe::DeviceEventKind::DisconnectEvent,
-            }) => {
+                oe::DeviceEventKind::DisconnectEvent,
+            ))) => {
                 players.write().remove(&device);
             }
             _ => {}

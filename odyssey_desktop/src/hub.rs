@@ -11,7 +11,7 @@ use slab::Slab;
 pub struct HubContext {
     pub client: SyncSignal<Client>,
     pub devices: SyncSignal<Slab<Device>>,
-    pub latest_event: Signal<oe::Event>,
+    pub latest_event: Signal<Option<oe::Event>>,
     device_keys: SyncSignal<HashMap<odyssey_hub_common::device::Device, usize>>,
 }
 
@@ -20,7 +20,7 @@ impl HubContext {
         Self {
             client: SyncSignal::new_maybe_sync(Client::default()),
             devices: SyncSignal::new_maybe_sync(Slab::new()),
-            latest_event: Signal::new(oe::Event::None),
+            latest_event: Signal::new(None),
             device_keys: SyncSignal::new_maybe_sync(HashMap::new()),
         }
     }
@@ -38,7 +38,7 @@ impl HubContext {
             let evt = evt.unwrap().event.unwrap().into();
             match &evt {
                 oe::Event::DeviceEvent(de) => match de {
-                    oe::DeviceEvent { device, kind } => match kind {
+                    oe::DeviceEvent(device, kind) => match kind {
                         oe::DeviceEventKind::ConnectEvent => {
                             self.device_keys.write().insert(
                                 device.clone(),
@@ -53,9 +53,8 @@ impl HubContext {
                         _ => {}
                     },
                 },
-                oe::Event::None => {}
             }
-            self.latest_event.set(evt);
+            self.latest_event.set(Some(evt));
         }
     }
 

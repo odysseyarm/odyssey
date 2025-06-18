@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
+use crate::hexkeymap::HexKeyMap;
 
 pub const APP_INFO: AppInfo = AppInfo {
     name: "odyssey",
@@ -14,7 +15,9 @@ pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dy
 
     if device_offsets_path.exists() {
         tracing::info!("Loading device offsets from {}", device_offsets_path.display());
-        Ok(json5::from_str(&std::fs::read_to_string(&device_offsets_path)?)?)
+        let contents = std::fs::read_to_string(&device_offsets_path)?;
+        let HexKeyMap(map) = json5::from_str::<HexKeyMap<nalgebra::Isometry3<f32>>>(&contents)?;
+        Ok(map)
     } else {
         tracing::warn!("Device offsets file not found, using default values");
         Ok(Default::default())
@@ -53,7 +56,7 @@ pub fn save_device_offsets(
     let converted: HashMap<String, &nalgebra::Isometry3<f32>> = device_offsets
         .iter()
         .map(|(k, v)| {
-            let key_str = format!("{:02x}", k);
+            let key_str = format!("0x{:02x}", k);
             (key_str, v)
         })
         .collect();
