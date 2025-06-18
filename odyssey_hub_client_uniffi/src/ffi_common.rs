@@ -13,7 +13,8 @@ macro_rules! impl_from_simple {
     };
 }
 
-#[derive(uniffi::Object)]
+#[uniffi::export(Eq, Hash)]
+#[derive(uniffi::Object, PartialEq, Clone, Eq, Hash)]
 pub struct Device {
     pub record: DeviceRecord,
 }
@@ -24,9 +25,14 @@ impl Device {
     pub fn new(record: DeviceRecord) -> Self {
         Self { record }
     }
+
+    #[uniffi::method]
+    pub fn get(&self) -> DeviceRecord {
+        self.record.clone()
+    }
 }
 
-#[derive(uniffi::Enum, Clone)]
+#[derive(uniffi::Enum, Clone, PartialEq, Eq, Hash)]
 pub enum DeviceRecord {
     Udp {
         uuid: u64,
@@ -45,6 +51,7 @@ pub enum DeviceRecord {
 
 #[uniffi::export]
 impl Device {
+    #[uniffi::method]
     pub fn uuid(&self) -> u64 {
         match self.record {
             DeviceRecord::Udp { uuid, .. } => uuid,
