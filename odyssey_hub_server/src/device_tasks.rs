@@ -141,7 +141,7 @@ pub async fn device_udp_manager(
                 tokio::select! {
                     _ = &mut timeout => break,
                     Ok((len, addr)) = socket.recv_from(&mut buf) => {
-                        if len >= 2 && buf[0] == 255 && buf[1] != 1 {
+                        if len >= 2 && buf[0] != 255 && buf[1] == 1 {
                             let id = buf[1];
                             let key = addr.to_string();
                             responders.insert(key.clone());
