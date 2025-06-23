@@ -22,7 +22,7 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
         .with_parse_expand_all_features(true)
         .generate()
         .expect("Unable to generate bindings")
-        .write_to_file("../odyssey_hub_client_ffi_build/include/odyssey_hub_client_lib.h");
+        .write_to_file("../odyssey_hub_client_ffi/include/odyssey_hub_client_lib.h");
 
     Ok(())
 }

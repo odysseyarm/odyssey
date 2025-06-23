@@ -74,7 +74,7 @@ impl Client {
         device: odyssey_hub_common::device::Device,
         tag: u8,
         data: Vec<u8>,
-    ) -> anyhow::Result<odyssey_hub_server_interface::WriteVendorReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::WriteVendorRequest {
                 device: Some(device.into()),
@@ -90,7 +90,7 @@ impl Client {
     pub async fn reset_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::ResetZeroReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             Ok(service_client.reset_zero(request).await?.into_inner())
@@ -104,7 +104,7 @@ impl Client {
         device: odyssey_hub_common::device::Device,
         translation: odyssey_hub_server_interface::Vector3,
         target: odyssey_hub_server_interface::Vector2,
-    ) -> anyhow::Result<odyssey_hub_server_interface::ZeroReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::ZeroRequest {
                 device: Some(device.into()),
@@ -120,7 +120,7 @@ impl Client {
     pub async fn save_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::SaveZeroReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             Ok(service_client.save_zero(request).await?.into_inner())
@@ -132,7 +132,7 @@ impl Client {
     pub async fn clear_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::ClearZeroReply> {
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             Ok(service_client.clear_zero(request).await?.into_inner())

@@ -9,6 +9,21 @@ pub const APP_INFO: AppInfo = AppInfo {
     author: "odysseyarm",
 };
 
+pub fn device_shot_delays() -> Result<HashMap<u64, u8>, Box<dyn std::error::Error>> {
+    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+    let device_shot_delays_path = config_dir.join("device_shot_delays.json");
+
+    if device_shot_delays_path.exists() {
+        tracing::info!("Loading device delays from {}", device_shot_delays_path.display());
+        let contents = std::fs::read_to_string(&device_shot_delays_path)?;
+        let HexKeyMap(map) = json5::from_str::<HexKeyMap<u8>>(&contents)?;
+        Ok(map)
+    } else {
+        tracing::warn!("Device shot delays file not found, using default values");
+        Ok(Default::default())
+    }
+}
+
 pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let device_offsets_path = config_dir.join("device_offsets.json");
@@ -45,6 +60,30 @@ pub fn screen_calibrations() -> Result<arrayvec::ArrayVec<(u8, ScreenCalibration
             }
         })
         .collect())
+}
+
+pub fn save_device_shot_delays(
+    device_shot_delays: &HashMap<u64, u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+    let device_shot_delays_path = config_dir.join("device_shot_delays.json");
+
+    let converted: HashMap<String, u8> = device_shot_delays
+        .iter()
+        .map(|(k, v)| {
+            let key_str = format!("0x{:02x}", k);
+            (key_str, *v)
+        })
+        .collect();
+
+    std::fs::write(device_shot_delays_path, json5::to_string(&converted)?)?;
+    Ok(())
+}
+
+pub fn save_device_shot_delay(uuid: u64, delay: u8) -> Result<(), Box<dyn std::error::Error>> {
+    let mut map = device_shot_delays()?;
+    map.insert(uuid, delay);
+    save_device_shot_delays(&map)
 }
 
 pub fn save_device_offsets(

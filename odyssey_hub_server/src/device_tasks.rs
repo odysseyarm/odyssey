@@ -400,39 +400,64 @@ async fn common_tasks(
         _ => false,
     };
 
-    async fn process_raycast_update(aimpoint_and_d: Option<(Point2<f32>, f32)>, pose: Option<(nalgebra::Matrix3<f32>, Vector3<f32>)>, screen_id: u32, device: &Device, message_channel: &Sender<Message>, prev_timestamp: Option<u32>) {
+    async fn process_raycast_update(
+        aimpoint_and_d: Option<(Point2<f32>, f32)>,
+        pose: Option<(nalgebra::Matrix3<f32>, Vector3<f32>)>,
+        screen_id: u32,
+        device: &Device,
+        message_channel: &Sender<Message>,
+        prev_timestamp: Option<u32>,
+    ) {
         if let Some((aimpoint, d)) = aimpoint_and_d {
             if let Some(pose) = pose {
-                let aimpoint_matrix = nalgebra::Matrix::<f32, nalgebra::Const<2>, nalgebra::Const<1>, nalgebra::ArrayStorage<f32, 2, 1>>::from_column_slice(&[aimpoint.x.into(), aimpoint.y.into()]);
+                let aimpoint_matrix = nalgebra::Matrix::<
+                    f32,
+                    nalgebra::Const<2>,
+                    nalgebra::Const<1>,
+                    nalgebra::ArrayStorage<f32, 2, 1>,
+                >::from_column_slice(&[
+                    aimpoint.x.into(),
+                    aimpoint.y.into(),
+                ]);
                 let device = device.clone();
-                let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(odyssey_hub_common::events::TrackingEvent {
-                    timestamp: prev_timestamp.unwrap_or(0),
-                    aimpoint: aimpoint_matrix.cast(),
-                    pose: Some(odyssey_hub_common::events::Pose {
-                        rotation: pose.0.cast(),
-                        translation: pose.1.cast(),
-                    }),
-                    distance: d,
-                    screen_id,
-                });
+                let kind = odyssey_hub_common::events::DeviceEventKind::TrackingEvent(
+                    odyssey_hub_common::events::TrackingEvent {
+                        timestamp: prev_timestamp.unwrap_or(0),
+                        aimpoint: aimpoint_matrix.cast(),
+                        pose: Some(odyssey_hub_common::events::Pose {
+                            rotation: pose.0.cast(),
+                            translation: pose.1.cast(),
+                        }),
+                        distance: d,
+                        screen_id,
+                    },
+                );
                 match device {
                     Device::Udp(device) => {
-                        let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                            odyssey_hub_common::events::DeviceEvent(
-                                Device::Udp(device.clone()),
-                                kind,
-                            )
-                        ))).await;
-                    },
+                        let _ = message_channel
+                            .send(Message::Event(
+                                odyssey_hub_common::events::Event::DeviceEvent(
+                                    odyssey_hub_common::events::DeviceEvent(
+                                        Device::Udp(device.clone()),
+                                        kind,
+                                    ),
+                                ),
+                            ))
+                            .await;
+                    }
                     Device::Cdc(device) => {
-                        let _ = message_channel.send(Message::Event(odyssey_hub_common::events::Event::DeviceEvent(
-                            odyssey_hub_common::events::DeviceEvent(
-                                Device::Cdc(device.clone()),
-                                kind,
-                            )
-                        ))).await;
-                    },
-                    Device::Hid(_) => {},
+                        let _ = message_channel
+                            .send(Message::Event(
+                                odyssey_hub_common::events::Event::DeviceEvent(
+                                    odyssey_hub_common::events::DeviceEvent(
+                                        Device::Cdc(device.clone()),
+                                        kind,
+                                    ),
+                                ),
+                            ))
+                            .await;
+                    }
+                    Device::Hid(_) => {}
                 }
             }
         }

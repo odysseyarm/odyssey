@@ -57,7 +57,7 @@ add_library(odyssey-hub-client-lib SHARED IMPORTED)
 # Set the properties for the imported library
 set_target_properties(odyssey-hub-client-lib PROPERTIES
     IMPORTED_LOCATION "${SHARED_LIB_PATH}"
-    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/../../../../odyssey_hub_client_ffi_build/include"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/../../../../odyssey_hub_client_ffi/include"
 )
 
 # On Windows, also set the IMPORTED_IMPLIB property for the import library
@@ -71,7 +71,7 @@ endif()
 target_link_libraries(odyssey-hub-client PRIVATE odyssey-hub-client-lib)
 
 # Add the include directory for the odyssey-hub-client executable
-target_include_directories(odyssey-hub-client PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../odyssey_hub_client_ffi_build/include")
+target_include_directories(odyssey-hub-client PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../odyssey_hub_client_ffi/include")
 
 # Copy the shared library to the output directory after building the executable
 add_custom_command(TARGET odyssey-hub-client POST_BUILD

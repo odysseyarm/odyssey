@@ -12,9 +12,9 @@ use interprocess::local_socket::{
 use interprocess::os::windows::{
     local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor,
 };
+use odyssey_hub_common::config;
 use odyssey_hub_server_interface::{
-    service_server::{Service, ServiceServer},
-    DeviceListReply, DeviceListRequest, PollReply, PollRequest, Vector2,
+    service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayResponse, PollReply, PollRequest, SetShotDelayRequest, Vector2
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -37,7 +37,7 @@ struct Server {
             )>,
         >,
     >,
-    event_channel: broadcast::Receiver<odyssey_hub_common::events::Event>,
+    event_channel: broadcast::Sender<odyssey_hub_common::events::Event>,
     screen_calibrations: Arc<
         ArcSwap<
             ArrayVec<
@@ -48,6 +48,7 @@ struct Server {
     >,
     device_offsets:
         Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
+    device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u8>>,
 }
 
 #[tonic::async_trait]
@@ -75,7 +76,7 @@ impl Service for Server {
         _: tonic::Request<PollRequest>,
     ) -> tonic::Result<tonic::Response<Self::PollStream>, tonic::Status> {
         let (tx, rx) = mpsc::channel(12);
-        let mut event_channel = self.event_channel.resubscribe();
+        let mut event_channel = self.event_channel.subscribe();
         tokio::spawn(async move {
             loop {
                 let event = match event_channel.recv().await {
@@ -103,8 +104,7 @@ impl Service for Server {
     async fn write_vendor(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::WriteVendorRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::WriteVendorReply>, tonic::Status>
-    {
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::EmptyReply>, tonic::Status> {
         let odyssey_hub_server_interface::WriteVendorRequest { device, tag, data } =
             request.into_inner();
 
@@ -128,15 +128,13 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(
-            odyssey_hub_server_interface::WriteVendorReply {},
-        ))
+        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn reset_zero(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::ResetZeroReply>, tonic::Status> {
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::EmptyReply>, tonic::Status> {
         let device = request.into_inner().into();
 
         let s;
@@ -157,15 +155,13 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(
-            odyssey_hub_server_interface::ResetZeroReply {},
-        ))
+        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn zero(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::ZeroRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::ZeroReply>, tonic::Status> {
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::EmptyReply>, tonic::Status> {
         let odyssey_hub_server_interface::ZeroRequest {
             device,
             translation,
@@ -199,13 +195,13 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_server_interface::ZeroReply {}))
+        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn save_zero(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::SaveZeroReply>, tonic::Status> {
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::EmptyReply>, tonic::Status> {
         let device = request.into_inner().into();
 
         let s;
@@ -226,15 +222,13 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(
-            odyssey_hub_server_interface::SaveZeroReply {},
-        ))
+        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn clear_zero(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::ClearZeroReply>, tonic::Status> {
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::EmptyReply>, tonic::Status> {
         let device = request.into_inner().into();
 
         let s;
@@ -255,9 +249,7 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(
-            odyssey_hub_server_interface::ClearZeroReply {},
-        ))
+        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn get_screen_info_by_id(
@@ -312,6 +304,116 @@ impl Service for Server {
         };
 
         Ok(Response::new(reply))
+    }
+
+    async fn reset_shot_delay(
+        &self,
+        request: tonic::Request<odyssey_hub_server_interface::Device>,
+    ) -> Result<Response<EmptyReply>, tonic::Status> {
+        let device: odyssey_hub_common::device::Device = request.into_inner().into();
+
+        let defaults = tokio::task::spawn_blocking(|| {
+            odyssey_hub_common::config::device_shot_delays()
+                .map_err(|e| anyhow::anyhow!("config error: {}", e))
+        })
+        .await
+        .map_err(|e| tonic::Status::internal(format!("reload join error: {}", e)))?
+        .map_err(|e| tonic::Status::internal(e.to_string()))?;
+
+        let delay_ms = defaults.get(&device.uuid()).cloned().unwrap_or(0);
+        self.device_shot_delays
+            .lock()
+            .unwrap()
+            .insert(device.uuid(), delay_ms);
+
+        if let Err(e) = self
+            .event_channel
+            .send(odyssey_hub_common::events::Event::DeviceEvent(
+                odyssey_hub_common::events::DeviceEvent(
+                    device.clone(),
+                    odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(delay_ms),
+                ),
+            ))
+        {
+            return Err(tonic::Status::internal(format!(
+                "Failed to send event: {}",
+                e
+            )));
+        }
+
+        Ok(Response::new(EmptyReply {}))
+    }
+
+    async fn get_shot_delay(
+        &self,
+        request: tonic::Request<odyssey_hub_server_interface::Device>,
+    ) -> Result<Response<GetShotDelayResponse>, tonic::Status> {
+        let device: odyssey_hub_common::device::Device = request.into_inner().into();
+
+        let delay_ms = self
+            .device_shot_delays
+            .lock()
+            .unwrap()
+            .get(&device.uuid())
+            .cloned()
+            .unwrap_or(0)
+            .into();
+
+        Ok(Response::new(GetShotDelayResponse { delay_ms }))
+    }
+
+    async fn set_shot_delay(
+        &self,
+        request: tonic::Request<SetShotDelayRequest> ,
+    ) -> Result<Response<EmptyReply>, tonic::Status> {
+        let SetShotDelayRequest { device, delay_ms } = request.into_inner();
+        let device: odyssey_hub_common::device::Device = device.unwrap().into();
+        let delay_ms = delay_ms as u8;
+
+        self.device_shot_delays.lock().unwrap().insert(device.uuid(), delay_ms);
+
+        if let Err(e) = self
+            .event_channel
+            .send(odyssey_hub_common::events::Event::DeviceEvent(
+                odyssey_hub_common::events::DeviceEvent(
+                    device.clone(),
+                    odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(delay_ms),
+                ),
+            ))
+        {
+            return Err(tonic::Status::internal(format!(
+                "Failed to send event: {}",
+                e
+            )));
+        }
+
+        Ok(Response::new(EmptyReply {}))
+    }
+
+    async fn save_shot_delay(
+        &self,
+        request: tonic::Request<odyssey_hub_server_interface::Device> ,
+    ) -> Result<Response<EmptyReply>, tonic::Status> {
+        let device: odyssey_hub_common::device::Device = request.into_inner().into();
+        let uuid = device.uuid();
+
+        let delay: u8 = {
+            let guard = self.device_shot_delays.lock().unwrap();
+            guard
+                .get(&uuid)
+                .cloned()
+                .ok_or_else(|| tonic::Status::not_found("No shot-delay entry for this device"))?
+        };
+
+        tokio::task::spawn_blocking(move || {
+            config::save_device_shot_delay(uuid, delay)
+                .map_err(|e| anyhow::anyhow!("failed to save shot-delay: {}", e))
+        })
+        .await
+        .map_err(|e| tonic::Status::internal(format!("blocking join error: {}", e)))?
+        .map_err(|e| tonic::Status::internal(e.to_string()))?;
+
+        Ok(Response::new(EmptyReply {}))
     }
 }
 
@@ -421,7 +523,7 @@ pub async fn run_server(
 
     let (sender, mut receiver) = mpsc::channel(12);
 
-    let (event_sender, event_receiver) = broadcast::channel(12);
+    let (event_sender, _) = broadcast::channel(12);
 
     let screen_calibrations = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::screen_calibrations()
@@ -439,11 +541,18 @@ pub async fn run_server(
     .await??;
     let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
 
+    let device_shot_delays = tokio::task::spawn_blocking(|| {
+        odyssey_hub_common::config::device_shot_delays()
+            .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
+    })
+    .await??;
+
     let server = Server {
         device_list: Default::default(),
-        event_channel: event_receiver,
+        event_channel: event_sender.clone(),
         screen_calibrations: screen_calibrations.clone(),
         device_offsets: device_offsets.clone(),
+        device_shot_delays: device_shot_delays.into(),
     };
 
     let dl = server.device_list.clone();

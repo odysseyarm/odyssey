@@ -215,6 +215,11 @@ impl From<odyssey_hub_common::events::Event> for proto::Event {
                                 proto::device_event::SaveZeroResultEvent { success },
                             )
                         }
+                        odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(delay_ms) => {
+                            proto::device_event::DeviceEventOneof::ShotDelayChanged(
+                                proto::device_event::ShotDelayChangedEvent { delay_ms: delay_ms.into() },
+                            )
+                        }
                         odyssey_hub_common::events::DeviceEventKind::PacketEvent(packet) => {
                             proto::device_event::DeviceEventOneof::Packet(
                                 proto::device_event::PacketEvent {
@@ -313,6 +318,9 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                         }
                         proto::device_event::DeviceEventOneof::SaveZeroResult(proto::device_event::SaveZeroResultEvent { success }) => {
                             odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(success)
+                        }
+                        proto::device_event::DeviceEventOneof::ShotDelayChanged(proto::device_event::ShotDelayChangedEvent { delay_ms }) => {
+                            odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(delay_ms as u8)
                         }
                         proto::device_event::DeviceEventOneof::Packet(
                             proto::device_event::PacketEvent { bytes },

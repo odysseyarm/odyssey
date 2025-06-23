@@ -4,13 +4,17 @@ package odyssey.service_interface;
 
 service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
-  rpc Poll (PollRequest) returns (stream PollReply) {}
-  rpc WriteVendor (WriteVendorRequest) returns (WriteVendorReply) {}
-  rpc SaveZero (Device) returns (SaveZeroReply) {}
-  rpc ClearZero (Device) returns (ClearZeroReply) {}
-  rpc ResetZero (Device) returns (ResetZeroReply) {}
-  rpc Zero (ZeroRequest) returns (ZeroReply) {}
   rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoResponse) {}
+  rpc Poll (PollRequest) returns (stream PollReply) {}
+  rpc WriteVendor (WriteVendorRequest) returns (EmptyReply) {}
+  rpc ClearZero (Device) returns (EmptyReply) {}
+  rpc ResetZero (Device) returns (EmptyReply) {}
+  rpc SaveZero (Device) returns (EmptyReply) {}
+  rpc Zero (ZeroRequest) returns (EmptyReply) {}
+  rpc ResetShotDelay (Device) returns (EmptyReply) {}
+  rpc GetShotDelay (Device) returns (GetShotDelayResponse) {}
+  rpc SetShotDelay (SetShotDelayRequest) returns (EmptyReply) {}
+  rpc SaveShotDelay (Device) returns (EmptyReply) {}
 }
 
 message UdpDevice {
@@ -101,6 +105,9 @@ message DeviceEvent {
   message SaveZeroResultEvent {
     bool success = 1;
   }
+  message ShotDelayChangedEvent {
+    uint32 delay_ms = 1;
+  }
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
     TrackingEvent tracking = 3;
@@ -110,6 +117,7 @@ message DeviceEvent {
     PacketEvent packet = 7;
     ZeroResultEvent zero_result = 8;
     SaveZeroResultEvent save_zero_result = 9;
+    ShotDelayChangedEvent shot_delay_changed = 10;
   }
 }
 
@@ -143,15 +151,12 @@ message ZeroRequest {
   Vector2 target = 3;
 }
 
-message WriteVendorReply {}
+message SetShotDelayRequest {
+  Device device = 1;
+  uint32 delay_ms = 2;
+}
 
-message SaveZeroReply {}
-
-message ClearZeroReply {}
-
-message ResetZeroReply {}
-
-message ZeroReply {}
+message EmptyReply {}
 
 message ScreenBounds {
   Vector2 tl = 1;
@@ -167,4 +172,8 @@ message ScreenInfoByIdRequest {
 message ScreenInfoResponse {
   uint32 id = 1;
   ScreenBounds bounds = 2;
+}
+
+message GetShotDelayResponse {
+  uint32 delay_ms = 1;
 }

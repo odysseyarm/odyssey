@@ -15,6 +15,7 @@ pub enum DeviceEventKind {
     DisconnectEvent,
     ZeroResult(bool),
     SaveZeroResult(bool),
+    ShotDelayChangedEvent(u8),
     PacketEvent(ats_usb::packets::vm::Packet),
 }
 
