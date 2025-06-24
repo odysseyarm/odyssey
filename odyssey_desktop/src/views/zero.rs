@@ -1,5 +1,3 @@
-// src/components/zero.rs
-
 use crate::components::crosshair_manager::CrosshairManager;
 use crate::hub;
 use dioxus::{html::geometry::euclid::Rect, logger::tracing, prelude::*};
@@ -95,6 +93,9 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                         for (slot, device) in devices {
                             {
                                 let firing = shooting_devices()[slot]();
+                                const PRIMARY: &str = "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700";
+                                const DANGER: &str = "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-red-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-red-600 dark:hover:text-white dark:hover:bg-gray-700";
+
                                 rsx! {
                                     li {
                                         class: "flex flex-col",
@@ -106,7 +107,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                             li { class: "flex items-center",
                                                 if firing {
                                                     button {
-                                                        class: "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-red-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-red-600 dark:hover:text-white dark:hover:bg-gray-700",
+                                                        class: DANGER,
                                                         onclick: move |_| {
                                                             shooting_devices.write()[slot].set(false);
                                                         },
@@ -114,14 +115,14 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     }
                                                 } else {
                                                     button {
-                                                        class: "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700",
+                                                        class: PRIMARY,
                                                         onclick: move |_| {
                                                             shooting_devices.write()[slot].set(true);
                                                         },
                                                         "Zero on shot"
                                                     }
                                                 }
-                                                button { class: "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700", onclick: {
+                                                button { class: PRIMARY, onclick: {
                                                     let dev = device.clone();
                                                     move |_| {
                                                         let dev = dev.clone();
@@ -133,7 +134,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         }
                                                     }
                                                 }, "Reset Zero" }
-                                                button { class: "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700", onclick: {
+                                                button { class: PRIMARY, onclick: {
                                                     let dev = device.clone();
                                                     move |_| {
                                                         let dev = dev.clone();
@@ -145,7 +146,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         }
                                                     }
                                                 }, "Clear Zero" }
-                                                button { class: "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700", onclick: {
+                                                button { class: PRIMARY, onclick: {
                                                     let dev = device.clone();
                                                     move |_| {
                                                         let dev = dev.clone();
