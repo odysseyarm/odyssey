@@ -14,7 +14,7 @@ use interprocess::os::windows::{
 };
 use odyssey_hub_common::config;
 use odyssey_hub_server_interface::{
-    service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayResponse, PollReply, PollRequest, SetShotDelayRequest, Vector2
+    service_server::{Service, ServiceServer}, DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayReply, PollReply, PollRequest, ResetShotDelayReply, SetShotDelayRequest, Vector2
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -22,7 +22,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tonic::{transport::server::Connected, Response};
+use tonic::transport::server::Connected;
 
 use crate::device_tasks::device_tasks;
 
@@ -98,7 +98,7 @@ impl Service for Server {
                 }
             }
         });
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(ReceiverStream::new(rx)))
     }
 
     async fn write_vendor(
@@ -128,7 +128,7 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
+        Ok(tonic::Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn reset_zero(
@@ -155,7 +155,7 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
+        Ok(tonic::Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn zero(
@@ -195,7 +195,7 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
+        Ok(tonic::Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn save_zero(
@@ -222,7 +222,7 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
+        Ok(tonic::Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn clear_zero(
@@ -249,13 +249,13 @@ impl Service for Server {
             }
         }
 
-        Ok(Response::new(odyssey_hub_server_interface::EmptyReply {}))
+        Ok(tonic::Response::new(odyssey_hub_server_interface::EmptyReply {}))
     }
 
     async fn get_screen_info_by_id(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::ScreenInfoByIdRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::ScreenInfoResponse>, tonic::Status>
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::ScreenInfoReply>, tonic::Status>
     {
         let odyssey_hub_server_interface::ScreenInfoByIdRequest { id } = request.into_inner();
 
@@ -266,7 +266,7 @@ impl Service for Server {
             .find(|(i, _)| *i as u32 == id)
             .map(|(_, calibration)| calibration.clone());
 
-        let reply = odyssey_hub_server_interface::ScreenInfoResponse {
+        let reply = odyssey_hub_server_interface::ScreenInfoReply {
             id,
             bounds: {
                 if let Some(screen_calibration) = screen_calibration {
@@ -303,13 +303,13 @@ impl Service for Server {
             },
         };
 
-        Ok(Response::new(reply))
+        Ok(tonic::Response::new(reply))
     }
 
     async fn reset_shot_delay(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device>,
-    ) -> Result<Response<EmptyReply>, tonic::Status> {
+    ) -> Result<tonic::Response<ResetShotDelayReply>, tonic::Status> {
         let device: odyssey_hub_common::device::Device = request.into_inner().into();
 
         let defaults = tokio::task::spawn_blocking(|| {
@@ -341,13 +341,15 @@ impl Service for Server {
             )));
         }
 
-        Ok(Response::new(EmptyReply {}))
+        Ok(tonic::Response::new(ResetShotDelayReply {
+            delay_ms: delay_ms as u32,
+        }))
     }
 
     async fn get_shot_delay(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device>,
-    ) -> Result<Response<GetShotDelayResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<GetShotDelayReply>, tonic::Status> {
         let device: odyssey_hub_common::device::Device = request.into_inner().into();
 
         let delay_ms = self
@@ -359,13 +361,13 @@ impl Service for Server {
             .unwrap_or(0)
             .into();
 
-        Ok(Response::new(GetShotDelayResponse { delay_ms }))
+        Ok(tonic::Response::new(GetShotDelayReply { delay_ms }))
     }
 
     async fn set_shot_delay(
         &self,
         request: tonic::Request<SetShotDelayRequest> ,
-    ) -> Result<Response<EmptyReply>, tonic::Status> {
+    ) -> Result<tonic::Response<EmptyReply>, tonic::Status> {
         let SetShotDelayRequest { device, delay_ms } = request.into_inner();
         let device: odyssey_hub_common::device::Device = device.unwrap().into();
         let delay_ms = delay_ms as u8;
@@ -387,13 +389,13 @@ impl Service for Server {
             )));
         }
 
-        Ok(Response::new(EmptyReply {}))
+        Ok(tonic::Response::new(EmptyReply {}))
     }
 
     async fn save_shot_delay(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::Device> ,
-    ) -> Result<Response<EmptyReply>, tonic::Status> {
+    ) -> Result<tonic::Response<EmptyReply>, tonic::Status> {
         let device: odyssey_hub_common::device::Device = request.into_inner().into();
         let uuid = device.uuid();
 
@@ -413,7 +415,7 @@ impl Service for Server {
         .map_err(|e| tonic::Status::internal(format!("blocking join error: {}", e)))?
         .map_err(|e| tonic::Status::internal(e.to_string()))?;
 
-        Ok(Response::new(EmptyReply {}))
+        Ok(tonic::Response::new(EmptyReply {}))
     }
 }
 

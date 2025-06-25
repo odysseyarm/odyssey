@@ -4,15 +4,15 @@ package odyssey.service_interface;
 
 service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
-  rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoResponse) {}
+  rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoReply) {}
   rpc Poll (PollRequest) returns (stream PollReply) {}
   rpc WriteVendor (WriteVendorRequest) returns (EmptyReply) {}
   rpc ClearZero (Device) returns (EmptyReply) {}
   rpc ResetZero (Device) returns (EmptyReply) {}
   rpc SaveZero (Device) returns (EmptyReply) {}
   rpc Zero (ZeroRequest) returns (EmptyReply) {}
-  rpc ResetShotDelay (Device) returns (EmptyReply) {}
-  rpc GetShotDelay (Device) returns (GetShotDelayResponse) {}
+  rpc ResetShotDelay (Device) returns (ResetShotDelayReply) {}
+  rpc GetShotDelay (Device) returns (GetShotDelayReply) {}
   rpc SetShotDelay (SetShotDelayRequest) returns (EmptyReply) {}
   rpc SaveShotDelay (Device) returns (EmptyReply) {}
 }
@@ -169,11 +169,15 @@ message ScreenInfoByIdRequest {
   uint32 id = 1;
 }
 
-message ScreenInfoResponse {
+message ScreenInfoReply {
   uint32 id = 1;
   ScreenBounds bounds = 2;
 }
 
-message GetShotDelayResponse {
+message ResetShotDelayReply {
+  uint32 delay_ms = 1;
+}
+
+message GetShotDelayReply {
   uint32 delay_ms = 1;
 }

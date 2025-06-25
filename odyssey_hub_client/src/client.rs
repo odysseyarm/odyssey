@@ -144,10 +144,10 @@ impl Client {
     pub async fn reset_shot_delay(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<u8> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
-            Ok(service_client.reset_shot_delay(request).await?.into_inner())
+            Ok(service_client.reset_shot_delay(request).await?.into_inner().delay_ms as u8)
         } else {
             Err(anyhow::anyhow!("No service client"))
         }

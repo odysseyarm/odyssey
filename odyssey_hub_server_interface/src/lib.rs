@@ -337,8 +337,8 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
     }
 }
 
-impl From<proto::ScreenInfoResponse> for odyssey_hub_common::ScreenInfo {
-    fn from(value: proto::ScreenInfoResponse) -> Self {
+impl From<proto::ScreenInfoReply> for odyssey_hub_common::ScreenInfo {
+    fn from(value: proto::ScreenInfoReply) -> Self {
         let bounds = value.bounds.unwrap();
         odyssey_hub_common::ScreenInfo {
             id: value.id as u8,

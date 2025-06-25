@@ -18,14 +18,6 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
     // one Signal<bool> per slot: true means “zero on next shot”
     let mut device_signals = use_signal(|| Vec::<DeviceSignals>::new());
 
-    // ensure we can safely index [0 .. devices.len())
-    {
-        let mut w = device_signals.write();
-        while w.len() < devices.len() {
-            w.resize_with(devices.len(), || Default::default());
-        }
-    }
-
     // for positioning the crosshair overlay
     let mut crosshair_manager_div = use_signal(|| None);
     let mut rect_signal = use_signal(Rect::<f32, _>::zero);
@@ -38,6 +30,14 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
         (center.x / ws.width, center.y / ws.height)
     });
     tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
+
+    // ensure we can safely index [0 .. devices.len())
+    {
+        let mut w = device_signals.write();
+        if w.len() < devices.len() {
+            w.resize_with(devices.len(), || Default::default());
+        }
+    }
 
     // fire off zero() when we see an ImpactEvent and the flag is set
     use_effect(move || {
@@ -88,6 +88,40 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                 }
             }
         }
+    });
+
+    use_hook(|| {
+        let devices = devices.clone();
+        let hub = hub.clone();
+        let mut device_signals = device_signals.clone();
+
+        spawn(async move {
+            {
+                let mut w = device_signals.write();
+                w.resize_with(devices.len(), || Default::default());
+            }
+
+            for (_, device) in devices.iter() {
+                let device = device.clone();
+                let hub = hub.clone();
+                let mut device_signals = device_signals.clone();
+
+                spawn(async move {
+                    if let Some(key) = hub.peek().device_key(&device) {
+                        match hub.peek().client.peek().clone().get_shot_delay(device.clone()).await {
+                            Ok(delay) => {
+                                device_signals.write()[key].shot_delay.set(delay);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to get shot delay: {e}");
+                            }
+                        }
+                    } else {
+                        tracing::error!("Connected device not found in device signals. Potential race");
+                    }
+                });
+            }
+        });
     });
 
     rsx! {
@@ -188,11 +222,11 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                                 hover:bg-gray-200 border border-gray-300 rounded-s-lg p-2 h-10 focus:ring-gray-100 \
                                                                 dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
                                                         onclick: move |_| {
-                                                            // let mut val = shot_delays.write()[slot];
-                                                            // if val > 0 {
-                                                            //     val -= 1;
-                                                            //     shot_delays.write()[slot] = val;
-                                                            // }
+                                                            let mut val = device_signals.peek()[slot].shot_delay.peek().clone();
+                                                            if val > 0 {
+                                                                val -= 1;
+                                                                device_signals.write()[slot].shot_delay.set(val as u8);
+                                                            }
                                                         },
                                                         svg {
                                                             class: "w-3 h-3 text-gray-900 dark:text-white",
@@ -212,7 +246,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     input {
                                                         r#type: "text",
                                                         id: "shot-delay-input",
-                                                        // value: "{shot_delays.read()[slot]}",
+                                                        value: "{device_signals.read()[slot].shot_delay.read()}",
                                                         class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
                                                                 focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
                                                                 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 \
@@ -220,7 +254,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         oninput: move |e| {
                                                             if let Ok(new_val) = e.value().parse::<u16>() {
                                                                 if new_val <= 255 {
-                                                                    // shot_delays.write()[slot] = new_val;
+                                                                    device_signals.write()[slot].shot_delay.set(new_val as u8);
                                                                 }
                                                             }
                                                         }
@@ -232,11 +266,11 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                                 hover:bg-gray-200 border border-gray-300 rounded-e-lg p-2 h-10 focus:ring-gray-100 \
                                                                 dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
                                                         onclick: move |_| {
-                                                            // let mut val = shot_delays.write()[slot];
-                                                            // if val < 1000 {
-                                                            //     val += 1;
-                                                            //     shot_delays.write()[slot] = val;
-                                                            // }
+                                                            let mut val = device_signals.peek()[slot].shot_delay.peek().clone();
+                                                            if val < 255 {
+                                                                val += 1;
+                                                                device_signals.write()[slot].shot_delay.set(val as u8);
+                                                            }
                                                         },
                                                         svg {
                                                             class: "w-3 h-3 text-gray-900 dark:text-white",
@@ -261,12 +295,12 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         let dev = device.clone();
                                                         move |_| {
                                                             let dev = dev.clone();
-                                                            // let delay = shot_delays.read()[slot];
+                                                            let delay = *device_signals.peek()[slot].shot_delay.peek();
                                                             async move {
-                                                                // match (hub().client)().set_shot_delay(dev.clone(), delay).await {
-                                                                //     Ok(_) => tracing::info!("Set shot delay {}ms for {:x}", delay, dev.uuid()),
-                                                                //     Err(e) => tracing::error!("Failed to set shot delay {:x}: {}", dev.uuid(), e),
-                                                                // }
+                                                                match (hub().client)().set_shot_delay(dev.clone(), delay).await {
+                                                                    Ok(_) => tracing::info!("Set shot delay {}ms for {:x}", delay, dev.uuid()),
+                                                                    Err(e) => tracing::error!("Failed to set shot delay {:x}: {}", dev.uuid(), e),
+                                                                }
                                                             }
                                                         }
                                                     },
@@ -282,7 +316,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                             let dev = dev.clone();
                                                             async move {
                                                                 match (hub().client)().reset_shot_delay(dev.clone()).await {
-                                                                    Ok(_) => tracing::info!("Reset shot delay for {:x}", dev.uuid()),
+                                                                    Ok(delay_ms) => {
+                                                                        tracing::info!("Reset shot delay for {:x}", dev.uuid());
+                                                                        device_signals.write()[slot].shot_delay.set(delay_ms);
+                                                                    }
                                                                     Err(e) => tracing::error!("Failed to reset shot delay {:x}: {}", dev.uuid(), e),
                                                                 }
                                                             }
@@ -298,12 +335,11 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         let dev = device.clone();
                                                         move |_| {
                                                             let dev = dev.clone();
-                                                            // let delay = shot_delays.read()[slot];
                                                             async move {
-                                                                // match (hub().client)().save_shot_delay(dev.clone(), delay).await {
-                                                                //     Ok(_) => tracing::info!("Saved shot delay {}ms for {:x}", delay, dev.uuid()),
-                                                                //     Err(e) => tracing::error!("Failed to save shot delay {:x}: {}", dev.uuid(), e),
-                                                                // }
+                                                                match (hub().client)().save_shot_delay(dev.clone()).await {
+                                                                    Ok(_) => tracing::info!("Saved shot delay for {:x}", dev.uuid()),
+                                                                    Err(e) => tracing::error!("Failed to save shot delay {:x}: {}", dev.uuid(), e),
+                                                                }
                                                             }
                                                         }
                                                     },
