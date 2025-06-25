@@ -5,18 +5,24 @@ use odyssey_hub_common::events as oe;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
+#[derive(Default)]
+struct DeviceSignals {
+    shooting: Signal<bool>,
+    shot_delay: Signal<u8>,
+}
+
 #[component]
 pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
     let devices = (hub().devices)();
 
     // one Signal<bool> per slot: true means “zero on next shot”
-    let mut shooting_devices = use_signal(|| Vec::<Signal<bool>>::new());
+    let mut device_signals = use_signal(|| Vec::<DeviceSignals>::new());
 
     // ensure we can safely index [0 .. devices.len())
     {
-        let mut w = shooting_devices.write();
-        if w.len() < devices.len() {
-            w.resize_with(devices.len(), || Signal::new(false));
+        let mut w = device_signals.write();
+        while w.len() < devices.len() {
+            w.resize_with(devices.len(), || Default::default());
         }
     }
 
@@ -40,41 +46,46 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
             match event {
                 oe::Event::DeviceEvent(oe::DeviceEvent(
                     device,
-                    oe::DeviceEventKind::ImpactEvent { .. },
+                    kind,
                 )) => {
-                    if let Some(key) = ctx.device_key(&device) {
-                        if shooting_devices.peek()[key]() {
-                            let zr = *zero_screen_ratio.peek();
-                            let dev = device.clone();
-                            spawn(async move {
-                                if let Err(e) = (ctx.client)()
-                                    .zero(
-                                        dev.clone(),
-                                        nalgebra::Vector3::new(0., -0.0635, 0.).into(),
-                                        nalgebra::Vector2::new(zr.0, zr.1).into(),
-                                    )
-                                    .await
-                                {
-                                    tracing::error!(
-                                        "Failed to zero device {:x}: {}",
-                                        dev.uuid(),
-                                        e
-                                    );
+                    match kind {
+                        oe::DeviceEventKind::ImpactEvent { .. } => 
+                            if let Some(key) = ctx.device_key(&device) {
+                                if *device_signals.peek()[key].shooting.peek() {
+                                    let zr = *zero_screen_ratio.peek();
+                                    let dev = device.clone();
+                                    spawn(async move {
+                                        if let Err(e) = (ctx.client)()
+                                            .zero(
+                                                dev.clone(),
+                                                nalgebra::Vector3::new(0., -0.0635, 0.).into(),
+                                                nalgebra::Vector2::new(zr.0, zr.1).into(),
+                                            )
+                                            .await
+                                        {
+                                            tracing::error!(
+                                                "Failed to zero device {:x}: {}",
+                                                dev.uuid(),
+                                                e
+                                            );
+                                        }
+                                    });
+                                    device_signals.write()[key].shooting.set(false);
                                 }
-                            });
-                            shooting_devices.write()[key].set(false);
-                        }
+                            },
+                        oe::DeviceEventKind::ConnectEvent =>
+                            if let Some(key) = hub.peek().device_key(&device) {
+                                spawn(async move { device_signals.write()[key].shot_delay.set(hub.peek().client.peek().clone().get_shot_delay(device).await.unwrap()) });
+                            } else {
+                                tracing::error!("Connected device not found in device signals. Potential race")
+                            },
+                        oe::DeviceEventKind::DisconnectEvent =>
+                            if let Some(key) = hub.peek().device_key(&device) {
+                                device_signals.write()[key].shooting.set(false);
+                            },
+                        _ => {}
                     }
                 }
-                oe::Event::DeviceEvent(oe::DeviceEvent(
-                    device,
-                    oe::DeviceEventKind::DisconnectEvent,
-                )) => {
-                    if let Some(key) = hub.peek().device_key(&device) {
-                        shooting_devices.write()[key].set(false);
-                    }
-                }
-                _ => {}
             }
         }
     });
@@ -92,24 +103,24 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                     ul { class: "space-y-2 font-medium",
                         for (slot, device) in devices {
                             {
-                                let firing = shooting_devices()[slot]();
-                                const PRIMARY: &str = "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700";
-                                const DANGER: &str = "py-2.5 px-5 me-3 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-red-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-red-600 dark:hover:text-white dark:hover:bg-gray-700";
+                                let firing = (device_signals.read()[slot].shooting)();
+                                const PRIMARY: &str = "py-2.5 px-4 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700";
+                                const DANGER: &str = "py-2.5 px-4 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-red-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-red-600 dark:hover:text-white dark:hover:bg-gray-700";
 
                                 rsx! {
                                     li {
-                                        class: "flex flex-col",
+                                        class: "flex flex-col gap-2",
                                         span {
                                             class: "text-gray-900 dark:text-white",
                                             {format!("0x{:x}", device.uuid())},
                                         }
-                                        ul { class: "flex justify-start",
-                                            li { class: "flex items-center",
+                                        ul { class: "flex flex-col gap-2",
+                                            li { class: "flex items-center gap-3",
                                                 if firing {
                                                     button {
                                                         class: DANGER,
                                                         onclick: move |_| {
-                                                            shooting_devices.write()[slot].set(false);
+                                                            device_signals.write()[slot].shooting.set(false);
                                                         },
                                                         "Cancel"
                                                     }
@@ -117,7 +128,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     button {
                                                         class: PRIMARY,
                                                         onclick: move |_| {
-                                                            shooting_devices.write()[slot].set(true);
+                                                            device_signals.write()[slot].shooting.set(true);
                                                         },
                                                         "Zero on shot"
                                                     }
@@ -158,6 +169,146 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         }
                                                     }
                                                 }, "Save Zero" }
+                                            }
+                                            li {
+                                                class: "flex items-center gap-2",
+
+                                                label {
+                                                    r#for: "shot-delay-input",
+                                                    class: "text-sm text-gray-900 dark:text-white",
+                                                    "Shot Delay (ms):"
+                                                }
+
+                                                div {
+                                                    class: "relative flex items-center max-w-[6rem]",
+
+                                                    button {
+                                                        id: "decrement-button",
+                                                        class: "bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-600 dark:border-gray-600 \
+                                                                hover:bg-gray-200 border border-gray-300 rounded-s-lg p-2 h-10 focus:ring-gray-100 \
+                                                                dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
+                                                        onclick: move |_| {
+                                                            // let mut val = shot_delays.write()[slot];
+                                                            // if val > 0 {
+                                                            //     val -= 1;
+                                                            //     shot_delays.write()[slot] = val;
+                                                            // }
+                                                        },
+                                                        svg {
+                                                            class: "w-3 h-3 text-gray-900 dark:text-white",
+                                                            xmlns: "http://www.w3.org/2000/svg",
+                                                            fill: "none",
+                                                            view_box: "0 0 18 2",
+                                                            path {
+                                                                d: "M1 1h16",
+                                                                stroke: "currentColor",
+                                                                stroke_linecap: "round",
+                                                                stroke_linejoin: "round",
+                                                                stroke_width: "2",
+                                                            }
+                                                        }
+                                                    }
+
+                                                    input {
+                                                        r#type: "text",
+                                                        id: "shot-delay-input",
+                                                        // value: "{shot_delays.read()[slot]}",
+                                                        class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
+                                                                focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
+                                                                dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 \
+                                                                dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500",
+                                                        oninput: move |e| {
+                                                            if let Ok(new_val) = e.value().parse::<u16>() {
+                                                                if new_val <= 255 {
+                                                                    // shot_delays.write()[slot] = new_val;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    button {
+                                                        id: "increment-button",
+                                                        class: "bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-600 dark:border-gray-600 \
+                                                                hover:bg-gray-200 border border-gray-300 rounded-e-lg p-2 h-10 focus:ring-gray-100 \
+                                                                dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
+                                                        onclick: move |_| {
+                                                            // let mut val = shot_delays.write()[slot];
+                                                            // if val < 1000 {
+                                                            //     val += 1;
+                                                            //     shot_delays.write()[slot] = val;
+                                                            // }
+                                                        },
+                                                        svg {
+                                                            class: "w-3 h-3 text-gray-900 dark:text-white",
+                                                            xmlns: "http://www.w3.org/2000/svg",
+                                                            fill: "none",
+                                                            view_box: "0 0 18 18",
+                                                            path {
+                                                                d: "M9 1v16M1 9h16",
+                                                                stroke: "currentColor",
+                                                                stroke_linecap: "round",
+                                                                stroke_linejoin: "round",
+                                                                stroke_width: "2",
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // Set button
+                                                button {
+                                                    class: PRIMARY,
+                                                    onclick: {
+                                                        let dev = device.clone();
+                                                        move |_| {
+                                                            let dev = dev.clone();
+                                                            // let delay = shot_delays.read()[slot];
+                                                            async move {
+                                                                // match (hub().client)().set_shot_delay(dev.clone(), delay).await {
+                                                                //     Ok(_) => tracing::info!("Set shot delay {}ms for {:x}", delay, dev.uuid()),
+                                                                //     Err(e) => tracing::error!("Failed to set shot delay {:x}: {}", dev.uuid(), e),
+                                                                // }
+                                                            }
+                                                        }
+                                                    },
+                                                    "Set"
+                                                }
+
+                                                // Reset button
+                                                button {
+                                                    class: PRIMARY,
+                                                    onclick: {
+                                                        let dev = device.clone();
+                                                        move |_| {
+                                                            let dev = dev.clone();
+                                                            async move {
+                                                                match (hub().client)().reset_shot_delay(dev.clone()).await {
+                                                                    Ok(_) => tracing::info!("Reset shot delay for {:x}", dev.uuid()),
+                                                                    Err(e) => tracing::error!("Failed to reset shot delay {:x}: {}", dev.uuid(), e),
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    "Reset"
+                                                }
+
+                                                // Save button
+                                                button {
+                                                    class: PRIMARY,
+                                                    onclick: {
+                                                        let dev = device.clone();
+                                                        move |_| {
+                                                            let dev = dev.clone();
+                                                            // let delay = shot_delays.read()[slot];
+                                                            async move {
+                                                                // match (hub().client)().save_shot_delay(dev.clone(), delay).await {
+                                                                //     Ok(_) => tracing::info!("Saved shot delay {}ms for {:x}", delay, dev.uuid()),
+                                                                //     Err(e) => tracing::error!("Failed to save shot delay {:x}: {}", dev.uuid(), e),
+                                                                // }
+                                                            }
+                                                        }
+                                                    },
+                                                    "Save"
+                                                }
                                             }
                                         }
                                     }

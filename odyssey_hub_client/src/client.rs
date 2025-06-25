@@ -141,6 +141,53 @@ impl Client {
         }
     }
 
+    pub async fn reset_shot_delay(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(device.into());
+            Ok(service_client.reset_shot_delay(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn set_shot_delay(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+        delay_ms: u8,
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::SetShotDelayRequest { device: Some(device.into()), delay_ms: delay_ms.into() });
+            Ok(service_client.set_shot_delay(request).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn get_shot_delay(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+    ) -> anyhow::Result<u8> {
+        if let Some(service_client) = &mut self.service_client {
+            Ok(service_client.get_shot_delay(tonic::Request::new(device.into())).await?.into_inner().delay_ms as u8)
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn save_shot_delay(
+        &mut self,
+        device: odyssey_hub_common::device::Device,
+    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+        if let Some(service_client) = &mut self.service_client {
+            Ok(service_client.save_shot_delay(tonic::Request::new(device.into())).await?.into_inner())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn get_screen_info_by_id(
         &mut self,
         id: u8,
