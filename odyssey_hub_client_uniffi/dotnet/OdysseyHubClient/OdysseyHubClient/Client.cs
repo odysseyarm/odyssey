@@ -88,6 +88,18 @@ namespace Radiosity.OdysseyHubClient
             return _inner.Zero(device, translation, target);
         }
 
+        public Task<byte> ResetShotDelay(uniffi.DeviceRecord device) {
+            return _inner.ResetShotDelay(device);
+        }
+
+        public Task<byte> GetShotDelay(uniffi.DeviceRecord device) {
+            return _inner.GetShotDelay(device);
+        }
+
+        public Task SetShotDelay(uniffi.DeviceRecord device, byte delay_ms) {
+            return _inner.SetShotDelay(device, delay_ms);
+        }
+
         public Task<uniffi.ScreenInfo> GetScreenInfoById(byte screenId) {
             return _inner.GetScreenInfoById(screenId);
         }

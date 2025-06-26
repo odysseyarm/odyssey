@@ -81,6 +81,7 @@ pub enum DeviceEventKind {
     DisconnectEvent,
     ZeroResult(bool),
     SaveZeroResult(bool),
+    ShotDelayChanged(u8),
     PacketEvent(PacketEvent),
 }
 
@@ -142,6 +143,7 @@ pub struct ScreenInfo {
 impl_from_simple!(odyssey_hub_common::events::AccelerometerEvent => AccelerometerEvent, timestamp, accel, gyro, euler_angles);
 impl_from_simple!(odyssey_hub_common::events::ImpactEvent => ImpactEvent, timestamp);
 impl_from_simple!(odyssey_hub_common::events::Pose => Pose, rotation, translation);
+impl_from_simple!(Pose => odyssey_hub_common::events::Pose, rotation, translation);
 
 impl From<odyssey_hub_common::ScreenInfo> for ScreenInfo {
     fn from(screen_info: odyssey_hub_common::ScreenInfo) -> Self {
@@ -157,6 +159,21 @@ impl From<odyssey_hub_common::ScreenInfo> for ScreenInfo {
 
 impl From<odyssey_hub_common::events::TrackingEvent> for TrackingEvent {
     fn from(e: odyssey_hub_common::events::TrackingEvent) -> Self {
+        Self {
+            timestamp: e.timestamp,
+            aimpoint: e.aimpoint.into(),
+            pose: match e.pose {
+                Some(p) => Option::Some(p.into()),
+                None => Option::None,
+            },
+            distance: e.distance,
+            screen_id: e.screen_id,
+        }
+    }
+}
+
+impl From<TrackingEvent> for odyssey_hub_common::events::TrackingEvent {
+    fn from(e: TrackingEvent) -> Self {
         Self {
             timestamp: e.timestamp,
             aimpoint: e.aimpoint.into(),
@@ -267,6 +284,9 @@ impl From<odyssey_hub_common::events::Event> for Event {
                     }
                     odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(b) => {
                         DeviceEventKind::SaveZeroResult(b)
+                    }
+                    odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(n) => {
+                        DeviceEventKind::ShotDelayChanged(n)
                     }
                     odyssey_hub_common::events::DeviceEventKind::PacketEvent(p) => {
                         DeviceEventKind::PacketEvent(PacketEvent {

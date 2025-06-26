@@ -83,7 +83,9 @@ impl Client {
                         Some(reply) => {
                             if let Some(event) = reply.event {
                                 Ok(PollEventResult {
-                                    event: Some(odyssey_hub_common::events::Event::from(event).into()),
+                                    event: Some(
+                                        odyssey_hub_common::events::Event::from(event).into(),
+                                    ),
                                     error: None,
                                 })
                             } else {
@@ -93,12 +95,10 @@ impl Client {
                                 })
                             }
                         }
-                        None => {
-                            Ok(PollEventResult {
-                                event: None,
-                                error: Some(ClientError::StreamEnd),
-                            })
-                        }
+                        None => Ok(PollEventResult {
+                            event: None,
+                            error: Some(ClientError::StreamEnd),
+                        }),
                     }
                 } else {
                     Ok(PollEventResult {
@@ -107,9 +107,7 @@ impl Client {
                     })
                 }
             }
-            Err(_) => {
-                Err(ClientError::NotConnected)
-            }
+            Err(_) => Err(ClientError::NotConnected),
         }
     }
 
@@ -166,6 +164,37 @@ impl Client {
             .write()
             .await
             .zero(device.into(), translation, target)
+            .await
+            .map_err(|_| ClientError::NotConnected)
+            .map(|_| ())
+    }
+
+    #[uniffi::method]
+    pub async fn reset_shot_delay(&self, device: DeviceRecord) -> Result<u8, ClientError> {
+        self.inner
+            .write()
+            .await
+            .reset_shot_delay(device.into())
+            .await
+            .map_err(|_| ClientError::NotConnected)
+    }
+
+    // TODO ClientError does not encompass all possible errors
+    #[uniffi::method]
+    pub async fn get_shot_delay(&self, device: DeviceRecord) -> Result<u8, ClientError> {
+        self.inner
+            .write()
+            .await
+            .get_shot_delay(device.into())
+            .await
+            .map_err(|_| ClientError::NotConnected)
+    }
+
+    pub async fn set_shot_delay(&self, device: DeviceRecord, delay_ms: u8) -> Result<(), ClientError> {
+        self.inner
+            .write()
+            .await
+            .set_shot_delay(device.into(), delay_ms)
             .await
             .map_err(|_| ClientError::NotConnected)
             .map(|_| ())

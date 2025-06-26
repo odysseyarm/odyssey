@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use crate::hexkeymap::HexKeyMap;
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
-use crate::hexkeymap::HexKeyMap;
 
 pub const APP_INFO: AppInfo = AppInfo {
     name: "odyssey",
@@ -14,7 +14,10 @@ pub fn device_shot_delays() -> Result<HashMap<u64, u8>, Box<dyn std::error::Erro
     let device_shot_delays_path = config_dir.join("device_shot_delays.json");
 
     if device_shot_delays_path.exists() {
-        tracing::info!("Loading device delays from {}", device_shot_delays_path.display());
+        tracing::info!(
+            "Loading device delays from {}",
+            device_shot_delays_path.display()
+        );
         let contents = std::fs::read_to_string(&device_shot_delays_path)?;
         let HexKeyMap(map) = json5::from_str::<HexKeyMap<u8>>(&contents)?;
         Ok(map)
@@ -24,12 +27,16 @@ pub fn device_shot_delays() -> Result<HashMap<u64, u8>, Box<dyn std::error::Erro
     }
 }
 
-pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>> {
+pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>>
+{
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let device_offsets_path = config_dir.join("device_offsets.json");
 
     if device_offsets_path.exists() {
-        tracing::info!("Loading device offsets from {}", device_offsets_path.display());
+        tracing::info!(
+            "Loading device offsets from {}",
+            device_offsets_path.display()
+        );
         let contents = std::fs::read_to_string(&device_offsets_path)?;
         let HexKeyMap(map) = json5::from_str::<HexKeyMap<nalgebra::Isometry3<f32>>>(&contents)?;
         Ok(map)
@@ -39,7 +46,13 @@ pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dy
     }
 }
 
-pub fn screen_calibrations() -> Result<arrayvec::ArrayVec<(u8, ScreenCalibration<f32>), { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize }>, Box<dyn std::error::Error>> {
+pub fn screen_calibrations() -> Result<
+    arrayvec::ArrayVec<
+        (u8, ScreenCalibration<f32>),
+        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+    >,
+    Box<dyn std::error::Error>,
+> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     Ok((0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
         .filter_map(|i| {
@@ -51,7 +64,11 @@ pub fn screen_calibrations() -> Result<arrayvec::ArrayVec<(u8, ScreenCalibration
                 match json5::from_str(&std::fs::read_to_string(&screen_path).ok()?) {
                     Ok(calibration) => Some((i as u8, calibration)),
                     Err(e) => {
-                        tracing::error!("Failed to parse screen calibration for screen {}: {}", i, e);
+                        tracing::error!(
+                            "Failed to parse screen calibration for screen {}: {}",
+                            i,
+                            e
+                        );
                         None
                     }
                 }

@@ -44,48 +44,58 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
         let ctx = hub();
         if let Some(event) = (ctx.latest_event)() {
             match event {
-                oe::Event::DeviceEvent(oe::DeviceEvent(
-                    device,
-                    kind,
-                )) => {
-                    match kind {
-                        oe::DeviceEventKind::ImpactEvent { .. } => 
-                            if let Some(key) = ctx.device_key(&device) {
-                                if *device_signals.peek()[key].shooting.peek() {
-                                    let zr = *zero_screen_ratio.peek();
-                                    let dev = device.clone();
-                                    spawn(async move {
-                                        if let Err(e) = (ctx.client)()
-                                            .zero(
-                                                dev.clone(),
-                                                nalgebra::Vector3::new(0., -0.0635, 0.).into(),
-                                                nalgebra::Vector2::new(zr.0, zr.1).into(),
-                                            )
-                                            .await
-                                        {
-                                            tracing::error!(
-                                                "Failed to zero device {:x}: {}",
-                                                dev.uuid(),
-                                                e
-                                            );
-                                        }
-                                    });
-                                    device_signals.write()[key].shooting.set(false);
-                                }
-                            },
-                        oe::DeviceEventKind::ConnectEvent =>
-                            if let Some(key) = hub.peek().device_key(&device) {
-                                spawn(async move { device_signals.write()[key].shot_delay.set(hub.peek().client.peek().clone().get_shot_delay(device).await.unwrap()) });
-                            } else {
-                                tracing::error!("Connected device not found in device signals. Potential race")
-                            },
-                        oe::DeviceEventKind::DisconnectEvent =>
-                            if let Some(key) = hub.peek().device_key(&device) {
+                oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) => match kind {
+                    oe::DeviceEventKind::ImpactEvent { .. } => {
+                        if let Some(key) = ctx.device_key(&device) {
+                            if *device_signals.peek()[key].shooting.peek() {
+                                let zr = *zero_screen_ratio.peek();
+                                let dev = device.clone();
+                                spawn(async move {
+                                    if let Err(e) = (ctx.client)()
+                                        .zero(
+                                            dev.clone(),
+                                            nalgebra::Vector3::new(0., -0.0635, 0.).into(),
+                                            nalgebra::Vector2::new(zr.0, zr.1).into(),
+                                        )
+                                        .await
+                                    {
+                                        tracing::error!(
+                                            "Failed to zero device {:x}: {}",
+                                            dev.uuid(),
+                                            e
+                                        );
+                                    }
+                                });
                                 device_signals.write()[key].shooting.set(false);
-                            },
-                        _ => {}
+                            }
+                        }
                     }
-                }
+                    oe::DeviceEventKind::ConnectEvent => {
+                        if let Some(key) = hub.peek().device_key(&device) {
+                            spawn(async move {
+                                device_signals.write()[key].shot_delay.set(
+                                    hub.peek()
+                                        .client
+                                        .peek()
+                                        .clone()
+                                        .get_shot_delay(device)
+                                        .await
+                                        .unwrap(),
+                                )
+                            });
+                        } else {
+                            tracing::error!(
+                                "Connected device not found in device signals. Potential race"
+                            )
+                        }
+                    }
+                    oe::DeviceEventKind::DisconnectEvent => {
+                        if let Some(key) = hub.peek().device_key(&device) {
+                            device_signals.write()[key].shooting.set(false);
+                        }
+                    }
+                    _ => {}
+                },
             }
         }
     });
@@ -108,7 +118,14 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
 
                 spawn(async move {
                     if let Some(key) = hub.peek().device_key(&device) {
-                        match hub.peek().client.peek().clone().get_shot_delay(device.clone()).await {
+                        match hub
+                            .peek()
+                            .client
+                            .peek()
+                            .clone()
+                            .get_shot_delay(device.clone())
+                            .await
+                        {
                             Ok(delay) => {
                                 device_signals.write()[key].shot_delay.set(delay);
                             }
@@ -117,7 +134,9 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                             }
                         }
                     } else {
-                        tracing::error!("Connected device not found in device signals. Potential race");
+                        tracing::error!(
+                            "Connected device not found in device signals. Potential race"
+                        );
                     }
                 });
             }

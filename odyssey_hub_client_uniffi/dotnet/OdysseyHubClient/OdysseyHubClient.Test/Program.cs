@@ -72,7 +72,7 @@ Console.WriteLine("Devices printed!");
     Console.WriteLine("\t\tBottom Right: \t{0}", screen_info.br);
 }
 
-Channel<(Ohc.uniffi.Event, Ohc.uniffi.ClientException)> eventChannel = Channel.CreateUnbounded<(Ohc.uniffi.Event, Ohc.uniffi.ClientException)>();
+Channel<(Ohc.uniffi.Event?, Ohc.uniffi.ClientException?)> eventChannel = Channel.CreateUnbounded<(Ohc.uniffi.Event?, Ohc.uniffi.ClientException?)>();
 await Task.WhenAny(
     client.RunStream(eventChannel.Writer),
     Task.Run(async () => {
