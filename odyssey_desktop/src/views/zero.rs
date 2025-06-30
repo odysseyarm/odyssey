@@ -227,7 +227,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                 class: "flex items-center gap-2",
 
                                                 label {
-                                                    r#for: "shot-delay-input",
+                                                    r#for: "shot-delay-input-{slot}",
                                                     class: "text-sm text-gray-900 dark:text-white",
                                                     "Shot Delay (ms):"
                                                 }
@@ -266,7 +266,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         r#type: "text",
                                                         inputmode: "numeric",
                                                         pattern: "[0-9]*",
-                                                        id: "shot-delay-input",
+                                                        id: "shot-delay-input-{slot}",
                                                         value: "{device_signals.read()[slot].shot_delay}",
                                                         class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
                                                                 focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
