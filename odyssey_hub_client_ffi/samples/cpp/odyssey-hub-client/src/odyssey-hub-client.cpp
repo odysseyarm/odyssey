@@ -1,4 +1,4 @@
-﻿#include "odyssey_hub_client_lib.hpp"
+﻿#include <ohc.hpp>
 
 #include <iostream>
 #include <thread>
@@ -6,36 +6,34 @@
 #include <memory>
 #include <chrono>
 
-using namespace OdysseyHubClient;
-
 std::atomic_bool end(false);
 
 class ClientState {
 public:
-    std::shared_ptr<Handle> handle;
-    std::shared_ptr<Client> client;
+    std::shared_ptr<ohc::Handle> handle;
+    std::shared_ptr<ohc::Client> client;
 
-    ClientState() : handle(odyssey_hub_client_init(), odyssey_hub_client_free),
-                    client(odyssey_hub_client_client_new(), odyssey_hub_client_client_free) {}
+    ClientState() : handle(ohc::rt_init(), ohc::rt_free),
+                    client(ohc::client_new(), ohc::client_free) {}
 };
 
-void clientConnectCallback(UserObj userdata, ClientError error);
-void startStreams(std::shared_ptr<Handle> handle, std::shared_ptr<Client> client);
-void streamCallback(UserObj userdata, ClientError error, const char *error_msg, Event reply);
-void handleDeviceEvent(const DeviceEvent &event);
+void clientConnectCallback(ohc::UserObj userdata, ohc::ClientError error);
+void startStreams(std::shared_ptr<ohc::Handle> handle, std::shared_ptr<ohc::Client> client);
+void streamCallback(ohc::UserObj, ohc::ClientError error, ohc::Event reply);
+void handleDeviceEvent(const ohc::DeviceEvent &event);
 
 void handleConnectEvent(ClientState *state) {
-    odyssey_hub_client_client_connect(state->handle.get(), UserObj{state}, state->client.get(), clientConnectCallback);
+    ohc::client_connect(state->handle.get(), state->client.get(), ohc::UserObj{state}, clientConnectCallback);
 }
 
-void clientConnectCallback(UserObj userdata, ClientError error) {
-    auto *state = const_cast<ClientState *>(static_cast<const ClientState *>(userdata._0));
-    if (error == ClientError::ClientErrorNone) {
+void clientConnectCallback(ohc::UserObj userdata, ohc::ClientError error) {
+    auto *state = const_cast<ClientState *>(static_cast<const ClientState *>(userdata.ptr));
+    if (error == ohc::ClientError::NONE) {
         std::cout << "Connected to hub" << std::endl;
         startStreams(state->handle, state->client);
     } else {
         switch (error) {
-        case ClientError::ClientErrorConnectFailure:
+        case ohc::ClientError::CONNECT_FAILURE:
             std::cout << "Connection failure" << std::endl;
             break;
         default:
@@ -46,57 +44,46 @@ void clientConnectCallback(UserObj userdata, ClientError error) {
     }
 }
 
-void startStreams(std::shared_ptr<Handle> handle, std::shared_ptr<Client> client) {
-    odyssey_hub_client_start_stream(handle.get(), UserObj{nullptr}, client.get(), streamCallback);
+void startStreams(std::shared_ptr<ohc::Handle> handle, std::shared_ptr<ohc::Client> client) {
+    ohc::client_start_stream(handle.get(), client.get(), ohc::UserObj{nullptr}, streamCallback);
 }
 
-void streamCallback(UserObj, ClientError error, const char *error_msg, Event reply) {
-    if (error != ClientError::ClientErrorNone) {
+void streamCallback(ohc::UserObj, ohc::ClientError error, ohc::Event reply) {
+    if (error != ohc::ClientError::NONE) {
         end.store(true);
         return;
     }
     
     std::thread([reply]() {
-        if (reply.tag == EventTag::DeviceEvent) {
-            handleDeviceEvent(reply.u.device_event);
+        if (reply.kind.tag == ohc::EventKind::Tag::DEVICE_EVENT) {
+            handleDeviceEvent(reply.kind.DEVICE_EVENT._0);
         }
     }).detach();
 }
 
-void handleDeviceEvent(const DeviceEvent &event) {
+void handleDeviceEvent(const ohc::DeviceEvent &event) {
     std::cout << "Device: ";
-    
-    switch (event.device.tag) {
-    case DeviceTag::Cdc:
-    case DeviceTag::Udp:
-        std::cout << std::hex << static_cast<int>(event.device.u.cdc.uuid[0]) << ":"
-                  << static_cast<int>(event.device.u.cdc.uuid[1]) << ":"
-                  << static_cast<int>(event.device.u.cdc.uuid[2]) << ":"
-                  << static_cast<int>(event.device.u.cdc.uuid[3]) << ":"
-                  << static_cast<int>(event.device.u.cdc.uuid[4]) << ":"
-                  << static_cast<int>(event.device.u.cdc.uuid[5]) << std::endl;
-        break;
-    case DeviceTag::Hid:
-        // Not implemented
-        break;
-    }
+
+    std::cout << "0x" << std::hex << ohc::device_uuid(event.device) << std::endl;
 
     switch (event.kind.tag) {
-    case DeviceEventKindTag::ConnectEvent:
+    case ohc::DeviceEventKind::Tag::CONNECT_EVENT:
         std::cout << "Connected" << std::endl;
         break;
-    case DeviceEventKindTag::DisconnectEvent:
+    case ohc::DeviceEventKind::Tag::DISCONNECT_EVENT:
         std::cout << "Disconnected" << std::endl;
         break;
-    case DeviceEventKindTag::TrackingEvent:
-        std::cout << "Tracking: aimpoint " << event.kind.u.tracking_event.aimpoint.x << " "
-                  << event.kind.u.tracking_event.aimpoint.y << ", screen_id "
-                  << event.kind.u.tracking_event.screen_id << std::endl;
+    case ohc::DeviceEventKind::Tag::TRACKING_EVENT:
+        std::cout << "Tracking: aimpoint " << event.kind.TRACKING_EVENT._0.aimpoint.x << " "
+                  << event.kind.TRACKING_EVENT._0.aimpoint.y << ", screen_id "
+                  << event.kind.TRACKING_EVENT._0.screen_id << std::endl;
         break;
-    case DeviceEventKindTag::ImpactEvent:
+    case ohc::DeviceEventKind::Tag::IMPACT_EVENT:
         std::cout << "Impact" << std::endl;
         break;
-    case DeviceEventKindTag::AccelerometerEvent:
+    case ohc::DeviceEventKind::Tag::ACCELEROMETER_EVENT:
+        break;
+    default:
         break;
     }
 }

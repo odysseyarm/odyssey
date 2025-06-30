@@ -1,45 +1,52 @@
-use interoptopus::{ffi_function, ffi_type};
+use odyssey_hub_client::client::Client;
+use std::ffi::c_void;
 
-#[ffi_type(skip(inner))]
-#[derive(Default, Clone)]
-pub struct Client {
-    inner: odyssey_hub_client::client::Client,
-}
+use crate::ffi_common::{Device, ScreenInfo};
+use crate::funny::{Vector2f32, Vector3f32};
+use crate::Handle;
 
-#[ffi_type]
-pub enum ClientError {
-    ClientErrorNone,
-    ClientErrorConnectFailure,
-    ClientErrorNotConnected,
-    ClientErrorStreamEnd,
-    ClientErrorEnd,
-}
-
-#[ffi_type]
+#[repr(C)]
 #[derive(Clone, Copy)]
-pub struct UserObj(*const std::ffi::c_void);
+pub struct UserObj {
+    pub ptr: *const c_void,
+}
+
+// cbindgen all of a sudden doesn't create opaque types
+mod hack {
+    #[allow(unused)]
+    #[no_mangle]
+    pub struct Client;
+}
 
 // SAFETY: Any user data object must be safe to send between threads.
 unsafe impl Send for UserObj {}
 
-#[ffi_function]
-pub extern "C" fn ohc_c_new() -> *mut Client {
+#[repr(C)]
+pub enum ClientError {
+    None,
+    NotConnected,
+    StreamEnd,
+    ConnectFailure,
+}
+
+#[no_mangle]
+pub extern "C" fn client_new() -> *mut Client {
     Box::into_raw(Box::new(Client::default()))
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_free(client: *mut Client) {
+#[no_mangle]
+pub extern "C" fn client_free(client: *mut Client) {
     unsafe {
         drop(Box::from_raw(client));
-    };
+    }
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_connect(
-    handle: *const crate::Handle,
-    userdata: UserObj,
+#[no_mangle]
+pub extern "C" fn client_connect(
+    handle: *const Handle,
     client: *mut Client,
-    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+    userdata: UserObj,
+    callback: extern "C" fn(UserObj, ClientError),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -47,266 +54,273 @@ pub extern "C" fn ohc_c_connect(
     let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
-        match client.inner.connect().await {
-            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
-            Err(_) => callback(userdata, ClientError::ClientErrorConnectFailure),
+        match client.connect().await {
+            Ok(_) => callback(userdata, ClientError::None),
+            Err(_) => callback(userdata, ClientError::ConnectFailure),
         }
     });
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_get_device_list(
-    handle: *const crate::Handle,
-    userdata: UserObj,
+#[no_mangle]
+pub extern "C" fn client_get_device_list(
+    handle: *const Handle,
     client: *mut Client,
-    callback: extern "C" fn(
-        userdata: UserObj,
-        error: ClientError,
-        device_list: *mut crate::ffi_common::Device,
-        size: usize,
-    ),
+    userdata: UserObj,
+    callback: extern "C" fn(UserObj, ClientError, *mut Device, usize),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-
-    let mut client = unsafe { &*client }.clone();
+    let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
-        match client.inner.get_device_list().await {
+        let result = client.get_device_list().await;
+        match result {
             Ok(dl) => {
-                // allocate memory for the device list, and copy the device list into it, and set len to the length of the device list
-                let device_list = dl
-                    .into_iter()
-                    .map(|d| d.into())
-                    .collect::<Vec<crate::ffi_common::Device>>();
-                unsafe {
-                    let len = device_list.len();
-                    let device_list_out = std::alloc::alloc(
-                        std::alloc::Layout::array::<crate::ffi_common::Device>(device_list.len())
-                            .unwrap(),
-                    ) as *mut crate::ffi_common::Device;
-                    std::ptr::copy(device_list.as_ptr(), device_list_out, device_list.len());
-                    callback(userdata, ClientError::ClientErrorNone, device_list_out, len);
-                }
+                let devices: Vec<Device> = dl.into_iter().map(Into::into).collect();
+                let len = devices.len();
+                let ptr = unsafe {
+                    let layout = std::alloc::Layout::array::<Device>(len).unwrap();
+                    let ptr = std::alloc::alloc(layout) as *mut Device;
+                    ptr.copy_from_nonoverlapping(devices.as_ptr(), len);
+                    ptr
+                };
+                callback(userdata, ClientError::None, ptr, len);
             }
-            Err(_) => callback(
-                userdata,
-                ClientError::ClientErrorNotConnected,
-                std::ptr::null_mut(),
-                0,
-            ),
+            Err(_) => callback(userdata, ClientError::NotConnected, std::ptr::null_mut(), 0),
         }
     });
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_start_stream(
+#[no_mangle]
+pub extern "C" fn client_start_stream(
     handle: *const crate::Handle,
-    userdata: UserObj,
     client: *mut Client,
-    callback: extern "C" fn(
-        userdata: UserObj,
-        error: ClientError,
-        error_msg: *const std::ffi::c_char,
-        reply: crate::ffi_common::Event,
-    ),
+    userdata: UserObj,
+    callback: extern "C" fn(UserObj, ClientError, std::mem::MaybeUninit<crate::ffi_common::Event>),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let mut client = unsafe { &*client }.clone();
+    let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
-        match client.inner.poll().await {
+        match client.poll().await {
             Ok(mut stream) => loop {
                 match stream.message().await {
                     Ok(Some(reply)) => {
                         let as_event: odyssey_hub_common::events::Event =
                             reply.event.unwrap().into();
-                        let err_msg = std::ffi::CString::new("").unwrap();
                         callback(
                             userdata,
-                            ClientError::ClientErrorNone,
-                            err_msg.as_ptr(),
-                            as_event.into(),
+                            ClientError::None,
+                            std::mem::MaybeUninit::new(as_event.into()),
                         );
                     }
                     Ok(None) => {
-                        let err_msg = std::ffi::CString::new("Stream closed by sender").unwrap();
                         callback(
                             userdata,
-                            ClientError::ClientErrorStreamEnd,
-                            err_msg.as_ptr(),
-                            odyssey_hub_common::events::Event::None.into(),
+                            ClientError::StreamEnd,
+                            std::mem::MaybeUninit::uninit(),
                         );
-                        continue;
+                        break;
                     }
-                    Err(val) => {
-                        let err_msg = std::ffi::CString::new(val.message()).unwrap();
+                    Err(_) => {
                         callback(
                             userdata,
-                            ClientError::ClientErrorStreamEnd,
-                            err_msg.as_ptr(),
-                            odyssey_hub_common::events::Event::None.into(),
+                            ClientError::StreamEnd,
+                            std::mem::MaybeUninit::uninit(),
                         );
                         break;
                     }
                 }
             },
             Err(_) => {
-                let err_msg = std::ffi::CString::new("Client not connected").unwrap();
                 callback(
                     userdata,
-                    ClientError::ClientErrorNotConnected,
-                    err_msg.as_ptr(),
-                    odyssey_hub_common::events::Event::None.into(),
+                    ClientError::NotConnected,
+                    std::mem::MaybeUninit::uninit(),
                 );
             }
         }
     });
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_stop_stream(
-    handle: *const crate::Handle,
-    client: *mut Client,
-) {
+#[no_mangle]
+pub extern "C" fn client_stop_stream(handle: *const Handle, client: *mut Client) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-
-    let client = unsafe { &*client };
-
-    client.inner.end_token.cancel();
-}
-
-#[ffi_function]
-pub extern "C" fn ohc_c_write_vendor(
-    handle: *const crate::Handle,
-    userdata: UserObj,
-    client: *mut Client,
-    device: *const crate::ffi_common::Device,
-    tag: u8,
-    data: *const u8,
-    len: usize,
-    callback: extern "C" fn(userdata: UserObj, error: ClientError),
-) {
-    let handle = unsafe { &*handle };
-    let _guard = handle.tokio_rt.enter();
-
-    let mut client = unsafe { &*client }.clone();
-
-    let device = unsafe { &*device }.clone().into();
-
-    let data = unsafe { std::slice::from_raw_parts(data, len) }
-        .iter()
-        .map(|&x| x as u8)
-        .collect::<Vec<u8>>();
+    let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
-        match client.inner.write_vendor(device, tag, data).await {
-            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
-            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
-        }
+        client.end_token.cancel();
     });
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_reset_zero(
-    handle: *const crate::Handle,
-    userdata: UserObj,
+#[no_mangle]
+pub extern "C" fn client_reset_zero(
+    handle: *const Handle,
     client: *mut Client,
-    device: *const crate::ffi_common::Device,
-    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+    userdata: UserObj,
+    device: Device,
+    callback: extern "C" fn(UserObj, ClientError),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
 
-    let mut client = unsafe { &*client }.clone();
-
-    let device = unsafe { &*device }.clone().into();
+    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
 
     tokio::spawn(async move {
-        match client.inner.reset_zero(device).await {
-            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
-            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
-        }
+        let result = client.reset_zero(device_owned).await;
+
+        let error = if result.is_ok() {
+            ClientError::None
+        } else {
+            ClientError::NotConnected
+        };
+
+        callback(userdata, error);
     });
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_zero(
-    handle: *const crate::Handle,
-    userdata: UserObj,
+#[no_mangle]
+pub extern "C" fn client_zero(
+    handle: *const Handle,
     client: *mut Client,
-    device: *const crate::ffi_common::Device,
-    translation: *const crate::funny::Vector3f32,
-    target: *const crate::funny::Vector2f32,
-    callback: extern "C" fn(userdata: UserObj, error: ClientError),
+    userdata: UserObj,
+    device: Device,
+    translation: Vector3f32,
+    target: Vector2f32,
+    callback: extern "C" fn(UserObj, ClientError),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
 
-    let mut client = unsafe { &*client }.clone();
-
-    let device = unsafe { &*device }.clone().into();
-
-    let translation = unsafe { &*translation }.clone();
     let translation = odyssey_hub_server_interface::Vector3 {
         x: translation.x,
         y: translation.y,
         z: translation.z,
     };
-    let target = unsafe { &*target }.clone();
     let target = odyssey_hub_server_interface::Vector2 {
         x: target.x,
         y: target.y,
     };
 
+    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
+
     tokio::spawn(async move {
-        match client.inner.zero(device, translation, target).await {
-            Ok(_) => callback(userdata, ClientError::ClientErrorNone),
-            Err(_) => callback(userdata, ClientError::ClientErrorNotConnected),
+        let result = client.zero(device_owned, translation, target).await;
+        let error = if result.is_ok() {
+            ClientError::None
+        } else {
+            ClientError::NotConnected
+        };
+        callback(userdata, error);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn client_reset_shot_delay(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    device: Device,
+    callback: extern "C" fn(UserObj, ClientError, u8),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
+
+    tokio::spawn(async move {
+        let result = client.reset_shot_delay(device_owned).await;
+
+        match result {
+            Ok(delay) => callback(userdata, ClientError::None, delay),
+            Err(_) => callback(userdata, ClientError::NotConnected, 0),
         }
     });
 }
 
-#[ffi_function]
-pub extern "C" fn ohc_c_get_screen_info_by_id(
-    handle: *const crate::Handle,
-    userdata: UserObj,
+#[no_mangle]
+pub extern "C" fn client_get_shot_delay(
+    handle: *const Handle,
     client: *mut Client,
-    screen_id: u8,
-    callback: extern "C" fn(
-        userdata: UserObj,
-        error: ClientError,
-        error_msg: *const std::ffi::c_char,
-        reply: crate::ffi_common::ScreenInfo,
-    ),
+    userdata: UserObj,
+    device: Device,
+    callback: extern "C" fn(UserObj, ClientError, u8),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
 
-    let mut client = unsafe { &*client }.clone();
+    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
 
     tokio::spawn(async move {
-        match client.inner.get_screen_info_by_id(screen_id).await {
-            Ok(reply) => {
-                let err_msg = std::ffi::CString::new("").unwrap();
-                callback(
-                    userdata,
-                    ClientError::ClientErrorNone,
-                    err_msg.as_ptr(),
-                    reply.into(),
-                );
-            }
+        let result = client.get_shot_delay(device_owned).await;
+
+        match result {
+            Ok(delay) => callback(userdata, ClientError::None, delay),
+            Err(_) => callback(userdata, ClientError::NotConnected, 0),
+        }
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn client_set_shot_delay(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    device: Device,
+    delay_ms: u8,
+    callback: extern "C" fn(UserObj, ClientError),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
+
+    tokio::spawn(async move {
+        let result = client.set_shot_delay(device_owned, delay_ms).await;
+
+        let error = if result.is_ok() {
+            ClientError::None
+        } else {
+            ClientError::NotConnected
+        };
+
+        callback(userdata, error);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn client_get_screen_info_by_id(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    screen_id: u8,
+    callback: extern "C" fn(UserObj, ClientError, ScreenInfo),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    tokio::spawn(async move {
+        let result = client.get_screen_info_by_id(screen_id).await;
+        match result {
+            Ok(info) => callback(userdata, ClientError::None, info.into()),
             Err(_) => {
-                let err_msg = std::ffi::CString::new("Client not connected").unwrap();
-                callback(
-                    userdata,
-                    ClientError::ClientErrorNotConnected,
-                    err_msg.as_ptr(),
-                    odyssey_hub_common::ScreenInfo::default().into(),
-                );
+                let dummy_screen_info = ScreenInfo {
+                    id: 0,
+                    tl: Vector2f32 { x: 0.0, y: 0.0 },
+                    tr: Vector2f32 { x: 0.0, y: 0.0 },
+                    bl: Vector2f32 { x: 0.0, y: 0.0 },
+                    br: Vector2f32 { x: 0.0, y: 0.0 },
+                };
+                callback(userdata, ClientError::NotConnected, dummy_screen_info);
             }
         }
     });

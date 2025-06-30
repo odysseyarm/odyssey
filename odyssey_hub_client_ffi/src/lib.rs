@@ -1,11 +1,15 @@
-use std::sync::Arc;
-
 pub mod client;
 pub mod ffi_common;
 pub mod funny;
+pub mod tracking_history;
 
-#[uniffi::export]
-pub extern "C" fn ohc_init() -> *mut Handle {
+#[allow(unused)]
+pub struct Handle {
+    tokio_rt: tokio::runtime::Runtime,
+}
+
+#[no_mangle]
+pub extern "C" fn rt_init() -> *mut Handle {
     let tokio_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -13,15 +17,9 @@ pub extern "C" fn ohc_init() -> *mut Handle {
     Box::into_raw(Box::new(Handle { tokio_rt }))
 }
 
-#[uniffi::export]
-pub extern "C" fn ohc_free(handle: *mut Handle) {
+#[no_mangle]
+pub extern "C" fn rt_free(handle: *mut Handle) {
     unsafe {
         drop(Box::from_raw(handle));
     };
-}
-
-#[derive(uniffi::Object)]
-#[allow(unused)]
-pub struct Handle {
-    tokio_rt: tokio::runtime::Runtime,
 }

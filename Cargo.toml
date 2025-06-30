@@ -4,7 +4,7 @@ resolver = "2"
 members = [
     "odyssey_desktop",
     "odyssey_hub_client",
-    # "odyssey_hub_client_ffi",
+    "odyssey_hub_client_ffi",
     "odyssey_hub_client_uniffi",
     "odyssey_hub_server",
     "odyssey_hub_server_interface",

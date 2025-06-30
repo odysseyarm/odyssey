@@ -1,0 +1,3 @@
+D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Debug/CMakeFiles/odyssey-hub-client.dir
+D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Debug/CMakeFiles/edit_cache.dir
+D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Debug/CMakeFiles/rebuild_cache.dir

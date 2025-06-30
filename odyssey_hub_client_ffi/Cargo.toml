@@ -3,6 +3,10 @@ name = "odyssey_hub_client_ffi"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["staticlib", "cdylib"]
+name = "ohc"
+
 [dependencies]
 anyhow = "1.0.81"
 odyssey_hub_common = { path = "../odyssey_hub_common" }
@@ -15,7 +19,7 @@ nalgebra = "0.33"
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 interoptopus = "0.15.0-alpha.6"
 paste = "1.0.15"
-uniffi = "0.29.3"
 
 [build-dependencies]
 cbindgen = "0.29.0"
+indoc = "2.0.6"
