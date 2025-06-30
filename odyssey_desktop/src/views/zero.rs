@@ -263,8 +263,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     }
 
                                                     input {
-                                                        r#type: "text",
+                                                        r#type: "number",
                                                         id: "shot-delay-input",
+                                                        min: "0",
+                                                        max: "255",
                                                         value: "{device_signals.read()[slot].shot_delay.read()}",
                                                         class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
                                                                 focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
@@ -347,17 +349,24 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     "Reset"
                                                 }
 
-                                                // Save button
+                                                // Save button (sets before saving)
                                                 button {
                                                     class: PRIMARY,
                                                     onclick: {
                                                         let dev = device.clone();
                                                         move |_| {
                                                             let dev = dev.clone();
+                                                            let delay = *device_signals.peek()[slot].shot_delay.peek();
                                                             async move {
-                                                                match (hub().client)().save_shot_delay(dev.clone()).await {
-                                                                    Ok(_) => tracing::info!("Saved shot delay for {:x}", dev.uuid()),
-                                                                    Err(e) => tracing::error!("Failed to save shot delay {:x}: {}", dev.uuid(), e),
+                                                                match (hub().client)().set_shot_delay(dev.clone(), delay).await {
+                                                                    Ok(_) => {
+                                                                        tracing::info!("Set shot delay {}ms for {:x}", delay, dev.uuid());
+                                                                        match (hub().client)().save_shot_delay(dev.clone()).await {
+                                                                            Ok(_) => tracing::info!("Saved shot delay for {:x}", dev.uuid()),
+                                                                            Err(e) => tracing::error!("Failed to save shot delay {:x}: {}", dev.uuid(), e),
+                                                                        }
+                                                                    }
+                                                                    Err(e) => tracing::error!("Failed to set shot delay {:x}: {}", dev.uuid(), e),
                                                                 }
                                                             }
                                                         }
