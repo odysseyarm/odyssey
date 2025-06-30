@@ -263,19 +263,23 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                     }
 
                                                     input {
-                                                        r#type: "number",
+                                                        r#type: "text",
+                                                        inputmode: "numeric",
+                                                        pattern: "[0-9]*",
                                                         id: "shot-delay-input",
-                                                        min: "0",
-                                                        max: "255",
-                                                        value: "{device_signals.read()[slot].shot_delay.read()}",
+                                                        value: "{device_signals.read()[slot].shot_delay}",
                                                         class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
                                                                 focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
                                                                 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 \
                                                                 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500",
                                                         oninput: move |e| {
-                                                            if let Ok(new_val) = e.value().parse::<u16>() {
-                                                                if new_val <= 255 {
+                                                            if let Ok(new_val) = e.value().parse::<i32>() {
+                                                                if new_val < 0 {
+                                                                    device_signals.write()[slot].shot_delay.set(0);
+                                                                } else if new_val <= 255 {
                                                                     device_signals.write()[slot].shot_delay.set(new_val as u8);
+                                                                } else {
+                                                                    device_signals.write()[slot].shot_delay.set(255);
                                                                 }
                                                             }
                                                         }
