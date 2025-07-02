@@ -26,7 +26,7 @@ fn main() {
                 Config::default()
                     .with_data_directory(user_data_dir)
                     .with_menu(None)
-                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowExitsApp)
+                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::WindowCloses)
                     .with_window(WindowBuilder::new().with_title("Odyssey")),
             )
             .launch(app);
@@ -35,7 +35,7 @@ fn main() {
             .with_cfg(
                 Config::default()
                     .with_menu(None)
-                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::LastWindowExitsApp)
+                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::WindowCloses)
                     .with_window(WindowBuilder::new().with_title("Odyssey")),
             )
             .launch(app);
