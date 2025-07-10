@@ -12,11 +12,13 @@ use tokio_util::sync::CancellationToken;
 
 use components::Navbar;
 use views::Home;
+use views::Accessories;
 
 mod components;
 mod hub;
 // mod tray;
 mod views;
+mod styles;
 
 fn main() {
     if cfg!(target_os = "windows") {
@@ -48,6 +50,8 @@ enum Route {
     #[layout(Navbar)]
     #[route("/")]
     Home {},
+    #[route("/accessories")]
+    Accessories {},
 }
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
