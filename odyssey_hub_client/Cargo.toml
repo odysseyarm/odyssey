@@ -16,8 +16,4 @@ tonic = "0.11.0"
 tower = "0.4.13"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-
-[dependencies.interprocess]
-git = "https://github.com/kotauskas/interprocess.git"
-rev = "ffbf7c65911c87251c47a8403da9b91118eb259c"
-features = ["tokio"]
+interprocess = { version = "2.2", features = ["tokio"] }

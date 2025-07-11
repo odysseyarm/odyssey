@@ -6,11 +6,15 @@ use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use ats_cv::ScreenCalibration;
 use interprocess::local_socket::{
-    traits::tokio::Listener, ListenerOptions, NameTypeSupport, ToFsName, ToNsName,
+    traits::tokio::Listener, GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _, ToFsName, ToNsName
 };
 #[cfg(target_os = "windows")]
 use interprocess::os::windows::{
-    local_socket::ListenerOptionsExt, AsSecurityDescriptorMutExt, SecurityDescriptor,
+    local_socket::ListenerOptionsExt,
+    security_descriptor::{
+        AsSecurityDescriptorMutExt,
+        SecurityDescriptor,
+    }
 };
 use odyssey_hub_common::config;
 use odyssey_hub_server_interface::{
@@ -50,7 +54,7 @@ struct Server {
     >,
     device_offsets:
         Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
-    device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u8>>,
+    device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u16>>,
 }
 
 #[tonic::async_trait]
@@ -381,7 +385,7 @@ impl Service for Server {
     ) -> Result<tonic::Response<EmptyReply>, tonic::Status> {
         let SetShotDelayRequest { device, delay_ms } = request.into_inner();
         let device: odyssey_hub_common::device::Device = device.unwrap().into();
-        let delay_ms = delay_ms as u8;
+        let delay_ms = delay_ms as u16;
 
         self.device_shot_delays
             .lock()
@@ -413,7 +417,7 @@ impl Service for Server {
         let device: odyssey_hub_common::device::Device = request.into_inner().into();
         let uuid = device.uuid();
 
-        let delay: u8 = {
+        let delay: u16 = {
             let guard = self.device_shot_delays.lock().unwrap();
             guard
                 .get(&uuid)
@@ -508,12 +512,10 @@ pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    let name = {
-        use NameTypeSupport as Nts;
-        match NameTypeSupport::query() {
-            Nts::OnlyFs => "/tmp/odyhub.sock".to_fs_name().unwrap(),
-            Nts::OnlyNs | Nts::Both => "@odyhub.sock".to_ns_name().unwrap(),
-        }
+    let name = if GenericNamespaced::is_supported() {
+        "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
+    } else {
+        "/tmp/odyhub.sock".to_fs_name::<GenericFilePath>()?
     };
     // Create our listener. In a more robust program, we'd check for an
     // existing socket file that has not been deleted for whatever reason,

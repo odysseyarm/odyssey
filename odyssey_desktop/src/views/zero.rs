@@ -8,7 +8,7 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 #[derive(Default)]
 struct DeviceSignals {
     shooting: Signal<bool>,
-    shot_delay: Signal<u8>,
+    shot_delay: Signal<u16>,
 }
 
 #[component]
@@ -244,7 +244,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                             let mut val = device_signals.peek()[slot].shot_delay.peek().clone();
                                                             if val > 0 {
                                                                 val -= 1;
-                                                                device_signals.write()[slot].shot_delay.set(val as u8);
+                                                                device_signals.write()[slot].shot_delay.set(val as u16);
                                                             }
                                                         },
                                                         svg {
@@ -276,10 +276,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                             if let Ok(new_val) = e.value().parse::<i32>() {
                                                                 if new_val < 0 {
                                                                     device_signals.write()[slot].shot_delay.set(0);
-                                                                } else if new_val <= 255 {
-                                                                    device_signals.write()[slot].shot_delay.set(new_val as u8);
+                                                                } else if new_val <= 1023 {
+                                                                    device_signals.write()[slot].shot_delay.set(new_val as u16);
                                                                 } else {
-                                                                    device_signals.write()[slot].shot_delay.set(255);
+                                                                    device_signals.write()[slot].shot_delay.set(1023);
                                                                 }
                                                             }
                                                         }
@@ -292,9 +292,9 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                                 dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
                                                         onclick: move |_| {
                                                             let mut val = device_signals.peek()[slot].shot_delay.peek().clone();
-                                                            if val < 255 {
+                                                            if val < 1023 {
                                                                 val += 1;
-                                                                device_signals.write()[slot].shot_delay.set(val as u8);
+                                                                device_signals.write()[slot].shot_delay.set(val as u16);
                                                             }
                                                         },
                                                         svg {

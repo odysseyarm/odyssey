@@ -170,7 +170,7 @@ impl Client {
     }
 
     #[uniffi::method]
-    pub async fn reset_shot_delay(&self, device: DeviceRecord) -> Result<u8, ClientError> {
+    pub async fn reset_shot_delay(&self, device: DeviceRecord) -> Result<u16, ClientError> {
         self.inner
             .write()
             .await
@@ -181,7 +181,7 @@ impl Client {
 
     // TODO ClientError does not encompass all possible errors
     #[uniffi::method]
-    pub async fn get_shot_delay(&self, device: DeviceRecord) -> Result<u8, ClientError> {
+    pub async fn get_shot_delay(&self, device: DeviceRecord) -> Result<u16, ClientError> {
         self.inner
             .write()
             .await
@@ -190,7 +190,7 @@ impl Client {
             .map_err(|_| ClientError::NotConnected)
     }
 
-    pub async fn set_shot_delay(&self, device: DeviceRecord, delay_ms: u8) -> Result<(), ClientError> {
+    pub async fn set_shot_delay(&self, device: DeviceRecord, delay_ms: u16) -> Result<(), ClientError> {
         self.inner
             .write()
             .await

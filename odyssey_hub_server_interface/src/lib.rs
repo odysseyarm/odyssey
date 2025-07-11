@@ -324,7 +324,7 @@ impl From<proto::Event> for odyssey_hub_common::events::Event {
                         proto::device_event::DeviceEventOneof::ShotDelayChanged(
                             proto::device_event::ShotDelayChangedEvent { delay_ms },
                         ) => odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(
-                            delay_ms as u8,
+                            delay_ms as u16,
                         ),
                         proto::device_event::DeviceEventOneof::Packet(
                             proto::device_event::PacketEvent { bytes },

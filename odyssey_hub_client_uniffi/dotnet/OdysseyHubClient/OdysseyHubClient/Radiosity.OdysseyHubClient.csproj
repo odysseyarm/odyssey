@@ -13,7 +13,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <VersionPrefix>4.1.0</VersionPrefix>
+        <VersionPrefix>5.0.0</VersionPrefix>
         <VersionSuffix>alpha</VersionSuffix>
     </PropertyGroup>
 
@@ -28,6 +28,8 @@
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)/../../../../target/release/ohc_uniffi.dll" Pack="true" PackagePath="runtimes/win-x64/native/" />
         <None Include="$(MSBuildThisFileDirectory)/../../../../target/i686-pc-windows-msvc/release/ohc_uniffi.dll" Pack="true" PackagePath="runtimes/win-x86/native/" />
+        <None Include="$(MSBuildThisFileDirectory)/../../../../target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so" Pack="true" PackagePath="runtimes/linux-x64/native/" />
+        <None Include="$(MSBuildThisFileDirectory)/../../../../target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so" Pack="true" PackagePath="runtimes/linux-arm64/native/" />
     </ItemGroup>
 
     <ItemGroup>

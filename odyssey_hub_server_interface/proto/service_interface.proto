@@ -87,7 +87,7 @@ message DeviceEvent {
   message TrackingEvent {
     uint32 timestamp = 1;
     Vector2 aimpoint = 2;
-    optional Pose pose = 3;
+    Pose pose = 3;
     float distance = 4;
     uint32 screen_id = 5;
   }

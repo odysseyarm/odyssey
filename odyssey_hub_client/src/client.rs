@@ -1,5 +1,5 @@
 use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream, traits::tokio::Stream, NameTypeSupport, ToFsName, ToNsName,
+    tokio::prelude::LocalSocketStream, traits::tokio::Stream, GenericFilePath, GenericNamespaced, NameType as _, ToFsName, ToNsName
 };
 use odyssey_hub_server_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
@@ -14,12 +14,10 @@ pub struct Client {
 
 impl Client {
     pub async fn connect(&mut self) -> anyhow::Result<()> {
-        let name = {
-            use NameTypeSupport as Nts;
-            match NameTypeSupport::query() {
-                Nts::OnlyFs => "/tmp/odyhub.sock".to_fs_name().unwrap(),
-                Nts::OnlyNs | Nts::Both => "@odyhub.sock".to_ns_name().unwrap(),
-            }
+        let name = if GenericNamespaced::is_supported() {
+            "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
+        } else {
+            "/tmp/odyhub.sock".to_fs_name::<GenericFilePath>()?
         };
 
         // Await this here since we can't do a whole lot without a connection.
@@ -144,14 +142,14 @@ impl Client {
     pub async fn reset_shot_delay(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<u8> {
+    ) -> anyhow::Result<u16> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             Ok(service_client
                 .reset_shot_delay(request)
                 .await?
                 .into_inner()
-                .delay_ms as u8)
+                .delay_ms as u16)
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -160,7 +158,7 @@ impl Client {
     pub async fn set_shot_delay(
         &mut self,
         device: odyssey_hub_common::device::Device,
-        delay_ms: u8,
+        delay_ms: u16,
     ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::SetShotDelayRequest {
@@ -176,13 +174,13 @@ impl Client {
     pub async fn get_shot_delay(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<u8> {
+    ) -> anyhow::Result<u16> {
         if let Some(service_client) = &mut self.service_client {
             Ok(service_client
                 .get_shot_delay(tonic::Request::new(device.into()))
                 .await?
                 .into_inner()
-                .delay_ms as u8)
+                .delay_ms as u16)
         } else {
             Err(anyhow::anyhow!("No service client"))
         }

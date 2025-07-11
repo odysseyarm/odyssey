@@ -89,7 +89,7 @@ pub enum DeviceEventKind {
     DisconnectEvent,
     ZeroResult(bool),
     SaveZeroResult(bool),
-    ShotDelayChanged(u8),
+    ShotDelayChanged(u16),
     PacketEvent(PacketEvent),
 }
 

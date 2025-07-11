@@ -9,7 +9,7 @@ pub const APP_INFO: AppInfo = AppInfo {
     author: "odysseyarm",
 };
 
-pub fn device_shot_delays() -> Result<HashMap<u64, u8>, Box<dyn std::error::Error>> {
+pub fn device_shot_delays() -> Result<HashMap<u64, u16>, Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let device_shot_delays_path = config_dir.join("device_shot_delays.json");
 
@@ -19,7 +19,7 @@ pub fn device_shot_delays() -> Result<HashMap<u64, u8>, Box<dyn std::error::Erro
             device_shot_delays_path.display()
         );
         let contents = std::fs::read_to_string(&device_shot_delays_path)?;
-        let HexKeyMap(map) = json5::from_str::<HexKeyMap<u8>>(&contents)?;
+        let HexKeyMap(map) = json5::from_str::<HexKeyMap<u16>>(&contents)?;
         Ok(map)
     } else {
         tracing::warn!("Device shot delays file not found, using default values");
@@ -80,12 +80,12 @@ pub fn screen_calibrations() -> Result<
 }
 
 pub fn save_device_shot_delays(
-    device_shot_delays: &HashMap<u64, u8>,
+    device_shot_delays: &HashMap<u64, u16>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let device_shot_delays_path = config_dir.join("device_shot_delays.json");
 
-    let converted: HashMap<String, u8> = device_shot_delays
+    let converted: HashMap<String, u16> = device_shot_delays
         .iter()
         .map(|(k, v)| {
             let key_str = format!("0x{:02x}", k);
@@ -97,7 +97,7 @@ pub fn save_device_shot_delays(
     Ok(())
 }
 
-pub fn save_device_shot_delay(uuid: u64, delay: u8) -> Result<(), Box<dyn std::error::Error>> {
+pub fn save_device_shot_delay(uuid: u64, delay: u16) -> Result<(), Box<dyn std::error::Error>> {
     let mut map = device_shot_delays()?;
     map.insert(uuid, delay);
     save_device_shot_delays(&map)

@@ -1,0 +1,32 @@
+set shell := ["powershell.exe", "-c"]
+
+build: build_lib build_projects
+run: build run_only
+
+build_lib:
+  Write-Host 'OdysseyHubClient' -ForegroundColor Blue
+  Write-Host 'Building native library (Rust)' -ForegroundColor Cyan
+  $env:CROSS_CONFIG="../../Cross.toml"
+  cargo build --manifest-path=../../Cargo.toml --release
+  cargo build --manifest-path=../../Cargo.toml --release --target=i686-pc-windows-msvc
+  & (Get-Process -Id $PID).Path { \
+    $env:CARGO_SKIP_BINDGEN="1"; \
+    cross build --manifest-path=../../Cargo.toml --release --target=x86_64-unknown-linux-gnu; \
+    cross build --manifest-path=../../Cargo.toml --release --target=aarch64-unknown-linux-gnu; \
+  }
+
+build_projects:
+  Write-Host 'Building Radiosity.OdysseyHubClient' -ForegroundColor Cyan;
+  dotnet build .\OdysseyHubClient\;
+  dotnet pack .\OdysseyHubClient\ -o nugets;
+
+  Write-Host 'Publishing Radiosity.OdysseyHubClient.Test' -ForegroundColor Cyan;
+  dotnet build .\OdysseyHubClient.Test\;
+  dotnet publish .\OdysseyHubClient.Test\ -o .\output;
+
+  Write-Host 'Running published Radiosity.OdysseyHubClient.Test' -ForegroundColor Cyan;
+  Write-Host;
+
+run_only:
+  ./output/Radiosity.OdysseyHubClient.Test.exe
+

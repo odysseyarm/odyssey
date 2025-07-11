@@ -226,7 +226,7 @@ pub extern "C" fn client_reset_shot_delay(
     client: *mut Client,
     userdata: UserObj,
     device: Device,
-    callback: extern "C" fn(UserObj, ClientError, u8),
+    callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -250,7 +250,7 @@ pub extern "C" fn client_get_shot_delay(
     client: *mut Client,
     userdata: UserObj,
     device: Device,
-    callback: extern "C" fn(UserObj, ClientError, u8),
+    callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -274,7 +274,7 @@ pub extern "C" fn client_set_shot_delay(
     client: *mut Client,
     userdata: UserObj,
     device: Device,
-    delay_ms: u8,
+    delay_ms: u16,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
     let handle = unsafe { &*handle };

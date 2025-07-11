@@ -6,9 +6,12 @@ use std::{
 };
 
 fn main() {
+    if std::env::var("CARGO_SKIP_BINDGEN").unwrap_or("0".to_string()) == "1" {
+        return;
+    }
+
     let output_dir = Path::new("generated");
     let lib_path = Path::new("../target/release/ohc_uniffi.dll");
-
     fs::create_dir_all(output_dir).unwrap();
 
     let status = Command::new("uniffi-bindgen-cs")
