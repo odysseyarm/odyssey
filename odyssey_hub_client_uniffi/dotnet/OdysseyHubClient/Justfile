@@ -4,11 +4,11 @@ build: build_lib build_projects
 run: build run_only
 
 build_lib:
-  Write-Host 'OdysseyHubClient' -ForegroundColor Blue
-  Write-Host 'Building native library (Rust)' -ForegroundColor Cyan
-  $env:CROSS_CONFIG="../../Cross.toml"
-  cargo build --manifest-path=../../Cargo.toml --release
-  cargo build --manifest-path=../../Cargo.toml --release --target=i686-pc-windows-msvc
+  Write-Host 'OdysseyHubClient' -ForegroundColor Blue;
+  Write-Host 'Building native library (Rust)' -ForegroundColor Cyan;
+  $env:CROSS_CONFIG="../../Cross.toml";
+  cargo build --manifest-path=../../Cargo.toml --release;
+  cargo build --manifest-path=../../Cargo.toml --release --target=i686-pc-windows-msvc;
   & (Get-Process -Id $PID).Path { \
     $env:CARGO_SKIP_BINDGEN="1"; \
     cross build --manifest-path=../../Cargo.toml --release --target=x86_64-unknown-linux-gnu; \

@@ -13,7 +13,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <VersionPrefix>5.0.0</VersionPrefix>
+        <VersionPrefix>5.0.1</VersionPrefix>
         <VersionSuffix>alpha</VersionSuffix>
     </PropertyGroup>
 

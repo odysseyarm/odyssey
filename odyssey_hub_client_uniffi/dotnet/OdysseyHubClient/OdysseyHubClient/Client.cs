@@ -96,7 +96,7 @@ namespace Radiosity.OdysseyHubClient
             return _inner.GetShotDelay(device);
         }
 
-        public Task SetShotDelay(uniffi.DeviceRecord device, byte delay_ms) {
+        public Task SetShotDelay(uniffi.DeviceRecord device, ushort delay_ms) {
             return _inner.SetShotDelay(device, delay_ms);
         }
 
