@@ -10,14 +10,15 @@ bytemuck = { version = "1.22.0", features = ["derive", "min_const_generics"] }
 enumn = "0.1.14"
 nalgebra = { version = "0.33", default-features = false, features = ["bytemuck"] }
 serde = { version = "1.0.219", default-features = false, optional = true }
-opencv-ros-camera = { version = "0.15", default-features = false }
+opencv-ros-camera = { version = "0.15", default-features = false, features = ["serde-serialize"] }
 thiserror = { version = "2.0.12", default-features = false }
 defmt = { version = "0.3.10", optional = true }
 static_assertions = "1.1.0"
+serde_bytes = { version = "0.11.17", optional = true }
 
 [features]
 default = ["std"]
 std = ["nalgebra/std", "ats_common/std"]
 pyo3 = ["dep:pyo3", "std"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:serde_bytes"]
 defmt = ["dep:defmt"]

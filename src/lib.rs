@@ -95,6 +95,7 @@ impl<T: Delegated> Parse for T {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Packet {
     pub data: PacketData,
@@ -103,6 +104,7 @@ pub struct Packet {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum PacketData {
     WriteRegister(WriteRegister), // a.k.a. Poke
@@ -123,10 +125,24 @@ pub enum PacketData {
     FlashSettings(),
     Ack(),
     WriteMode(Mode),
-    Vendor(u8, (u8, [u8; 98])),
+    Vendor(u8, VendorData),
+}
+
+#[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug)]
+pub struct VendorData {
+    len: u8,
+    #[cfg(feature = "serde")]
+    #[serde(with = "serde_bytes")]
+    data: [u8; 98],
+    #[cfg(not(feature = "serde"))]
+    data: [u8; 98],
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, enumn::N, PartialEq)]
 pub enum StreamUpdateAction {
@@ -144,6 +160,7 @@ impl TryFrom<u8> for StreamUpdateAction {
 
 #[repr(u8)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
 pub enum Mode {
     Object,
@@ -157,6 +174,7 @@ impl Delegated for Mode {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
 pub struct Register {
     pub port: Port,
@@ -171,6 +189,7 @@ impl Delegated for Register {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
 pub struct WriteRegister {
     pub port: Port,
@@ -186,6 +205,7 @@ impl Delegated for WriteRegister {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, NoUninit, AnyBitPattern)]
 pub struct ReadRegisterResponse {
     pub bank: u8,
@@ -247,6 +267,7 @@ pub struct GyroConfig {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct GeneralConfig {
     pub impact_threshold: u8,
@@ -297,6 +318,7 @@ impl Default for GeneralConfig {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, NoUninit, AnyBitPattern)]
 pub struct Props {
     pub uuid: [u8; 6],
@@ -310,6 +332,7 @@ impl Delegated for Props {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MotData {
     pub area: u16,
@@ -330,6 +353,7 @@ pub struct MotData {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ObjectReport {
     pub timestamp: u32,
@@ -339,6 +363,7 @@ pub struct ObjectReport {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CombinedMarkersReport {
     pub nf_points: [Point2<u16>; 16],
@@ -347,6 +372,7 @@ pub struct CombinedMarkersReport {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, NoUninit, AnyBitPattern)]
 pub struct PocMarkersReport {
     pub points: [Point2<u16>; 16],
@@ -368,6 +394,7 @@ impl From<PocMarkersReport> for CombinedMarkersReport {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AccelReport {
     pub timestamp: u32,
@@ -382,6 +409,7 @@ impl Delegated for AccelReport {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, NoUninit, AnyBitPattern)]
 pub struct ImpactReport {
     pub timestamp: u32,
@@ -394,6 +422,7 @@ impl Delegated for ImpactReport {
 
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
 pub struct StreamUpdate {
     pub packet_id: PacketType,
@@ -434,6 +463,7 @@ impl Display for Error {
 impl StdError for Error {}
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
 pub enum Port {
@@ -454,6 +484,7 @@ impl TryFrom<u8> for Port {
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug)]
 pub enum PacketType {
     WriteRegister(), // a.k.a. Poke
@@ -614,7 +645,7 @@ impl Packet {
                 let mut data = [0; 98];
                 data[..len as usize].copy_from_slice(&bytes[1..len as usize + 1]);
                 *bytes = &bytes[len as usize + 1..];
-                PacketData::Vendor(n, (len, data))
+                PacketData::Vendor(n, VendorData { len, data })
             }
             PacketType::Ack() => PacketData::Ack(),
             PacketType::WriteMode() => PacketData::WriteMode(Mode::parse(bytes)?),
@@ -645,7 +676,7 @@ impl Packet {
             PacketData::FlashSettings() => 0,
             PacketData::Ack() => 0,
             PacketData::WriteMode(_) => Mode::SIZE as u16,
-            PacketData::Vendor(_, (len, _)) => {
+            PacketData::Vendor(_, VendorData { len, data: _ }) => {
                 if *len % 2 != 0 {
                     (*len + 1) as u16
                 } else {
@@ -678,7 +709,7 @@ impl Packet {
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
             PacketData::WriteMode(x) => x.serialize_to_vec(buf),
-            PacketData::Vendor(_, (len, data)) => {
+            PacketData::Vendor(_, VendorData { len, data }) => {
                 buf.push(*len);
                 buf.extend_from_slice(&data[..*len as usize]);
                 if len % 2 == 0 {
@@ -709,7 +740,7 @@ impl Packet {
             PacketData::FlashSettings() => 0,
             PacketData::Ack() => 0,
             PacketData::WriteMode(_) => Mode::SIZE as u16,
-            PacketData::Vendor(_, (len, _)) => {
+            PacketData::Vendor(_, VendorData { len, data: _ }) => {
                 if *len % 2 != 0 {
                     (*len + 1) as u16
                 } else {
@@ -739,7 +770,7 @@ impl Packet {
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
             PacketData::WriteMode(x) => x.serialize(&mut buf),
-            PacketData::Vendor(_, (len, data)) => {
+            PacketData::Vendor(_, VendorData { len, data }) => {
                 push(&mut buf, &[*len]);
                 push(&mut buf, &data[..*len as usize]);
                 if len % 2 == 0 {
