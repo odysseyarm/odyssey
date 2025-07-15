@@ -133,12 +133,12 @@ pub enum PacketData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct VendorData {
-    len: u8,
+    pub len: u8,
     #[cfg(feature = "serde")]
     #[serde(with = "serde_bytes")]
-    data: [u8; 98],
+    pub data: [u8; 98],
     #[cfg(not(feature = "serde"))]
-    data: [u8; 98],
+    pub data: [u8; 98],
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
