@@ -4454,6 +4454,7 @@ dependencies = [
  "ats_common",
  "ats_cv",
  "ats_usb",
+ "btleplug",
  "cam-geom 0.15.3",
  "futures",
  "interprocess 2.2.3",
@@ -4476,6 +4477,7 @@ dependencies = [
  "tonic",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "winres",
 ]
 

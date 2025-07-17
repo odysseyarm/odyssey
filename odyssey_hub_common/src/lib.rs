@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub mod config;
 pub mod device;
 pub mod events;
@@ -8,4 +10,10 @@ mod hexkeymap;
 pub struct ScreenInfo {
     pub id: u8,
     pub bounds: [nalgebra::Vector2<f32>; 4],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccessoryInfo {
+    pub uuid: [u8; 6],
+    pub name: String,
 }

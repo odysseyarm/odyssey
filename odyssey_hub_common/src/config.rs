@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::hexkeymap::HexKeyMap;
+use crate::hexkeymap::{HexKeyMap, HexKeyMapN, HexValue};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
 
@@ -79,7 +79,7 @@ pub fn screen_calibrations() -> Result<
         .collect())
 }
 
-pub fn save_device_shot_delays(
+pub fn device_shot_delays_save(
     device_shot_delays: &HashMap<u64, u16>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
@@ -97,13 +97,13 @@ pub fn save_device_shot_delays(
     Ok(())
 }
 
-pub fn save_device_shot_delay(uuid: u64, delay: u16) -> Result<(), Box<dyn std::error::Error>> {
+pub fn device_shot_delay_save(uuid: u64, delay: u16) -> Result<(), Box<dyn std::error::Error>> {
     let mut map = device_shot_delays()?;
     map.insert(uuid, delay);
-    save_device_shot_delays(&map)
+    device_shot_delays_save(&map)
 }
 
-pub fn save_device_offsets(
+pub fn device_offsets_save(
     device_offsets: &HashMap<u64, nalgebra::Isometry3<f32>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
@@ -118,5 +118,34 @@ pub fn save_device_offsets(
         .collect();
 
     std::fs::write(device_offsets_path, json5::to_string(&converted)?)?;
+    Ok(())
+}
+
+type AccessoryMap = HexKeyMapN<HexValue, 6>;
+
+pub fn accessory_map() -> Result<HashMap<[u8;6], u64>, Box<dyn std::error::Error>> {
+    let dir  = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+    let path = dir.join("accessory_map.json");
+    if path.exists() {
+        let txt = std::fs::read_to_string(&path)?;
+        let HexKeyMapN(wrapped): AccessoryMap = json5::from_str(&txt)?;
+        Ok(wrapped.into_iter()
+            .map(|(k, HexValue(v))| (k, v))
+            .collect())
+    } else {
+        Ok(Default::default())
+    }
+}
+
+pub fn accessory_map_save(map: &HashMap<[u8;6], u64>) -> Result<(), Box<dyn std::error::Error>> {
+    let dir  = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+    let path = dir.join("accessory_map.json");
+    let wrapper = HexKeyMapN(
+        map.iter()
+           .map(|(&k,&v)| (k, HexValue(v)))
+           .collect()
+    );
+    let txt = json5::to_string(&wrapper)?;
+    std::fs::write(path, txt)?;
     Ok(())
 }

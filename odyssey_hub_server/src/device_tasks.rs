@@ -717,7 +717,7 @@ async fn common_tasks(
                         }
                         let device_offsets = device_offsets.lock().await.clone();
                         if tokio::task::spawn_blocking(move || {
-                            match odyssey_hub_common::config::save_device_offsets(&device_offsets) {
+                            match odyssey_hub_common::config::device_offsets_save(&device_offsets) {
                                 Ok(_) => {
                                     tracing::info!("Saved device offsets");
                                     true

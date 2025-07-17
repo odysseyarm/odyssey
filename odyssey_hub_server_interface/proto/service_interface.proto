@@ -121,9 +121,32 @@ message DeviceEvent {
   }
 }
 
+message AccessoryInfo {
+  uint64 uuid = 1;
+  string name = 2;
+}
+
+message AccessoryEvent {
+  AccessoryInfo accessory = 1;
+  message ConnectEvent {
+    optional uint64 assigned_device = 1;
+  }
+  message DisconnectEvent {
+  }
+  message AssignmentChangedEvent {
+    optional uint64 assigned_device = 1;
+  }
+  oneof accessory_event_oneof {
+    ConnectEvent connect = 2;
+    DisconnectEvent disconnect = 3;
+    AssignmentChangedEvent assignment_changed = 4;
+  }
+}
+
 message Event {
   oneof event_oneof {
     DeviceEvent device = 1;
+    AccessoryEvent accessory = 2;
   }
 }
 

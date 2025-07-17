@@ -1,3 +1,4 @@
+mod accessories;
 mod device_tasks;
 
 use std::{pin::Pin, sync::Arc};
@@ -16,7 +17,7 @@ use interprocess::os::windows::{
         SecurityDescriptor,
     }
 };
-use odyssey_hub_common::config;
+use odyssey_hub_common::config::{self, accessory_map};
 use odyssey_hub_server_interface::{
     service_server::{Service, ServiceServer},
     DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayReply, PollReply, PollRequest,
@@ -55,6 +56,7 @@ struct Server {
     device_offsets:
         Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
     device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u16>>,
+    accessory_map: Arc<std::sync::Mutex<std::collections::HashMap<[u8; 6], u64>>>,
 }
 
 #[tonic::async_trait]
@@ -426,7 +428,7 @@ impl Service for Server {
         };
 
         tokio::task::spawn_blocking(move || {
-            config::save_device_shot_delay(uuid, delay)
+            config::device_shot_delay_save(uuid, delay)
                 .map_err(|e| anyhow::anyhow!("failed to save shot-delay: {}", e))
         })
         .await
@@ -564,6 +566,14 @@ pub async fn run_server(
             .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
     })
     .await??;
+    
+    let accessory_map = tokio::task::spawn_blocking(|| {
+        odyssey_hub_common::config::accessory_map()
+            .map_err(|e| anyhow::anyhow!("Failed to load accessory map: {}", e))
+    })
+    .await??;
+    
+    let accessory_map = Arc::new(std::sync::Mutex::new(accessory_map));
 
     let server = Server {
         device_list: Default::default(),
@@ -571,6 +581,7 @@ pub async fn run_server(
         screen_calibrations: screen_calibrations.clone(),
         device_offsets: device_offsets.clone(),
         device_shot_delays: device_shot_delays.into(),
+        accessory_map: accessory_map.clone(),
     };
 
     let dl = server.device_list.clone();
