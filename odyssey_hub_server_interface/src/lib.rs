@@ -233,18 +233,11 @@ impl From<common::events::Event> for proto::Event {
                 }
             }
             common::events::Event::AccessoryEvent(common::events::AccessoryEvent(
-                common::AccessoryInfo { uuid, name },
+                accessory,
                 kind,
             )) => proto::Event {
                 event_oneof: Some(proto::event::EventOneof::Accessory(proto::AccessoryEvent {
-                    accessory: Some(proto::AccessoryInfo {
-                        uuid: u64::from_le_bytes({
-                            let mut bytes = [0; 8];
-                            bytes[..6].copy_from_slice(&uuid);
-                            bytes
-                        }),
-                        name,
-                    }),
+                    accessory: Some(accessory.into()),
                     accessory_event_oneof: Some(match kind {
                         common::events::AccessoryEventKind::Connect(assigned_device) => {
                             proto::accessory_event::AccessoryEventOneof::Connect(
@@ -369,10 +362,7 @@ impl From<proto::Event> for common::events::Event {
             }) => {
                 let accessory_info = accessory.unwrap();
                 common::events::Event::AccessoryEvent(common::events::AccessoryEvent(
-                    common::AccessoryInfo {
-                        uuid: accessory_info.uuid.to_le_bytes()[..6].try_into().unwrap(),
-                        name: accessory_info.name,
-                    },
+                    accessory_info.into(),
                     match accessory_event_oneof.unwrap() {
                         proto::accessory_event::AccessoryEventOneof::Connect(
                             proto::accessory_event::ConnectEvent { assigned_device },
@@ -401,6 +391,46 @@ impl From<proto::ScreenInfoReply> for common::ScreenInfo {
                 bounds.bl.unwrap().into(),
                 bounds.br.unwrap().into(),
             ],
+        }
+    }
+}
+
+impl From<common::AccessoryInfo> for proto::AccessoryInfo {
+    fn from(value: common::AccessoryInfo) -> Self {
+        Self {
+            uuid: u64::from_le_bytes({
+                let mut bytes = [0; 8];
+                bytes[..6].copy_from_slice(&value.uuid);
+                bytes
+            }),
+            name: value.name,
+            ty: proto::AccessoryType::from(value.ty).into(),
+        }
+    }
+}
+
+impl From<proto::AccessoryInfo> for common::AccessoryInfo {
+    fn from(value: proto::AccessoryInfo) -> Self {
+        Self {
+            uuid: value.uuid.to_le_bytes()[..6].try_into().unwrap(),
+            name: value.name,
+            ty: proto::AccessoryType::try_from(value.ty).unwrap().into(),
+        }
+    }
+}
+
+impl From<common::AccessoryType> for proto::AccessoryType {
+    fn from(value: common::AccessoryType) -> Self {
+        match value {
+            common::AccessoryType::DryFireMag => proto::AccessoryType::DryFireMag,
+        }
+    }
+}
+
+impl From<proto::AccessoryType> for common::AccessoryType {
+    fn from(value: proto::AccessoryType) -> Self {
+        match value {
+            proto::AccessoryType::DryFireMag => common::AccessoryType::DryFireMag,
         }
     }
 }

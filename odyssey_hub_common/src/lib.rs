@@ -13,7 +13,13 @@ pub struct ScreenInfo {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum AccessoryType {
+    DryFireMag,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessoryInfo {
     pub uuid: [u8; 6],
     pub name: String,
+    pub ty: AccessoryType,
 }

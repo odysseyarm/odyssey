@@ -48,7 +48,7 @@ pub fn spawn_accessory_scanner(
                     }
                     let uuid = props.address.into_inner();
                     seen.insert(uuid);
-                    let accessory = AccessoryInfo { uuid, name };
+                    let accessory = AccessoryInfo { uuid, name, ty: odyssey_hub_common::AccessoryType::DryFireMag };
                     if known.insert(uuid, accessory.clone()).is_some() {
                         let _ = event_tx
                             .send(AccessoryEvent(accessory, AccessoryEventKind::Connect(None)))

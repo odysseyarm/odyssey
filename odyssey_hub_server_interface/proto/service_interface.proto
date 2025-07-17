@@ -121,9 +121,14 @@ message DeviceEvent {
   }
 }
 
+enum AccessoryType {
+  DRY_FIRE_MAG = 0;
+}
+
 message AccessoryInfo {
   uint64 uuid = 1;
   string name = 2;
+  AccessoryType ty = 3;
 }
 
 message AccessoryEvent {
