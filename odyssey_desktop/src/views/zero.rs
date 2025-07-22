@@ -96,6 +96,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                     }
                     _ => {}
                 },
+                _ => {},
             }
         }
     });

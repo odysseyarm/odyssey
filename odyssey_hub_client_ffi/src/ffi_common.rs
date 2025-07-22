@@ -1,5 +1,7 @@
 use std::ffi::c_char;
 
+use odyssey_hub_common as common;
+
 #[macro_export]
 macro_rules! impl_from_simple {
     ($from:path => $to:ty, $($field:ident),+) => {
@@ -56,7 +58,7 @@ pub struct Device {
 
 impl Device {
     fn uuid(self) -> u64 {
-        odyssey_hub_common::device::Device::from(self).uuid()
+        common::device::Device::from(self).uuid()
     }
 }
 
@@ -69,7 +71,30 @@ pub struct Event {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum EventKind {
+    AccessoryEvent(AccessoryEvent),
     DeviceEvent(DeviceEvent),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AccessoryInfo {
+    pub uuid: [u8; 6],
+    pub name: *const c_char, // C string
+    pub ty: odyssey_hub_common::AccessoryType,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AccessoryEvent(pub AccessoryInfo, pub AccessoryEventKind);
+
+type DeviceId = u64;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub enum AccessoryEventKind {
+    Connect(Option<DeviceId>),
+    Disconnect,
+    AssignmentChange(Option<DeviceId>),
 }
 
 #[repr(C)]
@@ -157,13 +182,13 @@ pub struct ScreenInfo {
     pub br: crate::funny::Vector2f32,
 }
 
-impl_from_simple!(odyssey_hub_common::events::AccelerometerEvent => AccelerometerEvent, timestamp, accel, gyro, euler_angles);
-impl_from_simple!(odyssey_hub_common::events::ImpactEvent => ImpactEvent, timestamp);
-impl_from_simple!(odyssey_hub_common::events::Pose => Pose, rotation, translation);
-impl_from_simple!(Pose => odyssey_hub_common::events::Pose, rotation, translation);
+impl_from_simple!(common::events::AccelerometerEvent => AccelerometerEvent, timestamp, accel, gyro, euler_angles);
+impl_from_simple!(common::events::ImpactEvent => ImpactEvent, timestamp);
+impl_from_simple!(common::events::Pose => Pose, rotation, translation);
+impl_from_simple!(Pose => common::events::Pose, rotation, translation);
 
-impl From<odyssey_hub_common::ScreenInfo> for ScreenInfo {
-    fn from(screen_info: odyssey_hub_common::ScreenInfo) -> Self {
+impl From<common::ScreenInfo> for ScreenInfo {
+    fn from(screen_info: common::ScreenInfo) -> Self {
         ScreenInfo {
             id: screen_info.id,
             tl: screen_info.bounds[0].into(),
@@ -192,10 +217,10 @@ impl From<ats_usb::packets::vm::PacketData> for PacketData {
     }
 }
 
-impl From<odyssey_hub_common::device::Device> for Device {
-    fn from(device: odyssey_hub_common::device::Device) -> Self {
+impl From<common::device::Device> for Device {
+    fn from(device: common::device::Device) -> Self {
         match device {
-            odyssey_hub_common::device::Device::Udp(d) => Device {
+            common::device::Device::Udp(d) => Device {
                 kind: DeviceKind::Udp,
                 udp: UdpDevice {
                     id: d.id,
@@ -213,7 +238,7 @@ impl From<odyssey_hub_common::device::Device> for Device {
                     uuid: 0,
                 },
             },
-            odyssey_hub_common::device::Device::Hid(d) => Device {
+            common::device::Device::Hid(d) => Device {
                 kind: DeviceKind::Hid,
                 udp: UdpDevice {
                     id: 0,
@@ -229,7 +254,7 @@ impl From<odyssey_hub_common::device::Device> for Device {
                     uuid: 0,
                 },
             },
-            odyssey_hub_common::device::Device::Cdc(d) => Device {
+            common::device::Device::Cdc(d) => Device {
                 kind: DeviceKind::Cdc,
                 udp: UdpDevice {
                     id: 0,
@@ -249,11 +274,11 @@ impl From<odyssey_hub_common::device::Device> for Device {
     }
 }
 
-impl From<Device> for odyssey_hub_common::device::Device {
+impl From<Device> for common::device::Device {
     fn from(device: Device) -> Self {
         match device.kind {
             DeviceKind::Udp => {
-                odyssey_hub_common::device::Device::Udp(odyssey_hub_common::device::UdpDevice {
+                common::device::Device::Udp(common::device::UdpDevice {
                     id: device.udp.id,
                     addr: unsafe { std::ffi::CStr::from_ptr(device.udp.addr) }
                         .to_str()
@@ -264,7 +289,7 @@ impl From<Device> for odyssey_hub_common::device::Device {
                 })
             }
             DeviceKind::Hid => {
-                odyssey_hub_common::device::Device::Hid(odyssey_hub_common::device::HidDevice {
+                common::device::Device::Hid(common::device::HidDevice {
                     path: unsafe { std::ffi::CStr::from_ptr(device.hid.path) }
                         .to_str()
                         .unwrap()
@@ -273,7 +298,7 @@ impl From<Device> for odyssey_hub_common::device::Device {
                 })
             }
             DeviceKind::Cdc => {
-                odyssey_hub_common::device::Device::Cdc(odyssey_hub_common::device::CdcDevice {
+                common::device::Device::Cdc(common::device::CdcDevice {
                     path: unsafe { std::ffi::CStr::from_ptr(device.cdc.path) }
                         .to_str()
                         .unwrap()
@@ -285,18 +310,21 @@ impl From<Device> for odyssey_hub_common::device::Device {
     }
 }
 
-impl From<odyssey_hub_common::events::Event> for Event {
-    fn from(event: odyssey_hub_common::events::Event) -> Self {
+impl From<common::events::Event> for Event {
+    fn from(event: common::events::Event) -> Self {
         match event {
-            odyssey_hub_common::events::Event::DeviceEvent(device_event) => Event {
+            common::events::Event::DeviceEvent(device_event) => Event {
                 kind: EventKind::DeviceEvent(device_event.into()),
+            },
+            common::events::Event::AccessoryEvent(accessory_event) => Event {
+                kind: EventKind::AccessoryEvent(accessory_event.into()),
             },
         }
     }
 }
 
-impl From<odyssey_hub_common::events::DeviceEvent> for DeviceEvent {
-    fn from(event: odyssey_hub_common::events::DeviceEvent) -> Self {
+impl From<common::events::DeviceEvent> for DeviceEvent {
+    fn from(event: common::events::DeviceEvent) -> Self {
         DeviceEvent {
             device: event.0.into(),
             kind: event.1.into(),
@@ -304,42 +332,42 @@ impl From<odyssey_hub_common::events::DeviceEvent> for DeviceEvent {
     }
 }
 
-impl From<odyssey_hub_common::events::DeviceEventKind> for DeviceEventKind {
-    fn from(kind: odyssey_hub_common::events::DeviceEventKind) -> Self {
+impl From<common::events::DeviceEventKind> for DeviceEventKind {
+    fn from(kind: common::events::DeviceEventKind) -> Self {
         match kind {
-            odyssey_hub_common::events::DeviceEventKind::AccelerometerEvent(e) => {
+            common::events::DeviceEventKind::AccelerometerEvent(e) => {
                 DeviceEventKind::AccelerometerEvent(e.into())
             }
-            odyssey_hub_common::events::DeviceEventKind::TrackingEvent(e) => {
+            common::events::DeviceEventKind::TrackingEvent(e) => {
                 DeviceEventKind::TrackingEvent(e.into())
             }
-            odyssey_hub_common::events::DeviceEventKind::ImpactEvent(e) => {
+            common::events::DeviceEventKind::ImpactEvent(e) => {
                 DeviceEventKind::ImpactEvent(e.into())
             }
-            odyssey_hub_common::events::DeviceEventKind::ConnectEvent => {
+            common::events::DeviceEventKind::ConnectEvent => {
                 DeviceEventKind::ConnectEvent
             }
-            odyssey_hub_common::events::DeviceEventKind::DisconnectEvent => {
+            common::events::DeviceEventKind::DisconnectEvent => {
                 DeviceEventKind::DisconnectEvent
             }
-            odyssey_hub_common::events::DeviceEventKind::ZeroResult(r) => {
+            common::events::DeviceEventKind::ZeroResult(r) => {
                 DeviceEventKind::ZeroResult(r)
             }
-            odyssey_hub_common::events::DeviceEventKind::SaveZeroResult(r) => {
+            common::events::DeviceEventKind::SaveZeroResult(r) => {
                 DeviceEventKind::SaveZeroResult(r)
             }
-            odyssey_hub_common::events::DeviceEventKind::ShotDelayChangedEvent(e) => {
+            common::events::DeviceEventKind::ShotDelayChangedEvent(e) => {
                 DeviceEventKind::ShotDelayChanged(e)
             }
-            odyssey_hub_common::events::DeviceEventKind::PacketEvent(p) => {
+            common::events::DeviceEventKind::PacketEvent(p) => {
                 DeviceEventKind::PacketEvent(p.into())
             }
         }
     }
 }
 
-impl From<odyssey_hub_common::events::TrackingEvent> for TrackingEvent {
-    fn from(event: odyssey_hub_common::events::TrackingEvent) -> Self {
+impl From<common::events::TrackingEvent> for TrackingEvent {
+    fn from(event: common::events::TrackingEvent) -> Self {
         let (pose, has_pose) = match event.pose {
             Some(p) => (p.into(), true),
             None => (Pose::default(), false),
@@ -355,9 +383,9 @@ impl From<odyssey_hub_common::events::TrackingEvent> for TrackingEvent {
     }
 }
 
-impl From<TrackingEvent> for odyssey_hub_common::events::TrackingEvent {
+impl From<TrackingEvent> for common::events::TrackingEvent {
     fn from(event: TrackingEvent) -> Self {
-        odyssey_hub_common::events::TrackingEvent {
+        common::events::TrackingEvent {
             timestamp: event.timestamp,
             aimpoint: event.aimpoint.into(),
             pose: if event.has_pose { Some(event.pose.into()) } else { None },
@@ -372,6 +400,15 @@ impl From<ats_usb::packets::vm::Packet> for PacketEvent {
         PacketEvent {
             ty: packet.ty().into(),
             data: packet.data.into(),
+        }
+    }
+}
+
+impl From<common::events::AccessoryEventKind> for AccessoryEventKind {
+    fn from(kind: common::events::AccessoryEventKind) -> Self {
+        match kind {
+            common::events::AccessoryEventKind::Connect(_) => AccessoryEventKind::Connect(None),
+            common::events::AccessoryEventKind::Disconnect => AccessoryEventKind::Disconnect,
         }
     }
 }

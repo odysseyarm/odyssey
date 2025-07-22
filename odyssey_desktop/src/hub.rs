@@ -53,6 +53,7 @@ impl HubContext {
                         _ => {}
                     },
                 },
+                _ => {},
             }
             self.latest_event.set(Some(evt));
         }
