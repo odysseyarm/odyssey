@@ -1,6 +1,6 @@
 use crate::Route;
 use dioxus::prelude::*;
-use dioxus_router::prelude::*;
+use dioxus_router::{Link, Outlet};
 
 #[component]
 pub fn Navbar() -> Element {

@@ -13,8 +13,8 @@ serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 tracing-subscriber = "0.3.19"
-dioxus = { version = "0.7.0-alpha.2", features = ["desktop", "signals"] }
-dioxus-router = "0.7.0-alpha.2"
+dioxus = { version = "0.7.0-alpha.3", features = ["desktop", "signals"] }
+dioxus-router = "0.7.0-alpha.3"
 odyssey_hub_client = { path = "../odyssey_hub_client" }
 odyssey_hub_common = { path = "../odyssey_hub_common" }
 odyssey_hub_server = { version = "0.1.0", path = "../odyssey_hub_server" }
@@ -24,3 +24,7 @@ image = "0.25.6"
 hex = "0.4.3"
 nalgebra = "0.33.2"
 btleplug = "0.11.8"
+
+# https://github.com/dustinblackman/cargo-run-bin
+[package.metadata.bin]
+dioxus-cli = { version = "0.7.0-alpha.3", locked = true, bins = ["dx"] }

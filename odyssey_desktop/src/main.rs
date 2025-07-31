@@ -1,11 +1,11 @@
 #![windows_subsystem = "windows"]
 
 use dioxus::{
-    desktop::{Config, WindowBuilder},
+    desktop::{window, Config, WindowBuilder, WindowCloseBehaviour},
     logger::tracing,
     prelude::*,
 };
-use dioxus_router::prelude::*;
+use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
 
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,7 @@ use views::Accessories;
 
 mod components;
 mod hub;
-// mod tray;
+mod tray;
 mod views;
 mod styles;
 
@@ -59,7 +59,14 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 #[component]
 fn app() -> Element {
     let cancel_token = CancellationToken::new();
-    // tray::init(cancel_token.clone());
+
+    use_hook(|| {
+        // Set the close behavior for the main window
+        // This will hide the window instead of closing it when the user clicks the close button
+        window().set_close_behavior(WindowCloseBehaviour::WindowHides);
+    });
+
+    tray::use_tray_menu(cancel_token.clone());
 
     use_future({
         let cancel_token = cancel_token.clone();
