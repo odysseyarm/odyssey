@@ -1,21 +1,6 @@
-use crate::AccessoryInfo;
-
 #[derive(Clone, Debug)]
 pub enum Event {
-    AccessoryEvent(AccessoryEvent),
     DeviceEvent(DeviceEvent),
-}
-
-type DeviceId = u64;
-
-#[derive(Clone, Debug)]
-pub struct AccessoryEvent(pub AccessoryInfo, pub AccessoryEventKind);
-
-#[derive(Clone, Debug)]
-pub enum AccessoryEventKind {
-    Connect(Option<DeviceId>),
-    Disconnect,
-    AssignmentChange(Option<DeviceId>),
 }
 
 #[derive(Clone, Debug)]

@@ -104,16 +104,15 @@ pub extern "C" fn client_start_stream(
     let client = unsafe { &mut *client };
 
     tokio::spawn(async move {
-        match client.poll().await {
+        match client.subscribe_events().await {
             Ok(mut stream) => loop {
                 match stream.message().await {
-                    Ok(Some(reply)) => {
-                        let as_event: odyssey_hub_common::events::Event =
-                            reply.event.unwrap().into();
+                    Ok(Some(event)) => {
+                        let event: odyssey_hub_common::events::Event = event.into();
                         callback(
                             userdata,
                             ClientError::None,
-                            std::mem::MaybeUninit::new(as_event.into()),
+                            std::mem::MaybeUninit::new(event.into()),
                         );
                     }
                     Ok(None) => {

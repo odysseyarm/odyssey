@@ -74,7 +74,7 @@ Console.WriteLine("Devices printed!");
 
 Channel<(Ohc.uniffi.Event?, Ohc.uniffi.ClientException?)> eventChannel = Channel.CreateUnbounded<(Ohc.uniffi.Event?, Ohc.uniffi.ClientException?)>();
 await Task.WhenAny(
-    client.RunStream(eventChannel.Writer),
+    client.SubscribeEvents(eventChannel.Writer),
     Task.Run(async () => {
         Console.WriteLine("Starting event loop");
         await foreach ((var @event, var err) in eventChannel.Reader.ReadAllAsync()) {

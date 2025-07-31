@@ -4,8 +4,10 @@ package odyssey.service_interface;
 
 service Service {
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
+  rpc GetAccessoryMap (AccessoryMapRequest) returns (AccessoryMapReply) {}
+  rpc SubscribeAccessoryMap (SubscribeAccessoryMapRequest) returns (stream AccessoryMapReply) {}
   rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoReply) {}
-  rpc Poll (PollRequest) returns (stream PollReply) {}
+  rpc SubscribeEvents (SubscribeEventsRequest) returns (stream Event) {}
   rpc WriteVendor (WriteVendorRequest) returns (EmptyReply) {}
   rpc ClearZero (Device) returns (EmptyReply) {}
   rpc ResetZero (Device) returns (EmptyReply) {}
@@ -126,32 +128,19 @@ enum AccessoryType {
 }
 
 message AccessoryInfo {
-  uint64 uuid = 1;
-  string name = 2;
-  AccessoryType ty = 3;
+  string name = 1;
+  AccessoryType ty = 2;
+  uint64 assignment = 3;
 }
 
-message AccessoryEvent {
+message AccessoryStatus {
   AccessoryInfo accessory = 1;
-  message ConnectEvent {
-    optional uint64 assigned_device = 1;
-  }
-  message DisconnectEvent {
-  }
-  message AssignmentChangedEvent {
-    optional uint64 assigned_device = 1;
-  }
-  oneof accessory_event_oneof {
-    ConnectEvent connect = 2;
-    DisconnectEvent disconnect = 3;
-    AssignmentChangedEvent assignment_changed = 4;
-  }
+  bool connected = 2;
 }
 
 message Event {
   oneof event_oneof {
     DeviceEvent device = 1;
-    AccessoryEvent accessory = 2;
   }
 }
 
@@ -161,11 +150,16 @@ message DeviceListReply {
   repeated Device device_list = 1;
 }
 
-message PollRequest {}
 
-message PollReply {
-  Event event = 1;
+message AccessoryMapRequest {}
+
+message AccessoryMapReply {
+  map<uint64, AccessoryStatus> accessory_map = 1;
 }
+
+message SubscribeAccessoryMapRequest {}
+
+message SubscribeEventsRequest {}
 
 message WriteVendorRequest {
   Device device = 1;

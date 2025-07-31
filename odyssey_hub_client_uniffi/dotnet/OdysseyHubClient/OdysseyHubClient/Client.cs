@@ -47,12 +47,15 @@ namespace Radiosity.OdysseyHubClient
         /// This function starts a stream of events from the device.
         /// </summary>
         /// <param name="channelWriter"></param>
-        public Task RunStream(ChannelWriter<(uniffi.Event?, uniffi.ClientException?)> channelWriter) {
+        public Task SubscribeEvents(ChannelWriter<(uniffi.Event?, uniffi.ClientException?)> channelWriter) {
             return Task.Run(async () => {
+                var streaming = await _inner.SubscribeEvents();
                 while (true) {
-                    var (@event, error) = await _inner.PollEvent();
-                    await channelWriter.WriteAsync((@event, @error));
-                    if (error != null) {
+                    try {
+                        var @event = await streaming.Message();
+                        await channelWriter.WriteAsync((@event, null));
+                    } catch (uniffi.ClientException @error) {
+                        await channelWriter.WriteAsync((null, @error));
                         switch (error) {
                             case uniffi.ClientException.NotConnected:
                             case uniffi.ClientException.StreamEnd:
@@ -63,10 +66,6 @@ namespace Radiosity.OdysseyHubClient
                     }
                 }
             });
-        }
-
-        public Task StopStream() {
-            return _inner.StopStream();
         }
 
         /// <summary>

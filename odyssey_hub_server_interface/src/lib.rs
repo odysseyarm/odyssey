@@ -1,5 +1,7 @@
 use std::net::SocketAddr;
 
+use std::num::NonZero;
+
 mod proto {
     tonic::include_proto!("odyssey.service_interface");
 }
@@ -232,31 +234,6 @@ impl From<common::events::Event> for proto::Event {
                     })),
                 }
             }
-            common::events::Event::AccessoryEvent(common::events::AccessoryEvent(
-                accessory,
-                kind,
-            )) => proto::Event {
-                event_oneof: Some(proto::event::EventOneof::Accessory(proto::AccessoryEvent {
-                    accessory: Some(accessory.into()),
-                    accessory_event_oneof: Some(match kind {
-                        common::events::AccessoryEventKind::Connect(assigned_device) => {
-                            proto::accessory_event::AccessoryEventOneof::Connect(
-                                proto::accessory_event::ConnectEvent { assigned_device },
-                            )
-                        }
-                        common::events::AccessoryEventKind::Disconnect => {
-                            proto::accessory_event::AccessoryEventOneof::Disconnect(
-                                proto::accessory_event::DisconnectEvent {},
-                            )
-                        }
-                        common::events::AccessoryEventKind::AssignmentChange(assigned_device) => {
-                            proto::accessory_event::AccessoryEventOneof::AssignmentChanged(
-                                proto::accessory_event::AssignmentChangedEvent { assigned_device },
-                            )
-                        }
-                    }),
-                })),
-            },
         }
     }
 }
@@ -356,26 +333,6 @@ impl From<proto::Event> for common::events::Event {
                     }
                 },
             )),
-            proto::event::EventOneof::Accessory(proto::AccessoryEvent {
-                accessory,
-                accessory_event_oneof,
-            }) => {
-                let accessory_info = accessory.unwrap();
-                common::events::Event::AccessoryEvent(common::events::AccessoryEvent(
-                    accessory_info.into(),
-                    match accessory_event_oneof.unwrap() {
-                        proto::accessory_event::AccessoryEventOneof::Connect(
-                            proto::accessory_event::ConnectEvent { assigned_device },
-                        ) => common::events::AccessoryEventKind::Connect(assigned_device),
-                        proto::accessory_event::AccessoryEventOneof::Disconnect(
-                            proto::accessory_event::DisconnectEvent {},
-                        ) => common::events::AccessoryEventKind::Disconnect,
-                        proto::accessory_event::AccessoryEventOneof::AssignmentChanged(
-                            proto::accessory_event::AssignmentChangedEvent { assigned_device },
-                        ) => common::events::AccessoryEventKind::AssignmentChange(assigned_device),
-                    },
-                ))
-            }
         }
     }
 }
@@ -398,13 +355,13 @@ impl From<proto::ScreenInfoReply> for common::ScreenInfo {
 impl From<common::AccessoryInfo> for proto::AccessoryInfo {
     fn from(value: common::AccessoryInfo) -> Self {
         Self {
-            uuid: u64::from_le_bytes({
-                let mut bytes = [0; 8];
-                bytes[..6].copy_from_slice(&value.uuid);
-                bytes
-            }),
             name: value.name,
             ty: proto::AccessoryType::from(value.ty).into(),
+            assignment: if let Some(val) = value.assignment {
+                val.get()
+            } else {
+                0
+            },
         }
     }
 }
@@ -412,9 +369,13 @@ impl From<common::AccessoryInfo> for proto::AccessoryInfo {
 impl From<proto::AccessoryInfo> for common::AccessoryInfo {
     fn from(value: proto::AccessoryInfo) -> Self {
         Self {
-            uuid: value.uuid.to_le_bytes()[..6].try_into().unwrap(),
             name: value.name,
             ty: proto::AccessoryType::try_from(value.ty).unwrap().into(),
+            assignment: if value.assignment != 0 {
+                NonZero::new(value.assignment)
+            } else {
+                None
+            },
         }
     }
 }
@@ -432,5 +393,39 @@ impl From<proto::AccessoryType> for common::AccessoryType {
         match value {
             proto::AccessoryType::DryFireMag => common::AccessoryType::DryFireMag,
         }
+    }
+}
+
+impl From<common::AccessoryMap> for proto::AccessoryMapReply {
+    fn from(map: common::AccessoryMap) -> Self {
+        let accessory_map = map
+            .into_iter()
+            .map(|(k, (accessory, connected))| {
+                let mut buf = [0u8; 8];
+                buf[..6].copy_from_slice(&k);
+                let key = u64::from_le_bytes(buf);
+                let accessory: proto::AccessoryInfo = accessory.into();
+                (key, proto::AccessoryStatus {
+                    accessory: Some(accessory),
+                    connected,
+                })
+            })
+            .collect();
+        proto::AccessoryMapReply { accessory_map }
+    }
+}
+
+impl From<proto::AccessoryMapReply> for common::AccessoryMap {
+    fn from(value: proto::AccessoryMapReply) -> Self {
+        value
+            .accessory_map
+            .into_iter()
+            .map(|(k, v)| {
+                let mut buf = [0u8; 8];
+                buf[..6].copy_from_slice(&k.to_le_bytes()[..6]);
+                let key = buf[..6].try_into().unwrap();
+                (key, (v.accessory.unwrap().into(), v.connected))
+            })
+            .collect()
     }
 }

@@ -71,30 +71,17 @@ pub struct Event {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum EventKind {
-    AccessoryEvent(AccessoryEvent),
     DeviceEvent(DeviceEvent),
 }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct AccessoryInfo {
-    pub uuid: [u8; 6],
-    pub name: *const c_char, // C string
-    pub ty: odyssey_hub_common::AccessoryType,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct AccessoryEvent(pub AccessoryInfo, pub AccessoryEventKind);
 
 type DeviceId = u64;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub enum AccessoryEventKind {
-    Connect(Option<DeviceId>),
-    Disconnect,
-    AssignmentChange(Option<DeviceId>),
+pub struct AccessoryInfo {
+    pub name: *const c_char, // C string
+    pub ty: odyssey_hub_common::AccessoryType,
+    pub assignment: DeviceId,
 }
 
 #[repr(C)]
@@ -316,9 +303,6 @@ impl From<common::events::Event> for Event {
             common::events::Event::DeviceEvent(device_event) => Event {
                 kind: EventKind::DeviceEvent(device_event.into()),
             },
-            common::events::Event::AccessoryEvent(accessory_event) => Event {
-                kind: EventKind::AccessoryEvent(accessory_event.into()),
-            },
         }
     }
 }
@@ -404,11 +388,12 @@ impl From<ats_usb::packets::vm::Packet> for PacketEvent {
     }
 }
 
-impl From<common::events::AccessoryEventKind> for AccessoryEventKind {
-    fn from(kind: common::events::AccessoryEventKind) -> Self {
-        match kind {
-            common::events::AccessoryEventKind::Connect(_) => AccessoryEventKind::Connect(None),
-            common::events::AccessoryEventKind::Disconnect => AccessoryEventKind::Disconnect,
+impl From<common::AccessoryInfo> for AccessoryInfo {
+    fn from(info: common::AccessoryInfo) -> Self {
+        AccessoryInfo {
+            name: std::ffi::CString::new(info.name).unwrap().into_raw(),
+            ty: info.ty,
+            assignment: if let Some(assignment) = info.assignment { assignment.get() } else { 0 },
         }
     }
 }

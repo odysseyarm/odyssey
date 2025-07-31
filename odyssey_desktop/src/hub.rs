@@ -33,9 +33,9 @@ impl HubContext {
             self.devices.write().insert(d);
         }
 
-        let mut stream = (self.client)().poll().await.unwrap();
+        let mut stream = (self.client)().subscribe_events().await.unwrap();
         while let Some(evt) = stream.next().await {
-            let evt = evt.unwrap().event.unwrap().into();
+            let evt = evt.unwrap().into();
             match &evt {
                 oe::Event::DeviceEvent(de) => match de {
                     oe::DeviceEvent(device, kind) => match kind {
@@ -53,7 +53,6 @@ impl HubContext {
                         _ => {}
                     },
                 },
-                _ => {},
             }
             self.latest_event.set(Some(evt));
         }

@@ -7,6 +7,10 @@ edition = "2021"
 crate-type = ["staticlib", "cdylib"]
 name = "ohc_uniffi"
 
+[[bin]]
+name = "uniffi_bindgen"
+path = "src/bindgen.rs"
+
 [dependencies]
 odyssey_hub_common = { path = "../odyssey_hub_common" }
 odyssey_hub_client = { path = "../odyssey_hub_client" }

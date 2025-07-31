@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::ffi_common::*;
 
@@ -36,10 +36,26 @@ pub struct Client {
     inner: Arc<RwLock<odyssey_hub_client::client::Client>>,
 }
 
-#[derive(uniffi::Record)]
-pub struct PollEventResult {
-    pub event: Option<Event>,
-    pub error: Option<ClientError>,
+#[derive(uniffi::Object)]
+pub struct StreamingEvent {
+    pub inner: Arc<Mutex<tonic::Streaming<odyssey_hub_server_interface::Event>>>,
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl StreamingEvent {
+    #[uniffi::method]
+    pub async fn message(&self) -> Result<Event, ClientError> {
+        if let Ok(msg) = self.inner.lock().await.message().await {
+            match msg {
+                Some(event) => {
+                    Ok(odyssey_hub_common::events::Event::from(event).into())
+                }
+                None => Err(ClientError::StreamEnd),
+            }
+        } else {
+            Err(ClientError::StreamEnd)
+        } 
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -73,47 +89,17 @@ impl Client {
     }
 
     #[uniffi::method]
-    pub async fn poll_event(&self) -> Result<PollEventResult, ClientError> {
+    pub async fn subscribe_events(&self) -> Result<StreamingEvent, ClientError> {
         let mut client = self.inner.read().await.clone();
 
-        match client.poll().await {
-            Ok(mut stream) => {
-                if let Ok(msg) = stream.message().await {
-                    match msg {
-                        Some(reply) => {
-                            if let Some(event) = reply.event {
-                                Ok(PollEventResult {
-                                    event: Some(
-                                        odyssey_hub_common::events::Event::from(event).into(),
-                                    ),
-                                    error: None,
-                                })
-                            } else {
-                                Ok(PollEventResult {
-                                    event: None,
-                                    error: None,
-                                })
-                            }
-                        }
-                        None => Ok(PollEventResult {
-                            event: None,
-                            error: Some(ClientError::StreamEnd),
-                        }),
-                    }
-                } else {
-                    Ok(PollEventResult {
-                        event: None,
-                        error: Some(ClientError::StreamEnd),
-                    })
-                }
+        match client.subscribe_events().await {
+            Ok(stream) => {
+                Ok(StreamingEvent {
+                    inner: Arc::new(Mutex::new(stream)),
+                })
             }
             Err(_) => Err(ClientError::NotConnected),
         }
-    }
-
-    #[uniffi::method]
-    pub async fn stop_stream(&self) {
-        self.inner.write().await.end_token.cancel();
     }
 
     #[uniffi::method]

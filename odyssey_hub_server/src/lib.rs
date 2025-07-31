@@ -17,11 +17,9 @@ use interprocess::os::windows::{
         SecurityDescriptor,
     }
 };
-use odyssey_hub_common::config::{self, accessory_map};
+use odyssey_hub_common::{config::{self, accessory_map}, AccessoryInfo};
 use odyssey_hub_server_interface::{
-    service_server::{Service, ServiceServer},
-    DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayReply, PollReply, PollRequest,
-    ResetShotDelayReply, SetShotDelayRequest, Vector2,
+    service_server::{Service, ServiceServer}, AccessoryMapReply, AccessoryMapRequest, DeviceListReply, DeviceListRequest, EmptyReply, Event, GetShotDelayReply, ResetShotDelayReply, SetShotDelayRequest, SubscribeAccessoryMapRequest, SubscribeEventsRequest, Vector2
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -31,7 +29,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::server::Connected;
 
-use crate::device_tasks::device_tasks;
+use crate::{accessories::accessory_scanner, device_tasks::device_tasks};
 
 #[derive(Debug)]
 struct Server {
@@ -56,12 +54,14 @@ struct Server {
     device_offsets:
         Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
     device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u16>>,
-    accessory_map: Arc<std::sync::Mutex<std::collections::HashMap<[u8; 6], u64>>>,
+    accessory_map: Arc<std::sync::Mutex<odyssey_hub_common::AccessoryMap>>,
+    accessory_map_channel: broadcast::Sender<odyssey_hub_common::AccessoryMap>,
 }
 
 #[tonic::async_trait]
 impl Service for Server {
-    type PollStream = ReceiverStream<Result<PollReply, tonic::Status>>;
+    type SubscribeAccessoryMapStream = ReceiverStream<Result<odyssey_hub_server_interface::AccessoryMapReply, tonic::Status>>;
+    type SubscribeEventsStream = ReceiverStream<Result<odyssey_hub_server_interface::Event, tonic::Status>>;
 
     async fn get_device_list(
         &self,
@@ -79,10 +79,46 @@ impl Service for Server {
         Ok(tonic::Response::new(reply))
     }
 
-    async fn poll(
+    async fn get_accessory_map(
         &self,
-        _: tonic::Request<PollRequest>,
-    ) -> tonic::Result<tonic::Response<Self::PollStream>, tonic::Status> {
+        _: tonic::Request<AccessoryMapRequest>,
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::AccessoryMapReply>, tonic::Status> {
+        let accessory_map = self.accessory_map.lock().unwrap().clone().into();
+        Ok(tonic::Response::new(accessory_map))
+    }
+    
+    async fn subscribe_accessory_map(
+        &self,
+        _: tonic::Request<SubscribeAccessoryMapRequest>,
+    ) -> Result<tonic::Response<Self::SubscribeAccessoryMapStream>, tonic::Status> {
+        let (tx, rx) = mpsc::channel(12);
+        let mut accessory_map_channel = self.accessory_map_channel.subscribe();
+        tokio::spawn(async move {
+            loop {
+                let accessory_map = match accessory_map_channel.recv().await {
+                    Ok(v) => v,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        tracing::warn!("Dropping {dropped} accessory map notifications because the client is too slow");
+                        accessory_map_channel = accessory_map_channel.resubscribe();
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                let send_result = tx
+                    .send(Ok(accessory_map.into()))
+                    .await;
+                if send_result.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn subscribe_events(
+        &self,
+        _: tonic::Request<SubscribeEventsRequest>,
+    ) -> tonic::Result<tonic::Response<Self::SubscribeEventsStream>, tonic::Status> {
         let (tx, rx) = mpsc::channel(12);
         let mut event_channel = self.event_channel.subscribe();
         tokio::spawn(async move {
@@ -97,9 +133,7 @@ impl Service for Server {
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
                 let send_result = tx
-                    .send(Ok(PollReply {
-                        event: Some(event.into()),
-                    }))
+                    .send(Ok(event.into()))
                     .await;
                 if send_result.is_err() {
                     break;
@@ -544,6 +578,7 @@ pub async fn run_server(
     let (sender, mut receiver) = mpsc::channel(12);
 
     let (event_sender, _) = broadcast::channel(12);
+    let (accessory_map_sender, _) = broadcast::channel(12);
 
     let screen_calibrations = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::screen_calibrations()
@@ -573,7 +608,9 @@ pub async fn run_server(
     })
     .await??;
     
-    let accessory_map = Arc::new(std::sync::Mutex::new(accessory_map));
+    let accessory_map = Arc::new(std::sync::Mutex::new(
+        accessory_map.into_iter().map(|(k, v)| (k, (v, false))).collect()
+    ));
 
     let server = Server {
         device_list: Default::default(),
@@ -582,6 +619,7 @@ pub async fn run_server(
         device_offsets: device_offsets.clone(),
         device_shot_delays: device_shot_delays.into(),
         accessory_map: accessory_map.clone(),
+        accessory_map_channel: accessory_map_sender.clone(),
     };
 
     let dl = server.device_list.clone();
@@ -625,6 +663,7 @@ pub async fn run_server(
 
     tokio::select! {
         _ = device_tasks(sender, screen_calibrations.clone(), device_offsets.clone()) => {},
+        // _ = accessory_scanner(event_sender.clone(), dl) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))

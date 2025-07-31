@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use serde::{Deserialize, Serialize};
 
 pub mod config;
@@ -21,7 +23,10 @@ pub enum AccessoryType {
 #[repr(C)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessoryInfo {
-    pub uuid: [u8; 6],
     pub name: String,
     pub ty: AccessoryType,
+    pub assignment: Option<NonZero<u64>>,
 }
+
+pub type AccessoryConnected = bool;
+pub type AccessoryMap = std::collections::HashMap<[u8; 6], (AccessoryInfo, AccessoryConnected)>;

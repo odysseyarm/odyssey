@@ -3,7 +3,7 @@ use interprocess::local_socket::{
 };
 use odyssey_hub_server_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
-use tonic::transport::{Endpoint, Uri};
+use tonic::{transport::{Endpoint, Uri}};
 use tower::service_fn;
 
 #[derive(Clone, Default)]
@@ -56,12 +56,24 @@ impl Client {
         }
     }
 
-    pub async fn poll(
+    pub async fn get_accessory_map(
         &mut self,
-    ) -> anyhow::Result<tonic::Streaming<odyssey_hub_server_interface::PollReply>> {
+    ) -> anyhow::Result<odyssey_hub_common::AccessoryMap> {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::PollRequest {});
-            Ok(service_client.poll(request).await?.into_inner())
+            let request = tonic::Request::new(odyssey_hub_server_interface::AccessoryMapRequest {});
+            let response = service_client.get_accessory_map(request).await?;
+            Ok(response.into_inner().into())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn subscribe_events(
+        &mut self,
+    ) -> anyhow::Result<tonic::Streaming<odyssey_hub_server_interface::Event>> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::SubscribeEventsRequest {});
+            Ok(service_client.subscribe_events(request).await?.into_inner())
         } else {
             Err(anyhow::anyhow!("No service client")).into()
         }
@@ -72,14 +84,15 @@ impl Client {
         device: odyssey_hub_common::device::Device,
         tag: u8,
         data: Vec<u8>,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::WriteVendorRequest {
                 device: Some(device.into()),
                 tag: tag.into(),
                 data,
             });
-            Ok(service_client.write_vendor(request).await?.into_inner())
+            service_client.write_vendor(request).await?;
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -88,10 +101,11 @@ impl Client {
     pub async fn reset_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
-            Ok(service_client.reset_zero(request).await?.into_inner())
+            service_client.reset_zero(request).await?;
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -102,14 +116,15 @@ impl Client {
         device: odyssey_hub_common::device::Device,
         translation: odyssey_hub_server_interface::Vector3,
         target: odyssey_hub_server_interface::Vector2,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::ZeroRequest {
                 device: Some(device.into()),
                 translation: Some(translation.into()),
                 target: Some(target.into()),
             });
-            Ok(service_client.zero(request).await?.into_inner())
+            service_client.zero(request).await?;
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -118,10 +133,11 @@ impl Client {
     pub async fn save_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
-            Ok(service_client.save_zero(request).await?.into_inner())
+            service_client.save_zero(request).await?.into_inner();
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -130,10 +146,11 @@ impl Client {
     pub async fn clear_zero(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
-            Ok(service_client.clear_zero(request).await?.into_inner())
+            service_client.clear_zero(request).await?.into_inner();
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -159,13 +176,14 @@ impl Client {
         &mut self,
         device: odyssey_hub_common::device::Device,
         delay_ms: u16,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::SetShotDelayRequest {
                 device: Some(device.into()),
                 delay_ms: delay_ms.into(),
             });
-            Ok(service_client.set_shot_delay(request).await?.into_inner())
+            service_client.set_shot_delay(request).await?;
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -189,12 +207,12 @@ impl Client {
     pub async fn save_shot_delay(
         &mut self,
         device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<odyssey_hub_server_interface::EmptyReply> {
+    ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
-            Ok(service_client
+            service_client
                 .save_shot_delay(tonic::Request::new(device.into()))
-                .await?
-                .into_inner())
+                .await?;
+            Ok(())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }

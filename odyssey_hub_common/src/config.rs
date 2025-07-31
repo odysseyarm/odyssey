@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::hexkeymap::{HexKeyMap, HexKeyMapN, HexValue};
+use crate::{hexkeymap::{HexKeyMap, HexKeyMapN, HexValue}, AccessoryInfo};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
 
@@ -121,16 +121,16 @@ pub fn device_offsets_save(
     Ok(())
 }
 
-type AccessoryMap = HexKeyMapN<HexValue, 6>;
+type AccessoryMap = HexKeyMapN<AccessoryInfo, 6>;
 
-pub fn accessory_map() -> Result<HashMap<[u8;6], u64>, Box<dyn std::error::Error>> {
+pub fn accessory_map() -> Result<HashMap<[u8;6], AccessoryInfo>, Box<dyn std::error::Error>> {
     let dir  = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let path = dir.join("accessory_map.json");
     if path.exists() {
         let txt = std::fs::read_to_string(&path)?;
         let HexKeyMapN(wrapped): AccessoryMap = json5::from_str(&txt)?;
         Ok(wrapped.into_iter()
-            .map(|(k, HexValue(v))| (k, v))
+            .map(|(k, v)| (k, v))
             .collect())
     } else {
         Ok(Default::default())

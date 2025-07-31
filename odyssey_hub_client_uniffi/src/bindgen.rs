@@ -1,17 +1,23 @@
 use std::{
+    env,
     fs::{self, File},
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
 };
 
 fn main() {
-    if std::env::var("CARGO_SKIP_BINDGEN").unwrap_or("0".to_string()) == "1" {
-        return;
-    }
-
     let output_dir = Path::new("generated");
-    let lib_path = Path::new("../target/release/ohc_uniffi.dll");
+
+    // Get optional override for library path from CLI argument
+    let lib_path = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
+        if cfg!(debug_assertions) {
+            PathBuf::from("../target/debug/ohc_uniffi.dll")
+        } else {
+            PathBuf::from("../target/release/ohc_uniffi.dll")
+        }
+    });
+
     fs::create_dir_all(output_dir).unwrap();
 
     let status = Command::new("uniffi-bindgen-cs")
@@ -41,35 +47,21 @@ fn main() {
             .unwrap();
 
         let patched = contents
-            .replace(
-                "internal class UniffiException",
-                "public class UniffiException",
-            )
-            .replace(
-                "internal interface IEventCallback",
-                "public interface IEventCallback",
-            )
+            .replace("internal class UniffiException", "public class UniffiException")
+            .replace("internal interface IEventCallback", "public interface IEventCallback")
             .replace("internal class EventCallback", "public class EventCallback")
             .replace("internal class UserCallback", "public class UserCallback")
-            .replace(
-                "internal class CallbackException",
-                "public class CallbackException",
-            )
-            .replace(
-                "internal class ClientException",
-                "public class ClientException",
-            )
+            .replace("internal class CallbackException", "public class CallbackException")
+            .replace("internal class ClientException", "public class ClientException")
             .replace("internal struct UserObj", "public struct UserObj")
             .replace("internal struct Client", "public struct Client")
             .replace("internal record", "public record")
             .replace("internal class Device", "public class Device")
-            .replace(
-                "internal class AnyhowException",
-                "public class AnyhowException",
-            )
+            .replace("internal class AnyhowException", "public class AnyhowException")
             .replace("uniffi.ohc_uniffi", "Radiosity.OdysseyHubClient.uniffi")
             .replace("internal interface ITrackingHistory", "public interface ITrackingHistory")
-            .replace("internal class TrackingHistory", "public class TrackingHistory");
+            .replace("internal class TrackingHistory", "public class TrackingHistory")
+            .replace("internal enum AccessoryType", "public enum AccessoryType");
 
         File::create(&target_file)
             .unwrap()

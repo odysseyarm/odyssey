@@ -6,7 +6,7 @@ pub async fn main() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt();
     let mut client = client::Client::default();
     client.connect().await?;
-    let mut stream = client.poll().await?;
+    let mut stream = client.subscribe_events().await?;
     tokio::select! {
         _ = tokio::spawn(async move {
             while let Some(reply) = stream.message().await.unwrap() {
