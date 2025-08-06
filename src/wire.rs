@@ -142,7 +142,7 @@ pub struct GeneralConfig {
     pub camera_model_nf: CameraCalibrationParams,
     pub camera_model_wf: CameraCalibrationParams,
     pub stereo_iso: StereoCalibrationParams,
-    _padding: [u8; 40],
+    pub _padding: [u8; 40],
 }
 
 assert_eq_size!(GeneralConfig, [u8; 240]);
