@@ -404,6 +404,6 @@ FodyWeavers.xsd
 *.dll
 output
 
-.cargo
 .vscode
 .bin
+.bin/
