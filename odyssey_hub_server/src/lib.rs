@@ -15,9 +15,7 @@ use interprocess::os::windows::{
         SecurityDescriptor,
     }
 };
-use odyssey_hub_server_interface::{
-    service_server::ServiceServer,
-};
+use odyssey_hub_server_interface::service_server::{Service, ServiceServer};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{broadcast, mpsc},
@@ -25,7 +23,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tonic::transport::server::Connected;
 
-use crate::{device_tasks::device_tasks};
+use crate::{accessories::accessory_manager, device_tasks::device_tasks};
 
 pub enum Message {
     ServerInit(Result<(), std::io::Error>),
@@ -132,7 +130,6 @@ pub async fn run_server(
     let (sender, mut receiver) = mpsc::channel(12);
 
     let (event_sender, _) = broadcast::channel(12);
-    let (accessory_map_sender, _) = broadcast::channel(12);
 
     let screen_calibrations = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::screen_calibrations()
@@ -156,15 +153,19 @@ pub async fn run_server(
     })
     .await??;
     
-    let accessory_map = tokio::task::spawn_blocking(|| {
+    let accessory_info_map = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::accessory_map()
             .map_err(|e| anyhow::anyhow!("Failed to load accessory map: {}", e))
     })
     .await??;
+
+    let (accessory_info_sender, accessory_info_receiver) = tokio::sync::watch::channel(accessory_info_map.clone());
     
     let accessory_map = Arc::new(std::sync::Mutex::new(
-        accessory_map.into_iter().map(|(k, v)| (k, (v, false))).collect()
+        accessory_info_map.into_iter().map(|(k, v)| (k, (v, false))).collect()
     ));
+
+    let (accessory_map_sender, _) = broadcast::channel(12);
 
     let server = server::Server {
         device_list: Default::default(),
@@ -214,10 +215,10 @@ pub async fn run_server(
             }
         }
     };
-
+    
     tokio::select! {
         _ = device_tasks(sender, screen_calibrations.clone(), device_offsets.clone()) => {},
-        // _ = accessory_scanner(event_sender.clone(), dl) => {},
+        _ = accessory_manager(accessory_info_receiver, accessory_map_sender.clone()) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))

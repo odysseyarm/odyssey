@@ -1,72 +1,90 @@
 use btleplug::api::{Manager as _, Central, Peripheral as _, ScanFilter};
 use btleplug::platform::Manager;
-use odyssey_hub_common::AccessoryInfo;
+use odyssey_hub_common::{AccessoryInfo, AccessoryMap};
+use tokio::{sync::{broadcast::Sender, watch::Receiver}, time};
 use uuid::Uuid;
-use std::{collections::HashMap, collections::HashSet, sync::Arc, time::Duration};
-use tokio::{sync::mpsc::Sender, time};
-use odyssey_hub_common::events::Event;
+use std::{collections::{HashMap, HashSet}, time::Duration};
 
-// #[derive(Debug, Clone)]
-// pub enum Message {
-//     Connect(
-//         [u8; 6],
-//         Sender<AccessoryMessage>,
-//     ),
-//     Disconnect([u8; 6]),
-//     Event(odyssey_hub_common::events::Event),
-// }
-
-pub async fn accessory_scanner(
-    mut event_tx: Sender<Event>,
-    device_list: Arc<
-        parking_lot::Mutex<
-            Vec<(
-                odyssey_hub_common::device::Device,
-                ats_usb::device::UsbDevice,
-                tokio::sync::mpsc::Sender<crate::device_tasks::DeviceTaskMessage>,
-            )>,
-        >
-    >,
+pub async fn accessory_manager(
+    mut info_watch: Receiver<HashMap<[u8; 6], AccessoryInfo>>,
+    event_tx: Sender<AccessoryMap>,
 ) {
-    let nus_uuid = Uuid::from_bytes([0x6e,0x40,0x00,0x01, 0xb5,0xa3, 0xf3,0x93, 0xe0,0xa9, 0xe5,0x0e,0x24,0xdc,0xca,0x9e]);
+    // DryFireMag uses Nordic UART Service
+    let nus_uuid = Uuid::from_bytes([
+        0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93,
+        0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+    ]);
     let manager = Manager::new().await.unwrap();
     let adapter = loop {
-        let adapter = manager.adapters().await.unwrap()
-        .into_iter()
-        .next();
-        if let Some(adapter) = adapter {
-            break adapter;
+        if let Some(a) = manager.adapters().await.unwrap().into_iter().next() {
+            break a;
         }
         time::sleep(Duration::from_secs(1)).await;
     };
-
     let filter = ScanFilter { services: vec![nus_uuid] };
-    let mut known = HashMap::new();
+
+    let mut info_map = info_watch.borrow().clone();
+    let mut last_statuses: HashMap<[u8; 6], bool> =
+        info_map.keys().map(|&id| (id, false)).collect();
+
+    // Initial broadcast: all known accessories disconnected
+    send_if_changed(&info_map, &HashSet::new(), &mut last_statuses, &event_tx);
 
     loop {
-        adapter.start_scan(filter.clone()).await.unwrap();
-        time::sleep(Duration::from_secs(3)).await;
-        adapter.stop_scan().await.unwrap();
-
-        let mut seen = HashSet::new();
-        for p in adapter.peripherals().await.unwrap() {
-            if let Some(props) = p.properties().await.unwrap() {
-                let name = props.local_name.unwrap_or_default();
-                if name != "DryFireMag" {
-                    continue;
+        tokio::select! {
+            changed = info_watch.changed() => {
+                if changed.is_ok() {
+                    info_map = info_watch.borrow().clone();
+                    // Ensure new entries start as disconnected
+                    for &id in info_map.keys() {
+                        last_statuses.entry(id).or_insert(false);
+                    }
+                    send_if_changed(&info_map, &HashSet::new(), &mut last_statuses, &event_tx);
+                } else {
+                    break;
                 }
-                let uuid = props.address.into_inner();
-                seen.insert(uuid);
-                // todo set assignment from map
-                let accessory = AccessoryInfo { name, ty: odyssey_hub_common::AccessoryType::DryFireMag, assignment: None };
-                known.insert(uuid, accessory.clone());
             }
-        }
-
-        for removed in known.clone().into_keys().collect::<HashSet<_>>().difference(&seen) {
-            known.remove(removed);
+            _ = async {
+                adapter.start_scan(filter.clone()).await.unwrap();
+                time::sleep(Duration::from_secs(3)).await;
+                adapter.stop_scan().await.unwrap();
+            } => {
+                let mut seen = HashSet::new();
+                for p in adapter.peripherals().await.unwrap() {
+                    if let Some(props) = p.properties().await.unwrap() {
+                        if props.local_name.as_deref() == Some("DryFireMag") {
+                            seen.insert(props.address.into_inner());
+                        }
+                    }
+                }
+                send_if_changed(&info_map, &seen, &mut last_statuses, &event_tx);
+            }
         }
 
         time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+fn send_if_changed(
+    info_map: &HashMap<[u8; 6], AccessoryInfo>,
+    seen: &HashSet<[u8; 6]>,
+    last_statuses: &mut HashMap<[u8; 6], bool>,
+    tx: &Sender<AccessoryMap>,
+) {
+    let mut updated = HashMap::new();
+    for (&id, info) in info_map.iter() {
+        updated.insert(id, seen.contains(&id));
+    }
+    if *last_statuses == updated {
+        return;
+    }
+    *last_statuses = updated.clone();
+
+    let map: AccessoryMap = updated.into_iter()
+        .map(|(id, connected)| {
+            let info = info_map.get(&id).unwrap().clone();
+            (id, (info, connected))
+        })
+        .collect();
+    let _ = tx.send(map);
 }
