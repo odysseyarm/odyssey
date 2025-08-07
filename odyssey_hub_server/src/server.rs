@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use ats_cv::ScreenCalibration;
-use odyssey_hub_common::config;
+use odyssey_hub_common::{config, AccessoryInfoMap};
 use odyssey_hub_server_interface::{
     service_server::Service, AccessoryMapRequest, DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayReply, ResetShotDelayReply, SetShotDelayRequest, SubscribeAccessoryMapRequest, SubscribeEventsRequest, Vector2
 };
@@ -25,7 +25,7 @@ pub struct Server {
             )>,
         >,
     >,
-    pub event_channel: broadcast::Sender<odyssey_hub_common::events::Event>,
+    pub event_sender: broadcast::Sender<odyssey_hub_common::events::Event>,
     pub screen_calibrations: Arc<
         ArcSwap<
             ArrayVec<
@@ -38,7 +38,8 @@ pub struct Server {
         Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
     pub device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u16>>,
     pub accessory_map: Arc<std::sync::Mutex<odyssey_hub_common::AccessoryMap>>,
-    pub accessory_map_channel: broadcast::Sender<odyssey_hub_common::AccessoryMap>,
+    pub accessory_map_sender: broadcast::Sender<odyssey_hub_common::AccessoryMap>,
+    pub accessory_info_sender: tokio::sync::watch::Sender<AccessoryInfoMap>,
 }
 
 #[tonic::async_trait]
@@ -75,7 +76,7 @@ impl Service for Server {
         _: tonic::Request<SubscribeAccessoryMapRequest>,
     ) -> Result<tonic::Response<Self::SubscribeAccessoryMapStream>, tonic::Status> {
         let (tx, rx) = mpsc::channel(12);
-        let mut accessory_map_channel = self.accessory_map_channel.subscribe();
+        let mut accessory_map_channel = self.accessory_map_sender.subscribe();
         tokio::spawn(async move {
             loop {
                 let accessory_map = match accessory_map_channel.recv().await {
@@ -103,7 +104,7 @@ impl Service for Server {
         _: tonic::Request<SubscribeEventsRequest>,
     ) -> tonic::Result<tonic::Response<Self::SubscribeEventsStream>, tonic::Status> {
         let (tx, rx) = mpsc::channel(12);
-        let mut event_channel = self.event_channel.subscribe();
+        let mut event_channel = self.event_sender.subscribe();
         tokio::spawn(async move {
             loop {
                 let event = match event_channel.recv().await {
@@ -361,7 +362,7 @@ impl Service for Server {
             .insert(device.uuid(), delay_ms);
 
         if let Err(e) = self
-            .event_channel
+            .event_sender
             .send(odyssey_hub_common::events::Event::DeviceEvent(
                 odyssey_hub_common::events::DeviceEvent(
                     device.clone(),
@@ -412,7 +413,7 @@ impl Service for Server {
             .insert(device.uuid(), delay_ms);
 
         if let Err(e) = self
-            .event_channel
+            .event_sender
             .send(odyssey_hub_common::events::Event::DeviceEvent(
                 odyssey_hub_common::events::DeviceEvent(
                     device.clone(),
@@ -451,6 +452,24 @@ impl Service for Server {
         .await
         .map_err(|e| tonic::Status::internal(format!("blocking join error: {}", e)))?
         .map_err(|e| tonic::Status::internal(e.to_string()))?;
+
+        Ok(tonic::Response::new(EmptyReply {}))
+    }
+    
+    async fn update_accessory_info_map(
+        &self,
+        request: tonic::Request<odyssey_hub_server_interface::AccessoryInfoMap>,
+    ) -> Result<tonic::Response<EmptyReply>, tonic::Status> {
+        let accessory_info_map = request.into_inner().into();
+
+        self.accessory_info_sender.send_if_modified(|old_map| {
+            if *old_map == accessory_info_map {
+                false
+            } else {
+                *old_map = accessory_info_map.clone();
+                true
+            }
+        });
 
         Ok(tonic::Response::new(EmptyReply {}))
     }

@@ -15,7 +15,7 @@ use interprocess::os::windows::{
         SecurityDescriptor,
     }
 };
-use odyssey_hub_server_interface::service_server::{Service, ServiceServer};
+use odyssey_hub_server_interface::service_server::ServiceServer;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{broadcast, mpsc},
@@ -169,12 +169,13 @@ pub async fn run_server(
 
     let server = server::Server {
         device_list: Default::default(),
-        event_channel: event_sender.clone(),
+        event_sender: event_sender.clone(),
         screen_calibrations: screen_calibrations.clone(),
         device_offsets: device_offsets.clone(),
         device_shot_delays: device_shot_delays.into(),
         accessory_map: accessory_map.clone(),
-        accessory_map_channel: accessory_map_sender.clone(),
+        accessory_map_sender: accessory_map_sender.clone(),
+        accessory_info_sender,
     };
 
     let dl = server.device_list.clone();

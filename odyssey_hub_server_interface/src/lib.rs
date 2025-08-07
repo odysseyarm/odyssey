@@ -429,3 +429,18 @@ impl From<proto::AccessoryMapReply> for common::AccessoryMap {
             .collect()
     }
 }
+
+impl From<proto::AccessoryInfoMap> for common::AccessoryInfoMap {
+    fn from(value: proto::AccessoryInfoMap) -> Self {
+        value
+            .accessory_info_map
+            .into_iter()
+            .map(|(k, v)| {
+                let mut buf = [0u8; 8];
+                buf[..6].copy_from_slice(&k.to_le_bytes()[..6]);
+                let key = buf[..6].try_into().unwrap();
+                (key, v.into())
+            })
+            .collect()
+    }
+}

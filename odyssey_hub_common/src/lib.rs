@@ -15,13 +15,13 @@ pub struct ScreenInfo {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub enum AccessoryType {
     DryFireMag,
 }
 
 #[repr(C)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct AccessoryInfo {
     pub name: String,
     pub ty: AccessoryType,
@@ -30,3 +30,4 @@ pub struct AccessoryInfo {
 
 pub type AccessoryConnected = bool;
 pub type AccessoryMap = std::collections::HashMap<[u8; 6], (AccessoryInfo, AccessoryConnected)>;
+pub type AccessoryInfoMap = std::collections::HashMap<[u8; 6], AccessoryInfo>;

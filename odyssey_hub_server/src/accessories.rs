@@ -1,12 +1,12 @@
 use btleplug::api::{Manager as _, Central, Peripheral as _, ScanFilter};
 use btleplug::platform::Manager;
-use odyssey_hub_common::{AccessoryInfo, AccessoryMap};
+use odyssey_hub_common::{AccessoryInfo, AccessoryInfoMap, AccessoryMap};
 use tokio::{sync::{broadcast::Sender, watch::Receiver}, time};
 use uuid::Uuid;
 use std::{collections::{HashMap, HashSet}, time::Duration};
 
 pub async fn accessory_manager(
-    mut info_watch: Receiver<HashMap<[u8; 6], AccessoryInfo>>,
+    mut info_watch: Receiver<AccessoryInfoMap>,
     event_tx: Sender<AccessoryMap>,
 ) {
     // DryFireMag uses Nordic UART Service

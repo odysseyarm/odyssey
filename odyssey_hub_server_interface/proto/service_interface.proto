@@ -17,6 +17,7 @@ service Service {
   rpc GetShotDelay (Device) returns (GetShotDelayReply) {}
   rpc SetShotDelay (SetShotDelayRequest) returns (EmptyReply) {}
   rpc SaveShotDelay (Device) returns (EmptyReply) {}
+  rpc UpdateAccessoryInfoMap (AccessoryInfoMap) returns (EmptyReply) {}
 }
 
 message UdpDevice {
@@ -155,6 +156,10 @@ message AccessoryMapRequest {}
 
 message AccessoryMapReply {
   map<uint64, AccessoryStatus> accessory_map = 1;
+}
+
+message AccessoryInfoMap {
+  map<uint64, AccessoryInfo> accessory_info_map = 1;
 }
 
 message SubscribeAccessoryMapRequest {}
