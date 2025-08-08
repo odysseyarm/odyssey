@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures::StreamExt;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::ffi_common::*;
@@ -37,20 +38,20 @@ pub struct Client {
 }
 
 #[derive(uniffi::Object)]
-pub struct StreamingEvent {
-    pub inner: Arc<Mutex<tonic::Streaming<odyssey_hub_server_interface::Event>>>,
+pub struct EventStream {
+    pub inner: Arc<Mutex<futures::stream::BoxStream<'static, Result<odyssey_hub_common::events::Event, tonic::Status>>>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
-impl StreamingEvent {
+impl EventStream {
     #[uniffi::method]
     pub async fn message(&self) -> Result<Event, ClientError> {
-        if let Ok(msg) = self.inner.lock().await.message().await {
+        if let Some(msg) = self.inner.lock().await.next().await {
             match msg {
-                Some(event) => {
+                Ok(event) => {
                     Ok(odyssey_hub_common::events::Event::from(event).into())
                 }
-                None => Err(ClientError::StreamEnd),
+                Err(_) => Err(ClientError::StreamEnd),
             }
         } else {
             Err(ClientError::StreamEnd)
@@ -89,13 +90,13 @@ impl Client {
     }
 
     #[uniffi::method]
-    pub async fn subscribe_events(&self) -> Result<StreamingEvent, ClientError> {
+    pub async fn subscribe_events(&self) -> Result<EventStream, ClientError> {
         let mut client = self.inner.read().await.clone();
 
         match client.subscribe_events().await {
             Ok(stream) => {
-                Ok(StreamingEvent {
-                    inner: Arc::new(Mutex::new(stream)),
+                Ok(EventStream {
+                    inner: Arc::new(Mutex::new(Box::pin(stream))),
                 })
             }
             Err(_) => Err(ClientError::NotConnected),

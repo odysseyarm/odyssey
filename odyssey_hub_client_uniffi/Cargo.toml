@@ -24,3 +24,4 @@ paste = "1.0.15"
 uniffi = { version = "0.28.3", features = ["tokio"] }
 thiserror = "2.0.12"
 tokio-stream = "0.1.17"
+futures = "0.3.31"

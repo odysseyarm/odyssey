@@ -72,7 +72,7 @@ fn send_if_changed(
     tx: &Sender<AccessoryMap>,
 ) {
     let mut updated = HashMap::new();
-    for (&id, info) in info_map.iter() {
+    for (&id, _) in info_map.iter() {
         updated.insert(id, seen.contains(&id));
     }
     if *last_statuses == updated {

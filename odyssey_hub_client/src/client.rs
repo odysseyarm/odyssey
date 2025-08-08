@@ -5,6 +5,7 @@ use odyssey_hub_server_interface::{service_client::ServiceClient, DeviceListRequ
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::{Endpoint, Uri}};
 use tower::service_fn;
+use futures::StreamExt;
 
 #[derive(Clone, Default)]
 pub struct Client {
@@ -67,15 +68,30 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+    
+    pub async fn subscribe_accessory_map(
+        &mut self,
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<odyssey_hub_common::AccessoryMap, tonic::Status>>> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::SubscribeAccessoryMapRequest {});
+            let stream = service_client.subscribe_accessory_map(request).await?.into_inner();
+
+            Ok(stream.map(|item| item.map(Into::into)))
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
 
     pub async fn subscribe_events(
         &mut self,
-    ) -> anyhow::Result<tonic::Streaming<odyssey_hub_server_interface::Event>> {
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<odyssey_hub_common::events::Event, tonic::Status>>> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::SubscribeEventsRequest {});
-            Ok(service_client.subscribe_events(request).await?.into_inner())
+            let stream = service_client.subscribe_events(request).await?.into_inner();
+
+            Ok(stream.map(|item| item.map(Into::into)))
         } else {
-            Err(anyhow::anyhow!("No service client")).into()
+            Err(anyhow::anyhow!("No service client"))
         }
     }
 

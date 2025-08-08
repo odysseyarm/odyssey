@@ -4393,6 +4393,7 @@ name = "odyssey_hub_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures",
  "interprocess 2.2.3",
  "odyssey_hub_common",
  "odyssey_hub_server",
@@ -4429,6 +4430,7 @@ name = "odyssey_hub_client_uniffi"
 version = "0.1.0"
 dependencies = [
  "ats_usb",
+ "futures",
  "nalgebra 0.33.2",
  "odyssey_hub_client",
  "odyssey_hub_common",

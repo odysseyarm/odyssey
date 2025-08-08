@@ -1,5 +1,6 @@
 use anyhow::Ok;
 use odyssey_hub_client::client;
+use futures::stream::StreamExt;
 
 #[tokio::main]
 pub async fn main() -> anyhow::Result<()> {
@@ -9,7 +10,7 @@ pub async fn main() -> anyhow::Result<()> {
     let mut stream = client.subscribe_events().await?;
     tokio::select! {
         _ = tokio::spawn(async move {
-            while let Some(reply) = stream.message().await.unwrap() {
+            while let Some(reply) = stream.next().await {
                 println!("{:?}", reply);
             }
         }) => {},
