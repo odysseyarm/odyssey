@@ -19,6 +19,7 @@ nalgebra = "0.33"
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
 interoptopus = "0.15.0-alpha.6"
 paste = "1.0.15"
+futures-util = "0.3.31"
 
 [build-dependencies]
 cbindgen = "0.29.0"

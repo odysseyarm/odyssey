@@ -1,5 +1,6 @@
 use odyssey_hub_client::client::Client;
 use std::ffi::c_void;
+use futures_util::stream::StreamExt;
 
 use crate::ffi_common::{Device, ScreenInfo};
 use crate::funny::{Vector2f32, Vector3f32};
@@ -106,8 +107,8 @@ pub extern "C" fn client_start_stream(
     tokio::spawn(async move {
         match client.subscribe_events().await {
             Ok(mut stream) => loop {
-                match stream.message().await {
-                    Ok(Some(event)) => {
+                match stream.next().await {
+                    Some(Ok(event)) => {
                         let event: odyssey_hub_common::events::Event = event.into();
                         callback(
                             userdata,
@@ -115,7 +116,7 @@ pub extern "C" fn client_start_stream(
                             std::mem::MaybeUninit::new(event.into()),
                         );
                     }
-                    Ok(None) => {
+                    None => {
                         callback(
                             userdata,
                             ClientError::StreamEnd,
@@ -123,7 +124,7 @@ pub extern "C" fn client_start_stream(
                         );
                         break;
                     }
-                    Err(_) => {
+                    Some(Err(_)) => {
                         callback(
                             userdata,
                             ClientError::StreamEnd,

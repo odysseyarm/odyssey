@@ -4413,6 +4413,7 @@ dependencies = [
  "anyhow",
  "ats_usb",
  "cbindgen",
+ "futures-util",
  "indoc",
  "interoptopus",
  "nalgebra 0.33.2",
