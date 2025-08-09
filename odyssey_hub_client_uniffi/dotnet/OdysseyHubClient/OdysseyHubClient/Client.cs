@@ -49,10 +49,10 @@ namespace Radiosity.OdysseyHubClient
         /// <param name="channelWriter"></param>
         public Task SubscribeEvents(ChannelWriter<(uniffi.Event?, uniffi.ClientException?)> channelWriter) {
             return Task.Run(async () => {
-                var streaming = await _inner.SubscribeEvents();
+                var stream = await _inner.SubscribeEvents();
                 while (true) {
                     try {
-                        var @event = await streaming.Message();
+                        var @event = await stream.Next();
                         await channelWriter.WriteAsync((@event, null));
                     } catch (uniffi.ClientException @error) {
                         await channelWriter.WriteAsync((null, @error));

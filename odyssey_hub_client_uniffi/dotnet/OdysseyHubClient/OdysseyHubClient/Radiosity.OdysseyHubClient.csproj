@@ -10,10 +10,11 @@
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+        <Platforms>AnyCPU;x64</Platforms>
     </PropertyGroup>
 
     <PropertyGroup>
-        <VersionPrefix>5.0.2</VersionPrefix>
+        <VersionPrefix>6.0.0</VersionPrefix>
         <VersionSuffix>alpha</VersionSuffix>
     </PropertyGroup>
 

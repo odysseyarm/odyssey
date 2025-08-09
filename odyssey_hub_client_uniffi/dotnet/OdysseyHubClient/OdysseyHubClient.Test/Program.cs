@@ -85,16 +85,16 @@ await Task.WhenAny(
                         switch (deviceEvent.v1.kind) {
                             // uncomment desired behavior
                             case Ohc.uniffi.DeviceEventKind.AccelerometerEvent accelerometer:
-                                Console.WriteLine("Printing accelerometer event:");
-                                Console.WriteLine("\ttimestamp: {0}", accelerometer.v1.timestamp);
-                                Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.v1.accel.x, accelerometer.v1.accel.y, accelerometer.v1.accel.z);
+                                // Console.WriteLine("Printing accelerometer event:");
+                                // Console.WriteLine("\ttimestamp: {0}", accelerometer.v1.timestamp);
+                                // Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.v1.accel.x, accelerometer.v1.accel.y, accelerometer.v1.accel.z);
                                 // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
                                 // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.TrackingEvent tracking:
                                 // Console.WriteLine("Printing tracking event:");
                                 // Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
-                                Console.WriteLine("\taimpoint: {0} {1}", tracking.v1.aimpoint.x, tracking.v1.aimpoint.y);
+                                // Console.WriteLine("\taimpoint: {0} {1}", tracking.v1.aimpoint.x, tracking.v1.aimpoint.y);
                                 // if (tracking.pose != null) {
                                 //     Console.WriteLine("\tpose: ");
                                 //     Console.WriteLine("\t\trotation: ");
@@ -110,8 +110,8 @@ await Task.WhenAny(
                                 // Console.WriteLine("\tdistance: {0}", tracking.distance);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.ImpactEvent impact:
-                                // Console.WriteLine("Printing impact event:");
-                                // Console.WriteLine("\ttimestamp: {0}", impact.timestamp);
+                                Console.WriteLine("Printing impact event:");
+                                Console.WriteLine("\ttimestamp: {0}", impact.v1.timestamp);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.ConnectEvent _:
                                 Console.WriteLine("Device connected");

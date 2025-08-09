@@ -45,7 +45,7 @@ pub struct EventStream {
 #[uniffi::export(async_runtime = "tokio")]
 impl EventStream {
     #[uniffi::method]
-    pub async fn message(&self) -> Result<Event, ClientError> {
+    pub async fn next(&self) -> Result<Event, ClientError> {
         if let Some(msg) = self.inner.lock().await.next().await {
             match msg {
                 Ok(event) => {
