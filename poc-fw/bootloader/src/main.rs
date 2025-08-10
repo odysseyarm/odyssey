@@ -13,7 +13,7 @@ use embassy_nrf::{
     usb::{vbus_detect::HardwareVbusDetect, Driver},
 };
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_usb::Builder;
+use embassy_usb::{msos, Builder};
 use embassy_usb_dfu::consts::DfuAttributes;
 use embassy_usb_dfu::{usb_dfu, Control, ResetImmediate};
 
@@ -71,8 +71,21 @@ fn main() -> ! {
             &mut [],
             &mut control_buf,
         );
+        
+        // We add MSOS headers so that the device automatically gets assigned the WinUSB driver on Windows.
+        // Otherwise users need to do this manually using a tool like Zadig.
+        //
+        // It seems these always need to be at added at the device level for this to work and for
+        // composite devices they also need to be added on the function level (as shown later).
+        //
+        builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
+        builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
 
-        usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state);
+        usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state, |func| {
+            // You likely don't have to add these function level headers if your USB device is not composite
+            // (i.e. if your device does not expose another interface in addition to DFU)
+            func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+        });
 
         let mut dev = builder.build();
         embassy_futures::block_on(dev.run());

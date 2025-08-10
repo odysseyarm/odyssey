@@ -99,6 +99,8 @@ async fn usb_rcv_loop(
             }
             Ok(p) => p,
         };
+        
+        defmt::debug!("Received packet: {}", defmt::Debug2Format(&pkt));
 
         let response = match pkt.data {
             P::WriteRegister(register) => {
@@ -109,10 +111,11 @@ async fn usb_rcv_loop(
                     .write(register.address, &[register.data])
                     .await
                     .unwrap();
-                Some(Packet {
-                    id: pkt.id,
-                    data: P::Ack(),
-                })
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
             }
             P::ReadRegister(register) => {
                 let mut pag = pag.lock().await;
@@ -133,10 +136,11 @@ async fn usb_rcv_loop(
             }
             P::WriteConfig(config) => {
                 settings.general.set_general_config(&config.into());
-                Some(Packet {
-                    id: pkt.id,
-                    data: P::Ack(),
-                })
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
             }
             P::ReadConfig() => Some(Packet {
                 id: pkt.id,
@@ -145,10 +149,11 @@ async fn usb_rcv_loop(
             P::FlashSettings() => {
                 settings.pag = PagSettings::read_from_pag(&mut *pag.lock().await).await;
                 settings.write(nvmc);
-                Some(Packet {
-                    id: pkt.id,
-                    data: P::Ack(),
-                })
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
             }
             P::ReadProps() => Some(Packet {
                 id: pkt.id,
@@ -164,18 +169,20 @@ async fn usb_rcv_loop(
                     S::Disable => stream_infos.disable(s.packet_id),
                     S::DisableAll => stream_infos.disable_all(),
                 }
-                Some(Packet {
-                    id: pkt.id,
-                    data: P::Ack(),
-                })
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
             }
             P::WriteMode(mode) => {
                 settings.transient.mode = mode;
                 settings.transient_write(nvmc);
-                Some(Packet {
-                    id: pkt.id,
-                    data: P::Ack(),
-                })
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
             }
             P::ObjectReportRequest() => None,
             P::Ack() => None,
@@ -207,6 +214,7 @@ async fn usb_snd_loop(
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
             break;
         };
+        defmt::debug!("Sending packet: {}", defmt::Debug2Format(&pkt));
         pkt_writer.write_packet(&pkt).await;
     }
     todo!()
@@ -347,28 +355,60 @@ struct PacketReader<'a> {
     rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
     buf: &'a mut [u8; 1024],
     n: usize,
+    start: usize,
 }
 
 impl<'a> PacketReader<'a> {
+    // add `start`; keep the same constructor signature
     fn new(rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>, buf: &'a mut [u8; 1024]) -> Self {
-        Self { rcv, buf, n: 0 }
+        Self { rcv, buf, n: 0, start: 0 }
+    }
+
+    // ensure at least `need` bytes buffered contiguously at buf[start .. start+n]
+    async fn fill_min(&mut self, need: usize) -> Result<(), WaitForPacketError> {
+        while self.n < need {
+            if self.start + self.n == self.buf.len() {
+                if self.n == 0 {
+                    self.start = 0;
+                } else {
+                    // compact once when we run out of tail space
+                    self.buf.copy_within(self.start .. self.start + self.n, 0);
+                    self.start = 0;
+                }
+            }
+            let wrote = self.rcv.read_packet(&mut self.buf[self.start + self.n ..]).await?;
+            self.n += wrote;
+        }
+        Ok(())
     }
 
     async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
-        // ignore ff lolol
-        // gonna replace with slip anyways
-        while self.n < 3 {
-            self.n += self.rcv.read_packet(&mut self.buf[self.n..]).await?;
-        }
-        let size = usize::from(u16::from_le_bytes([self.buf[1], self.buf[2]])) * 2;
-        while self.n < size + 1 {
-            self.n += self.rcv.read_packet(&mut self.buf[self.n..]).await?;
+        // find sync 0xFF
+        loop {
+            self.fill_min(3).await?;
+            if self.buf[self.start] == 0xFF { break; }
+            // drop one byte (no shifting)
+            self.start += 1;
+            self.n -= 1;
         }
 
-        let pkt = Packet::parse(&mut &self.buf[1..size + 1]);
-        self.buf.copy_within(size + 1..self.n, 0);
+        // 16-bit little-endian length in WORDS
+        let size_words = u16::from_le_bytes([self.buf[self.start + 1], self.buf[self.start + 2]]) as usize;
+        let size = size_words * 2;
+
+        // wait until we have the whole frame: 0xFF + (size bytes starting at LEN)
+        self.fill_min(size + 1).await?;
+
+        // parse exactly like the original: from LEN through end (size bytes)
+        let mut slice = &self.buf[self.start + 1 .. self.start + size + 1];
+        let pkt = Packet::parse(&mut slice)?;
+
+        // consume this frame; compact lazily
+        self.start += size + 1;
         self.n -= size + 1;
-        Ok(pkt?)
+        if self.n == 0 { self.start = 0; }
+
+        Ok(pkt)
     }
 }
 

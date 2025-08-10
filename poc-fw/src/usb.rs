@@ -81,14 +81,14 @@ pub fn usb_device(
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
-    static STATE: ConstStaticCell<cdc_acm::State> = ConstStaticCell::new(cdc_acm::State::new());
+    static STATE: StaticCell<cdc_acm::State> = StaticCell::new();
+    let state = STATE.init(cdc_acm::State::new());
 
     let config_descriptor = static_byte_buffer!(256);
     let bos_descriptor = static_byte_buffer!(256);
     let msos_descriptor = static_byte_buffer!(256);
     let control_buf = static_byte_buffer!(64);
 
-    let state = STATE.take();
     let mut builder = embassy_usb::Builder::new(
         driver,
         config,

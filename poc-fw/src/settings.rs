@@ -192,7 +192,6 @@ impl PagSettings {
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 struct AlignedGeneralConfig {
     inner: GeneralConfig,
-    _padding: [u8; 1],
 }
 
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(200);
@@ -225,8 +224,9 @@ impl Default for GeneralSettings {
                         dist_coeffs: [-0.0183234196, 0.0833942071, 0.0, 0.0, -0.0357658006],
                     },
                     stereo_iso: Default::default(),
-                },
-                _padding: [0; 1],
+                    suppress_ms: 200,
+                    _padding: [0; 40],
+                }.into(),
             },
             accel_odr: &ACCEL_ODR,
         }
