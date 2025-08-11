@@ -444,3 +444,17 @@ impl From<proto::AccessoryInfoMap> for common::AccessoryInfoMap {
             .collect()
     }
 }
+
+impl From<common::AccessoryInfoMap> for proto::AccessoryInfoMap {
+    fn from(map: common::AccessoryInfoMap) -> Self {
+        let accessory_info_map = map
+            .into_iter()
+            .map(|(k, v)| {
+                let mut buf = [0u8; 8];
+                buf[..6].copy_from_slice(&k);
+                (u64::from_le_bytes(buf), v.into())
+            })
+            .collect();
+        proto::AccessoryInfoMap { accessory_info_map }
+    }
+}

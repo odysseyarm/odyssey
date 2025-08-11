@@ -11,14 +11,14 @@ use odyssey_hub_server::Message;
 use tokio_util::sync::CancellationToken;
 
 use components::Navbar;
-use views::Home;
 use views::Accessories;
+use views::Home;
 
 mod components;
 mod hub;
+mod styles;
 mod tray;
 mod views;
-mod styles;
 
 fn main() {
     if cfg!(target_os = "windows") {

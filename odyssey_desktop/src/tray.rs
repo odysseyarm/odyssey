@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use dioxus::{
     desktop::{
-        muda::PredefinedMenuItem, tao::event::Event, trayicon::{
-            menu::{Menu, MenuItem}, Icon, TrayIcon, TrayIconBuilder
-        }, use_tray_menu_event_handler, use_wry_event_handler, WindowEvent
+        muda::PredefinedMenuItem,
+        tao::event::Event,
+        trayicon::{
+            menu::{Menu, MenuItem},
+            Icon, TrayIcon, TrayIconBuilder,
+        },
+        use_tray_menu_event_handler, use_wry_event_handler, WindowEvent,
     },
     prelude::*,
 };
@@ -125,6 +129,6 @@ pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) ->
     //         }
     //     });
     // }
-    
+
     tray
 }

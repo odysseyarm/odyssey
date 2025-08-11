@@ -1,6 +1,6 @@
+mod accessories;
 mod home;
 mod zero;
-mod accessories;
+pub use accessories::Accessories;
 pub use home::Home;
 pub use zero::Zero;
-pub use accessories::Accessories;

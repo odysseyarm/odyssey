@@ -470,6 +470,14 @@ impl Service for Server {
                 true
             }
         });
+        
+        tokio::task::spawn_blocking(move || {
+            odyssey_hub_common::config::accessory_map_save(&accessory_info_map)
+                .map_err(|e| anyhow::anyhow!("failed to save accessory map: {}", e))
+        })
+        .await
+        .map_err(|e| tonic::Status::internal(format!("blocking join error: {}", e)))?
+        .map_err(|e| tonic::Status::internal(e.to_string()))?;
 
         Ok(tonic::Response::new(EmptyReply {}))
     }

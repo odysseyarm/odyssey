@@ -252,4 +252,17 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+    
+    pub async fn update_accessory_info_map(
+        &mut self,
+        map: odyssey_hub_common::AccessoryInfoMap,
+    ) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(map.into());
+            service_client.update_accessory_info_map(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
 }
