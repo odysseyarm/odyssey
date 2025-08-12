@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use ats_cv::ScreenCalibration;
-use odyssey_hub_common::{config, AccessoryInfoMap};
+use odyssey_hub_common::{config, accessory::AccessoryInfoMap};
 use odyssey_hub_server_interface::{
     service_server::Service, AccessoryMapRequest, DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayReply, ResetShotDelayReply, SetShotDelayRequest, SubscribeAccessoryMapRequest, SubscribeEventsRequest, Vector2
 };
@@ -37,8 +37,8 @@ pub struct Server {
     pub device_offsets:
         Arc<tokio::sync::Mutex<std::collections::HashMap<u64, nalgebra::Isometry3<f32>>>>,
     pub device_shot_delays: std::sync::Mutex<std::collections::HashMap<u64, u16>>,
-    pub accessory_map: Arc<std::sync::Mutex<odyssey_hub_common::AccessoryMap>>,
-    pub accessory_map_sender: broadcast::Sender<odyssey_hub_common::AccessoryMap>,
+    pub accessory_map: Arc<std::sync::Mutex<odyssey_hub_common::accessory::AccessoryMap>>,
+    pub accessory_map_sender: broadcast::Sender<odyssey_hub_common::accessory::AccessoryMap>,
     pub accessory_info_sender: tokio::sync::watch::Sender<AccessoryInfoMap>,
 }
 

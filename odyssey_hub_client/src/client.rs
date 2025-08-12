@@ -59,7 +59,7 @@ impl Client {
 
     pub async fn get_accessory_map(
         &mut self,
-    ) -> anyhow::Result<odyssey_hub_common::AccessoryMap> {
+    ) -> anyhow::Result<odyssey_hub_common::accessory::AccessoryMap> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::AccessoryMapRequest {});
             let response = service_client.get_accessory_map(request).await?;
@@ -71,7 +71,7 @@ impl Client {
     
     pub async fn subscribe_accessory_map(
         &mut self,
-    ) -> anyhow::Result<impl futures::Stream<Item = Result<odyssey_hub_common::AccessoryMap, tonic::Status>>> {
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<odyssey_hub_common::accessory::AccessoryMap, tonic::Status>>> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::SubscribeAccessoryMapRequest {});
             let stream = service_client.subscribe_accessory_map(request).await?.into_inner();
@@ -255,7 +255,7 @@ impl Client {
     
     pub async fn update_accessory_info_map(
         &mut self,
-        map: odyssey_hub_common::AccessoryInfoMap,
+        map: odyssey_hub_common::accessory::AccessoryInfoMap,
     ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(map.into());

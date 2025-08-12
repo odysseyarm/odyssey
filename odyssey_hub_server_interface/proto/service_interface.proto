@@ -128,10 +128,15 @@ enum AccessoryType {
   DRY_FIRE_MAG = 0;
 }
 
+enum AccessoryFeature {
+  IMPACT = 0;
+}
+
 message AccessoryInfo {
   string name = 1;
   AccessoryType ty = 2;
   uint64 assignment = 3;
+  repeated AccessoryFeature features = 4;
 }
 
 message AccessoryStatus {

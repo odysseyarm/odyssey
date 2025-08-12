@@ -352,8 +352,8 @@ impl From<proto::ScreenInfoReply> for common::ScreenInfo {
     }
 }
 
-impl From<common::AccessoryInfo> for proto::AccessoryInfo {
-    fn from(value: common::AccessoryInfo) -> Self {
+impl From<common::accessory::AccessoryInfo> for proto::AccessoryInfo {
+    fn from(value: common::accessory::AccessoryInfo) -> Self {
         Self {
             name: value.name,
             ty: proto::AccessoryType::from(value.ty).into(),
@@ -362,11 +362,16 @@ impl From<common::AccessoryInfo> for proto::AccessoryInfo {
             } else {
                 0
             },
+            features: value
+                .features
+                .into_iter()
+                .map(|f| proto::AccessoryFeature::from(f).into())
+                .collect(),
         }
     }
 }
 
-impl From<proto::AccessoryInfo> for common::AccessoryInfo {
+impl From<proto::AccessoryInfo> for common::accessory::AccessoryInfo {
     fn from(value: proto::AccessoryInfo) -> Self {
         Self {
             name: value.name,
@@ -376,28 +381,49 @@ impl From<proto::AccessoryInfo> for common::AccessoryInfo {
             } else {
                 None
             },
+            features: value
+                .features
+                .into_iter()
+                .map(|f| common::accessory::AccessoryFeature::from(proto::AccessoryFeature::try_from(f).unwrap()).into())
+                .collect(),
         }
     }
 }
 
-impl From<common::AccessoryType> for proto::AccessoryType {
-    fn from(value: common::AccessoryType) -> Self {
+impl From<common::accessory::AccessoryFeature> for proto::AccessoryFeature {
+    fn from(value: common::accessory::AccessoryFeature) -> Self {
         match value {
-            common::AccessoryType::DryFireMag => proto::AccessoryType::DryFireMag,
+            common::accessory::AccessoryFeature::Impact => proto::AccessoryFeature::Impact,
         }
     }
 }
 
-impl From<proto::AccessoryType> for common::AccessoryType {
+impl From<proto::AccessoryFeature> for common::accessory::AccessoryFeature {
+    fn from(value: proto::AccessoryFeature) -> Self {
+        match value {
+            proto::AccessoryFeature::Impact => common::accessory::AccessoryFeature::Impact,
+        }
+    }
+}
+
+impl From<common::accessory::AccessoryType> for proto::AccessoryType {
+    fn from(value: common::accessory::AccessoryType) -> Self {
+        match value {
+            common::accessory::AccessoryType::DryFireMag => proto::AccessoryType::DryFireMag,
+        }
+    }
+}
+
+impl From<proto::AccessoryType> for common::accessory::AccessoryType {
     fn from(value: proto::AccessoryType) -> Self {
         match value {
-            proto::AccessoryType::DryFireMag => common::AccessoryType::DryFireMag,
+            proto::AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
         }
     }
 }
 
-impl From<common::AccessoryMap> for proto::AccessoryMapReply {
-    fn from(map: common::AccessoryMap) -> Self {
+impl From<common::accessory::AccessoryMap> for proto::AccessoryMapReply {
+    fn from(map: common::accessory::AccessoryMap) -> Self {
         let accessory_map = map
             .into_iter()
             .map(|(k, (accessory, connected))| {
@@ -415,7 +441,7 @@ impl From<common::AccessoryMap> for proto::AccessoryMapReply {
     }
 }
 
-impl From<proto::AccessoryMapReply> for common::AccessoryMap {
+impl From<proto::AccessoryMapReply> for common::accessory::AccessoryMap {
     fn from(value: proto::AccessoryMapReply) -> Self {
         value
             .accessory_map
@@ -430,7 +456,7 @@ impl From<proto::AccessoryMapReply> for common::AccessoryMap {
     }
 }
 
-impl From<proto::AccessoryInfoMap> for common::AccessoryInfoMap {
+impl From<proto::AccessoryInfoMap> for common::accessory::AccessoryInfoMap {
     fn from(value: proto::AccessoryInfoMap) -> Self {
         value
             .accessory_info_map
@@ -445,8 +471,8 @@ impl From<proto::AccessoryInfoMap> for common::AccessoryInfoMap {
     }
 }
 
-impl From<common::AccessoryInfoMap> for proto::AccessoryInfoMap {
-    fn from(map: common::AccessoryInfoMap) -> Self {
+impl From<common::accessory::AccessoryInfoMap> for proto::AccessoryInfoMap {
+    fn from(map: common::accessory::AccessoryInfoMap) -> Self {
         let accessory_info_map = map
             .into_iter()
             .map(|(k, v)| {

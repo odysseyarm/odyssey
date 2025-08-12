@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::hub; // HubContext
-use odyssey_hub_common::{AccessoryInfo, AccessoryMap, AccessoryType};
+use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType, AccessoryFeature};
 
 // UI-side BLE scan (btleplug)
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
@@ -172,6 +172,7 @@ pub fn Accessories() -> Element {
                         name,
                         ty: AccessoryType::DryFireMag,
                         assignment: None::<NonZeroU64>,
+                        features: HashSet::from([AccessoryFeature::Impact]),
                     },
                 );
                 m
@@ -294,6 +295,7 @@ pub fn Accessories() -> Element {
                                             name: "Unknown".into(),
                                             ty: AccessoryType::DryFireMag,
                                             assignment: None::<NonZeroU64>,
+                                            features: HashSet::new(),
                                         }),
                                         false
                                     )

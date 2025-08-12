@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{hexkeymap::{HexKeyMap, HexKeyMapN}, AccessoryInfo};
+use crate::{hexkeymap::{HexKeyMap, HexKeyMapN}, accessory::AccessoryInfo};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
 

@@ -1,6 +1,6 @@
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, Characteristic, ValueNotification};
 use btleplug::platform::{Manager, Peripheral};
-use odyssey_hub_common::{AccessoryInfo, AccessoryInfoMap, AccessoryMap};
+use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryMap};
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
