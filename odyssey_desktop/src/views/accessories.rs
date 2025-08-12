@@ -6,8 +6,8 @@ use std::{
     time::Duration,
 };
 
-use crate::hub;
-use odyssey_hub_common::{AccessoryInfo, AccessoryMap, AccessoryType}; // HubContext
+use crate::hub; // HubContext
+use odyssey_hub_common::{AccessoryInfo, AccessoryMap, AccessoryType};
 
 // UI-side BLE scan (btleplug)
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
@@ -40,6 +40,20 @@ fn StatusChip(props: StatusChipProps) -> Element {
             span { class: "{dot_cls}" }
             "{label}"
         }
+    }
+}
+
+#[inline]
+fn slot_color_dot(slot: usize) -> &'static str {
+    // red, blue, yellow, green, orange, gray (match CROSSHAIRS order)
+    match slot {
+        0 => "bg-red-500",
+        1 => "bg-blue-500",
+        2 => "bg-yellow-400",
+        3 => "bg-green-500",
+        4 => "bg-orange-500",
+        5 => "bg-gray-400",
+        _ => "bg-gray-400",
     }
 }
 
@@ -197,10 +211,48 @@ pub fn Accessories() -> Element {
         })
     };
 
+    // assign: takes ([u8;6], Option<NonZeroU64>) — sets or clears assignment (UUID-based)
+    let assign = {
+        let hub_sig = hub.clone();
+        let info0 = info_map.clone();
+        use_callback(move |(id, assign_uuid): ([u8; 6], Option<NonZeroU64>)| {
+            let next: HashMap<[u8; 6], AccessoryInfo> = {
+                let cur = info0.read();
+                let mut m = cur.clone();
+                drop(cur);
+                if let Some(info) = m.get_mut(&id) {
+                    info.assignment = assign_uuid;
+                }
+                m
+            };
+
+            let mut client = hub_sig.read().client.read().clone();
+            let mut info_map = info0.clone();
+            spawn(async move {
+                let _ = client.update_accessory_info_map(next.clone()).await;
+                info_map.set(next);
+            });
+        })
+    };
+
     // ---------- derive snapshots for render (no live reads in rsx) ----------
     let info_snapshot: HashMap<[u8; 6], AccessoryInfo> = { info_map.read().clone() };
     let am_snapshot: HashMap<[u8; 6], (AccessoryInfo, bool)> = { accessory_map.read().clone() };
     let mut added_ids: Vec<[u8; 6]> = info_snapshot.keys().cloned().collect();
+
+    // Live device list from HubContext (reactive). Expect (hub().devices)() => iterable of (slot, device) where device.uuid() -> u64
+    let devices_snapshot = (hub().devices)();
+
+    // Build dropdown choices: (uuid_nz, label, slot)
+    let device_choices: Vec<(NonZeroU64, String, usize)> = devices_snapshot
+        .iter()
+        .filter_map(|(slot, dev)| {
+            let uuid_u64 = dev.uuid();
+            let nz = NonZeroU64::new(uuid_u64)?;
+            let label = format!("0x{:x}", uuid_u64);
+            Some((nz, label, slot))
+        })
+        .collect();
 
     // Sort: connected first, then by MAC for stability
     added_ids.sort_by_key(|id| {
@@ -249,14 +301,77 @@ pub fn Accessories() -> Element {
 
                             let mac = format_mac(id);
 
+                            // Current assignment UUID (u64)
+                            let assigned_uuid = info.assignment.map(|nz| nz.get());
+
+                            // Find live device by UUID to get slot (for color), otherwise mark offline
+                            let (assigned_slot_opt, assigned_label) = if let Some(uuid_v) = assigned_uuid {
+                                if let Some((_uuid_nz, label, slot)) = device_choices
+                                    .iter()
+                                    .find(|(nz, _, _)| nz.get() == uuid_v) {
+                                    (Some(*slot), label.clone())
+                                } else {
+                                    let offline_label = format!("0x{:x} (offline)", uuid_v);
+                                    (None, offline_label)
+                                }
+                            } else {
+                                (None, "(Unassigned)".to_string())
+                            };
+
                             rsx! {
-                                li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
+                                li { class: "flex flex-col gap-2 md:flex-row md:items-center md:justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
+
+                                    // Left: name + MAC
                                     div { class: "min-w-0",
                                         div { class: "font-medium truncate", "{info.name}" }
                                         div { class: "text-xs opacity-70 truncate", "{mac}" }
                                     }
-                                    div { class: "flex items-center gap-3",
+
+                                    // Right: status + assignment dropdown + remove
+                                    div { class: "flex items-center gap-3 flex-wrap justify-end",
+
+                                        // Connected status pill
                                         StatusChip { connected }
+
+                                        // Assignment chip (color + uuid/label)
+                                        {
+                                            let dot_class = slot_color_dot(assigned_slot_opt.unwrap_or(5)); // gray when None/offline
+                                            rsx!{
+                                                span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200/70 dark:border-white/10",
+                                                    span { class: "h-2.5 w-2.5 rounded-full {dot_class}" }
+                                                    "{assigned_label}"
+                                                }
+                                            }
+                                        }
+
+                                        // Assignment dropdown (UUID values; stays selected even if device goes offline)
+                                        select {
+                                            class: "px-2 py-1 text-sm rounded-lg border border-gray-300/70 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60",
+                                            value: assigned_uuid.map(|v| v.to_string()).unwrap_or_default(),
+                                            onchange: {
+                                                let id = *id;
+                                                let assign = assign.clone();
+                                                move |evt| {
+                                                    let s = evt.value();
+                                                    if s.is_empty() {
+                                                        assign.call((id, None));
+                                                    } else if let Ok(v) = s.parse::<u64>() {
+                                                        if let Some(nz) = NonZeroU64::new(v) {
+                                                            assign.call((id, Some(nz)));
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            option { value: "", "(Unassigned)" }
+                                            {device_choices.iter().map(|(nz, label, slot)| {
+                                                let display = format!("{label} (slot {})", slot + 1);
+                                                rsx!{
+                                                    option { value: "{nz.get()}", "{display}" }
+                                                }
+                                            })}
+                                        }
+
+                                        // Remove accessory
                                         button {
                                             class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 hover:bg-red-500 hover:text-white transition",
                                             onclick: {
