@@ -264,35 +264,29 @@ impl From<common::device::Device> for Device {
 impl From<Device> for common::device::Device {
     fn from(device: Device) -> Self {
         match device.kind {
-            DeviceKind::Udp => {
-                common::device::Device::Udp(common::device::UdpDevice {
-                    id: device.udp.id,
-                    addr: unsafe { std::ffi::CStr::from_ptr(device.udp.addr) }
-                        .to_str()
-                        .unwrap()
-                        .parse()
-                        .unwrap(),
-                    uuid: device.udp.uuid,
-                })
-            }
-            DeviceKind::Hid => {
-                common::device::Device::Hid(common::device::HidDevice {
-                    path: unsafe { std::ffi::CStr::from_ptr(device.hid.path) }
-                        .to_str()
-                        .unwrap()
-                        .to_owned(),
-                    uuid: device.hid.uuid,
-                })
-            }
-            DeviceKind::Cdc => {
-                common::device::Device::Cdc(common::device::CdcDevice {
-                    path: unsafe { std::ffi::CStr::from_ptr(device.cdc.path) }
-                        .to_str()
-                        .unwrap()
-                        .to_owned(),
-                    uuid: device.cdc.uuid,
-                })
-            }
+            DeviceKind::Udp => common::device::Device::Udp(common::device::UdpDevice {
+                id: device.udp.id,
+                addr: unsafe { std::ffi::CStr::from_ptr(device.udp.addr) }
+                    .to_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+                uuid: device.udp.uuid,
+            }),
+            DeviceKind::Hid => common::device::Device::Hid(common::device::HidDevice {
+                path: unsafe { std::ffi::CStr::from_ptr(device.hid.path) }
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+                uuid: device.hid.uuid,
+            }),
+            DeviceKind::Cdc => common::device::Device::Cdc(common::device::CdcDevice {
+                path: unsafe { std::ffi::CStr::from_ptr(device.cdc.path) }
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+                uuid: device.cdc.uuid,
+            }),
         }
     }
 }
@@ -328,15 +322,9 @@ impl From<common::events::DeviceEventKind> for DeviceEventKind {
             common::events::DeviceEventKind::ImpactEvent(e) => {
                 DeviceEventKind::ImpactEvent(e.into())
             }
-            common::events::DeviceEventKind::ConnectEvent => {
-                DeviceEventKind::ConnectEvent
-            }
-            common::events::DeviceEventKind::DisconnectEvent => {
-                DeviceEventKind::DisconnectEvent
-            }
-            common::events::DeviceEventKind::ZeroResult(r) => {
-                DeviceEventKind::ZeroResult(r)
-            }
+            common::events::DeviceEventKind::ConnectEvent => DeviceEventKind::ConnectEvent,
+            common::events::DeviceEventKind::DisconnectEvent => DeviceEventKind::DisconnectEvent,
+            common::events::DeviceEventKind::ZeroResult(r) => DeviceEventKind::ZeroResult(r),
             common::events::DeviceEventKind::SaveZeroResult(r) => {
                 DeviceEventKind::SaveZeroResult(r)
             }
@@ -372,7 +360,11 @@ impl From<TrackingEvent> for common::events::TrackingEvent {
         common::events::TrackingEvent {
             timestamp: event.timestamp,
             aimpoint: event.aimpoint.into(),
-            pose: if event.has_pose { Some(event.pose.into()) } else { None },
+            pose: if event.has_pose {
+                Some(event.pose.into())
+            } else {
+                None
+            },
             distance: event.distance,
             screen_id: event.screen_id,
         }
@@ -393,7 +385,11 @@ impl From<common::AccessoryInfo> for AccessoryInfo {
         AccessoryInfo {
             name: std::ffi::CString::new(info.name).unwrap().into_raw(),
             ty: info.ty,
-            assignment: if let Some(assignment) = info.assignment { assignment.get() } else { 0 },
+            assignment: if let Some(assignment) = info.assignment {
+                assignment.get()
+            } else {
+                0
+            },
         }
     }
 }

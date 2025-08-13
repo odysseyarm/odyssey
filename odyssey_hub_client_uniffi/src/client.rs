@@ -39,7 +39,14 @@ pub struct Client {
 
 #[derive(uniffi::Object)]
 pub struct EventStream {
-    pub inner: Arc<Mutex<futures::stream::BoxStream<'static, Result<odyssey_hub_common::events::Event, tonic::Status>>>>,
+    pub inner: Arc<
+        Mutex<
+            futures::stream::BoxStream<
+                'static,
+                Result<odyssey_hub_common::events::Event, tonic::Status>,
+            >,
+        >,
+    >,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -48,14 +55,12 @@ impl EventStream {
     pub async fn next(&self) -> Result<Event, ClientError> {
         if let Some(msg) = self.inner.lock().await.next().await {
             match msg {
-                Ok(event) => {
-                    Ok(odyssey_hub_common::events::Event::from(event).into())
-                }
+                Ok(event) => Ok(odyssey_hub_common::events::Event::from(event).into()),
                 Err(_) => Err(ClientError::StreamEnd),
             }
         } else {
             Err(ClientError::StreamEnd)
-        } 
+        }
     }
 }
 
@@ -94,11 +99,9 @@ impl Client {
         let mut client = self.inner.read().await.clone();
 
         match client.subscribe_events().await {
-            Ok(stream) => {
-                Ok(EventStream {
-                    inner: Arc::new(Mutex::new(Box::pin(stream))),
-                })
-            }
+            Ok(stream) => Ok(EventStream {
+                inner: Arc::new(Mutex::new(Box::pin(stream))),
+            }),
             Err(_) => Err(ClientError::NotConnected),
         }
     }
@@ -177,7 +180,11 @@ impl Client {
             .map_err(|_| ClientError::NotConnected)
     }
 
-    pub async fn set_shot_delay(&self, device: DeviceRecord, delay_ms: u16) -> Result<(), ClientError> {
+    pub async fn set_shot_delay(
+        &self,
+        device: DeviceRecord,
+        delay_ms: u16,
+    ) -> Result<(), ClientError> {
         self.inner
             .write()
             .await

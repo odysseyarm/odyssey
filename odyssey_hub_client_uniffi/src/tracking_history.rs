@@ -12,7 +12,9 @@ impl TrackingHistory {
     #[uniffi::constructor]
     pub fn new(capacity: u32) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(odyssey_hub_client::tracking_history::TrackingHistory::new(capacity as usize))),
+            inner: Arc::new(Mutex::new(
+                odyssey_hub_client::tracking_history::TrackingHistory::new(capacity as usize),
+            )),
         }
     }
 

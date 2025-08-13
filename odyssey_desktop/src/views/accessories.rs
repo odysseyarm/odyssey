@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::hub; // HubContext
-use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType, AccessoryFeature};
+use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType};
 
 // UI-side BLE scan (btleplug)
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
@@ -45,7 +45,6 @@ fn StatusChip(props: StatusChipProps) -> Element {
 
 #[inline]
 fn slot_color_dot(slot: usize) -> &'static str {
-    // red, blue, yellow, green, orange, gray (match CROSSHAIRS order)
     match slot {
         0 => "bg-red-500",
         1 => "bg-blue-500",
@@ -59,17 +58,15 @@ fn slot_color_dot(slot: usize) -> &'static str {
 
 #[component]
 pub fn Accessories() -> Element {
-    // Provided as Signal<HubContext> in app()
     let hub = use_context::<Signal<hub::HubContext>>();
 
-    // Full map from server: id -> (info, connected)
+    // id -> (info, connected)
     let accessory_map = use_signal(|| HashMap::<[u8; 6], (AccessoryInfo, bool)>::new());
-
-    // Local editable info map (what we send via update_accessory_info_map)
+    // id -> info
     let info_map = use_signal(|| HashMap::<[u8; 6], AccessoryInfo>::new());
 
-    // Nearby devices discovered by local BLE (potential candidates to Add)
-    let nearby = use_signal(|| HashSet::<[u8; 6]>::new());
+    // Nearby discovered by BLE: id -> (label, type)
+    let nearby = use_signal(|| HashMap::<[u8; 6], (String, AccessoryType)>::new());
 
     let format_mac = |mac: &[u8; 6]| -> String {
         mac.iter()
@@ -78,46 +75,48 @@ pub fn Accessories() -> Element {
             .join(":")
     };
 
-    // ---------- seed current state + subscribe live ----------
+    // Seed + subscribe AccessoryMap
     use_future({
         let hub_sig = hub.clone();
         let mut accessory_map = accessory_map.clone();
         let mut info_map = info_map.clone();
         move || async move {
-            // Clone an owned Client using only read locks
             let mut client = hub_sig.read().client.read().clone();
 
             if let Ok(m) = client.get_accessory_map().await {
                 accessory_map.set(m.clone());
-                let info_snapshot: HashMap<[u8; 6], AccessoryInfo> = m
+                let infos = m
                     .iter()
                     .map(|(id, (info, _))| (*id, info.clone()))
                     .collect();
-                info_map.set(info_snapshot);
+                info_map.set(infos);
             }
 
             if let Ok(mut stream) = client.subscribe_accessory_map().await {
                 while let Some(Ok(next)) = stream.next().await {
                     let m: AccessoryMap = next;
                     accessory_map.set(m.clone());
-                    let info_snapshot: HashMap<[u8; 6], AccessoryInfo> = m
+                    let infos = m
                         .iter()
                         .map(|(id, (info, _))| (*id, info.clone()))
                         .collect();
-                    info_map.set(info_snapshot);
+                    info_map.set(infos);
                 }
             }
         }
     });
 
-    // ---------- UI-side BLE scan loop (find things to Add) ----------
+    // BLE scan loop: detect DryFireMag and BlackbeardX
     use_future({
         let mut nearby = nearby.clone();
         move || async move {
-            // Keep UUID for reference, but don't filter by it (Windows often omits service UUIDs in passive scans)
             let _nus_uuid = Uuid::from_bytes([
                 0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc,
                 0xca, 0x9e,
+            ]);
+            let blackbeardx_uuid = Uuid::from_bytes([
+                0x6e, 0x40, 0x00, 0x01, 0x20, 0x4d, 0x61, 0x6e, 0x74, 0x69, 0x73, 0x20, 0x54, 0x65,
+                0x63, 0x68,
             ]);
 
             let Ok(manager) = Manager::new().await else {
@@ -130,7 +129,6 @@ pub fn Accessories() -> Element {
                 return;
             };
 
-            // Windows-friendly: empty filter
             let filter = ScanFilter { services: vec![] };
 
             loop {
@@ -138,12 +136,21 @@ pub fn Accessories() -> Element {
                 tokio::time::sleep(Duration::from_secs(3)).await;
                 let _ = adapter.stop_scan().await;
 
-                let mut found = HashSet::<[u8; 6]>::new();
+                let mut found = HashMap::<[u8; 6], (String, AccessoryType)>::new();
                 if let Ok(peris) = adapter.peripherals().await {
                     for p in peris {
                         if let Ok(Some(props)) = p.properties().await {
+                            let id = props.address.into_inner();
                             if props.local_name.as_deref() == Some("DryFireMag") {
-                                found.insert(props.address.into_inner());
+                                found.insert(
+                                    id,
+                                    ("DryFireMag".to_string(), AccessoryType::DryFireMag),
+                                );
+                            } else if props.services.contains(&blackbeardx_uuid) {
+                                found.insert(
+                                    id,
+                                    ("BlackbeardX".to_string(), AccessoryType::BlackbeardX),
+                                );
                             }
                         }
                     }
@@ -155,41 +162,29 @@ pub fn Accessories() -> Element {
         }
     });
 
-    // ---------- Actions via use_callback (clone Client from read locks only) ----------
-    // add: takes ([u8;6], String)
+    // add: ([u8;6], String, AccessoryType)
     let add = {
         let hub_sig = hub.clone();
         let info0 = info_map.clone();
-        use_callback(move |(id, name): ([u8; 6], String)| {
-            // Build "next" without holding a live read across the await
+        use_callback(move |(id, name, ty): ([u8; 6], String, AccessoryType)| {
             let next: HashMap<[u8; 6], AccessoryInfo> = {
                 let cur = info0.read();
                 let mut m = cur.clone();
                 drop(cur);
-                m.insert(
-                    id,
-                    AccessoryInfo {
-                        name,
-                        ty: AccessoryType::DryFireMag,
-                        assignment: None::<NonZeroU64>,
-                        features: HashSet::from([AccessoryFeature::Impact]),
-                    },
-                );
+                m.insert(id, AccessoryInfo::with_defaults(name, ty));
                 m
             };
 
             let mut client = hub_sig.read().client.read().clone();
             let mut info_map = info0.clone();
-
             spawn(async move {
                 let _ = client.update_accessory_info_map(next.clone()).await;
-                // Optimistic local update; server stream will reconcile
                 info_map.set(next);
             });
         })
     };
 
-    // remove: takes ([u8;6])
+    // remove: ([u8;6])
     let remove = {
         let hub_sig = hub.clone();
         let info0 = info_map.clone();
@@ -204,7 +199,6 @@ pub fn Accessories() -> Element {
 
             let mut client = hub_sig.read().client.read().clone();
             let mut info_map = info0.clone();
-
             spawn(async move {
                 let _ = client.update_accessory_info_map(next.clone()).await;
                 info_map.set(next);
@@ -212,7 +206,7 @@ pub fn Accessories() -> Element {
         })
     };
 
-    // assign: takes ([u8;6], Option<NonZeroU64>) — sets or clears assignment (UUID-based)
+    // assign: ([u8;6], Option<NonZeroU64>) — UUID-based
     let assign = {
         let hub_sig = hub.clone();
         let info0 = info_map.clone();
@@ -236,26 +230,26 @@ pub fn Accessories() -> Element {
         })
     };
 
-    // ---------- derive snapshots for render (no live reads in rsx) ----------
+    // Snapshots for render
     let info_snapshot: HashMap<[u8; 6], AccessoryInfo> = { info_map.read().clone() };
     let am_snapshot: HashMap<[u8; 6], (AccessoryInfo, bool)> = { accessory_map.read().clone() };
     let mut added_ids: Vec<[u8; 6]> = info_snapshot.keys().cloned().collect();
 
-    // Live device list from HubContext (reactive). Expect (hub().devices)() => iterable of (slot, device) where device.uuid() -> u64
+    // Devices (for assignment)
     let devices_snapshot = (hub().devices)();
-
-    // Build dropdown choices: (uuid_nz, label, slot)
     let device_choices: Vec<(NonZeroU64, String, usize)> = devices_snapshot
         .iter()
         .filter_map(|(slot, dev)| {
             let uuid_u64 = dev.uuid();
             let nz = NonZeroU64::new(uuid_u64)?;
             let label = format!("0x{:x}", uuid_u64);
-            Some((nz, label, slot))
+            // If your pattern binding gives a reference for slot, adjust to your type:
+            let s = slot;
+            Some((nz, label, s))
         })
         .collect();
 
-    // Sort: connected first, then by MAC for stability
+    // Sort connected first, then MAC
     added_ids.sort_by_key(|id| {
         let connected = am_snapshot.get(id).map(|(_, c)| *c).unwrap_or(false);
         (if connected { 0 } else { 1 }, *id)
@@ -264,17 +258,17 @@ pub fn Accessories() -> Element {
     let connected_count = am_snapshot.values().filter(|(_, c)| *c).count();
     let total_count = added_ids.len();
 
-    let nearby_snapshot: HashSet<[u8; 6]> = { nearby.read().clone() };
-    let nearby_addable: Vec<[u8; 6]> = nearby_snapshot
+    let nearby_snapshot: HashMap<[u8; 6], (String, AccessoryType)> = { nearby.read().clone() };
+    let mut nearby_addable: Vec<([u8; 6], (String, AccessoryType))> = nearby_snapshot
         .iter()
-        .filter(|id| !info_snapshot.contains_key(*id))
-        .cloned()
+        .filter(|(id, _)| !info_snapshot.contains_key(*id))
+        .map(|(id, v)| (*id, v.clone()))
         .collect();
+    nearby_addable.sort_by_key(|(id, _)| *id);
 
     rsx! {
         div { class: "p-4 space-y-6",
 
-            // Persisted accessories (with live connected status)
             section { class: "space-y-2",
                 h2 { class: "text-lg font-semibold flex items-center gap-2",
                     "Accessories"
@@ -291,22 +285,14 @@ pub fn Accessories() -> Element {
                                 .cloned()
                                 .unwrap_or_else(|| {
                                     (
-                                        info_snapshot.get(id).cloned().unwrap_or(AccessoryInfo {
-                                            name: "Unknown".into(),
-                                            ty: AccessoryType::DryFireMag,
-                                            assignment: None::<NonZeroU64>,
-                                            features: HashSet::new(),
-                                        }),
+                                        info_snapshot.get(id).cloned().unwrap_or_else(|| AccessoryInfo::with_defaults("Unknown", AccessoryType::DryFireMag)),
                                         false
                                     )
                                 });
 
                             let mac = format_mac(id);
-
-                            // Current assignment UUID (u64)
                             let assigned_uuid = info.assignment.map(|nz| nz.get());
 
-                            // Find live device by UUID to get slot (for color), otherwise mark offline
                             let (assigned_slot_opt, assigned_label) = if let Some(uuid_v) = assigned_uuid {
                                 if let Some((_uuid_nz, label, slot)) = device_choices
                                     .iter()
@@ -323,21 +309,16 @@ pub fn Accessories() -> Element {
                             rsx! {
                                 li { class: "flex flex-col gap-2 md:flex-row md:items-center md:justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
 
-                                    // Left: name + MAC
                                     div { class: "min-w-0",
                                         div { class: "font-medium truncate", "{info.name}" }
                                         div { class: "text-xs opacity-70 truncate", "{mac}" }
                                     }
 
-                                    // Right: status + assignment dropdown + remove
                                     div { class: "flex items-center gap-3 flex-wrap justify-end",
-
-                                        // Connected status pill
                                         StatusChip { connected }
 
-                                        // Assignment chip (color + uuid/label)
                                         {
-                                            let dot_class = slot_color_dot(assigned_slot_opt.unwrap_or(5)); // gray when None/offline
+                                            let dot_class = slot_color_dot(assigned_slot_opt.unwrap_or(5));
                                             rsx!{
                                                 span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200/70 dark:border-white/10",
                                                     span { class: "h-2.5 w-2.5 rounded-full {dot_class}" }
@@ -346,7 +327,6 @@ pub fn Accessories() -> Element {
                                             }
                                         }
 
-                                        // Assignment dropdown (UUID values; stays selected even if device goes offline)
                                         select {
                                             class: "px-2 py-1 text-sm rounded-lg border border-gray-300/70 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60",
                                             value: assigned_uuid.map(|v| v.to_string()).unwrap_or_default(),
@@ -373,7 +353,6 @@ pub fn Accessories() -> Element {
                                             })}
                                         }
 
-                                        // Remove accessory
                                         button {
                                             class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 hover:bg-red-500 hover:text-white transition",
                                             onclick: {
@@ -391,27 +370,28 @@ pub fn Accessories() -> Element {
                 }
             }
 
-            // Nearby discovered devices (not yet added)
             section { class: "space-y-2",
                 h2 { class: "text-lg font-semibold", "Nearby" }
                 if nearby_addable.is_empty() {
                     p { class: "text-sm opacity-70", "No nearby devices (or all are already added)." }
                 } else {
                     ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
-                        {nearby_addable.iter().map(|id| {
+                        {nearby_addable.iter().map(|(id, (label, ty))| {
                             let mac = format_mac(id);
                             rsx! {
                                 li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
                                     div { class: "min-w-0",
-                                        div { class: "font-medium truncate", "DryFireMag" }
+                                        div { class: "font-medium truncate", "{label}" }
                                         div { class: "text-xs opacity-70 truncate", "{mac}" }
                                     }
                                     button {
                                         class: "px-3 py-1.5 text-sm rounded-lg border border-emerald-600/60 hover:bg-emerald-600 hover:text-white transition",
                                         onclick: {
                                             let id = *id;
+                                            let label = label.clone();
+                                            let ty = *ty;
                                             let add = add.clone();
-                                            move |_| add.call((id, "DryFireMag".to_string()))
+                                            move |_| add.call((id, label.clone(), ty))
                                         },
                                         "Add"
                                     }

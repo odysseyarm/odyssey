@@ -1,11 +1,7 @@
-use std::num::NonZero;
-
-use serde::{Deserialize, Serialize};
-
+pub mod accessory;
 pub mod config;
 pub mod device;
 pub mod events;
-pub mod accessory;
 mod hexkeymap;
 
 #[repr(C)]

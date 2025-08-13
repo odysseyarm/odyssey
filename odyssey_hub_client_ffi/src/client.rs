@@ -1,6 +1,6 @@
+use futures_util::stream::StreamExt;
 use odyssey_hub_client::client::Client;
 use std::ffi::c_void;
-use futures_util::stream::StreamExt;
 
 use crate::ffi_common::{Device, ScreenInfo};
 use crate::funny::{Vector2f32, Vector3f32};

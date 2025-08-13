@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
 use crate::ffi_common::TrackingEvent;
 use odyssey_hub_client::tracking_history::TrackingHistory as TrackingHistoryInner;
+use std::sync::{Arc, Mutex};
 
 pub struct TrackingHistory {
     inner: Arc<Mutex<TrackingHistoryInner>>,
@@ -32,7 +32,9 @@ pub extern "C" fn tracking_history_get_closest(
     if let Some(history) = unsafe { history.as_ref() } {
         let lock = history.inner.lock().unwrap();
         if let Some(e) = lock.get_closest(timestamp) {
-            unsafe { *out_event = e.into(); }
+            unsafe {
+                *out_event = e.into();
+            }
             return true;
         }
     }
@@ -42,6 +44,8 @@ pub extern "C" fn tracking_history_get_closest(
 #[no_mangle]
 pub extern "C" fn tracking_history_free(history: *mut TrackingHistory) {
     if !history.is_null() {
-        unsafe { drop(Box::from_raw(history)); }
+        unsafe {
+            drop(Box::from_raw(history));
+        }
     }
 }

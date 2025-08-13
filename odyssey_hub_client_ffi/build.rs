@@ -54,7 +54,7 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(crate_dir.to_string() + "/generated/include/ohc.hpp");
-    
+
     let src_include = Path::new(crate_dir).join("include");
     let dst_include = Path::new(crate_dir).join("generated/include");
 

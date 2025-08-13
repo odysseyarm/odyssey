@@ -46,6 +46,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
             match event {
                 oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) => match kind {
                     oe::DeviceEventKind::ImpactEvent { .. } => {
+                        println!("ImpactEvent for device: {:?}", device);
                         if let Some(key) = ctx.device_key(&device) {
                             if *device_signals.peek()[key].shooting.peek() {
                                 let zr = *zero_screen_ratio.peek();

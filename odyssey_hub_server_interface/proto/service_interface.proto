@@ -126,6 +126,7 @@ message DeviceEvent {
 
 enum AccessoryType {
   DRY_FIRE_MAG = 0;
+  BLACKBEARD_X = 1;
 }
 
 enum AccessoryFeature {

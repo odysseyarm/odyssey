@@ -72,7 +72,8 @@ impl<'de> Deserialize<'de> for HexValue {
             where
                 E: de::Error,
             {
-                let s = v.strip_prefix("0x")
+                let s = v
+                    .strip_prefix("0x")
                     .ok_or_else(|| de::Error::invalid_value(Unexpected::Str(v), &self))?;
                 u64::from_str_radix(s, 16)
                     .map(HexValue)
@@ -98,7 +99,10 @@ where
             // produce e.g. "0x001122aabbcc"
             let key_str = format!(
                 "0x{}",
-                bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+                bytes
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>()
             );
             map_ser.serialize_entry(&key_str, value)?;
         }
@@ -136,9 +140,9 @@ where
             {
                 let mut values = HashMap::with_capacity(access.size_hint().unwrap_or(0));
                 while let Some((key_str, value)) = access.next_entry::<String, T>()? {
-                    let s = key_str
-                        .strip_prefix("0x")
-                        .ok_or_else(|| de::Error::custom(format!("Missing 0x prefix: {}", key_str)))?;
+                    let s = key_str.strip_prefix("0x").ok_or_else(|| {
+                        de::Error::custom(format!("Missing 0x prefix: {}", key_str))
+                    })?;
                     if s.len() != 2 * N {
                         return Err(de::Error::custom(format!(
                             "Expected {} hex digits ({} bytes), got {}: {}",
@@ -150,9 +154,10 @@ where
                     }
                     let mut arr = [0u8; N];
                     for i in 0..N {
-                        let byte_str = &s[2*i..2*i+2];
-                        arr[i] = u8::from_str_radix(byte_str, 16)
-                            .map_err(|_| de::Error::custom(format!("Invalid hex byte: {}", byte_str)))?;
+                        let byte_str = &s[2 * i..2 * i + 2];
+                        arr[i] = u8::from_str_radix(byte_str, 16).map_err(|_| {
+                            de::Error::custom(format!("Invalid hex byte: {}", byte_str))
+                        })?;
                     }
                     values.insert(arr, value);
                 }

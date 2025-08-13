@@ -286,52 +286,52 @@ impl From<DeviceRecord> for common::device::Device {
 impl From<common::events::Event> for Event {
     fn from(event: common::events::Event) -> Self {
         match event {
-            common::events::Event::DeviceEvent(
-                common::events::DeviceEvent(d, evt),
-            ) => Event::DeviceEvent(DeviceEvent {
-                device: d.into(),
-                kind: match evt {
-                    common::events::DeviceEventKind::AccelerometerEvent(e) => {
-                        DeviceEventKind::AccelerometerEvent(e.into())
-                    }
-                    common::events::DeviceEventKind::TrackingEvent(e) => {
-                        DeviceEventKind::TrackingEvent(TrackingEvent {
-                            timestamp: e.timestamp,
-                            aimpoint: e.aimpoint.into(),
-                            pose: match e.pose {
-                                Some(p) => Option::Some(p.into()),
-                                None => Option::None,
-                            },
-                            distance: e.distance,
-                            screen_id: e.screen_id,
-                        })
-                    }
-                    common::events::DeviceEventKind::ImpactEvent(e) => {
-                        DeviceEventKind::ImpactEvent(e.into())
-                    }
-                    common::events::DeviceEventKind::ConnectEvent => {
-                        DeviceEventKind::ConnectEvent
-                    }
-                    common::events::DeviceEventKind::DisconnectEvent => {
-                        DeviceEventKind::DisconnectEvent
-                    }
-                    common::events::DeviceEventKind::ZeroResult(b) => {
-                        DeviceEventKind::ZeroResult(b)
-                    }
-                    common::events::DeviceEventKind::SaveZeroResult(b) => {
-                        DeviceEventKind::SaveZeroResult(b)
-                    }
-                    common::events::DeviceEventKind::ShotDelayChangedEvent(n) => {
-                        DeviceEventKind::ShotDelayChanged(n)
-                    }
-                    common::events::DeviceEventKind::PacketEvent(p) => {
-                        DeviceEventKind::PacketEvent(PacketEvent {
-                            ty: p.ty().into(),
-                            data: p.data.into(),
-                        })
-                    }
-                },
-            }),
+            common::events::Event::DeviceEvent(common::events::DeviceEvent(d, evt)) => {
+                Event::DeviceEvent(DeviceEvent {
+                    device: d.into(),
+                    kind: match evt {
+                        common::events::DeviceEventKind::AccelerometerEvent(e) => {
+                            DeviceEventKind::AccelerometerEvent(e.into())
+                        }
+                        common::events::DeviceEventKind::TrackingEvent(e) => {
+                            DeviceEventKind::TrackingEvent(TrackingEvent {
+                                timestamp: e.timestamp,
+                                aimpoint: e.aimpoint.into(),
+                                pose: match e.pose {
+                                    Some(p) => Option::Some(p.into()),
+                                    None => Option::None,
+                                },
+                                distance: e.distance,
+                                screen_id: e.screen_id,
+                            })
+                        }
+                        common::events::DeviceEventKind::ImpactEvent(e) => {
+                            DeviceEventKind::ImpactEvent(e.into())
+                        }
+                        common::events::DeviceEventKind::ConnectEvent => {
+                            DeviceEventKind::ConnectEvent
+                        }
+                        common::events::DeviceEventKind::DisconnectEvent => {
+                            DeviceEventKind::DisconnectEvent
+                        }
+                        common::events::DeviceEventKind::ZeroResult(b) => {
+                            DeviceEventKind::ZeroResult(b)
+                        }
+                        common::events::DeviceEventKind::SaveZeroResult(b) => {
+                            DeviceEventKind::SaveZeroResult(b)
+                        }
+                        common::events::DeviceEventKind::ShotDelayChangedEvent(n) => {
+                            DeviceEventKind::ShotDelayChanged(n)
+                        }
+                        common::events::DeviceEventKind::PacketEvent(p) => {
+                            DeviceEventKind::PacketEvent(PacketEvent {
+                                ty: p.ty().into(),
+                                data: p.data.into(),
+                            })
+                        }
+                    },
+                })
+            }
         }
     }
 }

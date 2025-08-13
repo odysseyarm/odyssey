@@ -47,20 +47,41 @@ fn main() {
             .unwrap();
 
         let patched = contents
-            .replace("internal class UniffiException", "public class UniffiException")
-            .replace("internal interface IEventCallback", "public interface IEventCallback")
+            .replace(
+                "internal class UniffiException",
+                "public class UniffiException",
+            )
+            .replace(
+                "internal interface IEventCallback",
+                "public interface IEventCallback",
+            )
             .replace("internal class EventCallback", "public class EventCallback")
             .replace("internal class UserCallback", "public class UserCallback")
-            .replace("internal class CallbackException", "public class CallbackException")
-            .replace("internal class ClientException", "public class ClientException")
+            .replace(
+                "internal class CallbackException",
+                "public class CallbackException",
+            )
+            .replace(
+                "internal class ClientException",
+                "public class ClientException",
+            )
             .replace("internal struct UserObj", "public struct UserObj")
             .replace("internal struct Client", "public struct Client")
             .replace("internal record", "public record")
             .replace("internal class Device", "public class Device")
-            .replace("internal class AnyhowException", "public class AnyhowException")
+            .replace(
+                "internal class AnyhowException",
+                "public class AnyhowException",
+            )
             .replace("uniffi.ohc_uniffi", "Radiosity.OdysseyHubClient.uniffi")
-            .replace("internal interface ITrackingHistory", "public interface ITrackingHistory")
-            .replace("internal class TrackingHistory", "public class TrackingHistory")
+            .replace(
+                "internal interface ITrackingHistory",
+                "public interface ITrackingHistory",
+            )
+            .replace(
+                "internal class TrackingHistory",
+                "public class TrackingHistory",
+            )
             .replace("internal enum AccessoryType", "public enum AccessoryType");
 
         File::create(&target_file)

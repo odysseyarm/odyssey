@@ -384,7 +384,12 @@ impl From<proto::AccessoryInfo> for common::accessory::AccessoryInfo {
             features: value
                 .features
                 .into_iter()
-                .map(|f| common::accessory::AccessoryFeature::from(proto::AccessoryFeature::try_from(f).unwrap()).into())
+                .map(|f| {
+                    common::accessory::AccessoryFeature::from(
+                        proto::AccessoryFeature::try_from(f).unwrap(),
+                    )
+                    .into()
+                })
                 .collect(),
         }
     }
@@ -410,6 +415,7 @@ impl From<common::accessory::AccessoryType> for proto::AccessoryType {
     fn from(value: common::accessory::AccessoryType) -> Self {
         match value {
             common::accessory::AccessoryType::DryFireMag => proto::AccessoryType::DryFireMag,
+            common::accessory::AccessoryType::BlackbeardX => proto::AccessoryType::BlackbeardX,
         }
     }
 }
@@ -418,6 +424,7 @@ impl From<proto::AccessoryType> for common::accessory::AccessoryType {
     fn from(value: proto::AccessoryType) -> Self {
         match value {
             proto::AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
+            proto::AccessoryType::BlackbeardX => common::accessory::AccessoryType::BlackbeardX,
         }
     }
 }
@@ -431,10 +438,13 @@ impl From<common::accessory::AccessoryMap> for proto::AccessoryMapReply {
                 buf[..6].copy_from_slice(&k);
                 let key = u64::from_le_bytes(buf);
                 let accessory: proto::AccessoryInfo = accessory.into();
-                (key, proto::AccessoryStatus {
-                    accessory: Some(accessory),
-                    connected,
-                })
+                (
+                    key,
+                    proto::AccessoryStatus {
+                        accessory: Some(accessory),
+                        connected,
+                    },
+                )
             })
             .collect();
         proto::AccessoryMapReply { accessory_map }

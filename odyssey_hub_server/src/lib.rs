@@ -5,15 +5,13 @@ mod server;
 use std::{pin::Pin, sync::Arc};
 
 use interprocess::local_socket::{
-    traits::tokio::Listener, GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _, ToFsName, ToNsName
+    traits::tokio::Listener, GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _,
+    ToFsName, ToNsName,
 };
 #[cfg(target_os = "windows")]
 use interprocess::os::windows::{
     local_socket::ListenerOptionsExt,
-    security_descriptor::{
-        AsSecurityDescriptorMutExt,
-        SecurityDescriptor,
-    }
+    security_descriptor::{AsSecurityDescriptorMutExt, SecurityDescriptor},
 };
 use odyssey_hub_server_interface::service_server::ServiceServer;
 use tokio::{
@@ -152,17 +150,21 @@ pub async fn run_server(
             .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
     })
     .await??;
-    
+
     let accessory_info_map = tokio::task::spawn_blocking(|| {
         odyssey_hub_common::config::accessory_map()
             .map_err(|e| anyhow::anyhow!("Failed to load accessory map: {}", e))
     })
     .await??;
 
-    let (accessory_info_sender, accessory_info_receiver) = tokio::sync::watch::channel(accessory_info_map.clone());
-    
+    let (accessory_info_sender, accessory_info_receiver) =
+        tokio::sync::watch::channel(accessory_info_map.clone());
+
     let accessory_map = Arc::new(std::sync::Mutex::new(
-        accessory_info_map.into_iter().map(|(k, v)| (k, (v, false))).collect()
+        accessory_info_map
+            .into_iter()
+            .map(|(k, v)| (k, (v, false)))
+            .collect(),
     ));
 
     let (accessory_map_sender, _) = broadcast::channel(12);
@@ -216,10 +218,10 @@ pub async fn run_server(
             }
         }
     };
-    
+
     tokio::select! {
-        _ = device_tasks(sender, screen_calibrations.clone(), device_offsets.clone()) => {},
-        _ = accessory_manager(accessory_info_receiver, accessory_map_sender.clone()) => {},
+        _ = device_tasks(sender.clone(), screen_calibrations.clone(), device_offsets.clone()) => {},
+        _ = accessory_manager(sender.clone(), accessory_info_receiver, accessory_map_sender.clone(), dl.clone()) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))

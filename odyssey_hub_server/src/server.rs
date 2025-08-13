@@ -3,13 +3,13 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use ats_cv::ScreenCalibration;
-use odyssey_hub_common::{config, accessory::AccessoryInfoMap};
+use odyssey_hub_common::{accessory::AccessoryInfoMap, config};
 use odyssey_hub_server_interface::{
-    service_server::Service, AccessoryMapRequest, DeviceListReply, DeviceListRequest, EmptyReply, GetShotDelayReply, ResetShotDelayReply, SetShotDelayRequest, SubscribeAccessoryMapRequest, SubscribeEventsRequest, Vector2
+    service_server::Service, AccessoryMapRequest, DeviceListReply, DeviceListRequest, EmptyReply,
+    GetShotDelayReply, ResetShotDelayReply, SetShotDelayRequest, SubscribeAccessoryMapRequest,
+    SubscribeEventsRequest, Vector2,
 };
-use tokio::{
-    sync::{broadcast, mpsc},
-};
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::device_tasks;
@@ -44,8 +44,10 @@ pub struct Server {
 
 #[tonic::async_trait]
 impl Service for Server {
-    type SubscribeAccessoryMapStream = ReceiverStream<Result<odyssey_hub_server_interface::AccessoryMapReply, tonic::Status>>;
-    type SubscribeEventsStream = ReceiverStream<Result<odyssey_hub_server_interface::Event, tonic::Status>>;
+    type SubscribeAccessoryMapStream =
+        ReceiverStream<Result<odyssey_hub_server_interface::AccessoryMapReply, tonic::Status>>;
+    type SubscribeEventsStream =
+        ReceiverStream<Result<odyssey_hub_server_interface::Event, tonic::Status>>;
 
     async fn get_device_list(
         &self,
@@ -66,11 +68,12 @@ impl Service for Server {
     async fn get_accessory_map(
         &self,
         _: tonic::Request<AccessoryMapRequest>,
-    ) -> Result<tonic::Response<odyssey_hub_server_interface::AccessoryMapReply>, tonic::Status> {
+    ) -> Result<tonic::Response<odyssey_hub_server_interface::AccessoryMapReply>, tonic::Status>
+    {
         let accessory_map = self.accessory_map.lock().unwrap().clone().into();
         Ok(tonic::Response::new(accessory_map))
     }
-    
+
     async fn subscribe_accessory_map(
         &self,
         _: tonic::Request<SubscribeAccessoryMapRequest>,
@@ -88,9 +91,7 @@ impl Service for Server {
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                let send_result = tx
-                    .send(Ok(accessory_map.into()))
-                    .await;
+                let send_result = tx.send(Ok(accessory_map.into())).await;
                 if send_result.is_err() {
                     break;
                 }
@@ -116,9 +117,7 @@ impl Service for Server {
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                let send_result = tx
-                    .send(Ok(event.into()))
-                    .await;
+                let send_result = tx.send(Ok(event.into())).await;
                 if send_result.is_err() {
                     break;
                 }
@@ -455,7 +454,7 @@ impl Service for Server {
 
         Ok(tonic::Response::new(EmptyReply {}))
     }
-    
+
     async fn update_accessory_info_map(
         &self,
         request: tonic::Request<odyssey_hub_server_interface::AccessoryInfoMap>,
@@ -470,7 +469,7 @@ impl Service for Server {
                 true
             }
         });
-        
+
         tokio::task::spawn_blocking(move || {
             odyssey_hub_common::config::accessory_map_save(&accessory_info_map)
                 .map_err(|e| anyhow::anyhow!("failed to save accessory map: {}", e))

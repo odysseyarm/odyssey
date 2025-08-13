@@ -1,6 +1,9 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{hexkeymap::{HexKeyMap, HexKeyMapN}, accessory::AccessoryInfo};
+use crate::{
+    accessory::AccessoryInfo,
+    hexkeymap::{HexKeyMap, HexKeyMapN},
+};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_cv::ScreenCalibration;
 
@@ -128,20 +131,20 @@ fn accessory_map_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir.join("accessory_map.json"))
 }
 
-pub fn accessory_map() -> Result<HashMap<[u8;6], AccessoryInfo>, Box<dyn std::error::Error>> {
+pub fn accessory_map() -> Result<HashMap<[u8; 6], AccessoryInfo>, Box<dyn std::error::Error>> {
     let path = accessory_map_path()?;
     if path.exists() {
         let txt = std::fs::read_to_string(&path)?;
         let HexKeyMapN(wrapped): AccessoryMap = json5::from_str(&txt)?;
-        Ok(wrapped.into_iter()
-            .map(|(k, v)| (k, v))
-            .collect())
+        Ok(wrapped.into_iter().map(|(k, v)| (k, v)).collect())
     } else {
         Ok(Default::default())
     }
 }
 
-pub fn accessory_map_save(map: &HashMap<[u8; 6], AccessoryInfo>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn accessory_map_save(
+    map: &HashMap<[u8; 6], AccessoryInfo>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path = accessory_map_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
