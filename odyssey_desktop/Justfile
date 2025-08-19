@@ -1,3 +1,4 @@
+# Note: Run the uninstaller manually after
 velopack:
     #!pwsh
     Set-StrictMode -Version Latest

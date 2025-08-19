@@ -8,6 +8,7 @@ use dioxus::{
 use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
 
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use velopack::VelopackApp;
 
@@ -77,13 +78,11 @@ fn app() -> Element {
         let cancel_token = cancel_token.clone();
         move || {
             let cancel_token = cancel_token.clone();
-            tokio::spawn({
-                async move {
-                    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-                    tokio::select! {
-                        _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
-                        _ = tokio::spawn(handle_server_status(receiver)) => {},
-                    }
+            tokio::spawn(async move {
+                let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+                tokio::select! {
+                    _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
+                    _ = tokio::spawn(handle_server_status(receiver)) => {},
                 }
             })
         }
@@ -108,22 +107,26 @@ fn app() -> Element {
             dioxus::prelude::spawn(async move {
                 use velopack::{self as vp, sources};
 
-                let source = sources::HttpSource::new("https://github.com/odysseyarm/odyssey-desktop");
+                let source = sources::HttpSource::new("https://github.com/odysseyarm/odyssey-desktop/releases/latest/download");
                 match vp::UpdateManager::new(source, None, None) {
                     Ok(um) => {
                         match um.check_for_updates_async().await {
                             Ok(vp::UpdateCheck::UpdateAvailable(_)) => {
+                                tracing::info!("Update available");
                                 available.set(true);
                             }
                             Ok(_) => {
+                                tracing::info!("No update available");
                                 // no update available
                             }
                             Err(e) => {
+                                tracing::error!("Error checking for updates: {e}");
                                 error.set(Some(format!("{e}")));
                             }
                         }
                     }
                     Err(e) => {
+                        tracing::error!("Error creating UpdateManager: {e}");
                         error.set(Some(format!("{e}")));
                     }
                 }
@@ -138,6 +141,7 @@ fn app() -> Element {
             available: update_available,
             busy: update_busy,
             error: update_error,
+            cancel_token: Signal::new(cancel_token.clone()),
         }
 
         div {

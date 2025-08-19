@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use velopack::{self as vp, sources};
 
 #[derive(Props, Clone, PartialEq)]
@@ -6,6 +8,7 @@ pub struct UpdateBannerProps {
     pub available: Signal<bool>,
     pub busy: Signal<bool>,
     pub error: Signal<Option<String>>,
+    pub cancel_token: Signal<CancellationToken>,
 }
 
 #[component]
@@ -16,6 +19,7 @@ pub fn UpdateBanner(props: UpdateBannerProps) -> Element {
     }
 
     let on_update_click = {
+        // mutate these signals in the async task
         let mut available = props.available;
         let mut busy = props.busy;
         let mut error = props.error;
@@ -28,34 +32,48 @@ pub fn UpdateBanner(props: UpdateBannerProps) -> Element {
             error.set(None);
 
             dioxus::prelude::spawn(async move {
-                // This is sync/blocking, but short; fine on the UI thread for now.
-                let result = (|| -> Result<(), vp::Error> {
-                    let source = sources::AutoSource::new("github:odysseyarm/odyssey-desktop");
-                    let um = vp::UpdateManager::new(source, None, None)?;
-                    match um.check_for_updates()? {
-                        vp::UpdateCheck::UpdateAvailable(info) => {
-                            um.download_updates(&info, None)?;
-                            // Will relaunch the app:
-                            um.apply_updates_and_restart(&info)?;
-                        }
-                        _ => {
-                            // No update anymore; hide the banner
-                            available.set(false);
+                let source = sources::HttpSource::new("https://github.com/odysseyarm/odyssey-desktop/releases/latest/download");
+                match vp::UpdateManager::new(source, None, None) {
+                    Ok(um) => {
+                        match um.check_for_updates_async().await {
+                            Ok(vp::UpdateCheck::UpdateAvailable(info)) => {
+                                match um.download_updates_async(&info, None).await {
+                                    Ok(()) => {
+                                        // Apply is blocking
+                                        props.cancel_token.peek().cancel();
+                                        // TODO wait on server shutdown
+                                        if let Err(e) = um.apply_updates_and_restart(&info) {
+                                            error.set(Some(format!("{e}")));
+                                            busy.set(false);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error.set(Some(format!("{e}")));
+                                        busy.set(false);
+                                    }
+                                }
+                            }
+                            Ok(_) => {
+                                available.set(false);
+                                busy.set(false);
+                            }
+                            Err(e) => {
+                                error.set(Some(format!("{e}")));
+                                busy.set(false);
+                            }
                         }
                     }
-                    Ok(())
-                })();
-
-                if let Err(e) = result {
-                    error.set(Some(format!("{e}")));
-                    busy.set(false);
+                    Err(e) => {
+                        error.set(Some(format!("{e}")));
+                        busy.set(false);
+                    }
                 }
-                // On success, process restarts; no further UI updates
             });
         }
     };
 
     rsx! {
+        // Fixed banner at the top
         div { class: "fixed top-0 left-0 right-0 z-50",
             div { class: "bg-red-600 text-white px-4 py-2 flex items-center justify-between gap-3",
                 span { class: "font-medium",
