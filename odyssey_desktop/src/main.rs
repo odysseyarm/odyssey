@@ -9,10 +9,13 @@ use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
 
 use tokio_util::sync::CancellationToken;
+use velopack::VelopackApp;
 
 use components::Navbar;
 use views::Accessories;
 use views::Home;
+
+use components::update::UpdateBanner;
 
 mod components;
 mod hub;
@@ -21,6 +24,8 @@ mod tray;
 mod views;
 
 fn main() {
+    VelopackApp::build().run();
+
     if cfg!(target_os = "windows") {
         let user_data_dir = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
         dioxus::LaunchBuilder::new()
@@ -61,13 +66,13 @@ fn app() -> Element {
     let cancel_token = CancellationToken::new();
 
     use_hook(|| {
-        // Set the close behavior for the main window
-        // This will hide the window instead of closing it when the user clicks the close button
+        // Hide window to tray on close
         window().set_close_behavior(WindowCloseBehaviour::WindowHides);
     });
 
     tray::use_tray_menu(cancel_token.clone());
 
+    // Run server + status handling
     use_future({
         let cancel_token = cancel_token.clone();
         move || {
@@ -90,8 +95,50 @@ fn app() -> Element {
         async move { hub.run().await }
     });
 
+    // --- Update banner signals + one-shot check ---
+    let update_available = use_signal(|| false);
+    let update_busy = use_signal(|| false);
+    let update_error = use_signal(|| Option::<String>::None);
+
+    // One-shot update check
+    use_effect({
+        let mut available = update_available.clone();
+        let mut error = update_error.clone();
+        move || {
+            dioxus::prelude::spawn(async move {
+                use velopack::{self as vp, sources};
+
+                let source = sources::HttpSource::new("https://github.com/odysseyarm/odyssey-desktop");
+                match vp::UpdateManager::new(source, None, None) {
+                    Ok(um) => {
+                        match um.check_for_updates_async().await {
+                            Ok(vp::UpdateCheck::UpdateAvailable(_)) => {
+                                available.set(true);
+                            }
+                            Ok(_) => {
+                                // no update available
+                            }
+                            Err(e) => {
+                                error.set(Some(format!("{e}")));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error.set(Some(format!("{e}")));
+                    }
+                }
+            });
+        }
+    });
+
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+
+        UpdateBanner {
+            available: update_available,
+            busy: update_busy,
+            error: update_error,
+        }
 
         div {
             Router::<Route> {}

@@ -1,0 +1,54 @@
+velopack:
+    #!pwsh
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    # --- paths / ids ---
+    $nsisDir  = Join-Path $PWD.Path '..\target\dx\odyssey_desktop\bundle\windows\bundle\nsis'
+    $tempRoot = Join-Path $env:LOCALAPPDATA 'Temp\OdysseyDesktop'
+    $packId   = 'Odyssey.Desktop'
+    $exeName  = 'odyssey_desktop.exe'   # your real exe
+
+    # pick latest NSIS installer and parse version
+    $installerItem = Get-ChildItem -Path $nsisDir -Filter 'OdysseyDesktop_*_x64-setup.exe' -ErrorAction Stop |
+                     Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $installerItem) { Write-Error "No installer found under: $nsisDir"; exit 1 }
+    $installer = $installerItem.FullName
+    if ($installerItem.Name -match 'OdysseyDesktop_(?<ver>[\d\.]+)_x64-setup\.exe') {
+        $packVersion = $Matches['ver']
+    } else {
+        Write-Error "Could not parse version from: $($installerItem.Name)"; exit 1
+    }
+
+    # clean + reinstall to fixed temp
+    if (Test-Path $tempRoot) { Remove-Item -Recurse -Force $tempRoot }
+    New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+
+    $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$tempRoot" -PassThru -Wait
+    if ($p.ExitCode -ne 0) { Write-Error "Installer failed with exit code $($p.ExitCode)"; exit $p.ExitCode }
+
+    # remove uninstaller if present
+    $u = Join-Path $tempRoot 'uninstall.exe'
+    if (Test-Path $u) { Remove-Item $u -Force -ErrorAction SilentlyContinue }
+
+    # find the real exe (may be in a subfolder)
+    $exeItem = Get-ChildItem -Path $tempRoot -Filter $exeName -Recurse | Select-Object -First 1
+    if (-not $exeItem) {
+        $all = Get-ChildItem -Path $tempRoot -Filter '*.exe' -Recurse | Select-Object -ExpandProperty FullName
+        $list = if ($all) { ($all -join "`n") } else { "<none found>" }
+        Write-Error "Expected to find '$exeName' under '$tempRoot' but didn't.`nExecutables found:`n$list"
+        exit 1
+    }
+
+    $packDir  = $exeItem.DirectoryName
+    $mainExe  = $exeItem.Name
+
+    Write-Host "Packing Velopack:"
+    Write-Host "  packId     = $packId"
+    Write-Host "  version    = $packVersion"
+    Write-Host "  packDir    = $packDir"
+    Write-Host "  mainExe    = $mainExe"
+
+    vpk pack --packId $packId --packVersion $packVersion --packDir $packDir --mainExe $mainExe --channel win-x64-alpha
+
+    Write-Output "Velopack built for $packId $packVersion (dir=$packDir, exe=$mainExe)"

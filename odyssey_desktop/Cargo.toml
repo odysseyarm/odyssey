@@ -25,6 +25,7 @@ hex = "0.4.3"
 nalgebra = "0.33.2"
 btleplug = "0.11.8"
 uuid = "1.18.0"
+velopack = { version = "0.0.1298", features = ["async"] }
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
