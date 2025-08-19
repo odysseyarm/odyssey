@@ -24,7 +24,7 @@ pub fn Home() -> Element {
 
                 h1 {
                     class: "text-center text-2xl font-bold text-gray-900 dark:text-white",
-                    "Welcome!"
+                    "Welcome! Test meme v0.2.1"
                 }
 
                 form {
