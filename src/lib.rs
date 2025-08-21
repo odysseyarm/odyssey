@@ -125,6 +125,7 @@ pub enum PacketData {
     FlashSettings(),
     Ack(),
     WriteMode(Mode),
+    Version(Version),
     Vendor(u8, VendorData),
 }
 
@@ -170,6 +171,20 @@ pub enum Mode {
 impl Delegated for Mode {
     type Wire = Self;
     const PACKET_TYPE: Option<PacketType> = Some(PacketType::WriteMode());
+}
+
+#[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+pub struct Version {
+    pub protocol_semver: [u16; 3],
+    pub firmware_semver: [u16; 3],
+}
+
+impl Delegated for Version {
+    type Wire = Self;
+    const PACKET_TYPE: Option<PacketType> = Some(PacketType::Version());
 }
 
 #[repr(C)]
@@ -505,6 +520,7 @@ pub enum PacketType {
     Ack(),
     PocMarkersReport(),
     WriteMode(),
+    Version(),
     End(),
     VendorStart(),
     Vendor(u8),
@@ -533,7 +549,8 @@ impl TryFrom<u8> for PacketType {
             0x0f => Ok(Self::Ack()),
             0x10 => Ok(Self::PocMarkersReport()),
             0x11 => Ok(Self::WriteMode()),
-            0x12 => Ok(Self::End()),
+            0x12 => Ok(Self::Version()),
+            0x13 => Ok(Self::End()),
             0x80 => Ok(Self::VendorStart()),
             0xff => Ok(Self::VendorEnd()),
             n if (PacketType::VendorStart().into()..PacketType::VendorEnd().into())
@@ -567,7 +584,8 @@ impl From<PacketType> for u8 {
             PacketType::Ack() => 0x0f,
             PacketType::PocMarkersReport() => 0x10,
             PacketType::WriteMode() => 0x11,
-            PacketType::End() => 0x12,
+            PacketType::Version() => 0x12,
+            PacketType::End() => 0x13,
             PacketType::VendorStart() => 0x80,
             PacketType::VendorEnd() => 0xff,
             PacketType::Vendor(n) => n,
@@ -596,6 +614,7 @@ impl Packet {
             PacketData::FlashSettings() => PacketType::FlashSettings(),
             PacketData::Ack() => PacketType::Ack(),
             PacketData::WriteMode(_) => PacketType::WriteMode(),
+            PacketData::Version(_) => PacketType::Version(),
             PacketData::Vendor(n, _) => PacketType::Vendor(n),
         }
     }
@@ -676,6 +695,7 @@ impl Packet {
             PacketData::FlashSettings() => 0,
             PacketData::Ack() => 0,
             PacketData::WriteMode(_) => Mode::SIZE as u16,
+            PacketData::Version(_) => Version::SIZE as u16,
             PacketData::Vendor(_, VendorData { len, data: _ }) => {
                 if *len % 2 != 0 {
                     (*len + 1) as u16
@@ -709,6 +729,7 @@ impl Packet {
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
             PacketData::WriteMode(x) => x.serialize_to_vec(buf),
+            PacketData::Version(x) => x.serialize_to_vec(buf),
             PacketData::Vendor(_, VendorData { len, data }) => {
                 buf.push(*len);
                 buf.extend_from_slice(&data[..*len as usize]);
@@ -740,6 +761,7 @@ impl Packet {
             PacketData::FlashSettings() => 0,
             PacketData::Ack() => 0,
             PacketData::WriteMode(_) => Mode::SIZE as u16,
+            PacketData::Version(_) => Version::SIZE as u16,
             PacketData::Vendor(_, VendorData { len, data: _ }) => {
                 if *len % 2 != 0 {
                     (*len + 1) as u16
@@ -770,6 +792,7 @@ impl Packet {
             PacketData::FlashSettings() => (),
             PacketData::Ack() => (),
             PacketData::WriteMode(x) => x.serialize(&mut buf),
+            PacketData::Version(x) => x.serialize(&mut buf),
             PacketData::Vendor(_, VendorData { len, data }) => {
                 push(&mut buf, &[*len]);
                 push(&mut buf, &data[..*len as usize]);
