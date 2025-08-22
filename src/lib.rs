@@ -188,6 +188,31 @@ impl Delegated for Version {
     const PACKET_TYPE: Option<PacketType> = Some(PacketType::ReadVersion());
 }
 
+impl Version {
+    pub fn new(firmware_semver: [u16; 3]) -> Self {
+        const PROTO_MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
+            Ok(v) => v,
+            Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
+        };
+        const PROTO_MINOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
+            Ok(v) => v,
+            Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
+        };
+        const PROTO_PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
+            Ok(v) => v,
+            Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
+        };
+        Self {
+            protocol_semver: [
+                PROTO_MAJOR,
+                PROTO_MINOR,
+                PROTO_PATCH,
+            ],
+            firmware_semver,
+        }
+    }
+}
+
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
