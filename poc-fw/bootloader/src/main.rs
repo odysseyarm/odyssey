@@ -28,9 +28,9 @@ fn main() -> ! {
 
     // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
     // as it prevents a hard fault when accessing flash 'too early' after boot.
-    //    for _ in 0..10000000 {
-    //        cortex_m::asm::nop();
-    //    }
+    // for _ in 0..10000000 {
+    //     cortex_m::asm::nop();
+    // }
 
     let flash = Nvmc::new(p.NVMC);
     let flash = Mutex::new(RefCell::new(flash));
@@ -41,7 +41,7 @@ fn main() -> ! {
     let mut aligned_buf = embassy_boot::AlignedBuffer([0; PAGE_SIZE]);
     let mut boot = embassy_boot::BootLoader::new(config);
     let state = boot.prepare_boot(aligned_buf.as_mut()).unwrap();
-
+    
     if state == embassy_boot::State::DfuDetach {
         // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
@@ -57,6 +57,7 @@ fn main() -> ! {
 
         let mut config_descriptor = [0; 256];
         let mut bos_descriptor = [0; 256];
+        let mut msos_descriptor = [0; 4096];
         let mut control_buf = [0; 4096];
         let mut state = Control::new(
             updater,
@@ -68,10 +69,10 @@ fn main() -> ! {
             config,
             &mut config_descriptor,
             &mut bos_descriptor,
-            &mut [],
+            &mut msos_descriptor,
             &mut control_buf,
         );
-        
+
         // We add MSOS headers so that the device automatically gets assigned the WinUSB driver on Windows.
         // Otherwise users need to do this manually using a tool like Zadig.
         //
@@ -84,10 +85,11 @@ fn main() -> ! {
         usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state, |func| {
             // You likely don't have to add these function level headers if your USB device is not composite
             // (i.e. if your device does not expose another interface in addition to DFU)
-            func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+            // func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
         });
 
         let mut dev = builder.build();
+        
         embassy_futures::block_on(dev.run());
     }
 
@@ -101,11 +103,11 @@ fn main() -> ! {
     }
 }
 
-#[no_mangle]
-#[cfg_attr(target_os = "none", link_section = ".HardFault.user")]
-unsafe extern "C" fn HardFault() {
-    cortex_m::peripheral::SCB::sys_reset();
-}
+// #[no_mangle]
+// #[cfg_attr(target_os = "none", link_section = ".HardFault.user")]
+// unsafe extern "C" fn HardFault() {
+//     cortex_m::peripheral::SCB::sys_reset();
+// }
 
 #[exception]
 unsafe fn DefaultHandler(_: i16) -> ! {
