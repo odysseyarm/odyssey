@@ -79,6 +79,19 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
     // ctx
 }
 
+const MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
+    Ok(v) => v,
+    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
+};
+const MINOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
+    Ok(v) => v,
+    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
+};
+const PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
+    Ok(v) => v,
+    Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
+};
+
 async fn usb_rcv_loop(
     pag: &AsyncMutex<NoopRawMutex, Pag<mode::Mode>>,
     stream_infos: &StreamInfos,
@@ -184,6 +197,10 @@ async fn usb_rcv_loop(
                 // })
                 None
             }
+            P::ReadVersion() => Some(Packet {
+                id: pkt.id,
+                data: P::ReadVersionResponse(protodongers::Version::new([MAJOR, MINOR, PATCH])),
+            }),
             P::ObjectReportRequest() => None,
             P::Ack() => None,
             P::ReadConfigResponse(_) => None,
@@ -195,6 +212,7 @@ async fn usb_rcv_loop(
             P::ImpactReport(_) => None,
             P::Vendor(_, _) => None,
             P::ReadRegisterResponse(_) => None,
+            P::ReadVersionResponse(_) => None,
         };
 
         if let Some(r) = response {
