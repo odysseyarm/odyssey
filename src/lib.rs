@@ -13,7 +13,6 @@ use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit};
 use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 
-pub mod slip;
 #[cfg(test)]
 mod tests;
 pub mod wire;
