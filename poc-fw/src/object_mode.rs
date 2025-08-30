@@ -21,7 +21,6 @@ use pag7661qn::{
 };
 use protodongers::{
     Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
-    slip::{SlipDecodeError, encode_slip_frame},
 };
 use static_cell::ConstStaticCell;
 
@@ -44,7 +43,7 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
         packet_serialize_buffer: ctx.obj.packet_serialize_buffer,
-        packet_slip_encode_buffer: ctx.obj.packet_slip_encode_buffer,
+        packet_cobs_encode_buffer: ctx.obj.packet_cobs_encode_buffer,
     };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv, ctx.obj.packet_receive_buffer);
     let pkt_channel = Channel::new();
@@ -233,7 +232,7 @@ async fn usb_snd_loop(
             break;
         };
         defmt::debug!("Sending packet: {}", defmt::Debug2Format(&pkt));
-        pkt_writer.write_packet(&pkt).await;
+        let _ = pkt_writer.write_packet(&pkt).await;
     }
     todo!()
 }
@@ -353,9 +352,9 @@ async fn obj_loop(
 
 /// Singleton to hold static resources.
 pub struct Context {
-    packet_receive_buffer: &'static mut [u8; 1024],
-    packet_serialize_buffer: &'static mut [u8; 1024],
-    packet_slip_encode_buffer: &'static mut [u8; 2049],
+    pub packet_receive_buffer: &'static mut [u8; 1024],
+    pub packet_serialize_buffer: &'static mut [u8; 1024],
+    pub packet_cobs_encode_buffer: &'static mut [u8; 2049],
 }
 
 impl Context {
@@ -364,12 +363,12 @@ impl Context {
         Self {
             packet_receive_buffer: static_byte_buffer!(1024),
             packet_serialize_buffer: static_byte_buffer!(1024),
-            packet_slip_encode_buffer: static_byte_buffer!(2049),
+            packet_cobs_encode_buffer: static_byte_buffer!(2049),
         }
     }
 }
 
-struct PacketReader<'a> {
+pub struct PacketReader<'a> {
     rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
     buf: &'a mut [u8; 1024],
     n: usize,
@@ -377,12 +376,15 @@ struct PacketReader<'a> {
 }
 
 impl<'a> PacketReader<'a> {
-    // add `start`; keep the same constructor signature
-    fn new(rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>, buf: &'a mut [u8; 1024]) -> Self {
+    /// Keep the same constructor signature
+    pub fn new(
+        rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
+        buf: &'a mut [u8; 1024],
+    ) -> Self {
         Self { rcv, buf, n: 0, start: 0 }
     }
 
-    // ensure at least `need` bytes buffered contiguously at buf[start .. start+n]
+    /// Ensure at least `need` bytes are buffered contiguously at buf[start .. start+n]
     async fn fill_min(&mut self, need: usize) -> Result<(), WaitForPacketError> {
         while self.n < need {
             if self.start + self.n == self.buf.len() {
@@ -394,71 +396,102 @@ impl<'a> PacketReader<'a> {
                     self.start = 0;
                 }
             }
-            let wrote = self.rcv.read_packet(&mut self.buf[self.start + self.n ..]).await?;
+            let wrote = self
+                .rcv
+                .read_packet(&mut self.buf[self.start + self.n ..])
+                .await?;
             self.n += wrote;
         }
         Ok(())
     }
 
-    async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
-        // find sync 0xFF
+    /// Read a single COBS-framed packet: COBS(payload) followed by a single 0x00 delimiter.
+    pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
         loop {
-            self.fill_min(3).await?;
-            if self.buf[self.start] == 0xFF { break; }
-            // drop one byte (no shifting)
-            self.start += 1;
-            self.n -= 1;
+            // ensure at least one byte so we can search for the delimiter
+            self.fill_min(1).await?;
+
+            // find the 0x00 delimiter in the current window
+            let mut zero_pos = None;
+            for i in 0..self.n {
+                if self.buf[self.start + i] == 0x00 {
+                    zero_pos = Some(i);
+                    break;
+                }
+            }
+
+            if let Some(frame_len) = zero_pos {
+                // drop empty frames (possible if a stray delimiter arrives)
+                if frame_len == 0 {
+                    self.start += 1;
+                    self.n -= 1;
+                    if self.n == 0 { self.start = 0; }
+                    continue;
+                }
+
+                // decode COBS in-place within the window
+                let window = &mut self.buf[self.start .. self.start + frame_len];
+                let decoded_len = cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
+
+                // parse the decoded payload
+                let mut slice = &window[..decoded_len];
+                let pkt = Packet::parse(&mut slice)?;
+
+                // consume this frame + its trailing 0x00 delimiter
+                self.start += frame_len + 1;
+                self.n -= frame_len + 1;
+                if self.n == 0 { self.start = 0; }
+
+                return Ok(pkt);
+            }
+
+            // no delimiter found yet; pull at least one more byte
+            self.fill_min(self.n + 1).await?;
         }
-
-        // 16-bit little-endian length in WORDS
-        let size_words = u16::from_le_bytes([self.buf[self.start + 1], self.buf[self.start + 2]]) as usize;
-        let size = size_words * 2;
-
-        // wait until we have the whole frame: 0xFF + (size bytes starting at LEN)
-        self.fill_min(size + 1).await?;
-
-        // parse exactly like the original: from LEN through end (size bytes)
-        let mut slice = &self.buf[self.start + 1 .. self.start + size + 1];
-        let pkt = Packet::parse(&mut slice)?;
-
-        // consume this frame; compact lazily
-        self.start += size + 1;
-        self.n -= size + 1;
-        if self.n == 0 { self.start = 0; }
-
-        Ok(pkt)
     }
 }
 
-struct PacketWriter<'a> {
+pub struct PacketWriter<'a> {
     snd: &'a mut cdc_acm::Sender<'static, UsbDriver>,
     packet_serialize_buffer: &'a mut [u8; 1024],
-    packet_slip_encode_buffer: &'a mut [u8; 2049],
+    packet_cobs_encode_buffer: &'a mut [u8; 2049],
 }
 
 impl PacketWriter<'_> {
-    async fn write_packet(&mut self, pkt: &Packet) {
-        let bytes_written = {
+    pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
+        // Serialize the payload into the serialize buffer (no copies/allocs)
+        let ser_len = {
+            // serialize_raw writes into [MaybeUninit<u8>]
             let ser = unsafe {
                 transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(self.packet_serialize_buffer)
             };
             pkt.serialize_raw(ser)
         };
-        let pkt_bytes = &self.packet_serialize_buffer[..bytes_written];
+        let payload = &self.packet_serialize_buffer[..ser_len];
 
-        let slip_frame = encode_slip_frame(pkt_bytes, self.packet_slip_encode_buffer).unwrap();
-        write_serial(self.snd, slip_frame).await;
+        // COBS-encode into the encode buffer
+        // Worst-case encoded_len <= input_len + input_len/254 + 1
+        let enc_len = cobs::encode(payload, self.packet_cobs_encode_buffer);
+
+        // Append the single 0x00 delimiter after encoded data
+        self.packet_cobs_encode_buffer[enc_len] = 0x00;
+        let frame = &self.packet_cobs_encode_buffer[..enc_len + 1];
+
+        // Send the frame
+        write_serial(self.snd, frame).await;
+
+        Ok(())
     }
 }
 
 #[derive(Format)]
-enum WaitForPacketError {
-    Slip(SlipDecodeError),
+pub enum WaitForPacketError {
+    Cobs(cobs::DecodeError),
     Packet(protodongers::Error),
     Usb(EndpointError),
 }
 
-impl_from!(WaitForPacketError::Slip(SlipDecodeError));
+impl_from!(WaitForPacketError::Cobs(cobs::DecodeError));
 impl_from!(WaitForPacketError::Packet(protodongers::Error));
 impl_from!(WaitForPacketError::Usb(EndpointError));
 

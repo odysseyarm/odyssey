@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-executor = { version = "0.8.0", git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread"] }
-embassy-embedded-hal = { version = "0.4.0", git = "https://github.com/embassy-rs/embassy.git", features = [] }
+embassy-executor = { version = "0.9.0", git = "https://github.com/embassy-rs/embassy.git", features = ["arch-cortex-m", "executor-thread"] }
+embassy-embedded-hal = { version = "0.5.0", git = "https://github.com/embassy-rs/embassy.git", features = [] }
 embassy-futures = { version = "0.1.1", git = "https://github.com/embassy-rs/embassy.git" }
-embassy-nrf = { version = "0.6.0", git = "https://github.com/embassy-rs/embassy.git", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
+embassy-nrf = { version = "0.7.0", git = "https://github.com/embassy-rs/embassy.git", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
 embassy-boot = { version = "0.6.0", git = "https://github.com/embassy-rs/embassy.git" }
 embassy-sync = { version = "0.7.0", git = "https://github.com/embassy-rs/embassy.git" }
-embassy-time = { version = "0.4.0", git = "https://github.com/embassy-rs/embassy.git" }
+embassy-time = { version = "0.5.0", git = "https://github.com/embassy-rs/embassy.git" }
 embassy-usb = { version = "0.5.0", git = "https://github.com/embassy-rs/embassy.git", features = ["defmt"] }
-embassy-usb-dfu = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", features = ["application", "cortex-m", "defmt"] }
+embassy-usb-dfu = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git", features = ["application", "cortex-m", "defmt"] }
 
 cortex-m-rt = "0.7.5"
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
@@ -27,8 +27,9 @@ static_cell = "2.1.0"
 icm426xx = { version = "0.3.2", git = "https://github.com/0e4ef622/icm426xx", features = ["async"] }
 bytemuck = "1.21.0"
 futures = { version = "0.3.31", default-features = false, features = ["async-await"] }
-nalgebra = { version = "0.33", default-features = false }
+nalgebra = { version = "0.33.2", default-features = false }
 embedded-storage = "0.3.1"
+cobs = { version = "0.4.0", default-features = false, features = ["defmt"] }
 
 [dependencies.protodongers]
 git = "https://github.com/odysseyarm/protodonge-rs"
