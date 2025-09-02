@@ -44,9 +44,6 @@ jobs:
         with:
           version: "26.x"
 
-      - name: Copy Protoc to current working directory
-        run: cp "${{ steps.protoc.outputs.path }}/bin/protoc" .
-
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -54,6 +51,7 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
           sccache: 'true'
           manylinux: auto
+          docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
