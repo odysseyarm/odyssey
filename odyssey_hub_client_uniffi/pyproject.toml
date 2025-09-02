@@ -3,7 +3,7 @@ requires = ["maturin>=1.9,<2.0", "uniffi-bindgen"]
 build-backend = "maturin"
 
 [project]
-name = "odyssey_hub_client_uniffi"
+name = "odysseyhubclient"
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",

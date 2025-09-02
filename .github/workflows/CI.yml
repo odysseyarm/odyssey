@@ -55,6 +55,7 @@ jobs:
           sccache: 'true'
           manylinux: auto
           docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
+          before-script-linux: pip install uniffi-bindgen
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -92,6 +93,8 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
           sccache: 'true'
           manylinux: musllinux_1_2
+          docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
+          before-script-linux: pip install uniffi-bindgen
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -113,6 +116,8 @@ jobs:
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
+      - name: Install uniffi-bindgen
+        run: pip install uniffi-bindgen
       - name: Install Protoc
         id: protoc
         uses: arduino/setup-protoc@v3
@@ -145,6 +150,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Install uniffi-bindgen
+        run: pip install uniffi-bindgen
       - name: Install Protoc
         id: protoc
         uses: arduino/setup-protoc@v3
