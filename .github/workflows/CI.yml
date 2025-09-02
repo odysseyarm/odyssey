@@ -52,6 +52,7 @@ jobs:
           sccache: 'true'
           manylinux: auto
           docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
+          before-script-linux: pip install uniffi-bindgen
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
