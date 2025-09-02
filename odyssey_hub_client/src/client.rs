@@ -29,7 +29,6 @@ impl Client {
                 let name = name.clone();
                 async move {
                     let r = LocalSocketStream::connect(name).await?;
-                    let r = odyssey_hub_server::LocalSocketStream::new(r);
                     std::io::Result::Ok(r)
                 }
             }))

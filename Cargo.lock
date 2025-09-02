@@ -4856,7 +4856,6 @@ dependencies = [
  "futures",
  "interprocess 2.2.3",
  "odyssey_hub_common",
- "odyssey_hub_server",
  "odyssey_hub_server_interface",
  "tokio",
  "tokio-util",
