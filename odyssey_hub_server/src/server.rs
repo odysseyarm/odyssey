@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
-use ats_cv::ScreenCalibration;
+use ats_common::ScreenCalibration;
 use odyssey_hub_common::{accessory::AccessoryInfoMap, config};
 use odyssey_hub_server_interface::{
     service_server::Service, AccessoryMapRequest, DeviceListReply, DeviceListRequest, EmptyReply,
@@ -30,7 +30,7 @@ pub struct Server {
         ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,

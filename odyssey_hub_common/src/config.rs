@@ -5,7 +5,7 @@ use crate::{
     hexkeymap::{HexKeyMap, HexKeyMapN},
 };
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
-use ats_cv::ScreenCalibration;
+use ats_common::ScreenCalibration;
 
 pub const APP_INFO: AppInfo = AppInfo {
     name: "odyssey",
@@ -52,12 +52,12 @@ pub fn device_offsets() -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dy
 pub fn screen_calibrations() -> Result<
     arrayvec::ArrayVec<
         (u8, ScreenCalibration<f32>),
-        { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+        { (ats_common::MAX_SCREEN_ID + 1) as usize },
     >,
     Box<dyn std::error::Error>,
 > {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
-    Ok((0..{ (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize })
+    Ok((0..{ (ats_common::MAX_SCREEN_ID + 1) as usize })
         .filter_map(|i| {
             let screen_path = config_dir
                 .join("screens")

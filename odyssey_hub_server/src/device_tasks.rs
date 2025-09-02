@@ -1,8 +1,9 @@
 use ahrs::Ahrs;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
+use ats_common::ScreenCalibration;
 use ats_cv::foveated::FoveatedAimpointState;
-use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates, ScreenCalibration};
+use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
 use ats_usb::device::UsbDevice;
 use ats_usb::packets::vm::{CombinedMarkersReport, PocMarkersReport};
 use core::panic;
@@ -50,7 +51,7 @@ pub async fn device_tasks(
         ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
@@ -69,7 +70,7 @@ pub async fn device_udp_manager(
         arc_swap::ArcSwap<
             arrayvec::ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
@@ -224,7 +225,7 @@ async fn device_cdc_manager(
         arc_swap::ArcSwap<
             arrayvec::ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
@@ -349,7 +350,7 @@ async fn common_tasks(
         ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
@@ -762,7 +763,7 @@ pub async fn device_udp_stream_task(
         arc_swap::ArcSwap<
             arrayvec::ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
@@ -833,7 +834,7 @@ pub async fn device_cdc_stream_task(
         ArcSwap<
             ArrayVec<
                 (u8, ScreenCalibration<f32>),
-                { (ats_cv::foveated::MAX_SCREEN_ID + 1) as usize },
+                { (ats_common::MAX_SCREEN_ID + 1) as usize },
             >,
         >,
     >,
