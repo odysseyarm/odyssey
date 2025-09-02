@@ -8,8 +8,8 @@ crate-type = ["staticlib", "cdylib"]
 name = "ohc_uniffi"
 
 [[bin]]
-name = "uniffi_bindgen"
-path = "src/bindgen.rs"
+name = "cs_bindgen"
+path = "src/bin/cs_bindgen.rs"
 
 [dependencies]
 odyssey_hub_common = { path = "../odyssey_hub_common" }

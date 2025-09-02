@@ -1,3 +1,4 @@
+use ats_usb::packets::vm::VendorData;
 use odyssey_hub_common as common;
 
 #[macro_export]
@@ -173,10 +174,11 @@ impl_from_simple!(common::events::ImpactEvent => ImpactEvent, timestamp);
 impl_from_simple!(common::events::Pose => Pose, rotation, translation);
 impl_from_simple!(Pose => common::events::Pose, rotation, translation);
 
-impl From<common::AccessoryType> for AccessoryType {
-    fn from(accessory_type: common::AccessoryType) -> Self {
+impl From<common::accessory::AccessoryType> for AccessoryType {
+    fn from(accessory_type: common::accessory::AccessoryType) -> Self {
         match accessory_type {
-            common::AccessoryType::DryFireMag => Self::DryFireMag,
+            common::accessory::AccessoryType::DryFireMag => Self::DryFireMag,
+            common::accessory::AccessoryType::BlackbeardX => Self::DryFireMag,
         }
     }
 }
@@ -226,7 +228,7 @@ impl From<TrackingEvent> for common::events::TrackingEvent {
 impl From<ats_usb::packets::vm::PacketData> for PacketData {
     fn from(packet_data: ats_usb::packets::vm::PacketData) -> Self {
         match packet_data {
-            ats_usb::packets::vm::PacketData::Vendor(_, (len, data)) => {
+            ats_usb::packets::vm::PacketData::Vendor(_, VendorData { len, data }) => {
                 PacketData::VendorEvent(VendorEventPacketData {
                     len,
                     data: data.to_vec(),
