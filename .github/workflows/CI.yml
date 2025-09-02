@@ -41,6 +41,8 @@ jobs:
       - name: Install Protoc
         id: protoc
         uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
 
       - name: Copy Protoc to current working directory
         run: cp "${{ steps.protoc.outputs.path }}/bin/protoc" .
@@ -76,6 +78,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Install Protoc
+        id: protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -104,6 +112,12 @@ jobs:
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
+      - name: Install Protoc
+        id: protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -130,6 +144,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Install Protoc
+        id: protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
