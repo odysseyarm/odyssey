@@ -7,6 +7,9 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - '*'
   pull_request:
@@ -90,6 +93,7 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
           sccache: 'true'
           manylinux: musllinux_1_2
+          before-script-linux: pip install uniffi-bindgen
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -123,6 +127,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
           sccache: 'true'
+          before-script-linux: pip install uniffi-bindgen
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -155,6 +160,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
           sccache: 'true'
+          before-script-linux: pip install uniffi-bindgen
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
