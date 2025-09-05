@@ -1,3 +1,3 @@
 {
-    "rust-analyzer.cargo.features": ["embassy-nrf/nrf52840"],
+    "rust-analyzer.cargo.features": ["nrf", "embassy-nrf/nrf52840"],
 }

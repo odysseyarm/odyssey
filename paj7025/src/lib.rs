@@ -1,5 +1,5 @@
 use device_driver::AsyncRegisterInterface;
-use embedded_hal_async::spi::{Operation, SpiDevice};
+use embedded_hal_async::spi::{Operation};
 use protodongers::{MotData, Parse as _};
 
 const REG_BANK_SELECT: u8 = 0xEF;     // Non-bank register for bank switching
@@ -25,7 +25,7 @@ impl<I> DeviceInterface<I> {
 
 impl<I, E> AsyncRegisterInterface for DeviceInterface<I>
 where
-    I: SpiDevice<Error = E>,
+    I: embedded_hal_async::spi::SpiDevice<Error = E>,
     E: core::fmt::Debug,
 {
     type AddressType = u16;
@@ -83,6 +83,30 @@ where
         ];
         self.spi_device.transaction(&mut ops2).await.map_err(Paj7025Error::Spi)?;
         Ok(())
+    }
+}
+
+pub struct Paj7025<SpiDevice, E>
+where
+    SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E>,
+    E: core::fmt::Debug,
+{
+    pub ll: low_level::Paj7025<DeviceInterface<SpiDevice>>,
+    _marker: core::marker::PhantomData<E>,
+}
+
+impl<SpiDevice, E> Paj7025<SpiDevice, E>
+where
+    SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E> + 'static,
+    E: core::fmt::Debug,
+{
+    pub async fn init(spi_device: SpiDevice) -> Result<Self, Paj7025Error<E>> {
+        let driver = Self {
+            ll: low_level::Paj7025::new(DeviceInterface::new(spi_device)),
+            _marker: core::marker::PhantomData,
+        };
+
+        Ok(driver)
     }
 }
 
