@@ -308,7 +308,6 @@ checksum = "41fea5ef5bed4d3468dfd44f5c9fa4cda8f54c86d4fb4ae683eacf9d39e2ea12"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
- "embassy-time",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -772,10 +771,11 @@ version = "0.1.0"
 dependencies = [
  "defmt",
  "device-driver",
- "embassy-embedded-hal",
  "embassy-nrf",
  "embassy-time",
+ "embedded-hal-async",
  "protodongers",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

@@ -1,6 +1,92 @@
+use device_driver::AsyncRegisterInterface;
+use embedded_hal_async::spi::{Operation, SpiDevice};
 use protodongers::{MotData, Parse as _};
 
-pub mod registers {
+const REG_BANK_SELECT: u8 = 0xEF;     // Non-bank register for bank switching
+const CMD_MULTI: u8 = 0x01;           // CMD[6:0] = 0x00 single, 0x01 multi
+const CMD_READ:  u8 = 0x80;           // CMD bit7 = 1 => Read
+const CMD_WRITE: u8 = 0x00;           // CMD bit7 = 0 => Write
+
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Paj7025Error<SpiError> {
+    Spi(SpiError),
+}
+
+pub struct DeviceInterface<SpiDevice> {
+    spi_device: SpiDevice,
+}
+
+impl<I> DeviceInterface<I> {
+    pub fn new(spi_device: I) -> Self {
+        Self { spi_device }
+    }
+}
+
+impl<I, E> AsyncRegisterInterface for DeviceInterface<I>
+where
+    I: SpiDevice<Error = E>,
+    E: core::fmt::Debug,
+{
+    type AddressType = u16;
+    type Error = Paj7025Error<E>;
+
+    async fn read_register(
+        &mut self,
+        address: u16,
+        _size_bits: u32,
+        data: &mut [u8],
+    ) -> Result<(), Self::Error> {
+        let bank: u8 = (address >> 8) as u8;
+        let reg:  u8 = (address & 0xFF) as u8;
+
+        let cmd_bank = [CMD_WRITE | 0x00, REG_BANK_SELECT];
+        let bank_val = [bank];
+        let mut ops1 = [
+            Operation::Write(&cmd_bank),
+            Operation::Write(&bank_val),
+        ];
+        self.spi_device.transaction(&mut ops1).await.map_err(Paj7025Error::Spi)?;
+
+        let cmd = CMD_READ | if data.len() > 1 { CMD_MULTI } else { 0 };
+        let cmd_addr = [cmd, reg];
+        let mut ops2 = [
+            Operation::Write(&cmd_addr),
+            Operation::TransferInPlace(data),
+        ];
+        self.spi_device.transaction(&mut ops2).await.map_err(Paj7025Error::Spi)?;
+        Ok(())
+    }
+
+    async fn write_register(
+        &mut self,
+        address: u16,
+        _size_bits: u32,
+        data: &[u8],
+    ) -> Result<(), Self::Error> {
+        let bank: u8 = (address >> 8) as u8;
+        let reg:  u8 = (address & 0xFF) as u8;
+
+        let cmd_bank = [CMD_WRITE | 0x00, REG_BANK_SELECT];
+        let bank_val = [bank];
+        let mut ops1 = [
+            Operation::Write(&cmd_bank),
+            Operation::Write(&bank_val),
+        ];
+        self.spi_device.transaction(&mut ops1).await.map_err(Paj7025Error::Spi)?;
+
+        let cmd = CMD_WRITE | if data.len() > 1 { CMD_MULTI } else { 0 };
+        let cmd_addr = [cmd, reg];
+        let mut ops2 = [
+            Operation::Write(&cmd_addr),
+            Operation::Write(data),
+        ];
+        self.spi_device.transaction(&mut ops2).await.map_err(Paj7025Error::Spi)?;
+        Ok(())
+    }
+}
+
+pub mod low_level {
     device_driver::create_device!(
         device_name: Paj7025,
         dsl: {
