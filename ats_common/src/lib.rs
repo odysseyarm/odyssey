@@ -118,9 +118,10 @@ impl<F: Float + FromPrimitive + Scalar> Plane<F> {
 ///
 /// `homography` is used to map from physical screen space to
 /// the unit square, i.e. go from `(x, y)` in meters to `(x', y')` where `x', y' ∈ [0, 1]`.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy)]
 pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + nalgebra::RealField> {
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub rotation: nalgebra::UnitQuaternion<F>,
     pub homography: nalgebra::Matrix3<F>,
     pub object_points: [nalgebra::Point3<F>; MARKER_PATTERN_LEN],
