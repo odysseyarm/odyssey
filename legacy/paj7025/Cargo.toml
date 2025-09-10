@@ -1,5 +1,5 @@
 [package]
-name = "paj7025-nrf"
+name = "paj7025"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,12 +7,12 @@ edition = "2021"
 
 [dependencies]
 defmt = "0.3.6"
-embassy-nrf = { version = "0.3.0", optional = true }
+embassy-nrf = { version = "0.7.0", optional = true }
 embassy-time = "0.4.0"
 device-driver = { version = "1.0.7", default-features = false, features = ["dsl"] }
-protodongers = { git = "https://github.com/odysseyarm/protodonge-rs" }
+protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-features = false }
 embedded-hal-async = "1.0.0"
-thiserror = "2.0.16"
+thiserror = { version = "2.0.16", default-features = false }
 
 [features]
 defmt = []

@@ -1,0 +1,1 @@
+Requires [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe) for ChAruco in viewer to work well
