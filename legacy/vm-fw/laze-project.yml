@@ -1,0 +1,8 @@
+imports:
+  - git:
+      url: https://github.com/Abrahamh08/ariel-os/
+      branch: main
+    dldir: ariel-os
+
+apps:
+  - name: vm-fw

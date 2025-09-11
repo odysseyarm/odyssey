@@ -1,0 +1,43 @@
+{
+  "rust-analyzer.cargo.buildScripts.overrideCommand": [
+    "cargo",
+    "check",
+    "--config",
+    "./build/imports/ariel-os/ariel-os-cargo.toml",
+    "--features=ariel-os/semihosting,ariel-os/single-core,ariel-os/executor-interrupt,ariel-os/rtt-target,ariel-os/panic-printing,ariel-os/defmt,ariel-os/debug-console",
+    "--message-format=json"
+  ],
+  "rust-analyzer.cargo.features": [
+    "ariel-os/semihosting",
+    "ariel-os/single-core",
+    "ariel-os/executor-interrupt",
+    "ariel-os/rtt-target",
+    "ariel-os/panic-printing",
+    "ariel-os/defmt",
+    "ariel-os/debug-console"
+  ],
+  "rust-analyzer.check.allTargets": false,
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": [
+    "--config",
+    "./build/imports/ariel-os/ariel-os-cargo.toml",
+    "--features=ariel-os/semihosting,ariel-os/single-core,ariel-os/executor-interrupt,ariel-os/rtt-target,ariel-os/panic-printing,ariel-os/defmt,ariel-os/debug-console"
+  ],
+  "rust-analyzer.files.watcher": "server",
+  "rust-analyzer.server.extraEnv": {
+    "CARGO_BUILD_TARGET": "thumbv7em-none-eabihf",
+    "CARGO_TARGET_DIR": "./build/bin/nrf52840dk/cargo",
+    "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER": "probe-rs run --protocol=swd --chip nrf52840_xxAA --preverify",
+    "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS": "--cfg context=\"nrf52840dk\" --cfg context=\"nrf52840\" --cfg context=\"nrf52\" --cfg context=\"nrf\" --cfg context=\"ariel-os\" --cfg context=\"default\" --cfg stable -Cembed-bitcode=yes -Clto=fat -Ccodegen-units=1 --cfg capability=\"hw/device-identity\" -Clink-arg=-Tdefmt.x --cfg armv7m --cfg armv7m_eabihf -Clink-arg=--nmagic -Clink-arg=--no-eh-frame-hdr -Clink-arg=-Tlinkme.x -Clink-arg=-Tlink.x -Clink-arg=-Teheap.x -Clink-arg=-Tdevice.x -Clink-arg=-Tisr_stack.x --cfg context=\"cortex-m\" --cfg context=\"cortex-m4f\"",
+    "CONFIG_BOARD": "nrf52840dk",
+    "CONFIG_EXECUTOR_STACKSIZE": "8192",
+    "CONFIG_ISR_STACKSIZE": "2048",
+    "CONFIG_WIFI_NETWORK": "test-wifi",
+    "CONFIG_WIFI_PASSWORD": "test-password",
+    "DEFMT_LOG": "info,",
+    "OPENOCD_ARGS": "-f board/nordic_nrf52_dk.cfg",
+    "RUSTFLAGS": "--cfg context=\"nrf52840dk\" --cfg context=\"nrf52840\" --cfg context=\"nrf52\" --cfg context=\"nrf\" --cfg context=\"ariel-os\" --cfg context=\"default\" --cfg stable -Cembed-bitcode=yes -Clto=fat -Ccodegen-units=1 --cfg capability=\"hw/device-identity\" -Clink-arg=-Tdefmt.x --cfg armv7m --cfg armv7m_eabihf -Clink-arg=--nmagic -Clink-arg=--no-eh-frame-hdr -Clink-arg=-Tlinkme.x -Clink-arg=-Tlink.x -Clink-arg=-Teheap.x -Clink-arg=-Tdevice.x -Clink-arg=-Tisr_stack.x --cfg context=\"cortex-m\" --cfg context=\"cortex-m4f\"",
+    "RUSTUP_TOOLCHAIN": "nightly",
+    "SCRIPTS": "./scripts"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "gdb",
+      "request": "attach",
+      "name": "Debug Microcontroller",
+      "target": "extended-remote localhost:1337",
+      "executable": "./build/bin/nrf52840dk/example-ble-advertise/example-ble-advertise.elf",
+      "cwd": "${workspaceRoot}",
+      "preLaunchTask": "start ariel debugger"
+    }
+  ]
+}
