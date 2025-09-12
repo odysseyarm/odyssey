@@ -273,7 +273,7 @@ dependencies = [
  "cfg-if",
  "const_panic",
  "critical-section",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-executor",
  "embassy-futures",
  "embassy-hal-internal 0.2.0",
@@ -320,7 +320,7 @@ dependencies = [
  "ariel-os-utils",
  "cfg-if",
  "defmt 1.0.1",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-executor",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -432,7 +432,7 @@ dependencies = [
  "cfg-if",
  "cyw43",
  "defmt 1.0.1",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-executor",
  "embassy-rp",
  "embedded-hal-async",
@@ -484,7 +484,7 @@ dependencies = [
  "ariel-os-utils",
  "cfg-if",
  "defmt 1.0.1",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-executor",
  "embassy-stm32",
  "embedded-hal-async",
@@ -769,7 +769,7 @@ dependencies = [
 [[package]]
 name = "bmi2"
 version = "0.1.1"
-source = "git+https://github.com/alsuren/bmi2?branch=async#ba8fe59a60ca39ddc130aab7baee756438dc6e76"
+source = "git+https://github.com/Abrahamh08/bmi2?branch=async#bc198772de254199eb4c602b658b5634ca95d111"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -935,9 +935,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.36"
+version = "1.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5252b3d2648e5eedbc1a6f501e3c795e07025c1e93bbf8bbdd6eef7f447a6d54"
+checksum = "65193589c6404eb80b450d618eaf9a2cafaaafd57ecce47370519ef674a7bd44"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -1560,7 +1560,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.16",
+ "thiserror",
 ]
 
 [[package]]
@@ -1704,33 +1704,13 @@ dependencies = [
 
 [[package]]
 name = "embassy-embedded-hal"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c62a3bf127e03832fb97d8b01a058775e617653bc89e2a12c256485a7fb54c1"
+version = "0.3.0"
+source = "git+https://github.com/ariel-os/embassy?rev=21147bdceb85f55e375973f30e47c17036063689#21147bdceb85f55e375973f30e47c17036063689"
 dependencies = [
  "defmt 0.3.100",
- "embassy-embedded-hal 0.4.0",
  "embassy-futures",
  "embassy-sync 0.6.2",
  "embassy-time",
- "embedded-hal 0.2.7",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-storage",
- "embedded-storage-async",
- "nb 1.1.0",
-]
-
-[[package]]
-name = "embassy-embedded-hal"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1611b7a7ab5d1fbed84c338df26d56fd9bded58006ebb029075112ed2c5e039"
-dependencies = [
- "embassy-futures",
- "embassy-hal-internal 0.3.0",
- "embassy-sync 0.7.2",
- "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-storage",
@@ -1857,7 +1837,7 @@ dependencies = [
  "critical-section",
  "defmt 0.3.100",
  "document-features",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-hal-internal 0.2.0",
  "embassy-sync 0.6.2",
  "embassy-time",
@@ -1918,7 +1898,7 @@ dependencies = [
  "critical-section",
  "defmt 0.3.100",
  "document-features",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-futures",
  "embassy-hal-internal 0.2.0",
  "embassy-sync 0.6.2",
@@ -1961,7 +1941,7 @@ dependencies = [
  "critical-section",
  "defmt 0.3.100",
  "document-features",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-futures",
  "embassy-hal-internal 0.2.0",
  "embassy-net-driver",
@@ -2380,7 +2360,7 @@ dependencies = [
  "defmt 0.3.100",
  "delegate",
  "document-features",
- "embassy-embedded-hal 0.3.2",
+ "embassy-embedded-hal 0.3.0",
  "embassy-futures",
  "embassy-sync 0.6.2",
  "embassy-usb-driver 0.1.1",
@@ -3045,9 +3025,9 @@ dependencies = [
 
 [[package]]
 name = "iana-time-zone"
-version = "0.1.63"
+version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c919e5debc312ad217002b8048a17b7d83f80703865bbfcfebb0458b0b27d8"
+checksum = "33e57f83510bb73707521ebaffa789ec8caf86f9657cad665b092b581d40e9fb"
 dependencies = [
  "android_system_properties",
  "core-foundation-sys",
@@ -3288,13 +3268,12 @@ dependencies = [
 
 [[package]]
 name = "kdl"
-version = "6.3.4"
+version = "6.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12661358400b02cbbf1fbd05f0a483335490e8a6bd1867620f2eeb78f304a22f"
+checksum = "81a29e7b50079ff44549f68c0becb1c73d7f6de2a4ea952da77966daf3d4761e"
 dependencies = [
  "miette",
  "num",
- "thiserror 1.0.69",
  "winnow 0.6.24",
 ]
 
@@ -3548,19 +3527,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
 dependencies = [
  "cfg-if",
- "miette-derive",
  "unicode-width",
-]
-
-[[package]]
-name = "miette-derive"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
 ]
 
 [[package]]
@@ -3948,7 +3915,7 @@ dependencies = [
  "embassy-time",
  "embedded-hal-async",
  "protodongers",
- "thiserror 2.0.16",
+ "thiserror",
 ]
 
 [[package]]
@@ -4338,7 +4305,7 @@ dependencies = [
  "nalgebra",
  "opencv-ros-camera",
  "static_assertions",
- "thiserror 2.0.16",
+ "thiserror",
 ]
 
 [[package]]
@@ -5032,31 +4999,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3467d614147380f2e4e374161426ff399c91084acd2363eaf549172b3d5e60c0"
 dependencies = [
- "thiserror-impl 2.0.16",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -5475,13 +5422,13 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
-version = "0.61.2"
+version = "0.62.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
+checksum = "57fe7168f7de578d2d8a05b07fd61870d2e73b4020e9f49aa00da8471723497c"
 dependencies = [
  "windows-implement",
  "windows-interface",
- "windows-link 0.1.3",
+ "windows-link 0.2.0",
  "windows-result",
  "windows-strings",
 ]
@@ -5522,20 +5469,20 @@ checksum = "45e46c0661abb7180e7b9c281db115305d49ca1709ab8242adf09666d2173c65"
 
 [[package]]
 name = "windows-result"
-version = "0.3.4"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56f42bd332cc6c8eac5af113fc0c1fd6a8fd2aa08a0119358686e5160d0586c6"
+checksum = "7084dcc306f89883455a206237404d3eaf961e5bd7e0f312f7c91f57eb44167f"
 dependencies = [
- "windows-link 0.1.3",
+ "windows-link 0.2.0",
 ]
 
 [[package]]
 name = "windows-strings"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
+checksum = "7218c655a553b0bed4426cf54b20d7ba363ef543b52d515b3e48d7fd55318dda"
 dependencies = [
- "windows-link 0.1.3",
+ "windows-link 0.2.0",
 ]
 
 [[package]]
@@ -5930,11 +5877,6 @@ dependencies = [
  "quote",
  "syn 2.0.106",
 ]
-
-[[patch.unused]]
-name = "embassy-embedded-hal"
-version = "0.3.0"
-source = "git+https://github.com/ariel-os/embassy?rev=21147bdceb85f55e375973f30e47c17036063689#21147bdceb85f55e375973f30e47c17036063689"
 
 [[patch.unused]]
 name = "embedded-test"

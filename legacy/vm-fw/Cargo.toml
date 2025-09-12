@@ -13,7 +13,7 @@ once_cell = { version = "1.19", default-features = false }
 paj7025 = { path = "../paj7025", features = ["nrf"] }
 nrf-pac = { version = "0.1.0" }
 static_cell = "2.1.1"
-bmi2 = { git="https://github.com/alsuren/bmi2", branch="async", features = ["async"] }
+bmi2 = { git="https://github.com/Abrahamh08/bmi2", branch="async", features = ["async"] }
 
 [target.'cfg(context = "nrf52840")'.dependencies]
 ariel-nrf = { package = "embassy-nrf", version = "0.3.1" }

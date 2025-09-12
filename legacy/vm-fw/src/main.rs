@@ -4,18 +4,27 @@
 mod pins;
 
 use ariel_os::{
-    debug::{ExitCode, exit, log::{debug, info}},
+    debug::{
+        ExitCode, exit,
+        log::{debug, info},
+    },
     gpio, hal,
-    spi::{Mode, main::{Kilohertz, SpiDevice, highest_freq_in}},
+    spi::{
+        Mode,
+        main::{Kilohertz, SpiDevice, highest_freq_in},
+    },
 };
 use bmi2::{bmi2_async::Bmi2, types::Burst};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use paj7025::Paj7025;
 use static_cell::StaticCell;
 
-static SPI_BUS_R2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> = StaticCell::new();
-static SPI_BUS_R3: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> = StaticCell::new();
-static SPI_BUS_B2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> = StaticCell::new();
+static SPI_BUS_R2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
+    StaticCell::new();
+static SPI_BUS_R3: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
+    StaticCell::new();
+static SPI_BUS_B2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
+    StaticCell::new();
 
 fn make_spi_device(
     bus: hal::spi::main::Spi,
@@ -25,7 +34,6 @@ fn make_spi_device(
     let bus_mutex: &'static Mutex<CriticalSectionRawMutex, hal::spi::main::Spi> =
         cell.init(Mutex::new(bus));
 
-    
     SpiDevice::new(bus_mutex, cs_output)
 }
 
@@ -65,7 +73,7 @@ async fn main(pins: pins::Peripherals) {
         .await
         .unwrap()
         .value();
-    
+
     info!("Product ID for r2: {:#X}", prod_id);
 
     let prod_id = paj7025r3
@@ -77,9 +85,9 @@ async fn main(pins: pins::Peripherals) {
         .await
         .unwrap()
         .value();
-    
+
     info!("Product ID for r3: {:#X}", prod_id);
-    
+
     spi_config.frequency = const { highest_freq_in(Kilohertz::kHz(100)..=Kilohertz::MHz(10)) };
     spi_config.mode = Mode::Mode0;
     spi_config.bit_order = ariel_os_embassy_common::spi::BitOrder::MsbFirst;
@@ -87,11 +95,13 @@ async fn main(pins: pins::Peripherals) {
     let spi = ariel_os::hal::spi::main::SPI2::new(b2.sck, b2.miso, b2.mosi, spi_config);
     let spi = make_spi_device(spi, cs_output, &SPI_BUS_B2);
     const BUFFER_SIZE: usize = 256;
-    let mut bmi: Bmi2<_, _, BUFFER_SIZE> = Bmi2::new_spi(spi, ariel_os_embassy_common::reexports::embassy_time::Delay, Burst::new(255));
-    // according to the datasheet, the first read will fail but is necessary for SPI mode
-    let _ = bmi.get_chip_id().await.unwrap();
+    let mut bmi: Bmi2<_, _, BUFFER_SIZE> = Bmi2::new_spi(
+        spi,
+        ariel_os_embassy_common::reexports::embassy_time::Delay,
+        Burst::new(255),
+    );
     let chip_id = bmi.get_chip_id().await.unwrap();
-    info!("BMI270 chip id: {}", chip_id);
+    info!("Chip ID for BMI270: {:#X}", chip_id);
 
     exit(ExitCode::SUCCESS);
 }
