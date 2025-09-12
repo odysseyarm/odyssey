@@ -7,11 +7,13 @@ edition = "2024"
 embassy-sync = "0.6.2"
 ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = ["spi"] }
 ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
+ariel-os-embassy-common = { path = "build/imports/ariel-os/src/ariel-os-embassy-common" }
 embedded-hal-async = "1.0.0"
 once_cell = { version = "1.19", default-features = false }
 paj7025 = { path = "../paj7025", features = ["nrf"] }
 nrf-pac = { version = "0.1.0" }
 static_cell = "2.1.1"
+bmi2 = { git="https://github.com/alsuren/bmi2", branch="async", features = ["async"] }
 
 [target.'cfg(context = "nrf52840")'.dependencies]
 ariel-nrf = { package = "embassy-nrf", version = "0.3.1" }
@@ -24,4 +26,4 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [features]
 default = ["defmt"]
-defmt = []
+defmt = ["ariel-os/defmt"]

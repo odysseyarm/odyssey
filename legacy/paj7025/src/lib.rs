@@ -142,6 +142,7 @@ pub mod low_level {
                         type Access = RO;
                         const ADDRESS = 0x02;
                         const SIZE_BITS = 16;
+                        value: uint = 0..16,
                     },
                     #[doc = "DSP settings; area max threshold"]
                     register Cmd_oahb {
