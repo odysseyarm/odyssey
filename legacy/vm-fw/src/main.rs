@@ -2,10 +2,10 @@
 #![no_std]
 
 mod pins;
+mod usb;
 
 use ariel_os::{
     debug::{
-        ExitCode, exit,
         log::{debug, info},
     },
     gpio, hal,
@@ -18,6 +18,8 @@ use bmi2::{bmi2_async::Bmi2, types::Burst};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use paj7025::Paj7025;
 use static_cell::StaticCell;
+
+use crate::usb::{echo_srv, usb_device};
 
 static SPI_BUS_R2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
     StaticCell::new();
@@ -37,7 +39,7 @@ fn make_spi_device(
     SpiDevice::new(bus_mutex, cs_output)
 }
 
-#[ariel_os::task(autostart, peripherals)]
+#[ariel_os::task(autostart, peripherals, usb_builder_hook)]
 async fn main(pins: pins::Peripherals) {
     info!(
         "Hello from main()! Running on a {} board.",
@@ -102,6 +104,7 @@ async fn main(pins: pins::Peripherals) {
     );
     let chip_id = bmi.get_chip_id().await.unwrap();
     info!("Chip ID for BMI270: {:#X}", chip_id);
-
-    exit(ExitCode::SUCCESS);
+    
+    let class = usb_device(&USB_BUILDER_HOOK).await;
+    echo_srv(class).await;
 }

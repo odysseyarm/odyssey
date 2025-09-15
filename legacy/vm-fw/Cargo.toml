@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 embassy-sync = "0.6.2"
-ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = ["spi"] }
+ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = ["spi", "usb", "override-usb-config"] }
 ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
 ariel-os-embassy-common = { path = "build/imports/ariel-os/src/ariel-os-embassy-common" }
 embedded-hal-async = "1.0.0"
