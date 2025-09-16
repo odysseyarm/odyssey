@@ -1,5 +1,23 @@
-include = "../build/imports/ariel-os/ariel-os-cargo.toml"
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+# replace nRF52840_xxAA with your chip as listed in `probe-rs chip list`
+# runner = "cargo bin probe-rs run --chip nRF52840_xxAA"
 
-[unstable]
-# This is needed so the "include" statement above works.
-config-include = true
+# If you don't want to use cargo-bin's version
+runner = "probe-rs run --chip nRF52840_xxAA"
+
+[build]
+target = "thumbv7em-none-eabihf"
+rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
+
+# Uncomment to see flash/memory usage report
+# [env]
+# RUSTC_LOG = "rustc_codegen_ssa::back::link=info"
+
+# [patch."https://github.com/odysseyarm/ats_common"]
+# ats_common = { path = "patch/ats_common" }
+#
+# [patch."https://github.com/odysseyarm/protodonge-rs"]
+# protodongers = { path = "patch/protodonge-rs" }
+
+# [patch."https://github.com/0e4ef622/icm426xx"]
+# icm426xx = { path = "patch/icm426xx" }

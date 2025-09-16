@@ -1,72 +1,59 @@
 #![no_main]
 #![no_std]
 
-mod pins;
 mod usb;
+// TODO
+// mod pins;
 
-use ariel_os::{
-    debug::{
-        log::{debug, info},
-    },
-    gpio, hal,
-    spi::{
-        Mode,
-        main::{Kilohertz, SpiDevice, highest_freq_in},
-    },
-};
 use bmi2::{bmi2_async::Bmi2, types::Burst};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+use embassy_executor::Spawner;
+use embassy_nrf::{
+    bind_interrupts,
+    gpio::{Level, Output, OutputDrive},
+    peripherals,
+    spim::{self, Spim},
+    Peripherals,
+};
+use embassy_time::Delay;
+use embedded_hal_bus::spi::ExclusiveDevice;
 use paj7025::Paj7025;
-use static_cell::StaticCell;
 
-use crate::usb::{echo_srv, usb_device};
+use {defmt_rtt as _, panic_probe as _};
 
-static SPI_BUS_R2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
-    StaticCell::new();
-static SPI_BUS_R3: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
-    StaticCell::new();
-static SPI_BUS_B2: StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>> =
-    StaticCell::new();
+bind_interrupts!(struct Irqs {
+    TWISPI0     => spim::InterruptHandler<peripherals::TWISPI0>;
+    TWISPI1     => spim::InterruptHandler<peripherals::TWISPI1>;
+    SPI2        => spim::InterruptHandler<peripherals::SPI2>;
+    USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
+    CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
+});
 
-fn make_spi_device(
-    bus: hal::spi::main::Spi,
-    cs_output: gpio::Output,
-    cell: &'static StaticCell<Mutex<CriticalSectionRawMutex, hal::spi::main::Spi>>,
-) -> SpiDevice {
-    let bus_mutex: &'static Mutex<CriticalSectionRawMutex, hal::spi::main::Spi> =
-        cell.init(Mutex::new(bus));
+type SpiDevR2 = ExclusiveDevice<Spim<'static, peripherals::TWISPI0>, Output<'static>, Delay>;
+type SpiDevR3 = ExclusiveDevice<Spim<'static, peripherals::TWISPI1>, Output<'static>, Delay>;
+type SpiDevB2 = ExclusiveDevice<Spim<'static, peripherals::SPI2>,    Output<'static>, Delay>;
 
-    SpiDevice::new(bus_mutex, cs_output)
-}
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    let p: Peripherals = embassy_nrf::init(Default::default());
+    defmt::info!("boot");
 
-#[ariel_os::task(autostart, peripherals, usb_builder_hook)]
-async fn main(pins: pins::Peripherals) {
-    info!(
-        "Hello from main()! Running on a {} board.",
-        ariel_os::buildinfo::BOARD
-    );
+    let mut cfg_paj = spim::Config::default();
+    cfg_paj.frequency = spim::Frequency::M16;
+    cfg_paj.mode = spim::MODE_3;
+    cfg_paj.bit_order = spim::BitOrder::MSB_FIRST;
 
-    let mut spi_config = hal::spi::main::Config::default();
-    spi_config.frequency = const { highest_freq_in(Kilohertz::kHz(100)..=Kilohertz::MHz(14)) };
-    spi_config.mode = Mode::Mode3;
-    spi_config.bit_order = ariel_os_embassy_common::spi::BitOrder::LsbFirst;
-    debug!("Selected frequency: {:?}", spi_config.frequency);
+    let spim_r2 = Spim::new(p.TWISPI0, Irqs, p.P0_05, p.P0_04, p.P0_26, cfg_paj.clone());
+    let cs_r2 = Output::new(p.P0_08, Level::High, OutputDrive::Standard);
+    let dev_r2: SpiDevR2 = ExclusiveDevice::new(spim_r2, cs_r2, Delay).unwrap();
 
-    let r2 = pins::Spi::from(pins.paj7025r2_spi);
-    let r3 = pins::Spi::from(pins.paj7025r3_spi);
-    let b2 = pins::Spi::from(pins.bmi270_spi);
-
-    let spi = ariel_os::hal::spi::main::TWISPI0::new(r2.sck, r2.miso, r2.mosi, spi_config.clone());
-    let cs_output = gpio::Output::new(r2.cs, gpio::Level::High);
-    let dev_r2 = make_spi_device(spi, cs_output, &SPI_BUS_R2);
-    let spi = ariel_os::hal::spi::main::TWISPI1::new(r3.sck, r3.miso, r3.mosi, spi_config.clone());
-    let cs_output = gpio::Output::new(r3.cs, gpio::Level::High);
-    let dev_r3 = make_spi_device(spi, cs_output, &SPI_BUS_R3);
+    let spim_r3 = Spim::new(p.TWISPI1, Irqs, p.P1_00, p.P0_22, p.P1_07, cfg_paj);
+    let cs_r3 = Output::new(p.P0_06, Level::High, OutputDrive::Standard);
+    let dev_r3: SpiDevR3 = ExclusiveDevice::new(spim_r3, cs_r3, Delay).unwrap();
 
     let mut paj7025r2 = Paj7025::init(dev_r2).await.unwrap();
     let mut paj7025r3 = Paj7025::init(dev_r3).await.unwrap();
 
-    let prod_id = paj7025r2
+    let prod_id_r2 = paj7025r2
         .ll
         .control()
         .bank_0()
@@ -75,10 +62,9 @@ async fn main(pins: pins::Peripherals) {
         .await
         .unwrap()
         .value();
+    defmt::info!("PAG7025 R2 Product ID: 0x{:x}", prod_id_r2);
 
-    info!("Product ID for r2: {:#X}", prod_id);
-
-    let prod_id = paj7025r3
+    let prod_id_r3 = paj7025r3
         .ll
         .control()
         .bank_0()
@@ -87,24 +73,35 @@ async fn main(pins: pins::Peripherals) {
         .await
         .unwrap()
         .value();
+    defmt::info!("PAG7025 R3 Product ID: 0x{:x}", prod_id_r3);
 
-    info!("Product ID for r3: {:#X}", prod_id);
+    let mut cfg_bmi = spim::Config::default();
+    cfg_bmi.frequency = spim::Frequency::M8;
+    cfg_bmi.mode = spim::MODE_0;
+    cfg_bmi.bit_order = spim::BitOrder::MSB_FIRST;
 
-    spi_config.frequency = const { highest_freq_in(Kilohertz::kHz(100)..=Kilohertz::MHz(10)) };
-    spi_config.mode = Mode::Mode0;
-    spi_config.bit_order = ariel_os_embassy_common::spi::BitOrder::MsbFirst;
-    let cs_output = gpio::Output::new(b2.cs, gpio::Level::High);
-    let spi = ariel_os::hal::spi::main::SPI2::new(b2.sck, b2.miso, b2.mosi, spi_config);
-    let spi = make_spi_device(spi, cs_output, &SPI_BUS_B2);
-    const BUFFER_SIZE: usize = 256;
-    let mut bmi: Bmi2<_, _, BUFFER_SIZE> = Bmi2::new_spi(
-        spi,
-        ariel_os_embassy_common::reexports::embassy_time::Delay,
-        Burst::new(255),
-    );
+    let spim_b2 = Spim::new(p.SPI2, Irqs, p.P0_20, p.P0_19, p.P0_15, cfg_bmi);
+    let cs_b2 = Output::new(p.P0_03, Level::High, OutputDrive::Standard);
+    let dev_b2: SpiDevB2 = ExclusiveDevice::new(spim_b2, cs_b2, Delay).unwrap();
+
+    const FIFO_BURST: usize = 256;
+    let mut bmi: Bmi2<_, _, FIFO_BURST> = Bmi2::new_spi(dev_b2, Delay, Burst::new(255));
     let chip_id = bmi.get_chip_id().await.unwrap();
-    info!("Chip ID for BMI270: {:#X}", chip_id);
-    
-    let class = usb_device(&USB_BUILDER_HOOK).await;
-    echo_srv(class).await;
+    defmt::info!("BMI270 Chip ID: 0x{:x}", chip_id);
+
+    let (mut cdc, usb) = usb::usb_device(p.USBD);
+    spawner.must_spawn(usb::run_usb(usb));
+
+    cdc.wait_connection().await;
+    defmt::info!("CDC-ACM connected");
+
+    let (mut tx, mut rx, _ctl) = cdc.split_with_control();
+    loop {
+        let mut buf = [0u8; 64];
+        let n = rx.read_packet(&mut buf).await.unwrap();
+        if n == 0 {
+            continue;
+        }
+        tx.write_packet(&buf[..n]).await.unwrap();
+    }
 }

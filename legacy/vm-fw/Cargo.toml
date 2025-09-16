@@ -4,20 +4,30 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embassy-sync = "0.6.2"
-ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = ["spi", "usb", "override-usb-config"] }
-ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
-ariel-os-embassy-common = { path = "build/imports/ariel-os/src/ariel-os-embassy-common" }
+embassy-sync = "0.7.2"
 embedded-hal-async = "1.0.0"
-once_cell = { version = "1.19", default-features = false }
+once_cell = { version = "1.21.3", default-features = false }
 paj7025 = { path = "../paj7025", features = ["nrf"] }
 nrf-pac = { version = "0.1.0" }
 static_cell = "2.1.1"
 bmi2 = { git="https://github.com/Abrahamh08/bmi2", branch="async", features = ["async"] }
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-usb = "0.5.1"
+embassy-time = "0.5.0"
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+defmt-rtt = "1.0.0"
+panic-probe = { version = "1.0.0" }
+defmt = "1.0.1"
+cortex-m-rt = "0.7.5"
+cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
+embassy-embedded-hal = "0.5.0"
 
-[target.'cfg(context = "nrf52840")'.dependencies]
-ariel-nrf = { package = "embassy-nrf", version = "0.3.1" }
-embassy-nrf = { version = "0.7.0", features = ["nrf52840"] }
+[target.'cfg(context = "vm")'.dependencies]
+embassy-nrf = { version = "0.7.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
+
+[dependencies.protodongers]
+git = "https://github.com/odysseyarm/protodonge-rs"
+default-features = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
@@ -25,5 +35,15 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [features]
-default = ["defmt"]
-defmt = ["ariel-os/defmt"]
+default = []
+defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt"]
+
+# https://github.com/dustinblackman/cargo-run-bin
+[package.metadata.bin]
+probe-rs-tools = { version = "0.27.0", locked = true, bins = ["probe-rs"] }
+
+[profile.release]
+debug = 2
+lto = "fat"
+opt-level = "z"
+codegen-units = 1

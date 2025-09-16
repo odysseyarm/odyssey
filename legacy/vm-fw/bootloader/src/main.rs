@@ -28,9 +28,11 @@ fn main() -> ! {
 
     // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
     // as it prevents a hard fault when accessing flash 'too early' after boot.
-    // for _ in 0..10000000 {
-    //     cortex_m::asm::nop();
-    // }
+    for _ in 0..10000000 {
+        cortex_m::asm::nop();
+    }
+
+    defmt::info!("bootloader");
 
     let flash = Nvmc::new(p.NVMC);
     let flash = Mutex::new(RefCell::new(flash));

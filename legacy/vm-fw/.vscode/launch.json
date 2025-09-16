@@ -1,14 +1,72 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "gdb",
-      "request": "attach",
-      "name": "Debug Microcontroller",
-      "target": "extended-remote localhost:1337",
-      "executable": "./build/bin/nrf52840dk/example-ble-advertise/example-ble-advertise.elf",
-      "cwd": "${workspaceRoot}",
-      "preLaunchTask": "start ariel debugger"
-    }
-  ]
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "probe-rs poc-fw launch",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": false,
+            "chip": "nrf5340_xxAA",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": true
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv8m.main-none-eabihf/debug/${workspaceFolderBasename}"
+                }
+            ]
+        },
+        {
+            "type": "probe-rs-debug",
+            "request": "attach",
+            "name": "probe-rs poc-fw attach",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": false,
+            "chip": "nrf5340_xxAA",
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv8m.main-none-eabihf/debug/${workspaceFolderBasename}"
+                }
+            ]
+        },
+        {
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "probe-rs poc-fw launch",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": false,
+            "chip": "nrf52840",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": true
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename}"
+                }
+            ]
+        },
+        {
+            "type": "probe-rs-debug",
+            "request": "attach",
+            "name": "probe-rs poc-fw attach",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": false,
+            "chip": "nrf52840",
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename}"
+                }
+            ]
+        },
+    ]
 }
