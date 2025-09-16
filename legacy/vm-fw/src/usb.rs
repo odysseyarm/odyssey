@@ -1,10 +1,9 @@
-use embassy_nrf::peripherals::USBD;
-use embassy_nrf::usb::{vbus_detect::HardwareVbusDetect, Driver as NrfUsbDriver};
 use embassy_nrf::Peri;
-
+use embassy_nrf::peripherals::USBD;
+use embassy_nrf::usb::Driver as NrfUsbDriver;
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_usb::class::cdc_acm::{self, CdcAcmClass, State as CdcState};
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
-
 use static_cell::StaticCell;
 
 use crate::Irqs;
@@ -15,8 +14,8 @@ pub type StaticCdcAcmClass = CdcAcmClass<'static, UsbDriver>;
 
 static DEVICE_DESC: StaticCell<[u8; 256]> = StaticCell::new();
 static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-static BOS_DESC:    StaticCell<[u8; 256]> = StaticCell::new();
-static MSOS_DESC:   StaticCell<[u8; 256]> = StaticCell::new();
+static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+static MSOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
 
 static CDC_STATE: StaticCell<CdcState<'static>> = StaticCell::new();
 

@@ -32,7 +32,7 @@ fn main() -> ! {
         cortex_m::asm::nop();
     }
 
-    defmt::info!("bootloader");
+    // defmt::info!("bootloader");
 
     let flash = Nvmc::new(p.NVMC);
     let flash = Mutex::new(RefCell::new(flash));

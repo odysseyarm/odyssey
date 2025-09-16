@@ -2,22 +2,19 @@
 #![no_std]
 
 mod usb;
-// TODO
-// mod pins;
+mod pins;
 
-use bmi2::{bmi2_async::Bmi2, types::Burst};
+use bmi2::bmi2_async::Bmi2;
+use bmi2::types::Burst;
 use embassy_executor::Spawner;
-use embassy_nrf::{
-    bind_interrupts,
-    gpio::{Level, Output, OutputDrive},
-    peripherals,
-    spim::{self, Spim},
-    Peripherals,
-};
+use embassy_nrf::config::Config;
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
+use embassy_nrf::interrupt::typelevel::Binding;
+use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::{Peri, bind_interrupts, peripherals};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use paj7025::Paj7025;
-
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -28,28 +25,28 @@ bind_interrupts!(struct Irqs {
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
 });
 
-type SpiDevR2 = ExclusiveDevice<Spim<'static, peripherals::TWISPI0>, Output<'static>, Delay>;
-type SpiDevR3 = ExclusiveDevice<Spim<'static, peripherals::TWISPI1>, Output<'static>, Delay>;
-type SpiDevB2 = ExclusiveDevice<Spim<'static, peripherals::SPI2>,    Output<'static>, Delay>;
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let p: Peripherals = embassy_nrf::init(Default::default());
+    let mut config = Config::default();
+
+    // If building for the VM context, bump GPIO voltage to 2.4V.
+    #[cfg(context = "vm")]
+    {
+        config.dcdc.reg0_voltage = Some(embassy_nrf::config::Reg0Voltage::_2V4);
+    }
+
+    let p = embassy_nrf::init(config);
+    let b = split_board!(p);
     defmt::info!("boot");
 
+    // ========= PAG7025 (R2/R3) on TWISPI0 / TWISPI1 =========
     let mut cfg_paj = spim::Config::default();
     cfg_paj.frequency = spim::Frequency::M16;
     cfg_paj.mode = spim::MODE_3;
-    cfg_paj.bit_order = spim::BitOrder::MSB_FIRST;
+    cfg_paj.bit_order = spim::BitOrder::LSB_FIRST;
 
-    let spim_r2 = Spim::new(p.TWISPI0, Irqs, p.P0_05, p.P0_04, p.P0_26, cfg_paj.clone());
-    let cs_r2 = Output::new(p.P0_08, Level::High, OutputDrive::Standard);
-    let dev_r2: SpiDevR2 = ExclusiveDevice::new(spim_r2, cs_r2, Delay).unwrap();
-
-    let spim_r3 = Spim::new(p.TWISPI1, Irqs, p.P1_00, p.P0_22, p.P1_07, cfg_paj);
-    let cs_r3 = Output::new(p.P0_06, Level::High, OutputDrive::Standard);
-    let dev_r3: SpiDevR3 = ExclusiveDevice::new(spim_r3, cs_r3, Delay).unwrap();
-
+    let dev_r2 = make_spi_dev(p.TWISPI0, Irqs, b.paj7025r2_spi.into(), cfg_paj.clone());
+    let dev_r3 = make_spi_dev(p.TWISPI1, Irqs, b.paj7025r3_spi.into(), cfg_paj);
     let mut paj7025r2 = Paj7025::init(dev_r2).await.unwrap();
     let mut paj7025r3 = Paj7025::init(dev_r3).await.unwrap();
 
@@ -79,10 +76,8 @@ async fn main(spawner: Spawner) {
     cfg_bmi.frequency = spim::Frequency::M8;
     cfg_bmi.mode = spim::MODE_0;
     cfg_bmi.bit_order = spim::BitOrder::MSB_FIRST;
-
-    let spim_b2 = Spim::new(p.SPI2, Irqs, p.P0_20, p.P0_19, p.P0_15, cfg_bmi);
-    let cs_b2 = Output::new(p.P0_03, Level::High, OutputDrive::Standard);
-    let dev_b2: SpiDevB2 = ExclusiveDevice::new(spim_b2, cs_b2, Delay).unwrap();
+    
+    let dev_b2 = make_spi_dev(p.SPI2, Irqs, b.bmi270_spi.into(), cfg_bmi);
 
     const FIFO_BURST: usize = 256;
     let mut bmi: Bmi2<_, _, FIFO_BURST> = Bmi2::new_spi(dev_b2, Delay, Burst::new(255));
@@ -104,4 +99,19 @@ async fn main(spawner: Spawner) {
         }
         tx.write_packet(&buf[..n]).await.unwrap();
     }
+}
+
+fn make_spi_dev<SPI, IRQ>(
+    spi: Peri<'static, SPI>,
+    irqs: IRQ,
+    pins: pins::Spi,
+    cfg: spim::Config,
+) -> ExclusiveDevice<Spim<'static, SPI>, Output<'static>, Delay>
+where
+    SPI: spim::Instance,
+    IRQ: Binding<<SPI as spim::Instance>::Interrupt, spim::InterruptHandler<SPI>> + 'static,
+{
+    let spim = Spim::new(spi, irqs, pins.sck, pins.miso, pins.mosi, cfg);
+    let cs_out = Output::new(pins.cs, Level::High, OutputDrive::Standard);
+    ExclusiveDevice::new(spim, cs_out, Delay).unwrap()
 }

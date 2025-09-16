@@ -21,3 +21,6 @@ rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
 
 # [patch."https://github.com/0e4ef622/icm426xx"]
 # icm426xx = { path = "patch/icm426xx" }
+
+[env]
+DEFMT_LOG = "info"
