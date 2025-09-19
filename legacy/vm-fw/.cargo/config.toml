@@ -22,5 +22,10 @@ rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
 # [patch."https://github.com/0e4ef622/icm426xx"]
 # icm426xx = { path = "patch/icm426xx" }
 
+[patch.crates-io]
+embassy-nrf = { path = "../../../../forks/embassy/embassy-nrf" }
+embassy-time-driver = { path = "../../../../forks/embassy/embassy-time-driver" }
+embassy-usb-driver = { path = "../../../../forks/embassy/embassy-usb-driver" }
+
 [env]
 DEFMT_LOG = "info"

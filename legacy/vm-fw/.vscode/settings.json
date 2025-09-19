@@ -2,15 +2,13 @@
   "rust-analyzer.cargo.buildScripts.overrideCommand": [
     "cargo",
     "check",
-    "--cfg context=vm",
-    "--config 'build.rustflags=[\"--cfg\",\"context=vm\"]",
     "--message-format=json"
   ],
   // "rust-analyzer.cargo.features": [
   //   "",
   // ],
   "rust-analyzer.cargo.cfgs": [
-    "context=vm",
+    "context=vm"
   ],
   "rust-analyzer.check.allTargets": false,
   "rust-analyzer.check.command": "clippy",

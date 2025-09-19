@@ -21,6 +21,11 @@ defmt = "1.0.1"
 cortex-m-rt = "0.7.5"
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
 embassy-embedded-hal = "0.5.0"
+bytemuck = "1.23.2"
+nalgebra = { version = "0.33.2", default-features = false }
+embedded-storage = "0.3.1"
+embassy-futures = { version = "0.1.2" }
+cobs = { version = "0.4.0", default-features = false }
 
 [target.'cfg(context = "vm")'.dependencies]
 embassy-nrf = { version = "0.7.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
@@ -35,8 +40,8 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [features]
-default = []
-defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt"]
+default = ["defmt"]
+defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt", "embassy-futures/defmt", "cobs/defmt"]
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]

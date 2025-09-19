@@ -1,10 +1,12 @@
 #![no_std]
 
+pub mod types;
 mod u2048;
 
 use device_driver::AsyncRegisterInterface;
 use embedded_hal_async::spi::{Operation};
-use protodongers::{MotData, Parse as _};
+
+use crate::types::ObjectFormat1;
 
 const REG_BANK_SELECT: u8 = 0xEF;     // Non-bank register for bank switching
 const CMD_MULTI: u8 = 0x01;           // CMD[6:0] = 0x00 single, 0x01 multi
@@ -112,6 +114,26 @@ where
 
         Ok(driver)
     }
+    
+    pub async fn read_register(
+        &mut self,
+        bank: u8,
+        address: u8,
+        data: &mut [u8],
+    ) -> Result<(), Paj7025Error<E>> {
+        let address = ((bank as u16) << 8) | address as u16;
+        self.ll.interface().read_register(address, 0, data).await
+    }
+
+    pub async fn write_register(
+        &mut self,
+        bank: u8,
+        address: u8,
+        data: &[u8],
+    ) -> Result<(), Paj7025Error<E>> {
+        let address = ((bank as u16) << 8) | address as u16;
+        self.ll.interface().write_register(address, 0, data).await
+    }
 }
 
 pub mod low_level {
@@ -140,7 +162,8 @@ pub mod low_level {
                     register Bank0_Sync_Updated_Flag {
                         type Access = WO;
                         const ADDRESS = 0x01;
-                        const SIZE_BITS = 8;
+                        const SIZE_BITS = 1;
+                        value: uint = 0..1,
                     },
                     register Product_ID {
                         type Access = RO;
@@ -275,10 +298,10 @@ pub mod low_level {
     );
 }
 
-pub fn parse_bank5(bytes: [u8; 2048/8]) -> [MotData; 16] {
-    let mut arr = [MotData::default(); 16];
-    for (i, mut chunk) in bytes.chunks_exact(16).enumerate() {
-        arr[i] = MotData::parse(&mut chunk).unwrap_or_default();
+pub fn parse_bank5(bytes: [u8; 2048/8]) -> [ObjectFormat1; 16] {
+    let mut arr = [ObjectFormat1::default(); 16];
+    for (i, chunk) in bytes.chunks_exact(16).enumerate() {
+        arr[i] = *bytemuck::from_bytes::<ObjectFormat1>(chunk);
     }
     arr
 }

@@ -55,6 +55,7 @@ define_peripheral!(Paj7025R2 {
     miso: P0_04,
     mosi: P0_26,
     cs:  P0_08,
+    fod: P0_12,
 });
 #[cfg(context = "vm")]
 impl_spi_from!(Paj7025R2 { sck:sck, miso:miso, mosi:mosi, cs:cs });
@@ -65,6 +66,7 @@ define_peripheral!(Paj7025R3 {
     miso: P0_22,
     mosi: P1_07,
     cs:  P0_06,
+    fod: P1_13,
 });
 #[cfg(context = "vm")]
 impl_spi_from!(Paj7025R3 { sck:sck, miso:miso, mosi:mosi, cs:cs });
@@ -75,14 +77,14 @@ define_peripheral!(Bmi270 {
     miso: P0_19,
     mosi: P0_15,
     cs:  P0_03,
-    _irq: P0_25,
+    irq: P0_25,
 });
 #[cfg(context = "vm")]
 impl_spi_from!(Bmi270 { sck:sck, miso:miso, mosi:mosi, cs:cs });
 
 #[cfg(context = "vm")]
 group_peripherals!(Board {
-    paj7025r2_spi: Paj7025R2 { sck=P0_05, miso=P0_04, mosi=P0_26, cs=P0_08 },
-    paj7025r3_spi: Paj7025R3 { sck=P1_00, miso=P0_22, mosi=P1_07, cs=P0_06 },
-    bmi270_spi:    Bmi270    { sck=P0_20, miso=P0_19, mosi=P0_15, cs=P0_03, _irq=P0_25 },
+    paj7025r2: Paj7025R2 { sck=P0_05, miso=P0_04, mosi=P0_26, cs=P0_08, fod=P0_12 },
+    paj7025r3: Paj7025R3 { sck=P1_00, miso=P0_22, mosi=P1_07, cs=P0_06, fod=P1_13 },
+    bmi270:    Bmi270    { sck=P0_20, miso=P0_19, mosi=P0_15, cs=P0_03, irq=P0_25 },
 });

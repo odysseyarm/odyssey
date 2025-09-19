@@ -1,20 +1,33 @@
 #![no_main]
 #![no_std]
+#![feature(never_type)]
 
-mod usb;
+#[macro_use]
+mod utils;
 mod pins;
+mod usb;
+mod settings;
+mod imu;
+mod object_mode;
 
-use bmi2::bmi2_async::Bmi2;
-use bmi2::types::Burst;
+use core::cell::RefCell;
+
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_nrf::config::Config;
-use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::interrupt::typelevel::Binding;
+use embassy_nrf::gpio::{Output, OutputDrive};
+use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::{Peri, bind_interrupts, peripherals};
+use embassy_nrf::{bind_interrupts, peripherals};
 use embassy_time::Delay;
+use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use paj7025::Paj7025;
+use settings::{Settings, init_settings};
+use crate::imu::{Imu, ImuInterrupt};
+use crate::usb::UsbDriver;
+use crate::utils::make_spi_dev;
+
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -38,15 +51,33 @@ async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(config);
     let b = split_board!(p);
     defmt::info!("boot");
+    
+    static NVMC: static_cell::StaticCell<
+        Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>,
+    > = static_cell::StaticCell::new();
+    let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
+    let nvmc = &*nvmc;
 
     // ========= PAG7025 (R2/R3) on TWISPI0 / TWISPI1 =========
     let mut cfg_paj = spim::Config::default();
-    cfg_paj.frequency = spim::Frequency::M16;
+    cfg_paj.frequency = spim::Frequency::M8;
     cfg_paj.mode = spim::MODE_3;
     cfg_paj.bit_order = spim::BitOrder::LSB_FIRST;
 
-    let dev_r2 = make_spi_dev(p.TWISPI0, Irqs, b.paj7025r2_spi.into(), cfg_paj.clone());
-    let dev_r3 = make_spi_dev(p.TWISPI1, Irqs, b.paj7025r3_spi.into(), cfg_paj);
+    let paj7025r2_spi = pins::Spi {
+        sck: b.paj7025r2.sck.into(),
+        miso: b.paj7025r2.miso.into(),
+        mosi: b.paj7025r2.mosi.into(),
+        cs: b.paj7025r2.cs.into(),
+    };
+    let paj7025r3_spi = pins::Spi {
+        sck: b.paj7025r3.sck.into(),
+        miso: b.paj7025r3.miso.into(),
+        mosi: b.paj7025r3.mosi.into(),
+        cs: b.paj7025r3.cs.into(),
+    };
+    let dev_r2 = make_spi_dev(p.TWISPI0, Irqs, paj7025r2_spi, cfg_paj.clone());
+    let dev_r3 = make_spi_dev(p.TWISPI1, Irqs, paj7025r3_spi, cfg_paj);
     let mut paj7025r2 = Paj7025::init(dev_r2).await.unwrap();
     let mut paj7025r3 = Paj7025::init(dev_r3).await.unwrap();
 
@@ -59,7 +90,7 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap()
         .value();
-    defmt::info!("PAG7025 R2 Product ID: 0x{:x}", prod_id_r2);
+    defmt::info!("PAJ7025 R2 Product ID: 0x{:x}", prod_id_r2);
 
     let prod_id_r3 = paj7025r3
         .ll
@@ -70,48 +101,67 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap()
         .value();
-    defmt::info!("PAG7025 R3 Product ID: 0x{:x}", prod_id_r3);
-
-    let mut cfg_bmi = spim::Config::default();
-    cfg_bmi.frequency = spim::Frequency::M8;
-    cfg_bmi.mode = spim::MODE_0;
-    cfg_bmi.bit_order = spim::BitOrder::MSB_FIRST;
+    defmt::info!("PAJ7025 R3 Product ID: 0x{:x}", prod_id_r3);
     
-    let dev_b2 = make_spi_dev(p.SPI2, Irqs, b.bmi270_spi.into(), cfg_bmi);
+    let bmi270_spi = pins::Spi {
+        sck: b.bmi270.sck.into(),
+        miso: b.bmi270.miso.into(),
+        mosi: b.bmi270.mosi.into(),
+        cs: b.bmi270.cs.into(),
+    };
 
-    const FIFO_BURST: usize = 256;
-    let mut bmi: Bmi2<_, _, FIFO_BURST> = Bmi2::new_spi(dev_b2, Delay, Burst::new(255));
-    let chip_id = bmi.get_chip_id().await.unwrap();
-    defmt::info!("BMI270 Chip ID: 0x{:x}", chip_id);
+    let (imu, imu_int) = imu::init::<_, _, 1024, 255>(
+        p.SPI2,
+        Irqs,
+        bmi270_spi,
+        b.bmi270.irq.into(),
+    ).await.unwrap();
 
     let (mut cdc, usb) = usb::usb_device(p.USBD);
     spawner.must_spawn(usb::run_usb(usb));
+    
+    let nvmc = nvmc.borrow();
+    let settings = init_settings(&nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
 
     cdc.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
-    let (mut tx, mut rx, _ctl) = cdc.split_with_control();
-    loop {
-        let mut buf = [0u8; 64];
-        let n = rx.read_packet(&mut buf).await.unwrap();
-        if n == 0 {
-            continue;
-        }
-        tx.write_packet(&buf[..n]).await.unwrap();
-    }
+    let paj7025r2_fod = Output::new(b.paj7025r2.fod, embassy_nrf::gpio::Level::Low, OutputDrive::Standard);
+    let paj7025r3_fod = Output::new(b.paj7025r3.fod, embassy_nrf::gpio::Level::Low, OutputDrive::Standard);
+
+    let (usb_snd, usb_rcv, usb_ctl) = cdc.split_with_control();
+    let ctx = CommonContext {
+        usb_snd,
+        usb_rcv,
+        usb_ctl,
+        paj7025r2,
+        paj7025r3,
+        paj7025r2_fod,
+        paj7025r3_fod,
+        imu,
+        imu_int,
+        settings,
+        nvmc,
+        obj: object_mode::Context::take(),
+    };
+    
+    let _ = object_mode::object_mode(ctx).await;
 }
 
-fn make_spi_dev<SPI, IRQ>(
-    spi: Peri<'static, SPI>,
-    irqs: IRQ,
-    pins: pins::Spi,
-    cfg: spim::Config,
-) -> ExclusiveDevice<Spim<'static, SPI>, Output<'static>, Delay>
-where
-    SPI: spim::Instance,
-    IRQ: Binding<<SPI as spim::Instance>::Interrupt, spim::InterruptHandler<SPI>> + 'static,
-{
-    let spim = Spim::new(spi, irqs, pins.sck, pins.miso, pins.mosi, cfg);
-    let cs_out = Output::new(pins.cs, Level::High, OutputDrive::Standard);
-    ExclusiveDevice::new(spim, cs_out, Delay).unwrap()
+type Paj = Paj7025<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, embedded_hal_bus::spi::DeviceError<spim::Error, core::convert::Infallible>>;
+
+struct CommonContext<const IMU_N: usize> {
+    usb_snd: cdc_acm::Sender<'static, UsbDriver>,
+    usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
+    #[expect(dead_code)]
+    usb_ctl: cdc_acm::ControlChanged<'static>,
+    paj7025r2: Paj,
+    paj7025r3: Paj,
+    paj7025r2_fod: Output<'static>,
+    paj7025r3_fod: Output<'static>,
+    imu: Imu<IMU_N>,
+    imu_int: ImuInterrupt,
+    settings: &'static mut Settings,
+    nvmc: &'static RefCell<Nvmc<'static>>,
+    obj: object_mode::Context,
 }
