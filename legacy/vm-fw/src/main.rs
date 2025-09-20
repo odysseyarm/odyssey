@@ -110,7 +110,7 @@ async fn main(spawner: Spawner) {
         cs: b.bmi270.cs.into(),
     };
 
-    let (imu, imu_int) = imu::init::<_, _, 1024, 255>(
+    let (imu, imu_int) = imu::init::<_, _, 65535, 255>(
         p.SPI2,
         Irqs,
         bmi270_spi,
@@ -118,10 +118,10 @@ async fn main(spawner: Spawner) {
     ).await.unwrap();
 
     let (mut cdc, usb) = usb::usb_device(p.USBD);
-    spawner.must_spawn(usb::run_usb(usb));
-    
+    spawner.spawn(defmt::unwrap!(usb::run_usb(usb)));
+
     let nvmc = nvmc.borrow();
-    let settings = init_settings(&nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
+    let settings = init_settings(nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
 
     cdc.wait_connection().await;
     defmt::info!("CDC-ACM connected");

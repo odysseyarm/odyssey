@@ -40,7 +40,7 @@ where
     
     let spi_device = make_spi_dev(spi, irqs, pins, spim_config);
 
-    let mut imu: Bmi2<_, _, N> = Bmi2::new_spi(spi_device, Delay, Burst::new(MAX));
+    let mut imu: Bmi2<_, _, N> = Bmi2::new_spi(spi_device, Delay, Burst::new(MAX)).await;
 
     let chip_id = imu.get_chip_id().await.unwrap();
     defmt::info!("chip id: {}", chip_id);

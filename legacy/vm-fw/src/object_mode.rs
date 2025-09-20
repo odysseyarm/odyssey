@@ -57,7 +57,7 @@ pub async fn object_mode<const N: usize>(mut ctx: CommonContext<N>) -> Result<Co
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        &ctx.nvmc,
+        ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
     let c = imu_loop(
@@ -134,7 +134,7 @@ async fn usb_rcv_loop(
                 };
                 let mut paj = paj.lock().await;
                 let data: u8 = 0;
-                paj.read_register(register.bank, register.address, &mut [data]);
+                paj.read_register(register.bank, register.address, &mut [data]).await?;
                 Some(Packet {
                     id: pkt.id,
                     data: P::ReadRegisterResponse(ReadRegisterResponse {
@@ -212,11 +212,10 @@ async fn usb_rcv_loop(
             P::ReadVersionResponse(_) => None,
         };
 
-        if let Some(r) = response {
-            if r.id != 255 {
+        if let Some(r) = response
+            && r.id != 255 {
                 pkt_snd.send(r).await;
             }
-        }
     }
 }
 

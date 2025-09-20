@@ -41,7 +41,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [features]
 default = ["defmt"]
-defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt", "embassy-futures/defmt", "cobs/defmt"]
+defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt", "embassy-futures/defmt", "cobs/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
