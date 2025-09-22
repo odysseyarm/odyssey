@@ -50,9 +50,9 @@ where
     ppi_ch.enable();
     timer.start();
     // Let the timer run forever
-    core::mem::forget(timer);
-    core::mem::forget(ppi_ch);
-    core::mem::forget(clkin_ch);
+    timer.persist();
+    ppi_ch.persist();
+    clkin_ch.persist();
 
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M8;

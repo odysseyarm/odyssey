@@ -105,7 +105,7 @@ async fn main(spawner: Spawner) {
 
     let settings = init_settings(&nvmc, &mut pag).await;
 
-    spawner.must_spawn(usb::run_usb(usb));
+    spawner.spawn(defmt::unwrap!(usb::run_usb(usb)));
     cdc_acm_class.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
