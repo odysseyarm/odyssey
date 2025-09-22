@@ -2,12 +2,12 @@ use core::{
     cell::RefCell, convert::Infallible, mem::{MaybeUninit, transmute}, sync::atomic::{AtomicBool, AtomicU8, Ordering}
 };
 
-use defmt::Format;
+use defmt::{Debug2Format, Format};
 use embassy_futures::{
     join::join4,
     select::{Either, select},
 };
-use embassy_nrf::{Peri, gpio::{self, AnyPin}, nvmc::Nvmc, peripherals, spim::{self, Error}};
+use embassy_nrf::{Peri, nvmc::Nvmc, ppi::AnyConfigurableChannel, spim::Error};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex, watch::Watch};
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use embedded_hal_bus::spi::DeviceError;
@@ -18,10 +18,7 @@ use protodongers::{
 use static_cell::ConstStaticCell;
 
 use crate::{
-    CommonContext, Paj, UsbDriver,
-    imu::{Imu, ImuInterrupt},
-    settings::{PajsSettings, Settings},
-    usb::write_serial, utils::device_id,
+    CommonContext, Paj, PajGroup, UsbDriver, fodtrigger::{FodTrigger, FodTriggerConfig}, imu::{Imu, ImuInterrupt}, settings::{PajsSettings, Settings}, usb::write_serial, utils::device_id
 };
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
@@ -29,13 +26,9 @@ type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMu
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
-type PajGroup<'a> = (&'a AsyncMutex<NoopRawMutex, Paj>, gpio::Output<'a>);
-
 #[allow(unreachable_code)]
-pub async fn object_mode<const N: usize>(mut ctx: CommonContext<N>) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
+pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(mut ctx: CommonContext<N>, timer: Peri<'d, T>) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
-    let paj7025r2 = AsyncMutex::<NoopRawMutex, _>::new(ctx.paj7025r2);
-    let paj7025r3 = AsyncMutex::<NoopRawMutex, _>::new(ctx.paj7025r3);
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
         packet_serialize_buffer: ctx.obj.packet_serialize_buffer,
@@ -51,8 +44,8 @@ pub async fn object_mode<const N: usize>(mut ctx: CommonContext<N>) -> Result<Co
     let _exit3 = exit.receiver().unwrap();
 
     let a = usb_rcv_loop(
-        &paj7025r2,
-        &paj7025r3,
+        ctx.paj7025r2_group.0,
+        ctx.paj7025r3_group.0,
         &stream_infos,
         pkt_channel.sender(),
         &mut pkt_rcv,
@@ -66,7 +59,7 @@ pub async fn object_mode<const N: usize>(mut ctx: CommonContext<N>) -> Result<Co
         pkt_channel.sender(),
         &stream_infos,
     );
-    let d = obj_loop((&paj7025r2, ctx.paj7025r2_fod), (&paj7025r3, ctx.paj7025r3_fod), pkt_channel.sender(), &stream_infos);
+    let d = obj_loop(ctx.paj7025r2_group, ctx.paj7025r3_group, ctx.fod_set_ch, ctx.fod_clr_ch, timer, pkt_channel.sender(), &stream_infos);
     // TODO turn these into tasks
     let r = join4(a, b, c, d).await;
 
@@ -287,31 +280,55 @@ async fn imu_loop<const N: usize>(
     }
 }
 
-async fn obj_loop(
+async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     r2_group: PajGroup<'_>,
     r3_group: PajGroup<'_>,
+    ppi_set: Peri<'d, AnyConfigurableChannel>,
+    ppi_clr: Peri<'d, AnyConfigurableChannel>,
+    timer: Peri<'d, T>,
     pkt_snd: Sender<'_, Packet, 4>,
     stream_infos: &StreamInfos,
 ) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
-    let (r2, mut r2_fod) = r2_group;
-    let (r3, mut r3_fod) = r3_group;
+    let (r2, r2_fod, nf_ch) = r2_group;
+    let (r3, r3_fod, wf_ch) = r3_group;
+
+    let config = FodTriggerConfig::default();
+    // let mut trigger = FodTrigger::init(r2_fod, r3_fod, nf_ch, wf_ch, timer, ppi_set, ppi_clr, config, 5, 2);
+    // trigger.start();
+
+    let mut r2_fod = embassy_nrf::gpio::Output::new(r2_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
+    let mut r3_fod = embassy_nrf::gpio::Output::new(r3_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
+
     loop {
         if stream_infos.marker.enabled() {
-            let mut objs = [[paj7025::types::ObjectFormat1::default(); 16]; 2];
-
+            // trigger.wait_tick().await;
             embassy_time::Timer::after_millis(5).await;
+
             r2_fod.set_high();
             r3_fod.set_high();
+            embassy_time::Timer::after_micros(2).await;
+            r2_fod.set_low();
+            r3_fod.set_low();
+
+            let mut objs = [[paj7025::types::ObjectFormat1::default(); 16]; 2];
 
             objs[0] = paj7025::parse_bank5(r2.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
             objs[1] = paj7025::parse_bank5(r3.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
+
+            for obj in objs {
+                for o in obj {
+                    if o.area().value() != 0 {
+                        defmt::info!("{}", Debug2Format(&o));
+                    }
+                }
+            }
 
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
                 data: P::CombinedMarkersReport(protodongers::CombinedMarkersReport {
-                    nf_points: objs[0].map(|o| nalgebra::Point2::new(o.cx, o.cy)),
-                    wf_points: objs[1].map(|o| nalgebra::Point2::new(o.cx, o.cy)),
+                    nf_points: objs[0].map(|o| nalgebra::Point2::new(o.cx().into(), o.cy().into())),
+                    wf_points: objs[1].map(|o| nalgebra::Point2::new(o.cx().into(), o.cy().into())),
                 }),
             };
             let r = pkt_snd.try_send(pkt);

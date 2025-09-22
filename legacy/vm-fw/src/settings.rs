@@ -39,7 +39,7 @@ pub async fn init_settings(
     let region = get_settings_region();
     assert!(region.len() >= 2 * PAGE_SIZE);
     let s = Settings::init(flash, region.start as u32);
-    s.apply(pajr2, pajr3).await?;
+    // s.apply(pajr2, pajr3).await?;
     let s = SETTINGS.init(s);
     Ok(s)
 }
@@ -176,7 +176,7 @@ impl PajsSettings {
         flash.erase(start, start + PAGE_SIZE as u32).unwrap();
         flash.write(start, &Self::MAGIC).unwrap();
         flash
-            .write(start + Self::OFFSET as u32, bytes_of(self))
+            .write(start + Self::OFFSET, bytes_of(self))
             .unwrap();
     }
 
@@ -308,7 +308,7 @@ impl Default for GeneralSettings {
                     stereo_iso: Default::default(),
                     suppress_ms: 200,
                     _padding: [0; 40],
-                }.into(),
+                },
             },
             accel_odr: &ACCEL_ODR,
         }

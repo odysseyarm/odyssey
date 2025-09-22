@@ -111,7 +111,7 @@ where
             ll: low_level::Paj7025::new(DeviceInterface::new(spi_device)),
             _marker: core::marker::PhantomData,
         };
-
+        
         Ok(driver)
     }
     
@@ -133,6 +133,137 @@ where
     ) -> Result<(), Paj7025Error<E>> {
         let address = ((bank as u16) << 8) | address as u16;
         self.ll.interface().write_register(address, 0, data).await
+    }
+}
+
+impl<SpiDevice, E> Paj7025<SpiDevice, E>
+where
+    SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E> + 'static,
+    E: core::fmt::Debug,
+{
+    pub async fn init_settings(&mut self, v_flip: bool) -> Result<(), Paj7025Error<E>> {
+        // Normal operation mode
+        self.write_register(0x00, 0x12, &[0x01]).await?;
+        // internal_system_control_disable
+        self.write_register(0x00, 0xDC, &[0x00]).await?;
+        // LEDDAC disable
+        self.write_register(0x00, 0xFB, &[0x04]).await?;
+        // sensor_on
+        self.write_register(0x00, 0x2F, &[0x05]).await?;
+        // Manual_PowerControl_Update_Req (toggle 0 -> 1)
+        self.write_register(0x00, 0x30, &[0x00]).await?;
+        self.write_register(0x00, 0x30, &[0x01]).await?;
+        // freerun_irtx_disable
+        self.write_register(0x00, 0x1F, &[0x00]).await?;
+
+        // Bank1: V-Flip (manual) ---
+        self.write_register(0x01, 0x2D, &[if v_flip { 0x01 } else { 0x00 }]).await?;
+
+        // Scale resolution: 4095 x 4095
+        self.ll
+            .control()
+            .bank_c()
+            .cmd_scale_resolution_x()
+            .write_async(|x| { x.set_value(0x0FFF); })
+            .await?;
+        self.ll
+            .control()
+            .bank_c()
+            .cmd_scale_resolution_y()
+            .write_async(|y| { y.set_value(0x0FFF); })
+            .await?;
+
+        // G0..G5 = 0
+        self.write_register(0x0C, 0x64, &[0x00]).await?;
+        self.write_register(0x0C, 0x65, &[0x00]).await?;
+        self.write_register(0x0C, 0x66, &[0x00]).await?;
+        self.write_register(0x0C, 0x67, &[0x00]).await?;
+        self.write_register(0x0C, 0x68, &[0x00]).await?;
+        self.write_register(0x0C, 0x69, &[0x00]).await?;
+        // G6 = FOD mode (0x07)
+        self.write_register(0x0C, 0x6A, &[0x07]).await?;
+        // G7, G8 = 0
+        self.write_register(0x0C, 0x6B, &[0x00]).await?;
+        self.write_register(0x0C, 0x6C, &[0x00]).await?;
+        // G13, G14 = 0
+        self.write_register(0x0C, 0x71, &[0x00]).await?;
+        self.write_register(0x0C, 0x72, &[0x00]).await?;
+        // keyscan disable
+        self.write_register(0x0C, 0x12, &[0x00]).await?;
+        self.write_register(0x0C, 0x13, &[0x00]).await?;
+
+        // Frame subtraction off
+        // self.ll
+        //     .control()
+        //     .bank_0()
+        //     .cmd_frame_subtraction_on()
+        //     .write_async(|w| { w.set_value(0x00); })
+        //     .await?;
+        // Cap object count to 16
+        // self.ll
+        //     .control()
+        //     .bank_0()
+        //     .cmd_max_object_num()
+        //     .write_async(|w| { w.set_value(16); })
+        //     .await?;
+
+        // Bank0 sync
+        self.ll
+            .control()
+            .bank_0()
+            .bank_0_sync_updated_flag()
+            .write_async(|w| { w.set_value(1); })
+            .await?;
+
+        // Gain: global=0x10, ggh=0x00
+        self.ll
+            .control()
+            .bank_c()
+            .b_global()
+            .write_async(|w| { w.set_value(0x10); })
+            .await?;
+        self.ll
+            .control()
+            .bank_c()
+            .b_ggh()
+            .write_async(|w| { w.set_value(0x00); })
+            .await?;
+
+        // Exposure: 0x2000 (units = 200 ns) → ~1.6384 ms
+        self.ll
+            .control()
+            .bank_c()
+            .b_expo()
+            .write_async(|w| { w.set_value(0x2000); })
+            .await?;
+
+        // DSP thresholds
+        self.ll
+            .control()
+            .bank_c()
+            .cmd_oalb()
+            .write_async(|w| { w.set_value(0x00); })
+            .await?;
+        
+        // Texp=8192
+        self.write_register(0x0c, 0x0f, &[0x00]).await?;
+        self.write_register(0x0c, 0x10, &[0x20]).await?;
+
+        self.ll
+            .control()
+            .bank_c()
+            .cmd_thd()
+            .write_async(|w| { w.set_value(0x6E); })
+            .await?;
+
+        self.ll
+            .control()
+            .bank_1()
+            .bank_1_sync_updated_flag()
+            .write_async(|w| { w.set_value(1); })
+            .await?;
+
+        Ok(())
     }
 }
 

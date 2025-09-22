@@ -8,17 +8,20 @@ mod pins;
 mod usb;
 mod settings;
 mod imu;
+mod fodtrigger;
 mod object_mode;
 
 use core::cell::RefCell;
 
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::Mutex;
+use embassy_nrf::timer::Timer;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::{blocking_mutex::Mutex, mutex::Mutex as AsyncMutex};
 use embassy_nrf::config::Config;
-use embassy_nrf::gpio::{Output, OutputDrive};
+use embassy_nrf::gpio::{self, Output, OutputDrive};
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::{bind_interrupts, peripherals};
+use embassy_nrf::{Peri, bind_interrupts, gpiote, peripherals, ppi};
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -78,6 +81,9 @@ async fn main(spawner: Spawner) {
     };
     let dev_r2 = make_spi_dev(p.TWISPI0, Irqs, paj7025r2_spi, cfg_paj.clone());
     let dev_r3 = make_spi_dev(p.TWISPI1, Irqs, paj7025r3_spi, cfg_paj);
+    
+    embassy_time::Timer::after_millis(1).await;
+
     let mut paj7025r2 = Paj7025::init(dev_r2).await.unwrap();
     let mut paj7025r3 = Paj7025::init(dev_r3).await.unwrap();
 
@@ -91,7 +97,7 @@ async fn main(spawner: Spawner) {
         .unwrap()
         .value();
     defmt::info!("PAJ7025 R2 Product ID: 0x{:x}", prod_id_r2);
-
+    
     let prod_id_r3 = paj7025r3
         .ll
         .control()
@@ -103,6 +109,9 @@ async fn main(spawner: Spawner) {
         .value();
     defmt::info!("PAJ7025 R3 Product ID: 0x{:x}", prod_id_r3);
     
+    paj7025r2.init_settings(false).await.unwrap();
+    paj7025r3.init_settings(true).await.unwrap();
+
     let bmi270_spi = pins::Spi {
         sck: b.bmi270.sck.into(),
         miso: b.bmi270.miso.into(),
@@ -126,39 +135,43 @@ async fn main(spawner: Spawner) {
     cdc.wait_connection().await;
     defmt::info!("CDC-ACM connected");
 
-    let paj7025r2_fod = Output::new(b.paj7025r2.fod, embassy_nrf::gpio::Level::Low, OutputDrive::Standard);
-    let paj7025r3_fod = Output::new(b.paj7025r3.fod, embassy_nrf::gpio::Level::Low, OutputDrive::Standard);
+    static PAJ7025R2_MUTEX: static_cell::StaticCell<AsyncMutex<NoopRawMutex, Paj>> = static_cell::StaticCell::new();
+    static PAJ7025R3_MUTEX: static_cell::StaticCell<AsyncMutex<NoopRawMutex, Paj>> = static_cell::StaticCell::new();
+
+    let paj7025r2 = PAJ7025R2_MUTEX.init(AsyncMutex::<NoopRawMutex, _>::new(paj7025r2));
+    let paj7025r3 = PAJ7025R3_MUTEX.init(AsyncMutex::<NoopRawMutex, _>::new(paj7025r3));
 
     let (usb_snd, usb_rcv, usb_ctl) = cdc.split_with_control();
     let ctx = CommonContext {
         usb_snd,
         usb_rcv,
         usb_ctl,
-        paj7025r2,
-        paj7025r3,
-        paj7025r2_fod,
-        paj7025r3_fod,
+        paj7025r2_group: (paj7025r2, b.paj7025r2.fod.into(), p.GPIOTE_CH0.into()),
+        paj7025r3_group: (paj7025r3, b.paj7025r3.fod.into(), p.GPIOTE_CH1.into()),
+        fod_set_ch: p.PPI_CH0.into(),
+        fod_clr_ch: p.PPI_CH1.into(),
         imu,
         imu_int,
         settings,
         nvmc,
         obj: object_mode::Context::take(),
     };
-    
-    let _ = object_mode::object_mode(ctx).await;
+
+    let _ = object_mode::object_mode(ctx, p.TIMER1).await;
 }
 
 type Paj = Paj7025<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, embedded_hal_bus::spi::DeviceError<spim::Error, core::convert::Infallible>>;
+type PajGroup<'a> = (&'a AsyncMutex<NoopRawMutex, Paj>, Peri<'a, gpio::AnyPin>, Peri<'a, gpiote::AnyChannel>);
 
 struct CommonContext<const IMU_N: usize> {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,
     usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
     #[expect(dead_code)]
     usb_ctl: cdc_acm::ControlChanged<'static>,
-    paj7025r2: Paj,
-    paj7025r3: Paj,
-    paj7025r2_fod: Output<'static>,
-    paj7025r3_fod: Output<'static>,
+    paj7025r2_group: PajGroup<'static>,
+    paj7025r3_group: PajGroup<'static>,
+    fod_set_ch: Peri<'static, ppi::AnyConfigurableChannel>,
+    fod_clr_ch: Peri<'static, ppi::AnyConfigurableChannel>,
     imu: Imu<IMU_N>,
     imu_int: ImuInterrupt,
     settings: &'static mut Settings,
