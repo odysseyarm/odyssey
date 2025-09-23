@@ -97,7 +97,7 @@ async fn main(spawner: Spawner) {
         .unwrap()
         .value();
     defmt::info!("PAJ7025 R2 Product ID: 0x{:x}", prod_id_r2);
-    
+
     let prod_id_r3 = paj7025r3
         .ll
         .control()
@@ -108,9 +108,9 @@ async fn main(spawner: Spawner) {
         .unwrap()
         .value();
     defmt::info!("PAJ7025 R3 Product ID: 0x{:x}", prod_id_r3);
-    
-    paj7025r2.init_settings(false).await.unwrap();
-    paj7025r3.init_settings(true).await.unwrap();
+
+    paj7025r2.init_settings(false, 0x10, 0x00).await.unwrap();
+    paj7025r3.init_settings(true, 0x10, 0x02).await.unwrap();
 
     let bmi270_spi = pins::Spi {
         sck: b.bmi270.sck.into(),
@@ -119,12 +119,12 @@ async fn main(spawner: Spawner) {
         cs: b.bmi270.cs.into(),
     };
 
-    let (imu, imu_int) = imu::init::<_, _, 65535, 255>(
-        p.SPI2,
-        Irqs,
-        bmi270_spi,
-        b.bmi270.irq.into(),
-    ).await.unwrap();
+    // let (imu, imu_int) = imu::init::<_, _, 65535, 255>(
+    //     p.SPI2,
+    //     Irqs,
+    //     bmi270_spi,
+    //     b.bmi270.irq.into(),
+    // ).await.unwrap();
 
     let (mut cdc, usb) = usb::usb_device(p.USBD);
     spawner.spawn(defmt::unwrap!(usb::run_usb(usb)));
@@ -150,8 +150,8 @@ async fn main(spawner: Spawner) {
         paj7025r3_group: (paj7025r3, b.paj7025r3.fod.into(), p.GPIOTE_CH1.into()),
         fod_set_ch: p.PPI_CH0.into(),
         fod_clr_ch: p.PPI_CH1.into(),
-        imu,
-        imu_int,
+        // imu,
+        // imu_int,
         settings,
         nvmc,
         obj: object_mode::Context::take(),
@@ -163,7 +163,7 @@ async fn main(spawner: Spawner) {
 type Paj = Paj7025<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, embedded_hal_bus::spi::DeviceError<spim::Error, core::convert::Infallible>>;
 type PajGroup<'a> = (&'a AsyncMutex<NoopRawMutex, Paj>, Peri<'a, gpio::AnyPin>, Peri<'a, gpiote::AnyChannel>);
 
-struct CommonContext<const IMU_N: usize> {
+struct CommonContext/*<const IMU_N: usize>*/ {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,
     usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
     #[expect(dead_code)]
@@ -172,8 +172,8 @@ struct CommonContext<const IMU_N: usize> {
     paj7025r3_group: PajGroup<'static>,
     fod_set_ch: Peri<'static, ppi::AnyConfigurableChannel>,
     fod_clr_ch: Peri<'static, ppi::AnyConfigurableChannel>,
-    imu: Imu<IMU_N>,
-    imu_int: ImuInterrupt,
+    // imu: Imu<IMU_N>,
+    // imu_int: ImuInterrupt,
     settings: &'static mut Settings,
     nvmc: &'static RefCell<Nvmc<'static>>,
     obj: object_mode::Context,

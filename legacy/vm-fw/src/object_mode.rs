@@ -305,16 +305,23 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
             // trigger.wait_tick().await;
             r2_fod.set_high();
             r3_fod.set_high();
-            embassy_time::Timer::after_micros(10).await;
+            embassy_time::Timer::after_micros(2).await;
             r2_fod.set_low();
             r3_fod.set_low();
 
-            embassy_time::Timer::after_millis(10).await;
+            embassy_time::Timer::after_millis(5).await;
 
             let mut objs = [[paj7025::types::ObjectFormat1::DEFAULT; 16]; 2];
 
-            objs[0] = paj7025::parse_bank5(r2.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
-            objs[1] = paj7025::parse_bank5(r3.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
+            // TODO figure out why u2048x doesn't work or get rid of it
+            // objs[0] = paj7025::parse_bank5(r2.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
+            // objs[1] = paj7025::parse_bank5(r3.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
+            let mut bytes: [u8; 256] = [0; 256];
+            r2.lock().await.read_register(5, 0, &mut bytes).await?;
+            objs[0] = paj7025::parse_bank5(bytes);
+
+            r3.lock().await.read_register(5, 0, &mut bytes).await?;
+            objs[1] = paj7025::parse_bank5(bytes);
 
             for obj in objs {
                 for o in obj {

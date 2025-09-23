@@ -39,7 +39,7 @@ pub async fn init_settings(
     let region = get_settings_region();
     assert!(region.len() >= 2 * PAGE_SIZE);
     let s = Settings::init(flash, region.start as u32);
-    // s.apply(pajr2, pajr3).await?;
+    s.apply(pajr2, pajr3).await?;
     let s = SETTINGS.init(s);
     Ok(s)
 }
@@ -58,9 +58,9 @@ impl Settings {
         let pajs_start = start;
         let general_start = start + PAGE_SIZE as u32;
         let transient_start = start + PAGE_SIZE as u32 * 2;
-        let pajs = PajsSettings::init(&flash, pajs_start);
-        let general = GeneralSettings::init(&flash, general_start);
-        let transient = TransientSettings::init(&flash, transient_start);
+        let pajs = PajsSettings::init(flash, pajs_start);
+        let general = GeneralSettings::init(flash, general_start);
+        let transient = TransientSettings::init(flash, transient_start);
         Self {
             pajs,
             general,
@@ -232,6 +232,9 @@ impl PajsSettings {
                         .write_async(|x| x.set_value(resolution_x)).await?;
                     $paj.ll.control().bank_c().cmd_scale_resolution_y()
                         .write_async(|x| x.set_value(resolution_y)).await?;
+                    
+                    $paj.ll.control().bank_0().bank_0_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
+                    $paj.ll.control().bank_1().bank_1_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
 
                     Ok::<_, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>(())
                 }
