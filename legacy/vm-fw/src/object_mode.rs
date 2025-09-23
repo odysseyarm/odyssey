@@ -18,7 +18,7 @@ use protodongers::{
 use static_cell::ConstStaticCell;
 
 use crate::{
-    CommonContext, Paj, PajGroup, UsbDriver, fodtrigger::{FodTrigger, FodTriggerConfig}, imu::{Imu, ImuInterrupt}, settings::{PajsSettings, Settings}, usb::write_serial, utils::device_id
+    CommonContext, Paj, PajGroup, UsbDriver, imu::{Imu, ImuInterrupt}, settings::{PajsSettings, Settings}, usb::write_serial, utils::device_id
 };
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
@@ -27,7 +27,7 @@ type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopR
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
 #[allow(unreachable_code)]
-pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(mut ctx: CommonContext<N>, timer: Peri<'d, T>) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
+pub async fn object_mode<'d, /*const N: usize,*/ T: embassy_nrf::timer::Instance>(mut ctx: CommonContext/*<N>*/, timer: Peri<'d, T>) -> Result<CommonContext/*<N>*/, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -53,15 +53,15 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(mu
         ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
-    let c = imu_loop(
-        &mut ctx.imu,
-        &mut ctx.imu_int,
-        pkt_channel.sender(),
-        &stream_infos,
-    );
+    // let c = imu_loop(
+    //     &mut ctx.imu,
+    //     &mut ctx.imu_int,
+    //     pkt_channel.sender(),
+    //     &stream_infos,
+    // );
     let d = obj_loop(ctx.paj7025r2_group, ctx.paj7025r3_group, ctx.fod_set_ch, ctx.fod_clr_ch, timer, pkt_channel.sender(), &stream_infos);
     // TODO turn these into tasks
-    let r = join4(a, b, c, d).await;
+    let r = embassy_futures::join::join3(a, b, d).await;
 
     r.0?
     // ctx.paj = paj.into_inner().as_dynamic_mode();
@@ -114,6 +114,7 @@ async fn usb_rcv_loop(
                 let mut paj = paj.lock().await;
                 paj.write_register(register.bank, register.address, &[register.data]).await?;
                 paj.ll.control().bank_0().bank_0_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
+                paj.ll.control().bank_1().bank_1_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
                 // Some(Packet {
                 //     id: pkt.id,
                 //     data: P::Ack(),
@@ -126,14 +127,14 @@ async fn usb_rcv_loop(
                     protodongers::Port::Wf => paj7025r3,
                 };
                 let mut paj = paj.lock().await;
-                let data: u8 = 0;
-                paj.read_register(register.bank, register.address, &mut [data]).await?;
+                let mut data: [u8; 1] = [0];
+                paj.read_register(register.bank, register.address, &mut data).await?;
                 Some(Packet {
                     id: pkt.id,
                     data: P::ReadRegisterResponse(ReadRegisterResponse {
                         bank: register.bank,
                         address: register.address,
-                        data,
+                        data: data[0],
                     }),
                 })
             }
@@ -292,7 +293,7 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     let (r2, r2_fod, nf_ch) = r2_group;
     let (r3, r3_fod, wf_ch) = r3_group;
 
-    let config = FodTriggerConfig::default();
+    // let config = FodTriggerConfig::default();
     // let mut trigger = FodTrigger::init(r2_fod, r3_fod, nf_ch, wf_ch, timer, ppi_set, ppi_clr, config, 5, 2);
     // trigger.start();
 
@@ -302,22 +303,22 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     loop {
         if stream_infos.marker.enabled() {
             // trigger.wait_tick().await;
-            embassy_time::Timer::after_millis(5).await;
-
             r2_fod.set_high();
             r3_fod.set_high();
-            embassy_time::Timer::after_micros(2).await;
+            embassy_time::Timer::after_micros(10).await;
             r2_fod.set_low();
             r3_fod.set_low();
 
-            let mut objs = [[paj7025::types::ObjectFormat1::default(); 16]; 2];
+            embassy_time::Timer::after_millis(10).await;
+
+            let mut objs = [[paj7025::types::ObjectFormat1::DEFAULT; 16]; 2];
 
             objs[0] = paj7025::parse_bank5(r2.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
             objs[1] = paj7025::parse_bank5(r3.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
 
             for obj in objs {
                 for o in obj {
-                    if o.area().value() != 0 {
+                    if o.cx().value() != 4095 && o.cx().value() != 0 {
                         defmt::info!("{}", Debug2Format(&o));
                     }
                 }
