@@ -141,127 +141,97 @@ where
     SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E> + 'static,
     E: core::fmt::Debug,
 {
-    pub async fn init_settings(&mut self, v_flip: bool) -> Result<(), Paj7025Error<E>> {
-        // Normal operation mode
-        self.write_register(0x00, 0x12, &[0x01]).await?;
-        // internal_system_control_disable
-        self.write_register(0x00, 0xDC, &[0x00]).await?;
-        // LEDDAC disable
-        self.write_register(0x00, 0xFB, &[0x04]).await?;
-        // sensor_on
-        self.write_register(0x00, 0x2F, &[0x05]).await?;
-        // Manual_PowerControl_Update_Req (toggle 0 -> 1)
-        self.write_register(0x00, 0x30, &[0x00]).await?;
-        self.write_register(0x00, 0x30, &[0x01]).await?;
-        // freerun_irtx_disable
-        self.write_register(0x00, 0x1F, &[0x00]).await?;
+    pub async fn init_settings(
+        &mut self,
+        v_flip: bool,
+        gain_global: u8,
+        gain_ggh: u8,
+    ) -> Result<(), Paj7025Error<E>> {
+        #[inline(always)]
+        async fn w<SpiDevice, E>(
+            ll: &mut crate::low_level::Paj7025<crate::DeviceInterface<SpiDevice>>,
+            bank: u8,
+            reg: u8,
+            val: u8,
+        ) -> Result<(), Paj7025Error<E>>
+        where
+            SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E> + 'static,
+            E: core::fmt::Debug,
+        {
+            let addr = ((bank as u16) << 8) | reg as u16;
+            ll.interface().write_register(addr, 0, core::slice::from_ref(&val)).await
+        }
 
-        // Bank1: V-Flip (manual) ---
-        self.write_register(0x01, 0x2D, &[if v_flip { 0x01 } else { 0x00 }]).await?;
+        #[inline(always)]
+        async fn w_multi<SpiDevice, E>(
+            ll: &mut crate::low_level::Paj7025<crate::DeviceInterface<SpiDevice>>,
+            bank: u8,
+            reg: u8,
+            data: &[u8],
+        ) -> Result<(), Paj7025Error<E>>
+        where
+            SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E> + 'static,
+            E: core::fmt::Debug,
+        {
+            let addr = ((bank as u16) << 8) | reg as u16;
+            ll.interface().write_register(addr, 0, data).await
+        }
 
-        // Scale resolution: 4095 x 4095
-        self.ll
-            .control()
-            .bank_c()
-            .cmd_scale_resolution_x()
-            .write_async(|x| { x.set_value(0x0FFF); })
-            .await?;
-        self.ll
-            .control()
-            .bank_c()
-            .cmd_scale_resolution_y()
-            .write_async(|y| { y.set_value(0x0FFF); })
-            .await?;
+        // ---------- Bank 0 ----------
+        // (Note: our interface always issues the bank-select under the hood;
+        // we still group by bank to minimize redundant selects)
+        w(&mut self.ll, 0x00, 0x12, 0x01).await?; // operation mode
+        w(&mut self.ll, 0x00, 0xDC, 0x00).await?; // internal_system_control_disable
+        w(&mut self.ll, 0x00, 0xFB, 0x04).await?; // LEDDAC disable
+        w(&mut self.ll, 0x00, 0x2F, 0x05).await?; // sensor_on
+        w(&mut self.ll, 0x00, 0x30, 0x00).await?; // Manual_PowerControl_Update_Req (0)
+        w(&mut self.ll, 0x00, 0x30, 0x01).await?; // Manual_PowerControl_Update_Req (1)
+        w(&mut self.ll, 0x00, 0x1F, 0x00).await?; // freerun_irtx_disable
 
-        // G0..G5 = 0
-        self.write_register(0x0C, 0x64, &[0x00]).await?;
-        self.write_register(0x0C, 0x65, &[0x00]).await?;
-        self.write_register(0x0C, 0x66, &[0x00]).await?;
-        self.write_register(0x0C, 0x67, &[0x00]).await?;
-        self.write_register(0x0C, 0x68, &[0x00]).await?;
-        self.write_register(0x0C, 0x69, &[0x00]).await?;
-        // G6 = FOD mode (0x07)
-        self.write_register(0x0C, 0x6A, &[0x07]).await?;
-        // G7, G8 = 0
-        self.write_register(0x0C, 0x6B, &[0x00]).await?;
-        self.write_register(0x0C, 0x6C, &[0x00]).await?;
-        // G13, G14 = 0
-        self.write_register(0x0C, 0x71, &[0x00]).await?;
-        self.write_register(0x0C, 0x72, &[0x00]).await?;
+        // ---------- Bank 1 ----------
+        w(&mut self.ll, 0x01, 0x2D, if v_flip { 0x01 } else { 0x00 }).await?; // V flip
+
+        // ---------- Bank 12 (0x0C) ----------
+        // resolution: 4095 x 4095 => [0xFF, 0x0F] LE
+        let res_xy = [0xFFu8, 0x0F];
+        w_multi(&mut self.ll, 0x0C, 0x60, &res_xy).await?; // scale X
+        w_multi(&mut self.ll, 0x0C, 0x62, &res_xy).await?; // scale Y
+
+        // Gx modes
+        w(&mut self.ll, 0x0C, 0x64, 0x00).await?; // G0
+        w(&mut self.ll, 0x0C, 0x65, 0x00).await?; // G1
+        w(&mut self.ll, 0x0C, 0x66, 0x00).await?; // G2
+        w(&mut self.ll, 0x0C, 0x67, 0x00).await?; // G3
+        w(&mut self.ll, 0x0C, 0x68, 0x00).await?; // G4
+        w(&mut self.ll, 0x0C, 0x69, 0x00).await?; // G5
+        w(&mut self.ll, 0x0C, 0x6A, 0x07).await?; // G6 = FOD (0x00 would be STREAM)
+        w(&mut self.ll, 0x0C, 0x6B, 0x00).await?; // G7
+        w(&mut self.ll, 0x0C, 0x6C, 0x00).await?; // G8
+        w(&mut self.ll, 0x0C, 0x71, 0x00).await?; // G13
+        w(&mut self.ll, 0x0C, 0x72, 0x00).await?; // G14
+
         // keyscan disable
-        self.write_register(0x0C, 0x12, &[0x00]).await?;
-        self.write_register(0x0C, 0x13, &[0x00]).await?;
+        w(&mut self.ll, 0x0C, 0x12, 0x00).await?;
+        w(&mut self.ll, 0x0C, 0x13, 0x00).await?;
 
-        // Frame subtraction off
-        // self.ll
-        //     .control()
-        //     .bank_0()
-        //     .cmd_frame_subtraction_on()
-        //     .write_async(|w| { w.set_value(0x00); })
-        //     .await?;
-        // Cap object count to 16
-        // self.ll
-        //     .control()
-        //     .bank_0()
-        //     .cmd_max_object_num()
-        //     .write_async(|w| { w.set_value(16); })
-        //     .await?;
+        // ---------- Bank 0 SYNC ----------
+        // (this is the crucial one for coordinates to become valid)
+        w(&mut self.ll, 0x00, 0x01, 0x01).await?; // Bank0_Sync_Updated_Flag
 
-        // Bank0 sync
-        self.ll
-            .control()
-            .bank_0()
-            .bank_0_sync_updated_flag()
-            .write_async(|w| { w.set_value(1); })
-            .await?;
+        // ---------- Bank 12 (gain/expo/thresholds) ----------
+        w(&mut self.ll, 0x0C, 0x0B, gain_global).await?; // B_global
+        w(&mut self.ll, 0x0C, 0x0C, gain_ggh).await?;     // B_ggh
 
-        // Gain: global=0x10, ggh=0x00
-        self.ll
-            .control()
-            .bank_c()
-            .b_global()
-            .write_async(|w| { w.set_value(0x10); })
-            .await?;
-        self.ll
-            .control()
-            .bank_c()
-            .b_ggh()
-            .write_async(|w| { w.set_value(0x00); })
-            .await?;
-
-        // Exposure: 0x2000 (units = 200 ns) → ~1.6384 ms
-        self.ll
-            .control()
-            .bank_c()
-            .b_expo()
-            .write_async(|w| { w.set_value(0x2000); })
-            .await?;
+        // Exposure 0x2000 (units 200ns) split as in C: 0x0F=0x00, 0x10=0x20
+        w(&mut self.ll, 0x0C, 0x0F, 0x00).await?; // Texp LSB
+        w(&mut self.ll, 0x0C, 0x10, 0x20).await?; // Texp MSB
 
         // DSP thresholds
-        self.ll
-            .control()
-            .bank_c()
-            .cmd_oalb()
-            .write_async(|w| { w.set_value(0x00); })
-            .await?;
-        
-        // Texp=8192
-        self.write_register(0x0c, 0x0f, &[0x00]).await?;
-        self.write_register(0x0c, 0x10, &[0x20]).await?;
+        w(&mut self.ll, 0x0C, 0x46, 0x00).await?; // oalb
+        w(&mut self.ll, 0x0C, 0x47, 0x6E).await?; // thd (Yth = 110)
 
-        self.ll
-            .control()
-            .bank_c()
-            .cmd_thd()
-            .write_async(|w| { w.set_value(0x6E); })
-            .await?;
-
-        self.ll
-            .control()
-            .bank_1()
-            .bank_1_sync_updated_flag()
-            .write_async(|w| { w.set_value(1); })
-            .await?;
+        // ---------- Bank 1 SYNC ----------
+        w(&mut self.ll, 0x01, 0x01, 0x01).await?; // Bank1_Sync_Updated_Flag
 
         Ok(())
     }
@@ -429,10 +399,12 @@ pub mod low_level {
     );
 }
 
-pub fn parse_bank5(bytes: [u8; 2048/8]) -> [ObjectFormat1; 16] {
-    let mut arr = [ObjectFormat1::default(); 16];
-    for (i, chunk) in bytes.chunks_exact(16).enumerate() {
-        arr[i] = *bytemuck::from_bytes::<ObjectFormat1>(chunk);
+pub fn parse_bank5(bytes: [u8; 2048 / 8]) -> [ObjectFormat1; 16] {
+    let mut out = [ObjectFormat1::DEFAULT; 16];
+    for (i, c) in bytes.chunks_exact(16).enumerate() {
+        let mut tmp = [0u8; 16];
+        tmp.copy_from_slice(c);
+        out[i] = bytemuck::pod_read_unaligned(&tmp); // <- unaligned-safe
     }
-    arr
+    out
 }
