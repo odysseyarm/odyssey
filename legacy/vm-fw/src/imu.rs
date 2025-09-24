@@ -1,6 +1,6 @@
 use core::convert::Infallible;
 
-use bmi2::{bmi2_async::Bmi2, config, interface::SpiInterface, types::{Burst, Error}};
+use bmi2::{bmi2_async::Bmi2, config, interface::SpiInterface, types::{Burst, Error, FifoConf, IntIoCtrl, IntLatch, IntMapData, IntMapFeat, MapData, PwrConf, PwrCtrl}};
 use embassy_nrf::{
     Peri, gpio::{AnyPin, Input, Output, Pull}, interrupt::typelevel::Binding, spim::{self, Spim},
 };
@@ -63,8 +63,20 @@ where
             noise_perf: PerfMode::Perf,
         }
     };
+    imu.disable_power_save().await?;
     imu.set_acc_conf(acc_conf).await?;
     imu.set_gyr_conf(gyr_conf).await?;
-    
+    imu.set_acc_range(bmi2::types::AccRange::Range16g).await?;
+    imu.set_gyr_range(bmi2::types::GyrRange { range: bmi2::types::GyrRangeVal::Range500, ois_range: bmi2::types::OisRange::Range250 }).await?;
+    imu.set_int_map_data(IntMapData { int1: MapData { ffull: false, fwm: false, drdy: true, err: false }, int2: MapData { ffull: false, fwm: false, drdy: false, err: false } }).await?;
+    imu.set_int1_io_ctrl(IntIoCtrl { level: bmi2::types::OutputLevel::ActiveLow, od: bmi2::types::OutputBehavior::PushPull, output_en: true, input_en: false }).await?;
+    imu.set_pwr_ctrl(PwrCtrl {
+        acc_en: true,
+        gyr_en: true,
+        aux_en: false,
+        temp_en: false,
+    }).await?;
+    imu.set_int_latch(IntLatch::None).await?;
+
     Ok((imu, ImuInterrupt { irq }))
 }

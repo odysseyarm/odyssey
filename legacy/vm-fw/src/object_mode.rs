@@ -1,7 +1,8 @@
 use core::{
-    cell::RefCell, convert::Infallible, mem::{MaybeUninit, transmute}, sync::atomic::{AtomicBool, AtomicU8, Ordering}
+    array::from_fn, cell::RefCell, convert::Infallible, mem::{MaybeUninit, transmute}, sync::atomic::{AtomicBool, AtomicU8, Ordering}
 };
 
+use bmi2::types::AxisData;
 use defmt::{Debug2Format, Format};
 use embassy_futures::{
     join::join4,
@@ -11,6 +12,7 @@ use embassy_nrf::{Peri, nvmc::Nvmc, ppi::AnyConfigurableChannel, spim::Error};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex, watch::Watch};
 use embassy_usb::{class::cdc_acm, driver::EndpointError};
 use embedded_hal_bus::spi::DeviceError;
+use nalgebra::Vector3;
 use paj7025::Paj7025Error;
 use protodongers::{
     Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
@@ -27,7 +29,7 @@ type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopR
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
 #[allow(unreachable_code)]
-pub async fn object_mode<'d, /*const N: usize,*/ T: embassy_nrf::timer::Instance>(mut ctx: CommonContext/*<N>*/, timer: Peri<'d, T>) -> Result<CommonContext/*<N>*/, Paj7025Error<DeviceError<Error, Infallible>>> {
+pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(mut ctx: CommonContext<N>, timer: Peri<'d, T>) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -53,15 +55,15 @@ pub async fn object_mode<'d, /*const N: usize,*/ T: embassy_nrf::timer::Instance
         ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
-    // let c = imu_loop(
-    //     &mut ctx.imu,
-    //     &mut ctx.imu_int,
-    //     pkt_channel.sender(),
-    //     &stream_infos,
-    // );
+    let c = imu_loop(
+        &mut ctx.imu,
+        &mut ctx.imu_int,
+        pkt_channel.sender(),
+        &stream_infos,
+    );
     let d = obj_loop(ctx.paj7025r2_group, ctx.paj7025r3_group, ctx.fod_set_ch, ctx.fod_clr_ch, timer, pkt_channel.sender(), &stream_infos);
     // TODO turn these into tasks
-    let r = embassy_futures::join::join3(a, b, d).await;
+    let r = join4(a, b, c, d).await;
 
     r.0?
     // ctx.paj = paj.into_inner().as_dynamic_mode();
@@ -234,50 +236,61 @@ async fn imu_loop<const N: usize>(
     pkt_snd: Sender<'_, Packet, 4>,
     stream_infos: &StreamInfos,
 ) {
-    static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
-    let buffer = BUFFER.take();
-    let mut ts_micros = 0;
-    // TODO handle ODR change and impact stream
+    // ---- Sensor time: 24-bit free-running counter, 39.0625 µs per tick ----
+    const TS_BITS: u32 = 24;
+    const TS_MASK: u32 = (1 << TS_BITS) - 1; // 0x00FF_FFFF
+    const TICK_US_NUM: u32 = 625;
+    const TICK_US_DEN_SHIFT: u32 = 4;
+
+    // ---- Unit scales ----
+    // Accelerometer full-scale: 16 g -> 2048 LSB/g
+    const ACC_LSB_PER_G: f32 = 2048.0;
+    const G: f32 = 9.806_65;
+
+    // Gyro full-scale: 250 dps -> 16.384 LSB/(deg/s)
+    const GYRO_LSB_PER_DPS: f32 = 65.536;
+    const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
+
+    let mut last_ts_raw: Option<u32> = None; // last 24-bit sensor-time value
+    let mut ts_micros: u32 = 0;              // accumulated time in µs (wraps ~71.6 min)
+
     loop {
         imu_int.wait().await;
-        // let _items = imu.read_fifo(buffer).await.unwrap();
-        // let pkt = from_bytes::<FifoPacket4>(&cast_slice(buffer)[4..24]);
-        // CLKIN ticks (32 kHz)
-        // ts_micros += 1000 * (pkt.timestamp() as u32) / 32;
-        // TODO make the driver handle scale
-        // 32768 LSB/g
-        // let ax = pkt.accel_data_x();
-        // let ay = pkt.accel_data_y();
-        // let az = pkt.accel_data_z();
-        // // 262.144 LSB/(º/s)
-        // let gx = pkt.gyro_data_x();
-        // let gy = pkt.gyro_data_y();
-        // let gz = pkt.gyro_data_z();
+        let pkt = imu.get_data().await.unwrap();
 
-        // let (ax, ay, az) = (-ay, ax, az);
-        // let (gx, gy, gz) = (-gy, gx, gz);
+        let ts_raw = pkt.time & TS_MASK; // keep only 24 bits
+        let dt_ticks_u32 = match last_ts_raw {
+            Some(prev) => (ts_raw.wrapping_sub(prev)) & TS_MASK,
+            None => 0,
+        };
+        last_ts_raw = Some(ts_raw);
 
-        // if stream_infos.imu.enabled() {
-        //     // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
-        //     // defmt::info!("ax={} ay={} az={} gx={} gy={} gz={}", ax, ay, az, gx, gy, gz);
-        //     let id = stream_infos.imu.req_id();
-        //     let pkt = Packet {
-        //         id,
-        //         data: P::AccelReport(protodongers::AccelReport {
-        //             timestamp: ts_micros,
-        //             accel: Vector3::new(ax, ay, az).cast() / 32768.0 * 9.806650,
-        //             gyro: Vector3::new(
-        //                 (gx as f32 / 262.144).to_radians(),
-        //                 (gy as f32 / 262.144).to_radians(),
-        //                 (gz as f32 / 262.144).to_radians(),
-        //             ),
-        //         }),
-        //     };
-        //     let r = pkt_snd.try_send(pkt);
-        //     if r.is_err() {
-        //         defmt::warn!("Failed to send IMU data due to full channel");
-        //     }
-        // }
+        // ticks → µs: dt * (625/16)  (use u64 for the mul, then cast back)
+        let dt_us = (((dt_ticks_u32 as u64) * (TICK_US_NUM as u64)) >> TICK_US_DEN_SHIFT) as u32;
+        ts_micros = ts_micros.wrapping_add(dt_us);
+
+        // --- convert to SI ---
+        let accel = Vector3::new(-pkt.acc.x, -pkt.acc.y, pkt.acc.z).cast::<f32>()
+            / ACC_LSB_PER_G * G;
+
+        let gx = -(pkt.gyr.x as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gy = -(pkt.gyr.y as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gz = (pkt.gyr.z as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+
+        if stream_infos.imu.enabled() {
+            let id = stream_infos.imu.req_id();
+            let pkt = Packet {
+                id,
+                data: P::AccelReport(protodongers::AccelReport {
+                    timestamp: ts_micros,        // µs since loop start (u32)
+                    accel,
+                    gyro: Vector3::new(gx, gy, gz),
+                }),
+            };
+            if pkt_snd.try_send(pkt).is_err() {
+                defmt::warn!("Failed to send IMU data due to full channel");
+            }
+        }
     }
 }
 
@@ -305,7 +318,7 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
             // trigger.wait_tick().await;
             r2_fod.set_high();
             r3_fod.set_high();
-            embassy_time::Timer::after_micros(2).await;
+            embassy_time::Timer::after_micros(1).await;
             r2_fod.set_low();
             r3_fod.set_low();
 
@@ -322,21 +335,25 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
 
             r3.lock().await.read_register(5, 0, &mut bytes).await?;
             objs[1] = paj7025::parse_bank5(bytes);
-
-            for obj in objs {
-                for o in obj {
-                    if o.cx().value() != 4095 && o.cx().value() != 0 {
-                        defmt::info!("{}", Debug2Format(&o));
-                    }
-                }
-            }
-
+            
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
                 data: P::CombinedMarkersReport(protodongers::CombinedMarkersReport {
-                    nf_points: objs[0].map(|o| nalgebra::Point2::new(o.cx().into(), o.cy().into())),
-                    wf_points: objs[1].map(|o| nalgebra::Point2::new(o.cx().into(), o.cy().into())),
+                    nf_points: objs[0].map(|o| {
+                        if o.cx().value() == 4095 && o.cy().value() == 4095 {
+                            nalgebra::Point2::origin()
+                        } else {
+                            nalgebra::Point2::new(o.cx().value(), o.cy().value())
+                        }
+                    }),
+                    wf_points: objs[1].map(|o| {
+                        if o.cx().value() == 4095 && o.cy().value() == 4095 {
+                            nalgebra::Point2::origin()
+                        } else {
+                            nalgebra::Point2::new(4095 - o.cx().value(), 4095 - o.cy().value())
+                        }
+                    }),
                 }),
             };
             let r = pkt_snd.try_send(pkt);
@@ -517,7 +534,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::PocMarkersReport() => &self.marker,
+            PacketType::CombinedMarkersReport() => &self.marker,
             _ => return,
         };
         si.set_req_id(req_id);
@@ -528,7 +545,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::PocMarkersReport() => &self.marker,
+            PacketType::CombinedMarkersReport() => &self.marker,
             _ => return,
         };
         si.set_enable(false);

@@ -26,7 +26,7 @@ pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     for chunk in data.chunks(max_packet_size) {
         snd.write_packet(chunk).await.unwrap();
     }
-    if data.len() % max_packet_size == 0 {
+    if data.len().is_multiple_of(max_packet_size) {
         snd.write_packet(&[]).await.unwrap();
     }
 }
