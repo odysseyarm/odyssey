@@ -1,4 +1,7 @@
-use embassy_nrf::{Peri, gpio::{Level, Output, OutputDrive}, interrupt::typelevel::Binding, spim::{self, Spim}};
+use embassy_nrf::Peri;
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
+use embassy_nrf::interrupt::typelevel::Binding;
+use embassy_nrf::spim::{self, Spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 

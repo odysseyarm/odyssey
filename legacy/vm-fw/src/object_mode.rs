@@ -1,27 +1,34 @@
-use core::{
-    array::from_fn, cell::RefCell, convert::Infallible, mem::{MaybeUninit, transmute}, sync::atomic::{AtomicBool, AtomicU8, Ordering}
-};
+use core::array::from_fn;
+use core::cell::RefCell;
+use core::convert::Infallible;
+use core::mem::{MaybeUninit, transmute};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bmi2::types::AxisData;
 use defmt::{Debug2Format, Format};
-use embassy_futures::{
-    join::join4,
-    select::{Either, select},
-};
-use embassy_nrf::{Peri, nvmc::Nvmc, ppi::AnyConfigurableChannel, spim::Error};
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex, watch::Watch};
-use embassy_usb::{class::cdc_acm, driver::EndpointError};
+use embassy_futures::join::join4;
+use embassy_futures::select::{Either, select};
+use embassy_nrf::Peri;
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::ppi::AnyConfigurableChannel;
+use embassy_nrf::spim::Error;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex as AsyncMutex;
+use embassy_sync::watch::Watch;
+use embassy_usb::class::cdc_acm;
+use embassy_usb::driver::EndpointError;
 use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
-use protodongers::{
-    Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
-};
+use protodongers::{Packet, PacketData as P, PacketType, Props, ReadRegisterResponse};
 use static_cell::ConstStaticCell;
 
-use crate::{
-    CommonContext, Paj, PajGroup, UsbDriver, imu::{Imu, ImuInterrupt}, settings::{PajsSettings, Settings}, usb::write_serial, utils::device_id
-};
+use crate::fodtrigger::FodTrigger;
+use crate::imu::{Imu, ImuInterrupt};
+use crate::settings::{PajsSettings, Settings};
+use crate::usb::write_serial;
+use crate::utils::device_id;
+use crate::{CommonContext, Paj, PajGroup, UsbDriver};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
@@ -29,7 +36,10 @@ type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopR
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
 #[allow(unreachable_code)]
-pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(mut ctx: CommonContext<N>, timer: Peri<'d, T>) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
+pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
+    mut ctx: CommonContext<N>,
+    timer: Peri<'d, T>,
+) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -55,13 +65,16 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(mu
         ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
-    let c = imu_loop(
-        &mut ctx.imu,
-        &mut ctx.imu_int,
+    let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
+    let d = obj_loop(
+        ctx.paj7025r2_group,
+        ctx.paj7025r3_group,
+        ctx.fod_set_ch,
+        ctx.fod_clr_ch,
+        timer,
         pkt_channel.sender(),
         &stream_infos,
     );
-    let d = obj_loop(ctx.paj7025r2_group, ctx.paj7025r3_group, ctx.fod_set_ch, ctx.fod_clr_ch, timer, pkt_channel.sender(), &stream_infos);
     // TODO turn these into tasks
     let r = join4(a, b, c, d).await;
 
@@ -104,7 +117,7 @@ async fn usb_rcv_loop(
             }
             Ok(p) => p,
         };
-        
+
         defmt::debug!("Received packet: {}", defmt::Debug2Format(&pkt));
 
         let response = match pkt.data {
@@ -114,9 +127,20 @@ async fn usb_rcv_loop(
                     protodongers::Port::Wf => paj7025r3,
                 };
                 let mut paj = paj.lock().await;
-                paj.write_register(register.bank, register.address, &[register.data]).await?;
-                paj.ll.control().bank_0().bank_0_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
-                paj.ll.control().bank_1().bank_1_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
+                paj.write_register(register.bank, register.address, &[register.data])
+                    .await?;
+                paj.ll
+                    .control()
+                    .bank_0()
+                    .bank_0_sync_updated_flag()
+                    .write_async(|x| x.set_value(1))
+                    .await?;
+                paj.ll
+                    .control()
+                    .bank_1()
+                    .bank_1_sync_updated_flag()
+                    .write_async(|x| x.set_value(1))
+                    .await?;
                 // Some(Packet {
                 //     id: pkt.id,
                 //     data: P::Ack(),
@@ -153,7 +177,8 @@ async fn usb_rcv_loop(
                 data: P::ReadConfigResponse((*settings.general.general_config()).into()),
             }),
             P::FlashSettings() => {
-                settings.pajs = PajsSettings::read_from_pajs(&mut *paj7025r2.lock().await, &mut *paj7025r3.lock().await).await?;
+                settings.pajs =
+                    PajsSettings::read_from_pajs(&mut *paj7025r2.lock().await, &mut *paj7025r3.lock().await).await?;
                 settings.write(nvmc);
                 // Some(Packet {
                 //     id: pkt.id,
@@ -209,9 +234,10 @@ async fn usb_rcv_loop(
         };
 
         if let Some(r) = response
-            && r.id != 255 {
-                pkt_snd.send(r).await;
-            }
+            && r.id != 255
+        {
+            pkt_snd.send(r).await;
+        }
     }
 }
 
@@ -252,7 +278,7 @@ async fn imu_loop<const N: usize>(
     const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
 
     let mut last_ts_raw: Option<u32> = None; // last 24-bit sensor-time value
-    let mut ts_micros: u32 = 0;              // accumulated time in µs (wraps ~71.6 min)
+    let mut ts_micros: u32 = 0; // accumulated time in µs (wraps ~71.6 min)
 
     loop {
         imu_int.wait().await;
@@ -270,8 +296,7 @@ async fn imu_loop<const N: usize>(
         ts_micros = ts_micros.wrapping_add(dt_us);
 
         // --- convert to SI ---
-        let accel = Vector3::new(-pkt.acc.x, -pkt.acc.y, pkt.acc.z).cast::<f32>()
-            / ACC_LSB_PER_G * G;
+        let accel = Vector3::new(-pkt.acc.x, -pkt.acc.y, pkt.acc.z).cast::<f32>() / ACC_LSB_PER_G * G;
 
         let gx = -(pkt.gyr.x as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
         let gy = -(pkt.gyr.y as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
@@ -282,7 +307,7 @@ async fn imu_loop<const N: usize>(
             let pkt = Packet {
                 id,
                 data: P::AccelReport(protodongers::AccelReport {
-                    timestamp: ts_micros,        // µs since loop start (u32)
+                    timestamp: ts_micros, // µs since loop start (u32)
                     accel,
                     gyro: Vector3::new(gx, gy, gz),
                 }),
@@ -306,23 +331,37 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     let (r2, r2_fod, nf_ch) = r2_group;
     let (r3, r3_fod, wf_ch) = r3_group;
 
-    // let config = FodTriggerConfig::default();
-    // let mut trigger = FodTrigger::init(r2_fod, r3_fod, nf_ch, wf_ch, timer, ppi_set, ppi_clr, config, 5, 2);
-    // trigger.start();
+    let mut trigger = FodTrigger::new(
+        r2_fod,
+        r3_fod,
+        nf_ch,
+        wf_ch,
+        timer,
+        ppi_set,
+        ppi_clr,
+        embassy_nrf::timer::Frequency::F1MHz,
+        5,
+        2,
+    );
 
-    let mut r2_fod = embassy_nrf::gpio::Output::new(r2_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
-    let mut r3_fod = embassy_nrf::gpio::Output::new(r3_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
+    trigger.start();
+
+    // let mut r2_fod = embassy_nrf::gpio::Output::new(r2_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
+    // let mut r3_fod = embassy_nrf::gpio::Output::new(r3_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
 
     loop {
         if stream_infos.marker.enabled() {
-            // trigger.wait_tick().await;
-            r2_fod.set_high();
-            r3_fod.set_high();
-            embassy_time::Timer::after_micros(1).await;
-            r2_fod.set_low();
-            r3_fod.set_low();
+            defmt::info!("Waiting tick");
+            trigger.wait_tick().await;
+            defmt::info!("Tick waited");
 
-            embassy_time::Timer::after_millis(5).await;
+            // r2_fod.set_high();
+            // r3_fod.set_high();
+            // embassy_time::Timer::after_micros(1).await;
+            // r2_fod.set_low();
+            // r3_fod.set_low();
+
+            // embassy_time::Timer::after_millis(5).await;
 
             let mut objs = [[paj7025::types::ObjectFormat1::DEFAULT; 16]; 2];
 
@@ -335,7 +374,7 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
 
             r3.lock().await.read_register(5, 0, &mut bytes).await?;
             objs[1] = paj7025::parse_bank5(bytes);
-            
+
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
@@ -393,11 +432,13 @@ pub struct PacketReader<'a> {
 
 impl<'a> PacketReader<'a> {
     /// Keep the same constructor signature
-    pub fn new(
-        rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
-        buf: &'a mut [u8; 1024],
-    ) -> Self {
-        Self { rcv, buf, n: 0, start: 0 }
+    pub fn new(rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>, buf: &'a mut [u8; 1024]) -> Self {
+        Self {
+            rcv,
+            buf,
+            n: 0,
+            start: 0,
+        }
     }
 
     /// Ensure at least `need` bytes are buffered contiguously at buf[start .. start+n]
@@ -408,14 +449,11 @@ impl<'a> PacketReader<'a> {
                     self.start = 0;
                 } else {
                     // compact once when we run out of tail space
-                    self.buf.copy_within(self.start .. self.start + self.n, 0);
+                    self.buf.copy_within(self.start..self.start + self.n, 0);
                     self.start = 0;
                 }
             }
-            let wrote = self
-                .rcv
-                .read_packet(&mut self.buf[self.start + self.n ..])
-                .await?;
+            let wrote = self.rcv.read_packet(&mut self.buf[self.start + self.n..]).await?;
             self.n += wrote;
         }
         Ok(())
@@ -441,12 +479,14 @@ impl<'a> PacketReader<'a> {
                 if frame_len == 0 {
                     self.start += 1;
                     self.n -= 1;
-                    if self.n == 0 { self.start = 0; }
+                    if self.n == 0 {
+                        self.start = 0;
+                    }
                     continue;
                 }
 
                 // decode COBS in-place within the window
-                let window = &mut self.buf[self.start .. self.start + frame_len];
+                let window = &mut self.buf[self.start..self.start + frame_len];
                 let decoded_len = cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
 
                 // parse the decoded payload
@@ -456,7 +496,9 @@ impl<'a> PacketReader<'a> {
                 // consume this frame + its trailing 0x00 delimiter
                 self.start += frame_len + 1;
                 self.n -= frame_len + 1;
-                if self.n == 0 { self.start = 0; }
+                if self.n == 0 {
+                    self.start = 0;
+                }
 
                 return Ok(pkt);
             }
@@ -478,9 +520,7 @@ impl PacketWriter<'_> {
         // Serialize the payload into the serialize buffer (no copies/allocs)
         let ser_len = {
             // serialize_raw writes into [MaybeUninit<u8>]
-            let ser = unsafe {
-                transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(self.packet_serialize_buffer)
-            };
+            let ser = unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(self.packet_serialize_buffer) };
             pkt.serialize_raw(ser)
         };
         let payload = &self.packet_serialize_buffer[..ser_len];

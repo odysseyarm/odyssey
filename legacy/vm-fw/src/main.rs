@@ -4,34 +4,37 @@
 
 #[macro_use]
 mod utils;
-mod pins;
-mod usb;
-mod settings;
-mod imu;
 mod fodtrigger;
+mod imu;
 mod object_mode;
+mod pins;
+mod settings;
+mod usb;
 
 use core::cell::RefCell;
+use core::marker::PhantomData;
 
 use embassy_executor::Spawner;
-use embassy_nrf::timer::Timer;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::{blocking_mutex::Mutex, mutex::Mutex as AsyncMutex};
 use embassy_nrf::config::Config;
-use embassy_nrf::gpio::{self, Output, OutputDrive};
+use embassy_nrf::gpio::{self, Output};
+use embassy_nrf::interrupt::typelevel::Interrupt;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::{Peri, bind_interrupts, gpiote, peripherals, ppi};
+use embassy_nrf::{Peri, bind_interrupts, gpiote, interrupt, peripherals, ppi, timer};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use paj7025::Paj7025;
 use settings::{Settings, init_settings};
+use {defmt_rtt as _, panic_probe as _};
+
+use crate::fodtrigger::FOD_TICK_SIG;
 use crate::imu::{Imu, ImuInterrupt};
 use crate::usb::UsbDriver;
 use crate::utils::make_spi_dev;
-
-use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     TWISPI0     => spim::InterruptHandler<peripherals::TWISPI0>;
@@ -39,6 +42,7 @@ bind_interrupts!(struct Irqs {
     SPI2        => spim::InterruptHandler<peripherals::SPI2>;
     USBD        => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
+    TIMER1      => TIrq<peripherals::TIMER1>;
 });
 
 #[embassy_executor::main]
@@ -54,10 +58,9 @@ async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(config);
     let b = split_board!(p);
     defmt::info!("boot");
-    
-    static NVMC: static_cell::StaticCell<
-        Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>,
-    > = static_cell::StaticCell::new();
+
+    static NVMC: static_cell::StaticCell<Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>> =
+        static_cell::StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     let nvmc = &*nvmc;
 
@@ -81,7 +84,7 @@ async fn main(spawner: Spawner) {
     };
     let dev_r2 = make_spi_dev(p.TWISPI0, Irqs, paj7025r2_spi, cfg_paj.clone());
     let dev_r3 = make_spi_dev(p.TWISPI1, Irqs, paj7025r3_spi, cfg_paj);
-    
+
     embassy_time::Timer::after_millis(1).await;
 
     let mut paj7025r2 = Paj7025::init(dev_r2).await.unwrap();
@@ -119,12 +122,9 @@ async fn main(spawner: Spawner) {
         cs: b.bmi270.cs.into(),
     };
 
-    let (imu, imu_int) = imu::init::<_, _, 65535, 255>(
-        p.SPI2,
-        Irqs,
-        bmi270_spi,
-        b.bmi270.irq.into(),
-    ).await.unwrap();
+    let (imu, imu_int) = imu::init::<_, _, 65535, 255>(p.SPI2, Irqs, bmi270_spi, b.bmi270.irq.into())
+        .await
+        .unwrap();
 
     let (mut cdc, usb) = usb::usb_device(p.USBD);
     spawner.spawn(defmt::unwrap!(usb::run_usb(usb)));
@@ -160,8 +160,15 @@ async fn main(spawner: Spawner) {
     let _ = object_mode::object_mode(ctx, p.TIMER1).await;
 }
 
-type Paj = Paj7025<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, embedded_hal_bus::spi::DeviceError<spim::Error, core::convert::Infallible>>;
-type PajGroup<'a> = (&'a AsyncMutex<NoopRawMutex, Paj>, Peri<'a, gpio::AnyPin>, Peri<'a, gpiote::AnyChannel>);
+type Paj = Paj7025<
+    ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
+    embedded_hal_bus::spi::DeviceError<spim::Error, core::convert::Infallible>,
+>;
+type PajGroup<'a> = (
+    &'a AsyncMutex<NoopRawMutex, Paj>,
+    Peri<'a, gpio::AnyPin>,
+    Peri<'a, gpiote::AnyChannel>,
+);
 
 struct CommonContext<const IMU_N: usize> {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,
@@ -177,4 +184,17 @@ struct CommonContext<const IMU_N: usize> {
     settings: &'static mut Settings,
     nvmc: &'static RefCell<Nvmc<'static>>,
     obj: object_mode::Context,
+}
+
+pub struct TIrq<T: timer::Instance> {
+    _phantom: PhantomData<T>,
+}
+
+impl<T: timer::Instance> interrupt::typelevel::Handler<T::Interrupt> for TIrq<T> {
+    unsafe fn on_interrupt() {
+        let regs =
+            unsafe { core::mem::transmute::<&mut (), &mut core::mem::ManuallyDrop<timer::Timer<T>>>(&mut ()).regs() };
+        regs.events_compare(1).write(|w| *w = 0);
+        FOD_TICK_SIG.signal(());
+    }
 }

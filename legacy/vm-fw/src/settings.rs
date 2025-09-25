@@ -16,8 +16,7 @@ use core::cell::RefCell;
 use core::convert::Infallible;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use bytemuck::checked;
-use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit, bytes_of, bytes_of_mut};
+use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit, bytes_of, bytes_of_mut, checked};
 use defmt::Format;
 use embassy_nrf::nvmc::PAGE_SIZE;
 use embedded_hal_bus::spi::DeviceError;
@@ -72,7 +71,11 @@ impl Settings {
     }
 
     /// Make the settings take effect. Only applies to pajr2 for now
-    pub async fn apply(&self, pajr2: &mut Paj, pajr3: &mut Paj) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
+    pub async fn apply(
+        &self,
+        pajr2: &mut Paj,
+        pajr3: &mut Paj,
+    ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
         self.pajs.apply(pajr2, pajr3).await
     }
 
@@ -112,36 +115,38 @@ pub struct PajsSettings(PajSettings, PajSettings);
 
 impl Default for PajsSettings {
     fn default() -> Self {
-        Self(PajSettings {
-            area_threshold_max: 9605,
-            area_threshold_min: 10,
-            brightness_threshold: 110,
-            exposure_time: 8192,
-            frame_period: 49780,
-            frame_subtraction: 0,
-            gain_1: 16,
-            gain_2: 0,
-            max_object_cnt: 16,
-            noise_threshold: 15,
-            operation_mode: 0,
-            resolution_x: 4095,
-            resolution_y: 4095,
-        },
-        PajSettings {
-            area_threshold_max: 9605,
-            area_threshold_min: 5,
-            brightness_threshold: 110,
-            exposure_time: 11365,
-            frame_period: 49780,
-            frame_subtraction: 0,
-            gain_1: 8,
-            gain_2: 3,
-            max_object_cnt: 16,
-            noise_threshold: 15,
-            operation_mode: 0,
-            resolution_x: 4095,
-            resolution_y: 4095,
-        })
+        Self(
+            PajSettings {
+                area_threshold_max: 9605,
+                area_threshold_min: 10,
+                brightness_threshold: 110,
+                exposure_time: 8192,
+                frame_period: 49780,
+                frame_subtraction: 0,
+                gain_1: 16,
+                gain_2: 0,
+                max_object_cnt: 16,
+                noise_threshold: 15,
+                operation_mode: 0,
+                resolution_x: 4095,
+                resolution_y: 4095,
+            },
+            PajSettings {
+                area_threshold_max: 9605,
+                area_threshold_min: 5,
+                brightness_threshold: 110,
+                exposure_time: 11365,
+                frame_period: 49780,
+                frame_subtraction: 0,
+                gain_1: 8,
+                gain_2: 3,
+                max_object_cnt: 16,
+                noise_threshold: 15,
+                operation_mode: 0,
+                resolution_x: 4095,
+                resolution_y: 4095,
+            },
+        )
     }
 }
 
@@ -175,17 +180,14 @@ impl PajsSettings {
         let mut flash = flash.borrow_mut();
         flash.erase(start, start + PAGE_SIZE as u32).unwrap();
         flash.write(start, &Self::MAGIC).unwrap();
-        flash
-            .write(start + Self::OFFSET, bytes_of(self))
-            .unwrap();
+        flash.write(start + Self::OFFSET, bytes_of(self)).unwrap();
     }
 
     pub async fn apply(
         &self,
         pajr2: &mut Paj,
         pajr3: &mut Paj,
-    ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>
-    {
+    ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
         macro_rules! apply_one {
             ($paj:expr, $s:expr) => {
                 async {
@@ -232,7 +234,7 @@ impl PajsSettings {
                         .write_async(|x| x.set_value(resolution_x)).await?;
                     $paj.ll.control().bank_c().cmd_scale_resolution_y()
                         .write_async(|x| x.set_value(resolution_y)).await?;
-                    
+
                     $paj.ll.control().bank_0().bank_0_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
                     $paj.ll.control().bank_1().bank_1_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
 
@@ -256,15 +258,64 @@ impl PajsSettings {
                     area_threshold_min: $paj.ll.control().bank_c().cmd_oalb().read_async().await?.value(),
                     brightness_threshold: $paj.ll.control().bank_c().cmd_thd().read_async().await?.value(),
                     exposure_time: $paj.ll.control().bank_1().b_expo_r().read_async().await?.value(),
-                    frame_period: $paj.ll.control().bank_c().cmd_frame_period().read_async().await?.value(),
-                    frame_subtraction: $paj.ll.control().bank_0().cmd_frame_subtraction_on().read_async().await?.value(),
-                    gain_1: $paj.ll.control().bank_1().b_global_r().read_async().await?.value(),
+                    frame_period: $paj
+                        .ll
+                        .control()
+                        .bank_c()
+                        .cmd_frame_period()
+                        .read_async()
+                        .await?
+                        .value(),
+                    frame_subtraction: $paj
+                        .ll
+                        .control()
+                        .bank_0()
+                        .cmd_frame_subtraction_on()
+                        .read_async()
+                        .await?
+                        .value(),
+                    gain_1: $paj
+                        .ll
+                        .control()
+                        .bank_1()
+                        .b_global_r()
+                        .read_async()
+                        .await?
+                        .value(),
                     gain_2: $paj.ll.control().bank_1().b_ggh_r().read_async().await?.value(),
-                    max_object_cnt: $paj.ll.control().bank_0().cmd_max_object_num().read_async().await?.value(),
+                    max_object_cnt: $paj
+                        .ll
+                        .control()
+                        .bank_0()
+                        .cmd_max_object_num()
+                        .read_async()
+                        .await?
+                        .value(),
                     noise_threshold: $paj.ll.control().bank_0().cmd_nthd().read_async().await?.value(),
-                    operation_mode: $paj.ll.control().bank_0().cmd_dsp_operation_mode().read_async().await?.value(),
-                    resolution_x: $paj.ll.control().bank_c().cmd_scale_resolution_x().read_async().await?.value(),
-                    resolution_y: $paj.ll.control().bank_c().cmd_scale_resolution_y().read_async().await?.value(),
+                    operation_mode: $paj
+                        .ll
+                        .control()
+                        .bank_0()
+                        .cmd_dsp_operation_mode()
+                        .read_async()
+                        .await?
+                        .value(),
+                    resolution_x: $paj
+                        .ll
+                        .control()
+                        .bank_c()
+                        .cmd_scale_resolution_x()
+                        .read_async()
+                        .await?
+                        .value(),
+                    resolution_y: $paj
+                        .ll
+                        .control()
+                        .bank_c()
+                        .cmd_scale_resolution_y()
+                        .read_async()
+                        .await?
+                        .value(),
                 })
             }};
         }
@@ -297,16 +348,12 @@ impl Default for GeneralSettings {
                     accel_config: Default::default(),
                     gyro_config: Default::default(),
                     camera_model_nf: CameraCalibrationParams {
-                        camera_matrix: [
-                            13182.6602, 0.0, 8941.14648, 0.0, 13172.4834, 8340.88477, 0.0, 0.0, 1.0,
-                        ],
-                        dist_coeffs: [-0.0183234196, 0.0833942071, 0.0, 0.0, -0.0357658006],
+                        camera_matrix: [141.1052, 0.0, 49.0, 0.0, 141.1052, 49.0, 0.0, 0.0, 1.0],
+                        dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0],
                     },
                     camera_model_wf: CameraCalibrationParams {
-                        camera_matrix: [
-                            13182.6602, 0.0, 8941.14648, 0.0, 13172.4834, 8340.88477, 0.0, 0.0, 1.0,
-                        ],
-                        dist_coeffs: [-0.0183234196, 0.0833942071, 0.0, 0.0, -0.0357658006],
+                        camera_matrix: [34.341216, 0.0, 48.73854, 0.0, 34.39486, 49.98844, 0.0, 0.0, 1.0],
+                        dist_coeffs: [0.039820534, -0.039933169, 0.00043006078, -0.0012057066, 0.005302234],
                     },
                     stereo_iso: Default::default(),
                     suppress_ms: 200,
@@ -356,10 +403,7 @@ impl GeneralSettings {
 
     pub fn set_general_config(&mut self, general_config: &GeneralConfig) {
         self.general_config.inner = *general_config;
-        ACCEL_ODR.store(
-            self.general_config.inner.accel_config.accel_odr,
-            Ordering::Relaxed,
-        );
+        ACCEL_ODR.store(self.general_config.inner.accel_config.accel_odr, Ordering::Relaxed);
     }
 }
 
@@ -395,10 +439,7 @@ impl TransientSettings {
             r.write(flash, start);
         } else {
             let mut buf = [0u8; core::mem::size_of::<Self>()];
-            flash
-                .borrow_mut()
-                .read(start + Self::OFFSET, &mut buf)
-                .unwrap();
+            flash.borrow_mut().read(start + Self::OFFSET, &mut buf).unwrap();
 
             r = match checked::try_from_bytes::<TransientSettings>(&buf) {
                 Ok(v) => *v,

@@ -18,10 +18,7 @@ pub const PID: u16 = 0x520F;
 
 static CDC_STATE: StaticCell<CdcState<'static>> = StaticCell::new();
 
-pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    snd: &mut cdc_acm::Sender<'d, D>,
-    data: &[u8],
-) {
+pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(snd: &mut cdc_acm::Sender<'d, D>, data: &[u8]) {
     let max_packet_size = usize::from(snd.max_packet_size());
     for chunk in data.chunks(max_packet_size) {
         snd.write_packet(chunk).await.unwrap();
@@ -31,9 +28,7 @@ pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     }
 }
 
-pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    rcv: &mut cdc_acm::Receiver<'d, D>,
-) -> u8 {
+pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(rcv: &mut cdc_acm::Receiver<'d, D>) -> u8 {
     loop {
         let mut buf = [0; 64];
         let r = rcv.read_packet(&mut buf).await;
@@ -66,7 +61,7 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticCdcAcmClass, StaticUsbDev
     config.device_class = 0xEF;
     config.device_sub_class = 0x02;
     config.device_protocol = 0x01;
-    
+
     let config_descriptor = static_byte_buffer!(256);
     let bos_descriptor = static_byte_buffer!(256);
     let msos_descriptor = static_byte_buffer!(256);
