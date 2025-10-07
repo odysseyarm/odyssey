@@ -6,11 +6,15 @@ use bytemuck::{AnyBitPattern, NoUninit};
 #[allow(unused_imports)]
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsics;
-use static_assertions::assert_eq_size;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C, packed)]
 pub struct AccelConfig {
+    #[cfg(feature = "serde")]
+    #[serde(default = "default_accel_odr")]
+    pub accel_odr: u16,
+    #[cfg(not(feature = "serde"))]
     pub accel_odr: u16,
     pub b_x: f32,
     pub b_y: f32,
@@ -18,6 +22,11 @@ pub struct AccelConfig {
     pub s_x: f32,
     pub s_y: f32,
     pub s_z: f32,
+}
+
+#[cfg(feature = "serde")]
+fn default_accel_odr() -> u16 {
+    100
 }
 
 impl Default for AccelConfig {
@@ -62,9 +71,10 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct CameraCalibrationParams {
     pub camera_matrix: [f32; 9],
     pub dist_coeffs: [f32; 5],
@@ -94,9 +104,10 @@ impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
     }
 }
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct StereoCalibrationParams {
     pub r: [f32; 9],
     pub t: [f32; 3],
@@ -132,8 +143,9 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 }
 
 // This is also the format the POC uses on flash
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 #[repr(C, packed)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct GeneralConfig {
     pub impact_threshold: u8,
     pub suppress_ms: u8,
@@ -142,10 +154,7 @@ pub struct GeneralConfig {
     pub camera_model_nf: CameraCalibrationParams,
     pub camera_model_wf: CameraCalibrationParams,
     pub stereo_iso: StereoCalibrationParams,
-    pub _padding: [u8; 40],
 }
-
-assert_eq_size!(GeneralConfig, [u8; 240]);
 
 impl From<super::GeneralConfig> for GeneralConfig {
     fn from(value: super::GeneralConfig) -> Self {
@@ -157,7 +166,6 @@ impl From<super::GeneralConfig> for GeneralConfig {
             camera_model_nf: value.camera_model_nf.into(),
             camera_model_wf: value.camera_model_wf.into(),
             stereo_iso: value.stereo_iso.into(),
-            _padding: [0; 40],
         }
     }
 }
