@@ -16,8 +16,8 @@ rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
 # [patch."https://github.com/odysseyarm/ats_common"]
 # ats_common = { path = "patch/ats_common" }
 #
-# [patch."https://github.com/odysseyarm/protodonge-rs"]
-# protodongers = { path = "patch/protodonge-rs" }
+[patch."https://github.com/odysseyarm/protodonge-rs"]
+protodongers = { path = "patch/protodonge-rs" }
 
 # [patch."https://github.com/0e4ef622/icm426xx"]
 # icm426xx = { path = "patch/icm426xx" }
@@ -26,11 +26,12 @@ rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
 # bmi2 = { path = "../../../../forks/bmi2" }
 
 [patch.crates-io]
-embassy-nrf = { path = "../../../../forks/embassy/embassy-nrf" }
-embassy-time-driver = { path = "../../../../forks/embassy/embassy-time-driver" }
-embassy-usb-driver = { path = "../../../../forks/embassy/embassy-usb-driver" }
-embassy-executor = { path = "../../../../forks/embassy/embassy-executor" }
-embassy-time = { path = "../../../../forks/embassy/embassy-time" }
+# embassy-nrf = { path = "../../../../forks/embassy/embassy-nrf" }
+# embassy-time-driver = { path = "../../../../forks/embassy/embassy-time-driver" }
+# embassy-usb-driver = { path = "../../../../forks/embassy/embassy-usb-driver" }
+# embassy-executor = { path = "../../../../forks/embassy/embassy-executor" }
+# embassy-time = { path = "../../../../forks/embassy/embassy-time" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy" }
 
 [env]
 DEFMT_LOG = "info"

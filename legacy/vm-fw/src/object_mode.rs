@@ -1,34 +1,30 @@
-use core::array::from_fn;
 use core::cell::RefCell;
 use core::convert::Infallible;
-use core::mem::{MaybeUninit, transmute};
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use bmi2::types::AxisData;
-use defmt::{Debug2Format, Format};
-use embassy_futures::join::join4;
+use defmt::Format;
+use embassy_futures::join::{join3, join4};
+use embassy_futures::join::join;
 use embassy_futures::select::{Either, select};
 use embassy_nrf::Peri;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
+use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::watch::Watch;
-use embassy_usb::class::cdc_acm;
-use embassy_usb::driver::EndpointError;
+use embassy_usb::driver::{Endpoint as _, EndpointIn as _, EndpointOut as _, EndpointError};
 use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
 use protodongers::{Packet, PacketData as P, PacketType, Props, ReadRegisterResponse};
-use static_cell::ConstStaticCell;
 
 use crate::fodtrigger::FodTrigger;
 use crate::imu::{Imu, ImuInterrupt};
 use crate::settings::{PajsSettings, Settings};
-use crate::usb::write_serial;
 use crate::utils::device_id;
-use crate::{CommonContext, Paj, PajGroup, UsbDriver};
+use crate::{CommonContext, Paj, PajGroup};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
@@ -43,10 +39,8 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
-        packet_serialize_buffer: ctx.obj.packet_serialize_buffer,
-        packet_cobs_encode_buffer: ctx.obj.packet_cobs_encode_buffer,
     };
-    let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv, ctx.obj.packet_receive_buffer);
+    let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
     let pkt_channel = Channel::new();
     let stream_infos = StreamInfos::new();
     let exit = Watch::<_, _, 4>::new();
@@ -54,7 +48,7 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     let _exit1 = exit.receiver().unwrap();
     let _exit2 = exit.receiver().unwrap();
     let _exit3 = exit.receiver().unwrap();
-
+    
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
         ctx.paj7025r3_group.0,
@@ -108,7 +102,7 @@ async fn usb_rcv_loop(
     loop {
         let pkt = match pkt_rcv.wait_for_packet().await {
             Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                pkt_rcv.rcv.wait_connection().await;
+                pkt_rcv.rcv.wait_enabled().await;
                 continue;
             }
             Err(e) => {
@@ -344,6 +338,7 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
         2,
     );
 
+    // TODO freezes everything when used with raw usb driver
     trigger.start();
 
     // let mut r2_fod = embassy_nrf::gpio::Output::new(r2_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
@@ -351,9 +346,9 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
 
     loop {
         if stream_infos.marker.enabled() {
-            defmt::info!("Waiting tick");
+            // defmt::info!("Waiting tick");
             trigger.wait_tick().await;
-            defmt::info!("Tick waited");
+            // defmt::info!("Tick waited");
 
             // r2_fod.set_high();
             // r3_fod.set_high();
@@ -405,149 +400,46 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     }
 }
 
-/// Singleton to hold static resources.
-pub struct Context {
-    pub packet_receive_buffer: &'static mut [u8; 1024],
-    pub packet_serialize_buffer: &'static mut [u8; 1024],
-    pub packet_cobs_encode_buffer: &'static mut [u8; 2049],
-}
-
-impl Context {
-    /// Can only be called once
-    pub fn take() -> Self {
-        Self {
-            packet_receive_buffer: static_byte_buffer!(1024),
-            packet_serialize_buffer: static_byte_buffer!(1024),
-            packet_cobs_encode_buffer: static_byte_buffer!(2049),
-        }
-    }
-}
-
 pub struct PacketReader<'a> {
-    rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
-    buf: &'a mut [u8; 1024],
-    n: usize,
-    start: usize,
+    rcv: &'a mut Endpoint<'static, Out>,
 }
 
 impl<'a> PacketReader<'a> {
-    /// Keep the same constructor signature
-    pub fn new(rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>, buf: &'a mut [u8; 1024]) -> Self {
+    pub fn new(rcv: &'a mut Endpoint<'static, Out>) -> Self {
         Self {
             rcv,
-            buf,
-            n: 0,
-            start: 0,
         }
     }
 
-    /// Ensure at least `need` bytes are buffered contiguously at buf[start .. start+n]
-    async fn fill_min(&mut self, need: usize) -> Result<(), WaitForPacketError> {
-        while self.n < need {
-            if self.start + self.n == self.buf.len() {
-                if self.n == 0 {
-                    self.start = 0;
-                } else {
-                    // compact once when we run out of tail space
-                    self.buf.copy_within(self.start..self.start + self.n, 0);
-                    self.start = 0;
-                }
-            }
-            let wrote = self.rcv.read_packet(&mut self.buf[self.start + self.n..]).await?;
-            self.n += wrote;
-        }
-        Ok(())
-    }
-
-    /// Read a single COBS-framed packet: COBS(payload) followed by a single 0x00 delimiter.
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
-        loop {
-            // ensure at least one byte so we can search for the delimiter
-            self.fill_min(1).await?;
-
-            // find the 0x00 delimiter in the current window
-            let mut zero_pos = None;
-            for i in 0..self.n {
-                if self.buf[self.start + i] == 0x00 {
-                    zero_pos = Some(i);
-                    break;
-                }
-            }
-
-            if let Some(frame_len) = zero_pos {
-                // drop empty frames (possible if a stray delimiter arrives)
-                if frame_len == 0 {
-                    self.start += 1;
-                    self.n -= 1;
-                    if self.n == 0 {
-                        self.start = 0;
-                    }
-                    continue;
-                }
-
-                // decode COBS in-place within the window
-                let window = &mut self.buf[self.start..self.start + frame_len];
-                let decoded_len = cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
-
-                // parse the decoded payload
-                let mut slice = &window[..decoded_len];
-                let pkt = Packet::parse(&mut slice)?;
-
-                // consume this frame + its trailing 0x00 delimiter
-                self.start += frame_len + 1;
-                self.n -= frame_len + 1;
-                if self.n == 0 {
-                    self.start = 0;
-                }
-
-                return Ok(pkt);
-            }
-
-            // no delimiter found yet; pull at least one more byte
-            self.fill_min(self.n + 1).await?;
-        }
+        let mut data = [0; 1024];
+        defmt::info!("Read transfer start");
+        let n = self.rcv.read_transfer(&mut data).await?;
+        defmt::info!("Read transfer done");
+        Ok(postcard::from_bytes(&data[..n])?)
     }
 }
 
 pub struct PacketWriter<'a> {
-    snd: &'a mut cdc_acm::Sender<'static, UsbDriver>,
-    packet_serialize_buffer: &'a mut [u8; 1024],
-    packet_cobs_encode_buffer: &'a mut [u8; 2049],
+    snd: &'a mut Endpoint<'static, In>,
 }
 
 impl PacketWriter<'_> {
     pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
-        // Serialize the payload into the serialize buffer (no copies/allocs)
-        let ser_len = {
-            // serialize_raw writes into [MaybeUninit<u8>]
-            let ser = unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(self.packet_serialize_buffer) };
-            pkt.serialize_raw(ser)
-        };
-        let payload = &self.packet_serialize_buffer[..ser_len];
-
-        // COBS-encode into the encode buffer
-        // Worst-case encoded_len <= input_len + input_len/254 + 1
-        let enc_len = cobs::encode(payload, self.packet_cobs_encode_buffer);
-
-        // Append the single 0x00 delimiter after encoded data
-        self.packet_cobs_encode_buffer[enc_len] = 0x00;
-        let frame = &self.packet_cobs_encode_buffer[..enc_len + 1];
-
-        // Send the frame
-        write_serial(self.snd, frame).await;
-
+        let payload = postcard::to_vec::<_, 1024>(pkt)?;
+        self.snd.write_transfer(&payload, true).await?;
         Ok(())
     }
 }
 
 #[derive(Format)]
 pub enum WaitForPacketError {
-    Cobs(cobs::DecodeError),
+    Postcard(postcard::Error),
     Packet(protodongers::Error),
     Usb(EndpointError),
 }
 
-impl_from!(WaitForPacketError::Cobs(cobs::DecodeError));
+impl_from!(WaitForPacketError::Postcard(postcard::Error));
 impl_from!(WaitForPacketError::Packet(protodongers::Error));
 impl_from!(WaitForPacketError::Usb(EndpointError));
 

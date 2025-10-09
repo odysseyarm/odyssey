@@ -357,7 +357,6 @@ impl Default for GeneralSettings {
                     },
                     stereo_iso: Default::default(),
                     suppress_ms: 200,
-                    _padding: [0; 40],
                 },
             },
             accel_odr: &ACCEL_ODR,

@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use embassy_nrf::Peri;
 use embassy_nrf::gpio::{AnyPin, Level, Output, OutputDrive};
 use embassy_nrf::gpiote::{self, OutputChannel, OutputChannelPolarity};
@@ -10,12 +12,13 @@ use embassy_sync::signal::Signal;
 pub static FOD_TICK_SIG: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub struct FodTrigger<'d, T: Instance> {
-    timer: Timer<'d, T>,
+    timer: Timer<'d>,
     ppi_set: Ppi<'d, ppi::AnyConfigurableChannel, 1, 2>,
     ppi_clr: Ppi<'d, ppi::AnyConfigurableChannel, 1, 2>,
     _nf_ch: gpiote::OutputChannel<'d>,
     _wf_ch: gpiote::OutputChannel<'d>,
     running: bool,
+    _t: PhantomData<T>,
 }
 
 impl<'d, T: Instance> FodTrigger<'d, T> {
@@ -64,6 +67,7 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
             _nf_ch: nf_ch,
             _wf_ch: wf_ch,
             running: false,
+            _t: PhantomData,
         }
     }
 
@@ -90,6 +94,7 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         self.running = true;
     }
 
+    #[allow(dead_code)]
     pub fn stop(&mut self) {
         if !self.running {
             return;

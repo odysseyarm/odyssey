@@ -1,53 +1,28 @@
 use embassy_nrf::Peri;
 use embassy_nrf::peripherals::USBD;
-use embassy_nrf::usb::Driver as NrfUsbDriver;
+use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
-use embassy_usb::class::cdc_acm::{self, CdcAcmClass, State as CdcState};
-use embassy_usb::driver::EndpointError;
-use embassy_usb::{Config as UsbConfig, UsbDevice};
-use static_cell::{ConstStaticCell, StaticCell};
+use embassy_usb::driver::EndpointAddress;
+use embassy_usb::msos::windows_version;
+use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
+use static_cell::ConstStaticCell;
 
 use crate::Irqs;
 
-pub type UsbDriver = NrfUsbDriver<'static, USBD, HardwareVbusDetect>;
+pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
 pub type StaticUsbDevice = UsbDevice<'static, UsbDriver>;
-pub type StaticCdcAcmClass = CdcAcmClass<'static, UsbDriver>;
 
 pub const VID: u16 = 0x1915;
 pub const PID: u16 = 0x520F;
 
-static CDC_STATE: StaticCell<CdcState<'static>> = StaticCell::new();
-
-pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(snd: &mut cdc_acm::Sender<'d, D>, data: &[u8]) {
-    let max_packet_size = usize::from(snd.max_packet_size());
-    for chunk in data.chunks(max_packet_size) {
-        snd.write_packet(chunk).await.unwrap();
-    }
-    if data.len().is_multiple_of(max_packet_size) {
-        snd.write_packet(&[]).await.unwrap();
-    }
-}
-
-pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(rcv: &mut cdc_acm::Receiver<'d, D>) -> u8 {
-    loop {
-        let mut buf = [0; 64];
-        let r = rcv.read_packet(&mut buf).await;
-        match r {
-            Ok(_) => return buf[0],
-            Err(EndpointError::Disabled) => {
-                rcv.wait_connection().await;
-            }
-            Err(EndpointError::BufferOverflow) => unreachable!(),
-        }
-    }
-}
+const DEVICE_INTERFACE_GUIDS: &[&str] = &["{4d36e96c-e325-11ce-bfc1-08002be10318}"];
 
 #[embassy_executor::task]
 pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
 }
 
-pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticCdcAcmClass, StaticUsbDevice) {
+pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'static, In>, Endpoint<'static, Out>) {
     let vbus = HardwareVbusDetect::new(Irqs);
     let driver = UsbDriver::new(usbd, Irqs, vbus);
 
@@ -76,9 +51,28 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticCdcAcmClass, StaticUsbDev
         control_buf,
     );
 
-    let cdc_state = CDC_STATE.init(cdc_acm::State::new());
-    let cdc = CdcAcmClass::new(&mut builder, cdc_state, 64);
+    // Add the Microsoft OS Descriptor (MSOS/MOD) descriptor.
+    // We tell Windows that this entire device is compatible with the "WINUSB" feature,
+    // which causes it to use the built-in WinUSB driver automatically, which in turn
+    // can be used by libusb/rusb software without needing a custom driver or INF file.
+    // In principle you might want to call msos_feature() just on a specific function,
+    // if your device also has other functions that still use standard class drivers.
+    builder.msos_descriptor(windows_version::WIN8_1, 0);
+    builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+    builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+        "DeviceInterfaceGUIDs",
+        msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+    ));
+
+    // Add a vendor-specific function (class 0xFF), and corresponding interface,
+    // that uses our custom handler.
+    let mut function = builder.function(0xFF, 0, 0);
+    let mut interface = function.interface();
+    let mut alt = interface.alt_setting(0xFF, 0, 0, None);
+    let ep_out = alt.endpoint_bulk_out(None, 64);
+    let ep_in = alt.endpoint_bulk_in(None, 64);
+    drop(function);
 
     let usb = builder.build();
-    (cdc, usb)
+    (usb, ep_in, ep_out)
 }

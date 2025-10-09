@@ -47,13 +47,3 @@ pub fn device_id() -> [u8; 8] {
     let [e, f, g, h] = high.to_le_bytes();
     [a, b, c, d, e, f, g, h]
 }
-
-pub fn device_id_str(buf: &mut [u8; 16]) -> &str {
-    const CHARACTERS: [u8; 16] = *b"0123456789ABCDEF";
-    let id = device_id();
-    for (a, b) in id.into_iter().zip(buf.chunks_mut(2)) {
-        b[0] = CHARACTERS[(a >> 4) as usize];
-        b[1] = CHARACTERS[(a % 16) as usize];
-    }
-    unsafe { core::str::from_utf8_unchecked(buf) }
-}

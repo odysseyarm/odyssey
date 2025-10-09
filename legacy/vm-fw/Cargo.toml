@@ -21,18 +21,20 @@ defmt = "1.0.1"
 cortex-m-rt = "0.7.5"
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
 embassy-embedded-hal = "0.5.0"
-bytemuck = "1.23.2"
+bytemuck = "1.24.0"
 nalgebra = { version = "0.33.2", default-features = false }
 embedded-storage = "0.3.1"
 embassy-futures = { version = "0.1.2" }
-cobs = { version = "0.4.0", default-features = false }
+postcard = { version = "1.1.3", features = [ "use-defmt" ] }
+heapless = "0.9.1"
 
 [target.'cfg(context = "vm")'.dependencies]
-embassy-nrf = { version = "0.7.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
+embassy-nrf = { version = "0.8.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
 
 [dependencies.protodongers]
 git = "https://github.com/odysseyarm/protodonge-rs"
 default-features = false
+features = ["serde", "serde-no-std"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
@@ -41,7 +43,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [features]
 default = ["defmt"]
-defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt", "embassy-futures/defmt", "cobs/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
+defmt = ["embassy-usb/defmt", "embassy-embedded-hal/defmt", "protodongers/defmt", "panic-probe/print-defmt", "embassy-futures/defmt", "embassy-executor/defmt", "embassy-time/defmt", "postcard/defmt"]
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]

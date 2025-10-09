@@ -3,7 +3,7 @@ use core::convert::Infallible;
 use bmi2::bmi2_async::Bmi2;
 use bmi2::config;
 use bmi2::interface::SpiInterface;
-use bmi2::types::{Burst, Error, FifoConf, IntIoCtrl, IntLatch, IntMapData, IntMapFeat, MapData, PwrConf, PwrCtrl};
+use bmi2::types::{Burst, Error, IntIoCtrl, IntLatch, IntMapData, MapData, PwrCtrl};
 use embassy_nrf::Peri;
 use embassy_nrf::gpio::{AnyPin, Input, Output, Pull};
 use embassy_nrf::interrupt::typelevel::Binding;

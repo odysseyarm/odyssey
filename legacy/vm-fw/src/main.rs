@@ -17,15 +17,15 @@ use core::marker::PhantomData;
 use embassy_executor::Spawner;
 use embassy_nrf::config::Config;
 use embassy_nrf::gpio::{self, Output};
-use embassy_nrf::interrupt::typelevel::Interrupt;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::{Peri, bind_interrupts, gpiote, interrupt, peripherals, ppi, timer};
+use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Delay;
-use embassy_usb::class::cdc_acm;
+use embassy_usb::driver::Endpoint as _;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use paj7025::Paj7025;
 use settings::{Settings, init_settings};
@@ -33,7 +33,6 @@ use {defmt_rtt as _, panic_probe as _};
 
 use crate::fodtrigger::FOD_TICK_SIG;
 use crate::imu::{Imu, ImuInterrupt};
-use crate::usb::UsbDriver;
 use crate::utils::make_spi_dev;
 
 bind_interrupts!(struct Irqs {
@@ -126,14 +125,16 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap();
 
-    let (mut cdc, usb) = usb::usb_device(p.USBD);
-    spawner.spawn(defmt::unwrap!(usb::run_usb(usb)));
+    let (usb, mut usb_snd, mut usb_rcv) = usb::usb_device(p.USBD);
+    let _ = spawner.spawn(usb::run_usb(usb));
 
     let nvmc = nvmc.borrow();
     let settings = init_settings(nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
 
-    cdc.wait_connection().await;
-    defmt::info!("CDC-ACM connected");
+    usb_snd.wait_enabled().await;
+    usb_rcv.wait_enabled().await;
+
+    defmt::info!("USB Endpoints enabled");
 
     static PAJ7025R2_MUTEX: static_cell::StaticCell<AsyncMutex<NoopRawMutex, Paj>> = static_cell::StaticCell::new();
     static PAJ7025R3_MUTEX: static_cell::StaticCell<AsyncMutex<NoopRawMutex, Paj>> = static_cell::StaticCell::new();
@@ -141,11 +142,9 @@ async fn main(spawner: Spawner) {
     let paj7025r2 = PAJ7025R2_MUTEX.init(AsyncMutex::<NoopRawMutex, _>::new(paj7025r2));
     let paj7025r3 = PAJ7025R3_MUTEX.init(AsyncMutex::<NoopRawMutex, _>::new(paj7025r3));
 
-    let (usb_snd, usb_rcv, usb_ctl) = cdc.split_with_control();
     let ctx = CommonContext {
         usb_snd,
         usb_rcv,
-        usb_ctl,
         paj7025r2_group: (paj7025r2, b.paj7025r2.fod.into(), p.GPIOTE_CH0.into()),
         paj7025r3_group: (paj7025r3, b.paj7025r3.fod.into(), p.GPIOTE_CH1.into()),
         fod_set_ch: p.PPI_CH0.into(),
@@ -154,7 +153,6 @@ async fn main(spawner: Spawner) {
         imu_int,
         settings,
         nvmc,
-        obj: object_mode::Context::take(),
     };
 
     let _ = object_mode::object_mode(ctx, p.TIMER1).await;
@@ -171,10 +169,8 @@ type PajGroup<'a> = (
 );
 
 struct CommonContext<const IMU_N: usize> {
-    usb_snd: cdc_acm::Sender<'static, UsbDriver>,
-    usb_rcv: cdc_acm::Receiver<'static, UsbDriver>,
-    #[expect(dead_code)]
-    usb_ctl: cdc_acm::ControlChanged<'static>,
+    usb_snd: Endpoint<'static, In>,
+    usb_rcv: Endpoint<'static, Out>,
     paj7025r2_group: PajGroup<'static>,
     paj7025r3_group: PajGroup<'static>,
     fod_set_ch: Peri<'static, ppi::AnyConfigurableChannel>,
@@ -183,7 +179,6 @@ struct CommonContext<const IMU_N: usize> {
     imu_int: ImuInterrupt,
     settings: &'static mut Settings,
     nvmc: &'static RefCell<Nvmc<'static>>,
-    obj: object_mode::Context,
 }
 
 pub struct TIrq<T: timer::Instance> {
@@ -192,8 +187,8 @@ pub struct TIrq<T: timer::Instance> {
 
 impl<T: timer::Instance> interrupt::typelevel::Handler<T::Interrupt> for TIrq<T> {
     unsafe fn on_interrupt() {
-        let regs =
-            unsafe { core::mem::transmute::<&mut (), &mut core::mem::ManuallyDrop<timer::Timer<T>>>(&mut ()).regs() };
+        let regs = unsafe { embassy_nrf::pac::timer::Timer::from_ptr(embassy_nrf::pac::TIMER1.as_ptr()) };
+        
         regs.events_compare(1).write(|w| *w = 0);
         FOD_TICK_SIG.signal(());
     }
