@@ -5,7 +5,6 @@ use crate::Packet;
 pub const MAX_DEVICES: usize = 7;
 type Uuid = [u8; 6];
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
