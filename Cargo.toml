@@ -15,6 +15,7 @@ thiserror = { version = "2.0.17", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 static_assertions = "1.1.0"
 serde_bytes = { version = "0.11.19", optional = true, default-features = false }
+heapless = "0.9.1"
 
 [features]
 default = ["std"]

@@ -16,6 +16,7 @@ use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 #[cfg(test)]
 mod tests;
 pub mod wire;
+pub mod hub;
 
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
