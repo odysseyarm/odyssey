@@ -103,3 +103,59 @@ group_peripherals!(Board {
     paj7025r3: Paj7025R3 { sck=P1_00, miso=P0_22, mosi=P1_07, cs=P0_06, fod=P1_13 },
     bmi270:    Bmi270    { sck=P0_20, miso=P0_19, mosi=P0_15, cs=P0_03, irq=P0_25 },
 });
+
+#[cfg(context = "atslite1")]
+define_peripheral!(Paj7025R2 {
+    sck: P1_08,
+    miso: P1_09,
+    mosi: P0_29,
+    cs: P1_13,
+    fod: P1_14,
+});
+#[cfg(context = "atslite1")]
+impl_spi_from!(Paj7025R2 {
+    sck: sck,
+    miso: miso,
+    mosi: mosi,
+    cs: cs
+});
+
+#[cfg(context = "atslite1")]
+define_peripheral!(Paj7025R3 {
+    sck: P0_20,
+    miso: P0_22,
+    mosi: P1_01,
+    cs: P1_04,
+    fod: P0_24,
+});
+#[cfg(context = "atslite1")]
+impl_spi_from!(Paj7025R3 {
+    sck: sck,
+    miso: miso,
+    mosi: mosi,
+    cs: cs
+});
+
+#[cfg(context = "atslite1")]
+define_peripheral!(Icm42688v {
+    sck: P0_09,
+    miso: P0_12,
+    mosi: P0_10,
+    cs: P0_08,
+    int1: P0_21,
+    clkin: P1_05,
+});
+#[cfg(context = "atslite1")]
+impl_spi_from!(Icm42688v {
+    sck: sck,
+    miso: miso,
+    mosi: mosi,
+    cs: cs
+});
+
+#[cfg(context = "atslite1")]
+group_peripherals!(Board {
+    paj7025r2: Paj7025R2 { sck=P1_08, miso=P1_09, mosi=P0_29, cs=P1_13, fod=P1_14 },
+    paj7025r3: Paj7025R3 { sck=P0_20, miso=P0_22, mosi=P1_01, cs=P1_04, fod=P0_24 },
+    icm42688v: Icm42688v { sck=P0_09, miso=P0_12, mosi=P0_10, cs=P0_08, int1=P0_21, clkin=P1_05 },
+});

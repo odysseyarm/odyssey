@@ -1,0 +1,25 @@
+output_dir := "build"
+
+[positional-arguments]
+@make *args:
+    make "$@"
+
+clean:
+    make clean
+flash:
+    make flash
+flash-chiperase:
+    make flash-chiperase
+flash-recover:
+    make flash-recover
+reset:
+    make reset
+
+format:
+    cd ../../ && cargo fmt
+alias fmt := format
+
+@attach-app:
+    probe-rs attach --chip nRF52840_xxAA "{{ output_dir }}/app.elf"
+@serial *args:
+    cd serialtest && cargo run {{ args }}

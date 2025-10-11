@@ -2,7 +2,6 @@ use embassy_nrf::Peri;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
-use embassy_usb::driver::EndpointAddress;
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
 use static_cell::ConstStaticCell;

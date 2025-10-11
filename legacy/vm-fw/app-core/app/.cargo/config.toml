@@ -1,13 +1,12 @@
-[target.'cfg(all(target_arch = "arm", target_os = "none"))']
-# replace nRF52840_xxAA with your chip as listed in `probe-rs chip list`
-# runner = "cargo bin probe-rs run --chip nRF52840_xxAA"
+# VM (nRF5340, M33F)
+[target.thumbv8m.main-none-eabihf]
+rustflags = '-C target-cpu=cortex-m33 --cfg context="atslite1"'
+runner = "probe-rs run --chip nRF5340_xxAA"
 
-# If you don't want to use cargo-bin's version
-runner = "probe-rs run --chip nRF52840_xxAA"
-
-[build]
-target = "thumbv7em-none-eabihf"
+# ATS Lite 1 (nRF52840, M4F)
+[target.thumbv7em-none-eabihf]
 rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
+runner = "probe-rs run --chip nRF52840_xxAA"
 
 # Uncomment to see flash/memory usage report
 # [env]

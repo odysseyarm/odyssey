@@ -3,8 +3,7 @@ use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use defmt::Format;
-use embassy_futures::join::{join3, join4};
-use embassy_futures::join::join;
+use embassy_futures::join::join4;
 use embassy_futures::select::{Either, select};
 use embassy_nrf::Peri;
 use embassy_nrf::nvmc::Nvmc;
@@ -21,7 +20,10 @@ use paj7025::Paj7025Error;
 use protodongers::{Packet, PacketData as P, PacketType, Props, ReadRegisterResponse};
 
 use crate::fodtrigger::FodTrigger;
-use crate::imu::{Imu, ImuInterrupt};
+#[cfg(context = "vm")]
+use crate::imu::bmi::{Imu, ImuInterrupt};
+#[cfg(context = "atslite1")]
+use crate::imu::icm::{Imu, ImuInterrupt};
 use crate::settings::{PajsSettings, Settings};
 use crate::utils::device_id;
 use crate::{CommonContext, Paj, PajGroup};
@@ -31,11 +33,59 @@ type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMu
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
+#[cfg(context = "vm")]
 #[allow(unreachable_code)]
 pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     mut ctx: CommonContext<N>,
     timer: Peri<'d, T>,
 ) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
+    defmt::info!("Entering Object Mode");
+    let pkt_writer = PacketWriter {
+        snd: &mut ctx.usb_snd,
+    };
+    let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
+    let pkt_channel = Channel::new();
+    let stream_infos = StreamInfos::new();
+    let exit = Watch::<_, _, 4>::new();
+    let exit0 = exit.receiver().unwrap();
+    let _exit1 = exit.receiver().unwrap();
+    let _exit2 = exit.receiver().unwrap();
+    let _exit3 = exit.receiver().unwrap();
+    
+    let a = usb_rcv_loop(
+        ctx.paj7025r2_group.0,
+        ctx.paj7025r3_group.0,
+        &stream_infos,
+        pkt_channel.sender(),
+        &mut pkt_rcv,
+        ctx.settings,
+        ctx.nvmc,
+    );
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
+    let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
+    let d = obj_loop(
+        ctx.paj7025r2_group,
+        ctx.paj7025r3_group,
+        ctx.fod_set_ch,
+        ctx.fod_clr_ch,
+        timer,
+        pkt_channel.sender(),
+        &stream_infos,
+    );
+    // TODO turn these into tasks
+    let r = join4(a, b, c, d).await;
+
+    r.0?
+    // ctx.paj = paj.into_inner().as_dynamic_mode();
+    // ctx
+}
+
+#[cfg(context = "atslite1")]
+#[allow(unreachable_code)]
+pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
+    mut ctx: CommonContext,
+    timer: Peri<'d, T>,
+) -> Result<CommonContext, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -250,6 +300,7 @@ async fn usb_snd_loop(
     todo!()
 }
 
+#[cfg(context = "vm")]
 async fn imu_loop<const N: usize>(
     imu: &mut Imu<N>,
     imu_int: &mut ImuInterrupt,
@@ -307,6 +358,60 @@ async fn imu_loop<const N: usize>(
                 }),
             };
             if pkt_snd.try_send(pkt).is_err() {
+                defmt::warn!("Failed to send IMU data due to full channel");
+            }
+        }
+    }
+}
+
+#[cfg(context = "atslite1")]
+async fn imu_loop(
+    imu: &mut Imu,
+    imu_int: &mut ImuInterrupt,
+    pkt_snd: Sender<'_, Packet, 4>,
+    stream_infos: &StreamInfos,
+) {
+    static BUFFER: static_cell::ConstStaticCell<[u32; 521]> = static_cell::ConstStaticCell::new([0; 521]);
+    let buffer = BUFFER.take();
+    let mut ts_micros = 0;
+    // TODO handle ODR change and impact stream
+    loop {
+        imu_int.wait().await;
+        let _items = imu.read_fifo(buffer).await.unwrap();
+        let pkt = bytemuck::from_bytes::<icm426xx::fifo::FifoPacket4>(&bytemuck::cast_slice(buffer)[4..24]);
+        // CLKIN ticks (32 kHz)
+        ts_micros += 1000 * (pkt.timestamp() as u32) / 32;
+        // TODO make the driver handle scale
+        // 32768 LSB/g
+        let ax = pkt.accel_data_x();
+        let ay = pkt.accel_data_y();
+        let az = pkt.accel_data_z();
+        // 262.144 LSB/(º/s)
+        let gx = pkt.gyro_data_x();
+        let gy = pkt.gyro_data_y();
+        let gz = pkt.gyro_data_z();
+
+        let (ax, ay, az) = (-ay, ax, az);
+        let (gx, gy, gz) = (-gy, gx, gz);
+
+        if stream_infos.imu.enabled() {
+            // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
+            // defmt::info!("ax={} ay={} az={} gx={} gy={} gz={}", ax, ay, az, gx, gy, gz);
+            let id = stream_infos.imu.req_id();
+            let pkt = Packet {
+                id,
+                data: P::AccelReport(protodongers::AccelReport {
+                    timestamp: ts_micros,
+                    accel: Vector3::new(ax, ay, az).cast() / 32768.0 * 9.806650,
+                    gyro: Vector3::new(
+                        (gx as f32 / 262.144).to_radians(),
+                        (gy as f32 / 262.144).to_radians(),
+                        (gz as f32 / 262.144).to_radians(),
+                    ),
+                }),
+            };
+            let r = pkt_snd.try_send(pkt);
+            if r.is_err() {
                 defmt::warn!("Failed to send IMU data due to full channel");
             }
         }

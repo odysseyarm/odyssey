@@ -1,22 +1,6 @@
 {
-  "rust-analyzer.cargo.buildScripts.overrideCommand": [
-    "cargo",
-    "check",
-    "--message-format=json"
-  ],
-  // "rust-analyzer.cargo.features": [
-  //   "",
-  // ],
-  "rust-analyzer.cargo.cfgs": [
-    "context=vm"
-  ],
-  "rust-analyzer.check.allTargets": false,
-  "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.files.watcher": "server",
-  "rust-analyzer.server.extraEnv": {
-    "CARGO_BUILD_TARGET": "thumbv7em-none-eabihf",
-    "CARGO_TARGET_DIR": "./target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename}",
-    "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER": "probe-rs run --protocol=swd --chip nrf52840_xxAA --preverify",
-    "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS": "--cfg context=\"vm\"",
-  }
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  // Choose ONE depending on what you’re working on:
+  // "rust-analyzer.cargo.target": "thumbv8m.main-none-eabihf",
+  "rust-analyzer.cargo.target": "thumbv7em-none-eabihf",
 }
