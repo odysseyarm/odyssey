@@ -1,19 +1,14 @@
-use embassy_nrf::{
-    Peri,
-    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull},
-    gpiote::{self, OutputChannelPolarity},
-    interrupt,
-    peripherals::SPIM4,
-    ppi::{self, Ppi},
-    spim,
-    timer::{self, Timer},
-};
+use embassy_nrf::gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::gpiote::{self, OutputChannelPolarity};
+use embassy_nrf::peripherals::SPIM4;
+use embassy_nrf::ppi::{self, Ppi};
+use embassy_nrf::timer::{self, Timer};
+use embassy_nrf::{Peri, interrupt, spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{ICM42688, Ready};
 
-pub type Imu =
-    ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>;
+pub type Imu = ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance>(
@@ -29,16 +24,12 @@ pub async fn init<T: timer::Instance>(
     clkin_gpiote_ch: Peri<'static, gpiote::AnyChannel>,
 ) -> (Imu, ImuInterrupt)
 where
-    crate::Irqs: interrupt::typelevel::Binding<
-            <SPIM4 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPIM4>,
-        >,
+    crate::Irqs: interrupt::typelevel::Binding<<SPIM4 as spim::Instance>::Interrupt, spim::InterruptHandler<SPIM4>>,
 {
     let int1 = Input::new(int1, Pull::None);
     let clkin = Output::new(clkin, Level::Low, OutputDrive::Standard);
     let cs = Output::new(cs, Level::High, OutputDrive::Standard);
-    let clkin_ch =
-        gpiote::OutputChannel::new(clkin_gpiote_ch, clkin, OutputChannelPolarity::Toggle);
+    let clkin_ch = gpiote::OutputChannel::new(clkin_gpiote_ch, clkin, OutputChannelPolarity::Toggle);
 
     // Generate a 32 kHz clock on CLKIN
     let timer = Timer::new(clkin_timer_instance);

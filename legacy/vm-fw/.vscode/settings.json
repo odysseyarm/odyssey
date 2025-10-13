@@ -1,6 +1,9 @@
 {
   "rust-analyzer.cargo.buildScripts.enable": true,
-  // Choose ONE depending on what you’re working on:
-  // "rust-analyzer.cargo.target": "thumbv8m.main-none-eabihf",
-  "rust-analyzer.cargo.target": "thumbv7em-none-eabihf",
+  "rust-analyzer.linkedProjects": [
+    "${workspaceFolder}/app-core/app/Cargo.toml",
+    // "${workspaceFolder}/app-core/bootloaders/vm/Cargo.toml",
+    "${workspaceFolder}/app-core/bootloaders/atslite/Cargo.toml",
+    "${workspaceFolder}/net-core/Cargo.toml"
+  ]
 }

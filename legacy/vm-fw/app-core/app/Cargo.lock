@@ -43,6 +43,7 @@ dependencies = [
  "heapless 0.9.1",
  "icm426xx",
  "nalgebra",
+ "npm1300-rs",
  "nrf-pac",
  "once_cell",
  "paj7025",
@@ -72,6 +73,12 @@ name = "arbitrary-int"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c858caffa49edfc4ecc45a4bec37abd3e88041a2903816f10f990b7b41abc281"
+
+[[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "askama"
@@ -384,6 +391,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dd-manifest-tree"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5793572036e0a6638977c7370c6afc423eac848ee8495f079b8fd3964de7b9f9"
+dependencies = [
+ "yaml-rust2",
+]
+
+[[package]]
 name = "defmt"
 version = "0.3.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -455,6 +471,7 @@ dependencies = [
  "askama",
  "bitvec",
  "convert_case",
+ "dd-manifest-tree",
  "itertools 0.14.0",
  "kdl",
  "proc-macro2",
@@ -757,6 +774,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "enumn"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -848,6 +874,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
+dependencies = [
+ "hashbrown 0.14.5",
+]
+
+[[package]]
 name = "heapless"
 version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -884,7 +928,7 @@ dependencies = [
 [[package]]
 name = "icm426xx"
 version = "0.3.2"
-source = "git+https://github.com/Abrahamh08/icm426xx.git#87e036392c4cec727cb6e81356f82322629529cc"
+source = "git+https://github.com/Abrahamh08/icm426xx#87e036392c4cec727cb6e81356f82322629529cc"
 dependencies = [
  "bilge",
  "bytemuck",
@@ -1020,6 +1064,17 @@ name = "nb"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
+
+[[package]]
+name = "npm1300-rs"
+version = "0.1.0"
+source = "git+https://github.com/thermigo/npm1300-rs#aec8d947250867bee9106e5d5b1b5f3f42e9b3d4"
+dependencies = [
+ "device-driver",
+ "embedded-hal-async",
+ "libm",
+ "thiserror",
+]
 
 [[package]]
 name = "nrf-pac"
@@ -1559,7 +1614,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb573c76e7884035ac5e1ab4a81234c187a82b6100140af0ab45757650ccda38"
 dependencies = [
  "byteorder",
- "hashbrown",
+ "hashbrown 0.13.2",
  "log",
  "proc-macro2",
  "quote",
@@ -1620,6 +1675,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "yaml-rust2"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a1a1c0bc9823338a3bdf8c61f994f23ac004c6fa32c08cd152984499b445e8d"
+dependencies = [
+ "arraydeque",
+ "encoding_rs",
+ "hashlink",
 ]
 
 [[package]]

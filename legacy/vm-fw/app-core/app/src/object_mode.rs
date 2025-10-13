@@ -13,7 +13,7 @@ use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::watch::Watch;
-use embassy_usb::driver::{Endpoint as _, EndpointIn as _, EndpointOut as _, EndpointError};
+use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
 use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
@@ -40,9 +40,7 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     timer: Peri<'d, T>,
 ) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
-    let pkt_writer = PacketWriter {
-        snd: &mut ctx.usb_snd,
-    };
+    let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
     let pkt_channel = Channel::new();
     let stream_infos = StreamInfos::new();
@@ -51,7 +49,7 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     let _exit1 = exit.receiver().unwrap();
     let _exit2 = exit.receiver().unwrap();
     let _exit3 = exit.receiver().unwrap();
-    
+
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
         ctx.paj7025r3_group.0,
@@ -87,9 +85,7 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
     timer: Peri<'d, T>,
 ) -> Result<CommonContext, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode");
-    let pkt_writer = PacketWriter {
-        snd: &mut ctx.usb_snd,
-    };
+    let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
     let pkt_channel = Channel::new();
     let stream_infos = StreamInfos::new();
@@ -98,7 +94,7 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
     let _exit1 = exit.receiver().unwrap();
     let _exit2 = exit.receiver().unwrap();
     let _exit3 = exit.receiver().unwrap();
-    
+
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
         ctx.paj7025r3_group.0,
@@ -511,9 +507,7 @@ pub struct PacketReader<'a> {
 
 impl<'a> PacketReader<'a> {
     pub fn new(rcv: &'a mut Endpoint<'static, Out>) -> Self {
-        Self {
-            rcv,
-        }
+        Self { rcv }
     }
 
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {

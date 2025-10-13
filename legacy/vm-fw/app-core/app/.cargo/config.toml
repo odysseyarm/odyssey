@@ -8,6 +8,11 @@ runner = "probe-rs run --chip nRF5340_xxAA"
 rustflags = '-C target-cpu=cortex-m4 --cfg context="vm"'
 runner = "probe-rs run --chip nRF52840_xxAA"
 
+[build]
+# Choose ONE depending on what you’re working on:
+target = "thumbv8m.main-none-eabihf"
+# target = "thumbv7em-none-eabihf"
+
 # Uncomment to see flash/memory usage report
 # [env]
 # RUSTC_LOG = "rustc_codegen_ssa::back::link=info"

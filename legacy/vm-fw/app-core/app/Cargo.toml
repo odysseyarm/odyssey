@@ -33,7 +33,8 @@ bmi2 = { git="https://github.com/Abrahamh08/bmi2", branch="async", features = ["
 
 [target.'cfg(context = "atslite1")'.dependencies]
 embassy-nrf = { version = "0.8.0", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
-icm426xx = { version = "0.3.2", git = "https://github.com/Abrahamh08/icm426xx.git", features = ["async"] }
+icm426xx = { version = "0.3.2", git = "https://github.com/Abrahamh08/icm426xx", features = ["async"] }
+npm1300-rs = { git = "https://github.com/thermigo/npm1300-rs" }
 
 [dependencies.protodongers]
 git = "https://github.com/odysseyarm/protodonge-rs"

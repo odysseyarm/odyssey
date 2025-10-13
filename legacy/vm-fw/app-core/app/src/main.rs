@@ -14,6 +14,9 @@ mod usb;
 #[cfg(context = "atslite1")]
 mod nrf5340_init;
 
+#[cfg(context = "atslite1")]
+mod pmic_leds;
+
 use core::cell::RefCell;
 use core::marker::PhantomData;
 
@@ -23,16 +26,22 @@ use embassy_nrf::config::Config;
 use embassy_nrf::gpio::{self, Output};
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::{Peri, bind_interrupts, gpiote, interrupt, peripherals, ppi, timer};
+#[cfg(context = "atslite1")]
+use embassy_nrf::twim::{self, Twim};
 use embassy_nrf::usb::{Endpoint, In, Out};
+use embassy_nrf::{Peri, bind_interrupts, gpiote, interrupt, peripherals, ppi, timer};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Delay;
 use embassy_usb::driver::Endpoint as _;
 use embedded_hal_bus::spi::ExclusiveDevice;
+#[cfg(context = "atslite1")]
+use npm1300_rs::NPM1300;
 use paj7025::Paj7025;
 use settings::{Settings, init_settings};
+#[cfg(context = "atslite1")]
+use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::fodtrigger::FOD_TICK_SIG;
@@ -40,6 +49,8 @@ use crate::fodtrigger::FOD_TICK_SIG;
 use crate::imu::bmi::{Imu, ImuInterrupt};
 #[cfg(context = "atslite1")]
 use crate::imu::icm::{Imu, ImuInterrupt};
+#[cfg(context = "atslite1")]
+use crate::pmic_leds::{LedState, PmicLedAnimator};
 use crate::utils::make_spi_dev;
 
 #[cfg(context = "vm")]
@@ -56,6 +67,7 @@ bind_interrupts!(struct Irqs {
 bind_interrupts!(struct Irqs {
     SERIAL0 => spim::InterruptHandler<peripherals::SERIAL0>;
     SERIAL1 => spim::InterruptHandler<peripherals::SERIAL1>;
+    SERIAL2 => twim::InterruptHandler<peripherals::SERIAL2>;
     SPIM4 => spim::InterruptHandler<peripherals::SPIM4>;
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
@@ -78,8 +90,39 @@ async fn main(spawner: Spawner) {
 
     #[cfg(context = "vm")]
     let p = embassy_nrf::init(config);
+
     let b = split_board!(p);
     defmt::info!("boot");
+
+    #[cfg(context = "atslite1")]
+    let twim = Twim::new(
+        p.SERIAL2,
+        Irqs,
+        b.pmic.sda,
+        b.pmic.scl,
+        twim::Config::default(),
+        &mut [],
+    );
+    #[cfg(context = "atslite1")]
+    static PMIC_CELL: StaticCell<npm1300_rs::NPM1300<Twim, Delay>> = StaticCell::new();
+    #[cfg(context = "atslite1")]
+    let pmic: &'static mut _ = PMIC_CELL.init(NPM1300::new(twim, Delay));
+
+    #[cfg(context = "atslite1")]
+    let handle = {
+        use crate::pmic_leds::LedIdx;
+
+        let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
+            .await
+            .unwrap();
+
+        spawner.spawn(led_task(anim)).unwrap();
+
+        handle
+    };
+
+    #[cfg(context = "atslite1")]
+    handle.set_state(LedState::TurningOn).await;
 
     static NVMC: static_cell::StaticCell<Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>> =
         static_cell::StaticCell::new();
@@ -152,7 +195,7 @@ async fn main(spawner: Spawner) {
         mosi: b.bmi270.mosi.into(),
         cs: b.bmi270.cs.into(),
     };
-    
+
     #[cfg(context = "vm")]
     let (imu, imu_int) = imu::bmi::init::<_, _, 65535, 255>(p.SPI2, Irqs, bmi270_spi, b.bmi270.irq.into())
         .await
@@ -212,6 +255,12 @@ async fn main(spawner: Spawner) {
     let _ = object_mode::object_mode(ctx, p.TIMER1).await;
 }
 
+#[cfg(context = "atslite1")]
+#[embassy_executor::task]
+async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> ! {
+    anim.run().await
+}
+
 type Paj = Paj7025<
     ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
     embedded_hal_bus::spi::DeviceError<spim::Error, core::convert::Infallible>,
@@ -257,7 +306,7 @@ pub struct TIrq<T: timer::Instance> {
 impl<T: timer::Instance> interrupt::typelevel::Handler<T::Interrupt> for TIrq<T> {
     unsafe fn on_interrupt() {
         let regs = unsafe { embassy_nrf::pac::timer::Timer::from_ptr(embassy_nrf::pac::TIMER1.as_ptr()) };
-        
+
         regs.events_compare(1).write(|w| *w = 0);
         FOD_TICK_SIG.signal(());
     }
