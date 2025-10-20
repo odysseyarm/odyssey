@@ -12,7 +12,7 @@ nrf-pac = { version = "0.1.0" }
 static_cell = "2.1.1"
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embassy-usb = "0.5.1"
-embassy-time = "0.5.0"
+embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
 embedded-hal-bus = { version = "0.3.0", features = ["async"] }
 defmt-rtt = "1.0.0"
 panic-probe = { version = "1.0.0" }
@@ -34,7 +34,9 @@ bmi2 = { git="https://github.com/Abrahamh08/bmi2", branch="async", features = ["
 [target.'cfg(context = "atslite1")'.dependencies]
 embassy-nrf = { version = "0.8.0", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "time", "unstable-pac"] }
 icm426xx = { version = "0.3.2", git = "https://github.com/Abrahamh08/icm426xx", features = ["async"] }
-npm1300-rs = { git = "https://github.com/thermigo/npm1300-rs" }
+npm1300-rs = { git = "https://github.com/Abrahamh08/npm1300-rs", features = ["defmt-03"] }
+nrf-fuel-gauge = { git = "https://github.com/Abrahamh08/nrf-fuel-gauge", features = ["nrf5340"] }
+nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf_fuel_gauge"] }
 
 [dependencies.protodongers]
 git = "https://github.com/odysseyarm/protodonge-rs"

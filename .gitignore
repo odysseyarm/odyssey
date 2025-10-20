@@ -1,5 +1,7 @@
 target
+build
 .venv
 __pycache__
 .envrc
 .bin
+*.hex

@@ -2,9 +2,11 @@ use embassy_nrf::Peri;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
-use static_cell::ConstStaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::Irqs;
 
@@ -21,7 +23,7 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
 }
 
-pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'static, In>, Endpoint<'static, Out>) {
+pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'static, In>, Endpoint<'static, Out>, &'static Signal<ThreadModeRawMutex, bool>) {
     let vbus = HardwareVbusDetect::new(Irqs);
     let driver = UsbDriver::new(usbd, Irqs, vbus);
 
@@ -29,7 +31,7 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'stat
     config.manufacturer = Some("Odyssey Arm");
     config.product = Some("ATS USB Legacy");
     // config.serial_number = Some("...");
-    config.max_power = 100;
+    config.max_power = 310;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;
     config.device_class = 0xEF;
@@ -62,6 +64,14 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'stat
         "DeviceInterfaceGUIDs",
         msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
     ));
+    
+    static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> = ConstStaticCell::new(Signal::new());
+    let signal = SIGNAL.take();
+
+    static HANDLER: StaticCell<MyHandler> = StaticCell::new();
+    let handler = HANDLER.init(MyHandler::new(signal));
+
+    builder.handler(&mut *handler);
 
     // Add a vendor-specific function (class 0xFF), and corresponding interface,
     // that uses our custom handler.
@@ -71,7 +81,25 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'stat
     let ep_out = alt.endpoint_bulk_out(None, 64);
     let ep_in = alt.endpoint_bulk_in(None, 64);
     drop(function);
-
+    
     let usb = builder.build();
-    (usb, ep_in, ep_out)
+    (usb, ep_in, ep_out, signal)
+}
+
+struct MyHandler {
+    signal: &'static Signal<ThreadModeRawMutex, bool>,
+}
+
+impl MyHandler {
+    pub fn new(
+        signal: &'static Signal<ThreadModeRawMutex, bool>,
+    ) -> Self {
+        Self { signal }
+    }
+}
+
+impl embassy_usb::Handler for MyHandler {
+    fn configured(&mut self, configured: bool) {
+        self.signal.signal(configured);
+    }
 }

@@ -13,9 +13,16 @@ mod usb;
 
 #[cfg(context = "atslite1")]
 mod nrf5340_init;
-
+#[cfg(context = "atslite1")]
+mod battery_model;
 #[cfg(context = "atslite1")]
 mod pmic_leds;
+#[cfg(context = "atslite1")]
+mod power;
+#[cfg(context = "atslite1")]
+mod power_button;
+#[cfg(context = "atslite1")]
+mod power_state;
 
 use core::cell::RefCell;
 use core::marker::PhantomData;
@@ -23,7 +30,9 @@ use core::marker::PhantomData;
 use embassy_executor::Spawner;
 #[cfg(context = "vm")]
 use embassy_nrf::config::Config;
-use embassy_nrf::gpio::{self, Output};
+#[cfg(context = "atslite1")]
+use embassy_nrf::gpio::Input;
+use embassy_nrf::gpio::{self, Output, Pin as _};
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
 #[cfg(context = "atslite1")]
@@ -93,7 +102,7 @@ async fn main(spawner: Spawner) {
 
     let b = split_board!(p);
     defmt::info!("boot");
-
+    
     #[cfg(context = "atslite1")]
     let twim = Twim::new(
         p.SERIAL2,
@@ -104,9 +113,21 @@ async fn main(spawner: Spawner) {
         &mut [],
     );
     #[cfg(context = "atslite1")]
-    static PMIC_CELL: StaticCell<npm1300_rs::NPM1300<Twim, Delay>> = StaticCell::new();
+    static PMIC: StaticCell<embassy_sync::mutex::Mutex<NoopRawMutex, NPM1300<Twim, Delay>>> = StaticCell::new();
+    
     #[cfg(context = "atslite1")]
-    let pmic: &'static mut _ = PMIC_CELL.init(NPM1300::new(twim, Delay));
+    let mut pmic = NPM1300::new(twim, Delay);
+
+    #[cfg(context = "atslite1")]
+    power::pmic_setup(&mut pmic).await.unwrap();
+
+    #[cfg(context = "atslite1")]
+    power::configure_and_start_charging(&mut pmic, npm1300_rs::sysreg::VbusInCurrentLimit::MA100).await.unwrap();
+
+    #[cfg(context = "atslite1")]
+    let pmic = PMIC.init(embassy_sync::mutex::Mutex::new(pmic));
+
+    spawner.must_spawn(pmic_irq_task(b.pmic.irq.into(), pmic));
 
     #[cfg(context = "atslite1")]
     let handle = {
@@ -116,13 +137,29 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap();
 
-        spawner.spawn(led_task(anim)).unwrap();
+        spawner.must_spawn(led_task(anim));
 
         handle
     };
+    
+    let mut pwr_btn = Input::new(b.pmic.pwr_btn, gpio::Pull::Up);
+
+    handle_boot_vbus_policy(pmic, &handle).await.unwrap();
+    handle_pending_ship(pmic, &handle, &mut pwr_btn).await.unwrap();
 
     #[cfg(context = "atslite1")]
     handle.set_state(LedState::TurningOn).await;
+
+    #[cfg(context = "atslite1")]
+    static PMIC_LEDS_HANDLE: StaticCell<pmic_leds::PmicLedsHandle> = StaticCell::new();
+    #[cfg(context = "atslite1")]
+    let handle = PMIC_LEDS_HANDLE.init(handle);
+
+    #[cfg(context = "atslite1")]
+    spawner.must_spawn(power_btn_task(pwr_btn, pmic, handle));
+
+    #[cfg(context = "atslite1")]
+    spawner.must_spawn(power_state::power_state_task(pmic, handle));
 
     static NVMC: static_cell::StaticCell<Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>> =
         static_cell::StaticCell::new();
@@ -222,11 +259,17 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    let (usb, mut usb_snd, mut usb_rcv) = usb::usb_device(p.USBD);
+    let (usb, mut usb_snd, mut usb_rcv, configured_sig) = usb::usb_device(p.USBD);
     let _ = spawner.spawn(usb::run_usb(usb));
 
     let nvmc = nvmc.borrow();
     let settings = init_settings(nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
+    
+    if configured_sig.wait().await {
+        pmic.lock().await.set_vbus_in_current_limit(
+            npm1300_rs::sysreg::VbusInCurrentLimit::MA500,
+        ).await.unwrap();
+    }
 
     usb_snd.wait_enabled().await;
     usb_rcv.wait_enabled().await;
@@ -253,12 +296,6 @@ async fn main(spawner: Spawner) {
     };
 
     let _ = object_mode::object_mode(ctx, p.TIMER1).await;
-}
-
-#[cfg(context = "atslite1")]
-#[embassy_executor::task]
-async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> ! {
-    anim.run().await
 }
 
 type Paj = Paj7025<
@@ -310,4 +347,128 @@ impl<T: timer::Instance> interrupt::typelevel::Handler<T::Interrupt> for TIrq<T>
         regs.events_compare(1).write(|w| *w = 0);
         FOD_TICK_SIG.signal(());
     }
+}
+
+#[cfg(context = "atslite1")]
+#[embassy_executor::task]
+async fn pmic_irq_task(
+    irq_pin: Peri<'static, gpio::AnyPin>,
+    npm1300: &'static embassy_sync::mutex::Mutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+) {
+    let port = irq_pin.port();
+    let pin  = irq_pin.pin();
+
+    crate::utils::set_pin_sense(&port, pin, embassy_nrf::pac::gpio::vals::Sense::HIGH);
+
+    let mut irq = gpio::Input::new(irq_pin, gpio::Pull::None);
+
+    loop {
+        irq.wait_for_high().await;
+        npm1300.lock().await
+            .clear_vbusin0_event_mask(npm1300_rs::mainreg::Vbusin0EventMask::VBUS_REMOVED)
+            .await.unwrap();
+        crate::power::notify_vbus_removed();
+        defmt::debug!("VBUS removed");
+    }
+}
+
+#[cfg(context = "atslite1")]
+#[embassy_executor::task]
+async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> ! {
+    anim.run().await
+}
+
+#[embassy_executor::task]
+async fn power_btn_task(
+    btn: Input<'static>,
+    pmic: &'static embassy_sync::mutex::Mutex<
+        embassy_sync::blocking_mutex::raw::NoopRawMutex,
+        npm1300_rs::NPM1300<Twim<'static>, Delay>,
+    >,
+    leds: &'static crate::pmic_leds::PmicLedsHandle,
+)
+{
+    power_button::power_button_loop(btn, pmic, leds).await;
+}
+
+#[cfg(context = "atslite1")]
+async fn handle_pending_ship<I2c, Delay>(
+    pmic: &embassy_sync::mutex::Mutex<
+        embassy_sync::blocking_mutex::raw::NoopRawMutex,
+        npm1300_rs::NPM1300<I2c, Delay>,
+    >,
+    leds: &pmic_leds::PmicLedsHandle,
+    pwr_btn: &mut Input<'_>,
+) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>>
+where
+    I2c: embedded_hal_async::i2c::I2c,
+    Delay: embedded_hal_async::delay::DelayNs,
+{
+    let pending_ship = crate::power::take_pending_ship_flag();
+    
+    if pending_ship {
+        let vbus_present = pmic.lock().await
+            .get_vbus_in_status().await?
+            .is_vbus_in_present;
+        if !vbus_present {
+            defmt::trace!("Pending-ship and VBUS gone -> enter ship now");
+            leds.set_state(LedState::Off).await;
+            pmic.lock().await.enter_ship_mode().await?;
+        } else {
+            use embassy_time::Duration;
+
+            defmt::trace!("Pending-ship but VBUS present -> wait for VBUS removal");
+            embassy_futures::select::select(async { power::VBUS_REMOVED_SIG.wait().await; pmic.lock().await.enter_ship_mode().await.unwrap(); loop {} }, power_button::wait_for_power_button_full_press(pwr_btn, Duration::from_millis(96))).await;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(context = "atslite1")]
+async fn handle_boot_vbus_policy<I2c, Delay>(
+    pmic: &embassy_sync::mutex::Mutex<
+        embassy_sync::blocking_mutex::raw::NoopRawMutex,
+        npm1300_rs::NPM1300<I2c, Delay>,
+    >,
+    leds: &pmic_leds::PmicLedsHandle,
+) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>>
+where
+    I2c: embedded_hal_async::i2c::I2c,
+    Delay: embedded_hal_async::delay::DelayNs,
+{
+    use embassy_nrf::reset::ResetReason;
+
+    let rr = embassy_nrf::reset::read_reasons();
+    embassy_nrf::reset::clear_reasons();
+    defmt::trace!("Reset reasons: {:?}", defmt::Debug2Format(&rr));
+
+    let vbus_present = pmic.lock().await
+        .get_vbus_in_status().await?
+        .is_vbus_in_present;
+
+    let woke_by_gpio = rr.contains(ResetReason::RESETPIN);
+    let woke_by_vbus = rr.contains(ResetReason::VBUS);
+
+    // Errata 3.5 (55)
+    if woke_by_gpio {
+        defmt::trace!("Woke by GPIO (power button) -> continue boot");
+        return Ok(());
+    }
+
+    if woke_by_vbus || (rr.is_empty() && vbus_present) {
+        if vbus_present {
+            defmt::trace!("VBUS present at boot -> charging LEDs + faux off");
+            leds.set_state(pmic_leds::LedState::BattCharging).await;
+        } else {
+            defmt::trace!("No VBUS -> LEDs off + faux off");
+            leds.set_state(pmic_leds::LedState::Off).await;
+        }
+        
+        power::set_pending_ship_flag();
+
+        return Ok(());
+    }
+
+    Ok(())
 }

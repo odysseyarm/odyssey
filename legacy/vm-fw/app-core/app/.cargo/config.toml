@@ -29,6 +29,9 @@ protodongers = { path = "patch/protodonge-rs" }
 # [patch."https://github.com/Abrahamh08/bmi2"]
 # bmi2 = { path = "../../../../forks/bmi2" }
 
+[patch."https://github.com/Abrahamh08/npm1300-rs"]
+npm1300-rs = { path = "patch/npm1300-rs" }
+
 [patch.crates-io]
 # embassy-nrf = { path = "../../../../forks/embassy/embassy-nrf" }
 # embassy-time-driver = { path = "../../../../forks/embassy/embassy-time-driver" }
