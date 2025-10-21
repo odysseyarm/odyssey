@@ -12,9 +12,9 @@ mod settings;
 mod usb;
 
 #[cfg(context = "atslite1")]
-mod nrf5340_init;
-#[cfg(context = "atslite1")]
 mod battery_model;
+#[cfg(context = "atslite1")]
+mod nrf5340_init;
 #[cfg(context = "atslite1")]
 mod pmic_leds;
 #[cfg(context = "atslite1")]
@@ -102,7 +102,7 @@ async fn main(spawner: Spawner) {
 
     let b = split_board!(p);
     defmt::info!("boot");
-    
+
     #[cfg(context = "atslite1")]
     let twim = Twim::new(
         p.SERIAL2,
@@ -114,7 +114,7 @@ async fn main(spawner: Spawner) {
     );
     #[cfg(context = "atslite1")]
     static PMIC: StaticCell<embassy_sync::mutex::Mutex<NoopRawMutex, NPM1300<Twim, Delay>>> = StaticCell::new();
-    
+
     #[cfg(context = "atslite1")]
     let mut pmic = NPM1300::new(twim, Delay);
 
@@ -122,7 +122,9 @@ async fn main(spawner: Spawner) {
     power::pmic_setup(&mut pmic).await.unwrap();
 
     #[cfg(context = "atslite1")]
-    power::configure_and_start_charging(&mut pmic, npm1300_rs::sysreg::VbusInCurrentLimit::MA100).await.unwrap();
+    power::configure_and_start_charging(&mut pmic, npm1300_rs::sysreg::VbusInCurrentLimit::MA100)
+        .await
+        .unwrap();
 
     #[cfg(context = "atslite1")]
     let pmic = PMIC.init(embassy_sync::mutex::Mutex::new(pmic));
@@ -141,7 +143,7 @@ async fn main(spawner: Spawner) {
 
         handle
     };
-    
+
     let mut pwr_btn = Input::new(b.pmic.pwr_btn, gpio::Pull::Up);
 
     handle_boot_vbus_policy(pmic, &handle).await.unwrap();
@@ -264,11 +266,13 @@ async fn main(spawner: Spawner) {
 
     let nvmc = nvmc.borrow();
     let settings = init_settings(nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
-    
+
     if configured_sig.wait().await {
-        pmic.lock().await.set_vbus_in_current_limit(
-            npm1300_rs::sysreg::VbusInCurrentLimit::MA500,
-        ).await.unwrap();
+        pmic.lock()
+            .await
+            .set_vbus_in_current_limit(npm1300_rs::sysreg::VbusInCurrentLimit::MA500)
+            .await
+            .unwrap();
     }
 
     usb_snd.wait_enabled().await;
@@ -356,7 +360,7 @@ async fn pmic_irq_task(
     npm1300: &'static embassy_sync::mutex::Mutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
 ) {
     let port = irq_pin.port();
-    let pin  = irq_pin.pin();
+    let pin = irq_pin.pin();
 
     crate::utils::set_pin_sense(&port, pin, embassy_nrf::pac::gpio::vals::Sense::HIGH);
 
@@ -364,11 +368,57 @@ async fn pmic_irq_task(
 
     loop {
         irq.wait_for_high().await;
-        npm1300.lock().await
-            .clear_vbusin0_event_mask(npm1300_rs::mainreg::Vbusin0EventMask::VBUS_REMOVED)
-            .await.unwrap();
-        crate::power::notify_vbus_removed();
-        defmt::debug!("VBUS removed");
+        if !npm1300
+            .lock()
+            .await
+            .get_vbus_in_status()
+            .await
+            .unwrap()
+            .is_vbus_in_present
+        {
+            npm1300
+                .lock()
+                .await
+                .clear_vbusin0_event_mask(npm1300_rs::mainreg::Vbusin0EventMask::VBUS_REMOVED)
+                .await
+                .unwrap();
+            defmt::debug!("VBUS removed");
+            crate::power::notify_vbus_removed();
+        }
+        npm1300
+            .lock()
+            .await
+            .clear_vbusin1_event_mask(
+                npm1300_rs::mainreg::Vbusin1EventMask::CC1_STATE_CHANGE
+                    | npm1300_rs::mainreg::Vbusin1EventMask::CC2_STATE_CHANGE,
+            )
+            .await
+            .unwrap();
+        let cc_status = npm1300.lock().await.get_vbus_cc_status().await.unwrap();
+        use npm1300_rs::sysreg::VbusInCcCmp;
+        if {
+            (match cc_status.vbusin_cc1_status {
+                VbusInCcCmp::MA1500HighPower | VbusInCcCmp::MA3000HighPower => true,
+                _ => {
+                    defmt::trace!("CC1 is default-usb or disconnected");
+                    false
+                }
+            }) || match cc_status.vbusin_cc2_status {
+                VbusInCcCmp::MA1500HighPower | VbusInCcCmp::MA3000HighPower => true,
+                _ => {
+                    defmt::trace!("CC2 is default-usb or disconnected");
+                    false
+                }
+            }
+        } {
+            defmt::debug!("High-power CC detected -> 500mA limit");
+            npm1300
+                .lock()
+                .await
+                .set_vbus_in_current_limit(npm1300_rs::sysreg::VbusInCurrentLimit::MA500)
+                .await
+                .unwrap();
+        }
     }
 }
 
@@ -386,17 +436,13 @@ async fn power_btn_task(
         npm1300_rs::NPM1300<Twim<'static>, Delay>,
     >,
     leds: &'static crate::pmic_leds::PmicLedsHandle,
-)
-{
+) {
     power_button::power_button_loop(btn, pmic, leds).await;
 }
 
 #[cfg(context = "atslite1")]
 async fn handle_pending_ship<I2c, Delay>(
-    pmic: &embassy_sync::mutex::Mutex<
-        embassy_sync::blocking_mutex::raw::NoopRawMutex,
-        npm1300_rs::NPM1300<I2c, Delay>,
-    >,
+    pmic: &embassy_sync::mutex::Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, npm1300_rs::NPM1300<I2c, Delay>>,
     leds: &pmic_leds::PmicLedsHandle,
     pwr_btn: &mut Input<'_>,
 ) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>>
@@ -405,11 +451,9 @@ where
     Delay: embedded_hal_async::delay::DelayNs,
 {
     let pending_ship = crate::power::take_pending_ship_flag();
-    
+
     if pending_ship {
-        let vbus_present = pmic.lock().await
-            .get_vbus_in_status().await?
-            .is_vbus_in_present;
+        let vbus_present = pmic.lock().await.get_vbus_in_status().await?.is_vbus_in_present;
         if !vbus_present {
             defmt::trace!("Pending-ship and VBUS gone -> enter ship now");
             leds.set_state(LedState::Off).await;
@@ -418,7 +462,15 @@ where
             use embassy_time::Duration;
 
             defmt::trace!("Pending-ship but VBUS present -> wait for VBUS removal");
-            embassy_futures::select::select(async { power::VBUS_REMOVED_SIG.wait().await; pmic.lock().await.enter_ship_mode().await.unwrap(); loop {} }, power_button::wait_for_power_button_full_press(pwr_btn, Duration::from_millis(96))).await;
+            embassy_futures::select::select(
+                async {
+                    power::VBUS_REMOVED_SIG.wait().await;
+                    pmic.lock().await.enter_ship_mode().await.unwrap();
+                    loop {}
+                },
+                power_button::wait_for_power_button_full_press(pwr_btn, Duration::from_millis(96)),
+            )
+            .await;
         }
     }
 
@@ -427,10 +479,7 @@ where
 
 #[cfg(context = "atslite1")]
 async fn handle_boot_vbus_policy<I2c, Delay>(
-    pmic: &embassy_sync::mutex::Mutex<
-        embassy_sync::blocking_mutex::raw::NoopRawMutex,
-        npm1300_rs::NPM1300<I2c, Delay>,
-    >,
+    pmic: &embassy_sync::mutex::Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, npm1300_rs::NPM1300<I2c, Delay>>,
     leds: &pmic_leds::PmicLedsHandle,
 ) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>>
 where
@@ -443,9 +492,7 @@ where
     embassy_nrf::reset::clear_reasons();
     defmt::trace!("Reset reasons: {:?}", defmt::Debug2Format(&rr));
 
-    let vbus_present = pmic.lock().await
-        .get_vbus_in_status().await?
-        .is_vbus_in_present;
+    let vbus_present = pmic.lock().await.get_vbus_in_status().await?.is_vbus_in_present;
 
     let woke_by_gpio = rr.contains(ResetReason::RESETPIN);
     let woke_by_vbus = rr.contains(ResetReason::VBUS);
@@ -464,7 +511,7 @@ where
             defmt::trace!("No VBUS -> LEDs off + faux off");
             leds.set_state(pmic_leds::LedState::Off).await;
         }
-        
+
         power::set_pending_ship_flag();
 
         return Ok(());

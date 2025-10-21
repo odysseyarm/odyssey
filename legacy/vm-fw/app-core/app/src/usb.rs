@@ -23,7 +23,14 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
 }
 
-pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'static, In>, Endpoint<'static, Out>, &'static Signal<ThreadModeRawMutex, bool>) {
+pub fn usb_device(
+    usbd: Peri<'static, USBD>,
+) -> (
+    StaticUsbDevice,
+    Endpoint<'static, In>,
+    Endpoint<'static, Out>,
+    &'static Signal<ThreadModeRawMutex, bool>,
+) {
     let vbus = HardwareVbusDetect::new(Irqs);
     let driver = UsbDriver::new(usbd, Irqs, vbus);
 
@@ -64,7 +71,7 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'stat
         "DeviceInterfaceGUIDs",
         msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
     ));
-    
+
     static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> = ConstStaticCell::new(Signal::new());
     let signal = SIGNAL.take();
 
@@ -81,7 +88,7 @@ pub fn usb_device(usbd: Peri<'static, USBD>) -> (StaticUsbDevice, Endpoint<'stat
     let ep_out = alt.endpoint_bulk_out(None, 64);
     let ep_in = alt.endpoint_bulk_in(None, 64);
     drop(function);
-    
+
     let usb = builder.build();
     (usb, ep_in, ep_out, signal)
 }
@@ -91,9 +98,7 @@ struct MyHandler {
 }
 
 impl MyHandler {
-    pub fn new(
-        signal: &'static Signal<ThreadModeRawMutex, bool>,
-    ) -> Self {
+    pub fn new(signal: &'static Signal<ThreadModeRawMutex, bool>) -> Self {
         Self { signal }
     }
 }

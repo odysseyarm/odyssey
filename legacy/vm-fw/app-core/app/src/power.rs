@@ -1,6 +1,8 @@
 use embassy_nrf::pac;
-use embassy_sync::{{blocking_mutex::raw::CriticalSectionRawMutex}, signal::Signal};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use npm1300_rs::charger::DischargeCurrentLimit;
+use npm1300_rs::mainreg::Vbusin1EventMask;
 use npm1300_rs::sysreg::VbusInCurrentLimit;
 
 pub static VBUS_REMOVED_SIG: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -60,11 +62,16 @@ where
     I2c: embedded_hal_async::i2c::I2c,
     Delay: embedded_hal_async::delay::DelayNs,
 {
-    use npm1300_rs::{gpios::{GpioMode, GpioConfigBuilder}, mainreg::Vbusin0EventMask, Shphldtim};
+    use npm1300_rs::Shphldtim;
+    use npm1300_rs::gpios::{GpioConfigBuilder, GpioMode};
+    use npm1300_rs::mainreg::Vbusin0EventMask;
     pmic.set_ship_hold_press_timer(Shphldtim::Ms304).await?;
     pmic.use_ship_hold_button_only().await?;
-    pmic.configure_gpio(0, GpioConfigBuilder::default().mode(GpioMode::GpoIrq).build()).await?;
+    pmic.configure_gpio(0, GpioConfigBuilder::default().mode(GpioMode::GpoIrq).build())
+        .await?;
     pmic.enable_vbusin0_interrupts(Vbusin0EventMask::VBUS_REMOVED).await?;
+    pmic.enable_vbusin1_interrupts(Vbusin1EventMask::CC1_STATE_CHANGE | Vbusin1EventMask::CC2_STATE_CHANGE)
+        .await?;
 
     Ok(())
 }
@@ -81,8 +88,10 @@ where
     pmic.clear_charger_errors().await?;
     pmic.set_vbus_in_current_limit(vbus_limit).await?;
     pmic.set_discharge_current_limit(DISCHARGE_CURRENT).await?;
-    pmic.set_normal_temperature_termination_voltage(npm1300_rs::charger::ChargerTerminationVoltage::V4_15).await?;
-    pmic.set_warm_temperature_termination_voltage(npm1300_rs::charger::ChargerTerminationVoltage::V4_00).await?;
+    pmic.set_normal_temperature_termination_voltage(npm1300_rs::charger::ChargerTerminationVoltage::V4_15)
+        .await?;
+    pmic.set_warm_temperature_termination_voltage(npm1300_rs::charger::ChargerTerminationVoltage::V4_00)
+        .await?;
     pmic.use_ntc_measurements().await?;
     pmic.enable_battery_recharge().await?;
     pmic.enable_battery_charging().await

@@ -154,7 +154,12 @@ impl_spi_from!(Icm42688v {
 });
 
 #[cfg(context = "atslite1")]
-define_peripheral!(Pmic { sda: P1_02, scl: P1_03, pwr_btn: P0_04, irq: P0_05 });
+define_peripheral!(Pmic {
+    sda: P1_02,
+    scl: P1_03,
+    pwr_btn: P0_04,
+    irq: P0_05
+});
 
 #[cfg(context = "atslite1")]
 group_peripherals!(Board {
