@@ -143,57 +143,41 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct GeneralConfig {
-    pub impact_threshold: u8,
-    pub suppress_ms: u8,
-    pub accel_config: AccelConfig,
-    pub gyro_config: super::GyroConfig,
-    pub camera_model_nf: CameraCalibrationParams,
-    pub camera_model_wf: CameraCalibrationParams,
-    pub stereo_iso: StereoCalibrationParams,
+pub enum GeneralConfig {
+    ImpactThreshold(u8),
+    SuppressMs(u8),
+    AccelConfig(AccelConfig),
+    GyroConfig(super::GyroConfig),
+    CameraModelNf(CameraCalibrationParams),
+    CameraModelWf(CameraCalibrationParams),
+    StereoIso(StereoCalibrationParams),
 }
 
 impl From<super::GeneralConfig> for GeneralConfig {
     fn from(value: super::GeneralConfig) -> Self {
-        Self {
-            impact_threshold: value.impact_threshold,
-            suppress_ms: value.suppress_ms,
-            accel_config: value.accel_config.into(),
-            gyro_config: value.gyro_config,
-            camera_model_nf: value.camera_model_nf.into(),
-            camera_model_wf: value.camera_model_wf.into(),
-            stereo_iso: value.stereo_iso.into(),
+        match value {
+            super::GeneralConfig::ImpactThreshold(x) => Self::ImpactThreshold(x),
+            super::GeneralConfig::SuppressMs(x) => Self::SuppressMs(x),
+            super::GeneralConfig::AccelConfig(x) => Self::AccelConfig(x.into()),
+            super::GeneralConfig::GyroConfig(x) => Self::GyroConfig(x),
+            super::GeneralConfig::CameraModelNf(x) => Self::CameraModelNf(x.into()),
+            super::GeneralConfig::CameraModelWf(x) => Self::CameraModelWf(x.into()),
+            super::GeneralConfig::StereoIso(x) => Self::StereoIso(x.into()),
         }
     }
 }
 
 impl From<GeneralConfig> for super::GeneralConfig {
     fn from(value: GeneralConfig) -> Self {
-        let mut r = Self {
-            impact_threshold: value.impact_threshold,
-            suppress_ms: value.suppress_ms,
-            accel_config: value.accel_config.into(),
-            gyro_config: value.gyro_config,
-            camera_model_nf: value.camera_model_nf.into(),
-            camera_model_wf: value.camera_model_wf.into(),
-            stereo_iso: value.stereo_iso.into(),
-        };
-
-        // HACK old configs use camera calibration based on 98x98.
-        // Check cx and rescale to 4095x4095
-        if r.camera_model_nf.p.m13 < 100.0 {
-            r.camera_model_nf.p.m11 *= 4095.0 / 98.0;
-            r.camera_model_nf.p.m22 *= 4095.0 / 98.0;
-            r.camera_model_nf.p.m13 *= 4095.0 / 98.0;
-            r.camera_model_nf.p.m23 *= 4095.0 / 98.0;
+        match value {
+            GeneralConfig::ImpactThreshold(x) => Self::ImpactThreshold(x),
+            GeneralConfig::SuppressMs(x) => Self::SuppressMs(x),
+            GeneralConfig::AccelConfig(x) => Self::AccelConfig(x.into()),
+            GeneralConfig::GyroConfig(x) => Self::GyroConfig(x),
+            GeneralConfig::CameraModelNf(x) => Self::CameraModelNf(x.into()),
+            GeneralConfig::CameraModelWf(x) => Self::CameraModelWf(x.into()),
+            GeneralConfig::StereoIso(x) => Self::StereoIso(x.into()),
         }
-        if r.camera_model_wf.p.m13 < 100.0 {
-            r.camera_model_wf.p.m11 *= 4095.0 / 98.0;
-            r.camera_model_wf.p.m22 *= 4095.0 / 98.0;
-            r.camera_model_wf.p.m13 *= 4095.0 / 98.0;
-            r.camera_model_wf.p.m23 *= 4095.0 / 98.0;
-        }
-        r
     }
 }
 

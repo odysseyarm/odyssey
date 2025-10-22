@@ -10,7 +10,7 @@ use std::{error::Error as StdError, fmt::Display, vec::Vec};
 use core::mem::MaybeUninit;
 
 use nalgebra::{Isometry3, Point2, Vector3};
-use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
+use opencv_ros_camera::RosOpenCvIntrinsics;
 
 #[cfg(test)]
 mod tests;
@@ -230,64 +230,25 @@ pub struct GyroConfig {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(from = "wire::GeneralConfig", into = "wire::GeneralConfig"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug, PartialEq)]
-pub struct GeneralConfig {
-    pub impact_threshold: u8,
-    pub suppress_ms: u8,
-    pub accel_config: AccelConfig,
-    pub gyro_config: GyroConfig,
-    pub camera_model_nf: RosOpenCvIntrinsics<f32>,
-    pub camera_model_wf: RosOpenCvIntrinsics<f32>,
-    pub stereo_iso: Isometry3<f32>,
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for GeneralConfig {
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(
-            fmt,
-            "GeneralConfig {{ impact_threshold: {}, suppress_ms: {}, accel_config: {:?}, gyro_config: {:?}, camera_model_nf: {:?}, camera_model_wf: {:?}, stereo_iso: {:?} }}",
-            self.impact_threshold,
-            self.suppress_ms,
-            self.accel_config,
-            self.gyro_config,
-            defmt::Debug2Format(&self.camera_model_nf),
-            defmt::Debug2Format(&self.camera_model_wf),
-            self.stereo_iso,
-        );
-    }
-}
-
-impl Default for GeneralConfig {
-    fn default() -> Self {
-        Self {
-            impact_threshold: 5,
-            suppress_ms: 100,
-            accel_config: Default::default(),
-            gyro_config: Default::default(),
-            camera_model_nf: RosOpenCvIntrinsics::from_params(
-                5896.181, 0., 5896.181, 2047.5, 2047.5,
-            ),
-            camera_model_wf: RosOpenCvIntrinsics::from_params_with_distortion(
-                1434.9723,
-                0.,
-                1437.214,
-                2036.575,
-                2088.8027,
-                Distortion::from_opencv_vec(
-                    [
-                        0.039820533,
-                        -0.03993317,
-                        0.00043006078,
-                        -0.0012057066,
-                        0.005302235,
-                    ]
-                    .into(),
-                ),
-            ),
-            stereo_iso: Isometry3::identity(),
-        }
-    }
+pub enum GeneralConfig {
+    ImpactThreshold(u8),
+    SuppressMs(u8),
+    AccelConfig(AccelConfig),
+    GyroConfig(GyroConfig),
+    CameraModelNf(
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+        RosOpenCvIntrinsics<f32>
+    ),
+    CameraModelWf(
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+        RosOpenCvIntrinsics<f32>
+    ),
+    StereoIso(
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+        Isometry3<f32>
+    ),
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
