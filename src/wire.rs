@@ -6,6 +6,7 @@ use ats_common::ocv_types::{
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccelConfig {
@@ -69,6 +70,7 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CameraCalibrationParams {
@@ -100,6 +102,7 @@ impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StereoCalibrationParams {
@@ -137,6 +140,7 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 }
 
 // This is also the format the POC uses on flash
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GeneralConfig {
@@ -193,6 +197,7 @@ impl From<GeneralConfig> for super::GeneralConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(super) struct AccelReport {
     timestamp: u32,
