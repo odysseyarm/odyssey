@@ -2,14 +2,12 @@ use ats_common::ocv_types::{
     MinimalCameraCalibrationParams, MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1,
     OpenCVMatrix5x1,
 };
-use bytemuck::{AnyBitPattern, NoUninit};
 #[allow(unused_imports)]
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
-#[repr(C, packed)]
 pub struct AccelConfig {
     #[cfg(feature = "serde")]
     #[serde(default = "default_accel_odr")]
@@ -71,10 +69,8 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct CameraCalibrationParams {
     pub camera_matrix: [f32; 9],
     pub dist_coeffs: [f32; 5],
@@ -104,10 +100,8 @@ impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct StereoCalibrationParams {
     pub r: [f32; 9],
     pub t: [f32; 3],
@@ -143,9 +137,8 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 }
 
 // This is also the format the POC uses on flash
-#[repr(C, packed)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
 pub struct GeneralConfig {
     pub impact_threshold: u8,
     pub suppress_ms: u8,
@@ -200,8 +193,7 @@ impl From<GeneralConfig> for super::GeneralConfig {
     }
 }
 
-#[derive(Clone, Copy, NoUninit, AnyBitPattern)]
-#[repr(C)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(super) struct AccelReport {
     timestamp: u32,
     accel: [i16; 3],

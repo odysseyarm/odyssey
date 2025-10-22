@@ -4,13 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pyo3 = { version = "0.26.0", optional = true }
+pyo3 = { version = "0.27.1", optional = true }
 ats_common = { git = "https://github.com/odysseyarm/ats_common.git", default-features = false }
-bytemuck = { version = "1.24.0", features = ["derive", "min_const_generics"] }
 enumn = "0.1.14"
-nalgebra = { version = "0.33", default-features = false, features = ["bytemuck"] }
+nalgebra = { version = "0.34", default-features = false, features = ["bytemuck"] }
 serde = { version = "1.0.219", default-features = false, optional = true }
-opencv-ros-camera = { version = "0.15", default-features = false }
+opencv-ros-camera = { version = "0.16", default-features = false }
 thiserror = { version = "2.0.17", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 static_assertions = "1.1.0"
@@ -24,4 +23,4 @@ pyo3 = ["dep:pyo3", "std"]
 serde = ["dep:serde", "dep:serde_bytes", "heapless/serde"]
 serde-no-std = ["serde", "nalgebra/serde-serialize-no-std"]
 serde-std = ["serde", "opencv-ros-camera/serde-serialize"]
-defmt = ["dep:defmt"]
+defmt = ["dep:defmt", "nalgebra/defmt"]

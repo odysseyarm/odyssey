@@ -9,7 +9,6 @@ use std::{error::Error as StdError, fmt::Display, vec::Vec};
 
 use core::mem::MaybeUninit;
 
-use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit};
 use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 
@@ -46,8 +45,8 @@ fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
     *buf = &mut core::mem::take(buf)[data.len()..];
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct Packet {
@@ -56,6 +55,7 @@ pub struct Packet {
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum PacketData {
@@ -82,8 +82,8 @@ pub enum PacketData {
     Vendor(u8, VendorData),
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub struct VendorData {
@@ -96,6 +96,7 @@ pub struct VendorData {
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, enumn::N, PartialEq)]
@@ -114,17 +115,18 @@ impl TryFrom<u8> for StreamUpdateAction {
 
 #[repr(u8)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
     Object,
     Image,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Version {
     pub protocol_semver: [u16; 3],
     pub firmware_semver: [u16; 3],
@@ -155,20 +157,20 @@ impl Version {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Register {
     pub port: Port,
     pub bank: u8,
     pub address: u8,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WriteRegister {
     pub port: Port,
     pub bank: u8,
@@ -176,18 +178,18 @@ pub struct WriteRegister {
     pub data: u8,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, NoUninit, AnyBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReadRegisterResponse {
     pub bank: u8,
     pub address: u8,
     pub data: u8,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(from = "wire::AccelConfig", into = "wire::AccelConfig"))]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,17 +217,16 @@ impl Default for AccelConfig {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, NoUninit, AnyBitPattern)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct GyroConfig {
     pub b_x: f32,
     pub b_y: f32,
     pub b_z: f32,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(from = "wire::GeneralConfig", into = "wire::GeneralConfig"))]
@@ -238,6 +239,23 @@ pub struct GeneralConfig {
     pub camera_model_nf: RosOpenCvIntrinsics<f32>,
     pub camera_model_wf: RosOpenCvIntrinsics<f32>,
     pub stereo_iso: Isometry3<f32>,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for GeneralConfig {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "GeneralConfig {{ impact_threshold: {}, suppress_ms: {}, accel_config: {:?}, gyro_config: {:?}, camera_model_nf: {:?}, camera_model_wf: {:?}, stereo_iso: {:?} }}",
+            self.impact_threshold,
+            self.suppress_ms,
+            self.accel_config,
+            self.gyro_config,
+            defmt::Debug2Format(&self.camera_model_nf),
+            defmt::Debug2Format(&self.camera_model_wf),
+            self.stereo_iso,
+        );
+    }
 }
 
 impl Default for GeneralConfig {
@@ -272,17 +290,17 @@ impl Default for GeneralConfig {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, NoUninit, AnyBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Props {
     pub uuid: [u8; 6],
     pub product_id: u16,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MotData {
@@ -302,8 +320,8 @@ pub struct MotData {
     pub vy: u8,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ObjectReport {
@@ -312,8 +330,8 @@ pub struct ObjectReport {
     pub mot_data_wf: [MotData; 16],
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CombinedMarkersReport {
@@ -321,10 +339,10 @@ pub struct CombinedMarkersReport {
     pub wf_points: [Point2<u16>; 16],
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, NoUninit, AnyBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PocMarkersReport {
     pub points: [Point2<u16>; 16],
 }
@@ -338,8 +356,8 @@ impl From<PocMarkersReport> for CombinedMarkersReport {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AccelReport {
@@ -348,16 +366,16 @@ pub struct AccelReport {
     pub gyro: Vector3<f32>,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, NoUninit, AnyBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ImpactReport {
     pub timestamp: u32,
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
 pub struct StreamUpdate {
@@ -398,9 +416,10 @@ impl Display for Error {
 impl StdError for Error {}
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, NoUninit, CheckedBitPattern)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Port {
     Nf,
     Wf,
@@ -416,7 +435,6 @@ impl TryFrom<u8> for Port {
     }
 }
 
-#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
