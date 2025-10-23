@@ -7,15 +7,18 @@ extern crate std;
 #[cfg(feature = "std")]
 use std::{error::Error as StdError, fmt::Display, vec::Vec};
 
+#[cfg(feature = "minicbor")]
+use minicbor::{Decode, Encode};
+
 use core::mem::MaybeUninit;
 
 use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
+pub mod hub;
 #[cfg(test)]
 mod tests;
 pub mod wire;
-pub mod hub;
 
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
@@ -48,48 +51,87 @@ fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Debug)]
 pub struct Packet {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub data: PacketData,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub id: u8,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Debug)]
 pub enum PacketData {
-    WriteRegister(WriteRegister), // a.k.a. Poke
-    ReadRegister(Register),       // a.k.a. Peek
-    ReadRegisterResponse(ReadRegisterResponse),
-    WriteConfig(GeneralConfig),
+    #[cfg_attr(feature = "minicbor", n(0))]
+    WriteRegister(#[cfg_attr(feature = "minicbor", n(0))] WriteRegister),
+    #[cfg_attr(feature = "minicbor", n(1))]
+    ReadRegister(#[cfg_attr(feature = "minicbor", n(0))] Register),
+    #[cfg_attr(feature = "minicbor", n(2))]
+    ReadRegisterResponse(#[cfg_attr(feature = "minicbor", n(0))] ReadRegisterResponse),
+    #[cfg_attr(feature = "minicbor", n(3))]
+    WriteConfig(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
+        GeneralConfig,
+    ),
+    #[cfg_attr(feature = "minicbor", n(4))]
     ReadConfig(),
-    ReadConfigResponse(GeneralConfig),
+    #[cfg_attr(feature = "minicbor", n(5))]
+    ReadConfigResponse(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
+        GeneralConfig,
+    ),
+    #[cfg_attr(feature = "minicbor", n(6))]
     ReadProps(),
-    ReadPropsResponse(Props),
+    #[cfg_attr(feature = "minicbor", n(7))]
+    ReadPropsResponse(#[cfg_attr(feature = "minicbor", n(0))] Props),
+    #[cfg_attr(feature = "minicbor", n(8))]
     ObjectReportRequest(),
-    ObjectReport(ObjectReport),
-    CombinedMarkersReport(CombinedMarkersReport),
-    PocMarkersReport(PocMarkersReport),
-    AccelReport(AccelReport),
-    ImpactReport(ImpactReport),
-    StreamUpdate(StreamUpdate),
+    #[cfg_attr(feature = "minicbor", n(9))]
+    ObjectReport(#[cfg_attr(feature = "minicbor", n(0))] ObjectReport),
+    #[cfg_attr(feature = "minicbor", n(10))]
+    CombinedMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] CombinedMarkersReport),
+    #[cfg_attr(feature = "minicbor", n(11))]
+    PocMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] PocMarkersReport),
+    #[cfg_attr(feature = "minicbor", n(12))]
+    AccelReport(#[cfg_attr(feature = "minicbor", n(0))] AccelReport),
+    #[cfg_attr(feature = "minicbor", n(13))]
+    ImpactReport(#[cfg_attr(feature = "minicbor", n(0))] ImpactReport),
+    #[cfg_attr(feature = "minicbor", n(14))]
+    StreamUpdate(#[cfg_attr(feature = "minicbor", n(0))] StreamUpdate),
+    #[cfg_attr(feature = "minicbor", n(15))]
     FlashSettings(),
+    #[cfg_attr(feature = "minicbor", n(16))]
     Ack(),
-    WriteMode(Mode),
+    #[cfg_attr(feature = "minicbor", n(17))]
+    WriteMode(#[cfg_attr(feature = "minicbor", n(0))] Mode),
+    #[cfg_attr(feature = "minicbor", n(18))]
     ReadVersion(),
-    ReadVersionResponse(Version),
-    Vendor(u8, VendorData),
+    #[cfg_attr(feature = "minicbor", n(19))]
+    ReadVersionResponse(#[cfg_attr(feature = "minicbor", n(0))] Version),
+    #[cfg_attr(feature = "minicbor", n(20))]
+    Vendor(
+        #[cfg_attr(feature = "minicbor", n(0))] u8,
+        #[cfg_attr(feature = "minicbor", n(1))] VendorData,
+    ),
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Debug)]
 pub struct VendorData {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub len: u8,
     #[cfg(feature = "serde")]
     #[serde(with = "serde_bytes")]
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub data: [u8; 98],
     #[cfg(not(feature = "serde"))]
     pub data: [u8; 98],
@@ -98,11 +140,15 @@ pub struct VendorData {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, enumn::N, PartialEq)]
 pub enum StreamUpdateAction {
+    #[cfg_attr(feature = "minicbor", n(0))]
     Enable,
+    #[cfg_attr(feature = "minicbor", n(1))]
     Disable,
+    #[cfg_attr(feature = "minicbor", n(2))]
     DisableAll,
 }
 
@@ -117,41 +163,46 @@ impl TryFrom<u8> for StreamUpdateAction {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
+    #[cfg_attr(feature = "minicbor", n(0))]
     Object,
+    #[cfg_attr(feature = "minicbor", n(1))]
     Image,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Version {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub protocol_semver: [u16; 3],
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub firmware_semver: [u16; 3],
 }
 
 impl Version {
     pub fn new(firmware_semver: [u16; 3]) -> Self {
-        const PROTO_MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
-            Ok(v) => v,
-            Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
-        };
-        const PROTO_MINOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
-            Ok(v) => v,
-            Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
-        };
-        const PROTO_PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
-            Ok(v) => v,
-            Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
-        };
+        const PROTO_MAJOR: u16 =
+            match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
+                Ok(v) => v,
+                Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
+            };
+        const PROTO_MINOR: u16 =
+            match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
+                Ok(v) => v,
+                Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
+            };
+        const PROTO_PATCH: u16 =
+            match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
+                Ok(v) => v,
+                Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
+            };
         Self {
-            protocol_semver: [
-                PROTO_MAJOR,
-                PROTO_MINOR,
-                PROTO_PATCH,
-            ],
+            protocol_semver: [PROTO_MAJOR, PROTO_MINOR, PROTO_PATCH],
             firmware_semver,
         }
     }
@@ -160,46 +211,70 @@ impl Version {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Register {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub port: Port,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub bank: u8,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub address: u8,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WriteRegister {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub port: Port,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub bank: u8,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub address: u8,
+    #[cfg_attr(feature = "minicbor", n(3))]
     pub data: u8,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReadRegisterResponse {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub bank: u8,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub address: u8,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub data: u8,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "wire::AccelConfig", into = "wire::AccelConfig"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(from = "wire::AccelConfig", into = "wire::AccelConfig")
+)]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AccelConfig {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub accel_odr: u16,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub b_x: f32,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub b_y: f32,
+    #[cfg_attr(feature = "minicbor", n(3))]
     pub b_z: f32,
+    #[cfg_attr(feature = "minicbor", n(4))]
     pub s_x: f32,
+    #[cfg_attr(feature = "minicbor", n(5))]
     pub s_y: f32,
+    #[cfg_attr(feature = "minicbor", n(6))]
     pub s_z: f32,
 }
 
@@ -220,16 +295,23 @@ impl Default for AccelConfig {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct GyroConfig {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub b_x: f32,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub b_y: f32,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub b_z: f32,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "wire::GeneralConfig", into = "wire::GeneralConfig"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(from = "wire::GeneralConfig", into = "wire::GeneralConfig")
+)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum GeneralConfig {
@@ -237,74 +319,95 @@ pub enum GeneralConfig {
     SuppressMs(u8),
     AccelConfig(AccelConfig),
     GyroConfig(GyroConfig),
-    CameraModelNf(
-        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
-        RosOpenCvIntrinsics<f32>
-    ),
-    CameraModelWf(
-        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
-        RosOpenCvIntrinsics<f32>
-    ),
-    StereoIso(
-        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
-        Isometry3<f32>
-    ),
+    CameraModelNf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsics<f32>),
+    CameraModelWf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsics<f32>),
+    StereoIso(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Isometry3<f32>),
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Props {
-    pub uuid: [u8; 6],
-    pub product_id: u16,
+pub enum Props {
+    #[cfg_attr(feature = "minicbor", n(0))]
+    Uuid(#[cfg_attr(feature = "minicbor", n(0))] [u8; 6]),
+    #[cfg_attr(feature = "minicbor", n(1))]
+    ProductId(#[cfg_attr(feature = "minicbor", n(0))] u16),
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MotData {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub area: u16,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub cx: u16,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub cy: u16,
+    #[cfg_attr(feature = "minicbor", n(3))]
     pub avg_brightness: u8,
+    #[cfg_attr(feature = "minicbor", n(4))]
     pub max_brightness: u8,
+    #[cfg_attr(feature = "minicbor", n(5))]
     pub range: u8,
+    #[cfg_attr(feature = "minicbor", n(6))]
     pub radius: u8,
+    #[cfg_attr(feature = "minicbor", n(7))]
     pub boundary_left: u8,
+    #[cfg_attr(feature = "minicbor", n(8))]
     pub boundary_right: u8,
+    #[cfg_attr(feature = "minicbor", n(9))]
     pub boundary_up: u8,
+    #[cfg_attr(feature = "minicbor", n(10))]
     pub boundary_down: u8,
+    #[cfg_attr(feature = "minicbor", n(11))]
     pub aspect_ratio: u8,
+    #[cfg_attr(feature = "minicbor", n(12))]
     pub vx: u8,
+    #[cfg_attr(feature = "minicbor", n(13))]
     pub vy: u8,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ObjectReport {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub timestamp: u32,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub mot_data_nf: [MotData; 16],
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub mot_data_wf: [MotData; 16],
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CombinedMarkersReport {
+    #[cfg_attr(feature = "minicbor", n(0))]
+    #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
     pub nf_points: [Point2<u16>; 16],
+    #[cfg_attr(feature = "minicbor", n(1))]
+    #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
     pub wf_points: [Point2<u16>; 16],
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PocMarkersReport {
+    #[cfg_attr(feature = "minicbor", n(0))]
+    #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
     pub points: [Point2<u16>; 16],
 }
 
@@ -320,37 +423,58 @@ impl From<PocMarkersReport> for CombinedMarkersReport {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AccelReport {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub timestamp: u32,
+    #[cfg_attr(feature = "minicbor", n(1))]
+    #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
     pub accel: Vector3<f32>,
+    #[cfg_attr(feature = "minicbor", n(2))]
+    #[cfg_attr(feature = "minicbor", cbor(with = "serde_cbor_with"))]
     pub gyro: Vector3<f32>,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ImpactReport {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub timestamp: u32,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug)]
 pub struct StreamUpdate {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub packet_id: PacketType,
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub action: StreamUpdateAction,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
-    UnexpectedEof { packet_type: Option<PacketType> },
-    UnrecognizedPacketId(u8),
+    #[cfg_attr(feature = "minicbor", n(0))]
+    UnexpectedEof {
+        #[cfg_attr(feature = "minicbor", n(0))]
+        packet_type: Option<PacketType>,
+    },
+    #[cfg_attr(feature = "minicbor", n(1))]
+    UnrecognizedPacketId(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    #[cfg_attr(feature = "minicbor", n(2))]
     UnrecognizedPort,
-    UnrecognizedStreamUpdateAction(u8),
+    #[cfg_attr(feature = "minicbor", n(3))]
+    UnrecognizedStreamUpdateAction(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    #[cfg_attr(feature = "minicbor", n(4))]
     InvalidBitPattern,
 }
 
@@ -379,10 +503,13 @@ impl StdError for Error {}
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Port {
+    #[cfg_attr(feature = "minicbor", n(0))]
     Nf,
+    #[cfg_attr(feature = "minicbor", n(1))]
     Wf,
 }
 impl TryFrom<u8> for Port {
@@ -399,31 +526,56 @@ impl TryFrom<u8> for Port {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 #[derive(Copy, Clone, Debug)]
 pub enum PacketType {
-    WriteRegister(), // a.k.a. Poke
-    ReadRegister(),  // a.k.a. Peek
+    #[cfg_attr(feature = "minicbor", n(0))]
+    WriteRegister(),
+    #[cfg_attr(feature = "minicbor", n(1))]
+    ReadRegister(),
+    #[cfg_attr(feature = "minicbor", n(2))]
     ReadRegisterResponse(),
+    #[cfg_attr(feature = "minicbor", n(3))]
     WriteConfig(),
+    #[cfg_attr(feature = "minicbor", n(4))]
     ReadConfig(),
+    #[cfg_attr(feature = "minicbor", n(5))]
     ReadConfigResponse(),
+    #[cfg_attr(feature = "minicbor", n(6))]
     ReadProps(),
+    #[cfg_attr(feature = "minicbor", n(7))]
     ReadPropsResponse(),
+    #[cfg_attr(feature = "minicbor", n(8))]
     ObjectReportRequest(),
+    #[cfg_attr(feature = "minicbor", n(9))]
     ObjectReport(),
+    #[cfg_attr(feature = "minicbor", n(10))]
     CombinedMarkersReport(),
+    #[cfg_attr(feature = "minicbor", n(11))]
     AccelReport(),
+    #[cfg_attr(feature = "minicbor", n(12))]
     ImpactReport(),
+    #[cfg_attr(feature = "minicbor", n(13))]
     StreamUpdate(),
+    #[cfg_attr(feature = "minicbor", n(14))]
     FlashSettings(),
+    #[cfg_attr(feature = "minicbor", n(15))]
     Ack(),
+    #[cfg_attr(feature = "minicbor", n(16))]
     PocMarkersReport(),
+    #[cfg_attr(feature = "minicbor", n(17))]
     WriteMode(),
+    #[cfg_attr(feature = "minicbor", n(18))]
     ReadVersion(),
+    #[cfg_attr(feature = "minicbor", n(19))]
     ReadVersionResponse(),
+    #[cfg_attr(feature = "minicbor", n(20))]
     End(),
+    #[cfg_attr(feature = "minicbor", n(21))]
     VendorStart(),
-    Vendor(u8),
+    #[cfg_attr(feature = "minicbor", n(22))]
+    Vendor(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    #[cfg_attr(feature = "minicbor", n(23))]
     VendorEnd(),
 }
 
@@ -772,5 +924,42 @@ impl StreamUpdate {
         };
         *bytes = &bytes[2..];
         Ok(stream_update)
+    }
+}
+
+#[cfg(feature = "minicbor")]
+mod serde_cbor_with {
+    use minicbor::{Decoder, Encoder};
+    use minicbor_serde::{Deserializer, Serializer};
+    use serde::Serialize;
+
+    pub fn encode<W, C, T>(
+        v: &T,
+        e: &mut Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>>
+    where
+        W: minicbor::encode::Write,
+        T: Serialize,
+    {
+        let mut ser = Serializer::new(e.writer_mut());
+        v.serialize(&mut ser)
+            .map_err(|_| minicbor::encode::Error::message("serde encode error"))
+    }
+
+    pub fn decode<'b, C, T>(d: &mut Decoder<'b>, _ctx: &mut C) -> Result<T, minicbor::decode::Error>
+    where
+        T: serde::de::DeserializeOwned, // owns its data; no borrows from input
+    {
+        let start = d.position();
+        let rest = &d.input()[start..];
+
+        let mut de = Deserializer::new(rest);
+        let v: T = T::deserialize(&mut de)
+            .map_err(|_| minicbor::decode::Error::message("serde decode error"))?;
+
+        let consumed = de.decoder().position();
+        d.set_position(start + consumed);
+        Ok(v)
     }
 }

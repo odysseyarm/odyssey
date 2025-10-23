@@ -315,6 +315,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "minicbor"
+version = "2.1.1"
+source = "git+https://github.com/Abrahamh08/minicbor#16b2a01f94d9bfdb60ba077a196eb18838a3fddb"
+dependencies = [
+ "minicbor-derive",
+]
+
+[[package]]
+name = "minicbor-derive"
+version = "0.18.2"
+source = "git+https://github.com/Abrahamh08/minicbor#16b2a01f94d9bfdb60ba077a196eb18838a3fddb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "minicbor-serde"
+version = "0.6.1"
+source = "git+https://github.com/Abrahamh08/minicbor#16b2a01f94d9bfdb60ba077a196eb18838a3fddb"
+dependencies = [
+ "minicbor",
+ "serde",
+]
+
+[[package]]
 name = "nalgebra"
 version = "0.34.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -504,6 +531,8 @@ dependencies = [
  "defmt",
  "enumn",
  "heapless",
+ "minicbor",
+ "minicbor-serde",
  "nalgebra",
  "opencv-ros-camera",
  "pyo3",

@@ -6,20 +6,32 @@ use ats_common::ocv_types::{
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
+#[cfg(feature = "minicbor")]
+use minicbor::{Decode, Encode};
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 pub struct AccelConfig {
     #[cfg(feature = "serde")]
     #[serde(default = "default_accel_odr")]
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub accel_odr: u16,
+    #[cfg_attr(feature = "minicbor", n(1))]
     #[cfg(not(feature = "serde"))]
     pub accel_odr: u16,
+    #[cfg_attr(feature = "minicbor", n(2))]
     pub b_x: f32,
+    #[cfg_attr(feature = "minicbor", n(3))]
     pub b_y: f32,
+    #[cfg_attr(feature = "minicbor", n(4))]
     pub b_z: f32,
+    #[cfg_attr(feature = "minicbor", n(5))]
     pub s_x: f32,
+    #[cfg_attr(feature = "minicbor", n(6))]
     pub s_y: f32,
+    #[cfg_attr(feature = "minicbor", n(7))]
     pub s_z: f32,
 }
 
@@ -73,8 +85,11 @@ impl From<AccelConfig> for super::AccelConfig {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 pub struct CameraCalibrationParams {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub camera_matrix: [f32; 9],
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub dist_coeffs: [f32; 5],
 }
 
@@ -105,8 +120,11 @@ impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 pub struct StereoCalibrationParams {
+    #[cfg_attr(feature = "minicbor", n(0))]
     pub r: [f32; 9],
+    #[cfg_attr(feature = "minicbor", n(1))]
     pub t: [f32; 3],
 }
 
@@ -143,14 +161,22 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode))]
 pub enum GeneralConfig {
-    ImpactThreshold(u8),
-    SuppressMs(u8),
-    AccelConfig(AccelConfig),
-    GyroConfig(super::GyroConfig),
-    CameraModelNf(CameraCalibrationParams),
-    CameraModelWf(CameraCalibrationParams),
-    StereoIso(StereoCalibrationParams),
+    #[cfg_attr(feature = "minicbor", n(0))]
+    ImpactThreshold(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    #[cfg_attr(feature = "minicbor", n(1))]
+    SuppressMs(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    #[cfg_attr(feature = "minicbor", n(2))]
+    AccelConfig(#[cfg_attr(feature = "minicbor", n(0))] AccelConfig),
+    #[cfg_attr(feature = "minicbor", n(3))]
+    GyroConfig(#[cfg_attr(feature = "minicbor", n(0))] super::GyroConfig),
+    #[cfg_attr(feature = "minicbor", n(4))]
+    CameraModelNf(#[cfg_attr(feature = "minicbor", n(0))] CameraCalibrationParams),
+    #[cfg_attr(feature = "minicbor", n(5))]
+    CameraModelWf(#[cfg_attr(feature = "minicbor", n(0))] CameraCalibrationParams),
+    #[cfg_attr(feature = "minicbor", n(6))]
+    StereoIso(#[cfg_attr(feature = "minicbor", n(0))] StereoCalibrationParams),
 }
 
 impl From<super::GeneralConfig> for GeneralConfig {
