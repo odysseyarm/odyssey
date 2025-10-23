@@ -13,7 +13,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{ICM42688, Ready};
 
 pub type Imu =
-    ICM42688<ExclusiveDevice<spim::Spim<'static, SERIAL1>, Output<'static>, Delay>, Ready>;
+    ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance>(

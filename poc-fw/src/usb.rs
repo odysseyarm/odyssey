@@ -54,8 +54,8 @@ pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     }
 }
 
-type StaticUsbDevice = UsbDevice<'static, Driver<'static, USBD, HardwareVbusDetect>>;
-type StaticCdcAcmClass = CdcAcmClass<'static, Driver<'static, USBD, HardwareVbusDetect>>;
+type StaticUsbDevice = UsbDevice<'static, Driver<'static, HardwareVbusDetect>>;
+type StaticCdcAcmClass = CdcAcmClass<'static, Driver<'static, HardwareVbusDetect>>;
 
 #[embassy_executor::task]
 pub async fn run_usb(mut device: StaticUsbDevice) -> ! {

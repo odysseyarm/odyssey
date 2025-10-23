@@ -18,7 +18,7 @@ use embassy_executor::Spawner;
 use embassy_nrf::{
     gpio::{Input, Level, Output, OutputDrive, Pull},
     nvmc::Nvmc,
-    peripherals::{self, SPIM4},
+    peripherals,
     spim::{self, Spim},
     usb::vbus_detect::HardwareVbusDetect,
 };
@@ -137,13 +137,13 @@ async fn main(spawner: Spawner) {
 }
 
 type Pag<M> = Pag7661Qn<
-    Pag7661QnSpi<ExclusiveDevice<Spim<'static, SPIM4>, Output<'static>, Delay>>,
+    Pag7661QnSpi<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>>,
     embassy_time::Delay,
     M,
 >;
 type PagInt = Pag7661QnInterrupt<Input<'static>>;
 type UsbDriver =
-    embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>;
+    embassy_nrf::usb::Driver<'static, HardwareVbusDetect>;
 
 struct CommonContext {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,

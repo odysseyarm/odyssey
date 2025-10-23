@@ -305,19 +305,15 @@ async fn obj_loop(
                 pag.switch_mode_mut(mode::Object.mode()).await.unwrap();
             }
 
-            // TODO polling necessary rn from confusing bug where both imu and pag interrupts timeout forever eventually if both are enabled in loops
-            if pag_int.int_o.is_low() {
-                embassy_time::Timer::after_millis(1).await;
-                continue;
+            match embassy_time::with_timeout(embassy_time::Duration::from_millis(100), pag_int.wait()).await {
+                Ok(_) => {},
+                Err(embassy_time::TimeoutError) => {
+                    defmt::debug!("obj timeout");
+                    // set the mode back to object mode in case it was set to Idle by usb_rcv_loop
+                    continue;
+                }
             }
 
-            // match embassy_time::with_timeout(embassy_time::Duration::from_millis(100), pag_int.wait()).await {
-            //     Ok(_) => {},
-            //     Err(embassy_time::TimeoutError) => {
-            //         defmt::info!("obj timeout");
-            //         continue;
-            //     }
-            // }
             let mut pag = pag.lock().await;
             let Some(n) = pag
                 .try_get_objects::<core::convert::Infallible>(&mut objs)

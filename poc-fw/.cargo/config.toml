@@ -18,3 +18,14 @@ rustflags = "-C target-cpu=cortex-m33"
 
 # [patch."https://github.com/0e4ef622/icm426xx"]
 # icm426xx = { path = "patch/icm426xx" }
+
+# [patch."https://github.com/embassy-rs/embassy.git"]
+# embassy-executor = { path = "patch/embassy/embassy-executor" }
+# embassy-embedded-hal = { path = "patch/embassy/embassy-embedded-hal" }
+# embassy-futures = { path = "patch/embassy/embassy-futures" }
+# embassy-nrf = { path = "patch/embassy/embassy-nrf" }
+# embassy-boot = { path = "patch/embassy/embassy-boot" }
+# embassy-sync = { path = "patch/embassy/embassy-sync" }
+# embassy-time = { path = "patch/embassy/embassy-time" }
+# embassy-usb = { path = "patch/embassy/embassy-usb" }
+# embassy-usb-dfu = { path = "patch/embassy/embassy-usb-dfu" }
