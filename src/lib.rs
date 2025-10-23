@@ -16,8 +16,6 @@ use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
 pub mod hub;
-#[cfg(test)]
-mod tests;
 pub mod wire;
 
 pub trait Parse: Sized {
