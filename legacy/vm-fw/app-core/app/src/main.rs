@@ -14,6 +14,8 @@ mod usb;
 #[cfg(context = "atslite1")]
 mod battery_model;
 #[cfg(context = "atslite1")]
+mod ble;
+#[cfg(context = "atslite1")]
 mod nrf5340_init;
 #[cfg(context = "atslite1")]
 mod pmic_leds;
@@ -24,7 +26,6 @@ mod power_button;
 #[cfg(context = "atslite1")]
 mod power_state;
 
-use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use embassy_executor::Spawner;
@@ -39,7 +40,6 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::twim::{self, Twim};
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_nrf::{Peri, bind_interrupts, gpiote, interrupt, peripherals, ppi, timer};
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Delay;
@@ -81,6 +81,7 @@ bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
     TIMER1      => TIrq<peripherals::TIMER1>;
+    IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
 });
 
 #[embassy_executor::main]
@@ -163,10 +164,7 @@ async fn main(spawner: Spawner) {
     #[cfg(context = "atslite1")]
     spawner.must_spawn(power_state::power_state_task(pmic, handle));
 
-    static NVMC: static_cell::StaticCell<Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc>>> =
-        static_cell::StaticCell::new();
-    let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
-    let nvmc = &*nvmc;
+    let nvmc = embassy_embedded_hal::adapter::BlockingAsync::new(Nvmc::new(p.NVMC));
 
     // ========= PAG7025 (R2/R3) =========
     let mut cfg_paj = spim::Config::default();
@@ -264,8 +262,9 @@ async fn main(spawner: Spawner) {
     let (usb, mut usb_snd, mut usb_rcv, configured_sig) = usb::usb_device(p.USBD);
     let _ = spawner.spawn(usb::run_usb(usb));
 
-    let nvmc = nvmc.borrow();
-    let settings = init_settings(nvmc, &mut paj7025r2, &mut paj7025r3).await.unwrap();
+    let settings = init_settings(&spawner, nvmc, &mut paj7025r2, &mut paj7025r3)
+        .await
+        .unwrap();
 
     if configured_sig.wait().await {
         pmic.lock()
@@ -296,7 +295,6 @@ async fn main(spawner: Spawner) {
         imu,
         imu_int,
         settings,
-        nvmc,
     };
 
     let _ = object_mode::object_mode(ctx, p.TIMER1).await;
@@ -323,7 +321,6 @@ struct CommonContext<const IMU_N: usize> {
     imu: Imu<IMU_N>,
     imu_int: ImuInterrupt,
     settings: &'static mut Settings,
-    nvmc: &'static RefCell<Nvmc<'static>>,
 }
 
 #[cfg(context = "atslite1")]
@@ -337,7 +334,6 @@ struct CommonContext {
     imu: Imu,
     imu_int: ImuInterrupt,
     settings: &'static mut Settings,
-    nvmc: &'static RefCell<Nvmc<'static>>,
 }
 
 pub struct TIrq<T: timer::Instance> {

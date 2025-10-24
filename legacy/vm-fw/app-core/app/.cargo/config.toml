@@ -39,6 +39,7 @@ npm1300-rs = { path = "patch/npm1300-rs" }
 # embassy-executor = { path = "../../../../forks/embassy/embassy-executor" }
 # embassy-time = { path = "../../../../forks/embassy/embassy-time" }
 embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy" }
+minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
 
 [env]
 DEFMT_LOG = "info"

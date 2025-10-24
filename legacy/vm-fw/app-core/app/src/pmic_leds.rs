@@ -79,9 +79,10 @@ enum LedCmd {
 
 #[derive(Debug)]
 pub struct PmicLedsHandle {
-   locked: AtomicBool,
+    locked: AtomicBool,
 }
 
+#[allow(dead_code)]
 impl PmicLedsHandle {
     pub fn new() -> Self {
         Self {

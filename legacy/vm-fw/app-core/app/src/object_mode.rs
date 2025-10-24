@@ -1,4 +1,3 @@
-use core::cell::RefCell;
 use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -6,7 +5,6 @@ use defmt::Format;
 use embassy_futures::join::join4;
 use embassy_futures::select::{Either, select};
 use embassy_nrf::Peri;
-use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
 use embassy_nrf::usb::{Endpoint, In, Out};
@@ -17,7 +15,7 @@ use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, Endpoin
 use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
-use protodongers::{Packet, PacketData as P, PacketType, Props, ReadRegisterResponse};
+use protodongers::{ConfigKind, Packet, PacketData as P, PacketType, PropKind, Props, ReadRegisterResponse, wire};
 
 use crate::fodtrigger::FodTrigger;
 #[cfg(context = "vm")]
@@ -57,7 +55,6 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
     let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
@@ -102,7 +99,6 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        ctx.nvmc,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
     let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
@@ -143,7 +139,6 @@ async fn usb_rcv_loop(
     pkt_snd: Sender<'_, Packet, 4>,
     pkt_rcv: &mut PacketReader<'_>,
     settings: &mut Settings,
-    nvmc: &RefCell<Nvmc<'static>>,
 ) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         let pkt = match pkt_rcv.wait_for_packet().await {
@@ -205,34 +200,55 @@ async fn usb_rcv_loop(
                 })
             }
             P::WriteConfig(config) => {
-                settings.general.set_general_config(&config.into());
+                let wire_config: wire::GeneralConfig = config.into();
+                settings.general.set_general_config(&wire_config);
                 // Some(Packet {
                 //     id: pkt.id,
                 //     data: P::Ack(),
                 // })
                 None
             }
-            P::ReadConfig() => Some(Packet {
-                id: pkt.id,
-                data: P::ReadConfigResponse((*settings.general.general_config()).into()),
-            }),
+            P::ReadConfig(kind) => {
+                let wire_config = match kind {
+                    ConfigKind::ImpactThreshold => {
+                        wire::GeneralConfig::ImpactThreshold(settings.general.impact_threshold)
+                    }
+                    ConfigKind::SuppressMs => wire::GeneralConfig::SuppressMs(settings.general.suppress_ms),
+                    ConfigKind::AccelConfig => wire::GeneralConfig::AccelConfig(settings.general.accel_config.into()),
+                    ConfigKind::GyroConfig => wire::GeneralConfig::GyroConfig(settings.general.gyro_config.clone()),
+                    ConfigKind::CameraModelNf => {
+                        wire::GeneralConfig::CameraModelNf(settings.general.camera_model_nf.clone())
+                    }
+                    ConfigKind::CameraModelWf => {
+                        wire::GeneralConfig::CameraModelWf(settings.general.camera_model_wf.clone())
+                    }
+                    ConfigKind::StereoIso => wire::GeneralConfig::StereoIso(settings.general.stereo_iso.clone()),
+                };
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::ReadConfigResponse(wire_config.into()),
+                })
+            }
             P::FlashSettings() => {
                 settings.pajs =
                     PajsSettings::read_from_pajs(&mut *paj7025r2.lock().await, &mut *paj7025r3.lock().await).await?;
-                settings.write(nvmc);
+                settings.write();
                 // Some(Packet {
                 //     id: pkt.id,
                 //     data: P::Ack(),
                 // })
                 None
             }
-            P::ReadProps() => Some(Packet {
-                id: pkt.id,
-                data: P::ReadPropsResponse(Props {
-                    uuid: device_id()[..6].try_into().unwrap(),
-                    product_id: crate::usb::PID,
-                }),
-            }),
+            P::ReadProp(kind) => {
+                let prop = match kind {
+                    PropKind::Uuid => Props::Uuid(device_id()[..6].try_into().unwrap()),
+                    PropKind::ProductId => Props::ProductId(crate::usb::PID),
+                };
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::ReadPropResponse(prop),
+                })
+            }
             P::StreamUpdate(s) => {
                 use protodongers::StreamUpdateAction as S;
                 match s.action {
@@ -248,7 +264,7 @@ async fn usb_rcv_loop(
             }
             P::WriteMode(mode) => {
                 settings.transient.mode = mode;
-                settings.transient_write(nvmc);
+                settings.transient_write();
                 // Some(Packet {
                 //     id: pkt.id,
                 //     data: P::Ack(),
@@ -262,7 +278,7 @@ async fn usb_rcv_loop(
             P::ObjectReportRequest() => None,
             P::Ack() => None,
             P::ReadConfigResponse(_) => None,
-            P::ReadPropsResponse(_) => None,
+            P::ReadPropResponse(_) => None,
             P::ObjectReport(_) => None,
             P::CombinedMarkersReport(_) => None,
             P::PocMarkersReport(_) => None,
