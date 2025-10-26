@@ -20,6 +20,6 @@ format:
 alias fmt := format
 
 @attach-app:
-    probe-rs attach --chip nRF52840_xxAA "{{ output_dir }}/app.elf"
+    probe-rs attach --chip nRF52840_xxAA "{{ output_dir }}/app"
 @serial *args:
     cd serialtest && cargo run {{ args }}

@@ -20,19 +20,19 @@ all: $(OUTPUT_DIR)/merged.hex
 $(OUTPUT_DIR):
 	mkdir -p "$(OUTPUT_DIR)"
 
-$(APP_ARTIFACT_DIR): $(shell find $(APP_DIR) -path $(APP_TARGET_DIR) -prune -o -print)
-	cd $(APP_DIR) && cp memory/atslite.x memory.x && cargo build --release --target thumbv8m.main-none-eabihf
+$(APP_ARTIFACT_DIR)/app: $(shell find $(APP_DIR) -path $(APP_TARGET_DIR) -prune -o -print) ../../memory/memory-atslite.kdl
+	cd $(APP_DIR) && cargo build --release --target thumbv8m.main-none-eabihf
 
-$(OUTPUT_DIR)/app.elf: $(APP_ARTIFACT_DIR) | $(OUTPUT_DIR)
+$(OUTPUT_DIR)/app.elf: $(APP_ARTIFACT_DIR)/app | $(OUTPUT_DIR)
 	cp $(APP_ARTIFACT_DIR)/app $@
 
 $(NET_ARTIFACT_DIR)/net-core: $(shell find $(NET_DIR) -path $(NET_TARGET_DIR) -prune -o -print)
 	cd $(NET_DIR) && cargo build --release
 
-$(OUTPUT_DIR)/net-core.elf: $(NET_ARTIFACT_DIR) | $(OUTPUT_DIR)
+$(OUTPUT_DIR)/net-core.elf: $(NET_ARTIFACT_DIR)/net-core | $(OUTPUT_DIR)
 	cp $(NET_ARTIFACT_DIR)/net-core $@
 
-$(BOOT_ELF): $(shell find $(BOOT_DIR) -maxdepth 2 -name Cargo.toml -o -name src -o -name memory.x -o -name build.rs)
+$(BOOT_ELF): $(shell find $(BOOT_DIR) -maxdepth 2 -name Cargo.toml -o -name src -o -name build.rs) ../../memory/memory-atslite.kdl
 	cd $(BOOT_DIR) && cargo build --release --target thumbv8m.main-none-eabihf
 
 $(OUTPUT_DIR)/%.hex: $(OUTPUT_DIR)/%.elf | $(OUTPUT_DIR)

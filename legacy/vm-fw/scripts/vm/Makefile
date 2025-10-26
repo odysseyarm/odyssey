@@ -15,14 +15,13 @@ all: $(OUTPUT_DIR)/merged.hex
 $(OUTPUT_DIR):
 	mkdir -p "$(OUTPUT_DIR)"
 
-$(APP_ARTIFACT_DIR): $(shell find . -path ./$(APP_TARGET_DIR) -prune -o -print)
-	cp ../../memory/vm.x ../../memory.x
+$(APP_ARTIFACT_DIR): $(shell find . -path ./$(APP_TARGET_DIR) -prune -o -print) ../../memory/memory-vm.kdl
 	cargo build --release --target thumbv7em-none-eabihf
 
 $(OUTPUT_DIR)/app.elf: $(APP_ARTIFACT_DIR) | $(OUTPUT_DIR)
 	cp $(APP_ARTIFACT_DIR)/app $@
 
-$(BOOT_ELF): $(shell find $(BOOT_DIR) -maxdepth 2 -name Cargo.toml -o -name src -o -name memory.x -o -name build.rs)
+$(BOOT_ELF): $(shell find $(BOOT_DIR) -maxdepth 2 -name Cargo.toml -o -name src -o -name build.rs) ../../memory/memory-vm.kdl
 	cd $(BOOT_DIR) && cargo build --release --target $(BOOT_TRIPLE)
 
 $(OUTPUT_DIR)/%.hex: $(OUTPUT_DIR)/%.elf

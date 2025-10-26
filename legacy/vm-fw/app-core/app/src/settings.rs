@@ -32,6 +32,8 @@ use paj7025::Paj7025Error;
 use protodongers::wire::{CameraCalibrationParams, StereoCalibrationParams};
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
+#[cfg(context = "atslite1")]
+use trouble_host::prelude::*;
 
 use crate::Paj;
 
@@ -41,9 +43,24 @@ static NODE_PAJS: StorageListNode<PajsSettings> = StorageListNode::new("settings
 static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("settings/general");
 static NODE_TRANSIENT: StorageListNode<TransientSettings> = StorageListNode::new("settings/transient");
 
+#[cfg(context = "atslite1")]
+static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
+
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
+pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
+
+// Pointer to the settings for BLE access
+static SETTINGS_PTR: core::sync::atomic::AtomicPtr<Settings> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Get a reference to settings. Only safe to call after init_settings has been called.
+/// This is primarily for BLE peripheral to access settings.
+#[cfg(context = "atslite1")]
+pub unsafe fn get_settings() -> &'static mut Settings {
+    let ptr = SETTINGS_PTR.load(core::sync::atomic::Ordering::Acquire);
+    unsafe { &mut *ptr }
+}
 
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(200);
 
@@ -159,6 +176,12 @@ pub async fn init_settings(
         .await
         .unwrap();
 
+    #[cfg(context = "atslite1")]
+    let h_ble_bond = NODE_BLE_BOND
+        .attach_with_default(&LIST, BleBondSettings::default)
+        .await
+        .unwrap();
+
     let s = Settings {
         pajs: h_pajs.load(),
         general: {
@@ -167,16 +190,22 @@ pub async fn init_settings(
             g
         },
         transient: h_transient.load(),
+        #[cfg(context = "atslite1")]
+        ble_bond: h_ble_bond.load(),
     };
 
     s.apply(pajr2, pajr3).await?;
-    Ok(SETTINGS_CELL.init(s))
+    let settings_ref = SETTINGS_CELL.init(s);
+    SETTINGS_PTR.store(settings_ref as *mut Settings, core::sync::atomic::Ordering::Release);
+    Ok(settings_ref)
 }
 
 pub struct Settings {
     pub pajs: PajsSettings,
     pub general: GeneralSettings,
     pub transient: TransientSettings,
+    #[cfg(context = "atslite1")]
+    pub ble_bond: BleBondSettings,
 }
 
 impl Settings {
@@ -202,6 +231,26 @@ impl Settings {
         embassy_futures::block_on(async {
             let mut ht = NODE_TRANSIENT.attach(&LIST).await.unwrap();
             ht.write(&self.transient).await.unwrap();
+        });
+        settings_flush_now();
+    }
+
+    #[cfg(context = "atslite1")]
+    pub fn ble_bond_write(&self) {
+        embassy_futures::block_on(async {
+            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
+            hb.write(&self.ble_bond).await.unwrap();
+        });
+        settings_flush_now();
+    }
+
+    #[allow(dead_code)]
+    #[cfg(context = "atslite1")]
+    pub fn ble_bond_clear(&mut self) {
+        self.ble_bond = BleBondSettings::default();
+        embassy_futures::block_on(async {
+            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
+            hb.write(&self.ble_bond).await.unwrap();
         });
         settings_flush_now();
     }
@@ -546,5 +595,73 @@ impl Default for TransientSettings {
         Self {
             mode: protodongers::Mode::Object,
         }
+    }
+}
+
+#[cfg(context = "atslite1")]
+#[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
+pub struct BleBondSettings {
+    #[n(0)]
+    pub bd_addr: [u8; 6],
+    #[n(1)]
+    pub ltk: [u8; 16],
+    #[n(2)]
+    pub security_level: u8,
+    #[n(3)]
+    pub is_bonded: bool,
+    #[n(4)]
+    pub irk: Option<[u8; 16]>,
+}
+
+#[cfg(context = "atslite1")]
+impl Default for BleBondSettings {
+    fn default() -> Self {
+        Self {
+            bd_addr: [0; 6],
+            ltk: [0; 16],
+            security_level: 0,
+            is_bonded: false,
+            irk: None,
+        }
+    }
+}
+
+#[cfg(context = "atslite1")]
+impl BleBondSettings {
+    pub fn from_bond_info(info: &BondInformation) -> Self {
+        let mut bd_addr = [0u8; 6];
+        bd_addr.copy_from_slice(info.identity.bd_addr.raw());
+        Self {
+            bd_addr,
+            ltk: info.ltk.to_le_bytes(),
+            security_level: match info.security_level {
+                SecurityLevel::NoEncryption => 0,
+                SecurityLevel::Encrypted => 1,
+                SecurityLevel::EncryptedAuthenticated => 2,
+            },
+            is_bonded: info.is_bonded,
+            irk: info.identity.irk.map(|irk| irk.to_le_bytes()),
+        }
+    }
+
+    pub fn to_bond_info(&self) -> Option<BondInformation> {
+        if !self.is_bonded {
+            return None;
+        }
+
+        Some(BondInformation {
+            identity: Identity {
+                bd_addr: BdAddr::new(self.bd_addr),
+                irk: self.irk.map(|irk| IdentityResolvingKey::from_le_bytes(irk)),
+            },
+            security_level: match self.security_level {
+                0 => SecurityLevel::NoEncryption,
+                1 => SecurityLevel::Encrypted,
+                2 => SecurityLevel::EncryptedAuthenticated,
+                _ => SecurityLevel::NoEncryption,
+            },
+            is_bonded: self.is_bonded,
+            ltk: LongTermKey::from_le_bytes(self.ltk),
+        })
     }
 }

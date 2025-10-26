@@ -285,6 +285,12 @@ async fn main(spawner: Spawner) {
     let paj7025r2 = PAJ7025R2_MUTEX.init(AsyncMutex::<NoopRawMutex, _>::new(paj7025r2));
     let paj7025r3 = PAJ7025R3_MUTEX.init(AsyncMutex::<NoopRawMutex, _>::new(paj7025r3));
 
+    #[cfg(context = "atslite1")]
+    {
+        let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
+        spawner.must_spawn(ble_task(controller));
+    }
+
     let ctx = CommonContext {
         usb_snd,
         usb_rcv,
@@ -471,6 +477,12 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(context = "atslite1")]
+#[embassy_executor::task]
+async fn ble_task(controller: ble::host::BleController) {
+    ble::peripheral::run(controller).await;
 }
 
 #[cfg(context = "atslite1")]

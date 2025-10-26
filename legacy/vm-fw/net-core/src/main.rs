@@ -8,7 +8,11 @@ use core::cell::RefCell;
 
 use crate::{cmd_dispatch::exec_cmd_by_opcode, icmsg_config::ALIGN};
 use bt_hci::{
-    cmd::{self, Opcode, OpcodeGroup}, data::{AclPacketHeader, IsoPacketHeader, SyncPacketHeader}, event::EventPacketHeader, param, FromHciBytes, FromHciBytesError, PacketKind
+    FromHciBytes, FromHciBytesError, PacketKind,
+    cmd::{self, Opcode, OpcodeGroup},
+    data::{AclPacketHeader, IsoPacketHeader, SyncPacketHeader},
+    event::EventPacketHeader,
+    param,
 };
 use defmt::{Debug2Format, unwrap};
 use embassy_executor::Spawner;
@@ -19,7 +23,7 @@ use embassy_nrf::{
     peripherals::{self, RNG},
     rng::{self, Rng},
 };
-use embassy_sync::{blocking_mutex::{raw::NoopRawMutex, Mutex}};
+use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
 use embassy_time::Delay;
 use icmsg::{IcMsg, Notifier, WaitForNotify};
 use nrf_sdc::{self as sdc, mpsl};
@@ -66,13 +70,13 @@ mod icmsg_config {
 }
 
 /// How many outgoing L2CAP buffers per link
-const L2CAP_TXQ: u8 = 3;
+const L2CAP_TXQ: u8 = 6;
 
 /// How many incoming L2CAP buffers per link
-const L2CAP_RXQ: u8 = 3;
+const L2CAP_RXQ: u8 = 6;
 
 /// Size of L2CAP packets
-const L2CAP_MTU: usize = 72;
+const L2CAP_MTU: usize = 251;
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -83,6 +87,7 @@ fn build_sdc<'d, const N: usize>(
     sdc::Builder::new()?
         .support_adv()?
         .support_peripheral()?
+        .support_dle_peripheral()?
         .peripheral_count(1)?
         .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)
@@ -156,14 +161,16 @@ async fn main(spawner: Spawner) {
     static RNG_CELL: StaticCell<Rng<Async>> = StaticCell::new();
     let rng = RNG_CELL.init(Rng::new(p.RNG, Irqs));
 
-    static SDC_MEM: StaticCell<sdc::Mem<2480>> = StaticCell::new();
-    let sdc_mem = SDC_MEM.init(sdc::Mem::<2480>::new());
+    static SDC_MEM: StaticCell<sdc::Mem<7808>> = StaticCell::new();
+    let sdc_mem = SDC_MEM.init(sdc::Mem::<7808>::new());
     static SDC_CELL: StaticCell<sdc::SoftdeviceController> = StaticCell::new();
     let sdc = SDC_CELL.init(unwrap!(build_sdc(sdc_p, rng, mpsl, sdc_mem)));
 
     let (send, recv) = icmsg.split();
 
-    static SEND: StaticCell<Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>> = StaticCell::new();
+    static SEND: StaticCell<
+        Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
+    > = StaticCell::new();
     let send = SEND.init(Mutex::new(RefCell::new(send)));
     spawner.must_spawn(receive_task(send, recv, sdc));
 
@@ -189,7 +196,7 @@ fn packet_len(kind: PacketKind, data: &[u8]) -> Result<usize, FromHciBytesError>
     Ok(match kind {
         PacketKind::Cmd => {
             if data.len() < 3 {
-                return Err(FromHciBytesError::InvalidSize)
+                return Err(FromHciBytesError::InvalidSize);
             } else {
                 data[2] as usize + 3
             }
@@ -229,7 +236,7 @@ macro_rules! io {
 }
 
 async fn exec_h4_to_sdc(
-	send: &'static Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
+    send: &'static Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
     sdc: &sdc::SoftdeviceController<'static>,
     pkt: &[u8],
 ) -> Result<(), CmdErr> {
@@ -249,7 +256,7 @@ async fn exec_h4_to_sdc(
 
 #[embassy_executor::task]
 async fn receive_task(
-	send: &'static Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
+    send: &'static Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
     mut recv: icmsg::Receiver<IpcWait<'static>, ALIGN>,
     sdc: &'static sdc::SoftdeviceController<'static>,
 ) {
@@ -264,9 +271,9 @@ async fn receive_task(
         };
         defmt::info!("Received {} bytes: {=[u8]:x}", n, &buf[..n]);
 
-		if let Err(e) = exec_h4_to_sdc(send, sdc, &buf[..n]).await {
-			defmt::warn!("TX->SDC error: {:?}", e);
-		}
+        if let Err(e) = exec_h4_to_sdc(send, sdc, &buf[..n]).await {
+            defmt::warn!("TX->SDC error: {:?}", e);
+        }
     }
 }
 

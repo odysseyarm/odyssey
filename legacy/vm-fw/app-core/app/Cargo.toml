@@ -44,7 +44,7 @@ nrf-fuel-gauge = { git = "https://github.com/Abrahamh08/nrf-fuel-gauge", feature
 nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf_fuel_gauge"] }
 embedded-io = { version = "0.6.1" }
 embedded-io-async = { version = "0.6.1" }
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", features = ["defmt", "controller-host-flow-control", "peripheral", "gatt", "derive", "security", "dev-disable-csprng-seed-requirement"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", default-features = false, features = ["defmt", "controller-host-flow-control", "peripheral", "gatt", "derive", "security", "dev-disable-csprng-seed-requirement", "default-packet-pool"] }
 bt-hci = { version = "0.6.0", features = ["defmt"] }
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }
 embedded-storage-async = "0.4.1"
@@ -54,6 +54,9 @@ sequential-storage = { version = "5.0.1", features = ["defmt-03"] }
 git = "https://github.com/odysseyarm/protodonge-rs"
 default-features = false
 features = ["minicbor", "serde-no-std", "defmt"]
+
+[build-dependencies]
+memory-spec = "0.1.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
