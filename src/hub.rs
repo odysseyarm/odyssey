@@ -15,6 +15,10 @@ pub enum HubMsg {
     SendTo(SendTo),
     ReadVersion(),
     ReadVersionResponse(Version),
+    AddScanTarget(Uuid),
+    AddScanTargetResponse(AddScanTargetResult),
+    RemoveScanTarget(Uuid),
+    RemoveScanTargetResponse(RemoveScanTargetResult),
 }
 
 #[repr(C)]
@@ -42,4 +46,23 @@ pub struct SendTo {
 pub struct Version {
     pub protocol_semver: [u16; 3],
     pub firmware_semver: [u16; 3],
+}
+
+#[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug)]
+pub enum AddScanTargetResult {
+    Success,
+    ScanListFull,
+    InvalidAddress,
+}
+
+#[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug)]
+pub enum RemoveScanTargetResult {
+    Success,
+    NotFound,
 }
