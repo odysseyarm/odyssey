@@ -1,0 +1,24 @@
+// nRF52840 + S140 v7.x
+
+vars {
+    page_size "4K"
+}
+
+regions {
+    flash origin=0x0000_0000 length="1M" {
+        mbr         origin=0x0000_0000 length="4K"
+        softdevice  origin=0x0000_1000 length="152K"
+        app_flash   origin=0x0002_7000 length="764K"
+        settings    origin=0x000E_6000 length="24K" align="page_size"
+    }
+
+    ram origin=0x2000_0000 length="256K" {
+        softdevice_ram origin=0x2000_0000 length="0x7b08"
+        app_ram        origin=0x2000_7b08 end="ram.end"
+    }
+}
+
+symbols {
+    __settings_start "flash.settings.origin"
+    __settings_end   "flash.settings.end"
+}

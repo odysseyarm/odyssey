@@ -1,0 +1,57 @@
+[package]
+name = "dongle-fw"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread", "defmt"] }
+embassy-nrf = { version = "0.8.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "nfc-pins-as-gpio", "defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-usb = { version = "0.5.1", features = ["defmt"] }
+embassy-usb-driver = "0.2.0"
+embassy-time-driver = "0.2.0"
+embassy-sync = { version = "0.7.2", features = ["defmt"] }
+embassy-futures = "0.1.2"
+embassy-embedded-hal = "0.5.0"
+
+nrf-softdevice = { version = "0.1.0", git = "https://github.com/embassy-rs/nrf-softdevice", features = ["defmt", "ble-central", "ble-sec", "ble-l2cap", "s140", "nrf52840", "critical-section-impl"] }
+nrf-softdevice-s140 = "0.1.1"
+
+cortex-m-rt = "0.7.5"
+cortex-m = { version = "0.7.7", features = ["inline-asm"] }
+defmt = "1"
+static_cell = "2.1.1"
+heapless = "0.9.1"
+atomic-pool = "1.0"
+embedded-storage = "0.3.1"
+embedded-storage-async = "0.4.1"
+sequential-storage = { version = "5.0.1", features = ["defmt-03"] }
+futures = { version = "0.3", default-features = false }
+postcard = { version = "1.0", default-features = false, features = ["heapless"] }
+critical-section = "1.2.0"
+
+# Use same minicbor version as protodongers (only for storage, not USB)
+minicbor = { git = "https://github.com/Abrahamh08/minicbor", features = ["derive"] }
+minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
+
+# Use cfg-noodle with our minicbor version
+cfg-noodle = { version = "0.5", default-features = false, features = ["defmt"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+
+[dependencies.protodongers]
+git = "https://github.com/odysseyarm/protodonge-rs"
+default-features = false
+features = ["minicbor", "serde-no-std", "defmt"]
+
+[build-dependencies]
+memory-spec = "0.1.0"
+
+[features]
+default = ["defmt"]
+defmt = ["embassy-usb/defmt", "embassy-nrf/defmt", "protodongers/defmt", "embassy-futures/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
+
+[profile.release]
+debug = 2
+lto = "fat"
+opt-level = "z"
+codegen-units = 1

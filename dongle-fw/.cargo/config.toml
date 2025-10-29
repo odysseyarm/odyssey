@@ -1,0 +1,16 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "nrfdfu"
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[env]
+DEFMT_LOG = "debug"
+
+[patch.crates-io]
+minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
+cfg-noodle = { path = "D:/forks/cfg-noodle/crates/cfg-noodle" }
+
+[patch."https://github.com/odysseyarm/protodonge-rs"]
+protodongers = { path = "../../protodonge-rs" }
