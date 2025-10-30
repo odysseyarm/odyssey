@@ -2,7 +2,9 @@
 #![no_std]
 
 mod ble;
+mod control;
 mod defmt_serial;
+mod pairing;
 mod storage;
 mod usb;
 
@@ -51,22 +53,11 @@ async fn main(mut spawner: Spawner) {
     c.time_interrupt_priority = interrupt::Priority::P2;
     let p = embassy_nrf::init(c);
 
-    let red = p.P0_08;
-    let green = p.P1_09;
-    let blue = p.P0_12;
+    // let red = p.P0_08;
+    let red = p.P0_06;
 
     let mut red = embassy_nrf::gpio::Output::new(
         red,
-        embassy_nrf::gpio::Level::High,
-        embassy_nrf::gpio::OutputDrive::Standard,
-    );
-    let mut _green = embassy_nrf::gpio::Output::new(
-        green,
-        embassy_nrf::gpio::Level::High,
-        embassy_nrf::gpio::OutputDrive::Standard,
-    );
-    let mut blue = embassy_nrf::gpio::Output::new(
-        blue,
         embassy_nrf::gpio::Level::High,
         embassy_nrf::gpio::OutputDrive::Standard,
     );
@@ -75,6 +66,8 @@ async fn main(mut spawner: Spawner) {
 
     interrupt::USBD.set_priority(interrupt::Priority::P2);
     interrupt::GPIOTE.set_priority(interrupt::Priority::P2);
+
+    // Flash blue LED while pairing is active
 
     // Initialize USB
     let (builder, ep_in, ep_out, usb_signal) = usb::usb_device(p.USBD, x);
@@ -95,7 +88,7 @@ async fn main(mut spawner: Spawner) {
             accuracy: sd::raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
         }),
         conn_gap: Some(sd::raw::ble_gap_conn_cfg_t {
-            conn_count: 6,
+            conn_count: 7,
             event_length: 24,
         }),
         conn_gatt: Some(sd::raw::ble_gatt_conn_cfg_t { att_mtu: 256 }),
@@ -104,9 +97,10 @@ async fn main(mut spawner: Spawner) {
         }),
         gap_role_count: Some(sd::raw::ble_gap_cfg_role_count_t {
             adv_set_count: 1,
-            periph_role_count: 3,
-            central_role_count: 3,
-            central_sec_count: 0,
+            periph_role_count: 0,
+            central_role_count: 7,
+            // Allow up to 7 concurrent secured central links
+            central_sec_count: 7,
             _bitfield_1: sd::raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         gap_device_name: Some(sd::raw::ble_gap_cfg_device_name_t {
@@ -125,7 +119,8 @@ async fn main(mut spawner: Spawner) {
     spawner.must_spawn(softdevice_task(sd, x));
 
     red.set_high();
-    blue.set_low();
+
+    // Start pairing LED task (flashing blue while pairing)
 
     // Initialize L2CAP driver
     static L2CAP: StaticCell<l2cap::L2cap<L2capPacket>> = StaticCell::new();
@@ -141,11 +136,6 @@ async fn main(mut spawner: Spawner) {
     // Initialize active connections tracker
     let active_connections = ACTIVE_CONNECTIONS.init(ActiveConnections::new());
 
-    loop {
-        info!("Looping");
-        embassy_time::Timer::after_secs(1).await;
-    }
-
     // Load bonds into cache for reconnection
     ble::security::load_bond_cache(settings).await;
 
@@ -156,6 +146,8 @@ async fn main(mut spawner: Spawner) {
     // Initialize channels for BLE <-> USB communication
     static DEVICE_PACKETS: StaticCell<DevicePacketChannel> = StaticCell::new();
     let device_packets = DEVICE_PACKETS.init(Channel::new());
+    let control_ch = control::init();
+    control::register(control_ch);
 
     // Initialize per-device queue registry
     use ble::central::DEVICE_QUEUES;
@@ -166,6 +158,7 @@ async fn main(mut spawner: Spawner) {
         ep_out,
         usb_signal,
         device_packets,
+        control_ch,
         device_queues,
         active_connections,
         settings,
@@ -180,11 +173,6 @@ async fn main(mut spawner: Spawner) {
         l2cap,
     ));
     spawner.must_spawn(bond_storage_task(settings));
-
-    loop {
-        info!("Looping");
-        embassy_time::Timer::after_secs(1).await;
-    }
 }
 
 #[embassy_executor::task]
@@ -268,6 +256,11 @@ async fn usb_task(
         bool,
     >,
     device_packets: &'static DevicePacketChannel,
+    control_ch: &'static embassy_sync::channel::Channel<
+        embassy_sync::blocking_mutex::raw::ThreadModeRawMutex,
+        HubMsg,
+        4,
+    >,
     device_queues: &'static ble::central::DeviceQueues,
     active_connections: &'static ActiveConnections,
     settings: &'static Settings,
@@ -314,6 +307,16 @@ async fn usb_task(
                     warn!("Error sending device packet");
                 }
             }
+            // Handle control events
+            if let Ok(evt) = control_ch.try_receive() {
+                if let Err(_e) = send_hub_msg(&evt, &mut write_buf, &mut ep_in).await {
+                    warn!("Error sending control event");
+                }
+            }
+            // Emit timeout events
+            if pairing::take_timeout() {
+                let _ = send_hub_msg(&HubMsg::PairingTimeout, &mut write_buf, &mut ep_in).await;
+            }
         }
     }
 }
@@ -351,27 +354,16 @@ async fn handle_usb_rx(
             let response = HubMsg::ReadVersionResponse(VERSION);
             send_hub_msg(&response, write_buf, ep_in).await?;
         }
-        HubMsg::AddScanTarget(address) => {
-            use protodongers::hub::AddScanTargetResult;
-
-            let result = match settings.add_scan_target(address).await {
-                Ok(_) => AddScanTargetResult::Success,
-                Err(_) => AddScanTargetResult::ScanListFull,
-            };
-
-            let response = HubMsg::AddScanTargetResponse(result);
-            send_hub_msg(&response, write_buf, ep_in).await?;
+        HubMsg::StartPairing(start) => {
+            info!("USB StartPairing received, timeout_ms={}", start.timeout_ms);
+            let timeout = embassy_time::Duration::from_millis(start.timeout_ms as u64);
+            pairing::enter_with_timeout(timeout);
+            send_hub_msg(&HubMsg::PairingStarted, write_buf, ep_in).await?;
         }
-        HubMsg::RemoveScanTarget(address) => {
-            use protodongers::hub::RemoveScanTargetResult;
-
-            let result = match settings.remove_scan_target(&address).await {
-                Ok(_) => RemoveScanTargetResult::Success,
-                Err(_) => RemoveScanTargetResult::NotFound,
-            };
-
-            let response = HubMsg::RemoveScanTargetResponse(result);
-            send_hub_msg(&response, write_buf, ep_in).await?;
+        HubMsg::CancelPairing => {
+            info!("USB CancelPairing received");
+            pairing::cancel();
+            send_hub_msg(&HubMsg::PairingCancelled, write_buf, ep_in).await?;
         }
         _ => {
             warn!("Unexpected message from host");
@@ -393,9 +385,11 @@ async fn send_hub_msg(
 }
 
 #[exception]
-unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
-    let blue = unsafe { embassy_nrf::peripherals::P0_12::steal() };
-    let red = unsafe { embassy_nrf::peripherals::P0_08::steal() };
+unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
+    // let red = unsafe { embassy_nrf::peripherals::P0_08::steal() };
+    let red = unsafe { embassy_nrf::peripherals::P0_06::steal() };
+    // let blue = unsafe { embassy_nrf::peripherals::P0_12::steal() };
+    let blue = unsafe { embassy_nrf::peripherals::P0_08::steal() };
     let _blue = embassy_nrf::gpio::Output::new(
         blue,
         embassy_nrf::gpio::Level::High,

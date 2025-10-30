@@ -39,7 +39,7 @@ cfg-noodle = { version = "0.5", default-features = false, features = ["defmt"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [dependencies.protodongers]
-git = "https://github.com/odysseyarm/protodonge-rs"
+path = "../../protodonge-rs"
 default-features = false
 features = ["minicbor", "serde-no-std", "defmt"]
 

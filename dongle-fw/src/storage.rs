@@ -315,19 +315,22 @@ impl Settings {
             }
         }
 
-        // Find empty slot
-        for slot in scan_list.addresses.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(address);
-                info!("Added {:02x} to scan list", address);
-                drop(scan_list);
-                self.scan_list_write().await;
-                return Ok(());
+        // Find empty slot, otherwise overwrite oldest entry (index 0) by shifting left
+        if let Some(slot) = scan_list.addresses.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(address);
+        } else {
+            // shift left and place at end
+            for i in 0..(scan_list.addresses.len() - 1) {
+                scan_list.addresses[i] = scan_list.addresses[i + 1];
             }
+            let last = scan_list.addresses.len() - 1;
+            scan_list.addresses[last] = Some(address);
+            defmt::warn!("Scan list full, overwrote oldest with {:02x}", address);
         }
-
-        defmt::warn!("Scan list is full");
-        Err(())
+        info!("Added {:02x} to scan list", address);
+        drop(scan_list);
+        self.scan_list_write().await;
+        Ok(())
     }
 
     /// Remove an address from the scan list

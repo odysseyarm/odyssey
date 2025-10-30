@@ -7,7 +7,8 @@ use embassy_time::{Duration, TimeoutError, Timer, with_timeout};
 use heapless::Vec;
 use nrf_softdevice::Softdevice;
 use nrf_softdevice::ble::{Connection, SecurityMode, central, l2cap};
-use protodongers::hub::{DevicePacket, MAX_DEVICES};
+use protodongers::hub::{DevicePacket, HubMsg, MAX_DEVICES};
+// local AD parsing
 use static_cell::StaticCell;
 
 use crate::ble::L2capPacket;
@@ -16,8 +17,20 @@ use crate::storage::Settings;
 
 // L2CAP PSM (Protocol Service Multiplexer) for our custom protocol
 const L2CAP_PSM: u16 = 0x0080; // Dynamic PSM in valid range
+// Optional: set these to prefer manufacturer data matching (pre-connection filtering)
+// Bluetooth SIG Company Identifier (16-bit). Set to Some(0xFFFF) when known.
+// Bluetooth SIG Company Identifier (decimal). Raytac = 1674 (0x068A)
+const COMPANY_ID: Option<u16> = Some(1674);
+// Product ID prefixes immediately following company ID in MSD payload for ATS peripherals
+const PRODUCT_ID_PREFIXES: &[&[u8]] = &[b"ATS", b"ATS-LEG"];
 
 pub type Uuid = [u8; 6];
+
+#[derive(Copy, Clone)]
+struct ConnectTarget {
+    bytes: [u8; 6],
+    addr: nrf_softdevice::ble::Address,
+}
 
 /// Channel for outgoing packets (from device to USB)
 pub type DevicePacketChannel = Channel<ThreadModeRawMutex, DevicePacket, 8>;
@@ -148,65 +161,114 @@ impl BleManager {
         info!("Starting BLE central manager");
 
         loop {
-            // Get all scan targets
+            // Get all scan targets (for non-pairing mode) and log pairing state
             let scan_targets = self.settings.get_scan_targets().await;
-
-            if scan_targets.is_empty() {
-                info!("No scan targets, waiting...");
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
-            }
-
-            info!("Scanning for {} target device(s)...", scan_targets.len());
+            info!(
+                "Scanning (pairing={}, targets={})",
+                crate::pairing::is_active(),
+                scan_targets.len()
+            );
 
             // Configure scan parameters
             let config = central::ScanConfig {
+                active: true,
                 whitelist: None,
                 ..Default::default()
             };
 
-            // Start scanning - scan() takes a callback
-            let scan_result = central::scan(sd, &config, |report| {
+            // Race scan against restart signal with timeout
+            let scan_fut = central::scan(sd, &config, |report| {
                 let addr_bytes: [u8; 6] = report.peer_addr.addr;
+                let len = report.data.len as usize;
+                let data = unsafe { core::slice::from_raw_parts(report.data.p_data, len) };
 
-                // Check if this device is in our scan targets
-                for target_addr in scan_targets.iter() {
-                    if &addr_bytes == target_addr {
-                        info!("Found target device {:02x}", target_addr);
-                        // Return Some to stop scanning
-                        return Some(*target_addr);
+                // Evaluate pairing flag for each report to pick up runtime changes
+                if crate::pairing::is_active() {
+                    if adv_is_target(data) {
+                        let addr = nrf_softdevice::ble::Address::from_raw(report.peer_addr);
+                        return Some(ConnectTarget {
+                            bytes: report.peer_addr.addr,
+                            addr,
+                        });
                     }
-                }
-
-                None // Continue scanning
-            })
-            .await;
-
-            match scan_result {
-                Ok(device_uuid) => {
-                    info!("Connecting to device {:02x}...", device_uuid);
-
-                    // Try to connect
-                    if let Err(e) = self.connect_to_device(sd, &device_uuid).await {
-                        error!("Failed to connect: {:?}", e);
+                    return None;
+                } else {
+                    for target_addr in scan_targets.iter() {
+                        if &addr_bytes == target_addr {
+                            let addr = nrf_softdevice::ble::Address::from_raw(report.peer_addr);
+                            return Some(ConnectTarget {
+                                bytes: *target_addr,
+                                addr,
+                            });
+                        }
                     }
+                    None
                 }
-                Err(e) => {
-                    error!("Scan error: {:?}", e);
+            });
+
+            let restart_fut = crate::pairing::wait_for_scan_restart();
+            let timeout_fut = Timer::after(Duration::from_secs(10));
+
+            // Use select3 to allow scan to be interrupted by pairing state changes or timeout
+            match embassy_futures::select::select3(scan_fut, restart_fut, timeout_fut).await {
+                embassy_futures::select::Either3::First(scan_result) => {
+                    info!("Scan completed with result");
+                    // Scan completed (found target or error)
+                    match scan_result {
+                        Ok(target) => {
+                            info!("Connecting to device {:02x}...", target.bytes);
+
+                            // Try to connect
+                            match self.connect_to_device(sd, &target).await {
+                                Ok(()) => {
+                                    // Notify host of pairing result if pairing is still active now
+                                    if crate::pairing::is_active() {
+                                        crate::control::try_send(HubMsg::PairingResult(
+                                            target.bytes,
+                                        ));
+                                        crate::pairing::cancel();
+                                    }
+                                }
+                                Err(e) => error!("Failed to connect: {:?}", e),
+                            }
+                        }
+                        Err(e) => {
+                            error!("Scan error: {:?}", e);
+                        }
+                    }
+
+                    // Wait before next scan cycle
+                    Timer::after(Duration::from_secs(5)).await;
+                }
+                embassy_futures::select::Either3::Second(_) => {
+                    info!(
+                        "Pairing state changed, restarting scan (pairing={})",
+                        crate::pairing::is_active()
+                    );
+                    // No delay - restart scan loop immediately to pick up new state
+                }
+                embassy_futures::select::Either3::Third(_) => {
+                    info!(
+                        "Scan timeout reached, restarting (pairing={})",
+                        crate::pairing::is_active()
+                    );
+                    // Timeout - restart to ensure we pick up any state changes
                 }
             }
-
-            // Wait before next scan cycle
-            Timer::after(Duration::from_secs(5)).await;
         }
     }
 
-    async fn connect_to_device(&mut self, sd: &Softdevice, device_uuid: &Uuid) -> Result<(), ()> {
-        info!("Connecting to device {:02x}...", device_uuid);
+    async fn connect_to_device(
+        &mut self,
+        sd: &Softdevice,
+        target: &ConnectTarget,
+    ) -> Result<(), ()> {
+        info!("Connecting to device {:02x}...", target.bytes);
 
+        let wl = [&target.addr];
         let config = central::ConnectConfig {
             scan_config: central::ScanConfig {
-                whitelist: None,
+                whitelist: Some(&wl),
                 ..Default::default()
             },
             conn_params: nrf_softdevice::raw::ble_gap_conn_params_t {
@@ -225,7 +287,7 @@ impl BleManager {
             }
         };
 
-        info!("Connected to device {:02x}", device_uuid);
+        info!("Connected to device {:02x}", target.bytes);
 
         // Allocate a dedicated queue for this device
         let device_queue = match allocate_device_queue() {
@@ -239,7 +301,7 @@ impl BleManager {
         // Register the queue for this device
         if let Err(_) = self
             .device_queues
-            .register(*device_uuid, device_queue)
+            .register(target.bytes, device_queue)
             .await
         {
             error!("Failed to register device queue");
@@ -247,23 +309,38 @@ impl BleManager {
         }
 
         // Add to active connections
-        if let Err(_) = self.active_connections.add(*device_uuid).await {
+        if let Err(_) = self.active_connections.add(target.bytes).await {
             warn!("Too many active connections");
-            self.device_queues.unregister(device_uuid).await;
+            self.device_queues.unregister(&target.bytes).await;
             return Err(());
         }
 
         // Initiate pairing/bonding - this is mandatory for security
-        info!("Requesting pairing for device {:02x}...", device_uuid);
+        // Add small delay to let peripheral fully initialize
+        info!(
+            "Connection established for {:02x}, waiting 500ms before pairing...",
+            target.bytes
+        );
+        Timer::after(Duration::from_millis(500)).await;
+
+        // Log connection state before pairing
+        let pre_pair_security = conn.security_mode();
+        info!("Pre-pairing security mode: {:?}", pre_pair_security);
+
+        info!("Requesting pairing for device {:02x}...", target.bytes);
+
+        // Request pairing - our SecurityHandler's security_params() will provide LESC-enabled params
         if let Err(e) = conn.request_pairing() {
             error!("Pairing request failed: {:?} - disconnecting", e);
-            self.active_connections.remove(device_uuid).await;
+            self.active_connections.remove(&target.bytes).await;
             return Err(());
         }
 
+        info!("Pairing request sent (LESC enabled via SecurityHandler)");
+
         // Wait for pairing/bonding to complete
         // The SecurityHandler callbacks (on_bonded, on_security_update) are called during this process
-        info!("Pairing initiated, waiting for bonding to complete...");
+        info!("Pairing request sent, waiting for bonding to complete...");
 
         let wait_for_pairing = async {
             loop {
@@ -291,36 +368,36 @@ impl BleManager {
         // Give it 30 seconds to pair (generous timeout for user interaction if needed)
         match with_timeout(Duration::from_secs(30), wait_for_pairing).await {
             Ok(Ok(())) => {
-                info!("Device {:02x} paired and bonded successfully", device_uuid);
+                info!("Device {:02x} paired and bonded successfully", target.bytes);
             }
             Ok(Err(())) => {
-                error!("Pairing failed for device {:02x}", device_uuid);
-                self.active_connections.remove(device_uuid).await;
-                self.device_queues.unregister(device_uuid).await;
+                error!("Pairing failed for device {:02x}", target.bytes);
+                self.active_connections.remove(&target.bytes).await;
+                self.device_queues.unregister(&target.bytes).await;
                 return Err(());
             }
             Err(TimeoutError) => {
                 error!(
                     "Pairing timeout for device {:02x} - disconnecting",
-                    device_uuid
+                    target.bytes
                 );
-                self.active_connections.remove(device_uuid).await;
-                self.device_queues.unregister(device_uuid).await;
+                self.active_connections.remove(&target.bytes).await;
+                self.device_queues.unregister(&target.bytes).await;
                 return Err(());
             }
         }
 
         // Handle the connection
         if let Err(e) = self
-            .handle_device_connection(&conn, device_uuid, device_queue)
+            .handle_device_connection(&conn, &target.bytes, device_queue)
             .await
         {
-            error!("Connection handler error for {:02x}: {:?}", device_uuid, e);
+            error!("Connection handler error for {:02x}: {:?}", target.bytes, e);
         }
 
         // Remove from active connections and unregister queue when done
-        self.active_connections.remove(device_uuid).await;
-        self.device_queues.unregister(device_uuid).await;
+        self.active_connections.remove(&target.bytes).await;
+        self.device_queues.unregister(&target.bytes).await;
 
         Ok(())
     }
@@ -415,4 +492,51 @@ impl BleManager {
             }
         }
     }
+}
+
+fn adv_is_target(payload: &[u8]) -> bool {
+    if let Some(cid) = COMPANY_ID {
+        if adv_has_msd(payload, cid) {
+            return true;
+        }
+    }
+    false
+}
+
+fn adv_has_msd(payload: &[u8], company_id: u16) -> bool {
+    let mut i = 0;
+    while i < payload.len() {
+        let len = payload[i] as usize;
+        if len == 0 {
+            break;
+        }
+        if i + 1 + len > payload.len() {
+            break;
+        }
+        let ty = payload[i + 1];
+        if ty == 0xFF {
+            let data = &payload[(i + 2)..(i + 1 + len)];
+            if data.len() >= 2 {
+                let cid = u16::from_le_bytes([data[0], data[1]]);
+                if cid == company_id {
+                    if PRODUCT_ID_PREFIXES.is_empty() {
+                        return true;
+                    }
+                    for prefix in PRODUCT_ID_PREFIXES {
+                        if data.len() >= 2 + prefix.len() && &data[2..(2 + prefix.len())] == *prefix
+                        {
+                            info!(
+                                "scan: MSD matched cid=0x{:04x} prefix={:?}",
+                                cid,
+                                defmt::Debug2Format(prefix)
+                            );
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        i += 1 + len;
+    }
+    false
 }

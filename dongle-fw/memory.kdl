@@ -8,13 +8,15 @@ regions {
     flash origin=0x0000_0000 length="1M" {
         mbr         origin=0x0000_0000 length="4K"
         softdevice  origin=0x0000_1000 length="152K"
-        app_flash   origin=0x0002_7000 length="764K"
-        settings    origin=0x000E_6000 length="24K" align="page_size"
+        app_flash   origin=0x0002_7000 length="512K"
+        settings    origin=0x000A_7000 length="24K" align="page_size"
+        bootloader  origin=0x000E_0000 end="0x000F_DFFF"
     }
 
     ram origin=0x2000_0000 length="256K" {
-        softdevice_ram origin=0x2000_0000 length="0x7b08"
-        app_ram        origin=0x2000_7b08 end="ram.end"
+        // Updated per SoftDevice runtime requirement
+        softdevice_ram origin=0x2000_0000 length="0x8d78"
+        app_ram        origin=0x2000_8d78 end="ram.end"
     }
 }
 

@@ -17,6 +17,32 @@ pub static BOND_TO_STORE: Signal<CriticalSectionRawMutex, BondData> = Signal::ne
 pub static BOND_CACHE: Mutex<CriticalSectionRawMutex, Vec<BondData, MAX_DEVICES>> =
     Mutex::new(Vec::new());
 
+/// Helper function to create LESC-enabled security parameters
+/// Must be const-compatible for static initialization
+fn create_lesc_sec_params() -> nrf_softdevice::raw::ble_gap_sec_params_t {
+    use nrf_softdevice::raw;
+
+    let mut sec_params: raw::ble_gap_sec_params_t = unsafe { core::mem::zeroed() };
+
+    sec_params.set_bond(1); // Enable bonding
+    sec_params.set_mitm(0); // No MITM (Just Works)
+    sec_params.set_lesc(1); // Enable LE Secure Connections - REQUIRED by trouble-host
+    sec_params.set_keypress(0); // No keypress notifications
+    sec_params.set_io_caps(raw::BLE_GAP_IO_CAPS_NONE as u8); // No display or keyboard
+    sec_params.set_oob(0); // No out-of-band data
+
+    sec_params.min_key_size = 7;
+    sec_params.max_key_size = 16;
+
+    // Set key distribution: enc=1 (encryption key), id=1 (identity key)
+    sec_params.kdist_own.set_enc(1);
+    sec_params.kdist_own.set_id(1);
+    sec_params.kdist_peer.set_enc(1);
+    sec_params.kdist_peer.set_id(1);
+
+    sec_params
+}
+
 pub struct DongleSecurityHandler {
     #[allow(dead_code)]
     settings: &'static Settings,
@@ -89,6 +115,11 @@ impl SecurityHandler for DongleSecurityHandler {
         info!("Passkey for bonding: {:?}", passkey);
     }
 
+    fn security_params(&self, _conn: &Connection) -> nrf_softdevice::raw::ble_gap_sec_params_t {
+        info!("Providing LESC-enabled security params");
+        create_lesc_sec_params()
+    }
+
     fn on_bonded(
         &self,
         _conn: &Connection,
@@ -101,10 +132,31 @@ impl SecurityHandler for DongleSecurityHandler {
         let address = peer_id.addr;
         let bd_addr: [u8; 6] = address.bytes;
 
+        // Extract flags from encryption info to determine security level
+        let flags = enc_info.flags;
+        let is_lesc = (flags & 0x01) != 0; // Bit 0 = LESC
+        let is_auth = (flags & 0x02) != 0; // Bit 1 = authenticated
+
+        info!(
+            "Bond flags - LESC: {}, Auth: {}, Raw flags: 0x{:02x}",
+            is_lesc, is_auth, flags
+        );
+
+        // Security level: 4 for LESC+MITM, 3 for LESC, 2 for authenticated, 1 for unauthenticated
+        let security_level = if is_lesc && is_auth {
+            4
+        } else if is_lesc {
+            3
+        } else if is_auth {
+            2
+        } else {
+            1
+        };
+
         let bond = BondData {
             bd_addr,
             ltk: enc_info.ltk,
-            security_level: 2, // Authenticated
+            security_level,
             is_bonded: true,
             irk: Some(peer_id.irk.as_raw().irk),
         };
@@ -142,8 +194,25 @@ impl SecurityHandler for DongleSecurityHandler {
 
                     // Create EncryptionInfo from stored LTK
                     // flags byte: bit 0 = lesc, bit 1 = auth, bits 2-7 = ltk_len
-                    let flags = if bond.security_level >= 2 { 0x02 } else { 0x00 }; // auth bit
-                    let flags = flags | (16 << 2); // ltk_len = 16 bytes (128 bits)
+                    let mut flags = 0x00;
+
+                    // Set LESC bit if security level indicates LESC was used (3 or 4)
+                    if bond.security_level >= 3 {
+                        flags |= 0x01; // LESC bit
+                    }
+
+                    // Set auth bit if security level indicates authenticated pairing (2 or 4)
+                    if bond.security_level == 2 || bond.security_level == 4 {
+                        flags |= 0x02; // auth bit
+                    }
+
+                    // Set LTK length (16 bytes = 128 bits)
+                    flags |= 16 << 2;
+
+                    info!(
+                        "Restoring bond for {:02x} - security_level: {}, flags: 0x{:02x}",
+                        bd_addr, bond.security_level, flags
+                    );
 
                     let enc_info = EncryptionInfo {
                         ltk: bond.ltk,
@@ -159,7 +228,31 @@ impl SecurityHandler for DongleSecurityHandler {
         None
     }
 
-    fn on_security_update(&self, _conn: &Connection, security_mode: SecurityMode) {
-        info!("Security updated: {:?}", security_mode);
+    fn on_security_update(&self, conn: &Connection, security_mode: SecurityMode) {
+        let peer_addr = conn.peer_address();
+        let bd_addr: [u8; 6] = peer_addr.bytes;
+        info!(
+            "Security updated for device {:02x} - mode: {:?}",
+            bd_addr, security_mode
+        );
+
+        // Log whether this is LESC or legacy
+        match security_mode {
+            SecurityMode::LescMitm => {
+                info!("✓ LESC with MITM protection established");
+            }
+            SecurityMode::Mitm => {
+                info!("⚠ Legacy pairing with MITM (not LESC)");
+            }
+            SecurityMode::JustWorks => {
+                info!("⚠ Legacy Just Works pairing (not LESC)");
+            }
+            SecurityMode::Open => {
+                info!("⚠ Open/no security");
+            }
+            _ => {
+                info!("Security mode: {:?}", security_mode);
+            }
+        }
     }
 }
