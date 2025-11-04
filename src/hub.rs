@@ -7,12 +7,19 @@ type Uuid = [u8; 6];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy)]
+pub enum PairingError {
+    Timeout,
+    Cancelled,
+}
+
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum HubMsg {
     ClearBonds,
-    ClearBondsResponse(ClearBondsResult),
+    ClearBondsResponse(Result<(), ClearBondsError>),
     BondStoreError(BondStoreError),
-
     DevicesSnapshot(Vec<Uuid, MAX_DEVICES>),
     DevicePacket(DevicePacket),
     RequestDevices,
@@ -20,11 +27,9 @@ pub enum HubMsg {
     ReadVersion(),
     ReadVersionResponse(Version),
     StartPairing(StartPairing),
-    PairingStarted,
-    PairingTimeout,
+    StartPairingResponse,
     CancelPairing,
-    PairingCancelled,
-    PairingResult(Uuid),
+    PairingResult(Result<Uuid, PairingError>),
 }
 
 #[repr(C)]
@@ -117,8 +122,8 @@ impl HubMsg {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
-pub enum ClearBondsResult {
-    Success,
+pub enum ClearBondsError {
+    Failed,
 }
 
 #[repr(C)]
