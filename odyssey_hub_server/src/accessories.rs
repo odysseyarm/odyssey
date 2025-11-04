@@ -16,14 +16,13 @@ const NUS_TX_UUID: Uuid = Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e
 const BBX_SHOT_CHAR_UUID: Uuid = Uuid::from_u128(0x6e40000e_204d_616e_7469_732054656368);
 
 pub async fn accessory_manager(
-    event_tx: tokio::sync::mpsc::Sender<crate::device_tasks::Message>,
+    event_tx: tokio::sync::broadcast::Sender<odyssey_hub_common::events::Event>,
     mut info_watch: Receiver<AccessoryInfoMap>,
     map_tx: Sender<AccessoryMap>,
     dl: Arc<
         parking_lot::Mutex<
             Vec<(
                 odyssey_hub_common::device::Device,
-                ats_usb::device::UsbDevice,
                 tokio::sync::mpsc::Sender<crate::device_tasks::DeviceTaskMessage>,
             )>,
         >,
@@ -128,7 +127,7 @@ pub async fn accessory_manager(
                                                                 let maybe_device = {
                                                                     let dl_guard = dl.lock();
                                                                     dl_guard.iter()
-                                                                        .find(|d| d.0.uuid() == assignment.get())
+                                                                        .find(|d| d.0.uuid == assignment.get())
                                                                         .map(|d| d.0.clone())
                                                                 };
                                                                 if let Some(device) = maybe_device {
@@ -136,7 +135,6 @@ pub async fn accessory_manager(
                                                                         let event_tx = event_tx.clone();
                                                                         async move {
                                                                             if let Err(e) = event_tx.send(
-                                                                                crate::device_tasks::Message::Event(
                                                                                     odyssey_hub_common::events::Event::DeviceEvent(
                                                                                         odyssey_hub_common::events::DeviceEvent(
                                                                                             device,
@@ -145,8 +143,7 @@ pub async fn accessory_manager(
                                                                                             ),
                                                                                         )
                                                                                     )
-                                                                                )
-                                                                            ).await {
+                                                                            ) {
                                                                                 warn!("accessory_manager: failed to forward impact event: {e}");
                                                                             }
                                                                         }

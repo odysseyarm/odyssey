@@ -1,236 +1,180 @@
-use std::net::SocketAddr;
-
 use std::num::NonZero;
 
 mod proto {
     tonic::include_proto!("odyssey.service_interface");
 }
-
 pub use proto::*;
 
 use odyssey_hub_common as common;
 
+// -------- Math type conversions --------
+
 impl From<nalgebra::Matrix3x1<f32>> for proto::Matrix3x1 {
-    fn from(value: nalgebra::Matrix3x1<f32>) -> Self {
+    fn from(v: nalgebra::Matrix3x1<f32>) -> Self {
         Self {
-            m11: value.x,
-            m21: value.y,
-            m31: value.z,
+            m11: v.x,
+            m21: v.y,
+            m31: v.z,
         }
     }
 }
-
-impl Into<nalgebra::Matrix3x1<f32>> for proto::Matrix3x1 {
-    fn into(self) -> nalgebra::Matrix3x1<f32> {
-        nalgebra::Matrix3x1::new(self.m11, self.m21, self.m31)
+impl From<proto::Matrix3x1> for nalgebra::Matrix3x1<f32> {
+    fn from(v: proto::Matrix3x1) -> Self {
+        nalgebra::Matrix3x1::new(v.m11, v.m21, v.m31)
     }
 }
 
 impl From<nalgebra::Matrix3<f32>> for proto::Matrix3x3 {
-    fn from(value: nalgebra::Matrix3<f32>) -> Self {
+    fn from(m: nalgebra::Matrix3<f32>) -> Self {
         Self {
-            m11: value.m11,
-            m12: value.m12,
-            m13: value.m13,
-            m21: value.m21,
-            m22: value.m22,
-            m23: value.m23,
-            m31: value.m31,
-            m32: value.m32,
-            m33: value.m33,
+            m11: m.m11,
+            m12: m.m12,
+            m13: m.m13,
+            m21: m.m21,
+            m22: m.m22,
+            m23: m.m23,
+            m31: m.m31,
+            m32: m.m32,
+            m33: m.m33,
         }
     }
 }
-
-impl Into<nalgebra::Matrix3<f32>> for proto::Matrix3x3 {
-    fn into(self) -> nalgebra::Matrix3<f32> {
+impl From<proto::Matrix3x3> for nalgebra::Matrix3<f32> {
+    fn from(m: proto::Matrix3x3) -> Self {
         nalgebra::Matrix3::new(
-            self.m11, self.m12, self.m13, self.m21, self.m22, self.m23, self.m31, self.m32,
-            self.m33,
+            m.m11, m.m12, m.m13, m.m21, m.m22, m.m23, m.m31, m.m32, m.m33,
         )
     }
 }
 
 impl From<nalgebra::Vector2<f32>> for proto::Vector2 {
-    fn from(value: nalgebra::Vector2<f32>) -> Self {
-        Self {
-            x: value.x,
-            y: value.y,
-        }
+    fn from(v: nalgebra::Vector2<f32>) -> Self {
+        Self { x: v.x, y: v.y }
     }
 }
-
-impl Into<nalgebra::Vector2<f32>> for proto::Vector2 {
-    fn into(self) -> nalgebra::Vector2<f32> {
-        nalgebra::Vector2::new(self.x, self.y)
+impl From<proto::Vector2> for nalgebra::Vector2<f32> {
+    fn from(v: proto::Vector2) -> Self {
+        nalgebra::Vector2::new(v.x, v.y)
     }
 }
 
 impl From<nalgebra::Vector3<f32>> for proto::Vector3 {
-    fn from(value: nalgebra::Vector3<f32>) -> Self {
+    fn from(v: nalgebra::Vector3<f32>) -> Self {
         Self {
-            x: value.x,
-            y: value.y,
-            z: value.z,
+            x: v.x,
+            y: v.y,
+            z: v.z,
         }
     }
 }
+impl From<proto::Vector3> for nalgebra::Vector3<f32> {
+    fn from(v: proto::Vector3) -> Self {
+        nalgebra::Vector3::new(v.x, v.y, v.z)
+    }
+}
 
-impl Into<nalgebra::Vector3<f32>> for proto::Vector3 {
-    fn into(self) -> nalgebra::Vector3<f32> {
-        nalgebra::Vector3::new(self.x, self.y, self.z)
+// -------- Device conversions --------
+
+impl From<common::device::Transport> for proto::Transport {
+    fn from(t: common::device::Transport) -> Self {
+        use common::device::Transport::*;
+        match t {
+            BLE => Self::Ble,
+            UDPHub => Self::Udp,
+            USB => Self::Usb,
+        }
+    }
+}
+impl From<proto::Transport> for common::device::Transport {
+    fn from(t: proto::Transport) -> Self {
+        match t {
+            proto::Transport::Ble => common::device::Transport::BLE,
+            proto::Transport::Udp => common::device::Transport::UDPHub,
+            proto::Transport::Usb => common::device::Transport::USB,
+        }
     }
 }
 
 impl From<common::device::Device> for proto::Device {
-    fn from(value: common::device::Device) -> Self {
-        match value {
-            common::device::Device::Udp(d) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::UdpDevice(proto::UdpDevice {
-                    id: d.id as i32,
-                    ip: d.addr.ip().to_string(),
-                    port: d.addr.port() as i32,
-                    uuid: d.uuid,
-                })),
-            },
-            common::device::Device::Hid(d) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::HidDevice(proto::HidDevice {
-                    path: d.path,
-                    uuid: d.uuid,
-                })),
-            },
-            common::device::Device::Cdc(d) => proto::Device {
-                device_oneof: Some(proto::device::DeviceOneof::CdcDevice(proto::CdcDevice {
-                    path: d.path,
-                    uuid: d.uuid,
-                })),
-            },
+    fn from(d: common::device::Device) -> Self {
+        Self {
+            uuid: d.uuid,
+            transport: proto::Transport::from(d.transport) as i32,
+        }
+    }
+}
+impl From<proto::Device> for common::device::Device {
+    fn from(d: proto::Device) -> Self {
+        common::device::Device {
+            uuid: d.uuid,
+            transport: proto::Transport::try_from(d.transport).unwrap().into(),
         }
     }
 }
 
-impl From<proto::Device> for common::device::Device {
-    fn from(value: proto::Device) -> Self {
-        match value.device_oneof.unwrap() {
-            proto::device::DeviceOneof::UdpDevice(proto::UdpDevice { id, ip, port, uuid }) => {
-                common::device::Device::Udp(common::device::UdpDevice {
-                    uuid,
-                    id: id as u8,
-                    addr: SocketAddr::new(ip.parse().unwrap(), port as u16),
-                })
-            }
-            proto::device::DeviceOneof::HidDevice(proto::HidDevice { path, uuid }) => {
-                common::device::Device::Hid(common::device::HidDevice { uuid, path })
-            }
-            proto::device::DeviceOneof::CdcDevice(proto::CdcDevice { path, uuid }) => {
-                common::device::Device::Cdc(common::device::CdcDevice { uuid, path })
-            }
-        }
-    }
-}
+// -------- Events --------
 
 impl From<common::events::Event> for proto::Event {
     fn from(value: common::events::Event) -> Self {
         match value {
             common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind)) => {
+                let device_pb: proto::Device = device.into();
+                let oneof = match kind {
+                    common::events::DeviceEventKind::AccelerometerEvent(e) => {
+                        proto::device_event::DeviceEventOneof::Accelerometer(
+                            proto::device_event::AccelerometerEvent {
+                                timestamp: e.timestamp,
+                                acceleration: Some(proto::Vector3::from(e.accel)),
+                                angular_velocity: Some(proto::Vector3::from(e.gyro)),
+                                euler_angles: Some(proto::Vector3::from(e.euler_angles)),
+                            },
+                        )
+                    }
+                    common::events::DeviceEventKind::TrackingEvent(e) => {
+                        proto::device_event::DeviceEventOneof::Tracking(
+                            proto::device_event::TrackingEvent {
+                                timestamp: e.timestamp,
+                                aimpoint: Some(proto::Vector2::from(e.aimpoint)),
+                                pose: e.pose.map(|p| proto::Pose {
+                                    rotation: Some(proto::Matrix3x3::from(p.rotation)),
+                                    translation: Some(proto::Matrix3x1::from(p.translation)),
+                                }),
+                                distance: e.distance,
+                                screen_id: e.screen_id,
+                            },
+                        )
+                    }
+                    common::events::DeviceEventKind::ImpactEvent(e) => {
+                        proto::device_event::DeviceEventOneof::Impact(
+                            proto::device_event::ImpactEvent {
+                                timestamp: e.timestamp,
+                            },
+                        )
+                    }
+                    common::events::DeviceEventKind::PacketEvent(pkt) => {
+                        proto::device_event::DeviceEventOneof::Packet(
+                            proto::device_event::PacketEvent {
+                                bytes: postcard::to_allocvec(&pkt)
+                                    .expect("postcard serialize Packet"),
+                            },
+                        )
+                    }
+                    common::events::DeviceEventKind::ZeroResult(success) => {
+                        proto::device_event::DeviceEventOneof::ZeroResult(
+                            proto::device_event::ZeroResultEvent { success },
+                        )
+                    }
+                    common::events::DeviceEventKind::SaveZeroResult(success) => {
+                        proto::device_event::DeviceEventOneof::SaveZeroResult(
+                            proto::device_event::SaveZeroResultEvent { success },
+                        )
+                    } // Removed:
+                      // ConnectEvent / DisconnectEvent / ShotDelayChangedEvent
+                };
                 proto::Event {
                     event_oneof: Some(proto::event::EventOneof::Device(proto::DeviceEvent {
-                        device: Some(device.into()),
-                        device_event_oneof: Some(match kind {
-                            common::events::DeviceEventKind::AccelerometerEvent(
-                                common::events::AccelerometerEvent {
-                                    timestamp,
-                                    accel,
-                                    gyro,
-                                    euler_angles,
-                                },
-                            ) => proto::device_event::DeviceEventOneof::Accelerometer(
-                                proto::device_event::AccelerometerEvent {
-                                    timestamp,
-                                    acceleration: Some(proto::Vector3 {
-                                        x: accel.x,
-                                        y: accel.y,
-                                        z: accel.z,
-                                    }),
-                                    angular_velocity: Some(proto::Vector3 {
-                                        x: gyro.x,
-                                        y: gyro.y,
-                                        z: gyro.z,
-                                    }),
-                                    euler_angles: Some(proto::Vector3 {
-                                        x: euler_angles.x,
-                                        y: euler_angles.y,
-                                        z: euler_angles.z,
-                                    }),
-                                },
-                            ),
-                            common::events::DeviceEventKind::TrackingEvent(
-                                common::events::TrackingEvent {
-                                    timestamp,
-                                    aimpoint,
-                                    pose,
-                                    distance,
-                                    screen_id,
-                                },
-                            ) => proto::device_event::DeviceEventOneof::Tracking(
-                                proto::device_event::TrackingEvent {
-                                    timestamp,
-                                    aimpoint: Some(proto::Vector2 {
-                                        x: aimpoint.x,
-                                        y: aimpoint.y,
-                                    }),
-                                    pose: Some(proto::Pose {
-                                        rotation: Some(pose.unwrap().rotation.into()),
-                                        translation: Some(pose.unwrap().translation.into()),
-                                    }),
-                                    distance,
-                                    screen_id,
-                                },
-                            ),
-                            common::events::DeviceEventKind::ImpactEvent(
-                                common::events::ImpactEvent { timestamp },
-                            ) => proto::device_event::DeviceEventOneof::Impact(
-                                proto::device_event::ImpactEvent { timestamp },
-                            ),
-                            common::events::DeviceEventKind::ConnectEvent => {
-                                proto::device_event::DeviceEventOneof::Connect(
-                                    proto::device_event::ConnectEvent {},
-                                )
-                            }
-                            common::events::DeviceEventKind::DisconnectEvent => {
-                                proto::device_event::DeviceEventOneof::Disconnect(
-                                    proto::device_event::DisconnectEvent {},
-                                )
-                            }
-                            common::events::DeviceEventKind::ZeroResult(success) => {
-                                proto::device_event::DeviceEventOneof::ZeroResult(
-                                    proto::device_event::ZeroResultEvent { success },
-                                )
-                            }
-                            common::events::DeviceEventKind::SaveZeroResult(success) => {
-                                proto::device_event::DeviceEventOneof::SaveZeroResult(
-                                    proto::device_event::SaveZeroResultEvent { success },
-                                )
-                            }
-                            common::events::DeviceEventKind::ShotDelayChangedEvent(delay_ms) => {
-                                proto::device_event::DeviceEventOneof::ShotDelayChanged(
-                                    proto::device_event::ShotDelayChangedEvent {
-                                        delay_ms: delay_ms.into(),
-                                    },
-                                )
-                            }
-                            common::events::DeviceEventKind::PacketEvent(packet) => {
-                                proto::device_event::DeviceEventOneof::Packet(
-                                    proto::device_event::PacketEvent {
-                                        bytes: {
-                                            let mut buf = Vec::new();
-                                            packet.serialize(&mut buf);
-                                            buf
-                                        },
-                                    },
-                                )
-                            }
-                        }),
+                        device: Some(device_pb),
+                        device_event_oneof: Some(oneof),
                     })),
                 }
             }
@@ -240,257 +184,213 @@ impl From<common::events::Event> for proto::Event {
 
 impl From<proto::Event> for common::events::Event {
     fn from(event: proto::Event) -> Self {
-        match event.event_oneof.unwrap() {
-            proto::event::EventOneof::Device(proto::DeviceEvent {
-                device,
-                device_event_oneof,
-            }) => common::events::Event::DeviceEvent(common::events::DeviceEvent(
-                device.unwrap().into(),
-                match device_event_oneof.unwrap() {
-                    proto::device_event::DeviceEventOneof::Accelerometer(
-                        proto::device_event::AccelerometerEvent {
-                            timestamp,
-                            acceleration,
-                            angular_velocity,
-                            euler_angles,
-                        },
-                    ) => common::events::DeviceEventKind::AccelerometerEvent(
-                        common::events::AccelerometerEvent {
-                            timestamp,
-                            accel: nalgebra::Vector3::new(
-                                acceleration.clone().unwrap().x,
-                                acceleration.clone().unwrap().y,
-                                acceleration.clone().unwrap().z,
-                            ),
-                            gyro: nalgebra::Vector3::new(
-                                angular_velocity.clone().unwrap().x,
-                                angular_velocity.clone().unwrap().y,
-                                angular_velocity.clone().unwrap().z,
-                            ),
-                            euler_angles: nalgebra::Vector3::new(
-                                euler_angles.clone().unwrap().x,
-                                euler_angles.clone().unwrap().y,
-                                euler_angles.clone().unwrap().z,
-                            ),
-                        },
-                    ),
-                    proto::device_event::DeviceEventOneof::Tracking(
-                        proto::device_event::TrackingEvent {
-                            timestamp,
-                            aimpoint,
-                            pose,
-                            distance,
-                            screen_id,
-                        },
-                    ) => common::events::DeviceEventKind::TrackingEvent(
-                        common::events::TrackingEvent {
-                            timestamp,
-                            aimpoint: nalgebra::Vector2::new(
-                                aimpoint.clone().unwrap().x,
-                                aimpoint.clone().unwrap().y,
-                            ),
-                            pose: if let Some(pose) = pose {
-                                Some(common::events::Pose {
-                                    rotation: pose.rotation.unwrap().into(),
-                                    translation: pose.translation.unwrap().into(),
-                                })
-                            } else {
-                                None
-                            },
-                            distance,
-                            screen_id,
-                        },
-                    ),
-                    proto::device_event::DeviceEventOneof::Impact(
-                        proto::device_event::ImpactEvent { timestamp },
-                    ) => {
-                        common::events::DeviceEventKind::ImpactEvent(common::events::ImpactEvent {
-                            timestamp,
-                        })
-                    }
-                    proto::device_event::DeviceEventOneof::Connect(_) => {
-                        common::events::DeviceEventKind::ConnectEvent
-                    }
-                    proto::device_event::DeviceEventOneof::Disconnect(_) => {
-                        common::events::DeviceEventKind::DisconnectEvent
-                    }
-                    proto::device_event::DeviceEventOneof::ZeroResult(
-                        proto::device_event::ZeroResultEvent { success },
-                    ) => common::events::DeviceEventKind::ZeroResult(success),
-                    proto::device_event::DeviceEventOneof::SaveZeroResult(
-                        proto::device_event::SaveZeroResultEvent { success },
-                    ) => common::events::DeviceEventKind::SaveZeroResult(success),
-                    proto::device_event::DeviceEventOneof::ShotDelayChanged(
-                        proto::device_event::ShotDelayChangedEvent { delay_ms },
-                    ) => common::events::DeviceEventKind::ShotDelayChangedEvent(delay_ms as u16),
-                    proto::device_event::DeviceEventOneof::Packet(
-                        proto::device_event::PacketEvent { bytes },
-                    ) => {
-                        let mut bytes_slice: &[u8] = &bytes;
-                        common::events::DeviceEventKind::PacketEvent(
-                            ats_usb::packets::vm::Packet::parse(&mut bytes_slice).unwrap(),
-                        )
-                    }
-                },
-            )),
-        }
+        let Some(proto::event::EventOneof::Device(d)) = event.event_oneof else {
+            panic!("proto::Event missing device variant");
+        };
+        let device: common::device::Device = match d.device {
+            Some(dev) => dev.into(),
+            None => panic!("proto::DeviceEvent missing device field"),
+        };
+        let kind = match d.device_event_oneof.expect("proto::DeviceEvent missing payload") {
+            proto::device_event::DeviceEventOneof::Accelerometer(e) => {
+                common::events::DeviceEventKind::AccelerometerEvent(
+                    common::events::AccelerometerEvent {
+                        timestamp: e.timestamp,
+                        accel: e.acceleration.expect("acceleration").into(),
+                        gyro: e.angular_velocity.expect("angular_velocity").into(),
+                        euler_angles: e.euler_angles.expect("euler_angles").into(),
+                    },
+                )
+            }
+            proto::device_event::DeviceEventOneof::Tracking(e) => {
+                common::events::DeviceEventKind::TrackingEvent(common::events::TrackingEvent {
+                    timestamp: e.timestamp,
+                    aimpoint: e.aimpoint.expect("aimpoint").into(),
+                    pose: e.pose.map(|p| common::events::Pose {
+                        rotation: p.rotation.expect("rotation").into(),
+                        translation: p.translation.expect("translation").into(),
+                    }),
+                    distance: e.distance,
+                    screen_id: e.screen_id,
+                })
+            }
+            proto::device_event::DeviceEventOneof::Impact(e) => {
+                common::events::DeviceEventKind::ImpactEvent(common::events::ImpactEvent {
+                    timestamp: e.timestamp,
+                })
+            }
+            proto::device_event::DeviceEventOneof::Packet(proto::device_event::PacketEvent {
+                bytes,
+            }) => {
+                let pkt: ats_usb::packets::vm::Packet =
+                    postcard::from_bytes(&bytes).expect("postcard deserialize Packet");
+                common::events::DeviceEventKind::PacketEvent(pkt)
+            }
+            proto::device_event::DeviceEventOneof::ZeroResult(e) => {
+                common::events::DeviceEventKind::ZeroResult(e.success)
+            }
+            proto::device_event::DeviceEventOneof::SaveZeroResult(e) => {
+                common::events::DeviceEventKind::SaveZeroResult(e.success)
+            }
+        };
+        common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind))
     }
 }
 
+// -------- Accessory conversions (unchanged) --------
+
+impl From<common::ScreenInfo> for proto::ScreenInfoReply {
+    fn from(v: common::ScreenInfo) -> Self {
+        let bounds = proto::ScreenBounds {
+            tl: Some(proto::Vector2::from(v.bounds[0])),
+            tr: Some(proto::Vector2::from(v.bounds[1])),
+            bl: Some(proto::Vector2::from(v.bounds[2])),
+            br: Some(proto::Vector2::from(v.bounds[3])),
+        };
+        Self {
+            id: v.id as u32,
+            bounds: Some(bounds),
+        }
+    }
+}
 impl From<proto::ScreenInfoReply> for common::ScreenInfo {
-    fn from(value: proto::ScreenInfoReply) -> Self {
-        let bounds = value.bounds.unwrap();
-        common::ScreenInfo {
-            id: value.id as u8,
+    fn from(v: proto::ScreenInfoReply) -> Self {
+        let b = v.bounds.unwrap();
+        Self {
+            id: v.id as u8,
             bounds: [
-                bounds.tl.unwrap().into(),
-                bounds.tr.unwrap().into(),
-                bounds.bl.unwrap().into(),
-                bounds.br.unwrap().into(),
+                b.tl.unwrap().into(),
+                b.tr.unwrap().into(),
+                b.bl.unwrap().into(),
+                b.br.unwrap().into(),
             ],
         }
     }
 }
 
-impl From<common::accessory::AccessoryInfo> for proto::AccessoryInfo {
-    fn from(value: common::accessory::AccessoryInfo) -> Self {
-        Self {
-            name: value.name,
-            ty: proto::AccessoryType::from(value.ty).into(),
-            assignment: if let Some(val) = value.assignment {
-                val.get()
-            } else {
-                0
-            },
-            features: value
-                .features
-                .into_iter()
-                .map(|f| proto::AccessoryFeature::from(f).into())
-                .collect(),
-        }
-    }
-}
-
-impl From<proto::AccessoryInfo> for common::accessory::AccessoryInfo {
-    fn from(value: proto::AccessoryInfo) -> Self {
-        Self {
-            name: value.name,
-            ty: proto::AccessoryType::try_from(value.ty).unwrap().into(),
-            assignment: if value.assignment != 0 {
-                NonZero::new(value.assignment)
-            } else {
-                None
-            },
-            features: value
-                .features
-                .into_iter()
-                .map(|f| {
-                    common::accessory::AccessoryFeature::from(
-                        proto::AccessoryFeature::try_from(f).unwrap(),
-                    )
-                    .into()
-                })
-                .collect(),
-        }
-    }
-}
-
 impl From<common::accessory::AccessoryFeature> for proto::AccessoryFeature {
-    fn from(value: common::accessory::AccessoryFeature) -> Self {
-        match value {
-            common::accessory::AccessoryFeature::Impact => proto::AccessoryFeature::Impact,
+    fn from(v: common::accessory::AccessoryFeature) -> Self {
+        match v {
+            common::accessory::AccessoryFeature::Impact => Self::Impact,
         }
     }
 }
-
 impl From<proto::AccessoryFeature> for common::accessory::AccessoryFeature {
-    fn from(value: proto::AccessoryFeature) -> Self {
-        match value {
+    fn from(v: proto::AccessoryFeature) -> Self {
+        match v {
             proto::AccessoryFeature::Impact => common::accessory::AccessoryFeature::Impact,
         }
     }
 }
-
 impl From<common::accessory::AccessoryType> for proto::AccessoryType {
-    fn from(value: common::accessory::AccessoryType) -> Self {
-        match value {
-            common::accessory::AccessoryType::DryFireMag => proto::AccessoryType::DryFireMag,
-            common::accessory::AccessoryType::BlackbeardX => proto::AccessoryType::BlackbeardX,
+    fn from(v: common::accessory::AccessoryType) -> Self {
+        match v {
+            common::accessory::AccessoryType::DryFireMag => Self::DryFireMag,
+            common::accessory::AccessoryType::BlackbeardX => Self::BlackbeardX,
         }
     }
 }
-
 impl From<proto::AccessoryType> for common::accessory::AccessoryType {
-    fn from(value: proto::AccessoryType) -> Self {
-        match value {
+    fn from(v: proto::AccessoryType) -> Self {
+        match v {
             proto::AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
             proto::AccessoryType::BlackbeardX => common::accessory::AccessoryType::BlackbeardX,
         }
     }
 }
 
-impl From<common::accessory::AccessoryMap> for proto::AccessoryMapReply {
-    fn from(map: common::accessory::AccessoryMap) -> Self {
-        let accessory_map = map
-            .into_iter()
-            .map(|(k, (accessory, connected))| {
-                let mut buf = [0u8; 8];
-                buf[..6].copy_from_slice(&k);
-                let key = u64::from_le_bytes(buf);
-                let accessory: proto::AccessoryInfo = accessory.into();
-                (
-                    key,
-                    proto::AccessoryStatus {
-                        accessory: Some(accessory),
-                        connected,
-                    },
-                )
-            })
-            .collect();
-        proto::AccessoryMapReply { accessory_map }
+impl From<common::accessory::AccessoryInfo> for proto::AccessoryInfo {
+    fn from(v: common::accessory::AccessoryInfo) -> Self {
+        Self {
+            name: v.name,
+            ty: proto::AccessoryType::from(v.ty) as i32,
+            assignment: v.assignment.map(NonZero::get).unwrap_or(0),
+            features: v
+                .features
+                .into_iter()
+                .map(|f| proto::AccessoryFeature::from(f) as i32)
+                .collect(),
+        }
+    }
+}
+impl From<proto::AccessoryInfo> for common::accessory::AccessoryInfo {
+    fn from(v: proto::AccessoryInfo) -> Self {
+        Self {
+            name: v.name,
+            ty: proto::AccessoryType::try_from(v.ty).unwrap().into(),
+            assignment: if v.assignment != 0 {
+                NonZero::new(v.assignment)
+            } else {
+                None
+            },
+            features: v
+                .features
+                .into_iter()
+                .map(|f| {
+                    common::accessory::AccessoryFeature::from(
+                        proto::AccessoryFeature::try_from(f).unwrap(),
+                    )
+                })
+                .collect(),
+        }
     }
 }
 
+impl From<common::accessory::AccessoryMap> for proto::AccessoryMapReply {
+    fn from(map: common::accessory::AccessoryMap) -> Self {
+        let mut accessory_map = std::collections::HashMap::new();
+        for (k6, (info, connected)) in map {
+            let mut buf = [0u8; 8];
+            buf[..6].copy_from_slice(&k6);
+            let key64 = u64::from_le_bytes(buf);
+            accessory_map.insert(
+                key64,
+                proto::AccessoryStatus {
+                    accessory: Some(info.into()),
+                    connected,
+                },
+            );
+        }
+        Self { accessory_map }
+    }
+}
 impl From<proto::AccessoryMapReply> for common::accessory::AccessoryMap {
-    fn from(value: proto::AccessoryMapReply) -> Self {
-        value
-            .accessory_map
+    fn from(v: proto::AccessoryMapReply) -> Self {
+        v.accessory_map
             .into_iter()
-            .map(|(k, v)| {
+            .map(|(k64, status)| {
                 let mut buf = [0u8; 8];
-                buf[..6].copy_from_slice(&k.to_le_bytes()[..6]);
-                let key = buf[..6].try_into().unwrap();
-                (key, (v.accessory.unwrap().into(), v.connected))
+                buf[..6].copy_from_slice(&k64.to_le_bytes()[..6]);
+                let k6: [u8; 6] = buf[..6].try_into().unwrap();
+                (k6, (status.accessory.unwrap().into(), status.connected))
             })
             .collect()
     }
 }
 
 impl From<proto::AccessoryInfoMap> for common::accessory::AccessoryInfoMap {
-    fn from(value: proto::AccessoryInfoMap) -> Self {
-        value
-            .accessory_info_map
+    fn from(v: proto::AccessoryInfoMap) -> Self {
+        v.accessory_info_map
             .into_iter()
-            .map(|(k, v)| {
+            .map(|(k64, info)| {
                 let mut buf = [0u8; 8];
-                buf[..6].copy_from_slice(&k.to_le_bytes()[..6]);
-                let key = buf[..6].try_into().unwrap();
-                (key, v.into())
+                buf[..6].copy_from_slice(&k64.to_le_bytes()[..6]);
+                let k6: [u8; 6] = buf[..6].try_into().unwrap();
+                (k6, info.into())
             })
             .collect()
     }
 }
-
 impl From<common::accessory::AccessoryInfoMap> for proto::AccessoryInfoMap {
     fn from(map: common::accessory::AccessoryInfoMap) -> Self {
-        let accessory_info_map = map
-            .into_iter()
-            .map(|(k, v)| {
-                let mut buf = [0u8; 8];
-                buf[..6].copy_from_slice(&k);
-                (u64::from_le_bytes(buf), v.into())
-            })
-            .collect();
-        proto::AccessoryInfoMap { accessory_info_map }
+        let mut m = std::collections::HashMap::new();
+        for (k6, info) in map {
+            let mut buf = [0u8; 8];
+            buf[..6].copy_from_slice(&k6);
+            m.insert(u64::from_le_bytes(buf), info.into());
+        }
+        Self {
+            accessory_info_map: m,
+        }
     }
 }

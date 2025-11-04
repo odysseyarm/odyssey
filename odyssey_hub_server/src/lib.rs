@@ -1,6 +1,9 @@
 mod accessories;
+mod device_link;
 mod device_tasks;
 mod server;
+mod usb_hub_link;
+mod usb_link;
 
 use std::{pin::Pin, sync::Arc};
 
@@ -129,33 +132,27 @@ pub async fn run_server(
 
     let (event_sender, _) = broadcast::channel(12);
 
-    let screen_calibrations = tokio::task::spawn_blocking(|| {
-        odyssey_hub_common::config::screen_calibrations()
-            .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))
-    })
-    .await??;
+    let screen_calibrations = odyssey_hub_common::config::screen_calibrations_async()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))?;
     let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
 
     println!("Screen calibrations loaded: {:?}", screen_calibrations);
 
-    let device_offsets = tokio::task::spawn_blocking(|| {
-        odyssey_hub_common::config::device_offsets()
-            .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
-    })
-    .await??;
+    let device_offsets = odyssey_hub_common::config::device_offsets_async()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))?;
     let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
 
-    let device_shot_delays = tokio::task::spawn_blocking(|| {
-        odyssey_hub_common::config::device_shot_delays()
-            .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))
-    })
-    .await??;
+    let device_shot_delays = odyssey_hub_common::config::device_shot_delays_async()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load device shot delays: {}", e))?;
 
-    let accessory_info_map = tokio::task::spawn_blocking(|| {
-        odyssey_hub_common::config::accessory_map()
-            .map_err(|e| anyhow::anyhow!("Failed to load accessory map: {}", e))
-    })
-    .await??;
+    let device_shot_delays = Arc::new(tokio::sync::RwLock::new(device_shot_delays));
+    let shot_delay_watch = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let accessory_info_map = odyssey_hub_common::config::accessory_map_async()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load accessory map: {}", e))?;
 
     let (accessory_info_sender, accessory_info_receiver) =
         tokio::sync::watch::channel(accessory_info_map.clone());
@@ -174,7 +171,8 @@ pub async fn run_server(
         event_sender: event_sender.clone(),
         screen_calibrations: screen_calibrations.clone(),
         device_offsets: device_offsets.clone(),
-        device_shot_delays: device_shot_delays.into(),
+        device_shot_delays: device_shot_delays.clone(),
+        shot_delay_watch: shot_delay_watch.clone(),
         accessory_map: accessory_map.clone(),
         accessory_map_sender: accessory_map_sender.clone(),
         accessory_info_sender,
@@ -186,16 +184,8 @@ pub async fn run_server(
         // Forward events from the device tasks to subscribed clients
         while let Some(message) = receiver.recv().await {
             match message {
-                device_tasks::Message::Connect(d1, d2, sender) => {
-                    dl.lock().push((d1.clone(), d2.clone(), sender));
-                    event_sender
-                        .send(odyssey_hub_common::events::Event::DeviceEvent({
-                            odyssey_hub_common::events::DeviceEvent(
-                                d1.clone(),
-                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
-                            )
-                        }))
-                        .unwrap();
+                device_tasks::Message::Connect(d1, sender) => {
+                    dl.lock().push((d1.clone(), sender));
                 }
                 device_tasks::Message::Disconnect(d) => {
                     let mut dl = dl.lock();
@@ -203,14 +193,6 @@ pub async fn run_server(
                     if let Some(i) = i {
                         dl.remove(i);
                     }
-                    event_sender
-                        .send(odyssey_hub_common::events::Event::DeviceEvent({
-                            odyssey_hub_common::events::DeviceEvent(
-                                d.clone(),
-                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
-                            )
-                        }))
-                        .unwrap();
                 }
                 device_tasks::Message::Event(e) => {
                     event_sender.send(e).unwrap();
@@ -220,8 +202,8 @@ pub async fn run_server(
     };
 
     tokio::select! {
-        _ = device_tasks(sender.clone(), screen_calibrations.clone(), device_offsets.clone()) => {},
-        _ = accessory_manager(sender.clone(), accessory_info_receiver, accessory_map_sender.clone(), dl.clone()) => {},
+        _ = device_tasks(sender.clone(), screen_calibrations.clone(), device_offsets.clone(), device_shot_delays.clone(), shot_delay_watch.clone(), accessory_map.clone(), accessory_map_sender.clone(), accessory_info_receiver.clone(), event_sender.clone()) => {},
+        _ = accessory_manager(event_sender.clone(), accessory_info_receiver, accessory_map_sender.clone(), dl.clone()) => {},
         _ = event_fwd => {},
         _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))

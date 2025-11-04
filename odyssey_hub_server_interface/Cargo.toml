@@ -6,11 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nalgebra = "0.33.2"
+nalgebra = "0.34"
 odyssey_hub_common = { path = "../odyssey_hub_common" }
 prost = "0.12.4"
 tonic = { version = "0.11.0", features = ["prost"] }
 ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+postcard = "1"
 
 [build-dependencies]
 tonic-build = "0.11.0"

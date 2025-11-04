@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, num::NonZeroU64};
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AccessoryType {
     DryFireMag,

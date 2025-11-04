@@ -11,11 +11,8 @@ pub enum DeviceEventKind {
     AccelerometerEvent(AccelerometerEvent),
     TrackingEvent(TrackingEvent),
     ImpactEvent(ImpactEvent),
-    ConnectEvent,
-    DisconnectEvent,
     ZeroResult(bool),
     SaveZeroResult(bool),
-    ShotDelayChangedEvent(u16),
     PacketEvent(ats_usb::packets::vm::Packet),
 }
 

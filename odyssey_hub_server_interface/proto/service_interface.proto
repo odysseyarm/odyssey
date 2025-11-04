@@ -3,146 +3,104 @@ syntax = "proto3";
 package odyssey.service_interface;
 
 service Service {
+  // Devices
   rpc GetDeviceList (DeviceListRequest) returns (DeviceListReply) {}
+  rpc SubscribeDeviceList (SubscribeDeviceListRequest) returns (stream DeviceListReply) {}
+
+  // Accessories
   rpc GetAccessoryMap (AccessoryMapRequest) returns (AccessoryMapReply) {}
   rpc SubscribeAccessoryMap (SubscribeAccessoryMapRequest) returns (stream AccessoryMapReply) {}
+  rpc UpdateAccessoryInfoMap (AccessoryInfoMap) returns (EmptyReply) {}
+
+  // Screen info
   rpc GetScreenInfoById (ScreenInfoByIdRequest) returns (ScreenInfoReply) {}
+
   rpc SubscribeEvents (SubscribeEventsRequest) returns (stream Event) {}
+
+  // Vendor & zero
   rpc WriteVendor (WriteVendorRequest) returns (EmptyReply) {}
   rpc ClearZero (Device) returns (EmptyReply) {}
   rpc ResetZero (Device) returns (EmptyReply) {}
   rpc SaveZero (Device) returns (EmptyReply) {}
   rpc Zero (ZeroRequest) returns (EmptyReply) {}
+
+  // Shot delay (get + set + save + reset) + subscribe
   rpc ResetShotDelay (Device) returns (ResetShotDelayReply) {}
   rpc GetShotDelay (Device) returns (GetShotDelayReply) {}
   rpc SetShotDelay (SetShotDelayRequest) returns (EmptyReply) {}
   rpc SaveShotDelay (Device) returns (EmptyReply) {}
-  rpc UpdateAccessoryInfoMap (AccessoryInfoMap) returns (EmptyReply) {}
+  rpc SubscribeShotDelay (SubscribeShotDelayRequest) returns (stream GetShotDelayReply) {}
 }
 
-message UdpDevice {
-  int32 id = 1;
-  string ip = 2;
-  int32 port = 3;
-  uint64 uuid = 4;
-}
-
-message HidDevice {
-  string path = 1;
-  uint64 uuid = 2;
-}
-
-message CdcDevice {
-  string path = 1;
-  uint64 uuid = 2;
-}
-
-message Device {
-  oneof device_oneof {
-    UdpDevice udpDevice = 1;
-    HidDevice hidDevice = 2;
-    CdcDevice cdcDevice = 3;
-  }
-}
+// --- Basic math types ---
 
 message Matrix3x3 {
-  float m11 = 1;
-  float m12 = 2;
-  float m13 = 3;
-  float m21 = 4;
-  float m22 = 5;
-  float m23 = 6;
-  float m31 = 7;
-  float m32 = 8;
-  float m33 = 9;
+  float m11 = 1; float m12 = 2; float m13 = 3;
+  float m21 = 4; float m22 = 5; float m23 = 6;
+  float m31 = 7; float m32 = 8; float m33 = 9;
 }
 
-message Matrix3x1 {
-  float m11 = 1;
-  float m21 = 2;
-  float m31 = 3;
-}
-
-message Vector2 {
-  float x = 1;
-  float y = 2;
-}
-
-message Vector3 {
-  float x = 1;
-  float y = 2;
-  float z = 3;
-}
+message Matrix3x1 { float m11 = 1; float m21 = 2; float m31 = 3; }
+message Vector2 { float x = 1; float y = 2; }
+message Vector3 { float x = 1; float y = 2; float z = 3; }
 
 message Pose {
   Matrix3x3 rotation = 1;
   Matrix3x1 translation = 2;
 }
 
+// --- Device ---
+
+enum Transport {
+  BLE = 0;
+  UDP = 1;
+  USB = 2;
+}
+
+message Device {
+  uint64 uuid = 1;
+  Transport transport = 2;
+}
+
+// --- Events ---
+
 message DeviceEvent {
   Device device = 1;
+
   message AccelerometerEvent {
     uint32 timestamp = 1;
     Vector3 acceleration = 2;
     Vector3 angular_velocity = 3;
     Vector3 euler_angles = 4;
   }
+
   message TrackingEvent {
     uint32 timestamp = 1;
     Vector2 aimpoint = 2;
-    Pose pose = 3;
-    float distance = 4;
+    Pose   pose = 3;
+    float  distance = 4;
     uint32 screen_id = 5;
   }
+
   message ImpactEvent {
     uint32 timestamp = 1;
   }
-  message ConnectEvent {}
-  message DisconnectEvent {}
+
   message PacketEvent {
     bytes bytes = 1;
   }
-  message ZeroResultEvent {
-    bool success = 1;
-  }
-  message SaveZeroResultEvent {
-    bool success = 1;
-  }
-  message ShotDelayChangedEvent {
-    uint32 delay_ms = 1;
-  }
+
+  message ZeroResultEvent { bool success = 1; }
+  message SaveZeroResultEvent { bool success = 1; }
+
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
-    TrackingEvent tracking = 3;
-    ImpactEvent impact = 4;
-    ConnectEvent connect = 5;
-    DisconnectEvent disconnect = 6;
-    PacketEvent packet = 7;
-    ZeroResultEvent zero_result = 8;
+    TrackingEvent      tracking      = 3;
+    ImpactEvent        impact        = 4;
+    PacketEvent        packet        = 7;
+    ZeroResultEvent    zero_result   = 8;
     SaveZeroResultEvent save_zero_result = 9;
-    ShotDelayChangedEvent shot_delay_changed = 10;
   }
-}
-
-enum AccessoryType {
-  DRY_FIRE_MAG = 0;
-  BLACKBEARD_X = 1;
-}
-
-enum AccessoryFeature {
-  IMPACT = 0;
-}
-
-message AccessoryInfo {
-  string name = 1;
-  AccessoryType ty = 2;
-  uint64 assignment = 3;
-  repeated AccessoryFeature features = 4;
-}
-
-message AccessoryStatus {
-  AccessoryInfo accessory = 1;
-  bool connected = 2;
 }
 
 message Event {
@@ -151,26 +109,57 @@ message Event {
   }
 }
 
-message DeviceListRequest {}
+// --- Device list ---
 
-message DeviceListReply {
-  repeated Device device_list = 1;
+message DeviceListRequest {}
+message SubscribeDeviceListRequest {}
+message DeviceListReply { repeated Device device_list = 1; }
+
+// --- Accessories ---
+
+enum AccessoryType { DRY_FIRE_MAG = 0; BLACKBEARD_X = 1; }
+enum AccessoryFeature { IMPACT = 0; }
+
+message AccessoryInfo {
+  string name = 1;
+  AccessoryType ty = 2;
+  uint64 assignment = 3;                // 0 means None
+  repeated AccessoryFeature features = 4;
 }
 
+message AccessoryStatus {
+  AccessoryInfo accessory = 1;
+  bool connected = 2;
+}
 
 message AccessoryMapRequest {}
-
-message AccessoryMapReply {
-  map<uint64, AccessoryStatus> accessory_map = 1;
-}
-
-message AccessoryInfoMap {
-  map<uint64, AccessoryInfo> accessory_info_map = 1;
-}
-
 message SubscribeAccessoryMapRequest {}
+message AccessoryMapReply { map<uint64, AccessoryStatus> accessory_map = 1; }
+message AccessoryInfoMap { map<uint64, AccessoryInfo> accessory_info_map = 1; }
 
-message SubscribeEventsRequest {}
+// --- Shot delay ---
+
+message SubscribeShotDelayRequest { Device device = 1; }
+message ResetShotDelayReply { uint32 delay_ms = 1; }
+message GetShotDelayReply   { uint32 delay_ms = 1; }
+message SetShotDelayRequest { Device device = 1; uint32 delay_ms = 2; }
+
+// --- Screen info ---
+
+message ScreenBounds {
+  Vector2 tl = 1;
+  Vector2 tr = 2;
+  Vector2 bl = 4;
+  Vector2 br = 3;
+}
+
+message ScreenInfoByIdRequest { uint32 id = 1; }
+message ScreenInfoReply {
+  uint32 id = 1;
+  ScreenBounds bounds = 2;
+}
+
+// --- Misc ---
 
 message WriteVendorRequest {
   Device device = 1;
@@ -184,33 +173,5 @@ message ZeroRequest {
   Vector2 target = 3;
 }
 
-message SetShotDelayRequest {
-  Device device = 1;
-  uint32 delay_ms = 2;
-}
-
+message SubscribeEventsRequest {}
 message EmptyReply {}
-
-message ScreenBounds {
-  Vector2 tl = 1;
-  Vector2 tr = 2;
-  Vector2 bl = 4;
-  Vector2 br = 3;
-}
-
-message ScreenInfoByIdRequest {
-  uint32 id = 1;
-}
-
-message ScreenInfoReply {
-  uint32 id = 1;
-  ScreenBounds bounds = 2;
-}
-
-message ResetShotDelayReply {
-  uint32 delay_ms = 1;
-}
-
-message GetShotDelayReply {
-  uint32 delay_ms = 1;
-}
