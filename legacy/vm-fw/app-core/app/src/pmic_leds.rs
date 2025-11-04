@@ -25,6 +25,8 @@ pub enum LedState {
     TurningOff,
     TurningOn,
     ProgramError,
+    // Pairing mode: flash blue rapidly
+    Pairing,
 
     // On, battery status, BLE not connected
     BattCharging,
@@ -46,6 +48,7 @@ impl LedState {
         match self {
             // Fast blink
             LedState::TurningOff | LedState::TurningOn => (100, 150),
+            LedState::Pairing => (200, 200),
 
             // Slow blink
             LedState::BattLow
@@ -122,6 +125,7 @@ fn color_for(state: LedState, frame_idx: u8) -> (bool, bool, bool) {
         // immediate/solid-ish
         LedState::Off => RGB_OFF,
         LedState::ProgramError => RGB_WHT,
+        LedState::Pairing => { if frame_idx == 0 { RGB_BLU } else { RGB_OFF } },
         LedState::TurningOff => {
             if frame_idx == 0 {
                 RGB_RED
@@ -327,3 +331,7 @@ where
         }
     }
 }
+
+
+
+

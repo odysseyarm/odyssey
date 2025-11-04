@@ -84,6 +84,21 @@ bind_interrupts!(struct Irqs {
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
 });
 
+#[cfg(context = "atslite1")]
+#[embassy_executor::task]
+async fn usb_pmic_config_task(
+    configured_sig: &'static embassy_sync::signal::Signal<embassy_sync::blocking_mutex::raw::ThreadModeRawMutex, bool>,
+    pmic: &'static embassy_sync::mutex::Mutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+) {
+    configured_sig.wait().await;
+    pmic.lock()
+        .await
+        .set_vbus_in_current_limit(npm1300_rs::sysreg::VbusInCurrentLimit::MA500)
+        .await
+        .unwrap();
+    defmt::info!("USB configured, PMIC current limit set to 500mA");
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     #[cfg(context = "vm")]
@@ -266,18 +281,9 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap();
 
-    if configured_sig.wait().await {
-        pmic.lock()
-            .await
-            .set_vbus_in_current_limit(npm1300_rs::sysreg::VbusInCurrentLimit::MA500)
-            .await
-            .unwrap();
-    }
-
-    usb_snd.wait_enabled().await;
-    usb_rcv.wait_enabled().await;
-
-    defmt::info!("USB Endpoints enabled");
+    // Spawn PMIC configuration task - don't block main flow
+    #[cfg(context = "atslite1")]
+    spawner.must_spawn(usb_pmic_config_task(configured_sig, pmic));
 
     static PAJ7025R2_MUTEX: static_cell::StaticCell<AsyncMutex<NoopRawMutex, Paj>> = static_cell::StaticCell::new();
     static PAJ7025R3_MUTEX: static_cell::StaticCell<AsyncMutex<NoopRawMutex, Paj>> = static_cell::StaticCell::new();

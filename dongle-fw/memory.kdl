@@ -1,4 +1,4 @@
-// nRF52840 + S140 v7.x
+// nRF52840 + trouble-host + nrf-sdc (SoftDevice Controller as library, no blob)
 
 vars {
     page_size "4K"
@@ -6,17 +6,20 @@ vars {
 
 regions {
     flash origin=0x0000_0000 length="1M" {
+        // Reserve Nordic MBR (4KB) at start. Application starts at 0x0000_1000.
         mbr         origin=0x0000_0000 length="4K"
-        softdevice  origin=0x0000_1000 length="152K"
-        app_flash   origin=0x0002_7000 length="512K"
-        settings    origin=0x000A_7000 length="24K" align="page_size"
-        bootloader  origin=0x000E_0000 end="0x000F_DFFF"
+        // Application region up to start of settings.
+        app_flash   origin=0x0000_1000 end="0x000E_DFFF"
+        // Settings: 24K placed immediately below bootloader, page-aligned.
+        settings    origin=0x000E_E000 length="24K" align="page_size"
+        // Bootloader region
+        bootloader  origin=0x000F_4000 end="0x000F_DFFF"
     }
 
+    // The bootloader uses the first 8 bytes of RAM to preserve state so don't
+    // touch them
     ram origin=0x2000_0000 length="256K" {
-        // Updated per SoftDevice runtime requirement
-        softdevice_ram origin=0x2000_0000 length="0x8d78"
-        app_ram        origin=0x2000_8d78 end="ram.end"
+        app_ram origin=0x2000_0008 end="ram.end"
     }
 }
 

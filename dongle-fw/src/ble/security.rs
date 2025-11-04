@@ -3,8 +3,6 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use heapless::Vec;
-use nrf_softdevice::ble::security::{IoCapabilities, SecurityHandler};
-use nrf_softdevice::ble::{Connection, EncryptionInfo, IdentityKey, MasterId, SecurityMode};
 use protodongers::hub::MAX_DEVICES;
 
 use crate::storage::{BondData, Settings};
@@ -17,40 +15,50 @@ pub static BOND_TO_STORE: Signal<CriticalSectionRawMutex, BondData> = Signal::ne
 pub static BOND_CACHE: Mutex<CriticalSectionRawMutex, Vec<BondData, MAX_DEVICES>> =
     Mutex::new(Vec::new());
 
-/// Helper function to create LESC-enabled security parameters
-/// Must be const-compatible for static initialization
-fn create_lesc_sec_params() -> nrf_softdevice::raw::ble_gap_sec_params_t {
-    use nrf_softdevice::raw;
+// Security is handled by trouble-host's built-in manager; no extra handler needed here.
 
-    let mut sec_params: raw::ble_gap_sec_params_t = unsafe { core::mem::zeroed() };
+/// Convert trouble-host BondInformation into our persisted BondData format.
+pub fn bonddata_from_info(info: &trouble_host::prelude::BondInformation) -> BondData {
+    let mut bd_addr = [0u8; 6];
+    bd_addr.copy_from_slice(info.identity.bd_addr.raw());
 
-    sec_params.set_bond(1); // Enable bonding
-    sec_params.set_mitm(0); // No MITM (Just Works)
-    sec_params.set_lesc(1); // Enable LE Secure Connections - REQUIRED by trouble-host
-    sec_params.set_keypress(0); // No keypress notifications
-    sec_params.set_io_caps(raw::BLE_GAP_IO_CAPS_NONE as u8); // No display or keyboard
-    sec_params.set_oob(0); // No out-of-band data
+    let security_level = match info.security_level {
+        trouble_host::prelude::SecurityLevel::NoEncryption => 0,
+        trouble_host::prelude::SecurityLevel::Encrypted => 1,
+        trouble_host::prelude::SecurityLevel::EncryptedAuthenticated => 2,
+    };
 
-    sec_params.min_key_size = 7;
-    sec_params.max_key_size = 16;
+    let irk = info.identity.irk.map(|irk| irk.to_le_bytes());
 
-    // Set key distribution: enc=1 (encryption key), id=1 (identity key)
-    sec_params.kdist_own.set_enc(1);
-    sec_params.kdist_own.set_id(1);
-    sec_params.kdist_peer.set_enc(1);
-    sec_params.kdist_peer.set_id(1);
-
-    sec_params
+    BondData {
+        bd_addr,
+        ltk: info.ltk.to_le_bytes(),
+        security_level,
+        is_bonded: info.is_bonded,
+        irk,
+    }
 }
 
-pub struct DongleSecurityHandler {
-    #[allow(dead_code)]
-    settings: &'static Settings,
-}
+/// Convert our persisted BondData into trouble-host BondInformation.
+pub fn info_from_bonddata(bd: &BondData) -> trouble_host::prelude::BondInformation {
+    let security_level = match bd.security_level {
+        0 => trouble_host::prelude::SecurityLevel::NoEncryption,
+        1 => trouble_host::prelude::SecurityLevel::Encrypted,
+        2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
+        _ => trouble_host::prelude::SecurityLevel::NoEncryption,
+    };
+    let irk = bd
+        .irk
+        .map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk));
 
-impl DongleSecurityHandler {
-    pub const fn new(settings: &'static Settings) -> Self {
-        Self { settings }
+    trouble_host::prelude::BondInformation {
+        identity: trouble_host::prelude::Identity {
+            bd_addr: trouble_host::prelude::BdAddr::new(bd.bd_addr),
+            irk,
+        },
+        security_level,
+        is_bonded: bd.is_bonded,
+        ltk: trouble_host::prelude::LongTermKey::from_le_bytes(bd.ltk),
     }
 }
 
@@ -102,157 +110,10 @@ pub async fn update_bond_cache(bond: BondData) {
     }
 }
 
-impl SecurityHandler for DongleSecurityHandler {
-    fn io_capabilities(&self) -> IoCapabilities {
-        IoCapabilities::None // No display or keyboard - Just Works pairing
-    }
-
-    fn can_bond(&self, _conn: &Connection) -> bool {
-        true // We want to bond with all devices
-    }
-
-    fn display_passkey(&self, passkey: &[u8; 6]) {
-        info!("Passkey for bonding: {:?}", passkey);
-    }
-
-    fn security_params(&self, _conn: &Connection) -> nrf_softdevice::raw::ble_gap_sec_params_t {
-        info!("Providing LESC-enabled security params");
-        create_lesc_sec_params()
-    }
-
-    fn on_bonded(
-        &self,
-        _conn: &Connection,
-        _master_id: MasterId,
-        enc_info: EncryptionInfo,
-        peer_id: IdentityKey,
-    ) {
-        info!("Bonded! Storing keys...");
-
-        let address = peer_id.addr;
-        let bd_addr: [u8; 6] = address.bytes;
-
-        // Extract flags from encryption info to determine security level
-        let flags = enc_info.flags;
-        let is_lesc = (flags & 0x01) != 0; // Bit 0 = LESC
-        let is_auth = (flags & 0x02) != 0; // Bit 1 = authenticated
-
-        info!(
-            "Bond flags - LESC: {}, Auth: {}, Raw flags: 0x{:02x}",
-            is_lesc, is_auth, flags
-        );
-
-        // Security level: 4 for LESC+MITM, 3 for LESC, 2 for authenticated, 1 for unauthenticated
-        let security_level = if is_lesc && is_auth {
-            4
-        } else if is_lesc {
-            3
-        } else if is_auth {
-            2
-        } else {
-            1
-        };
-
-        let bond = BondData {
-            bd_addr,
-            ltk: enc_info.ltk,
-            security_level,
-            is_bonded: true,
-            irk: Some(peer_id.irk.as_raw().irk),
-        };
-
-        // Signal async task to store bond to flash
-        // This is safe to call from sync context
-        BOND_TO_STORE.signal(bond);
-        info!("Bond queued for storage: device {:02x}", bd_addr);
-    }
-
-    fn get_key(&self, _conn: &Connection, _master_id: MasterId) -> Option<EncryptionInfo> {
-        // Peripheral role - not used in our central-only implementation
-        None
-    }
-
-    fn get_peripheral_key(&self, conn: &Connection) -> Option<(MasterId, EncryptionInfo)> {
-        // This is called when reconnecting to a bonded peripheral
-        // Look up the bond from our in-memory cache
-        let peer_addr = conn.peer_address();
-        let bd_addr: [u8; 6] = peer_addr.bytes;
-
-        info!("Looking up bond for device {:02x}", bd_addr);
-
-        // Try to lock the cache (should be fast with CriticalSectionRawMutex)
-        if let Ok(bonds) = BOND_CACHE.try_lock() {
-            for bond in bonds.iter() {
-                if bond.bd_addr == bd_addr {
-                    info!("Found bond for device {:02x}", bd_addr);
-
-                    // Create MasterId (all zeros since we don't track EDIV/RAND)
-                    let master_id = MasterId::from_raw(nrf_softdevice::raw::ble_gap_master_id_t {
-                        ediv: 0,
-                        rand: [0; 8],
-                    });
-
-                    // Create EncryptionInfo from stored LTK
-                    // flags byte: bit 0 = lesc, bit 1 = auth, bits 2-7 = ltk_len
-                    let mut flags = 0x00;
-
-                    // Set LESC bit if security level indicates LESC was used (3 or 4)
-                    if bond.security_level >= 3 {
-                        flags |= 0x01; // LESC bit
-                    }
-
-                    // Set auth bit if security level indicates authenticated pairing (2 or 4)
-                    if bond.security_level == 2 || bond.security_level == 4 {
-                        flags |= 0x02; // auth bit
-                    }
-
-                    // Set LTK length (16 bytes = 128 bits)
-                    flags |= 16 << 2;
-
-                    info!(
-                        "Restoring bond for {:02x} - security_level: {}, flags: 0x{:02x}",
-                        bd_addr, bond.security_level, flags
-                    );
-
-                    let enc_info = EncryptionInfo {
-                        ltk: bond.ltk,
-                        flags,
-                    };
-
-                    return Some((master_id, enc_info));
-                }
-            }
-        }
-
-        info!("No bond found for device {:02x}", bd_addr);
-        None
-    }
-
-    fn on_security_update(&self, conn: &Connection, security_mode: SecurityMode) {
-        let peer_addr = conn.peer_address();
-        let bd_addr: [u8; 6] = peer_addr.bytes;
-        info!(
-            "Security updated for device {:02x} - mode: {:?}",
-            bd_addr, security_mode
-        );
-
-        // Log whether this is LESC or legacy
-        match security_mode {
-            SecurityMode::LescMitm => {
-                info!("✓ LESC with MITM protection established");
-            }
-            SecurityMode::Mitm => {
-                info!("⚠ Legacy pairing with MITM (not LESC)");
-            }
-            SecurityMode::JustWorks => {
-                info!("⚠ Legacy Just Works pairing (not LESC)");
-            }
-            SecurityMode::Open => {
-                info!("⚠ Open/no security");
-            }
-            _ => {
-                info!("Security mode: {:?}", security_mode);
-            }
-        }
-    }
+/// Clear all bonds from the cache
+/// Should be called when clearing bonds to prevent stale bonds from being used
+pub async fn clear_bond_cache() {
+    let mut cache = BOND_CACHE.lock().await;
+    cache.clear();
+    info!("Cleared bond cache");
 }

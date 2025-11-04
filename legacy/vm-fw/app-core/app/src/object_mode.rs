@@ -40,13 +40,16 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
-    let pkt_channel = Channel::new();
+    let pkt_channel = Channel::<Packet, 64>::new();
     let stream_infos = StreamInfos::new();
     let exit = Watch::<_, _, 4>::new();
     let exit0 = exit.receiver().unwrap();
     let _exit1 = exit.receiver().unwrap();
     let _exit2 = exit.receiver().unwrap();
     let _exit3 = exit.receiver().unwrap();
+
+    // Also handle BLE L2CAP packets using the same request handler
+    let (l2cap_rx, l2cap_tx) = crate::ble::l2cap_bridge::get_or_init();
 
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
@@ -55,8 +58,10 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
+        l2cap_rx,
+        l2cap_tx,
     );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, l2cap_tx);
     let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
         ctx.paj7025r2_group,
@@ -84,13 +89,16 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
     defmt::info!("Entering Object Mode");
     let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
-    let pkt_channel = Channel::new();
+    let pkt_channel = Channel::<Packet, 64>::new();
     let stream_infos = StreamInfos::new();
     let exit = Watch::<_, _, 4>::new();
     let exit0 = exit.receiver().unwrap();
     let _exit1 = exit.receiver().unwrap();
     let _exit2 = exit.receiver().unwrap();
     let _exit3 = exit.receiver().unwrap();
+
+    // Also handle BLE L2CAP packets using the same request handler
+    let (l2cap_rx, l2cap_tx) = crate::ble::l2cap_bridge::get_or_init();
 
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
@@ -99,8 +107,10 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
+        l2cap_rx,
+        l2cap_tx,
     );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, l2cap_tx);
     let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
         ctx.paj7025r2_group,
@@ -132,28 +142,55 @@ const PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH
     Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
 };
 
+#[derive(Debug, Clone, Copy)]
+enum PacketSource {
+    Usb,
+    Ble,
+}
+
 async fn usb_rcv_loop(
     paj7025r2: &AsyncMutex<NoopRawMutex, Paj>,
     paj7025r3: &AsyncMutex<NoopRawMutex, Paj>,
     stream_infos: &StreamInfos,
-    pkt_snd: Sender<'_, Packet, 4>,
+    pkt_snd: Sender<'_, Packet, 64>,
     pkt_rcv: &mut PacketReader<'_>,
     settings: &mut Settings,
+    l2cap_rx: &'static crate::ble::l2cap_bridge::L2capRxChannel,
+    l2cap_tx: &'static crate::ble::l2cap_bridge::L2capTxChannel,
 ) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
-        let pkt = match pkt_rcv.wait_for_packet().await {
-            Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                pkt_rcv.rcv.wait_enabled().await;
-                continue;
-            }
-            Err(e) => {
-                defmt::error!("Failed to read packet: {}", e);
-                continue;
-            }
-            Ok(p) => p,
+        // Select between USB and BLE packets
+        // When USB is disabled, the USB future will pend forever, allowing BLE to be selected
+        let (src, pkt) = match select(
+            async {
+                loop {
+                    match pkt_rcv.wait_for_packet().await {
+                        Ok(pkt) => break pkt,
+                        Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
+                            // USB disabled - pend forever to allow BLE path to be selected
+                            core::future::pending::<()>().await;
+                        }
+                        Err(e) => {
+                            defmt::error!("Failed to read USB packet: {}", e);
+                            embassy_time::Timer::after_millis(100).await;
+                        }
+                    }
+                }
+            },
+            l2cap_rx.receive(),
+        )
+        .await
+        {
+            Either::First(pkt) => (PacketSource::Usb, pkt),
+            Either::Second(pkt) => (PacketSource::Ble, pkt),
         };
 
-        defmt::debug!("Received packet: {}", defmt::Debug2Format(&pkt));
+        match src {
+            PacketSource::Usb => defmt::info!("[app] src=USB"),
+            PacketSource::Ble => defmt::info!("[app] src=BLE"),
+        }
+
+        defmt::trace!("Received packet: {}", defmt::Debug2Format(&pkt));
 
         let response = match pkt.data {
             P::WriteRegister(register) => {
@@ -209,6 +246,7 @@ async fn usb_rcv_loop(
                 None
             }
             P::ReadConfig(kind) => {
+                defmt::info!("[app] building ReadConfig response for {:?}", kind);
                 let wire_config = match kind {
                     ConfigKind::ImpactThreshold => {
                         wire::GeneralConfig::ImpactThreshold(settings.general.impact_threshold)
@@ -292,22 +330,40 @@ async fn usb_rcv_loop(
         if let Some(r) = response
             && r.id != 255
         {
-            pkt_snd.send(r).await;
+            match src {
+                PacketSource::Usb => {
+                    pkt_snd.send(r).await;
+                }
+                PacketSource::Ble => {
+                    defmt::trace!("[app] enqueue BLE response: {}", defmt::Debug2Format(&r));
+                    l2cap_tx.send(r).await;
+                }
+            }
         }
     }
 }
 
 async fn usb_snd_loop(
     mut pkt_writer: PacketWriter<'_>,
-    pkt_rcv: Receiver<'_, Packet, 4>,
+    pkt_rcv: Receiver<'_, Packet, 64>,
     mut exit: ExitReceiver<'_>,
+    l2cap_tx: &'static crate::ble::l2cap_bridge::L2capTxChannel,
 ) -> ! {
     loop {
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
             break;
         };
-        defmt::debug!("Sending packet: {}", defmt::Debug2Format(&pkt));
+        defmt::trace!("Sending packet: {}", defmt::Debug2Format(&pkt));
+
+        // Try to send via USB (may fail if USB is disabled)
         let _ = pkt_writer.write_packet(&pkt).await;
+
+        // Also send via BLE if there's space - non-blocking for stream data
+        if l2cap_tx.try_send(pkt.clone()).is_ok() {
+            defmt::trace!("Broadcast packet to BLE");
+        } else {
+            defmt::error!("Broadcast packet to BLE failed");
+        }
     }
     todo!()
 }
@@ -316,7 +372,7 @@ async fn usb_snd_loop(
 async fn imu_loop<const N: usize>(
     imu: &mut Imu<N>,
     imu_int: &mut ImuInterrupt,
-    pkt_snd: Sender<'_, Packet, 4>,
+    pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
 ) {
     // ---- Sensor time: 24-bit free-running counter, 39.0625 µs per tick ----
@@ -380,7 +436,7 @@ async fn imu_loop<const N: usize>(
 async fn imu_loop(
     imu: &mut Imu,
     imu_int: &mut ImuInterrupt,
-    pkt_snd: Sender<'_, Packet, 4>,
+    pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
 ) {
     static BUFFER: static_cell::ConstStaticCell<[u32; 521]> = static_cell::ConstStaticCell::new([0; 521]);
@@ -403,8 +459,8 @@ async fn imu_loop(
         let gy = pkt.gyro_data_y();
         let gz = pkt.gyro_data_z();
 
-        let (ax, ay, az) = (-ay, ax, az);
-        let (gx, gy, gz) = (-gy, gx, gz);
+        let (ax, ay, az) = (ax, -ay, -az);
+        let (gx, gy, gz) = (gx, -gy, -gz);
 
         if stream_infos.imu.enabled() {
             // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
@@ -436,7 +492,7 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     ppi_set: Peri<'d, AnyConfigurableChannel>,
     ppi_clr: Peri<'d, AnyConfigurableChannel>,
     timer: Peri<'d, T>,
-    pkt_snd: Sender<'_, Packet, 4>,
+    pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
 ) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
     let (r2, r2_fod, nf_ch) = r2_group;
@@ -528,9 +584,9 @@ impl<'a> PacketReader<'a> {
 
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
         let mut data = [0; 1024];
-        defmt::info!("Read transfer start");
+        defmt::debug!("Read transfer start");
         let n = self.rcv.read_transfer(&mut data).await?;
-        defmt::info!("Read transfer done");
+        defmt::debug!("Read transfer done");
         Ok(postcard::from_bytes(&data[..n])?)
     }
 }

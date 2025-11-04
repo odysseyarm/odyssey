@@ -14,8 +14,13 @@ embassy-sync = { version = "0.7.2", features = ["defmt"] }
 embassy-futures = "0.1.2"
 embassy-embedded-hal = "0.5.0"
 
-nrf-softdevice = { version = "0.1.0", git = "https://github.com/embassy-rs/nrf-softdevice", features = ["defmt", "ble-central", "ble-sec", "ble-l2cap", "s140", "nrf52840", "critical-section-impl"] }
-nrf-softdevice-s140 = "0.1.1"
+defmt-rtt = { version = "0.4", optional = true }
+panic-probe = { version = "0.3", features = ["print-defmt"], optional = true }
+
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "4f4fa16e65b6a52c66b0140df47a606ac5c140a6", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "defmt", "security", "scan"] }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c", default-features = false, features = ["defmt", "nrf52840", "central", "peripheral"] }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c", default-features = false, features = ["nrf52840", "defmt", "critical-section-impl"] }
+bt-hci = "0.6.0"
 
 cortex-m-rt = "0.7.5"
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
@@ -29,19 +34,17 @@ sequential-storage = { version = "5.0.1", features = ["defmt-03"] }
 futures = { version = "0.3", default-features = false }
 postcard = { version = "1.0", default-features = false, features = ["heapless"] }
 critical-section = "1.2.0"
+rand_core = { version = "0.6", default-features = false }
 
 # Use same minicbor version as protodongers (only for storage, not USB)
 minicbor = { git = "https://github.com/Abrahamh08/minicbor", features = ["derive"] }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
 
+protodongers = { git = "https://github.com/odysseyarm/protodonge-rs.git", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+
 # Use cfg-noodle with our minicbor version
 cfg-noodle = { version = "0.5", default-features = false, features = ["defmt"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-
-[dependencies.protodongers]
-path = "../../protodonge-rs"
-default-features = false
-features = ["minicbor", "serde-no-std", "defmt"]
 
 [build-dependencies]
 memory-spec = "0.1.0"
@@ -49,9 +52,15 @@ memory-spec = "0.1.0"
 [features]
 default = ["defmt"]
 defmt = ["embassy-usb/defmt", "embassy-nrf/defmt", "protodongers/defmt", "embassy-futures/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
+rtt = ["defmt-rtt", "panic-probe"]
 
 [profile.release]
 debug = 2
 lto = "fat"
 opt-level = "z"
 codegen-units = 1
+
+[patch.crates-io]
+kdl = { git = "https://github.com/Abrahamh08/kdl-rs", rev = "bb49e5a671f4186046a2acb2df0342e4c0a498ab" }
+
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "da4af0a7ae67d8ec592edf5eff9bbaed2d9e439a" }

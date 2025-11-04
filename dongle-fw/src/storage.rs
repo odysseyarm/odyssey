@@ -12,6 +12,7 @@ mod settings_region {
     }
 }
 
+use bt_hci::param::BdAddr;
 use cfg_noodle::NdlDataStorage;
 use cfg_noodle::flash::Flash;
 use cfg_noodle::minicbor::{CborLen, Decode, Encode};
@@ -34,21 +35,20 @@ pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
 static NODE_BONDS: StorageListNode<BondsSettings> = StorageListNode::new("settings/bonds");
 
-static NODE_SCAN_LIST: StorageListNode<ScanListSettings> =
-    StorageListNode::new("settings/scan_list");
+// Scan list is no longer persisted - it's derived from bonds on boot
+// and only holds temporary pairing targets during runtime
 
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-// Signaled by the SoftDevice task when it has started, indicating flash access is safe.
-static SOFTDEVICE_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+// Flash access is coordinated through MPSL to avoid conflicts with radio operations
 
 pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
 // Use a static scratch buffer for cfg-noodle to avoid large task stack usage
 const STORAGE_BUF_SIZE: usize =
-    <Flash<nrf_softdevice::Flash, NoCache> as NdlDataStorage>::MAX_ELEM_SIZE;
+    <Flash<nrf_mpsl::Flash<'static>, NoCache> as NdlDataStorage>::MAX_ELEM_SIZE;
 static STORAGE_BUF: StaticCell<[u8; STORAGE_BUF_SIZE]> = StaticCell::new();
-static STORAGE_FLASH: StaticCell<Flash<nrf_softdevice::Flash, NoCache>> = StaticCell::new();
+static STORAGE_FLASH: StaticCell<Flash<nrf_mpsl::Flash<'static>, NoCache>> = StaticCell::new();
 
 /// BLE bond information for a single device
 #[derive(Debug, Clone, Copy, Encode, Decode, CborLen)]
@@ -103,14 +103,14 @@ impl Default for ScanListSettings {
 impl Default for BondsSettings {
     fn default() -> Self {
         Self {
-            slots: [None, None, None, None, None, None, None],
+            slots: [None; MAX_DEVICES],
         }
     }
 }
 
 #[embassy_executor::task]
 async fn settings_worker(
-    flash_dev: nrf_softdevice::Flash,
+    flash_dev: nrf_mpsl::Flash<'static>,
     region: core::ops::Range<u32>,
     auto_interval: Duration,
 ) {
@@ -120,7 +120,7 @@ async fn settings_worker(
     let buffer = STORAGE_BUF.init([0u8; STORAGE_BUF_SIZE]);
 
     // Wait until SoftDevice task signals readiness before using flash
-    SOFTDEVICE_READY.wait().await;
+    // Start immediately; no need to wait for SoftDevice readiness.
     loop {
         let read_fut = async {
             LIST.needs_read().await;
@@ -162,34 +162,57 @@ async fn settings_worker(
 
         match embassy_futures::select::select(read_fut, select(write_fut, tick_fut)).await {
             // Reads ready
-            Either::First(_) => match LIST.process_reads(&mut *flash, &mut buffer[..]).await {
-                Ok(rpt) => defmt::debug!("process_reads ok: {:?}", rpt),
-                Err(e) => defmt::error!("process_reads err: {:?}", e),
-            },
-            // Writes or tick
-            Either::Second(Either::First(_)) | Either::Second(Either::Second(_)) => {
+            Either::First(_) => {
+                defmt::debug!("Storage: starting process_reads");
+                match LIST.process_reads(&mut *flash, &mut buffer[..]).await {
+                    Ok(rpt) => defmt::debug!("process_reads ok: {:?}", rpt),
+                    Err(e) => defmt::error!("process_reads err: {:?}", e),
+                }
+                defmt::debug!("Storage: finished process_reads");
+            }
+            // Write wake (queued write or explicit flush)
+            Either::Second(Either::First(_)) => {
+                defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
                 match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
                     Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
                     Err(e) => defmt::debug!("process_writes err: {:?}", e),
                 }
+                defmt::debug!("Storage: finished process_writes");
 
                 // GC after writes
+                defmt::debug!("Storage: starting process_garbage");
                 match LIST.process_garbage(&mut *flash, &mut buffer[..]).await {
                     Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
                     Err(e) => defmt::error!("process_garbage err: {:?}", e),
                 }
+                defmt::debug!("Storage: finished process_garbage");
+            }
+            // Periodic tick: attempt a single write pass, same as vm-fw
+            Either::Second(Either::Second(_)) => {
+                defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
+                match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
+                    Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
+                    Err(e) => defmt::debug!("process_writes err: {:?}", e),
+                }
+                defmt::debug!("Storage: finished process_writes");
+
+                // GC after writes
+                defmt::debug!("Storage: starting process_garbage");
+                match LIST.process_garbage(&mut *flash, &mut buffer[..]).await {
+                    Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
+                    Err(e) => defmt::error!("process_garbage err: {:?}", e),
+                }
+                defmt::debug!("Storage: finished process_garbage");
             }
         }
     }
 }
 
-#[allow(dead_code)]
 #[inline]
-fn settings_flush_now() {
+pub fn settings_flush_now() {
     SETTINGS_FLUSH.signal(());
 }
 
-/// Settings containing persistent bonds
 pub struct Settings {
     #[allow(dead_code)]
     bonds: AsyncMutex<ThreadModeRawMutex, BondsSettings>,
@@ -273,11 +296,11 @@ impl Settings {
 
     /// Get bond for a device
     #[allow(dead_code)]
-    pub async fn get_bond(&self, bd_addr: &[u8; 6]) -> Option<BondData> {
+    pub async fn get_bond(&self, bd_addr: BdAddr) -> Option<BondData> {
         let bonds = self.bonds.lock().await;
         for bond_opt in bonds.slots.iter() {
             if let Some(bond) = bond_opt {
-                if &bond.bd_addr == bd_addr {
+                if bond.bd_addr == bd_addr.into_inner() {
                     return Some(*bond);
                 }
             }
@@ -292,16 +315,10 @@ impl Settings {
         bonds.clone()
     }
 
-    /// Write scan list to flash
-    async fn scan_list_write(&self) {
-        let scan_list = self.scan_list.lock().await;
-        let mut h = NODE_SCAN_LIST.attach(&LIST).await.unwrap();
-        h.write(&*scan_list).await.unwrap();
-        drop(scan_list);
-        SETTINGS_FLUSH.signal(());
-    }
+    // scan_list_write removed - scan list is no longer persisted to flash
 
-    /// Add an address to the scan list
+    /// Add an address to the scan list (runtime only, not persisted)
+    #[allow(dead_code)]
     pub async fn add_scan_target(&self, address: [u8; 6]) -> Result<(), ()> {
         let mut scan_list = self.scan_list.lock().await;
 
@@ -328,12 +345,11 @@ impl Settings {
             defmt::warn!("Scan list full, overwrote oldest with {:02x}", address);
         }
         info!("Added {:02x} to scan list", address);
-        drop(scan_list);
-        self.scan_list_write().await;
         Ok(())
     }
 
-    /// Remove an address from the scan list
+    /// Remove an address from the scan list (runtime only)
+    #[allow(dead_code)]
     pub async fn remove_scan_target(&self, address: &[u8; 6]) -> Result<(), ()> {
         let mut scan_list = self.scan_list.lock().await;
 
@@ -342,8 +358,6 @@ impl Settings {
                 if addr == address {
                     *slot = None;
                     info!("Removed {:02x} from scan list", address);
-                    drop(scan_list);
-                    self.scan_list_write().await;
                     return Ok(());
                 }
             }
@@ -362,12 +376,19 @@ impl Settings {
             .filter_map(|&addr| addr)
             .collect()
     }
+
+    /// Clear all scan targets (runtime only)
+    pub async fn scan_list_clear(&self) {
+        let mut scan_list = self.scan_list.lock().await;
+        *scan_list = ScanListSettings::default();
+        info!("Cleared all scan targets");
+    }
 }
 
 /// Initialize settings subsystem
 pub async fn init_settings(
     spawner: &Spawner,
-    flash_dev: nrf_softdevice::Flash,
+    flash_dev: nrf_mpsl::Flash<'static>,
 ) -> &'static mut Settings {
     let region = get_settings_region();
     assert!((region.end - region.start) as usize >= 2 * PAGE_SIZE);
@@ -382,6 +403,7 @@ pub async fn init_settings(
     );
 
     // Start I/O worker first so it can service read hydration for attached nodes
+    // TEMP: Use very long interval to avoid periodic flash writes during debugging
     spawner.must_spawn(settings_worker(
         flash_dev,
         region.clone(),
@@ -398,19 +420,19 @@ pub async fn init_settings(
     let bond_count = bonds_data.slots.iter().filter(|b| b.is_some()).count();
     info!("Loaded {} bonds from flash", bond_count);
 
-    // Attach scan_list node with default
-    let h_scan_list = NODE_SCAN_LIST
-        .attach_with_default(&LIST, ScanListSettings::default)
-        .await
-        .unwrap();
-
-    let scan_list_data = h_scan_list.load();
+    // Populate scan list from bonds (not persisted to flash)
+    let mut scan_list_data = ScanListSettings::default();
+    for (i, bond_opt) in bonds_data.slots.iter().enumerate() {
+        if let Some(bond) = bond_opt {
+            scan_list_data.addresses[i] = Some(bond.bd_addr);
+        }
+    }
     let scan_count = scan_list_data
         .addresses
         .iter()
         .filter(|a| a.is_some())
         .count();
-    info!("Loaded {} scan targets from flash", scan_count);
+    info!("Populated {} scan targets from bonds", scan_count);
 
     let settings = Settings {
         bonds: AsyncMutex::new(bonds_data),
@@ -420,7 +442,4 @@ pub async fn init_settings(
     SETTINGS_CELL.init(settings)
 }
 
-/// Signal from the SoftDevice task that flash operations are safe to begin.
-pub fn softdevice_ready() {
-    SOFTDEVICE_READY.signal(());
-}
+// Softdevice gating removed: storage starts immediately.

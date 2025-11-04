@@ -56,8 +56,8 @@ where
     let mut imu_config = icm426xx::Config::default();
     {
         use icm426xx::config::{AccelMode, AccelOdr, Drive, GyroOdr, Pin9Function, Polarity};
-        imu_config.gyro.odr = GyroOdr::_200Hz;
-        imu_config.accel.odr = AccelOdr::_200Hz;
+        imu_config.gyro.odr = GyroOdr::_100Hz;
+        imu_config.accel.odr = AccelOdr::_100Hz;
         imu_config.accel.mode = AccelMode::LowNoise;
         imu_config.int1.drive = Drive::PushPull;
         imu_config.int1.polarity = Polarity::ActiveLow;

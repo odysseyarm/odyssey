@@ -5,13 +5,23 @@ use std::{env, fs};
 use memory_spec::MemorySpec;
 
 fn main() {
-    println!("cargo:rerun-if-changed=memory.kdl");
+    // Determine which memory layout to use based on BOARD env var
+    // (set in .cargo/config.toml or .cargo/config-dk.toml)
+    let board = env::var("BOARD").unwrap_or_else(|_| "dongle".to_string());
+    let memory_file = format!("memory-{}.kdl", board);
+
+    println!("cargo:rerun-if-changed={}", memory_file);
+    println!("cargo:rerun-if-env-changed=BOARD");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let memory_kdl_path = manifest_dir.join("memory.kdl");
+    let memory_kdl_path = manifest_dir.join(&memory_file);
 
-    let content = fs::read_to_string(&memory_kdl_path)
-        .unwrap_or_else(|e| panic!("Failed to read memory.kdl: {}", e));
+    let content = fs::read_to_string(&memory_kdl_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read {}: {}. Set CARGO_CFG_BOARD=dk or CARGO_CFG_BOARD=dongle",
+            memory_file, e
+        )
+    });
 
     let memoryspec = match MemorySpec::from_str(&content) {
         Ok(m) => m,
@@ -22,10 +32,10 @@ fn main() {
     };
 
     let regions = memoryspec.regions();
-    let symbols = memoryspec.render_symbols();
+    let _symbols = memoryspec.render_symbols();
 
     let app_flash = &regions["flash"]["app_flash"];
-    let _settings = &regions["flash"]["settings"];
+    let settings = &regions["flash"]["settings"];
     let app_ram = &regions["ram"]["app_ram"];
 
     let memory_x = format!(
@@ -36,12 +46,15 @@ MEMORY
   RAM   : ORIGIN = {:#010x}, LENGTH = {:#08x}
 }}
 
-{symbols}
+__settings_start = {:#010x};
+__settings_end = {:#010x};
 ",
         app_flash.origin(),
         app_flash.length(),
         app_ram.origin(),
-        app_ram.length()
+        app_ram.length(),
+        settings.origin(),
+        settings.end(),
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

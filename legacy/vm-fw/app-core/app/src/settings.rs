@@ -62,7 +62,7 @@ pub unsafe fn get_settings() -> &'static mut Settings {
     unsafe { &mut *ptr }
 }
 
-static ACCEL_ODR: AtomicU16 = AtomicU16::new(200);
+static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
 #[embassy_executor::task]
 async fn settings_worker(

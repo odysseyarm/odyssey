@@ -87,8 +87,9 @@ fn build_sdc<'d, const N: usize>(
     sdc::Builder::new()?
         .support_adv()?
         .support_peripheral()?
-        .support_dle_peripheral()?
-        .peripheral_count(1)?
+        .support_phy_update_peripheral()?
+        .support_le_2m_phy()?
+        .peripheral_count(2)? // Allow peripheral conn + transition overlap
         .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)
 }
@@ -106,7 +107,7 @@ async fn main(spawner: Spawner) {
     defmt::info!("Hello, world!");
 
     // give myself a second to attach without panic. uncomment for debug
-    // embassy_time::Timer::after_secs(3).await;
+    embassy_time::Timer::after_secs(3).await;
 
     let mut ipc = Ipc::new(p.IPC, Irqs);
     ipc.event0.configure_trigger([IpcChannel::Channel0]);
@@ -161,8 +162,8 @@ async fn main(spawner: Spawner) {
     static RNG_CELL: StaticCell<Rng<Async>> = StaticCell::new();
     let rng = RNG_CELL.init(Rng::new(p.RNG, Irqs));
 
-    static SDC_MEM: StaticCell<sdc::Mem<7808>> = StaticCell::new();
-    let sdc_mem = SDC_MEM.init(sdc::Mem::<7808>::new());
+    static SDC_MEM: StaticCell<sdc::Mem<11760>> = StaticCell::new();
+    let sdc_mem = SDC_MEM.init(sdc::Mem::<11760>::new());
     static SDC_CELL: StaticCell<sdc::SoftdeviceController> = StaticCell::new();
     let sdc = SDC_CELL.init(unwrap!(build_sdc(sdc_p, rng, mpsl, sdc_mem)));
 

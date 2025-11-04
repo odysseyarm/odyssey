@@ -12,7 +12,7 @@ use core::{
 use critical_section::RestoreState;
 use defmt::{Encoder, Logger, unwrap};
 use embassy_executor::{Spawner, task};
-use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pipe::Pipe};
 use embassy_usb::{
     Builder, UsbDevice,
@@ -23,7 +23,7 @@ use timer::Timer;
 
 use crate::defmt_serial::timer::NOOP_WAKER;
 
-type Driver = embassy_nrf::usb::Driver<'static, &'static SoftwareVbusDetect>;
+type Driver = embassy_nrf::usb::Driver<'static, HardwareVbusDetect>;
 
 /// Adds a CDC-ACM interface, runs the USB device and initializes the logger.
 pub fn init(spawner: &mut Spawner, mut builder: Builder<'static, Driver>) {
@@ -147,6 +147,7 @@ fn push_log_bytes(mut bytes: &[u8]) {
     }
 }
 
+#[cfg(not(feature = "rtt"))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     static PANICKED: AtomicBool = AtomicBool::new(false);

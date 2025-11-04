@@ -42,4 +42,4 @@ embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy" }
 minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
 
 [env]
-DEFMT_LOG = "info"
+DEFMT_LOG = "info,npm1300_rs=info"
