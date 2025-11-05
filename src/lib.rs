@@ -15,9 +15,9 @@ use core::mem::MaybeUninit;
 use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
-pub mod hub;
+pub mod mux;
 pub mod wire;
-
+pub mod control;
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
 }
