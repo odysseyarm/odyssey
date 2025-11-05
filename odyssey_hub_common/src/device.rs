@@ -1,15 +1,15 @@
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {
     /// Direct USB connection
-    USB,
+    Usb,
     /// BLE connection via USB Hub/Dongle
-    BLE,
+    UsbHub,
     /// UDP connection via Hub (not yet implemented)
-    UDPHub,
+    UdpHub,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Device {
-    pub uuid: u64,
+    pub uuid: [u8; 6],
     pub transport: Transport,
 }

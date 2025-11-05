@@ -52,13 +52,13 @@ message Pose {
 // --- Device ---
 
 enum Transport {
-  BLE = 0;
-  UDP = 1;
-  USB = 2;
+  USB = 0;
+  USBHub = 1;
+  UDP = 2;
 }
 
 message Device {
-  uint64 uuid = 1;
+  bytes uuid = 1;
   Transport transport = 2;
 }
 

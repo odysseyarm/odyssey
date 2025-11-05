@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use futures::{stream::SelectAll, StreamExt};
 use odyssey_hub_common::device::{Device, Transport};
-use protodongers::{Packet, PacketData, PacketType, PropKind, Props, VendorData};
+use protodongers::{Packet, PacketData, PropKind, Props};
 use tokio::sync::mpsc;
 
 use crate::device_link::DeviceLink;
@@ -25,25 +25,38 @@ impl UsbLink {
         Self::from_connected_usb(usb).await
     }
 
+    /// Create UsbLink from a VmDevice connected via hub
+    pub async fn from_vm_device(usb: ats_usb::device::VmDevice, uuid: [u8; 6]) -> Result<Self> {
+        let dev_meta = Device {
+            uuid,
+            transport: Transport::UsbHub,
+        };
+
+        Self::from_vm_device_with_transport(usb, dev_meta).await
+    }
+
     /// Create UsbLink from an already connected VmDevice
     pub async fn from_connected_usb(usb: ats_usb::device::VmDevice) -> Result<Self> {
         // Read UUID from device properties
         let props = usb.read_prop(PropKind::Uuid).await?;
-        let uuid_bytes = match props {
+        let uuid = match props {
             Props::Uuid(bytes) => bytes,
             _ => return Err(anyhow!("Expected Uuid prop, got {:?}", props)),
         };
 
-        // Convert 6-byte UUID to u64
-        let mut padded = [0u8; 8];
-        padded[..6].copy_from_slice(&uuid_bytes);
-        let uuid = u64::from_le_bytes(padded);
-
         let dev_meta = Device {
             uuid,
-            transport: Transport::USB,
+            transport: Transport::Usb,
         };
 
+        Self::from_vm_device_with_transport(usb, dev_meta).await
+    }
+
+    /// Common helper to create UsbLink from VmDevice with specified device metadata
+    async fn from_vm_device_with_transport(
+        usb: ats_usb::device::VmDevice,
+        dev_meta: Device,
+    ) -> Result<Self> {
         // Create channel for multiplexed packet stream
         let (tx, rx) = mpsc::channel::<Packet>(128);
 

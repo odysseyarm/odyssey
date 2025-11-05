@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::device_link::DeviceLink;
 use crate::usb_link::UsbLink;
@@ -45,6 +45,7 @@ pub enum DeviceTaskMessage {
 pub enum Message {
     Connect(Device, mpsc::Sender<DeviceTaskMessage>),
     Disconnect(Device),
+    #[allow(dead_code)]
     Event(Event),
 }
 
@@ -59,9 +60,9 @@ pub async fn device_tasks(
             ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
-    device_shot_delays: Arc<RwLock<HashMap<u64, u16>>>,
-    shot_delay_watch: Arc<RwLock<HashMap<u64, watch::Sender<u32>>>>,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_shot_delays: Arc<RwLock<HashMap<[u8; 6], u16>>>,
+    shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
     _accessory_map: Arc<
         std::sync::Mutex<HashMap<[u8; 6], (odyssey_hub_common::accessory::AccessoryInfo, bool)>>,
     >,
@@ -90,14 +91,14 @@ async fn usb_device_manager(
             ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
-    device_shot_delays: Arc<RwLock<HashMap<u64, u16>>>,
-    shot_delay_watch: Arc<RwLock<HashMap<u64, watch::Sender<u32>>>>,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_shot_delays: Arc<RwLock<HashMap<[u8; 6], u16>>>,
+    shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
     event_sender: broadcast::Sender<Event>,
 ) {
     // Map of uuid -> JoinHandle for per-device tasks
     let device_handles = Arc::new(tokio::sync::Mutex::new(HashMap::<
-        u64,
+        [u8; 6],
         tokio::task::JoinHandle<()>,
     >::new()));
 
@@ -156,65 +157,126 @@ async fn usb_device_manager(
             {
                 let pid = dev_info.product_id();
                 if pid == 0x5210 {
-                    // Hub/dongle
+                    // Hub/dongle - check if we're already managing this hub
+                    let hub_managers_guard = hub_managers.lock().await;
+                    let already_managed = hub_managers_guard
+                        .iter()
+                        .any(|(stored_info, _)| stored_info.id() == dev_info.id());
+                    drop(hub_managers_guard); // Release lock before connecting
+
+                    if already_managed {
+                        trace!("Hub already being managed, skipping: {:?}", dev_info.id());
+                        continue;
+                    }
+
+                    info!("Attempting to connect to hub/dongle device");
                     match ats_usb::device::HubDevice::connect_usb(dev_info.clone()).await {
                         Ok(hub) => {
                             info!("Connected USB hub device: {:?}", dev_info);
 
-                            // Per-hub map: BLE addr -> sender of Packet
-                            let per_hub_senders = Arc::new(tokio::sync::Mutex::new(HashMap::<
-                                [u8; 6],
-                                mpsc::Sender<Packet>,
-                            >::new(
-                            )));
-
                             // Create device handlers for current hub snapshot
                             match hub.request_devices().await {
                                 Ok(list) => {
+                                    info!("Hub returned {} devices", list.len());
                                     for addr in list.iter() {
+                                        info!(
+                                            "Processing hub device with BLE address: {:02x?}",
+                                            addr
+                                        );
                                         let addr_copy = *addr;
-                                        let (pkt_tx, pkt_rx) = mpsc::channel::<Packet>(128);
-                                        let link = crate::usb_hub_link::UsbHubLink::from_connected_hub_with_rx(
+
+                                        // Use VmDevice::connect_via_hub for proper device abstraction
+                                        match ats_usb::device::VmDevice::connect_via_hub(
                                             hub.clone(),
                                             addr_copy,
-                                            pkt_rx,
-                                        );
-                                        let (ctrl_tx, ctrl_rx) =
-                                            mpsc::channel::<DeviceTaskMessage>(32);
-
-                                        let dh_handle = tokio::spawn(device_handler_task(
-                                            Box::new(link),
-                                            ctrl_rx,
-                                            screen_calibrations.clone(),
-                                            device_offsets.clone(),
-                                            device_shot_delays.clone(),
-                                            shot_delay_watch.clone(),
-                                            event_sender.clone(),
-                                        ));
-
-                                        let mut uuid_bytes = [0u8; 8];
-                                        uuid_bytes[..6].copy_from_slice(&addr_copy);
-                                        let uuid = u64::from_le_bytes(uuid_bytes);
-
+                                        )
+                                        .await
                                         {
-                                            let mut dh = device_handles.lock().await;
-                                            if !dh.contains_key(&uuid) {
-                                                dh.insert(uuid, dh_handle);
+                                            Ok(vm_device) => {
+                                                // Read actual UUID from device
+                                                let uuid = match vm_device
+                                                    .read_prop(protodongers::PropKind::Uuid)
+                                                    .await
+                                                {
+                                                    Ok(protodongers::Props::Uuid(uuid_bytes)) => {
+                                                        uuid_bytes
+                                                    }
+                                                    Ok(other) => {
+                                                        warn!(
+                                                            "Expected Uuid prop, got {:?}",
+                                                            other
+                                                        );
+                                                        // Fall back to BLE address as UUID
+                                                        addr_copy
+                                                    }
+                                                    Err(e) => {
+                                                        warn!(
+                                                            "Failed to read UUID from device: {}",
+                                                            e
+                                                        );
+                                                        // Fall back to BLE address as UUID
+                                                        addr_copy
+                                                    }
+                                                };
+
+                                                info!(
+                                                    "Hub device {:02x?} has UUID {:02x?}",
+                                                    addr_copy, uuid
+                                                );
+
+                                                // Create UsbLink from VmDevice with UsbHub transport
+                                                // This will properly handle streaming via VmDevice
+                                                let link =
+                                                    match crate::usb_link::UsbLink::from_vm_device(
+                                                        vm_device, uuid,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(link) => link,
+                                                        Err(e) => {
+                                                            warn!("Failed to create UsbLink from VmDevice: {}", e);
+                                                            continue;
+                                                        }
+                                                    };
+                                                let (ctrl_tx, ctrl_rx) =
+                                                    mpsc::channel::<DeviceTaskMessage>(32);
+
+                                                let dh_handle = tokio::spawn(device_handler_task(
+                                                    Box::new(link),
+                                                    ctrl_rx,
+                                                    screen_calibrations.clone(),
+                                                    device_offsets.clone(),
+                                                    device_shot_delays.clone(),
+                                                    shot_delay_watch.clone(),
+                                                    event_sender.clone(),
+                                                ));
+
+                                                {
+                                                    let mut dh = device_handles.lock().await;
+                                                    if !dh.contains_key(&uuid) {
+                                                        dh.insert(uuid, dh_handle);
+                                                    }
+                                                }
+
+                                                let device_meta = Device {
+                                                    uuid,
+                                                    transport:
+                                                        odyssey_hub_common::device::Transport::UsbHub,
+                                                };
+                                                let _ = message_channel
+                                                    .send(Message::Connect(
+                                                        device_meta.clone(),
+                                                        ctrl_tx,
+                                                    ))
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Failed to connect to hub device {:02x?}: {}",
+                                                    addr_copy, e
+                                                );
                                             }
                                         }
-
-                                        {
-                                            let mut map = per_hub_senders.lock().await;
-                                            map.insert(addr_copy, pkt_tx.clone());
-                                        }
-
-                                        let device_meta = Device {
-                                            uuid,
-                                            transport: odyssey_hub_common::device::Transport::BLE,
-                                        };
-                                        let _ = message_channel
-                                            .send(Message::Connect(device_meta.clone(), ctrl_tx))
-                                            .await;
                                     }
                                 }
                                 Err(e) => {
@@ -222,11 +284,9 @@ async fn usb_device_manager(
                                 }
                             }
 
-                            // Hub manager task: route HubMsg -> per-device channels and handle snapshots
+                            // Hub manager task: handle device snapshots (no manual packet routing needed)
                             let hub_clone = hub.clone();
-                            let per_hub_senders_clone = per_hub_senders.clone();
                             let device_handles_clone = device_handles.clone();
-                            let hub_managers_clone = hub_managers.clone();
                             let message_channel_clone = message_channel.clone();
                             let sc_clone = screen_calibrations.clone();
                             let doff_clone = device_offsets.clone();
@@ -236,124 +296,158 @@ async fn usb_device_manager(
                             let hub_info = dev_info.clone();
 
                             let hub_manager_handle = tokio::spawn(async move {
+                                tracing::info!("Hub manager task started for hub {:?}", hub_info);
                                 loop {
+                                    tracing::debug!("Hub manager waiting for message...");
                                     match hub_clone.receive_msg().await {
-                                        Ok(msg) => match msg {
-                                            HubMsg::DevicePacket(dev_pkt) => {
-                                                let tx_opt = {
-                                                    let map = per_hub_senders_clone.lock().await;
-                                                    map.get(&dev_pkt.dev).cloned()
-                                                };
-                                                if let Some(tx) = tx_opt {
-                                                    if tx.send(dev_pkt.pkt).await.is_err() {
-                                                        let mut map =
-                                                            per_hub_senders_clone.lock().await;
-                                                        map.remove(&dev_pkt.dev);
-                                                    }
-                                                }
-                                            }
-                                            HubMsg::DevicesSnapshot(devs) => {
-                                                use std::collections::HashSet;
-                                                let new_set: HashSet<[u8; 6]> =
-                                                    devs.into_iter().collect();
-                                                let existing_set: HashSet<[u8; 6]> = {
-                                                    let map = per_hub_senders_clone.lock().await;
-                                                    map.keys().cloned().collect()
-                                                };
+                                        Ok(msg) => {
+                                            match msg {
+                                                HubMsg::DevicesSnapshot(devs) => {
+                                                    tracing::info!("Hub received device snapshot with {} devices: {:02x?}", devs.len(), devs);
+                                                    use std::collections::HashSet;
+                                                    let new_set: HashSet<[u8; 6]> =
+                                                        devs.into_iter().collect();
+                                                    let existing_set: HashSet<[u8; 6]> = {
+                                                        let dh = device_handles_clone.lock().await;
+                                                        dh.keys().cloned().collect()
+                                                    };
 
-                                                // Added devices
-                                                for addr in new_set.difference(&existing_set) {
-                                                    let addr_copy = *addr;
-                                                    let (pkt_tx, pkt_rx) =
-                                                        mpsc::channel::<Packet>(128);
-                                                    let link = crate::usb_hub_link::UsbHubLink::from_connected_hub_with_rx(
-                                                        hub_clone.clone(),
-                                                        addr_copy,
-                                                        pkt_rx,
-                                                    );
-                                                    let (ctrl_tx, ctrl_rx) =
-                                                        mpsc::channel::<DeviceTaskMessage>(32);
-                                                    let dh_handle =
-                                                        tokio::spawn(device_handler_task(
-                                                            Box::new(link),
-                                                            ctrl_rx,
-                                                            sc_clone.clone(),
-                                                            doff_clone.clone(),
-                                                            dsd_clone.clone(),
-                                                            swatch_clone.clone(),
-                                                            ev_clone.clone(),
-                                                        ));
+                                                    tracing::info!("Device diff - new: {:02x?}, existing: {:02x?}, added: {:02x?}, removed: {:02x?}",
+                                                        new_set, existing_set,
+                                                        new_set.difference(&existing_set).copied().collect::<Vec<_>>(),
+                                                        existing_set.difference(&new_set).copied().collect::<Vec<_>>());
 
-                                                    let mut uuid_bytes = [0u8; 8];
-                                                    uuid_bytes[..6].copy_from_slice(&addr_copy);
-                                                    let uuid = u64::from_le_bytes(uuid_bytes);
+                                                    // Added devices
+                                                    for addr in new_set.difference(&existing_set) {
+                                                        let addr_copy = *addr;
+                                                        tracing::info!("DevicesSnapshot: Adding new device {:02x?}", addr_copy);
 
-                                                    {
-                                                        let mut dh =
-                                                            device_handles_clone.lock().await;
-                                                        if !dh.contains_key(&uuid) {
-                                                            dh.insert(uuid, dh_handle);
+                                                        // Connect via VmDevice to properly handle streaming
+                                                        match ats_usb::device::VmDevice::connect_via_hub(
+                                                            hub_clone.clone(),
+                                                            addr_copy,
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(vm_device) => {
+                                                                // Read actual UUID from device
+                                                                let uuid = match vm_device
+                                                                    .read_prop(protodongers::PropKind::Uuid)
+                                                                    .await
+                                                                {
+                                                                    Ok(protodongers::Props::Uuid(uuid_bytes)) => {
+                                                                        uuid_bytes
+                                                                    }
+                                                                    Ok(other) => {
+                                                                        tracing::warn!(
+                                                                            "Expected Uuid prop, got {:?}",
+                                                                            other
+                                                                        );
+                                                                        // Fall back to BLE address as UUID
+                                                                        addr_copy
+                                                                    }
+                                                                    Err(e) => {
+                                                                        tracing::warn!(
+                                                                            "Failed to read UUID from device: {}",
+                                                                            e
+                                                                        );
+                                                                        // Fall back to BLE address as UUID
+                                                                        addr_copy
+                                                                    }
+                                                                };
+
+                                                                // Create UsbLink from VmDevice with UsbHub transport
+                                                                // This will properly handle streaming via VmDevice
+                                                                let link =
+                                                                    match crate::usb_link::UsbLink::from_vm_device(
+                                                                        vm_device, uuid,
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(link) => link,
+                                                                        Err(e) => {
+                                                                            tracing::warn!("Failed to create UsbLink from VmDevice: {}", e);
+                                                                            continue;
+                                                                        }
+                                                                    };
+
+                                                                let (ctrl_tx, ctrl_rx) =
+                                                                    mpsc::channel::<DeviceTaskMessage>(32);
+
+                                                                let dh_handle =
+                                                                    tokio::spawn(device_handler_task(
+                                                                        Box::new(link),
+                                                                        ctrl_rx,
+                                                                        sc_clone.clone(),
+                                                                        doff_clone.clone(),
+                                                                        dsd_clone.clone(),
+                                                                        swatch_clone.clone(),
+                                                                        ev_clone.clone(),
+                                                                    ));
+
+                                                                {
+                                                                    let mut dh =
+                                                                        device_handles_clone.lock().await;
+                                                                    if !dh.contains_key(&uuid) {
+                                                                        dh.insert(uuid, dh_handle);
+                                                                    }
+                                                                }
+
+                                                                let device_meta = Device {
+                                                                    uuid,
+                                                                    transport: odyssey_hub_common::device::Transport::UsbHub,
+                                                                };
+                                                                let _ = message_channel_clone
+                                                                    .send(Message::Connect(
+                                                                        device_meta.clone(),
+                                                                        ctrl_tx,
+                                                                    ))
+                                                                    .await;
+                                                            }
+                                                            Err(e) => {
+                                                                tracing::warn!(
+                                                                    "Failed to connect to hub device {:02x?} during snapshot: {}",
+                                                                    addr_copy, e
+                                                                );
+                                                            }
                                                         }
                                                     }
 
-                                                    {
-                                                        let mut map =
-                                                            per_hub_senders_clone.lock().await;
-                                                        map.insert(addr_copy, pkt_tx);
-                                                    }
-
-                                                    let device_meta = Device {
-                                                        uuid,
-                                                        transport: odyssey_hub_common::device::Transport::BLE,
+                                                    // Removed devices
+                                                    let to_remove: Vec<[u8; 6]> = {
+                                                        let dh = device_handles_clone.lock().await;
+                                                        dh.keys()
+                                                            .cloned()
+                                                            .filter(|a| !new_set.contains(a))
+                                                            .collect()
                                                     };
-                                                    let _ = message_channel_clone
-                                                        .send(Message::Connect(
-                                                            device_meta.clone(),
-                                                            ctrl_tx,
-                                                        ))
-                                                        .await;
-                                                }
-
-                                                // Removed devices
-                                                let to_remove: Vec<[u8; 6]> = {
-                                                    let map = per_hub_senders_clone.lock().await;
-                                                    map.keys()
-                                                        .cloned()
-                                                        .filter(|a| !new_set.contains(a))
-                                                        .collect()
-                                                };
-                                                for addr in to_remove {
-                                                    {
-                                                        let mut map =
-                                                            per_hub_senders_clone.lock().await;
-                                                        map.remove(&addr);
-                                                    }
-                                                    let mut uuid_bytes = [0u8; 8];
-                                                    uuid_bytes[..6].copy_from_slice(&addr);
-                                                    let uuid = u64::from_le_bytes(uuid_bytes);
-                                                    if let Some(handle) = device_handles_clone
-                                                        .lock()
-                                                        .await
-                                                        .remove(&uuid)
-                                                    {
-                                                        handle.abort();
-                                                    }
-                                                    let device_meta = Device {
+                                                    for addr in to_remove {
+                                                        let uuid = addr;
+                                                        if let Some(handle) = device_handles_clone
+                                                            .lock()
+                                                            .await
+                                                            .remove(&uuid)
+                                                        {
+                                                            handle.abort();
+                                                        }
+                                                        let device_meta = Device {
                                                         uuid,
-                                                        transport: odyssey_hub_common::device::Transport::BLE,
+                                                        transport: odyssey_hub_common::device::Transport::UsbHub,
                                                     };
-                                                    let _ = message_channel_clone
-                                                        .send(Message::Disconnect(device_meta))
-                                                        .await;
+                                                        let _ = message_channel_clone
+                                                            .send(Message::Disconnect(device_meta))
+                                                            .await;
+                                                    }
                                                 }
+                                                _ => {}
                                             }
-                                            _ => {}
-                                        },
+                                        }
                                         Err(e) => {
-                                            tracing::warn!(
-                                                "HubDevice receive error in hub manager: {}",
+                                            tracing::error!(
+                                                "HubDevice receive error in hub manager - hub likely disconnected or device not streaming: {:?}",
                                                 e
                                             );
+                                            // Exit immediately on channel closed or other errors
                                             break;
                                         }
                                     }
@@ -361,52 +455,26 @@ async fn usb_device_manager(
                                 tracing::info!("Hub manager task ended for hub {:?}", hub_info);
                             });
 
-                            // Store hub manager slot for later abort/observe
-                            let hub_slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(
-                                hub_manager_handle,
-                            )));
+                            // Store hub manager handle for tracking (runs indefinitely until hub is disconnected)
                             {
                                 let mut hm = hub_managers.lock().await;
-                                hm.push((dev_info.clone(), hub_slot.clone()));
+                                // Store with a dummy slot - we track the handle itself
+                                let hub_slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(
+                                    hub_manager_handle,
+                                )));
+                                hm.push((dev_info.clone(), hub_slot));
                             }
-
-                            // Observer to remove slot when manager completes
-                            let hub_managers_clone2 = hub_managers.clone();
-                            let hub_id_for_watch = dev_info.clone();
-                            tokio::spawn(async move {
-                                let handle_opt = {
-                                    let mut slot = hub_slot.lock().await;
-                                    slot.take()
-                                };
-                                if let Some(handle) = handle_opt {
-                                    match tokio::time::timeout(Duration::from_secs(5), handle).await
-                                    {
-                                        Ok(res) => tracing::info!(
-                                            "Observed hub manager completion for hub {:?}: {:?}",
-                                            hub_id_for_watch,
-                                            res
-                                        ),
-                                        Err(_) => tracing::info!(
-                                            "Hub manager for {:?} did not exit within grace period",
-                                            hub_id_for_watch
-                                        ),
-                                    }
-                                }
-                                let mut hm = hub_managers_clone2.lock().await;
-                                if let Some(pos) = hm
-                                    .iter()
-                                    .position(|(id, _)| id.id() == hub_id_for_watch.id())
-                                {
-                                    hm.remove(pos);
-                                }
-                            });
                         }
                         Err(e) => {
-                            debug!("Failed to connect to USB hub device: {}", e);
+                            warn!("Failed to connect to USB hub device: {}", e);
                         }
                     }
                 } else {
                     // Direct USB device (VmDevice)
+                    info!(
+                        "Attempting to connect to direct USB device PID: 0x{:04x}",
+                        pid
+                    );
                     match UsbLink::connect_usb(dev_info.clone()).await {
                         Ok(link) => {
                             let device = link.device();
@@ -415,10 +483,14 @@ async fn usb_device_manager(
                             {
                                 let mut dh = device_handles.lock().await;
                                 if dh.contains_key(&uuid) {
+                                    info!(
+                                        "Device {:02x?} already in device_handles, skipping",
+                                        uuid
+                                    );
                                     continue;
                                 }
 
-                                info!("Discovered USB device with UUID {:016x}", uuid);
+                                info!("Discovered direct USB device with UUID {:02x?}", uuid);
 
                                 let (tx, rx) = mpsc::channel(32);
 
@@ -452,7 +524,7 @@ async fn usb_device_manager(
             let mut dh = device_handles.lock().await;
             dh.retain(|uuid, handle| {
                 if handle.is_finished() {
-                    info!("Device {:016x} task finished", uuid);
+                    info!("Device {:02x?} task finished", uuid);
                     false
                 } else {
                     true
@@ -474,14 +546,14 @@ async fn device_handler_task(
             ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
-    device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
-    device_shot_delays: Arc<RwLock<HashMap<u64, u16>>>,
-    shot_delay_watch: Arc<RwLock<HashMap<u64, watch::Sender<u32>>>>,
+    device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
+    device_shot_delays: Arc<RwLock<HashMap<[u8; 6], u16>>>,
+    shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
     event_sender: broadcast::Sender<Event>,
 ) {
     let device = link.device();
     info!(
-        "Starting device handler for device UUID {:016x}",
+        "Starting device handler for device UUID {:02x?}",
         device.uuid
     );
 
@@ -507,13 +579,64 @@ async fn device_handler_task(
     // Track current value locally
     let mut current_shot_delay = *shot_delay_rx.borrow();
     info!(
-        "Initial shot delay for {:016x} = {} ms",
+        "Initial shot delay for {:02x?} = {} ms",
         device.uuid, current_shot_delay
     );
     // Per-device foveated state (local to this handler) and previous IMU timestamp.
     // Keeping these local avoids a global registry and ties filter lifetime to the device task.
     let mut fv_state = FoveatedAimpointState::new();
     let mut prev_accel_timestamp: Option<u32> = None;
+
+    // Enable device streams by sending StreamUpdate packets
+    use protodongers::{PacketType, StreamUpdate, StreamUpdateAction};
+    info!("Enabling streams for device {:02x?}", device.uuid);
+
+    // Enable accelerometer stream
+    if let Err(e) = link
+        .send(Packet {
+            id: 0,
+            data: PacketData::StreamUpdate(StreamUpdate {
+                packet_id: PacketType::AccelReport(),
+                action: StreamUpdateAction::Enable,
+            }),
+        })
+        .await
+    {
+        warn!("Failed to enable AccelReport stream: {}", e);
+    }
+
+    // Enable combined markers stream
+    if let Err(e) = link
+        .send(Packet {
+            id: 0,
+            data: PacketData::StreamUpdate(StreamUpdate {
+                packet_id: PacketType::CombinedMarkersReport(),
+                action: StreamUpdateAction::Enable,
+            }),
+        })
+        .await
+    {
+        warn!("Failed to enable CombinedMarkersReport stream: {}", e);
+    }
+
+    // Enable impact stream
+    if let Err(e) = link
+        .send(Packet {
+            id: 0,
+            data: PacketData::StreamUpdate(StreamUpdate {
+                packet_id: PacketType::ImpactReport(),
+                action: StreamUpdateAction::Enable,
+            }),
+        })
+        .await
+    {
+        warn!("Failed to enable ImpactReport stream: {}", e);
+    }
+
+    info!(
+        "Stream initialization complete for device {:02x?}",
+        device.uuid
+    );
 
     loop {
         tokio::select! {
@@ -535,14 +658,14 @@ async fn device_handler_task(
                 match changed {
                     Ok(_) => {
                         current_shot_delay = *shot_delay_rx.borrow_and_update();
-                        info!("Shot delay updated for {:016x} = {} ms", device.uuid, current_shot_delay);
+                        info!("Shot delay updated for {:02x?} = {} ms", device.uuid, current_shot_delay);
                         // Update in-memory store as well (keeps server and task in sync)
                         device_shot_delays.write().await.insert(device.uuid, current_shot_delay as u16);
                         // Do not emit a ShotDelayChanged DeviceEvent here — the server RPCs
                         // and other code paths are responsible for broadcasting higher-level updates.
                     }
                     Err(_) => {
-                        warn!("Shot delay watch sender dropped for {:016x}", device.uuid);
+                        warn!("Shot delay watch sender dropped for {:02x?}", device.uuid);
                     }
                 }
             }
@@ -550,7 +673,7 @@ async fn device_handler_task(
             msg = control_rx.recv() => {
                 match msg {
                     Some(DeviceTaskMessage::ResetZero) => {
-                        debug!("ResetZero requested for {:016x}", device.uuid);
+                        debug!("ResetZero requested for {:02x?}", device.uuid);
                         // Clear stored offset
                         {
                             let mut guard = device_offsets.lock().await;
@@ -560,7 +683,7 @@ async fn device_handler_task(
                         let _ = event_sender.send(ev);
                     }
                     Some(DeviceTaskMessage::SaveZero) => {
-                        debug!("SaveZero requested for {:016x}", device.uuid);
+                        debug!("SaveZero requested for {:02x?}", device.uuid);
                         // Persist device_offsets to disk via odyssey_hub_common::config
                         {
                             let guard = device_offsets.lock().await;
@@ -572,7 +695,7 @@ async fn device_handler_task(
                         let _ = event_sender.send(ev);
                     }
                     Some(DeviceTaskMessage::WriteVendor(tag, data)) => {
-                        debug!("WriteVendor tag={} len={} for {:016x}", tag, data.len(), device.uuid);
+                        debug!("WriteVendor tag={} len={} for {:02x?}", tag, data.len(), device.uuid);
                         let mut padded = [0u8; 98];
                         let copy_len = std::cmp::min(data.len(), 98);
                         padded[..copy_len].copy_from_slice(&data[..copy_len]);
@@ -583,7 +706,7 @@ async fn device_handler_task(
                         }
                     }
                     Some(DeviceTaskMessage::SetShotDelay(ms)) => {
-                        debug!("SetShotDelay requested for {:016x} = {} ms", device.uuid, ms);
+                        debug!("SetShotDelay requested for {:02x?} = {} ms", device.uuid, ms);
                         // Update in-memory store and notify watchers so handler and others observe change.
                         {
                             device_shot_delays.write().await.insert(device.uuid, ms);
@@ -598,7 +721,7 @@ async fn device_handler_task(
                         }
                     }
                     Some(DeviceTaskMessage::Zero(trans, _point)) => {
-                        debug!("Zero received - storing device offset for {:016x}", device.uuid);
+                        debug!("Zero received - storing device offset for {:02x?}", device.uuid);
                         let iso = Isometry3::from_parts(Translation3::from(trans.vector), UnitQuaternion::identity());
                         {
                             let mut guard = device_offsets.lock().await;
@@ -608,7 +731,7 @@ async fn device_handler_task(
                         let _ = event_sender.send(ev);
                     }
                     Some(DeviceTaskMessage::ClearZero) => {
-                        debug!("ClearZero - removing stored device offset for {:016x}", device.uuid);
+                        debug!("ClearZero - removing stored device offset for {:02x?}", device.uuid);
                         {
                             let mut guard = device_offsets.lock().await;
                             guard.remove(&device.uuid);
@@ -617,7 +740,7 @@ async fn device_handler_task(
                         let _ = event_sender.send(ev);
                     }
                     None => {
-                        info!("Control channel closed for {:016x}", device.uuid);
+                        info!("Control channel closed for {:02x?}", device.uuid);
                         break;
                     }
                 }
@@ -625,7 +748,7 @@ async fn device_handler_task(
         }
     }
 
-    info!("Device handler task ending for {:016x}", device.uuid);
+    info!("Device handler task ending for {:02x?}", device.uuid);
 }
 
 /// Process a single inbound Packet and emit appropriate events.
@@ -638,7 +761,7 @@ async fn process_packet(
     device: &Device,
     pkt: Packet,
     event_sender: &broadcast::Sender<Event>,
-    device_offsets: &Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
+    device_offsets: &Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
     fv_state: &mut FoveatedAimpointState,
     screen_calibrations: &Arc<
         ArcSwap<
@@ -706,9 +829,8 @@ async fn process_packet(
             let mut tracking_pose: Option<Pose> = None;
             let mut aimpoint = Vector2::new(0.0f32, 0.0f32);
             let mut distance = 0.0f32;
-            let mut screen_id = 0u32;
 
-            {
+            let screen_id = {
                 // Use nominal gravity if IMU hasn't set it elsewhere
                 let gravity = UnitVector3::new_normalize(Vector3::new(0.0f32, 9.81f32, 0.0f32));
 
@@ -736,8 +858,8 @@ async fn process_packet(
                     distance = d;
                 }
 
-                screen_id = fv_state.screen_id as u32;
-            }
+                fv_state.screen_id as u32
+            };
 
             // If available, prefer stored device offset pose as additional context (non-blocking).
             if tracking_pose.is_none() {
@@ -782,9 +904,8 @@ async fn process_packet(
             let mut tracking_pose: Option<Pose> = None;
             let mut aimpoint = Vector2::new(0.0f32, 0.0f32);
             let mut distance = 0.0f32;
-            let mut screen_id = 0u32;
 
-            {
+            let screen_id = {
                 let gravity = UnitVector3::new_normalize(Vector3::new(0.0f32, 9.81f32, 0.0f32));
                 let wf_empty: Vec<ats_cv::foveated::Marker> = Vec::new();
                 let _observed = fv_state.observe_markers(
@@ -807,8 +928,8 @@ async fn process_packet(
                     aimpoint = pt.coords;
                     distance = d;
                 }
-                screen_id = fv_state.screen_id as u32;
-            }
+                fv_state.screen_id as u32
+            };
 
             if tracking_pose.is_none() {
                 let pose_opt = {

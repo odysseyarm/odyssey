@@ -126,8 +126,9 @@ pub async fn accessory_manager(
                                                             if let Some(assignment) = assignment_opt {
                                                                 let maybe_device = {
                                                                     let dl_guard = dl.lock();
+                                                                    let assignment_uuid: [u8; 6] = assignment.get().to_le_bytes()[..6].try_into().unwrap();
                                                                     dl_guard.iter()
-                                                                        .find(|d| d.0.uuid == assignment.get())
+                                                                        .find(|d| d.0.uuid == assignment_uuid)
                                                                         .map(|d| d.0.clone())
                                                                 };
                                                                 if let Some(device) = maybe_device {
