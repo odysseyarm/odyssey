@@ -38,11 +38,11 @@ pub struct Server {
             ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
-    pub device_offsets: Arc<tokio::sync::Mutex<HashMap<u64, Isometry3<f32>>>>,
+    pub device_offsets: Arc<tokio::sync::Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 
     /// Shot delay store (uuid→delay), plus per-uuid watchers for SubscribeShotDelay.
-    pub device_shot_delays: Arc<RwLock<HashMap<u64, u16>>>, // seeded by lib.rs at startup
-    pub shot_delay_watch: Arc<RwLock<HashMap<u64, watch::Sender<u32>>>>,
+    pub device_shot_delays: Arc<RwLock<HashMap<[u8; 6], u16>>>, // seeded by lib.rs at startup
+    pub shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
 
     /// Accessory info/state
     pub accessory_map:
@@ -107,7 +107,7 @@ impl Server {
     }
 
     // -------------------- Shot delay helpers --------------------
-    async fn get_or_default_shot_delay(&self, uuid: u64) -> u16 {
+    async fn get_or_default_shot_delay(&self, uuid: [u8; 6]) -> u16 {
         if let Some(v) = self.device_shot_delays.read().await.get(&uuid).copied() {
             return v;
         }
@@ -117,7 +117,7 @@ impl Server {
         }
     }
 
-    async fn set_shot_delay_live(&self, uuid: u64, ms: u16) {
+    async fn set_shot_delay_live(&self, uuid: [u8; 6], ms: u16) {
         self.device_shot_delays.write().await.insert(uuid, ms);
         let mut g = self.shot_delay_watch.write().await;
         if let Some(tx) = g.get(&uuid) {
@@ -129,7 +129,7 @@ impl Server {
         }
     }
 
-    async fn subscribe_shot_delay_watch(&self, uuid: u64) -> watch::Receiver<u32> {
+    async fn subscribe_shot_delay_watch(&self, uuid: [u8; 6]) -> watch::Receiver<u32> {
         let cur = self.get_or_default_shot_delay(uuid).await as u32;
         let mut g = self.shot_delay_watch.write().await;
         if let Some(tx) = g.get(&uuid) {
@@ -141,7 +141,7 @@ impl Server {
         }
     }
 
-    async fn persist_shot_delay(&self, uuid: u64, ms: u16) -> Result<(), Status> {
+    async fn persist_shot_delay(&self, uuid: [u8; 6], ms: u16) -> Result<(), Status> {
         common::config::device_shot_delay_save_async(uuid, ms)
             .await
             .map_err(|e| Status::internal(format!("failed to save delay: {e}")))
@@ -159,7 +159,7 @@ impl Server {
     }
 
     /// Find the control sender associated with a device UUID, if present.
-    fn sender_for_uuid(&self, uuid: u64) -> Option<mpsc::Sender<DeviceTaskMessage>> {
+    fn sender_for_uuid(&self, uuid: [u8; 6]) -> Option<mpsc::Sender<DeviceTaskMessage>> {
         let guard = self.device_list.lock();
         guard
             .iter()
@@ -279,7 +279,14 @@ impl Service for Server {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<GetShotDelayReply>, Status> {
-        let uuid = req.into_inner().uuid;
+        let mut uuid = [0u8; 6];
+        let uuid_vec = req.into_inner().uuid;
+        if uuid_vec.len() == 6 {
+            uuid.copy_from_slice(&uuid_vec);
+        } else if uuid_vec.len() > 0 {
+            let len = std::cmp::min(6, uuid_vec.len());
+            uuid[..len].copy_from_slice(&uuid_vec[..len]);
+        }
         let cur = self.get_or_default_shot_delay(uuid).await as u32;
         Ok(Response::new(GetShotDelayReply { delay_ms: cur }))
     }
@@ -288,11 +295,18 @@ impl Service for Server {
         &self,
         req: tonic::Request<SubscribeShotDelayRequest>,
     ) -> Result<Response<Self::SubscribeShotDelayStream>, Status> {
-        let uuid = req
+        let uuid_vec = req
             .into_inner()
             .device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .uuid;
+        let mut uuid = [0u8; 6];
+        if uuid_vec.len() == 6 {
+            uuid.copy_from_slice(&uuid_vec);
+        } else if uuid_vec.len() > 0 {
+            let len = std::cmp::min(6, uuid_vec.len());
+            uuid[..len].copy_from_slice(&uuid_vec[..len]);
+        }
 
         let mut rx = self.subscribe_shot_delay_watch(uuid).await;
         let (tx, out) = mpsc::channel::<Result<GetShotDelayReply, Status>>(16);
@@ -318,9 +332,16 @@ impl Service for Server {
         req: tonic::Request<SetShotDelayRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let SetShotDelayRequest { device, delay_ms } = req.into_inner();
-        let uuid = device
+        let uuid_vec = device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .uuid;
+        let mut uuid = [0u8; 6];
+        if uuid_vec.len() == 6 {
+            uuid.copy_from_slice(&uuid_vec);
+        } else if uuid_vec.len() > 0 {
+            let len = std::cmp::min(6, uuid_vec.len());
+            uuid[..len].copy_from_slice(&uuid_vec[..len]);
+        }
         let ms: u16 = delay_ms as u16;
 
         // Apply live in-server state & notify watchers
@@ -331,7 +352,7 @@ impl Service for Server {
             match tx.try_send(DeviceTaskMessage::SetShotDelay(ms)) {
                 Ok(()) => {}
                 Err(_) => tracing::warn!(
-                    "Device task not available to receive shot delay for {:016x}",
+                    "Device task not available to receive shot delay for {:02x?}",
                     uuid
                 ),
             }
@@ -344,7 +365,14 @@ impl Service for Server {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<ResetShotDelayReply>, Status> {
-        let uuid = req.into_inner().uuid;
+        let uuid_vec = req.into_inner().uuid;
+        let mut uuid = [0u8; 6];
+        if uuid_vec.len() == 6 {
+            uuid.copy_from_slice(&uuid_vec);
+        } else if uuid_vec.len() > 0 {
+            let len = std::cmp::min(6, uuid_vec.len());
+            uuid[..len].copy_from_slice(&uuid_vec[..len]);
+        }
         // Policy: default 0ms
         let default_ms: u16 = 0;
 
@@ -356,7 +384,7 @@ impl Service for Server {
             match tx.try_send(DeviceTaskMessage::SetShotDelay(default_ms)) {
                 Ok(()) => {}
                 Err(_) => tracing::warn!(
-                    "Device task not available to receive shot delay reset for {:016x}",
+                    "Device task not available to receive shot delay reset for {:02x?}",
                     uuid
                 ),
             }
@@ -371,7 +399,14 @@ impl Service for Server {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let uuid = req.into_inner().uuid;
+        let uuid_vec = req.into_inner().uuid;
+        let mut uuid = [0u8; 6];
+        if uuid_vec.len() == 6 {
+            uuid.copy_from_slice(&uuid_vec);
+        } else if uuid_vec.len() > 0 {
+            let len = std::cmp::min(6, uuid_vec.len());
+            uuid[..len].copy_from_slice(&uuid_vec[..len]);
+        }
         let cur = self.get_or_default_shot_delay(uuid).await;
         self.persist_shot_delay(uuid, cur).await?;
         Ok(Response::new(EmptyReply {}))

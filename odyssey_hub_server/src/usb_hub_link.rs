@@ -37,19 +37,18 @@ impl UsbHubLink {
     /// Lightweight constructor: create a `UsbHubLink` from an already connected `HubDevice`
     /// using an externally-provided receiver. This allows a single hub manager task to own
     /// the HubDevice receive loop and route `HubMsg::DevicePacket` into per-device channels.
+    ///
+    /// NOTE: This uses a temporary UUID derived from the BLE address. Call `read_uuid()`
+    /// after creation to get the real device UUID.
     pub fn from_connected_hub_with_rx(
         hub: ats_usb::device::HubDevice,
         device_addr: [u8; 6],
         rx: mpsc::Receiver<Packet>,
     ) -> Self {
-        // Get device UUID from the 6-byte address
-        let mut uuid_bytes = [0u8; 8];
-        uuid_bytes[..6].copy_from_slice(&device_addr);
-        let uuid = u64::from_le_bytes(uuid_bytes);
-
+        // Use the BLE address as the UUID
         let dev_meta = Device {
-            uuid,
-            transport: Transport::BLE, // Devices connected through hub are BLE
+            uuid: device_addr,
+            transport: Transport::UsbHub,
         };
 
         Self {
@@ -58,6 +57,37 @@ impl UsbHubLink {
             device_addr,
             rx,
         }
+    }
+
+    /// Read the actual UUID from the device and update the internal device metadata
+    pub async fn read_and_set_uuid(&mut self) -> Result<[u8; 6]> {
+        use protodongers::{Packet, PacketData, PropKind, Props};
+
+        // Send ReadProp request for UUID
+        let read_pkt = Packet {
+            id: 0,
+            data: PacketData::ReadProp(PropKind::Uuid),
+        };
+        self.hub.send_to(self.device_addr, read_pkt).await?;
+
+        // Wait for response
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(pkt) = self.rx.recv().await {
+                    if let PacketData::ReadPropResponse(Props::Uuid(uuid_bytes)) = pkt.data {
+                        return Ok(uuid_bytes);
+                    }
+                } else {
+                    return Err(anyhow::anyhow!("Channel closed while reading UUID"));
+                }
+            }
+        })
+        .await??;
+
+        // Update device metadata
+        self.dev_meta.uuid = timeout;
+
+        Ok(timeout)
     }
 
     /// Convenience constructor: create a `UsbHubLink` from a connected `HubDevice` and
@@ -82,14 +112,9 @@ impl UsbHubLink {
         hub: ats_usb::device::HubDevice,
         device_addr: [u8; 6],
     ) -> Result<Self> {
-        // Get device UUID from the 6-byte address
-        let mut uuid_bytes = [0u8; 8];
-        uuid_bytes[..6].copy_from_slice(&device_addr);
-        let uuid = u64::from_le_bytes(uuid_bytes);
-
         let dev_meta = Device {
-            uuid,
-            transport: Transport::BLE, // Devices connected through hub are BLE
+            uuid: device_addr,
+            transport: Transport::UsbHub,
         };
 
         // Create packet stream from hub messages

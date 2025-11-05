@@ -423,7 +423,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "ats_common"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_common.git#44fad2c47d587a61769517031e11634e6b288520"
+source = "git+https://github.com/odysseyarm/ats_common#44fad2c47d587a61769517031e11634e6b288520"
 dependencies = [
  "nalgebra 0.34.1",
  "num",

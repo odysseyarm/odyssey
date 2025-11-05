@@ -77,20 +77,19 @@ impl From<proto::Vector3> for nalgebra::Vector3<f32> {
 
 impl From<common::device::Transport> for proto::Transport {
     fn from(t: common::device::Transport) -> Self {
-        use common::device::Transport::*;
         match t {
-            BLE => Self::Ble,
-            UDPHub => Self::Udp,
-            USB => Self::Usb,
+            common::device::Transport::Usb => Self::Usb,
+            common::device::Transport::UsbHub => Self::UsbHub,
+            common::device::Transport::UdpHub => Self::Udp,
         }
     }
 }
 impl From<proto::Transport> for common::device::Transport {
     fn from(t: proto::Transport) -> Self {
         match t {
-            proto::Transport::Ble => common::device::Transport::BLE,
-            proto::Transport::Udp => common::device::Transport::UDPHub,
-            proto::Transport::Usb => common::device::Transport::USB,
+            proto::Transport::Usb => common::device::Transport::Usb,
+            proto::Transport::UsbHub => common::device::Transport::UsbHub,
+            proto::Transport::Udp => common::device::Transport::UdpHub,
         }
     }
 }
@@ -98,15 +97,23 @@ impl From<proto::Transport> for common::device::Transport {
 impl From<common::device::Device> for proto::Device {
     fn from(d: common::device::Device) -> Self {
         Self {
-            uuid: d.uuid,
+            uuid: d.uuid.to_vec(),
             transport: proto::Transport::from(d.transport) as i32,
         }
     }
 }
 impl From<proto::Device> for common::device::Device {
     fn from(d: proto::Device) -> Self {
+        let mut uuid = [0u8; 6];
+        if d.uuid.len() == 6 {
+            uuid.copy_from_slice(&d.uuid);
+        } else if d.uuid.len() > 0 {
+            // If we have some bytes, take first 6 (or pad)
+            let len = std::cmp::min(6, d.uuid.len());
+            uuid[..len].copy_from_slice(&d.uuid[..len]);
+        }
         common::device::Device {
-            uuid: d.uuid,
+            uuid,
             transport: proto::Transport::try_from(d.transport).unwrap().into(),
         }
     }
@@ -191,7 +198,10 @@ impl From<proto::Event> for common::events::Event {
             Some(dev) => dev.into(),
             None => panic!("proto::DeviceEvent missing device field"),
         };
-        let kind = match d.device_event_oneof.expect("proto::DeviceEvent missing payload") {
+        let kind = match d
+            .device_event_oneof
+            .expect("proto::DeviceEvent missing payload")
+        {
             proto::device_event::DeviceEventOneof::Accelerometer(e) => {
                 common::events::DeviceEventKind::AccelerometerEvent(
                     common::events::AccelerometerEvent {

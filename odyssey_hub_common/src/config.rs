@@ -1,9 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{
-    accessory::AccessoryInfo,
-    hexkeymap::{HexKeyMap, HexKeyMapN},
-};
+use crate::{accessory::AccessoryInfo, hexkeymap::HexKeyMapN};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_common::ScreenCalibration;
 use tokio::fs;
@@ -15,14 +12,15 @@ pub const APP_INFO: AppInfo = AppInfo {
 
 /* ------------------------------- Shot delays ------------------------------- */
 
-pub async fn device_shot_delays_async() -> Result<HashMap<u64, u16>, Box<dyn std::error::Error>> {
+pub async fn device_shot_delays_async() -> Result<HashMap<[u8; 6], u16>, Box<dyn std::error::Error>>
+{
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let path = config_dir.join("device_shot_delays.json");
 
     if fs::try_exists(&path).await? {
         tracing::info!("Loading device delays from {}", path.display());
         let contents = fs::read_to_string(&path).await?;
-        let HexKeyMap(map) = json5::from_str::<HexKeyMap<u16>>(&contents)?;
+        let HexKeyMapN(map) = json5::from_str::<HexKeyMapN<u16, 6>>(&contents)?;
         Ok(map)
     } else {
         tracing::warn!("Device shot delays file not found, using default values");
@@ -31,23 +29,19 @@ pub async fn device_shot_delays_async() -> Result<HashMap<u64, u16>, Box<dyn std
 }
 
 pub async fn device_shot_delays_save_async(
-    device_shot_delays: &HashMap<u64, u16>,
+    device_shot_delays: &HashMap<[u8; 6], u16>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let path = config_dir.join("device_shot_delays.json");
 
-    // Keep the existing string-key format (e.g., "0x..")
-    let converted: HashMap<String, u16> = device_shot_delays
-        .iter()
-        .map(|(k, v)| (format!("0x{:02x}", k), *v))
-        .collect();
-
-    fs::write(path, json5::to_string(&converted)?).await?;
+    let wrapped = HexKeyMapN(device_shot_delays.clone());
+    let contents = json5::to_string(&wrapped)?;
+    fs::write(&path, contents).await?;
     Ok(())
 }
 
 pub async fn device_shot_delay_save_async(
-    uuid: u64,
+    uuid: [u8; 6],
     delay: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut map = device_shot_delays_async().await?;
@@ -58,14 +52,15 @@ pub async fn device_shot_delay_save_async(
 /* --------------------------------- Offsets -------------------------------- */
 
 pub async fn device_offsets_async(
-) -> Result<HashMap<u64, nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<[u8; 6], nalgebra::Isometry3<f32>>, Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let path = config_dir.join("device_offsets.json");
 
     if fs::try_exists(&path).await? {
         tracing::info!("Loading device offsets from {}", path.display());
         let contents = fs::read_to_string(&path).await?;
-        let HexKeyMap(map) = json5::from_str::<HexKeyMap<nalgebra::Isometry3<f32>>>(&contents)?;
+        let HexKeyMapN(map) =
+            json5::from_str::<HexKeyMapN<nalgebra::Isometry3<f32>, 6>>(&contents)?;
         Ok(map)
     } else {
         tracing::warn!("Device offsets file not found, using default values");
@@ -74,18 +69,14 @@ pub async fn device_offsets_async(
 }
 
 pub async fn device_offsets_save_async(
-    device_offsets: &HashMap<u64, nalgebra::Isometry3<f32>>,
+    device_offsets: &HashMap<[u8; 6], nalgebra::Isometry3<f32>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
     let path = config_dir.join("device_offsets.json");
 
-    // Preserve current format: stringified keys
-    let converted: HashMap<String, &nalgebra::Isometry3<f32>> = device_offsets
-        .iter()
-        .map(|(k, v)| (format!("0x{:02x}", k), v))
-        .collect();
-
-    fs::write(path, json5::to_string(&converted)?).await?;
+    let wrapped = HexKeyMapN(device_offsets.clone());
+    let contents = json5::to_string(&wrapped)?;
+    fs::write(&path, contents).await?;
     Ok(())
 }
 
