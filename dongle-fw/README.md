@@ -1,11 +1,11 @@
 # Dongle Firmware
 
-nRF52840 USB dongle firmware that acts as a BLE-to-USB hub for up to 7 vm-fw devices using the HubMsg protocol.
+nRF52840 USB dongle firmware that acts as a BLE-to-USB mux for up to 7 vm-fw devices using the Mux protocol.
 
 ## Features
 
 - **USB Communication**: VID 0x1915, PID 0x5210
-- **HubMsg Protocol**: Minicbor-encoded protocol from protodonge-rs
+- **Mux Protocol (bulk)**: Postcard-encoded MuxMsg over USB bulk endpoints
 - **BLE Central**: Connects to up to 7 peripheral devices simultaneously using Nordic S140 SoftDevice
 - **Device Management**: Add/remove devices to bond with by UUID
 - **Nordic SoftDevice S140**: Officially qualified BLE stack for regulatory compliance
@@ -13,15 +13,14 @@ nRF52840 USB dongle firmware that acts as a BLE-to-USB hub for up to 7 vm-fw dev
 ## Architecture
 
 ```
-┌─────────┐    USB (HubMsg)     ┌────────────┐    BLE      ┌──────────┐
+┌─────────┐    USB (MuxMsg)     ┌────────────┐    BLE      ┌──────────┐
 │   PC    │ ←─────────────────→ │  Dongle    │ ←─────────→ │  vm-fw   │
 │         │                     │  (nRF52840)│             │ device 1 │
 └─────────┘                     │            │ ←─────────→ │  vm-fw   │
                                 │  - USB     │             │ device 2 │
-                                │  - BLE Hub │             │   ...    │
-                                │  - Storage │ ←─────────→ │  vm-fw   │
-                                └────────────┘             │ device 7 │
-                                                           └──────────┘
+                                │  - USB Mux │             │  vm-fw   │
+                                │  - Storage │ ←─────────→ │ device 3 │
+                                └────────────┘             └──────────┘
 ```
 
 ## Building
@@ -49,7 +48,7 @@ nRF52840 USB dongle firmware that acts as a BLE-to-USB hub for up to 7 vm-fw dev
    cargo build --release
 
    # Put dongle in bootloader mode (press reset button)
-   
+
    # Flash to dongle
    cargo run --release
    ```
@@ -72,14 +71,14 @@ Configured for S140 SoftDevice v7.x on nRF52840:
   - SoftDevice: 0x00000-0x26000 (152KB) - S140 v7.x
   - Application: 0x26000-0xE6000 (768KB)
   - Settings: 0xE6000-0xEC000 (24KB)
-  
+
 - **RAM**: 256KB total
   - SoftDevice: 0x20000000-0x20003000 (12KB)
   - Application: 0x20003000-0x20040000 (244KB)
 
-## HubMsg Protocol
+## Mux Protocol (bulk)
 
-The dongle communicates with the PC using the HubMsg protocol (minicbor-encoded):
+The dongle communicates with the PC over USB bulk endpoints using the MuxMsg protocol (postcard-encoded):
 
 ### Messages from Host to Dongle:
 - `RequestDevices`: Get list of configured device UUIDs
@@ -134,7 +133,7 @@ sd::Config {
 ## Current Status
 
 ### ✅ Implemented
-- [x] USB device with HubMsg protocol
+- [x] USB device with MuxMsg (bulk) protocol
 - [x] S140 SoftDevice initialization and configuration
 - [x] BLE central role with scanning
 - [x] Multi-device connection management (up to 7)
@@ -147,7 +146,7 @@ sd::Config {
 - [ ] GATT service/characteristic discovery for ATS devices
 - [ ] Actual data read/write to characteristics
 - [ ] Persistent storage for device UUIDs (flash)
-- [ ] Add `AddDevice`/`RemoveDevice` to HubMsg protocol
+- [ ] Add `AddDevice`/`RemoveDevice` to data/control protocols
 - [ ] BLE bonding and pairing with security
 - [ ] Reconnection logic for dropped connections
 - [ ] LED status indicators
@@ -215,6 +214,21 @@ If you see "SoftDevice assert", common causes:
 ## See Also
 
 - [PROTOCOL_EXTENSION.md](PROTOCOL_EXTENSION.md) - Proposed device management protocol additions
-- [protodonge-rs](https://github.com/odysseyarm/protodonge-rs) - HubMsg protocol definition
+- [protodonge-rs](https://github.com/odysseyarm/protodonge-rs) - Mux and USB Mux control protocol definitions
 - [nrf-softdevice](https://github.com/embassy-rs/nrf-softdevice) - Rust bindings for SoftDevice
 - [S140 Documentation](https://infocenter.nordicsemi.com/topic/struct_nrf52/struct/s140.html) - Official Nordic docs
+
+## USB Control (EP0)
+
+A separate control plane is carried over EP0 control transfers using UsbMuxCtrlMsg with interface recipient on interface 0:
+
+- OUT (host->device) SEND: bmRequestType Vendor|Interface|OUT, bRequest 0x30, wValue 0, wIndex 0, data = postcard(UsbMuxCtrlMsg)
+- IN (device->host) RECV: bmRequestType Vendor|Interface|IN, bRequest 0x31, wValue 0, wIndex 0, data = postcard(UsbMuxCtrlMsg)
+
+Control messages include:
+- ReadVersion / ReadVersionResponse(UsbMuxVersion)
+- StartPairing(StartPairing) / StartPairingResponse
+- CancelPairing
+- PairingResult(Result<Uuid, PairingError>)
+- ClearBonds / ClearBondsResponse(Result<(), ClearBondsError>)
+

@@ -114,6 +114,17 @@ impl PmicLedsHandle {
     }
 }
 
+// Lightweight global helpers for places that don't have a handle reference.
+// These do not respect the handle lock and are intended for coarse state
+// updates from BLE tasks (e.g., on connect/disconnect/pairing).
+pub async fn set_state_global(s: LedState) {
+    let _ = CMD_CH.send(LedCmd::Set(s)).await;
+}
+
+pub async fn set_state_seamless_global(s: LedState) {
+    let _ = CMD_CH.send(LedCmd::SetSeamless(s)).await;
+}
+
 fn frame_durations(state: LedState) -> (Duration, Duration) {
     let (on, off) = state.frames();
     (Duration::from_millis(on), Duration::from_millis(off))
@@ -331,7 +342,6 @@ where
         }
     }
 }
-
 
 
 

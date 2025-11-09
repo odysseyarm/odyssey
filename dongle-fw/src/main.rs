@@ -9,7 +9,6 @@ mod pairing;
 mod storage;
 mod usb;
 
-// Initialize RTT logging and panic handler when rtt feature is enabled
 #[cfg(feature = "rtt")]
 use {defmt_rtt as _, panic_probe as _};
 
@@ -18,59 +17,46 @@ use defmt::{error, info, warn};
 use embassy_executor::Spawner;
 use embassy_nrf::{bind_interrupts, peripherals, usb as nrf_usb};
 use embassy_nrf::{peripherals::RNG as NRF_RNG, rng};
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal as SyncSignal;
+
+// Channel for sending host responses (RequestDevices, ReadVersion, etc.)
+type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 4>;
+static HOST_RESPONSES: HostResponseChannel = Channel::new();
 use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
 // Using trouble-host + nrf-sdc
-use protodongers::hub::{DevicePacket, HubMsg, MAX_DEVICES, PairingError, Version};
+use protodongers::control::usb_mux::{BondStoreError, PairingError, UsbMuxCtrlMsg, UsbMuxVersion};
+use protodongers::mux::{DevicePacket, MAX_DEVICES, MuxMsg, Version};
 
-// L2CAP PSM (Protocol Service Multiplexer) for our custom protocol
-#[allow(dead_code)]
-const L2CAP_PSM: u16 = 0x0080; // Dynamic PSM in valid range (0x0080-0x00FF)
 use static_cell::StaticCell;
 
 use nrf_sdc::{self as sdc, mpsl};
-use rand_core::{CryptoRng, RngCore};
+use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
 use trouble_host::PacketPool;
 use trouble_host::prelude::DefaultPacketPool;
 
-struct SeedRng {
-    buf: [u8; 32],
-    off: usize,
-}
-impl SeedRng {
-    fn new(buf: [u8; 32]) -> Self {
-        Self { buf, off: 0 }
-    }
-}
-impl RngCore for SeedRng {
-    fn next_u32(&mut self) -> u32 {
-        0
-    }
-    fn next_u64(&mut self) -> u64 {
-        0
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        let n = core::cmp::min(dest.len(), 32 - self.off);
-        dest[..n].copy_from_slice(&self.buf[self.off..self.off + n]);
-        self.off += n;
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-impl CryptoRng for SeedRng {}
-
-// Type aliases used across tasks
 type Controller = nrf_sdc::SoftdeviceController<'static>;
 type Pool = DefaultPacketPool;
 
 use crate::ble::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager, DevicePacketChannel};
 use crate::storage::Settings;
 
-use core::pin::pin;
-use embassy_futures::select::{Either, select};
+use crate::storage::BondData;
+
+use heapless::Vec as HVec;
+
+// Host management channel to handle bond purge requests while keeping
+// preloading at boot. ClearBonds will send to this channel and wait for
+// completion before responding.
+enum HostMgmtCmd {
+    PurgeBonds(HVec<BondData, { MAX_DEVICES }>),
+}
+
+static HOST_MGMT_CH: Channel<ThreadModeRawMutex, HostMgmtCmd, 2> = Channel::new();
+static HOST_MGMT_DONE: SyncSignal<ThreadModeRawMutex, ()> = SyncSignal::new();
 // Capture scan reports during pairing using a host event handler
 struct HostEventHandler;
 impl trouble_host::prelude::EventHandler for HostEventHandler {
@@ -78,17 +64,12 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
         if crate::pairing::is_active() {
             for r in reports {
                 if let Ok(rep) = r {
-                    // Only consider connectable legacy adverts (ADV_IND or ADV_DIRECT_IND)
-                    match rep.event_kind {
-                        bt_hci::param::LeAdvEventKind::AdvInd
-                        | bt_hci::param::LeAdvEventKind::AdvDirectInd => {}
-                        _ => continue,
-                    }
+                    // During pairing, accept MSD in either primary ADV or SCAN_RSP.
                     if crate::ble::central::adv_matches_pairing(rep.data) {
                         let raw = rep.addr.raw();
                         let mut addr = [0u8; 6];
                         addr.copy_from_slice(raw);
-                        defmt::info!("pairing: adv match (LEGACY) {:02x}", addr);
+                        defmt::info!("pairing: adv/scan match (LEGACY) {:02x}", addr);
                         crate::ble::central::report_scan_address(addr);
                         break;
                     }
@@ -100,10 +81,7 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
         if crate::pairing::is_active() {
             for r in reports {
                 if let Ok(rep) = r {
-                    // Only consider connectable extended adverts
-                    if !rep.event_kind.connectable() {
-                        continue;
-                    }
+                    // Accept any extended advert that contains our MSD.
                     if crate::ble::central::adv_matches_pairing(rep.data) {
                         let raw = rep.addr.raw();
                         let mut addr = [0u8; 6];
@@ -129,7 +107,6 @@ bind_interrupts!(pub struct Irqs {
     TIMER0 => mpsl::HighPrioInterruptHandler;
     RTC0 => mpsl::HighPrioInterruptHandler;
 
-    // RNG and USBD
     RNG => rng::InterruptHandler<NRF_RNG>;
     USBD => nrf_usb::InterruptHandler<peripherals::USBD>;
 });
@@ -137,6 +114,10 @@ bind_interrupts!(pub struct Irqs {
 // Hardware VBUS detect is used; no SoftwareVbusDetect needed.
 
 const VERSION: Version = Version {
+    protocol_semver: [0, 1, 0],
+    firmware_semver: [0, 1, 0],
+};
+const USB_MUX_VERSION: UsbMuxVersion = UsbMuxVersion {
     protocol_semver: [0, 1, 0],
     firmware_semver: [0, 1, 0],
 };
@@ -267,12 +248,13 @@ async fn main(mut spawner: Spawner) {
 
     // Host resources and stack
     info!("trouble-host initialization");
-    static RESOURCES: StaticCell<trouble_host::HostResources<Pool, { MAX_DEVICES }, 8>> =
+    // Need 2 L2CAP channels per device (control + data), so 16 channels for 8 devices
+    static RESOURCES: StaticCell<trouble_host::HostResources<Pool, { MAX_DEVICES }, 16>> =
         StaticCell::new();
     let resources = RESOURCES.init(trouble_host::HostResources::new());
     static STACK_CELL: StaticCell<trouble_host::Stack<'static, Controller, Pool>> =
         StaticCell::new();
-    let mut host_seed_rng = SeedRng::new(seed);
+    let mut host_seed_rng = ChaCha20Rng::from_seed(seed);
     // Set a static random address like the examples; replace with a stable ID if desired.
     let address = trouble_host::Address::random([0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03]);
     let stack = STACK_CELL.init(
@@ -303,7 +285,8 @@ async fn main(mut spawner: Spawner) {
     // Load bonds into cache for reconnection
     ble::security::load_bond_cache(settings).await;
 
-    // Restore stored bonds into the host before building the stack
+    // Preload bonds into the host at runtime for convenient auto-encryption on reconnects.
+    // Runtime ClearBonds will also purge the host DB via HOST_MGMT_CH to avoid stale LTKs.
     {
         let bonds = settings.get_all_bonds().await;
         for opt in bonds.slots.iter() {
@@ -320,27 +303,24 @@ async fn main(mut spawner: Spawner) {
     spawner.must_spawn(host_rx_task(rx));
     spawner.must_spawn(host_ctrl_task(control));
     spawner.must_spawn(host_tx_task(tx));
+    spawner.must_spawn(host_mgmt_task(stack));
 
     // Initialize channels for BLE <-> USB communication
     static DEVICE_PACKETS: StaticCell<DevicePacketChannel> = StaticCell::new();
     let device_packets = DEVICE_PACKETS.init(Channel::new());
-    let control_ch = control::init();
-    control::register(control_ch);
+    let (evt_ch, cmd_ch) = control::init();
+    control::register(evt_ch, cmd_ch);
 
     // Initialize per-device queue registry
     use ble::central::DEVICE_QUEUES;
     let device_queues = DEVICE_QUEUES.init(ble::central::DeviceQueues::new());
 
-    spawner.must_spawn(usb_task(
-        ep_in,
-        ep_out,
-        usb_signal,
-        device_packets,
-        control_ch,
-        device_queues,
-        active_connections,
-        settings,
-    ));
+    // Store global references for use in control task
+    ble::central::set_global_refs(active_connections, device_queues).await;
+
+    spawner.must_spawn(usb_rx_task(ep_out, device_queues, active_connections));
+    spawner.must_spawn(usb_tx_task(ep_in, device_packets));
+    spawner.must_spawn(control_exec_task(settings));
     // Start BLE manager (central)
     info!("Starting BLE manager task");
     spawner.must_spawn(ble_task(
@@ -379,7 +359,7 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
                 ble::security::update_bond_cache(bond).await;
 
                 // Send pairing success to USB host
-                control::try_send(HubMsg::PairingResult(Ok(bond.bd_addr)));
+                control::try_send_event(UsbMuxCtrlMsg::PairingResult(Ok(bond.bd_addr)));
 
                 // Exit pairing mode now that we've successfully bonded
                 pairing::cancel();
@@ -387,6 +367,7 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
             }
             Err(()) => {
                 defmt::error!("Failed to store bond for device {:02x}", bond.bd_addr);
+                control::try_send_event(UsbMuxCtrlMsg::BondStoreError(BondStoreError::Full));
             }
         }
     }
@@ -430,6 +411,23 @@ async fn host_ctrl_task(
 }
 
 #[embassy_executor::task]
+async fn host_mgmt_task(stack: &'static trouble_host::Stack<'static, Controller, Pool>) -> ! {
+    defmt::info!("host_mgmt_task: starting");
+    loop {
+        match HOST_MGMT_CH.receive().await {
+            HostMgmtCmd::PurgeBonds(list) => {
+                defmt::info!("host_mgmt: purging {} bond(s) from host DB", list.len());
+                for bd in list.iter() {
+                    let info = ble::security::info_from_bonddata(bd);
+                    let _ = stack.remove_bond_information(info.identity);
+                }
+                HOST_MGMT_DONE.signal(());
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
 async fn host_tx_task(mut tx: trouble_host::prelude::TxRunner<'static, Controller, Pool>) -> ! {
     defmt::info!("host_tx_task: starting");
     loop {
@@ -462,90 +460,73 @@ async fn ble_task(
     ble_manager.run().await
 }
 
+// USB RX task: receives commands from host
 #[embassy_executor::task]
-async fn usb_task(
-    mut ep_in: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
+async fn usb_rx_task(
     mut ep_out: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::Out>,
-    usb_signal: &'static embassy_sync::signal::Signal<
-        embassy_sync::blocking_mutex::raw::ThreadModeRawMutex,
-        bool,
-    >,
-    device_packets: &'static DevicePacketChannel,
-    control_ch: &'static embassy_sync::channel::Channel<
-        embassy_sync::blocking_mutex::raw::ThreadModeRawMutex,
-        HubMsg,
-        4,
-    >,
     device_queues: &'static ble::central::DeviceQueues,
     active_connections: &'static ActiveConnections,
-    settings: &'static Settings,
 ) {
     loop {
-        // Wait for USB to be configured
-        usb_signal.wait().await;
-        info!("USB configured");
+        info!("USB RX task: waiting for USB configuration");
 
         let mut read_buf = [0u8; 512];
-        let mut write_buf = [0u8; 256];
 
-        info!("USB task entering main loop");
         loop {
-            // Concurrently wait for either a host OUT packet, a device->host packet, or a control event.
-            let res = {
-                let out_read = pin!(EndpointOut::read_transfer(&mut ep_out, &mut read_buf));
-                let dev_recv = pin!(device_packets.receive());
-                let ctrl_recv = pin!(control_ch.receive());
-                select(out_read, select(dev_recv, ctrl_recv)).await
-            };
-            match res {
-                Either::First(res) => match res {
-                    Ok(n) => {
-                        info!("USB task: received {} bytes", n);
-                        if let Err(_e) = handle_usb_rx(
-                            &read_buf[..n],
-                            &mut write_buf,
-                            device_queues,
-                            active_connections,
-                            settings,
-                            &mut ep_in,
-                        )
-                        .await
-                        {
-                            error!("Error handling USB RX ({} bytes)", n);
-                        }
+            match EndpointOut::read_transfer(&mut ep_out, &mut read_buf).await {
+                Ok(n) => {
+                    info!("USB RX: received {} bytes", n);
+                    if let Err(_e) =
+                        handle_usb_rx(&read_buf[..n], device_queues, active_connections).await
+                    {
+                        error!("Error handling USB RX ({} bytes)", n);
                     }
-                    Err(EndpointError::Disabled) => {
-                        info!("USB disabled, waiting for reconnection");
-                        break;
-                    }
-                    Err(_e) => {
-                        warn!("USB read error");
-                    }
-                },
-                Either::Second(branch) => match branch {
-                    Either::First(pkt) => {
-                        if let Err(_e) =
-                            send_hub_msg(&HubMsg::DevicePacket(pkt), &mut write_buf, &mut ep_in)
-                                .await
-                        {
-                            warn!("Error sending device packet");
-                        }
-                    }
-                    Either::Second(evt) => {
-                        if let Err(_e) = send_hub_msg(&evt, &mut write_buf, &mut ep_in).await {
-                            warn!("Error sending control event");
-                        }
-                    }
-                },
+                }
+                Err(EndpointError::Disabled) => {
+                    info!("USB RX: disabled, waiting for reconnection");
+                    break;
+                }
+                Err(_e) => {
+                    warn!("USB RX: read error");
+                }
             }
 
             if pairing::take_timeout() {
-                let _ = send_hub_msg(
-                    &HubMsg::PairingResult(Err(PairingError::Timeout)),
-                    &mut write_buf,
-                    &mut ep_in,
-                )
-                .await;
+                // Emit control-plane timeout event
+                control::try_send_event(UsbMuxCtrlMsg::PairingResult(Err(PairingError::Timeout)));
+            }
+        }
+    }
+}
+
+// USB TX task: sends device packets to host
+#[embassy_executor::task]
+async fn usb_tx_task(
+    mut ep_in: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
+    device_packets: &'static DevicePacketChannel,
+) {
+    loop {
+        info!("USB TX task: waiting for USB configuration");
+
+        let mut write_buf = [0u8; 256];
+
+        loop {
+            // Priority: host responses first (low volume), then device packets (high volume)
+            use embassy_futures::select::{Either, select};
+            let msg = select(HOST_RESPONSES.receive(), async {
+                MuxMsg::DevicePacket(device_packets.receive().await)
+            })
+            .await;
+
+            let msg = match msg {
+                Either::First(response) => response,
+                Either::Second(device_pkt) => device_pkt,
+            };
+
+            if let Err(_e) = send_mux_msg(&msg, &mut write_buf, &mut ep_in).await {
+                warn!("USB TX: error sending message");
+                // Endpoint disabled, break to wait for reconfiguration
+                break;
             }
         }
     }
@@ -553,14 +534,11 @@ async fn usb_task(
 
 async fn handle_usb_rx(
     data: &[u8],
-    write_buf: &mut [u8],
     device_queues: &ble::central::DeviceQueues,
     active_connections: &ActiveConnections,
-    settings: &Settings,
-    ep_in: &mut embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
 ) -> Result<(), ()> {
     // Decode using postcard (standard for USB in ats_usb)
-    let msg: HubMsg = postcard::from_bytes(data).map_err(|e| {
+    let msg: MuxMsg = postcard::from_bytes(data).map_err(|e| {
         error!(
             "Failed to deserialize USB packet ({} bytes): {:?}",
             data.len(),
@@ -570,12 +548,12 @@ async fn handle_usb_rx(
     })?;
 
     match msg {
-        HubMsg::RequestDevices => {
+        MuxMsg::RequestDevices => {
             let devices = active_connections.get_all().await;
-            let response = HubMsg::DevicesSnapshot(devices);
-            send_hub_msg(&response, write_buf, ep_in).await?;
+            let response = MuxMsg::DevicesSnapshot(devices);
+            HOST_RESPONSES.send(response).await;
         }
-        HubMsg::SendTo(send_to_msg) => {
+        MuxMsg::SendTo(send_to_msg) => {
             // Route message to the specific device's queue
             let device_uuid = &send_to_msg.dev;
             info!("SendTo message for device {:02x}", device_uuid);
@@ -584,8 +562,15 @@ async fn handle_usb_rx(
                     dev: send_to_msg.dev,
                     pkt: send_to_msg.pkt,
                 };
-                queue.send(device_pkt).await;
-                info!("Packet queued successfully for device {:02x}", device_uuid);
+                // Use try_send to avoid blocking if queue is full (BLE task not draining fast enough)
+                match queue.try_send(device_pkt) {
+                    Ok(()) => {
+                        info!("Packet queued successfully for device {:02x}", device_uuid);
+                    }
+                    Err(_) => {
+                        warn!("Device queue full for {:02x}, packet dropped", device_uuid);
+                    }
+                }
             } else {
                 error!(
                     "No queue found for device {:02x} - device not connected",
@@ -593,39 +578,9 @@ async fn handle_usb_rx(
                 );
             }
         }
-        HubMsg::ReadVersion() => {
-            let response = HubMsg::ReadVersionResponse(VERSION);
-            send_hub_msg(&response, write_buf, ep_in).await?;
-        }
-        HubMsg::StartPairing(start) => {
-            info!("USB StartPairing received, timeout_ms={}", start.timeout_ms);
-            let timeout = embassy_time::Duration::from_millis(start.timeout_ms as u64);
-            pairing::enter_with_timeout(timeout);
-            send_hub_msg(&HubMsg::StartPairingResponse, write_buf, ep_in).await?;
-        }
-        HubMsg::CancelPairing => {
-            info!("USB CancelPairing received");
-            pairing::cancel();
-            send_hub_msg(
-                &HubMsg::PairingResult(Err(PairingError::Cancelled)),
-                write_buf,
-                ep_in,
-            )
-            .await?;
-        }
-        HubMsg::ClearBonds => {
-            info!("USB ClearBonds received");
-
-            // Clear bonds (scan targets will be empty on next boot since they're derived from bonds)
-            settings.bonds_clear().await;
-
-            // Also clear runtime scan targets immediately
-            settings.scan_list_clear().await;
-
-            // Clear bond cache so they're not used until reboot
-            ble::security::clear_bond_cache().await;
-
-            send_hub_msg(&HubMsg::ClearBondsResponse(Ok(())), write_buf, ep_in).await?;
+        MuxMsg::ReadVersion() => {
+            let response = MuxMsg::ReadVersionResponse(VERSION);
+            HOST_RESPONSES.send(response).await;
         }
         _ => {
             error!(
@@ -638,8 +593,8 @@ async fn handle_usb_rx(
     Ok(())
 }
 
-async fn send_hub_msg(
-    msg: &HubMsg,
+async fn send_mux_msg(
+    msg: &MuxMsg,
     write_buf: &mut [u8],
     ep_in: &mut embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
 ) -> Result<(), ()> {
@@ -653,6 +608,72 @@ async fn send_hub_msg(
         .await
         .map_err(|_| ())?;
     Ok(())
+}
+
+#[embassy_executor::task]
+async fn control_exec_task(settings: &'static Settings) -> ! {
+    loop {
+        use UsbMuxCtrlMsg as C;
+        let cmd = control::recv_cmd().await;
+        match cmd {
+            C::ReadVersion() => control::try_send_event(C::ReadVersionResponse(USB_MUX_VERSION)),
+            C::StartPairing(start) => {
+                info!("CTL StartPairing received, timeout_ms={}", start.timeout_ms);
+                let timeout = embassy_time::Duration::from_millis(start.timeout_ms as u64);
+                pairing::enter_with_timeout(timeout);
+                control::try_send_event(C::StartPairingResponse);
+            }
+            C::CancelPairing => {
+                info!("CTL CancelPairing received");
+                pairing::cancel();
+                control::try_send_event(C::PairingResult(Err(PairingError::Cancelled)));
+            }
+            C::ClearBonds => {
+                info!("CTL ClearBonds received");
+                // Capture current bonds to purge from host DB
+                let bonds = settings.get_all_bonds().await;
+                let mut to_purge: HVec<BondData, { MAX_DEVICES }> = HVec::new();
+                for opt in bonds.slots.iter() {
+                    if let Some(bd) = opt {
+                        let _ = to_purge.push(*bd);
+                    }
+                }
+                // Ask host task to purge; wait briefly for completion
+                HOST_MGMT_CH.send(HostMgmtCmd::PurgeBonds(to_purge)).await;
+                let _ = embassy_time::with_timeout(
+                    embassy_time::Duration::from_millis(500),
+                    HOST_MGMT_DONE.wait(),
+                )
+                .await;
+                // Now clear persisted + runtime state
+                settings.bonds_clear().await;
+                settings.scan_list_clear().await;
+                ble::security::clear_bond_cache().await;
+
+                // Disconnect all active BLE connections
+                if let (Some(active_connections), Some(device_queues)) = (
+                    ble::central::get_active_connections().await,
+                    ble::central::get_device_queues().await,
+                ) {
+                    let active_devs = active_connections.get_all().await;
+                    for dev in active_devs.iter() {
+                        info!(
+                            "Disconnecting active connection to {:02x} due to bond clear",
+                            dev
+                        );
+                        active_connections.remove(dev).await;
+                        device_queues.unregister(dev).await;
+                    }
+                }
+
+                // Signal central loop to restart immediately (cancel any in-flight operations)
+                ble::central::RESTART_CENTRAL.signal(());
+
+                control::try_send_event(C::ClearBondsResponse(Ok(())));
+            }
+            _ => {}
+        }
+    }
 }
 
 #[exception]

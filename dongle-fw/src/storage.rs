@@ -27,7 +27,7 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMu
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer, WithTimeout};
-use protodongers::hub::MAX_DEVICES;
+use protodongers::mux::MAX_DEVICES;
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
 
@@ -443,3 +443,4 @@ pub async fn init_settings(
 }
 
 // Softdevice gating removed: storage starts immediately.
+

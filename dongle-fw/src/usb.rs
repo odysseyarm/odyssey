@@ -38,7 +38,7 @@ pub fn usb_device(
 
     let mut config = UsbConfig::new(VID, PID);
     config.manufacturer = Some("Odyssey Arm");
-    config.product = Some("Dongle USB Hub");
+    config.product = Some("Dongle USB Mux");
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;
@@ -80,8 +80,8 @@ pub fn usb_device(
     ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);
-    let ep_out = alt.endpoint_bulk_out(None, 64);
-    let ep_in = alt.endpoint_bulk_in(None, 64);
+    let ep_out = alt.endpoint_bulk_out(Some(1u8.into()), 64);
+    let ep_in = alt.endpoint_bulk_in(Some(1u8.into()), 64);
     drop(function);
     (builder, ep_in, ep_out, signal)
 }
@@ -99,5 +99,58 @@ impl MyHandler {
 impl embassy_usb::Handler for MyHandler {
     fn configured(&mut self, configured: bool) {
         self.signal.signal(configured);
+    }
+
+    fn control_out(
+        &mut self,
+        req: embassy_usb::control::Request,
+        data: &[u8],
+    ) -> Option<embassy_usb::control::OutResponse> {
+        use embassy_usb::control::{OutResponse, Recipient, RequestType};
+        use protodongers::control::usb_mux::UsbMuxCtrlMsg;
+
+        // Vendor|Interface, request SEND=0x30, wIndex=1
+        if req.request_type == RequestType::Vendor
+            && req.recipient == Recipient::Interface
+            && req.request == 0x30
+            && req.index == 0
+        {
+            match postcard::from_bytes::<UsbMuxCtrlMsg>(data) {
+                Ok(msg) => {
+                    crate::control::try_send_cmd(msg);
+                    Some(OutResponse::Accepted)
+                }
+                Err(_) => Some(OutResponse::Rejected),
+            }
+        } else {
+            None
+        }
+    }
+
+    fn control_in<'a>(
+        &'a mut self,
+        req: embassy_usb::control::Request,
+        buf: &'a mut [u8],
+    ) -> Option<embassy_usb::control::InResponse<'a>> {
+        use embassy_usb::control::{InResponse, Recipient, RequestType};
+
+        // Vendor|Interface, request RECV=0x31, wIndex=0
+        if req.request_type == RequestType::Vendor
+            && req.recipient == Recipient::Interface
+            && req.request == 0x31
+            && req.index == 0
+        {
+            if let Some(msg) = crate::control::try_recv_event() {
+                match postcard::to_slice(&msg, buf) {
+                    Ok(out) => Some(InResponse::Accepted(out)),
+                    Err(_) => Some(InResponse::Rejected),
+                }
+            } else {
+                // No event pending: return zero-length success to indicate "no data".
+                Some(InResponse::Accepted(&[]))
+            }
+        } else {
+            None
+        }
     }
 }

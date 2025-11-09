@@ -591,6 +591,7 @@ dependencies = [
  "panic-probe",
  "postcard",
  "protodongers",
+ "rand_chacha",
  "rand_core 0.6.4",
  "sequential-storage",
  "serde",
@@ -2195,7 +2196,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=4f4fa16e65b6a52c66b0140df47a606ac5c140a6#4f4fa16e65b6a52c66b0140df47a606ac5c140a6"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=bb61f8a#bb61f8a0b8e84b4afa175674a56c91b6e545acd3"
 dependencies = [
  "aes",
  "bt-hci",
@@ -2219,7 +2220,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.3.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=4f4fa16e65b6a52c66b0140df47a606ac5c140a6#4f4fa16e65b6a52c66b0140df47a606ac5c140a6"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=bb61f8a#bb61f8a0b8e84b4afa175674a56c91b6e545acd3"
 dependencies = [
  "convert_case",
  "darling",

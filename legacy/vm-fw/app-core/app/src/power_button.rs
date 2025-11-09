@@ -79,12 +79,27 @@ where
                 leds.lock_and_set_state(crate::pmic_leds::LedState::Pairing).await;
                 let timeout = Duration::from_secs(120);
                 let deadline = Instant::now() + timeout;
+                // While in pairing, still allow long-press power-off
                 loop {
                     if !crate::ble::peripheral::is_pairing_active() {
                         break;
                     }
                     if Instant::now() >= deadline {
                         break;
+                    }
+                    // Check for long press without blocking
+                    if btn.is_low() {
+                        let t0 = Instant::now();
+                        while btn.is_low() {
+                            if Instant::now() - t0 >= LONG_PRESS {
+                                // Power off during pairing
+                                leds.lock_and_set_state(crate::pmic_leds::LedState::TurningOff).await;
+                                btn.wait_for_high().await;
+                                let _ = crate::power::handle_long_press_power_off(pmic).await;
+                                loop {}
+                            }
+                            Timer::after_millis(POLL_MS).await;
+                        }
                     }
                     Timer::after_millis(100).await;
                 }

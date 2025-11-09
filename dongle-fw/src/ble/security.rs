@@ -3,7 +3,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use heapless::Vec;
-use protodongers::hub::MAX_DEVICES;
+use protodongers::mux::MAX_DEVICES;
 
 use crate::storage::{BondData, Settings};
 
@@ -117,3 +117,4 @@ pub async fn clear_bond_cache() {
     cache.clear();
     info!("Cleared bond cache");
 }
+

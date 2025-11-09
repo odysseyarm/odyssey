@@ -17,7 +17,7 @@ embassy-embedded-hal = "0.5.0"
 defmt-rtt = { version = "0.4", optional = true }
 panic-probe = { version = "0.3", features = ["print-defmt"], optional = true }
 
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "4f4fa16e65b6a52c66b0140df47a606ac5c140a6", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "defmt", "security", "scan"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "bb61f8a", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "defmt", "security", "scan"] }
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c", default-features = false, features = ["defmt", "nrf52840", "central", "peripheral"] }
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c", default-features = false, features = ["nrf52840", "defmt", "critical-section-impl"] }
 bt-hci = "0.6.0"
@@ -35,6 +35,7 @@ futures = { version = "0.3", default-features = false }
 postcard = { version = "1.0", default-features = false, features = ["heapless"] }
 critical-section = "1.2.0"
 rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
 
 # Use same minicbor version as protodongers (only for storage, not USB)
 minicbor = { git = "https://github.com/Abrahamh08/minicbor", features = ["derive"] }

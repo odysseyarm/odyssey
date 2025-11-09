@@ -49,7 +49,7 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
     let _exit3 = exit.receiver().unwrap();
 
     // Also handle BLE L2CAP packets using the same request handler
-    let (l2cap_rx, l2cap_tx) = crate::ble::l2cap_bridge::get_or_init();
+    let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
 
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
@@ -58,10 +58,10 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        l2cap_rx,
-        l2cap_tx,
+        l2cap_channels.rx,
+        &l2cap_channels,
     );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, l2cap_tx);
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &l2cap_channels);
     let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
         ctx.paj7025r2_group,
@@ -98,7 +98,7 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
     let _exit3 = exit.receiver().unwrap();
 
     // Also handle BLE L2CAP packets using the same request handler
-    let (l2cap_rx, l2cap_tx) = crate::ble::l2cap_bridge::get_or_init();
+    let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
 
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
@@ -107,10 +107,10 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        l2cap_rx,
-        l2cap_tx,
+        l2cap_channels.rx,
+        &l2cap_channels,
     );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, l2cap_tx);
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &l2cap_channels);
     let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
         ctx.paj7025r2_group,
@@ -156,7 +156,7 @@ async fn usb_rcv_loop(
     pkt_rcv: &mut PacketReader<'_>,
     settings: &mut Settings,
     l2cap_rx: &'static crate::ble::l2cap_bridge::L2capRxChannel,
-    l2cap_tx: &'static crate::ble::l2cap_bridge::L2capTxChannel,
+    l2cap_channels: &crate::ble::l2cap_bridge::L2capChannels,
 ) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Select between USB and BLE packets
@@ -190,7 +190,11 @@ async fn usb_rcv_loop(
             PacketSource::Ble => defmt::info!("[app] src=BLE"),
         }
 
-        defmt::trace!("Received packet: {}", defmt::Debug2Format(&pkt));
+        defmt::info!(
+            "[app] Processing packet with id={}, data={:?}",
+            pkt.id,
+            defmt::Debug2Format(&pkt.data)
+        );
 
         let response = match pkt.data {
             P::WriteRegister(register) => {
@@ -294,11 +298,10 @@ async fn usb_rcv_loop(
                     S::Disable => stream_infos.disable(s.packet_id),
                     S::DisableAll => stream_infos.disable_all(),
                 }
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
-                None
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::Ack(),
+                })
             }
             P::WriteMode(mode) => {
                 settings.transient.mode = mode;
@@ -333,13 +336,28 @@ async fn usb_rcv_loop(
             match src {
                 PacketSource::Usb => {
                     pkt_snd.send(r).await;
+                    defmt::debug!("[app] Response sent via USB");
                 }
                 PacketSource::Ble => {
-                    defmt::trace!("[app] enqueue BLE response: {}", defmt::Debug2Format(&r));
-                    l2cap_tx.send(r).await;
+                    // Route to correct L2CAP channel - each has dedicated L2CAP connection
+                    // Use try_send to avoid blocking if channel is full (BLE task not draining)
+                    if crate::ble::l2cap_bridge::is_control_packet(&r) {
+                        if l2cap_channels.control_tx.try_send(r).is_err() {
+                            defmt::warn!("[app] Dropped control response - channel full");
+                        } else {
+                            defmt::debug!("[app] Control response queued for BLE");
+                        }
+                    } else {
+                        if l2cap_channels.data_tx.try_send(r).is_err() {
+                            defmt::warn!("[app] Dropped data response - channel full");
+                        } else {
+                            defmt::debug!("[app] Data response queued for BLE");
+                        }
+                    }
                 }
             }
         }
+        defmt::debug!("[app] Packet processing complete, looping...");
     }
 }
 
@@ -347,7 +365,7 @@ async fn usb_snd_loop(
     mut pkt_writer: PacketWriter<'_>,
     pkt_rcv: Receiver<'_, Packet, 64>,
     mut exit: ExitReceiver<'_>,
-    l2cap_tx: &'static crate::ble::l2cap_bridge::L2capTxChannel,
+    l2cap_channels: &crate::ble::l2cap_bridge::L2capChannels,
 ) -> ! {
     loop {
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
@@ -358,11 +376,13 @@ async fn usb_snd_loop(
         // Try to send via USB (may fail if USB is disabled)
         let _ = pkt_writer.write_packet(&pkt).await;
 
-        // Also send via BLE if there's space - non-blocking for stream data
-        if l2cap_tx.try_send(pkt.clone()).is_ok() {
-            defmt::trace!("Broadcast packet to BLE");
+        // Also send via BLE - route to correct L2CAP channel
+        if crate::ble::l2cap_bridge::is_control_packet(&pkt) {
+            // Control packets must be sent (blocking)
+            l2cap_channels.control_tx.send(pkt.clone()).await;
         } else {
-            defmt::error!("Broadcast packet to BLE failed");
+            // Streaming data - drop if channel full to avoid blocking object_mode
+            let _ = l2cap_channels.data_tx.try_send(pkt.clone());
         }
     }
     todo!()
@@ -663,7 +683,7 @@ struct StreamInfo {
 
 impl StreamInfo {
     fn enabled(&self) -> bool {
-        self.enable.load(Ordering::Relaxed)
+        self.enable.load(Ordering::Acquire)
     }
 
     fn req_id(&self) -> u8 {
@@ -675,6 +695,6 @@ impl StreamInfo {
     }
 
     fn set_enable(&self, enable: bool) {
-        self.enable.store(enable, Ordering::Relaxed);
+        self.enable.store(enable, Ordering::Release);
     }
 }

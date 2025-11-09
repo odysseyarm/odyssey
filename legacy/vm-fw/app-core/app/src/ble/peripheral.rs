@@ -10,8 +10,8 @@ use crate::settings;
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
-/// Max number of L2CAP channels.
-const L2CAP_CHANNELS_MAX: usize = 1;
+/// Max number of L2CAP channels (need 2: control + data).
+const L2CAP_CHANNELS_MAX: usize = 2;
 
 // GATT Server definition
 #[gatt_server]
@@ -200,6 +200,7 @@ async fn advertise<'values, 'server, C: Controller>(
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
     server: &'server Server<'values>,
 ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
+    defmt::info!("[advertise] Starting to advertise");
     let mut advertiser_data = [0; 31];
     let mut scan_rsp_data = [0; 31];
 
@@ -243,7 +244,9 @@ async fn advertise<'values, 'server, C: Controller>(
             },
         )
         .await?;
+    defmt::info!("[advertise] Now advertising, waiting for connection...");
     let conn = advertiser.accept().await?.with_attribute_server(server)?;
+    defmt::info!("[advertise] Connection accepted!");
     Ok(conn)
 }
 
@@ -257,57 +260,107 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     let _ = take_disconnect_request();
 
     // PSM for L2CAP channel - must match dongle
-    const L2CAP_PSM: u16 = 0x0080;
+    // Two separate L2CAP channels for control and data
+    const L2CAP_PSM_CONTROL: u16 = 0x0080;
+    const L2CAP_PSM_DATA: u16 = 0x0081;
     const L2CAP_MTU: u16 = 251;
-    const PAYLOAD_LEN: u16 = 1024;
+    const PAYLOAD_LEN: u16 = 512;
 
-    // Setup L2CAP channel acceptance
-    let l2cap_config = L2capChannelConfig {
+    // Setup L2CAP channel acceptance with separate configs
+    // Control channel: 16 credits for reliable control packet delivery
+    let l2cap_control_config = L2capChannelConfig {
         mtu: Some(PAYLOAD_LEN - 6),
         mps: Some(L2CAP_MTU - 4),
-        flow_policy: CreditFlowPolicy::Every(10), // Replenish credits more frequently
-        initial_credits: Some(500),               // Larger initial credit pool for high throughput
+        flow_policy: CreditFlowPolicy::Every(5),
+        initial_credits: Some(16),
     };
 
-    defmt::info!("[custom_task] Accepting L2CAP channel on PSM {:04x}", L2CAP_PSM);
+    // Data channel: 8 credits to prevent pool exhaustion and leave room for control packets
+    let l2cap_data_config = L2capChannelConfig {
+        mtu: Some(PAYLOAD_LEN - 6),
+        mps: Some(L2CAP_MTU - 4),
+        flow_policy: CreditFlowPolicy::Every(5),
+        initial_credits: Some(8),
+    };
 
-    // Use with_timeout to detect connection drops during accept
-    // See: https://github.com/embassy-rs/trouble/issues/355
-    let mut l2cap_channel = loop {
+    defmt::info!(
+        "[custom_task] Accepting L2CAP channels on PSM {:04x} (control) and {:04x} (data)",
+        L2CAP_PSM_CONTROL,
+        L2CAP_PSM_DATA
+    );
+
+    // Accept BOTH L2CAP channels - listening on both PSMs simultaneously
+    // The central will create both channels sequentially, we accept them as they arrive
+    // NOTE: We can't determine which PSM each channel uses, so we rely on creation order
+    // Dongle creates: control (0x0080) first, then data (0x0081)
+    let mut l2cap_control_channel = loop {
         match embassy_time::with_timeout(
-            embassy_time::Duration::from_secs(1),
-            L2capChannel::accept(stack, conn.raw(), &[L2CAP_PSM], &l2cap_config),
+            embassy_time::Duration::from_secs(10),
+            L2capChannel::accept(
+                stack,
+                conn.raw(),
+                &[L2CAP_PSM_CONTROL, L2CAP_PSM_DATA],
+                &l2cap_control_config,
+            ),
         )
         .await
         {
             Ok(Ok(ch)) => {
-                defmt::info!("[custom_task] L2CAP channel accepted");
+                defmt::info!("[custom_task] L2CAP channel 1 accepted (control PSM 0x0080)");
                 break ch;
             }
             Ok(Err(e)) => {
                 defmt::error!(
-                    "[custom_task] Failed to accept L2CAP channel: {:?}",
+                    "[custom_task] Failed to accept L2CAP channel 1: {:?}",
                     defmt::Debug2Format(&e)
                 );
                 return;
             }
             Err(_) => {
-                // Timeout - check if still connected
                 defmt::debug!("[custom_task] L2CAP accept timeout, retrying...");
-                // Connection event check will happen in select3 above if disconnected
+                continue;
+            }
+        }
+    };
+
+    let mut l2cap_data_channel = loop {
+        match embassy_time::with_timeout(
+            embassy_time::Duration::from_secs(10),
+            L2capChannel::accept(
+                stack,
+                conn.raw(),
+                &[L2CAP_PSM_CONTROL, L2CAP_PSM_DATA],
+                &l2cap_data_config,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(ch)) => {
+                defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
+                break ch;
+            }
+            Ok(Err(e)) => {
+                defmt::error!(
+                    "[custom_task] Failed to accept L2CAP channel 2: {:?}",
+                    defmt::Debug2Format(&e)
+                );
+                return;
+            }
+            Err(_) => {
+                defmt::debug!("[custom_task] L2CAP accept timeout, retrying...");
                 continue;
             }
         }
     };
 
     // Get or initialize L2CAP bridge channels
-    let (l2cap_rx, l2cap_tx) = crate::ble::l2cap_bridge::get_or_init();
+    let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
 
     defmt::info!("[custom_task] L2CAP bridge ready, entering event loop");
 
-    let mut rx_buf = [0u8; 1024];
+    let mut rx_buf_control = [0u8; 1024];
+    let mut rx_buf_data = [0u8; 1024];
     let mut tx_buf = [0u8; 1024];
-    let mut rssi_timer = embassy_time::Timer::after_secs(1);
 
     loop {
         // Check disconnect request first
@@ -321,102 +374,209 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
             break;
         }
 
-        // Drain all available TX packets before waiting
-        while let Ok(pkt) = l2cap_tx.try_receive() {
+        // Drain all available control TX packets before waiting
+        while let Ok(pkt) = l2cap_channels.control_tx.try_receive() {
             match postcard::to_slice(&pkt, &mut tx_buf) {
                 Ok(data) => {
                     match embassy_time::with_timeout(
                         embassy_time::Duration::from_secs(5),
-                        l2cap_channel.send(stack, data),
+                        l2cap_control_channel.send(stack, data),
                     )
                     .await
                     {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => {
-                            defmt::error!("[custom_task] L2CAP send failed: {:?}", defmt::Debug2Format(&e));
+                            defmt::error!("[custom_task] L2CAP control send failed: {:?}", defmt::Debug2Format(&e));
                             return;
                         }
                         Err(_) => {
-                            defmt::error!("[custom_task] L2CAP send timeout");
+                            defmt::error!("[custom_task] L2CAP control send timeout");
                             return;
                         }
                     }
                 }
                 Err(_) => {
-                    defmt::error!("[custom_task] Failed to serialize packet");
+                    defmt::error!("[custom_task] Failed to serialize control packet");
                 }
             }
         }
 
-        // Wait for next event, including connection events to detect disconnection
-        use embassy_futures::select::{Either4, select4};
-        match select4(
-            l2cap_tx.receive(),
-            embassy_time::with_timeout(
-                embassy_time::Duration::from_secs(30),
-                l2cap_channel.receive(stack, &mut rx_buf),
-            ),
-            &mut rssi_timer,
-            conn.next(),
-        )
-        .await
-        {
-            Either4::First(pkt) => match postcard::to_slice(&pkt, &mut tx_buf) {
+        // Drain all available data TX packets before waiting
+        while let Ok(pkt) = l2cap_channels.data_tx.try_receive() {
+            match postcard::to_slice(&pkt, &mut tx_buf) {
                 Ok(data) => {
                     match embassy_time::with_timeout(
                         embassy_time::Duration::from_secs(5),
-                        l2cap_channel.send(stack, data),
+                        l2cap_data_channel.send(stack, data),
                     )
                     .await
                     {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => {
-                            defmt::error!("[custom_task] L2CAP send failed: {:?}", defmt::Debug2Format(&e));
-                            break;
+                            defmt::warn!(
+                                "[custom_task] L2CAP data send failed (dropping packet): {:?}",
+                                defmt::Debug2Format(&e)
+                            );
+                            // Don't return - just drop the packet and continue
                         }
                         Err(_) => {
-                            defmt::error!("[custom_task] L2CAP send timeout");
-                            break;
+                            defmt::warn!("[custom_task] L2CAP data send timeout (dropping packet)");
+                            // Don't return - just drop the packet and continue
                         }
                     }
                 }
                 Err(_) => {
-                    defmt::error!("[custom_task] Failed to serialize packet");
+                    defmt::error!("[custom_task] Failed to serialize data packet");
                 }
-            },
+            }
+        }
 
-            Either4::Second(timeout_result) => {
-                match timeout_result {
-                    Ok(Ok(len)) => {
-                        match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
-                            Ok(pkt) => {
-                                // Use try_send to avoid blocking main loop
-                                if l2cap_rx.try_send(pkt).is_err() {
-                                    defmt::warn!("[custom_task] RX channel full, dropping");
+        // Wait for next event from either channel
+        use embassy_futures::select::{Either3, select3};
+        match select3(
+            async {
+                embassy_futures::select::select(l2cap_channels.control_tx.receive(), l2cap_channels.data_tx.receive())
+                    .await
+            },
+            async {
+                embassy_futures::select::select(
+                    embassy_time::with_timeout(
+                        embassy_time::Duration::from_secs(30),
+                        l2cap_control_channel.receive(stack, &mut rx_buf_control),
+                    ),
+                    embassy_time::with_timeout(
+                        embassy_time::Duration::from_secs(30),
+                        l2cap_data_channel.receive(stack, &mut rx_buf_data),
+                    ),
+                )
+                .await
+            },
+            conn.next(),
+        )
+        .await
+        {
+            // TX packet ready (either control or data)
+            Either3::First(either_pkt) => {
+                use embassy_futures::select::Either;
+                match either_pkt {
+                    Either::First(pkt) => {
+                        // Control packet
+                        match postcard::to_slice(&pkt, &mut tx_buf) {
+                            Ok(data) => {
+                                match embassy_time::with_timeout(
+                                    embassy_time::Duration::from_secs(5),
+                                    l2cap_control_channel.send(stack, data),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(e)) => {
+                                        defmt::error!(
+                                            "[custom_task] L2CAP control send failed: {:?}",
+                                            defmt::Debug2Format(&e)
+                                        );
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        defmt::error!("[custom_task] L2CAP control send timeout");
+                                        break;
+                                    }
                                 }
                             }
                             Err(_) => {
-                                defmt::error!("[custom_task] Failed to deserialize packet");
+                                defmt::error!("[custom_task] Failed to serialize control packet");
                             }
                         }
                     }
-                    Ok(Err(e)) => {
-                        defmt::error!("[custom_task] L2CAP receive error: {:?}", defmt::Debug2Format(&e));
-                        break;
-                    }
-                    Err(_) => {
-                        defmt::error!("[custom_task] L2CAP receive timeout (30s) - connection may be stalled");
-                        break;
+                    Either::Second(pkt) => {
+                        // Data packet - drop on error instead of disconnecting
+                        match postcard::to_slice(&pkt, &mut tx_buf) {
+                            Ok(data) => {
+                                match embassy_time::with_timeout(
+                                    embassy_time::Duration::from_secs(5),
+                                    l2cap_data_channel.send(stack, data),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(e)) => {
+                                        defmt::warn!(
+                                            "[custom_task] L2CAP data send failed (dropping packet): {:?}",
+                                            defmt::Debug2Format(&e)
+                                        );
+                                    }
+                                    Err(_) => {
+                                        defmt::warn!("[custom_task] L2CAP data send timeout (dropping packet)");
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                defmt::error!("[custom_task] Failed to serialize data packet");
+                            }
+                        }
                     }
                 }
             }
 
-            Either4::Third(_) => {
-                let _ = conn.raw().rssi(stack).await;
-                rssi_timer = embassy_time::Timer::after_secs(1);
+            // RX packet ready (either control or data)
+            Either3::Second(either_rx) => {
+                use embassy_futures::select::Either;
+                match either_rx {
+                    Either::First(timeout_result) => {
+                        // Control channel RX - use blocking send to ensure delivery
+                        match timeout_result {
+                            Ok(Ok(len)) => {
+                                defmt::info!("[custom_task] RX control: {} bytes", len);
+                                match postcard::from_bytes::<protodongers::Packet>(&rx_buf_control[..len]) {
+                                    Ok(pkt) => {
+                                        defmt::info!("[custom_task] RX control packet id={}", pkt.id);
+                                        // CRITICAL: Control packets must not be dropped
+                                        l2cap_channels.rx.send(pkt).await;
+                                    }
+                                    Err(_) => {
+                                        defmt::error!("[custom_task] Failed to deserialize control packet");
+                                    }
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                defmt::error!(
+                                    "[custom_task] L2CAP control receive error: {:?}",
+                                    defmt::Debug2Format(&e)
+                                );
+                                break;
+                            }
+                            Err(_) => {
+                                // Timeout is OK, just means no data
+                            }
+                        }
+                    }
+                    Either::Second(timeout_result) => {
+                        // Data channel RX
+                        match timeout_result {
+                            Ok(Ok(len)) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf_data[..len]) {
+                                Ok(pkt) => {
+                                    if l2cap_channels.rx.try_send(pkt).is_err() {
+                                        defmt::warn!("[custom_task] RX channel full, dropping data");
+                                    }
+                                }
+                                Err(_) => {
+                                    defmt::error!("[custom_task] Failed to deserialize data packet");
+                                }
+                            },
+                            Ok(Err(e)) => {
+                                defmt::error!("[custom_task] L2CAP data receive error: {:?}", defmt::Debug2Format(&e));
+                                break;
+                            }
+                            Err(_) => {
+                                // Timeout is OK, just means no data
+                            }
+                        }
+                    }
+                }
             }
 
-            Either4::Fourth(event) => {
+            // Connection event
+            Either3::Third(event) => {
                 match event {
                     GattConnectionEvent::Disconnected { reason } => {
                         defmt::info!("[custom_task] Disconnected: {:?}", defmt::Debug2Format(&reason));
@@ -430,7 +590,11 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         }
     }
 
-    defmt::info!("[custom_task] exiting");
+    defmt::info!("[custom_task] exiting - L2CAP channels closed");
+
+    // L2CAP channels closed (dongle closed them when USB disconnected)
+    // Streams will naturally stop as there's no longer a path to send data
+    // When L2CAP channels reconnect, streams can be re-enabled via StreamUpdate packets
 }
 use core::sync::atomic::{AtomicBool, Ordering};
 
