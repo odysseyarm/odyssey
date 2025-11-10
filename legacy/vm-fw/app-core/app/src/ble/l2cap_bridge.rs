@@ -5,9 +5,13 @@ use embassy_sync::channel::Channel;
 use protodongers::Packet;
 use static_cell::StaticCell;
 
-/// Channel for incoming packets from L2CAP (BLE -> Main)
-/// Size: 16 packets - balance between buffering and memory usage
-pub type L2capRxChannel = Channel<ThreadModeRawMutex, Packet, 16>;
+/// Channel for incoming CONTROL packets from L2CAP (BLE -> Main)
+/// Size: 16 packets - sufficient for burst control requests
+pub type L2capControlRxChannel = Channel<ThreadModeRawMutex, Packet, 16>;
+
+/// Channel for incoming DATA packets from L2CAP (BLE -> Main)
+/// Size: 16 packets - buffer for streaming data
+pub type L2capDataRxChannel = Channel<ThreadModeRawMutex, Packet, 16>;
 
 /// Channel for outgoing CONTROL packets (dedicated L2CAP channel)
 /// Size: 16 packets to handle burst queries without excessive memory
@@ -17,8 +21,11 @@ pub type L2capControlTxChannel = Channel<ThreadModeRawMutex, Packet, 16>;
 /// Size: 8 packets - data should be consumed quickly, minimize memory usage
 pub type L2capDataTxChannel = Channel<ThreadModeRawMutex, Packet, 8>;
 
-/// Global L2CAP RX channel (shared - receives from both control and data L2CAP channels)
-static L2CAP_RX: StaticCell<L2capRxChannel> = StaticCell::new();
+/// Global L2CAP Control RX channel
+static L2CAP_CONTROL_RX: StaticCell<L2capControlRxChannel> = StaticCell::new();
+
+/// Global L2CAP Data RX channel
+static L2CAP_DATA_RX: StaticCell<L2capDataRxChannel> = StaticCell::new();
 
 /// Global L2CAP Control TX channel
 static L2CAP_CONTROL_TX: StaticCell<L2capControlTxChannel> = StaticCell::new();
@@ -30,12 +37,14 @@ static L2CAP_DATA_TX: StaticCell<L2capDataTxChannel> = StaticCell::new();
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Stored references to initialized channels
-static mut RX_REF: Option<&'static L2capRxChannel> = None;
+static mut CONTROL_RX_REF: Option<&'static L2capControlRxChannel> = None;
+static mut DATA_RX_REF: Option<&'static L2capDataRxChannel> = None;
 static mut CONTROL_TX_REF: Option<&'static L2capControlTxChannel> = None;
 static mut DATA_TX_REF: Option<&'static L2capDataTxChannel> = None;
 
 pub struct L2capChannels {
-    pub rx: &'static L2capRxChannel,
+    pub control_rx: &'static L2capControlRxChannel,
+    pub data_rx: &'static L2capDataRxChannel,
     pub control_tx: &'static L2capControlTxChannel,
     pub data_tx: &'static L2capDataTxChannel,
 }
@@ -45,12 +54,14 @@ pub struct L2capChannels {
 pub fn get_or_init() -> L2capChannels {
     if !INITIALIZED.load(Ordering::Acquire) {
         // First call - initialize
-        let rx = L2CAP_RX.init(L2capRxChannel::new());
+        let control_rx = L2CAP_CONTROL_RX.init(L2capControlRxChannel::new());
+        let data_rx = L2CAP_DATA_RX.init(L2capDataRxChannel::new());
         let control_tx = L2CAP_CONTROL_TX.init(L2capControlTxChannel::new());
         let data_tx = L2CAP_DATA_TX.init(L2capDataTxChannel::new());
 
         unsafe {
-            RX_REF = Some(rx);
+            CONTROL_RX_REF = Some(control_rx);
+            DATA_RX_REF = Some(data_rx);
             CONTROL_TX_REF = Some(control_tx);
             DATA_TX_REF = Some(data_tx);
         }
@@ -61,7 +72,8 @@ pub fn get_or_init() -> L2capChannels {
     // Return stored references
     unsafe {
         L2capChannels {
-            rx: RX_REF.unwrap(),
+            control_rx: CONTROL_RX_REF.unwrap(),
+            data_rx: DATA_RX_REF.unwrap(),
             control_tx: CONTROL_TX_REF.unwrap(),
             data_tx: DATA_TX_REF.unwrap(),
         }

@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use defmt::Format;
 use embassy_futures::join::join4;
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_nrf::Peri;
 use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
@@ -58,7 +58,6 @@ pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        l2cap_channels.rx,
         &l2cap_channels,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &l2cap_channels);
@@ -107,7 +106,6 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
         pkt_channel.sender(),
         &mut pkt_rcv,
         ctx.settings,
-        l2cap_channels.rx,
         &l2cap_channels,
     );
     let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &l2cap_channels);
@@ -155,13 +153,12 @@ async fn usb_rcv_loop(
     pkt_snd: Sender<'_, Packet, 64>,
     pkt_rcv: &mut PacketReader<'_>,
     settings: &mut Settings,
-    l2cap_rx: &'static crate::ble::l2cap_bridge::L2capRxChannel,
     l2cap_channels: &crate::ble::l2cap_bridge::L2capChannels,
 ) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
-        // Select between USB and BLE packets
+        // Select between USB and BLE packets (control and data)
         // When USB is disabled, the USB future will pend forever, allowing BLE to be selected
-        let (src, pkt) = match select(
+        let (src, pkt) = match select3(
             async {
                 loop {
                     match pkt_rcv.wait_for_packet().await {
@@ -177,12 +174,14 @@ async fn usb_rcv_loop(
                     }
                 }
             },
-            l2cap_rx.receive(),
+            l2cap_channels.control_rx.receive(),
+            l2cap_channels.data_rx.receive(),
         )
         .await
         {
-            Either::First(pkt) => (PacketSource::Usb, pkt),
-            Either::Second(pkt) => (PacketSource::Ble, pkt),
+            Either3::First(pkt) => (PacketSource::Usb, pkt),
+            Either3::Second(pkt) => (PacketSource::Ble, pkt),
+            Either3::Third(pkt) => (PacketSource::Ble, pkt),
         };
 
         match src {
