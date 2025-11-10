@@ -22,7 +22,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "tracing-lo
 parking_lot = "0.12.1"
 tokio-util = "0.7.10"
 pin-project = "1.1.5"
-ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool", rev = "f715721e9d2f4131f25b470b1d03ba47f25b5827" }
 nalgebra = "0.33"
 cam-geom = "0.15"
 opencv-ros-camera = "0.15"

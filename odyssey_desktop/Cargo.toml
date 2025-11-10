@@ -11,10 +11,10 @@ futures = { version = "0.3.30", default-features = false, features = ["std", "as
 serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }
 serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
-ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool", rev = "f715721e9d2f4131f25b470b1d03ba47f25b5827" }
 tracing-subscriber = "0.3.19"
-dioxus = { version = "0.7.0-alpha.3", features = ["desktop", "signals"] }
-dioxus-router = "0.7.0-alpha.3"
+dioxus = { version = "0.7.0", features = ["desktop", "signals"] }
+dioxus-router = "0.7.0"
 odyssey_hub_client = { path = "../odyssey_hub_client" }
 odyssey_hub_common = { path = "../odyssey_hub_common" }
 odyssey_hub_server = { version = "0.1.0", path = "../odyssey_hub_server" }
@@ -30,4 +30,4 @@ dfu-nusb = "0.1.1"
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
-dioxus-cli = { version = "0.7.0-alpha.3", locked = true, bins = ["dx"] }
+dioxus-cli = { version = "0.7.1", locked = true, bins = ["dx"] }
