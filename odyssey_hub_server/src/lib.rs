@@ -188,13 +188,12 @@ pub async fn run_server(
             match message {
                 device_tasks::Message::Connect(d1, d2, sender) => {
                     dl.lock().push((d1.clone(), d2.clone(), sender));
-                    let _ = event_sender
-                        .send(odyssey_hub_common::events::Event::DeviceEvent({
-                            odyssey_hub_common::events::DeviceEvent(
-                                d1.clone(),
-                                odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
-                            )
-                        }));
+                    let _ = event_sender.send(odyssey_hub_common::events::Event::DeviceEvent({
+                        odyssey_hub_common::events::DeviceEvent(
+                            d1.clone(),
+                            odyssey_hub_common::events::DeviceEventKind::ConnectEvent,
+                        )
+                    }));
                 }
                 device_tasks::Message::Disconnect(d) => {
                     let mut dl = dl.lock();
@@ -202,16 +201,15 @@ pub async fn run_server(
                     if let Some(i) = i {
                         dl.remove(i);
                     }
-                    let _ = event_sender
-                        .send(odyssey_hub_common::events::Event::DeviceEvent({
-                            odyssey_hub_common::events::DeviceEvent(
-                                d.clone(),
-                                odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
-                            )
-                        }));
+                    let _ = event_sender.send(odyssey_hub_common::events::Event::DeviceEvent({
+                        odyssey_hub_common::events::DeviceEvent(
+                            d.clone(),
+                            odyssey_hub_common::events::DeviceEventKind::DisconnectEvent,
+                        )
+                    }));
                 }
                 device_tasks::Message::Event(e) => {
-                    event_sender.send(e).unwrap();
+                    let _ = event_sender.send(e);
                 }
             }
         }

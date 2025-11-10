@@ -471,35 +471,12 @@ dependencies = [
 [[package]]
 name = "ats_usb"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats-vision-tool?rev=f715721e9d2f4131f25b470b1d03ba47f25b5827#f715721e9d2f4131f25b470b1d03ba47f25b5827"
+source = "git+https://github.com/odysseyarm/ats-vision-tool?rev=27dce523270ab6368e27c6b60d566d3c66bd2128#27dce523270ab6368e27c6b60d566d3c66bd2128"
 dependencies = [
  "anyhow",
  "argmin",
  "enumn",
- "nalgebra 0.33.2",
- "num-derive",
- "num-traits",
- "opencv-ros-camera 0.14.1",
- "protodongers",
- "serde",
- "serde_json",
- "serial2",
- "socket2 0.5.10",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "ats_usb"
-version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats-vision-tool#4a31b18affa78e82fdf24c8d427a500b83c488e7"
-dependencies = [
- "anyhow",
- "argmin",
- "cobs",
- "enumn",
- "nalgebra 0.33.2",
+ "nalgebra 0.32.6",
  "num-derive",
  "num-traits",
  "opencv-ros-camera 0.14.1",
@@ -1016,15 +993,6 @@ name = "clap_lex"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
-
-[[package]]
-name = "cobs"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fea6d1b751c55bd9c0dda7d4ff752074e98f4765ae969664648bd193bb326d15"
-dependencies = [
- "thiserror 2.0.16",
-]
 
 [[package]]
 name = "cocoa"
@@ -4028,6 +3996,7 @@ checksum = "7b5c17de023a86f59ed79891b2e5d5a94c705dbe904a5b5c9c952ea6221b03e4"
 dependencies = [
  "approx 0.5.1",
  "matrixmultiply",
+ "nalgebra-macros",
  "num-complex 0.4.6",
  "num-rational 0.4.2",
  "num-traits",
@@ -4508,9 +4477,9 @@ dependencies = [
 
 [[package]]
 name = "odyssey_desktop"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
- "ats_usb 0.1.0 (git+https://github.com/odysseyarm/ats-vision-tool?rev=f715721e9d2f4131f25b470b1d03ba47f25b5827)",
+ "ats_usb",
  "btleplug",
  "dfu-nusb",
  "dioxus",
@@ -4569,7 +4538,7 @@ name = "odyssey_hub_client_ffi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ats_usb 0.1.0 (git+https://github.com/odysseyarm/ats-vision-tool?rev=f715721e9d2f4131f25b470b1d03ba47f25b5827)",
+ "ats_usb",
  "cbindgen",
  "futures-util",
  "indoc",
@@ -4591,7 +4560,7 @@ dependencies = [
  "app_dirs2",
  "arrayvec 0.7.6",
  "ats_common",
- "ats_usb 0.1.0 (git+https://github.com/odysseyarm/ats-vision-tool)",
+ "ats_usb",
  "json5",
  "nalgebra 0.33.2",
  "serde",
@@ -4609,7 +4578,7 @@ dependencies = [
  "arrayvec 0.7.6",
  "ats_common",
  "ats_cv",
- "ats_usb 0.1.0 (git+https://github.com/odysseyarm/ats-vision-tool?rev=f715721e9d2f4131f25b470b1d03ba47f25b5827)",
+ "ats_usb",
  "btleplug",
  "cam-geom 0.15.3",
  "futures",
@@ -4641,7 +4610,7 @@ dependencies = [
 name = "odyssey_hub_server_interface"
 version = "0.1.0"
 dependencies = [
- "ats_usb 0.1.0 (git+https://github.com/odysseyarm/ats-vision-tool?rev=f715721e9d2f4131f25b470b1d03ba47f25b5827)",
+ "ats_usb",
  "nalgebra 0.33.2",
  "odyssey_hub_common",
  "prost",
@@ -4680,8 +4649,6 @@ checksum = "2ad5e1fadd423d39279c0edddb9ef6fa61bb4b27da77d22ab60bf6e13c7b7cc7"
 dependencies = [
  "cam-geom 0.15.3",
  "nalgebra 0.33.2",
- "serde",
- "serde_yaml",
  "thiserror 2.0.16",
 ]
 
@@ -5295,7 +5262,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs#1f0c55c91c63286134fd33da4dd02a0206f831ae"
+source = "git+https://github.com/odysseyarm/protodonge-rs#e0aa065e81e91461f3753e799b305822eee77b6c"
 dependencies = [
  "ats_common",
  "bytemuck",
@@ -5303,7 +5270,6 @@ dependencies = [
  "nalgebra 0.33.2",
  "opencv-ros-camera 0.15.2",
  "serde",
- "serde_bytes",
  "static_assertions",
  "thiserror 2.0.16",
 ]
@@ -5896,15 +5862,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_bytes"
-version = "0.11.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "serde_derive"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5945,19 +5902,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.11.0",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -7020,12 +6964,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

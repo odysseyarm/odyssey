@@ -1,6 +1,6 @@
 [package]
 name = "odyssey_desktop"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 default-run = "odyssey_desktop"
 
@@ -11,7 +11,7 @@ futures = { version = "0.3.30", default-features = false, features = ["std", "as
 serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }
 serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
-ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool", rev = "f715721e9d2f4131f25b470b1d03ba47f25b5827" }
+ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool", rev = "27dce523270ab6368e27c6b60d566d3c66bd2128" }
 tracing-subscriber = "0.3.19"
 dioxus = { version = "0.7.0", features = ["desktop", "signals"] }
 dioxus-router = "0.7.0"

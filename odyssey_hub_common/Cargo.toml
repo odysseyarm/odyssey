@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 arrayvec = "0.7.4"
 ats_common = { git = "https://github.com/odysseyarm/ats_common" }
-ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool", rev = "27dce523270ab6368e27c6b60d566d3c66bd2128" }
 nalgebra = "0.33.2"
 app_dirs2 = "2.5.5"
 serde = "1.0.197"

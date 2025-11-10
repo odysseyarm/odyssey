@@ -49,10 +49,7 @@ pub async fn device_tasks(
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
         ArcSwap<
-            ArrayVec<
-                (u8, ScreenCalibration<f32>),
-                { (ats_common::MAX_SCREEN_ID + 1) as usize },
-            >,
+            ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
     device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
@@ -101,7 +98,7 @@ pub async fn device_udp_manager(
     let mut sys = System::new_all();
     sys.refresh_all();
     let networks = Networks::new_with_refreshed_list();
-    let broadcast_addrs: Vec<Ipv4Addr> = networks
+    let mut broadcast_addrs: Vec<Ipv4Addr> = networks
         .iter()
         .filter_map(|(_, data)| {
             data.ip_networks().iter().find_map(|ipn| {
@@ -117,6 +114,12 @@ pub async fn device_udp_manager(
             })
         })
         .collect();
+
+    // Always include the playback tool's local broadcast address
+    let playback_addr = Ipv4Addr::new(127, 31, 33, 7);
+    if !broadcast_addrs.contains(&playback_addr) {
+        broadcast_addrs.push(playback_addr);
+    }
 
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
     let addr = std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
@@ -348,10 +351,7 @@ async fn common_tasks(
     mut config: ats_usb::packets::vm::GeneralConfig,
     screen_calibrations: Arc<
         ArcSwap<
-            ArrayVec<
-                (u8, ScreenCalibration<f32>),
-                { (ats_common::MAX_SCREEN_ID + 1) as usize },
-            >,
+            ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
     device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
@@ -832,10 +832,7 @@ pub async fn device_cdc_stream_task(
     message_channel: Sender<Message>,
     screen_calibrations: Arc<
         ArcSwap<
-            ArrayVec<
-                (u8, ScreenCalibration<f32>),
-                { (ats_common::MAX_SCREEN_ID + 1) as usize },
-            >,
+            ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
     device_offsets: Arc<Mutex<HashMap<u64, Isometry3<f32>>>>,
