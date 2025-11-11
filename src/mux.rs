@@ -17,6 +17,11 @@ pub enum MuxMsg {
     SendTo(SendTo),
     ReadVersion(),
     ReadVersionResponse(Version),
+    /// Subscribe to device list changes. After subscribing, the dongle will send
+    /// DevicesSnapshot messages whenever devices connect or disconnect.
+    SubscribeDeviceList,
+    /// Unsubscribe from device list changes.
+    UnsubscribeDeviceList,
 }
 
 #[repr(C)]
