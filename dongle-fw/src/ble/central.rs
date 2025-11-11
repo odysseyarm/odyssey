@@ -434,6 +434,48 @@ where
                     );
                     return Err(());
                 }
+
+                // Wait for encryption to be established (with timeout)
+                let security_timeout = Duration::from_secs(10);
+                let security_result = embassy_time::with_timeout(security_timeout, async {
+                    loop {
+                        match conn.next().await {
+                            trouble_host::prelude::ConnectionEvent::PairingComplete {
+                                security_level,
+                                ..
+                            } => {
+                                info!("Encryption established: {:?}", security_level);
+                                return Ok(());
+                            }
+                            trouble_host::prelude::ConnectionEvent::PairingFailed(err) => {
+                                error!("Encryption failed: {:?}", err);
+                                return Err(());
+                            }
+                            trouble_host::prelude::ConnectionEvent::Disconnected { reason } => {
+                                error!("Disconnected during encryption: {:?}", reason);
+                                return Err(());
+                            }
+                            _ => {
+                                // Ignore other events
+                            }
+                        }
+                    }
+                })
+                .await;
+
+                match security_result {
+                    Ok(Ok(())) => {
+                        info!("Encryption successful, proceeding with L2CAP");
+                    }
+                    Ok(Err(())) => {
+                        error!("Encryption failed or disconnected");
+                        return Err(());
+                    }
+                    Err(_) => {
+                        error!("Encryption timeout");
+                        return Err(());
+                    }
+                }
             }
 
             // Request 2M PHY
@@ -571,24 +613,29 @@ where
             .await;
 
             // One of the tasks ended (connection lost, error, or disconnection)
+            // Clean up connection state before returning
+            info!(
+                "Connection tasks ending for device {:02x}, cleaning up",
+                target
+            );
+            this.active_connections.remove(&target.into_inner()).await;
+            this.device_queues.unregister(&target.into_inner()).await;
+
             match connection_result {
                 Either4::First(_) => {
                     info!("TX task ended for device {:02x}", target);
-                    return Ok(());
                 }
                 Either4::Second(_) => {
                     info!("Control RX task ended for device {:02x}", target);
-                    return Ok(());
                 }
                 Either4::Third(_) => {
                     info!("Data RX task ended for device {:02x}", target);
-                    return Ok(());
                 }
                 Either4::Fourth(_) => {
                     info!("Connection task ended for device {:02x}", target);
-                    return Ok(());
                 }
             }
+            return Ok(());
         }
         Ok(Err(e)) => {
             match &e {

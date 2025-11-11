@@ -68,8 +68,9 @@ where
                             is_pairing_active(),
                             bond_stored
                         );
-                        // Allow bondable if no bond is stored.
-                        let bondable = is_pairing_active() || !bond_stored;
+                        // Allow bondable in pairing mode (to create new bonds) OR when bond exists (to use existing bond for encryption)
+                        // This prevents bonding outside pairing mode but allows reconnection with existing bonds
+                        let bondable = is_pairing_active() || bond_stored;
                         defmt::info!("[adv] setting bondable={}", bondable);
                         conn.raw().set_bondable(bondable).unwrap();
                         defmt::info!("[adv] starting connection tasks");
@@ -82,9 +83,11 @@ where
                             Either3::First(result) => {
                                 // gatt_events_task completed
                                 let _ = result;
+                                defmt::info!("[adv] gatt_events_task completed, restarting advertising");
                             }
                             Either3::Second(_) => {
-                                // custom_task completed
+                                // custom_task completed (L2CAP failure or connection issue)
+                                defmt::info!("[adv] custom_task completed, restarting advertising");
                             }
                             Either3::Third(_) => {
                                 // Restart signal: disconnect and wait for disconnect event
@@ -293,6 +296,11 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     // The central will create both channels sequentially, we accept them as they arrive
     // NOTE: We can't determine which PSM each channel uses, so we rely on creation order
     // Dongle creates: control (0x0080) first, then data (0x0081)
+
+    // Give up after multiple timeouts to avoid getting stuck waiting forever
+    const MAX_L2CAP_ACCEPT_ATTEMPTS: u8 = 5;
+    let mut accept_attempts = 0u8;
+
     let mut l2cap_control_channel = loop {
         match embassy_time::with_timeout(
             embassy_time::Duration::from_secs(10),
@@ -317,12 +325,25 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
                 return;
             }
             Err(_) => {
-                defmt::debug!("[custom_task] L2CAP accept timeout, retrying...");
+                accept_attempts += 1;
+                defmt::warn!(
+                    "[custom_task] L2CAP channel 1 accept timeout (attempt {}/{})",
+                    accept_attempts,
+                    MAX_L2CAP_ACCEPT_ATTEMPTS
+                );
+                if accept_attempts >= MAX_L2CAP_ACCEPT_ATTEMPTS {
+                    defmt::error!(
+                        "[custom_task] Failed to accept L2CAP channel 1 after {} attempts, giving up",
+                        MAX_L2CAP_ACCEPT_ATTEMPTS
+                    );
+                    return;
+                }
                 continue;
             }
         }
     };
 
+    accept_attempts = 0; // Reset for second channel
     let mut l2cap_data_channel = loop {
         match embassy_time::with_timeout(
             embassy_time::Duration::from_secs(10),
@@ -347,7 +368,19 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
                 return;
             }
             Err(_) => {
-                defmt::debug!("[custom_task] L2CAP accept timeout, retrying...");
+                accept_attempts += 1;
+                defmt::warn!(
+                    "[custom_task] L2CAP channel 2 accept timeout (attempt {}/{})",
+                    accept_attempts,
+                    MAX_L2CAP_ACCEPT_ATTEMPTS
+                );
+                if accept_attempts >= MAX_L2CAP_ACCEPT_ATTEMPTS {
+                    defmt::error!(
+                        "[custom_task] Failed to accept L2CAP channel 2 after {} attempts, giving up",
+                        MAX_L2CAP_ACCEPT_ATTEMPTS
+                    );
+                    return;
+                }
                 continue;
             }
         }
@@ -391,6 +424,8 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 ) {
     defmt::info!("[control_tx_task] started");
     let mut tx_buf = [0u8; 1024];
+    let mut consecutive_timeouts = 0u8;
+    const MAX_CONSECUTIVE_TIMEOUTS: u8 = 3;
 
     loop {
         let pkt = tx_queue.receive().await;
@@ -402,6 +437,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                 match embassy_time::with_timeout(embassy_time::Duration::from_secs(5), channel.send(stack, data)).await
                 {
                     Ok(Ok(())) => {
+                        consecutive_timeouts = 0; // Reset counter on success
                         let duration_ms = send_start.elapsed().as_millis();
                         defmt::info!(
                             "[control_tx_task] TX control: send complete (id={}, duration={}ms)",
@@ -417,8 +453,16 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                         return;
                     }
                     Err(_) => {
-                        defmt::error!("[control_tx_task] L2CAP control send timeout");
-                        return;
+                        consecutive_timeouts += 1;
+                        defmt::error!(
+                            "[control_tx_task] L2CAP control send timeout ({}/{})",
+                            consecutive_timeouts,
+                            MAX_CONSECUTIVE_TIMEOUTS
+                        );
+                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
+                            defmt::error!("[control_tx_task] Too many consecutive timeouts, exiting");
+                            return;
+                        }
                     }
                 }
             }
@@ -437,6 +481,8 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 ) {
     defmt::info!("[data_tx_task] started");
     let mut tx_buf = [0u8; 1024];
+    let mut consecutive_timeouts = 0u8;
+    const MAX_CONSECUTIVE_TIMEOUTS: u8 = 10; // Higher threshold for data packets (streaming is more tolerant)
 
     loop {
         let pkt = tx_queue.receive().await;
@@ -445,15 +491,28 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
             Ok(data) => {
                 match embassy_time::with_timeout(embassy_time::Duration::from_secs(5), channel.send(stack, data)).await
                 {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(())) => {
+                        consecutive_timeouts = 0; // Reset counter on success
+                    }
                     Ok(Err(e)) => {
                         defmt::warn!(
                             "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
                             defmt::Debug2Format(&e)
                         );
+                        // Send errors are fatal - channel is broken
+                        return;
                     }
                     Err(_) => {
-                        defmt::warn!("[data_tx_task] L2CAP data send timeout (dropping packet)");
+                        consecutive_timeouts += 1;
+                        defmt::warn!(
+                            "[data_tx_task] L2CAP data send timeout (dropping packet, {}/{})",
+                            consecutive_timeouts,
+                            MAX_CONSECUTIVE_TIMEOUTS
+                        );
+                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
+                            defmt::error!("[data_tx_task] Too many consecutive timeouts, connection appears dead");
+                            return;
+                        }
                     }
                 }
             }

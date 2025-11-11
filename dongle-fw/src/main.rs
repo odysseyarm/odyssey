@@ -319,7 +319,7 @@ async fn main(mut spawner: Spawner) {
     ble::central::set_global_refs(active_connections, device_queues).await;
 
     spawner.must_spawn(usb_rx_task(ep_out, device_queues, active_connections));
-    spawner.must_spawn(usb_tx_task(ep_in, device_packets));
+    spawner.must_spawn(usb_tx_task(ep_in, device_packets, usb_signal));
     spawner.must_spawn(control_exec_task(settings));
     // Start BLE manager (central)
     info!("Starting BLE manager task");
@@ -500,22 +500,31 @@ async fn usb_rx_task(
 }
 
 // USB TX task: sends device packets to host
+// Static mutex shared by USB TX subtasks
+static EP_MUTEX: StaticCell<
+    embassy_sync::mutex::Mutex<
+        ThreadModeRawMutex,
+        Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
+    >,
+> = StaticCell::new();
+
 #[embassy_executor::task]
 async fn usb_tx_task(
     ep_in: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
     device_packets: &'static DevicePacketChannel,
+    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
-    loop {
-        info!("USB TX task: waiting for USB configuration");
+    // Initialize the mutex once (outside the loop since it's a StaticCell)
+    let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
 
-        // Wrap endpoint in a mutex so multiple tasks can share it
-        static EP_MUTEX: StaticCell<
-            embassy_sync::mutex::Mutex<
-                ThreadModeRawMutex,
-                Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
-            >,
-        > = StaticCell::new();
-        let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
+    loop {
+        // Wait for USB to be configured
+        loop {
+            if usb_signal.wait().await {
+                break; // USB is configured
+            }
+        }
+        info!("USB TX task: USB configured, starting");
 
         // Spawn two independent tasks: one for host responses, one for device packets
         let host_task = host_responses_tx_task(ep_mutex);
@@ -525,8 +534,8 @@ async fn usb_tx_task(
         use embassy_futures::join::join;
         let _ = join(host_task, device_task).await;
 
-        warn!("USB TX: one of the tasks ended, waiting for reconfiguration");
-        break;
+        warn!("USB TX: tasks ended, waiting for reconfiguration");
+        // Loop will restart and wait for configuration again
     }
 }
 
