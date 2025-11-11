@@ -502,30 +502,74 @@ async fn usb_rx_task(
 // USB TX task: sends device packets to host
 #[embassy_executor::task]
 async fn usb_tx_task(
-    mut ep_in: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
+    ep_in: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
     device_packets: &'static DevicePacketChannel,
 ) {
     loop {
         info!("USB TX task: waiting for USB configuration");
 
-        let mut write_buf = [0u8; 256];
+        // Wrap endpoint in a mutex so multiple tasks can share it
+        static EP_MUTEX: StaticCell<
+            embassy_sync::mutex::Mutex<
+                ThreadModeRawMutex,
+                Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
+            >,
+        > = StaticCell::new();
+        let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
 
-        loop {
-            // Priority: host responses first (low volume), then device packets (high volume)
-            use embassy_futures::select::{Either, select};
-            let msg = select(HOST_RESPONSES.receive(), async {
-                MuxMsg::DevicePacket(device_packets.receive().await)
-            })
-            .await;
+        // Spawn two independent tasks: one for host responses, one for device packets
+        let host_task = host_responses_tx_task(ep_mutex);
+        let device_task = device_packets_tx_task(ep_mutex, device_packets);
 
-            let msg = match msg {
-                Either::First(response) => response,
-                Either::Second(device_pkt) => device_pkt,
-            };
+        // Run both tasks concurrently - neither will be cancelled
+        use embassy_futures::join::join;
+        let _ = join(host_task, device_task).await;
 
-            if let Err(_e) = send_mux_msg(&msg, &mut write_buf, &mut ep_in).await {
-                warn!("USB TX: error sending message");
-                // Endpoint disabled, break to wait for reconfiguration
+        warn!("USB TX: one of the tasks ended, waiting for reconfiguration");
+        break;
+    }
+}
+
+// Sends host responses (RequestDevices, ReadVersion, etc.) to USB endpoint
+async fn host_responses_tx_task(
+    ep_mutex: &'static embassy_sync::mutex::Mutex<
+        ThreadModeRawMutex,
+        Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
+    >,
+) {
+    let mut write_buf = [0u8; 256];
+
+    loop {
+        let response = HOST_RESPONSES.receive().await;
+
+        let mut ep_opt = ep_mutex.lock().await;
+        if let Some(ep) = ep_opt.as_mut() {
+            if send_mux_msg(&response, &mut write_buf, ep).await.is_err() {
+                warn!("USB TX: error sending host response");
+                break;
+            }
+        }
+    }
+}
+
+// Sends device packets to USB endpoint
+async fn device_packets_tx_task(
+    ep_mutex: &'static embassy_sync::mutex::Mutex<
+        ThreadModeRawMutex,
+        Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
+    >,
+    device_packets: &'static DevicePacketChannel,
+) {
+    let mut write_buf = [0u8; 256];
+
+    loop {
+        let device_pkt = device_packets.receive().await;
+        let msg = MuxMsg::DevicePacket(device_pkt);
+
+        let mut ep_opt = ep_mutex.lock().await;
+        if let Some(ep) = ep_opt.as_mut() {
+            if send_mux_msg(&msg, &mut write_buf, ep).await.is_err() {
+                warn!("USB TX: error sending device packet");
                 break;
             }
         }
