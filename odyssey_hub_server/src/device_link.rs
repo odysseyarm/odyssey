@@ -1,6 +1,6 @@
+use ats_usb::packets::vm::Packet;
 use futures::future::BoxFuture;
 use odyssey_hub_common::device::Device;
-use protodongers::Packet;
 
 /// Object-safe device link trait.
 ///

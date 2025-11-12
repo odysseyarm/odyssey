@@ -1,6 +1,7 @@
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
 use btleplug::platform::{Manager, Peripheral};
-use futures::StreamExt;
+use futures::stream::StreamExt;
+use futures_concurrency::prelude::*;
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryMap, AccessoryType};
 use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
@@ -8,6 +9,7 @@ use tokio::{
     sync::{broadcast::Sender, watch::Receiver},
     time,
 };
+use tokio_stream::wrappers::{IntervalStream, WatchStream};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -15,9 +17,15 @@ const NUS_TX_UUID: Uuid = Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e
 
 const BBX_SHOT_CHAR_UUID: Uuid = Uuid::from_u128(0x6e40000e_204d_616e_7469_732054656368);
 
+/// Events from the accessory_manager merged stream
+enum AccessoryEvent {
+    InfoChanged,
+    ScanComplete,
+}
+
 pub async fn accessory_manager(
     event_tx: tokio::sync::broadcast::Sender<odyssey_hub_common::events::Event>,
-    mut info_watch: Receiver<AccessoryInfoMap>,
+    info_watch: Receiver<AccessoryInfoMap>,
     map_tx: Sender<AccessoryMap>,
     dl: Arc<
         parking_lot::Mutex<
@@ -46,12 +54,34 @@ pub async fn accessory_manager(
 
     send_if_changed(&info_map, &last_statuses, &map_tx);
 
-    loop {
-        tokio::select! {
-            changed = info_watch.changed() => {
-                if changed.is_err() {
-                    break;
-                }
+    // Convert info_watch to stream - clone it first so we can use it later
+    let info_watch_clone = info_watch.clone();
+    let info_stream = WatchStream::new(info_watch_clone).map(|_| AccessoryEvent::InfoChanged);
+
+    // Create periodic scan interval stream (2 second intervals)
+    let scan_interval = tokio::time::interval(Duration::from_secs(2));
+    let scan_stream = IntervalStream::new(scan_interval).then({
+        let adapter = adapter.clone();
+        let filter = filter.clone();
+        move |_| {
+            let adapter = adapter.clone();
+            let filter = filter.clone();
+            async move {
+                let _ = adapter.start_scan(filter).await;
+                time::sleep(Duration::from_secs(3)).await;
+                let _ = adapter.stop_scan().await;
+                AccessoryEvent::ScanComplete
+            }
+        }
+    });
+
+    // Merge both streams
+    let merged = (info_stream, scan_stream).merge();
+    tokio::pin!(merged);
+
+    while let Some(event) = merged.next().await {
+        match event {
+            AccessoryEvent::InfoChanged => {
                 info_map = info_watch.borrow().clone();
                 last_statuses.retain(|id, _| info_map.contains_key(id));
                 for &id in info_map.keys() {
@@ -60,13 +90,8 @@ pub async fn accessory_manager(
                 periph_cache.retain(|id, _| info_map.contains_key(id));
                 send_if_changed(&info_map, &last_statuses, &map_tx);
             }
-
-            _ = async {
-                let _ = adapter.start_scan(filter.clone()).await;
-                time::sleep(Duration::from_secs(3)).await;
-                let _ = adapter.stop_scan().await;
-            } => {
-                let mut by_mac: HashMap<[u8;6], Peripheral> = HashMap::new();
+            AccessoryEvent::ScanComplete => {
+                let mut by_mac: HashMap<[u8; 6], Peripheral> = HashMap::new();
                 if let Ok(peris) = adapter.peripherals().await {
                     for p in peris {
                         if let Ok(Some(props)) = p.properties().await {
@@ -77,7 +102,10 @@ pub async fn accessory_manager(
 
                 // Snapshot: (mac, assignment, type)
                 let snapshot: Vec<([u8; 6], Option<std::num::NonZeroU64>, AccessoryType)> =
-                    info_map.iter().map(|(id, info)| (*id, info.assignment, info.ty)).collect();
+                    info_map
+                        .iter()
+                        .map(|(id, info)| (*id, info.assignment, info.ty))
+                        .collect();
 
                 for (id, assignment_opt, ty) in snapshot {
                     if let Some(p) = by_mac.get(&id).cloned() {
@@ -97,7 +125,11 @@ pub async fn accessory_manager(
                                         AccessoryType::BlackbeardX => BBX_SHOT_CHAR_UUID,
                                     };
 
-                                    if let Some(ch) = p.characteristics().into_iter().find(|c| c.uuid == target_char_uuid) {
+                                    if let Some(ch) = p
+                                        .characteristics()
+                                        .into_iter()
+                                        .find(|c| c.uuid == target_char_uuid)
+                                    {
                                         if let Err(e) = p.subscribe(&ch).await {
                                             warn!("Subscribe failed for {id:?}: {e}");
                                         } else {
@@ -107,7 +139,9 @@ pub async fn accessory_manager(
                                             let event_tx = event_tx.clone();
                                             tokio::spawn(async move {
                                                 let mut notif_stream = notif_stream;
-                                                while let Some(ValueNotification { uuid, value }) = notif_stream.next().await {
+                                                while let Some(ValueNotification { uuid, value }) =
+                                                    notif_stream.next().await
+                                                {
                                                     if uuid == target_char_uuid {
                                                         let mut shot = false;
                                                         match ty {
@@ -117,23 +151,38 @@ pub async fn accessory_manager(
                                                             }
                                                             AccessoryType::BlackbeardX => {
                                                                 // shot when single byte 0x01
-                                                                if value.len() == 1 && value[0] == 0x01 { shot = true; }
+                                                                if value.len() == 1
+                                                                    && value[0] == 0x01
+                                                                {
+                                                                    shot = true;
+                                                                }
                                                             }
                                                         }
 
                                                         if shot {
                                                             debug!("shotted");
-                                                            if let Some(assignment) = assignment_opt {
+                                                            if let Some(assignment) = assignment_opt
+                                                            {
                                                                 let maybe_device = {
                                                                     let dl_guard = dl.lock();
-                                                                    let assignment_uuid: [u8; 6] = assignment.get().to_le_bytes()[..6].try_into().unwrap();
-                                                                    dl_guard.iter()
-                                                                        .find(|d| d.0.uuid == assignment_uuid)
+                                                                    let assignment_uuid: [u8; 6] =
+                                                                        assignment
+                                                                            .get()
+                                                                            .to_le_bytes()[..6]
+                                                                            .try_into()
+                                                                            .unwrap();
+                                                                    dl_guard
+                                                                        .iter()
+                                                                        .find(|d| {
+                                                                            d.0.uuid
+                                                                                == assignment_uuid
+                                                                        })
                                                                         .map(|d| d.0.clone())
                                                                 };
                                                                 if let Some(device) = maybe_device {
                                                                     tokio::spawn({
-                                                                        let event_tx = event_tx.clone();
+                                                                        let event_tx =
+                                                                            event_tx.clone();
                                                                         async move {
                                                                             if let Err(e) = event_tx.send(
                                                                                     odyssey_hub_common::events::Event::DeviceEvent(
@@ -158,7 +207,10 @@ pub async fn accessory_manager(
                                             });
                                         }
                                     } else {
-                                        warn!("No target characteristic ({:?}) found for {id:?}", ty);
+                                        warn!(
+                                            "No target characteristic ({:?}) found for {id:?}",
+                                            ty
+                                        );
                                     }
                                 }
                             }
@@ -173,8 +225,6 @@ pub async fn accessory_manager(
                 send_if_changed(&info_map, &last_statuses, &map_tx);
             }
         }
-
-        time::sleep(Duration::from_secs(2)).await;
     }
 }
 

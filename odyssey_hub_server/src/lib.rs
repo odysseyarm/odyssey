@@ -7,6 +7,8 @@ mod usb_link;
 
 use std::{pin::Pin, sync::Arc};
 
+use futures::stream::{self, StreamExt};
+use futures_concurrency::prelude::*;
 use interprocess::local_socket::{
     traits::tokio::Listener, GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _,
     ToFsName, ToNsName,
@@ -29,6 +31,15 @@ use crate::{accessories::accessory_manager, device_tasks::device_tasks};
 pub enum Message {
     ServerInit(Result<(), std::io::Error>),
     Stop,
+}
+
+/// Events from the run_server merged stream
+#[derive(Debug)]
+enum ServerEvent {
+    DeviceTasks,
+    AccessoryManager,
+    EventForward,
+    TonicServer,
 }
 
 /// Wrapper around interprocess's `LocalSocketStream` to implement the `Connected` trait and
@@ -128,7 +139,7 @@ pub async fn run_server(
     sender.send(Message::ServerInit(Ok(()))).unwrap();
     println!("Server running at {:?}", name);
 
-    let (sender, mut receiver) = mpsc::channel(12);
+    let (sender, receiver) = mpsc::channel(12);
 
     let (event_sender, _) = broadcast::channel(12);
 
@@ -180,35 +191,126 @@ pub async fn run_server(
 
     let dl = server.device_list.clone();
 
-    let event_fwd = async {
-        // Forward events from the device tasks to subscribed clients
-        while let Some(message) = receiver.recv().await {
-            match message {
-                device_tasks::Message::Connect(d1, sender) => {
-                    dl.lock().push((d1.clone(), sender));
-                }
-                device_tasks::Message::Disconnect(d) => {
-                    let mut dl = dl.lock();
-                    let i = dl.iter().position(|a| (*a).0 == d);
-                    if let Some(i) = i {
-                        dl.remove(i);
+    // Clone values before moving into streams
+    let sender_clone = sender.clone();
+    let screen_calibrations_clone = screen_calibrations.clone();
+    let device_offsets_clone = device_offsets.clone();
+    let device_shot_delays_clone = device_shot_delays.clone();
+    let shot_delay_watch_clone = shot_delay_watch.clone();
+    let accessory_map_clone = accessory_map.clone();
+    let accessory_map_sender_clone1 = accessory_map_sender.clone();
+    let accessory_map_sender_clone2 = accessory_map_sender.clone();
+    let accessory_info_receiver_clone = accessory_info_receiver.clone();
+    let event_sender_clone1 = event_sender.clone();
+    let event_sender_clone2 = event_sender.clone();
+    let event_sender_clone3 = event_sender.clone();
+    let dl_clone1 = dl.clone();
+    let dl_clone2 = dl.clone();
+
+    // Convert device_tasks to stream
+    let device_tasks_stream = stream::once(async move {
+        tracing::info!("device_tasks_stream: starting");
+        let result = device_tasks(
+            sender_clone,
+            screen_calibrations_clone,
+            device_offsets_clone,
+            device_shot_delays_clone,
+            shot_delay_watch_clone,
+            accessory_map_clone,
+            accessory_map_sender_clone1,
+            accessory_info_receiver_clone,
+            event_sender_clone1,
+        )
+        .await;
+        tracing::error!("device_tasks_stream: device_tasks returned {:?}", result);
+        ServerEvent::DeviceTasks
+    });
+
+    // Convert accessory_manager to stream
+    let accessory_stream = stream::once(async move {
+        let _ = accessory_manager(
+            event_sender_clone2,
+            accessory_info_receiver,
+            accessory_map_sender_clone2,
+            dl_clone1,
+        )
+        .await;
+        ServerEvent::AccessoryManager
+    });
+
+    // Convert event forwarding to stream
+    let event_fwd_stream = stream::unfold(
+        (receiver, dl_clone2, event_sender_clone3),
+        |(mut recv, dl, event_sender)| async move {
+            match recv.recv().await {
+                Some(message) => {
+                    match message {
+                        device_tasks::Message::Connect(d1, sender) => {
+                            dl.lock().push((d1.clone(), sender));
+                        }
+                        device_tasks::Message::Disconnect(d) => {
+                            let mut dl = dl.lock();
+                            let i = dl.iter().position(|a| (*a).0 == d);
+                            if let Some(i) = i {
+                                dl.remove(i);
+                            }
+                        }
+                        device_tasks::Message::Event(e) => {
+                            event_sender.send(e).unwrap();
+                        }
                     }
+                    Some((ServerEvent::EventForward, (recv, dl, event_sender)))
                 }
-                device_tasks::Message::Event(e) => {
-                    event_sender.send(e).unwrap();
-                }
+                None => None,
+            }
+        },
+    );
+
+    // Convert tonic server to stream
+    let tonic_stream = stream::once(async move {
+        let _ = tonic::transport::Server::builder()
+            .add_service(ServiceServer::new(server))
+            .serve_with_incoming_shutdown(listener, cancel_token.cancelled())
+            .await;
+        ServerEvent::TonicServer
+    });
+
+    // Merge all streams
+    tracing::info!("run_server: merging streams");
+    let merged = (
+        device_tasks_stream,
+        accessory_stream,
+        event_fwd_stream,
+        tonic_stream,
+    )
+        .merge();
+    tokio::pin!(merged);
+    tracing::info!("run_server: entering main loop");
+
+    // Wait for any stream to complete (which means a critical task exited)
+    while let Some(event) = merged.next().await {
+        tracing::debug!("Server loop event: {:?}", event);
+        match event {
+            ServerEvent::DeviceTasks => {
+                tracing::error!("Device tasks exited unexpectedly");
+                break;
+            }
+            ServerEvent::AccessoryManager => {
+                tracing::error!("Accessory manager exited unexpectedly");
+                break;
+            }
+            ServerEvent::EventForward => {
+                // Event forwarding continues, don't break
+                tracing::trace!("Event forwarded");
+            }
+            ServerEvent::TonicServer => {
+                tracing::info!("Tonic server exited");
+                break;
             }
         }
-    };
-
-    tokio::select! {
-        _ = device_tasks(sender.clone(), screen_calibrations.clone(), device_offsets.clone(), device_shot_delays.clone(), shot_delay_watch.clone(), accessory_map.clone(), accessory_map_sender.clone(), accessory_info_receiver.clone(), event_sender.clone()) => {},
-        _ = accessory_manager(event_sender.clone(), accessory_info_receiver, accessory_map_sender.clone(), dl.clone()) => {},
-        _ = event_fwd => {},
-        _ = tonic::transport::Server::builder()
-            .add_service(ServiceServer::new(server))
-            .serve_with_incoming_shutdown(listener, cancel_token.cancelled()) => {},
     }
+
+    tracing::info!("Server main loop ended");
 
     Ok(())
 }

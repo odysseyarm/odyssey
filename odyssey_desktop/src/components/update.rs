@@ -32,7 +32,9 @@ pub fn UpdateBanner(props: UpdateBannerProps) -> Element {
             error.set(None);
 
             dioxus::prelude::spawn(async move {
-                let source = sources::HttpSource::new("https://github.com/odysseyarm/odyssey-desktop/releases/latest/download");
+                let source = sources::HttpSource::new(
+                    "https://github.com/odysseyarm/odyssey-desktop/releases/latest/download",
+                );
                 match vp::UpdateManager::new(source, None, None) {
                     Ok(um) => {
                         match um.check_for_updates_async().await {

@@ -4,10 +4,10 @@
 //! packet types into a unified DeviceLink interface.
 
 use anyhow::{anyhow, Result};
+use ats_usb::packets::vm::{Packet, PacketData, PacketType, PropKind, Props};
 use futures::future::BoxFuture;
 use futures::{stream::SelectAll, StreamExt};
 use odyssey_hub_common::device::{Device, Transport};
-use protodongers::{Packet, PacketData, PropKind, Props};
 use tokio::sync::mpsc;
 
 use crate::device_link::DeviceLink;
@@ -130,10 +130,7 @@ impl UsbLink {
             for tag in 0x81u8..=0xfeu8 {
                 // Try to create a stream for PacketType::Vendor(tag). Some devices may not expose
                 // all vendor streams; ignore errors and continue.
-                match usb_clone
-                    .stream(protodongers::PacketType::Vendor(tag))
-                    .await
-                {
+                match usb_clone.stream(PacketType::Vendor(tag)).await {
                     Ok(stream) => {
                         fused.push(
                             stream
@@ -200,7 +197,7 @@ impl DeviceLink for UsbLink {
                 }
                 PacketData::WriteConfig(cfg) => {
                     // Convert to the crate's GeneralConfig type (not the wire module)
-                    let wire: protodongers::GeneralConfig = cfg.clone().into();
+                    let wire: ats_usb::packets::vm::GeneralConfig = cfg.clone().into();
                     self.usb.write_config(wire).await?;
                 }
                 PacketData::ReadConfig(kind) => {

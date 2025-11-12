@@ -63,21 +63,22 @@ impl Client {
         impl futures::Stream<Item = Result<Vec<odyssey_hub_common::device::Device>, tonic::Status>>,
     > {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(
-                odyssey_hub_server_interface::SubscribeDeviceListRequest {},
-            );
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::SubscribeDeviceListRequest {});
             let stream = service_client
                 .subscribe_device_list(request)
                 .await?
                 .into_inner();
 
-            Ok(stream.map(|item| item.map(|reply| {
-                reply
-                    .device_list
-                    .into_iter()
-                    .map(Into::into)
-                    .collect::<Vec<odyssey_hub_common::device::Device>>()
-            })))
+            Ok(stream.map(|item| {
+                item.map(|reply| {
+                    reply
+                        .device_list
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<odyssey_hub_common::device::Device>>()
+                })
+            }))
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -260,11 +261,10 @@ impl Client {
         device: odyssey_hub_common::device::Device,
     ) -> anyhow::Result<impl futures::Stream<Item = Result<u16, tonic::Status>>> {
         if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(
-                odyssey_hub_server_interface::SubscribeShotDelayRequest {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::SubscribeShotDelayRequest {
                     device: Some(device.into()),
-                },
-            );
+                });
             let stream = service_client
                 .subscribe_shot_delay(request)
                 .await?
