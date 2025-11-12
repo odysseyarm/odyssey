@@ -15,9 +15,9 @@ use core::mem::MaybeUninit;
 use nalgebra::{Isometry3, Point2, Vector3};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
+pub mod control;
 pub mod mux;
 pub mod wire;
-pub mod control;
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
 }
@@ -123,7 +123,7 @@ pub enum PacketData {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct VendorData {
     #[cfg_attr(feature = "minicbor", n(0))]
     pub len: u8,
@@ -140,7 +140,7 @@ pub struct VendorData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, enumn::N, PartialEq)]
+#[derive(Clone, Copy, Debug, enumn::N, PartialEq)]
 pub enum StreamUpdateAction {
     #[cfg_attr(feature = "minicbor", n(0))]
     Enable,
@@ -294,7 +294,7 @@ impl Default for AccelConfig {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct GyroConfig {
     #[cfg_attr(feature = "minicbor", n(0))]
     pub b_x: f32,
