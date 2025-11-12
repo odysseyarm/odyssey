@@ -46,6 +46,7 @@ fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
     *buf = &mut core::mem::take(buf)[data.len()..];
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -58,6 +59,7 @@ pub struct Packet {
     pub id: u8,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -119,6 +121,7 @@ pub enum PacketData {
     ),
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -170,6 +173,7 @@ pub enum Mode {
     Image,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -206,6 +210,7 @@ impl Version {
     }
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -220,6 +225,7 @@ pub struct Register {
     pub address: u8,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -236,6 +242,7 @@ pub struct WriteRegister {
     pub data: u8,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -250,6 +257,7 @@ pub struct ReadRegisterResponse {
     pub data: u8,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -290,6 +298,7 @@ impl Default for AccelConfig {
     }
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -327,6 +336,7 @@ pub enum ConfigKind {
     StereoIso = 6,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -358,6 +368,7 @@ pub enum PropKind {
     ProductId = 1,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -370,6 +381,7 @@ pub enum Props {
     ProductId(#[cfg_attr(feature = "minicbor", n(0))] u16),
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -406,6 +418,7 @@ pub struct MotData {
     pub vy: u8,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -420,6 +433,7 @@ pub struct ObjectReport {
     pub mot_data_wf: [MotData; 16],
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -434,6 +448,7 @@ pub struct CombinedMarkersReport {
     pub wf_points: [Point2<u16>; 16],
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -454,6 +469,7 @@ impl From<PocMarkersReport> for CombinedMarkersReport {
     }
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -470,6 +486,7 @@ pub struct AccelReport {
     pub gyro: Vector3<f32>,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -480,6 +497,7 @@ pub struct ImpactReport {
     pub timestamp: u32,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -492,6 +510,7 @@ pub struct StreamUpdate {
     pub action: StreamUpdateAction,
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
@@ -557,6 +576,7 @@ impl TryFrom<u8> for Port {
     }
 }
 
+#[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

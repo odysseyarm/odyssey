@@ -9,6 +9,7 @@ use opencv_ros_camera::RosOpenCvIntrinsics;
 #[cfg(feature = "minicbor")]
 use minicbor::{CborLen, Decode, Encode};
 
+#[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -82,6 +83,7 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
+#[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -117,6 +119,7 @@ impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
     }
 }
 
+#[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -158,6 +161,7 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 }
 
 // This is also the format the POC uses on flash
+#[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -207,6 +211,7 @@ impl From<GeneralConfig> for super::GeneralConfig {
     }
 }
 
+#[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(super) struct AccelReport {
