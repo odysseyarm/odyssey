@@ -1,47 +1,47 @@
-//! usb_hub_link.rs — wraps ats_usb::device::HubDevice into DeviceLink
+//! usb_mux_link.rs — wraps ats_usb::device::MuxDevice into DeviceLink
 //!
-//! The USB Hub/Dongle uses the HubMsg protocol to multiplex multiple devices
-//! over a single USB connection. Each device connected to the hub gets packets
-//! routed through HubMsg::SendTo and HubMsg::DevicePacket.
+//! The USB Mux/Dongle uses the MuxMsg protocol to multiplex multiple devices
+//! over a single USB connection. Each device connected to the mux gets packets
+//! routed through MuxMsg::SendTo and MuxMsg::DevicePacket.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::{anyhow, Result};
-use ats_usb::device::HubDevice;
-use ats_usb::packets::hub::HubMsg;
+use ats_usb::device::MuxDevice;
+use ats_usb::packets::mux::MuxMsg;
+use ats_usb::packets::vm::Packet;
 use nusb::DeviceInfo;
 use odyssey_hub_common::device::{Device, Transport};
-use protodongers::Packet;
 use tokio::sync::mpsc;
 
 use crate::device_link::DeviceLink;
 
-/// Wraps a HubDevice connection to a specific device through the hub
+/// Wraps a MuxDevice connection to a specific device through the mux
 pub struct UsbHubLink {
     dev_meta: Device,
-    hub: HubDevice,
+    mux: MuxDevice,
     device_addr: [u8; 6], // 6-byte BLE address
     rx: mpsc::Receiver<Packet>,
 }
 
 impl UsbHubLink {
-    /// Connect to a device through the USB hub
-    /// - `hub_info`: USB device info for the hub itself
+    /// Connect to a device through the USB Mux
+    /// - `mux_info`: USB device info for the mux itself
     /// - `device_addr`: 6-byte BLE address of the target device
-    pub async fn connect(hub_info: DeviceInfo, device_addr: [u8; 6]) -> Result<Self> {
-        let hub = ats_usb::device::HubDevice::connect_usb(hub_info).await?;
-        Self::from_connected_hub(hub, device_addr).await
+    pub async fn connect(mux_info: DeviceInfo, device_addr: [u8; 6]) -> Result<Self> {
+        let mux = ats_usb::device::MuxDevice::connect_usb(mux_info).await?;
+        Self::from_connected_mux(mux, device_addr).await
     }
 
-    /// Lightweight constructor: create a `UsbHubLink` from an already connected `HubDevice`
-    /// using an externally-provided receiver. This allows a single hub manager task to own
-    /// the HubDevice receive loop and route `HubMsg::DevicePacket` into per-device channels.
+    /// Lightweight constructor: create a `UsbHubLink` from an already connected `MuxDevice`
+    /// using an externally-provided receiver. This allows a single mux manager task to own
+    /// the MuxDevice receive loop and route `MuxMsg::DevicePacket` into per-device channels.
     ///
     /// NOTE: This uses a temporary UUID derived from the BLE address. Call `read_uuid()`
     /// after creation to get the real device UUID.
-    pub fn from_connected_hub_with_rx(
-        hub: ats_usb::device::HubDevice,
+    pub fn from_connected_mux_with_rx(
+        mux: ats_usb::device::MuxDevice,
         device_addr: [u8; 6],
         rx: mpsc::Receiver<Packet>,
     ) -> Self {
@@ -53,7 +53,7 @@ impl UsbHubLink {
 
         Self {
             dev_meta,
-            hub,
+            mux,
             device_addr,
             rx,
         }
@@ -61,14 +61,14 @@ impl UsbHubLink {
 
     /// Read the actual UUID from the device and update the internal device metadata
     pub async fn read_and_set_uuid(&mut self) -> Result<[u8; 6]> {
-        use protodongers::{Packet, PacketData, PropKind, Props};
+        use ats_usb::packets::vm::{Packet, PacketData, PropKind, Props};
 
         // Send ReadProp request for UUID
         let read_pkt = Packet {
             id: 0,
             data: PacketData::ReadProp(PropKind::Uuid),
         };
-        self.hub.send_to(self.device_addr, read_pkt).await?;
+        self.mux.send_to(self.device_addr, read_pkt).await?;
 
         // Wait for response
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -90,26 +90,26 @@ impl UsbHubLink {
         Ok(timeout)
     }
 
-    /// Convenience constructor: create a `UsbHubLink` from a connected `HubDevice` and
+    /// Convenience constructor: create a `UsbHubLink` from a connected `MuxDevice` and
     /// create an internal receiver channel for it. Use this when you don't need to
     /// supply your own receiver/routing mechanism.
-    pub fn from_connected_hub_no_spawn(
-        hub: ats_usb::device::HubDevice,
+    pub fn from_connected_mux_no_spawn(
+        mux: ats_usb::device::MuxDevice,
         device_addr: [u8; 6],
     ) -> Self {
         let (tx, rx) = mpsc::channel::<Packet>(128);
         // tx is intentionally unused here — caller won't receive packets unless they
-        // arrange to route hub messages into the created channel. This constructor is
+        // arrange to route mux messages into the created channel. This constructor is
         // useful for quick local wiring where the link manages its own receive task
-        // elsewhere (or for tests). If you need the hub manager to route packets,
-        // prefer `from_connected_hub_with_rx`.
+        // elsewhere (or for tests). If you need the mux manager to route packets,
+        // prefer `from_connected_mux_with_rx`.
         let _ = tx;
-        Self::from_connected_hub_with_rx(hub, device_addr, rx)
+        Self::from_connected_mux_with_rx(mux, device_addr, rx)
     }
 
-    /// Create UsbHubLink from an already connected HubDevice
-    pub async fn from_connected_hub(
-        hub: ats_usb::device::HubDevice,
+    /// Create UsbHubLink from an already connected MuxDevice
+    pub async fn from_connected_mux(
+        mux: ats_usb::device::MuxDevice,
         device_addr: [u8; 6],
     ) -> Result<Self> {
         let dev_meta = Device {
@@ -117,19 +117,19 @@ impl UsbHubLink {
             transport: Transport::UsbHub,
         };
 
-        // Create packet stream from hub messages
+        // Create packet stream from mux messages
         let (tx, rx) = mpsc::channel::<Packet>(128);
 
-        // Spawn task to listen for HubMsg::RecvFrom and forward to channel
-        let hub_clone = hub.clone();
+        // Spawn task to listen for MuxMsg::RecvFrom and forward to channel
+        let mux_clone = mux.clone();
         let device_addr_clone = device_addr;
         tokio::spawn(async move {
             loop {
-                match hub_clone.receive_msg().await {
+                match mux_clone.receive_msg().await {
                     Ok(msg) => {
-                        // Use the hub message definition from the ats_usb crate's packets module
+                        // Use the mux message definition from the ats_usb crate's packets module
                         match msg {
-                            HubMsg::DevicePacket(dev_pkt) => {
+                            MuxMsg::DevicePacket(dev_pkt) => {
                                 // Check if this message is for our device
                                 if dev_pkt.dev == device_addr_clone {
                                     if tx.send(dev_pkt.pkt).await.is_err() {
@@ -144,7 +144,7 @@ impl UsbHubLink {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("HubDevice receive error: {}", e);
+                        tracing::warn!("MuxDevice receive error: {}", e);
                         break;
                     }
                 }
@@ -157,7 +157,7 @@ impl UsbHubLink {
 
         Ok(Self {
             dev_meta,
-            hub,
+            mux,
             device_addr,
             rx,
         })
@@ -174,7 +174,7 @@ impl DeviceLink for UsbHubLink {
             self.rx
                 .recv()
                 .await
-                .ok_or_else(|| anyhow!("USB Hub packet stream ended"))
+                .ok_or_else(|| anyhow!("USB Mux packet stream ended"))
         })
     }
 
@@ -183,8 +183,8 @@ impl DeviceLink for UsbHubLink {
         pkt: Packet,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            // Send packet to specific device through the hub
-            self.hub.send_to(self.device_addr, pkt).await?;
+            // Send packet to specific device through the mux
+            self.mux.send_to(self.device_addr, pkt).await?;
             Ok(())
         })
     }

@@ -1,0 +1,213 @@
+================================================================================
+DEVICE SNAPSHOT - QUICK REFERENCE
+================================================================================
+
+WHAT IS IT?
+  A list of connected BLE device addresses sent from dongle-fw to USB host
+  Response to RequestDevices message
+  Format: heapless::Vec<[u8; 6], 8> (up to 8 devices)
+  Encoded: postcard binary
+
+WHERE IS IT GENERATED?
+  PRIMARY: dongle-fw/src/ble/central.rs - ActiveConnections::get_all()
+           (lines 160-220)
+  TRIGGERED: dongle-fw/src/main.rs - handle_usb_rx() (lines 619-665)
+
+HOW IS IT SENT?
+  1. Get snapshot: active_connections.get_all().await
+  2. Build message: MuxMsg::DevicesSnapshot(devices)
+  3. Queue: HOST_RESPONSES.send(response).await
+  4. Transmit: host_responses_tx_task() sends on USB bulk IN
+
+KEY CODE LOCATIONS
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ File: dongle-fw/src/main.rs                                     │
+  │                                                                 │
+  │ Line 21-23:   HOST_RESPONSES channel definition                │
+  │ Line 490:     usb_rx_task - receives from USB                  │
+  │ Line 531:     usb_tx_task - sends to USB                       │
+  │ Line 562:     host_responses_tx_task - dequeues & sends        │
+  │ Line 600:     send_mux_msg - encodes with postcard             │
+  │ Line 619:     handle_usb_rx - processes RequestDevices         │
+  │ Line 650:     *** SNAPSHOT GENERATED HERE ***                  │
+  │                 let devices = active_connections.get_all()     │
+  │ Line 651:     *** RESPONSE QUEUED HERE ***                     │
+  │                 HOST_RESPONSES.send(response)                  │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ File: dongle-fw/src/ble/central.rs                              │
+  │                                                                 │
+  │ Line 67:      pub type Uuid = [u8; 6];                         │
+  │ Line 160:     struct ActiveConnections definition               │
+  │ Line 190:     pub async fn get_all() *** SNAPSHOT BUILDER ***   │
+  │               - Locks map                                      │
+  │               - Iterates entries                               │
+  │               - Collects UUIDs to Vec                          │
+  │               - Returns Vec                                    │
+  │ Line 175:     pub async fn add()                               │
+  │               Called when device connects                      │
+  │ Line 182:     pub async fn remove()                            │
+  │               Called when device disconnects                   │
+  │ Line 840:     Connection add example                           │
+  │ Line 900:     Connection remove example                        │
+  └─────────────────────────────────────────────────────────────────┘
+
+CONTROL.RS - WHAT IT IS NOT
+  ✗ Does NOT handle RequestDevices
+  ✗ Does NOT send DevicesSnapshot
+  ✗ Uses separate EP0 control plane (pairing, bonding)
+  ✗ Not involved in snapshot generation or transmission
+  → Use DEVICE_SNAPSHOT_ANALYSIS.md section "Control.rs Analysis"
+
+DEVICE_TASKS.RS - WHAT IT IS NOT
+  ✗ File does not exist in the codebase
+  ✗ Device connection handling is in ble/central.rs
+  → Check DEVICE_SNAPSHOT_ANALYSIS.md
+
+ODYSSEY_HUB_SERVER - WHAT IT IS NOT
+  ✗ Not found in donger repository
+  ✗ Snapshot protocol: Host ↔ Dongle-FW only
+  ✗ May exist in separate odyssey repository
+  → Check SEARCH_RESULTS_SUMMARY.md section "odyssey_hub_server"
+
+EXECUTION SEQUENCE
+  [Host]                               [Dongle-FW]
+    │                                      │
+    ├─ 1. Send RequestDevices ──────────→ │
+    │      (MuxMsg::RequestDevices)       │
+    │      postcard encoded              │
+    │      USB bulk OUT endpoint          │
+    │                                      │ 2. usb_rx_task
+    │                                      │    receives data
+    │                                      │
+    │                                      │ 3. handle_usb_rx()
+    │                                      │    decodes postcard
+    │                                      │    matches RequestDevices
+    │                                      │
+    │                                      │ 4. active_connections
+    │                                      │    .get_all().await
+    │                                      │    Locks map
+    │                                      │    Collects UUIDs
+    │                                      │
+    │                                      │ 5. Build response
+    │                                      │    DevicesSnapshot
+    │                                      │
+    │                                      │ 6. HOST_RESPONSES
+    │                                      │    .send(response)
+    │                                      │
+    │                                      │ 7. host_responses_tx_task
+    │                                      │    dequeues from channel
+    │                                      │
+    │                                      │ 8. send_mux_msg()
+    │                                      │    postcard encodes
+    │                                      │
+    │                                      │ 9. EndpointIn::write_transfer()
+    │                                      │    sends on USB bulk IN
+    │                                      │
+    │← 10. Receive DevicesSnapshot ───────┤
+    │      (MuxMsg::DevicesSnapshot)      │
+    │      postcard encoded               │
+    │      USB bulk IN endpoint           │
+    │                                      │
+    └─ 11. Parse snapshot ─────────────→ Done
+
+SYNCHRONIZATION
+  ActiveConnections::get_all()
+    ├─ Acquires AsyncMutex lock (fair, no starvation)
+    ├─ Iterates LinearMap (shared ownership)
+    ├─ Builds heapless::Vec (stack-allocated)
+    └─ Releases lock → Returns Vec
+
+  HOST_RESPONSES Channel
+    ├─ Capacity: 4 messages
+    ├─ Producer: handle_usb_rx() + others
+    ├─ Consumer: host_responses_tx_task()
+    └─ Behavior: Sender blocks if full (unlikely)
+
+LIMITS & CONSTRAINTS
+  MAX_DEVICES                8         Maximum connected devices
+  HOST_RESPONSES capacity    4         Queued responses before blocking
+  USB bulk OUT buffer        512 B     RequestDevices packet size
+  USB bulk IN buffer         256 B     DevicesSnapshot packet size
+  Snapshot Vec capacity      8         Matches MAX_DEVICES
+  L2CAP channels per device  2         Control + data
+  Total L2CAP channels       16        2 × 8 devices
+  Max snapshot size          ~50 B     8×6 bytes + overhead
+
+MEMORY LAYOUT
+  ActiveConnections struct:
+    ├─ LinearMap<[u8; 6], (), 8>  ~48 bytes resident
+    └─ AsyncMutex guard            ~24 bytes during access
+
+  Snapshot Vec during get_all():
+    └─ heapless::Vec<[u8; 6], 8>  ~50 bytes on stack
+
+  USB buffers:
+    ├─ usb_rx_task read_buf        512 bytes
+    └─ host_responses_tx_task write_buf  256 bytes
+
+DOCUMENTATION GUIDE
+  ✓ Quick answers?            → SEARCH_RESULTS_SUMMARY.md
+  ✓ Need code snippets?       → DEVICE_SNAPSHOT_CODE_SNIPPETS.md
+  ✓ System design?            → DEVICE_SNAPSHOT_ARCHITECTURE.md
+  ✓ Technical deep dive?      → DEVICE_SNAPSHOT_ANALYSIS.md
+  ✓ Navigation help?          → DEVICE_SNAPSHOT_INDEX.md
+  ✓ This file?                → QUICK_REFERENCE.txt
+
+COMMON MODIFICATIONS
+  To change snapshot contents:
+    1. Modify ActiveConnections::get_all() return logic
+    2. Ensure result is postcard-serializable
+    3. Test with various device counts
+
+  To change snapshot transmission:
+    1. Modify host_responses_tx_task()
+    2. Keep USB endpoint writing synchronized
+    3. Verify buffer sizes are adequate
+
+  To add filtering/sorting:
+    1. Modify get_all() before returning Vec
+    2. Example: sort addresses, filter by state
+    3. Keep lock scope minimal for performance
+
+TESTING VERIFICATION
+  ✓ Connect devices to dongle
+  ✓ Send RequestDevices from host
+  ✓ Verify DevicesSnapshot has expected addresses
+  ✓ Disconnect device
+  ✓ Verify device removed from next snapshot
+  ✓ Test with full capacity (8 devices)
+
+FILES IN SEARCH
+  ✓ dongle-fw/src/main.rs               PRIMARY
+  ✓ dongle-fw/src/ble/central.rs        PRIMARY
+  ✓ dongle-fw/src/control.rs            REFERENCE (not snapshot-related)
+  ✓ dongle-fw/src/ble/mod.rs            REFERENCE (module exports)
+  ✓ dongle-fw/src/usb.rs                REFERENCE (USB setup)
+  ✓ dongle-fw/.claude/PROTOCOL_EXTENSION.md  DOCUMENTATION
+  ✓ dongle-fw/README.md                 DOCUMENTATION
+  ✗ device_tasks.rs                     NOT FOUND
+  ✗ odyssey_hub_server                  NOT FOUND
+
+ABSOLUTE FILE PATHS
+  D:\ody\donger\dongle-fw\src\main.rs
+  D:\ody\donger\dongle-fw\src\ble\central.rs
+  D:\ody\donger\dongle-fw\src\control.rs
+  D:\ody\donger\dongle-fw\src\ble\mod.rs
+  D:\ody\donger\dongle-fw\README.md
+  D:\ody\donger\dongle-fw\.claude\PROTOCOL_EXTENSION.md
+
+GENERATED DOCUMENTATION
+  1. SEARCH_RESULTS_SUMMARY.md         (~6 KB, 12 sections)
+  2. DEVICE_SNAPSHOT_ANALYSIS.md       (~12 KB, 10 sections)
+  3. DEVICE_SNAPSHOT_CODE_SNIPPETS.md  (~8 KB, 11 snippets)
+  4. DEVICE_SNAPSHOT_ARCHITECTURE.md   (~10 KB, 10 sections)
+  5. DEVICE_SNAPSHOT_INDEX.md          (~5 KB, navigation)
+  6. QUICK_REFERENCE.txt               (this file, ~4 KB)
+
+  Total: ~45 KB of organized documentation
+
+================================================================================
+END OF QUICK REFERENCE
+================================================================================

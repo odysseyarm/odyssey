@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.81"
+futures = { version = "0.3.30", default-features = false, features = ["alloc", "async-await", "std"] }
+futures-concurrency = "7.6.1"
 odyssey_hub_server = { version = "0.1.0", path = "../odyssey_hub_server" }
 odyssey_hub_server_interface = { version = "0.1.0", path = "../odyssey_hub_server_interface" }
 serde = { version = "1.0.197", features = ["derive"] }

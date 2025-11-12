@@ -79,10 +79,34 @@ fn app() -> Element {
         move || {
             let cancel_token = cancel_token.clone();
             tokio::spawn(async move {
+                use futures::stream::{self, StreamExt};
+                use futures_concurrency::prelude::*;
+
                 let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-                tokio::select! {
-                    _ = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {},
-                    _ = tokio::spawn(handle_server_status(receiver)) => {},
+
+                // Convert server task to stream
+                let server_stream = stream::once({
+                    let sender = sender.clone();
+                    let cancel_token = cancel_token.clone();
+                    async move {
+                        let _ = odyssey_hub_server::run_server(sender, cancel_token).await;
+                        0u8
+                    }
+                });
+
+                // Convert status handler to stream
+                let status_stream = stream::once(async move {
+                    handle_server_status(receiver).await;
+                    1u8
+                });
+
+                // Merge both streams
+                let merged = (server_stream, status_stream).merge();
+                tokio::pin!(merged);
+
+                // Wait for either to complete
+                while let Some(_) = merged.next().await {
+                    break;
                 }
             })
         }
@@ -107,7 +131,9 @@ fn app() -> Element {
             dioxus::prelude::spawn(async move {
                 use velopack::{self as vp, sources};
 
-                let source = sources::HttpSource::new("https://github.com/odysseyarm/odyssey-desktop/releases/latest/download");
+                let source = sources::HttpSource::new(
+                    "https://github.com/odysseyarm/odyssey-desktop/releases/latest/download",
+                );
                 match vp::UpdateManager::new(source, None, None) {
                     Ok(um) => {
                         match um.check_for_updates_async().await {

@@ -1,7 +1,15 @@
+use futures::stream::{self, StreamExt};
+use futures_concurrency::prelude::*;
 use odyssey_hub_server::{self, Message};
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
+
+/// Events from the main merged stream
+enum MainEvent {
+    ServerExited,
+    StatusHandlerExited,
+}
 
 #[tokio::main]
 async fn main() {
@@ -24,12 +32,28 @@ async fn main() {
             cancel_token.cancel();
         }
     });
-    tokio::select! {
-        result = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)) => {
-            println!("Server exited with: {:?}", result);
-        },
-        _ = tokio::spawn(handle_server_status(receiver)) => {},
-    };
+
+    // Convert server task to stream
+    let server_stream = stream::once(async move {
+        let result = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)).await;
+        println!("Server exited with: {:?}", result);
+        MainEvent::ServerExited
+    });
+
+    // Convert status handler to stream
+    let status_stream = stream::once(async move {
+        handle_server_status(receiver).await;
+        MainEvent::StatusHandlerExited
+    });
+
+    // Merge both streams
+    let merged = (server_stream, status_stream).merge();
+    tokio::pin!(merged);
+
+    // Wait for either to complete
+    while let Some(_event) = merged.next().await {
+        break;
+    }
 }
 
 async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>) {
