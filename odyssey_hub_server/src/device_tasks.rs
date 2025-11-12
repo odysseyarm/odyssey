@@ -189,6 +189,7 @@ async fn usb_device_manager(
                         Ok(hub) => {
                             info!("Connected USB hub device: {:?}", dev_info);
 
+                            // TODO repeated code
                             // Create device handlers for current hub snapshot
                             match hub.request_devices().await {
                                 Ok(list) => {
@@ -200,7 +201,6 @@ async fn usb_device_manager(
                                         );
                                         let addr_copy = *addr;
 
-                                        // Use VmDevice::connect_via_hub for proper device abstraction
                                         match ats_usb::device::VmDevice::connect_via_mux(
                                             hub.clone(),
                                             addr_copy,
@@ -313,13 +313,14 @@ async fn usb_device_manager(
                             let hub_manager_handle = tokio::spawn(async move {
                                 tracing::info!("Hub manager task started for hub {:?}", hub_info);
 
-                                // Subscribe to device list changes - this will send an initial
-                                // DevicesSnapshot and then send updates whenever devices connect or disconnect
+                                // Subscribe to device list changes
                                 if let Err(e) = hub_clone.subscribe_device_list().await {
                                     tracing::error!("Failed to subscribe to device list: {}", e);
                                     return;
                                 }
                                 tracing::info!("Subscribed to device list changes");
+                                // Note: Initial devices were already processed before this task started
+                                // Now we just listen for changes via subscription
 
                                 // Create snapshot stream from hub - will receive DevicesSnapshot
                                 // messages automatically when devices connect/disconnect
