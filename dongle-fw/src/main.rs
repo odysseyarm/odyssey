@@ -12,6 +12,7 @@ mod usb;
 #[cfg(feature = "rtt")]
 use {defmt_rtt as _, panic_probe as _};
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use cortex_m_rt::{ExceptionFrame, exception};
 use defmt::{error, info, warn};
 use embassy_executor::Spawner;
@@ -20,7 +21,6 @@ use embassy_nrf::{peripherals::RNG as NRF_RNG, rng};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal as SyncSignal;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 // Channel for sending host responses (RequestDevices, ReadVersion, etc.)
 type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 4>;
@@ -642,10 +642,6 @@ async fn handle_usb_rx(
         MuxMsg::SubscribeDeviceList => {
             info!("Subscribing to device list changes");
             DEVICE_LIST_SUBSCRIBED.store(true, Ordering::Relaxed);
-            // Send initial snapshot
-            let devices = active_connections.get_all().await;
-            let response = MuxMsg::DevicesSnapshot(devices);
-            HOST_RESPONSES.send(response).await;
         }
         MuxMsg::UnsubscribeDeviceList => {
             info!("Unsubscribing from device list changes");
