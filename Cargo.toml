@@ -9,7 +9,7 @@ ats_common = { git = "https://github.com/odysseyarm/ats_common.git", default-fea
 enumn = "0.1.14"
 nalgebra = { version = "0.34", default-features = false }
 serde = { version = "1.0.219", default-features = false, optional = true }
-opencv-ros-camera = { version = "0.16", default-features = false }
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", default-features = false }
 thiserror = { version = "2.0.17", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 static_assertions = "1.1.0"
