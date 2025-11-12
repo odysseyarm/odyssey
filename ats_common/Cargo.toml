@@ -13,7 +13,7 @@ serde = ["dep:serde", "nalgebra/serde-serialize"]
 [dependencies]
 nalgebra = { version = "0.34", default-features = false, features = [ "libm", "macros" ] }
 num = { version = "0.4.1", default-features = false, features = [ "libm" ] }
-opencv-ros-camera = { version = "0.16", default-features = false }
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", default-features = false }
 serde = { version = "1.0.198", features = [ "derive" ], optional = true }
 serde_json = { version = "1.0.116", optional = true }
 simba = { version = "0.9", default-features = false }
