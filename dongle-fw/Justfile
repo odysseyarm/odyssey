@@ -12,7 +12,7 @@ key_file  := ""
 # Serial
 dfu_port  := "COM20"
 baud      := "115200"
-dev_port  := "COM4"
+dev_port  := "COM25"
 
 ROOT      := "."
 

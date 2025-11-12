@@ -20,10 +20,14 @@ use embassy_nrf::{peripherals::RNG as NRF_RNG, rng};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal as SyncSignal;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 // Channel for sending host responses (RequestDevices, ReadVersion, etc.)
 type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 4>;
-static HOST_RESPONSES: HostResponseChannel = Channel::new();
+pub static HOST_RESPONSES: HostResponseChannel = Channel::new();
+
+// Device list subscription flag
+pub static DEVICE_LIST_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
 use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
 // Using trouble-host + nrf-sdc
@@ -634,6 +638,18 @@ async fn handle_usb_rx(
         MuxMsg::ReadVersion() => {
             let response = MuxMsg::ReadVersionResponse(VERSION);
             HOST_RESPONSES.send(response).await;
+        }
+        MuxMsg::SubscribeDeviceList => {
+            info!("Subscribing to device list changes");
+            DEVICE_LIST_SUBSCRIBED.store(true, Ordering::Relaxed);
+            // Send initial snapshot
+            let devices = active_connections.get_all().await;
+            let response = MuxMsg::DevicesSnapshot(devices);
+            HOST_RESPONSES.send(response).await;
+        }
+        MuxMsg::UnsubscribeDeviceList => {
+            info!("Unsubscribing from device list changes");
+            DEVICE_LIST_SUBSCRIBED.store(false, Ordering::Relaxed);
         }
         _ => {
             error!(

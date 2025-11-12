@@ -1,4 +1,4 @@
-use defmt::{error, info};
+use defmt::{error, info, warn};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex as AsyncMutex;
@@ -15,6 +15,7 @@ use trouble_host::scan::Scanner;
 use trouble_host::{PacketPool, Stack};
 
 use crate::storage::Settings;
+use crate::{DEVICE_LIST_SUBSCRIBED, HOST_RESPONSES};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 // L2CAP PSM (Protocol Service Multiplexer) for our custom protocol
@@ -125,9 +126,16 @@ pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 32>;
 pub struct DeviceQueues {
     queues: AsyncMutex<
         ThreadModeRawMutex,
-        heapless::LinearMap<Uuid, &'static DeviceQueue, MAX_DEVICES>,
+        heapless::LinearMap<Uuid, (&'static DeviceQueue, usize), MAX_DEVICES>,
     >,
 }
+
+// Pre-allocated array of queues that can be reused
+static QUEUE_POOL: [DeviceQueue; MAX_DEVICES] = {
+    const INIT: DeviceQueue = Channel::new();
+    [INIT; MAX_DEVICES]
+};
+static ALLOCATED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 impl DeviceQueues {
     pub const fn new() -> Self {
@@ -142,24 +150,29 @@ impl DeviceQueues {
             return None;
         }
 
-        // Use const {} block to initialize array of StaticCells
-        static QUEUES: [StaticCell<DeviceQueue>; MAX_DEVICES] = {
-            const INIT: StaticCell<DeviceQueue> = StaticCell::new();
-            [INIT; MAX_DEVICES]
-        };
-        static NEXT_IDX: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-        let idx = NEXT_IDX.fetch_add(1, Ordering::Relaxed);
-        if idx >= MAX_DEVICES {
-            return None;
+        // Find first free slot using atomic bitmap
+        let mut idx = None;
+        for i in 0..MAX_DEVICES {
+            let mask = 1u8 << i;
+            let current = ALLOCATED.fetch_or(mask, Ordering::AcqRel);
+            if (current & mask) == 0 {
+                // This slot was free, we claimed it
+                idx = Some(i);
+                break;
+            }
         }
-        let queue = QUEUES[idx].init(Channel::new());
-        let _ = map.insert(*uuid, queue);
+        
+        let idx = idx?;
+        
+        // Get reference to the pre-allocated queue
+        let queue = &QUEUE_POOL[idx];
+        let _ = map.insert(*uuid, (queue, idx));
         Some(queue)
     }
 
     pub async fn get(&self, uuid: &Uuid) -> Option<&'static DeviceQueue> {
         let map = self.queues.lock().await;
-        map.get(uuid).copied()
+        map.get(uuid).map(|(q, _)| *q)
     }
 
     pub async fn get_queue(&self, uuid: &Uuid) -> Option<&'static DeviceQueue> {
@@ -168,12 +181,15 @@ impl DeviceQueues {
 
     pub async fn unregister(&self, uuid: &Uuid) {
         let mut map = self.queues.lock().await;
-        let _ = map.remove(uuid);
+        if let Some((_, idx)) = map.remove(uuid) {
+            // Free the slot in the bitmap
+            let mask = 1u8 << idx;
+            ALLOCATED.fetch_and(!mask, Ordering::AcqRel);
+        }
     }
 }
 
 pub static DEVICE_QUEUES: StaticCell<DeviceQueues> = StaticCell::new();
-
 pub struct ActiveConnections {
     connections: AsyncMutex<ThreadModeRawMutex, heapless::LinearMap<Uuid, (), MAX_DEVICES>>,
 }
@@ -186,13 +202,62 @@ impl ActiveConnections {
     }
 
     pub async fn add(&self, uuid: &Uuid) -> bool {
+        info!("ActiveConnections::add() called for device {:02x}", uuid);
+
         let mut map = self.connections.lock().await;
-        map.insert(*uuid, ()).is_ok()
+        let result = map.insert(*uuid, ()).is_ok();
+        drop(map); // Release lock before sending notification
+
+        info!("Device add result: {}", result);
+
+        // Send notification if subscribed
+        if result && DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
+            info!("Device list subscription flag: true");
+            let devices = self.get_all().await;
+            let device_count = devices.len();
+            info!("Building snapshot with {} devices", device_count);
+            let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
+            match HOST_RESPONSES.try_send(response) {
+                Ok(_) => info!("Successfully sent DevicesSnapshot notification with {} devices", device_count),
+                Err(_) => warn!("Failed to send DevicesSnapshot notification - HOST_RESPONSES channel full"),
+            }
+        } else if !result {
+            info!("Skipping snapshot notification - device was already present");
+        } else {
+            info!("Skipping snapshot notification - no subscription");
+        }
+
+        result
     }
 
     pub async fn remove(&self, uuid: &Uuid) {
+        info!("ActiveConnections::remove() called for device {:02x}", uuid);
+        
         let mut map = self.connections.lock().await;
         let _ = map.remove(uuid);
+        drop(map); // Release lock before sending notification
+
+        // Send notification if subscribed
+        let subscribed = DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed);
+        info!("Device list subscription flag: {}", subscribed);
+        
+        if subscribed {
+            let devices = self.get_all().await;
+            let device_count = devices.len();
+            info!("Building snapshot with {} devices", device_count);
+            
+            let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
+            match HOST_RESPONSES.try_send(response) {
+                Ok(()) => {
+                    info!("Successfully sent DevicesSnapshot notification with {} devices", device_count);
+                }
+                Err(_) => {
+                    warn!("Failed to send DevicesSnapshot notification - HOST_RESPONSES channel full");
+                }
+            }
+        } else {
+            info!("Skipping snapshot notification - no subscription");
+        }
     }
 
     pub async fn contains(&self, uuid: &Uuid) -> bool {
