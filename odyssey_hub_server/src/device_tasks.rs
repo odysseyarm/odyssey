@@ -189,6 +189,13 @@ async fn usb_device_manager(
                         Ok(hub) => {
                             info!("Connected USB hub device: {:?}", dev_info);
 
+                            // Subscribe to device list changes
+                            if let Err(e) = hub.subscribe_device_list().await {
+                                tracing::error!("Failed to subscribe to device list: {}", e);
+                                return;
+                            }
+                            tracing::info!("Subscribed to device list changes");
+
                             // TODO repeated code
                             // Create device handlers for current hub snapshot
                             match hub.request_devices().await {
@@ -313,12 +320,6 @@ async fn usb_device_manager(
                             let hub_manager_handle = tokio::spawn(async move {
                                 tracing::info!("Hub manager task started for hub {:?}", hub_info);
 
-                                // Subscribe to device list changes
-                                if let Err(e) = hub_clone.subscribe_device_list().await {
-                                    tracing::error!("Failed to subscribe to device list: {}", e);
-                                    return;
-                                }
-                                tracing::info!("Subscribed to device list changes");
                                 // Note: Initial devices were already processed before this task started
                                 // Now we just listen for changes via subscription
 
