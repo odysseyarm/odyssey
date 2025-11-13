@@ -3,7 +3,7 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, Instant};
 use protodongers::mux::{DevicePacket, MAX_DEVICES};
 use static_cell::StaticCell;
 
@@ -17,6 +17,11 @@ use trouble_host::{PacketPool, Stack};
 use crate::storage::Settings;
 use crate::{DEVICE_LIST_SUBSCRIBED, HOST_RESPONSES};
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicU32;
+
+// Lightweight diagnostics
+static DROPPED_DATA_TO_HOST: AtomicU32 = AtomicU32::new(0);
+static DISCONNECT_COUNT: AtomicU32 = AtomicU32::new(0);
 
 // L2CAP PSM (Protocol Service Multiplexer) for our custom protocol
 // Using two separate channels for control and data
@@ -121,7 +126,7 @@ pub fn adv_matches_pairing(data: &[u8]) -> bool {
 }
 
 // Simplified device queue and connection tracking for trouble-host
-pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 32>;
+pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 64>;
 
 pub struct DeviceQueues {
     queues: AsyncMutex<
@@ -217,10 +222,8 @@ impl ActiveConnections {
             let device_count = devices.len();
             info!("Building snapshot with {} devices", device_count);
             let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
-            match HOST_RESPONSES.try_send(response) {
-                Ok(_) => info!("Successfully sent DevicesSnapshot notification with {} devices", device_count),
-                Err(_) => warn!("Failed to send DevicesSnapshot notification - HOST_RESPONSES channel full"),
-            }
+            HOST_RESPONSES.send(response).await;
+            info!("Sent DevicesSnapshot notification with {} devices", device_count);
         } else if !result {
             info!("Skipping snapshot notification - device was already present");
         } else {
@@ -247,14 +250,8 @@ impl ActiveConnections {
             info!("Building snapshot with {} devices", device_count);
             
             let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
-            match HOST_RESPONSES.try_send(response) {
-                Ok(()) => {
-                    info!("Successfully sent DevicesSnapshot notification with {} devices", device_count);
-                }
-                Err(_) => {
-                    warn!("Failed to send DevicesSnapshot notification - HOST_RESPONSES channel full");
-                }
-            }
+            HOST_RESPONSES.send(response).await;
+            info!("Sent DevicesSnapshot notification with {} devices", device_count);
         } else {
             info!("Skipping snapshot notification - no subscription");
         }
@@ -380,8 +377,8 @@ where
                 }
             }
 
-            // Small delay before next cycle
-            Timer::after(Duration::from_secs(2)).await;
+            // Wait up to 2s before next cycle, but wake immediately if a restart is signalled
+            let _ = embassy_time::with_timeout(Duration::from_secs(2), RESTART_CENTRAL.wait()).await;
         }
     }
 }
@@ -411,7 +408,7 @@ where
             max_latency: 0,
             min_event_length: Duration::from_micros(0),
             max_event_length: Duration::from_micros(0),
-            supervision_timeout: Duration::from_secs(5),
+            supervision_timeout: Duration::from_secs(10),
         },
         scan_config: ScanConfig {
             filter_accept_list: &[(AddrKind::RANDOM, &target)],
@@ -658,48 +655,143 @@ where
             }
 
             // Split L2CAP channels into separate readers and writers
-            let (control_writer, control_reader) = l2cap_control_channel.split();
-            let (data_writer, data_reader) = l2cap_data_channel.split();
+            let (mut control_writer, mut control_reader) = l2cap_control_channel.split();
+            let (mut data_writer, mut data_reader) = l2cap_data_channel.split();
 
-            // Run 4 independent tasks: control TX, control RX, data TX, data RX
-            use embassy_futures::select::{Either4, select4};
-            let connection_result = select4(
-                central_tx_task(
-                    this.stack,
-                    control_writer,
-                    data_writer,
-                    &device_queue,
-                    target,
-                ),
-                central_control_rx_task(this.stack, control_reader, &this.device_packets, target),
-                central_data_rx_task(this.stack, data_reader, &this.device_packets, target),
-                central_conn_task(&conn, this.active_connections, &this.device_queues, target),
-            )
-            .await;
+            // Cooperative shutdown signal so we can avoid select; when one path ends, all exit.
+            let shutdown = Signal::<ThreadModeRawMutex, ()>::new();
 
-            // One of the tasks ended (connection lost, error, or disconnection)
+            // Build sub-futures
+            let tx_fut = async {
+                let mut tx_buf = [0u8; 1024];
+                loop {
+                    // Fast shutdown check
+                    if embassy_time::with_timeout(Duration::from_millis(0), shutdown.wait()).await.is_ok() {
+                        return;
+                    }
+                    let device_pkt = match device_queue.try_receive() {
+                        Ok(pkt) => pkt,
+                        Err(_) => {
+                            // Bound idle to yield to other tasks
+                            Timer::after(Duration::from_micros(200)).await;
+                            continue;
+                        }
+                    };
+                    let is_control = is_control_packet(&device_pkt.pkt);
+                    if let Ok(data) = postcard::to_slice(&device_pkt.pkt, &mut tx_buf) {
+                        let writer = if is_control { &mut control_writer } else { &mut data_writer };
+                        let start = Instant::now();
+                        match embassy_time::with_timeout(Duration::from_secs(10), writer.send(this.stack, data)).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                error!("L2CAP send failed: {:?}", defmt::Debug2Format(&e));
+                                shutdown.signal(());
+                                return;
+                            }
+                            Err(_) => {
+                                warn!("L2CAP send timeout; will retry next packet");
+                            }
+                        }
+                        let elapsed = Instant::now() - start;
+                        if elapsed >= Duration::from_millis(100) {
+                            warn!("L2CAP send took {} ms", elapsed.as_millis());
+                        }
+                    } else {
+                        error!("Failed to serialize packet");
+                    }
+                }
+            };
+
+            let ctrl_rx_fut = async {
+                let mut rx_buf = [0u8; 1024];
+                loop {
+                    if embassy_time::with_timeout(Duration::from_millis(0), shutdown.wait()).await.is_ok() {
+                        return;
+                    }
+                    match control_reader.receive(this.stack, &mut rx_buf).await {
+                        Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
+                            Ok(pkt) => {
+                                let device_packet = DevicePacket { dev: target.into_inner(), pkt };
+                                this.device_packets.send(device_packet).await;
+                            }
+                            Err(_) => error!("Failed to deserialize L2CAP control packet"),
+                        },
+                        Err(e) => {
+                            error!("L2CAP control receive error: {:?}", defmt::Debug2Format(&e));
+                            shutdown.signal(());
+                            return;
+                        }
+                    }
+                }
+            };
+
+            let data_rx_fut = async {
+                let mut rx_buf = [0u8; 1024];
+                loop {
+                    if embassy_time::with_timeout(Duration::from_millis(0), shutdown.wait()).await.is_ok() {
+                        return;
+                    }
+                    match data_reader.receive(this.stack, &mut rx_buf).await {
+                        Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
+                            Ok(pkt) => {
+                                let device_packet = DevicePacket { dev: target.into_inner(), pkt };
+                                if let Err(_) = this.device_packets.try_send(device_packet) {
+                                    let c = DROPPED_DATA_TO_HOST.fetch_add(1, Ordering::AcqRel) + 1;
+                                    if c % 64 == 0 {
+                                        warn!("Dropped {} data packets to host (channel full)", c);
+                                    }
+                                }
+                            }
+                            Err(_) => error!("Failed to deserialize L2CAP data packet"),
+                        },
+                        Err(e) => {
+                            error!("L2CAP data receive error: {:?}", defmt::Debug2Format(&e));
+                            shutdown.signal(());
+                            return;
+                        }
+                    }
+                }
+            };
+
+            let conn_fut = async {
+                loop {
+                    match conn.next().await {
+                        trouble_host::prelude::ConnectionEvent::Disconnected { reason } => {
+                            let c = DISCONNECT_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
+                            info!("Disconnected: {:?} (total={})", reason, c);
+                            shutdown.signal(());
+                            return;
+                        }
+                        trouble_host::prelude::ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
+                            info!("PHY updated tx={:?} rx={:?}", tx_phy, rx_phy);
+                        }
+                        trouble_host::prelude::ConnectionEvent::PairingComplete { security_level, bond } => {
+                            info!("Pairing complete: {:?}", security_level);
+                            if let Some(bi) = bond {
+                                let bd = crate::ble::security::bonddata_from_info(&bi);
+                                info!("Storing bond for {:02x}", bd.bd_addr);
+                                crate::ble::security::BOND_TO_STORE.signal(bd);
+                            }
+                        }
+                        trouble_host::prelude::ConnectionEvent::PairingFailed(err) => {
+                            error!("Pairing failed: {:?}", err);
+                        }
+                        _ => {}
+                    }
+                }
+            };
+
+            // Run all sub-futures; join waits for graceful shutdown of all after signal
+            use embassy_futures::join::join;
+            let _ = join(join(tx_fut, ctrl_rx_fut), join(data_rx_fut, conn_fut)).await;
+
             // Clean up connection state before returning
             info!(
-                "Connection tasks ending for device {:02x}, cleaning up",
+                "Connection loop ending for device {:02x}, cleaning up",
                 target
             );
             this.active_connections.remove(&target.into_inner()).await;
             this.device_queues.unregister(&target.into_inner()).await;
-
-            match connection_result {
-                Either4::First(_) => {
-                    info!("TX task ended for device {:02x}", target);
-                }
-                Either4::Second(_) => {
-                    info!("Control RX task ended for device {:02x}", target);
-                }
-                Either4::Third(_) => {
-                    info!("Data RX task ended for device {:02x}", target);
-                }
-                Either4::Fourth(_) => {
-                    info!("Connection task ended for device {:02x}", target);
-                }
-            }
             return Ok(());
         }
         Ok(Err(e)) => {
@@ -775,155 +867,4 @@ where
     found
 }
 
-// TX task: sends packets from device queue to L2CAP channels
-async fn central_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a Stack<'a, C, P>,
-    mut control_writer: trouble_host::l2cap::L2capChannelWriter<'a, P>,
-    mut data_writer: trouble_host::l2cap::L2capChannelWriter<'a, P>,
-    device_queue: &'a DeviceQueue,
-    target: BdAddr,
-) {
-    let mut tx_buf = [0u8; 1024];
-
-    loop {
-        let device_pkt = device_queue.receive().await;
-        let is_control = is_control_packet(&device_pkt.pkt);
-
-        info!(
-            "TX: sending {} packet (id={}) to device",
-            if is_control { "CONTROL" } else { "DATA" },
-            device_pkt.pkt.id
-        );
-
-        match postcard::to_slice(&device_pkt.pkt, &mut tx_buf) {
-            Ok(data) => {
-                let writer = if is_control {
-                    &mut control_writer
-                } else {
-                    &mut data_writer
-                };
-
-                match embassy_time::with_timeout(Duration::from_secs(5), writer.send(stack, data))
-                    .await
-                {
-                    Ok(Ok(())) => {
-                        info!(
-                            "TX: {} packet sent successfully",
-                            if is_control { "CONTROL" } else { "DATA" }
-                        );
-                    }
-                    Ok(Err(e)) => {
-                        error!("L2CAP send failed: {:?}", defmt::Debug2Format(&e));
-                        return;
-                    }
-                    Err(_) => {
-                        error!("L2CAP send timeout");
-                        return;
-                    }
-                }
-            }
-            Err(_) => {
-                error!("Failed to serialize packet");
-            }
-        }
-    }
-}
-
-// Control RX task: receives control packets from L2CAP
-async fn central_control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a Stack<'a, C, P>,
-    mut reader: trouble_host::l2cap::L2capChannelReader<'a, P>,
-    device_packets: &'static crate::ble::DevicePacketChannel,
-    target: BdAddr,
-) {
-    let mut rx_buf = [0u8; 1024];
-
-    loop {
-        match reader.receive(stack, &mut rx_buf).await {
-            Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
-                Ok(pkt) => {
-                    let device_packet = DevicePacket {
-                        dev: target.into_inner(),
-                        pkt,
-                    };
-                    device_packets.send(device_packet).await;
-                }
-                Err(_) => {
-                    error!("Failed to deserialize L2CAP control packet");
-                }
-            },
-            Err(e) => {
-                error!("L2CAP control receive error: {:?}", defmt::Debug2Format(&e));
-                return;
-            }
-        }
-    }
-}
-
-// Data RX task: receives data packets from L2CAP
-async fn central_data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a Stack<'a, C, P>,
-    mut reader: trouble_host::l2cap::L2capChannelReader<'a, P>,
-    device_packets: &'static crate::ble::DevicePacketChannel,
-    target: BdAddr,
-) {
-    let mut rx_buf = [0u8; 1024];
-
-    loop {
-        match reader.receive(stack, &mut rx_buf).await {
-            Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
-                Ok(pkt) => {
-                    let device_packet = DevicePacket {
-                        dev: target.into_inner(),
-                        pkt,
-                    };
-                    device_packets.send(device_packet).await;
-                }
-                Err(_) => {
-                    error!("Failed to deserialize L2CAP data packet");
-                }
-            },
-            Err(e) => {
-                error!("L2CAP data receive error: {:?}", defmt::Debug2Format(&e));
-                return;
-            }
-        }
-    }
-}
-
-// Connection task: handles connection events and disconnections
-async fn central_conn_task<P: PacketPool>(
-    conn: &trouble_host::prelude::Connection<'_, P>,
-    active_connections: &ActiveConnections,
-    device_queues: &DeviceQueues,
-    _target: BdAddr,
-) {
-    loop {
-        match conn.next().await {
-            trouble_host::prelude::ConnectionEvent::Disconnected { reason } => {
-                info!("Disconnected: {:?}", reason);
-                active_connections.remove(&_target.into_inner()).await;
-                device_queues.unregister(&_target.into_inner()).await;
-                return;
-            }
-            trouble_host::prelude::ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
-                info!("PHY updated tx={:?} rx={:?}", tx_phy, rx_phy);
-            }
-            trouble_host::prelude::ConnectionEvent::PairingComplete {
-                security_level,
-                bond,
-            } => {
-                info!("Pairing complete: {:?}", security_level);
-                if let Some(bi) = bond {
-                    let bd = crate::ble::security::bonddata_from_info(&bi);
-                    info!("Storing bond for {:02x}", bd.bd_addr);
-                    crate::ble::security::BOND_TO_STORE.signal(bd);
-                }
-            }
-            trouble_host::prelude::ConnectionEvent::PairingFailed(err) => {
-                error!("Pairing failed: {:?}", err);
-            }
-            _ => {}
-        }
-    }
-}
+// (Removed legacy split tasks: central_tx_task, central_control_rx_task, central_data_rx_task, central_conn_task)

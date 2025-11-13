@@ -23,7 +23,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal as SyncSignal;
 
 // Channel for sending host responses (RequestDevices, ReadVersion, etc.)
-type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 4>;
+type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 8>;
 pub static HOST_RESPONSES: HostResponseChannel = Channel::new();
 
 // Device list subscription flag
@@ -322,8 +322,16 @@ async fn main(mut spawner: Spawner) {
     // Store global references for use in control task
     ble::central::set_global_refs(active_connections, device_queues).await;
 
-    spawner.must_spawn(usb_rx_task(ep_out, device_queues, active_connections));
-    spawner.must_spawn(usb_tx_task(ep_in, device_packets, usb_signal));
+    spawner.must_spawn(usb_rx_task(
+        ep_out,
+        device_queues,
+        active_connections,
+        usb_signal,
+    ));
+    // Initialize shared EP mutex and spawn independent TX tasks
+    let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
+    spawner.must_spawn(host_responses_tx_task(ep_mutex, usb_signal));
+    spawner.must_spawn(device_packets_tx_task(ep_mutex, device_packets, usb_signal));
     spawner.must_spawn(control_exec_task(settings));
     // Start BLE manager (central)
     info!("Starting BLE manager task");
@@ -470,15 +478,31 @@ async fn usb_rx_task(
     mut ep_out: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::Out>,
     device_queues: &'static ble::central::DeviceQueues,
     active_connections: &'static ActiveConnections,
+    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
     loop {
         info!("USB RX task: waiting for USB configuration");
+        // Wait until configured before attempting to read (multi-consumer watch)
+        let mut cfg = crate::usb::usb_config_receiver();
+        loop {
+            if let Some(v) = cfg.try_get() {
+                if v { break; }
+            }
+            // wait for any value, then loop to check
+            let _ = cfg.get().await;
+        }
 
         let mut read_buf = [0u8; 512];
 
         loop {
-            match EndpointOut::read_transfer(&mut ep_out, &mut read_buf).await {
-                Ok(n) => {
+            // Bound the read to periodically check pairing timeout or deconfigure
+            match embassy_time::with_timeout(
+                embassy_time::Duration::from_millis(250),
+                EndpointOut::read_transfer(&mut ep_out, &mut read_buf),
+            )
+            .await
+            {
+                Ok(Ok(n)) => {
                     info!("USB RX: received {} bytes", n);
                     if let Err(_e) =
                         handle_usb_rx(&read_buf[..n], device_queues, active_connections).await
@@ -486,12 +510,15 @@ async fn usb_rx_task(
                         error!("Error handling USB RX ({} bytes)", n);
                     }
                 }
-                Err(EndpointError::Disabled) => {
+                Ok(Err(EndpointError::Disabled)) => {
                     info!("USB RX: disabled, waiting for reconnection");
                     break;
                 }
-                Err(_e) => {
+                Ok(Err(_e)) => {
                     warn!("USB RX: read error");
+                }
+                Err(_) => {
+                    // timeout: fall through to pairing timeout check
                 }
             }
 
@@ -512,80 +539,100 @@ static EP_MUTEX: StaticCell<
     >,
 > = StaticCell::new();
 
-#[embassy_executor::task]
-async fn usb_tx_task(
-    ep_in: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>,
-    device_packets: &'static DevicePacketChannel,
-    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
-) {
-    // Initialize the mutex once (outside the loop since it's a StaticCell)
-    let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
-
-    loop {
-        // Wait for USB to be configured
-        loop {
-            if usb_signal.wait().await {
-                break; // USB is configured
-            }
-        }
-        info!("USB TX task: USB configured, starting");
-
-        // Spawn two independent tasks: one for host responses, one for device packets
-        let host_task = host_responses_tx_task(ep_mutex);
-        let device_task = device_packets_tx_task(ep_mutex, device_packets);
-
-        // Run both tasks concurrently - neither will be cancelled
-        use embassy_futures::join::join;
-        let _ = join(host_task, device_task).await;
-
-        warn!("USB TX: tasks ended, waiting for reconfiguration");
-        // Loop will restart and wait for configuration again
-    }
-}
-
 // Sends host responses (RequestDevices, ReadVersion, etc.) to USB endpoint
+#[embassy_executor::task]
 async fn host_responses_tx_task(
     ep_mutex: &'static embassy_sync::mutex::Mutex<
         ThreadModeRawMutex,
         Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
     >,
+    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
     let mut write_buf = [0u8; 256];
 
     loop {
-        let response = HOST_RESPONSES.receive().await;
+        // Wait for configuration (watch, multi-consumer)
+        let mut cfg = crate::usb::usb_config_receiver();
+        loop {
+            if let Some(v) = cfg.try_get() { if v { break; } }
+            let _ = cfg.get().await;
+        }
+        info!("USB TX host task: configured");
 
-        let mut ep_opt = ep_mutex.lock().await;
-        if let Some(ep) = ep_opt.as_mut() {
-            if send_mux_msg(&response, &mut write_buf, ep).await.is_err() {
-                warn!("USB TX: error sending host response");
-                break;
+        // Inner running loop
+        loop {
+            // Bounded wait to detect deconfigure while idle
+            let response = match embassy_time::with_timeout(
+                embassy_time::Duration::from_millis(250),
+                HOST_RESPONSES.receive(),
+            )
+            .await
+            {
+                Ok(msg) => msg,
+                Err(_) => {
+                    if let Some(v) = cfg.try_get() { if !v { break; } }
+                    continue;
+                }
+            };
+
+            let mut ep_opt = ep_mutex.lock().await;
+            if let Some(ep) = ep_opt.as_mut() {
+                if send_mux_msg(&response, &mut write_buf, ep).await.is_err() {
+                    warn!("USB TX: error sending host response");
+                    break;
+                }
             }
         }
+        warn!("USB TX host task: deconfigured");
     }
 }
 
 // Sends device packets to USB endpoint
+#[embassy_executor::task]
 async fn device_packets_tx_task(
     ep_mutex: &'static embassy_sync::mutex::Mutex<
         ThreadModeRawMutex,
         Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
     >,
     device_packets: &'static DevicePacketChannel,
+    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
     let mut write_buf = [0u8; 256];
 
     loop {
-        let device_pkt = device_packets.receive().await;
-        let msg = MuxMsg::DevicePacket(device_pkt);
+        // Wait for configuration (watch, multi-consumer)
+        let mut cfg = crate::usb::usb_config_receiver();
+        loop {
+            if let Some(v) = cfg.try_get() { if v { break; } }
+            let _ = cfg.get().await;
+        }
+        info!("USB TX data task: configured");
 
-        let mut ep_opt = ep_mutex.lock().await;
-        if let Some(ep) = ep_opt.as_mut() {
-            if send_mux_msg(&msg, &mut write_buf, ep).await.is_err() {
-                warn!("USB TX: error sending device packet");
-                break;
+        loop {
+            // Bounded wait to detect deconfigure while idle
+            let device_pkt = match embassy_time::with_timeout(
+                embassy_time::Duration::from_millis(250),
+                device_packets.receive(),
+            )
+            .await
+            {
+                Ok(pkt) => pkt,
+                Err(_) => {
+                    if let Some(v) = cfg.try_get() { if !v { break; } }
+                    continue;
+                }
+            };
+            let msg = MuxMsg::DevicePacket(device_pkt);
+
+            let mut ep_opt = ep_mutex.lock().await;
+            if let Some(ep) = ep_opt.as_mut() {
+                if send_mux_msg(&msg, &mut write_buf, ep).await.is_err() {
+                    warn!("USB TX: error sending device packet");
+                    break;
+                }
             }
         }
+        warn!("USB TX data task: deconfigured");
     }
 }
 

@@ -1,9 +1,12 @@
 use embassy_nrf::Peri;
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::watch::Watch;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::DynReceiver;
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Builder, Config as UsbConfig, msos};
 use static_cell::{ConstStaticCell, StaticCell};
@@ -98,6 +101,8 @@ impl MyHandler {
 
 impl embassy_usb::Handler for MyHandler {
     fn configured(&mut self, configured: bool) {
+        USB_CONFIGURED.store(configured, Ordering::Release);
+        USB_CONFIG_WATCH.sender().send(configured);
         self.signal.signal(configured);
     }
 
@@ -153,4 +158,16 @@ impl embassy_usb::Handler for MyHandler {
             None
         }
     }
+}
+
+// Global configured flag + watch for multi-task gating (Signal is single-consumer)
+pub static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
+static USB_CONFIG_WATCH: Watch<ThreadModeRawMutex, bool, 4> = Watch::new();
+
+pub fn is_configured() -> bool {
+    USB_CONFIGURED.load(Ordering::Acquire)
+}
+
+pub fn usb_config_receiver() -> DynReceiver<'static, bool> {
+    USB_CONFIG_WATCH.dyn_receiver().expect("usb config watch receivers exhausted")
 }

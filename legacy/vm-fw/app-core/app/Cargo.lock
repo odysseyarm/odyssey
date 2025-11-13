@@ -78,7 +78,7 @@ dependencies = [
  "nrf-pac",
  "nrfxlib-sys",
  "once_cell",
- "opencv-ros-camera",
+ "opencv-ros-camera 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "paj7025",
  "panic-probe",
  "postcard",
@@ -169,7 +169,7 @@ source = "git+https://github.com/odysseyarm/ats_common.git#44fad2c47d587a6176951
 dependencies = [
  "nalgebra",
  "num",
- "opencv-ros-camera",
+ "opencv-ros-camera 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "simba",
 ]
 
@@ -1841,6 +1841,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "opencv-ros-camera"
+version = "0.16.0"
+source = "git+https://github.com/Abrahamh08/opencv-ros-camera#f105e8a556da7dd3d5ee90556f1582e5c4231588"
+dependencies = [
+ "cam-geom",
+ "nalgebra",
+]
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2031,7 +2040,7 @@ dependencies = [
  "minicbor",
  "minicbor-serde 0.6.1 (git+https://github.com/Abrahamh08/minicbor)",
  "nalgebra",
- "opencv-ros-camera",
+ "opencv-ros-camera 0.16.0 (git+https://github.com/Abrahamh08/opencv-ros-camera)",
  "serde",
  "serde_bytes",
  "static_assertions",
