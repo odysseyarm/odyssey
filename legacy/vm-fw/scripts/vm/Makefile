@@ -1,8 +1,10 @@
 OUTPUT_DIR = build
+
+APP_DIR = ../../app-core/app
 APP_TARGET_DIR = ../../target
 APP_ARTIFACT_DIR = $(APP_TARGET_DIR)/thumbv7em-none-eabihf/release
 
-BOOT_DIR = ../bootloaders/vm
+BOOT_DIR = ../../app-core/bootloaders/vm
 BOOT_TARGET_DIR = $(BOOT_DIR)/target
 BOOT_TRIPLE = thumbv7em-none-eabihf
 BOOT_ARTIFACT_DIR = $(BOOT_TARGET_DIR)/$(BOOT_TRIPLE)/release
@@ -16,7 +18,7 @@ $(OUTPUT_DIR):
 	mkdir -p "$(OUTPUT_DIR)"
 
 $(APP_ARTIFACT_DIR): $(shell find . -path ./$(APP_TARGET_DIR) -prune -o -print) ../../memory/memory-vm.kdl
-	cargo build --release --target thumbv7em-none-eabihf
+	cd $(APP_DIR) && cargo build --release --target thumbv7em-none-eabihf
 
 $(OUTPUT_DIR)/app.elf: $(APP_ARTIFACT_DIR) | $(OUTPUT_DIR)
 	cp $(APP_ARTIFACT_DIR)/app $@

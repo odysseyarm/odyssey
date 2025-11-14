@@ -554,12 +554,12 @@ impl Default for GeneralSettings {
             accel_config: Default::default(),
             gyro_config: Default::default(),
             camera_model_nf: CameraCalibrationParams {
-                camera_matrix: [141.1052, 0.0, 49.0, 0.0, 141.1052, 49.0, 0.0, 0.0, 1.0],
+                camera_matrix: [5896.181, 0.0, 2047.5, 0.0, 5896.181, 2047.5, 0.0, 0.0, 1.0],
                 dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0],
             },
             camera_model_wf: CameraCalibrationParams {
-                camera_matrix: [34.341216, 0.0, 48.73854, 0.0, 34.39486, 49.98844, 0.0, 0.0, 1.0],
-                dist_coeffs: [0.039820534, -0.039933169, 0.00043006078, -0.0012057066, 0.005302234],
+                camera_matrix: [1434.9723, 0.0, 2036.575, 0.0, 1437.214, 2088.8027, 0.0, 0.0, 1.0],
+                dist_coeffs: [0.039820533, -0.03993317, 0.00043006078, -0.0012057066, 0.005302235],
             },
             stereo_iso: Default::default(),
         }
