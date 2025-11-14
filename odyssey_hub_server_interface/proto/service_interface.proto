@@ -53,8 +53,8 @@ message Pose {
 
 enum Transport {
   USB = 0;
-  USBHub = 1;
-  UDP = 2;
+  USBMux = 1;
+  UDPMux = 2;
 }
 
 message Device {

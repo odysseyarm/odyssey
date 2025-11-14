@@ -7,7 +7,7 @@ build_lib:
   Write-Host 'OdysseyHubClient' -ForegroundColor Blue;
   Write-Host 'Building native library (Rust)' -ForegroundColor Cyan;
   cargo build --manifest-path=../../Cargo.toml -r;
-  cargo run --manifest-path=../../Cargo.toml -r --bin uniffi_bindgen -- ../../../target/release/ohc_uniffi.dll
+  cargo run --manifest-path=../../Cargo.toml -r --bin cs_bindgen -- ../../target/release/ohc_uniffi.dll
   cargo build --manifest-path=../../Cargo.toml -r --target=i686-pc-windows-msvc;
   & (Get-Process -Id $PID).Path { \
     $env:CROSS_CONFIG="../../Cross.toml"; \

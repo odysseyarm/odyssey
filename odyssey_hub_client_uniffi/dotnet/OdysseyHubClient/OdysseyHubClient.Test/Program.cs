@@ -2,7 +2,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-
+using uniffi.odyssey_hub_common;
 using Ohc = Radiosity.OdysseyHubClient;
 
 Ohc.Client client = new Ohc.Client();
@@ -16,38 +16,33 @@ try {
     Environment.Exit(1);
 }
 
-Task<List<Ohc.uniffi.DeviceRecord>> deviceListTask = client.GetDeviceList();
-List<Ohc.uniffi.DeviceRecord> devices = new List<Ohc.uniffi.DeviceRecord>();
+Task<Ohc.uniffi.Device[]> deviceListTask = client.GetDeviceList();
+Ohc.uniffi.Device[] devices = {};
 try {
     devices = await deviceListTask;
-    Console.WriteLine("Devices (count: {0}):", devices.Count);
+    Console.WriteLine("Devices (count: {0}):", devices.Length);
 } catch (Ohc.uniffi.AnyhowException ex) {
     Console.WriteLine(ex.AnyhowMessage());
     Environment.Exit(1);
 }
 
-void PrintDevice(Ohc.uniffi.DeviceRecord deviceR) {
+void PrintDevice(Ohc.uniffi.Device device) {
     Console.WriteLine("\tDevice:");
-    switch (deviceR) {
-        case Ohc.uniffi.DeviceRecord.Udp udpDevice:
-            Console.WriteLine("\t\tType: UDP");
-            Console.WriteLine("\t\tID: {0}", udpDevice.id);
-            Console.WriteLine("\t\tAddr: {0}", udpDevice.addr);
+    switch (device.transport) {
+        case Transport.UdpMux:
+            Console.WriteLine("\t\tType: UDP Mux");
             break;
-        case Ohc.uniffi.DeviceRecord.Cdc cdcDevice:
-            Console.WriteLine("\t\tType: CDC");
-            Console.WriteLine("\t\tPath: {0}", cdcDevice.path);
+        case Transport.Usb:
+            Console.WriteLine("\t\tType: USB");
             break;
-        case Ohc.uniffi.DeviceRecord.Hid hidDevice:
-            Console.WriteLine("\t\tType: HID");
-            Console.WriteLine("\t\tPath: {0}", hidDevice.path);
+        case Transport.UsbMux:
+            Console.WriteLine("\t\tType: USB Mux");
             break;
         default:
             break;
 
     }
-    var device = new Ohc.uniffi.Device(deviceR);
-    Console.WriteLine("\t\tUUID: 0x{0:X}", device.Uuid());
+    Console.WriteLine("\t\tUUID: 0x{0:X}", device.uuid);
 }
 
 foreach (var device in devices) {
@@ -82,32 +77,29 @@ await Task.WhenAny(
             if (err == null) {
                 switch (@event) {
                     case Ohc.uniffi.Event.DeviceEvent deviceEvent:
+                        Console.WriteLine($"Kind: {deviceEvent.v1.kind.GetType().Name}");
                         switch (deviceEvent.v1.kind) {
                             // uncomment desired behavior
                             case Ohc.uniffi.DeviceEventKind.AccelerometerEvent accelerometer:
                                 // Console.WriteLine("Printing accelerometer event:");
                                 // Console.WriteLine("\ttimestamp: {0}", accelerometer.v1.timestamp);
                                 // Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.v1.accel.x, accelerometer.v1.accel.y, accelerometer.v1.accel.z);
-                                // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.angular_velocity.x, accelerometer.angular_velocity.y, accelerometer.angular_velocity.z);
-                                // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.euler_angles.x, accelerometer.euler_angles.y, accelerometer.euler_angles.z);
+                                // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.v1.gyro.x, accelerometer.v1.gyro.y, accelerometer.v1.gyro.z);
+                                // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.v1.eulerAngles.x, accelerometer.v1.eulerAngles.y, accelerometer.v1.eulerAngles.z);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.TrackingEvent tracking:
-                                // Console.WriteLine("Printing tracking event:");
-                                // Console.WriteLine("\ttimestamp: {0}", tracking.timestamp);
-                                // Console.WriteLine("\taimpoint: {0} {1}", tracking.v1.aimpoint.x, tracking.v1.aimpoint.y);
-                                // if (tracking.pose != null) {
-                                //     Console.WriteLine("\tpose: ");
-                                //     Console.WriteLine("\t\trotation: ");
-                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m11, tracking.pose.rotation.m12, tracking.pose.rotation.m13);
-                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m21, tracking.pose.rotation.m22, tracking.pose.rotation.m23);
-                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.rotation.m31, tracking.pose.rotation.m32, tracking.pose.rotation.m33);
-                                //     Console.WriteLine("\t\ttranslation: ");
-                                //     Console.WriteLine("\t\t\t{0} {1} {2}", tracking.pose.translation.x, tracking.pose.translation.y, tracking.pose.translation.z);
-                                //     Console.WriteLine("\t\tscreen_id: {0}", tracking.screen_id);
-                                // } else {
-                                //     Console.WriteLine("\tpose: Not resolved");
-                                // }
-                                // Console.WriteLine("\tdistance: {0}", tracking.distance);
+                                Console.WriteLine("Printing tracking event:");
+                                Console.WriteLine("\ttimestamp: {0}", tracking.v1.timestamp);
+                                Console.WriteLine("\taimpoint: {0} {1}", tracking.v1.aimpoint.x, tracking.v1.aimpoint.y);
+                                Console.WriteLine("\tpose: ");
+                                Console.WriteLine("\t\trotation: ");
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.rotation.m11, tracking.v1.pose.rotation.m12, tracking.v1.pose.rotation.m13);
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.rotation.m21, tracking.v1.pose.rotation.m22, tracking.v1.pose.rotation.m23);
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.rotation.m31, tracking.v1.pose.rotation.m32, tracking.v1.pose.rotation.m33);
+                                Console.WriteLine("\t\ttranslation: ");
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.translation.x, tracking.v1.pose.translation.y, tracking.v1.pose.translation.z);
+                                Console.WriteLine("\t\tscreen_id: {0}", tracking.v1.screenId);
+                                Console.WriteLine("\tdistance: {0}", tracking.v1.distance);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.ImpactEvent impact:
                                 Console.WriteLine("Printing impact event:");

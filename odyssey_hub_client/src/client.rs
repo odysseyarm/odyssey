@@ -3,6 +3,7 @@ use interprocess::local_socket::{
     tokio::prelude::LocalSocketStream, traits::tokio::Stream, GenericFilePath, GenericNamespaced,
     NameType as _, ToFsName, ToNsName,
 };
+use odyssey_hub_common as common;
 use odyssey_hub_server_interface::{service_client::ServiceClient, DeviceListRequest};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, Uri};
@@ -39,9 +40,7 @@ impl Client {
         Ok(())
     }
 
-    pub async fn get_device_list(
-        &mut self,
-    ) -> anyhow::Result<Vec<odyssey_hub_common::device::Device>> {
+    pub async fn get_device_list(&mut self) -> anyhow::Result<Vec<common::device::Device>> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(DeviceListRequest {});
             // for whatever insane reason get_device_list requires mutable service_client
@@ -51,7 +50,7 @@ impl Client {
                 .device_list
                 .into_iter()
                 .map(|d| d.into())
-                .collect::<Vec<odyssey_hub_common::device::Device>>())
+                .collect::<Vec<common::device::Device>>())
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
@@ -60,7 +59,7 @@ impl Client {
     pub async fn subscribe_device_list(
         &mut self,
     ) -> anyhow::Result<
-        impl futures::Stream<Item = Result<Vec<odyssey_hub_common::device::Device>, tonic::Status>>,
+        impl futures::Stream<Item = Result<Vec<common::device::Device>, tonic::Status>>,
     > {
         if let Some(service_client) = &mut self.service_client {
             let request =
@@ -76,7 +75,7 @@ impl Client {
                         .device_list
                         .into_iter()
                         .map(Into::into)
-                        .collect::<Vec<odyssey_hub_common::device::Device>>()
+                        .collect::<Vec<common::device::Device>>()
                 })
             }))
         } else {
@@ -84,9 +83,7 @@ impl Client {
         }
     }
 
-    pub async fn get_accessory_map(
-        &mut self,
-    ) -> anyhow::Result<odyssey_hub_common::accessory::AccessoryMap> {
+    pub async fn get_accessory_map(&mut self) -> anyhow::Result<common::accessory::AccessoryMap> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::AccessoryMapRequest {});
             let response = service_client.get_accessory_map(request).await?;
@@ -99,7 +96,7 @@ impl Client {
     pub async fn subscribe_accessory_map(
         &mut self,
     ) -> anyhow::Result<
-        impl futures::Stream<Item = Result<odyssey_hub_common::accessory::AccessoryMap, tonic::Status>>,
+        impl futures::Stream<Item = Result<common::accessory::AccessoryMap, tonic::Status>>,
     > {
         if let Some(service_client) = &mut self.service_client {
             let request =
@@ -117,9 +114,8 @@ impl Client {
 
     pub async fn subscribe_events(
         &mut self,
-    ) -> anyhow::Result<
-        impl futures::Stream<Item = Result<odyssey_hub_common::events::Event, tonic::Status>>,
-    > {
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<common::events::Event, tonic::Status>>>
+    {
         if let Some(service_client) = &mut self.service_client {
             let request =
                 tonic::Request::new(odyssey_hub_server_interface::SubscribeEventsRequest {});
@@ -133,7 +129,7 @@ impl Client {
 
     pub async fn write_vendor(
         &mut self,
-        device: odyssey_hub_common::device::Device,
+        device: common::device::Device,
         tag: u8,
         data: Vec<u8>,
     ) -> anyhow::Result<()> {
@@ -150,10 +146,7 @@ impl Client {
         }
     }
 
-    pub async fn reset_zero(
-        &mut self,
-        device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<()> {
+    pub async fn reset_zero(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             service_client.reset_zero(request).await?;
@@ -165,7 +158,7 @@ impl Client {
 
     pub async fn zero(
         &mut self,
-        device: odyssey_hub_common::device::Device,
+        device: common::device::Device,
         translation: odyssey_hub_server_interface::Vector3,
         target: odyssey_hub_server_interface::Vector2,
     ) -> anyhow::Result<()> {
@@ -182,10 +175,7 @@ impl Client {
         }
     }
 
-    pub async fn save_zero(
-        &mut self,
-        device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<()> {
+    pub async fn save_zero(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             service_client.save_zero(request).await?.into_inner();
@@ -195,10 +185,7 @@ impl Client {
         }
     }
 
-    pub async fn clear_zero(
-        &mut self,
-        device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<()> {
+    pub async fn clear_zero(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             service_client.clear_zero(request).await?.into_inner();
@@ -210,7 +197,7 @@ impl Client {
 
     pub async fn reset_shot_delay(
         &mut self,
-        device: odyssey_hub_common::device::Device,
+        device: common::device::Device,
     ) -> anyhow::Result<u16> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
@@ -224,9 +211,21 @@ impl Client {
         }
     }
 
+    pub async fn get_shot_delay(&mut self, device: common::device::Device) -> anyhow::Result<u16> {
+        if let Some(service_client) = &mut self.service_client {
+            Ok(service_client
+                .get_shot_delay(tonic::Request::new(device.into()))
+                .await?
+                .into_inner()
+                .delay_ms as u16)
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn set_shot_delay(
         &mut self,
-        device: odyssey_hub_common::device::Device,
+        device: common::device::Device,
         delay_ms: u16,
     ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
@@ -241,24 +240,9 @@ impl Client {
         }
     }
 
-    pub async fn get_shot_delay(
-        &mut self,
-        device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<u16> {
-        if let Some(service_client) = &mut self.service_client {
-            Ok(service_client
-                .get_shot_delay(tonic::Request::new(device.into()))
-                .await?
-                .into_inner()
-                .delay_ms as u16)
-        } else {
-            Err(anyhow::anyhow!("No service client"))
-        }
-    }
-
     pub async fn subscribe_shot_delay(
         &mut self,
-        device: odyssey_hub_common::device::Device,
+        device: common::device::Device,
     ) -> anyhow::Result<impl futures::Stream<Item = Result<u16, tonic::Status>>> {
         if let Some(service_client) = &mut self.service_client {
             let request =
@@ -275,10 +259,7 @@ impl Client {
         }
     }
 
-    pub async fn save_shot_delay(
-        &mut self,
-        device: odyssey_hub_common::device::Device,
-    ) -> anyhow::Result<()> {
+    pub async fn save_shot_delay(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             service_client
                 .save_shot_delay(tonic::Request::new(device.into()))
@@ -289,10 +270,7 @@ impl Client {
         }
     }
 
-    pub async fn get_screen_info_by_id(
-        &mut self,
-        id: u8,
-    ) -> anyhow::Result<odyssey_hub_common::ScreenInfo> {
+    pub async fn get_screen_info_by_id(&mut self, id: u8) -> anyhow::Result<common::ScreenInfo> {
         if let Some(service_client) = &mut self.service_client {
             let request =
                 tonic::Request::new(odyssey_hub_server_interface::ScreenInfoByIdRequest {
@@ -310,7 +288,7 @@ impl Client {
 
     pub async fn update_accessory_info_map(
         &mut self,
-        map: odyssey_hub_common::accessory::AccessoryInfoMap,
+        map: common::accessory::AccessoryInfoMap,
     ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(map.into());

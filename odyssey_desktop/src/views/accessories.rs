@@ -240,12 +240,12 @@ pub fn Accessories() -> Element {
     let device_choices: Vec<(NonZeroU64, String, usize)> = devices_snapshot
         .iter()
         .filter_map(|(slot, dev)| {
-            let uuid_u64 = dev.uuid();
+            let mut buf = [0u8; 8];
+            buf[..6].copy_from_slice(&dev.uuid);
+            let uuid_u64 = u64::from_le_bytes(buf);
             let nz = NonZeroU64::new(uuid_u64)?;
             let label = format!("0x{:x}", uuid_u64);
-            // If your pattern binding gives a reference for slot, adjust to your type:
-            let s = slot;
-            Some((nz, label, s))
+            Some((nz, label, slot))
         })
         .collect();
 

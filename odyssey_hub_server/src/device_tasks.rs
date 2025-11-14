@@ -1,42 +1,51 @@
+use ahrs::Ahrs;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
-use ats_common::ScreenCalibration;
-use nalgebra::{Isometry3, Matrix3x1, Translation3, UnitQuaternion, UnitVector3, Vector2, Vector3};
+use ats_common::{ros_opencv_intrinsics_type_convert, ScreenCalibration};
+use ats_usb::device::VmDevice;
+use ats_usb::packets::vm::{
+    AccelReport, CombinedMarkersReport, ImpactReport, Packet, PacketData, PacketType,
+    PocMarkersReport, VendorData,
+};
+use nalgebra::{
+    Isometry3, Matrix3, Matrix3x1, Point2, Rotation3, Translation3, UnitQuaternion, UnitVector3,
+    Vector2, Vector3,
+};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::{
     AccelerometerEvent, DeviceEvent, DeviceEventKind, Event, ImpactEvent, Pose, TrackingEvent,
 };
-use protodongers::{Packet, PacketData, VendorData};
 use std::collections::HashMap;
 
-use futures::stream::{self, StreamExt};
-use futures_concurrency::prelude::*;
+use futures::stream::{self, BoxStream, SelectAll, StreamExt};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 use tokio::time::sleep;
 use tracing::{debug, info, trace, warn};
 
-use crate::device_link::DeviceLink;
-use crate::usb_link::UsbLink;
-
 /// Events from the hub manager's merged stream
 enum HubEvent {
     Snapshot(Result<heapless::Vec<[u8; 6], 3>>),
 }
 
-/// Events from the device handler's merged stream
-enum DeviceHandlerEvent {
-    Packet(Result<Packet, anyhow::Error>),
-    ShotDelayChanged(u32),
-    ControlMessage(Option<DeviceTaskMessage>),
+enum DeviceStreamEvent {
+    CombinedMarkers(CombinedMarkersReport),
+    PocMarkers(PocMarkersReport),
+    Accel(AccelReport),
+    Impact(ImpactReport),
+    Vendor(u8, VendorData),
 }
 
+/// Events from the device handler's merged stream
 // ats_cv foveated helpers
-use ats_cv::foveated::FoveatedAimpointState;
-use ats_cv::helpers as ats_helpers;
+use ats_cv::{
+    foveated::FoveatedAimpointState, helpers as ats_helpers, to_normalized_image_coordinates,
+    undistort_points,
+};
 use nalgebra::Point2 as NaPoint2;
+use opencv_ros_camera::RosOpenCvIntrinsics;
 
 // per-handler foveated state and last-timestamp are local to each device handler now.
 
@@ -246,25 +255,17 @@ async fn usb_device_manager(
                                                     addr_copy, uuid
                                                 );
 
-                                                // Create UsbLink from VmDevice with UsbHub transport
-                                                // This will properly handle streaming via VmDevice
-                                                let link =
-                                                    match crate::usb_link::UsbLink::from_vm_device(
-                                                        vm_device, uuid,
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(link) => link,
-                                                        Err(e) => {
-                                                            warn!("Failed to create UsbLink from VmDevice: {}", e);
-                                                            continue;
-                                                        }
-                                                    };
+                                                let device_meta = Device {
+                                                    uuid,
+                                                    transport:
+                                                        odyssey_hub_common::device::Transport::UsbMux,
+                                                };
                                                 let (ctrl_tx, ctrl_rx) =
                                                     mpsc::channel::<DeviceTaskMessage>(32);
 
                                                 let dh_handle = tokio::spawn(device_handler_task(
-                                                    Box::new(link),
+                                                    vm_device,
+                                                    device_meta.clone(),
                                                     ctrl_rx,
                                                     screen_calibrations.clone(),
                                                     device_offsets.clone(),
@@ -280,16 +281,8 @@ async fn usb_device_manager(
                                                     }
                                                 }
 
-                                                let device_meta = Device {
-                                                    uuid,
-                                                    transport:
-                                                        odyssey_hub_common::device::Transport::UsbHub,
-                                                };
                                                 let _ = message_channel
-                                                    .send(Message::Connect(
-                                                        device_meta.clone(),
-                                                        ctrl_tx,
-                                                    ))
+                                                    .send(Message::Connect(device_meta, ctrl_tx))
                                                     .await;
                                             }
                                             Err(e) => {
@@ -396,26 +389,17 @@ async fn usb_device_manager(
                                                                     addr_copy, uuid
                                                                 );
 
-                                                                // Create UsbLink from VmDevice with UsbHub transport
-                                                                let link =
-                                                                    match crate::usb_link::UsbLink::from_vm_device(
-                                                                        vm_device, uuid,
-                                                                    )
-                                                                    .await
-                                                                    {
-                                                                        Ok(link) => link,
-                                                                        Err(e) => {
-                                                                            tracing::warn!("Failed to create UsbLink from VmDevice: {}", e);
-                                                                            continue;
-                                                                        }
-                                                                    };
-
+                                                                let device_meta = Device {
+                                                                    uuid,
+                                                                    transport: odyssey_hub_common::device::Transport::UsbMux,
+                                                                };
                                                                 let (ctrl_tx, ctrl_rx) =
                                                                     mpsc::channel::<DeviceTaskMessage>(32);
 
                                                                 let dh_handle =
                                                                     tokio::spawn(device_handler_task(
-                                                                        Box::new(link),
+                                                                        vm_device,
+                                                                        device_meta.clone(),
                                                                         ctrl_rx,
                                                                         sc_clone.clone(),
                                                                         doff_clone.clone(),
@@ -432,13 +416,9 @@ async fn usb_device_manager(
                                                                     }
                                                                 }
 
-                                                                let device_meta = Device {
-                                                                    uuid,
-                                                                    transport: odyssey_hub_common::device::Transport::UsbHub,
-                                                                };
                                                                 let _ = message_channel_clone
                                                                     .send(Message::Connect(
-                                                                        device_meta.clone(),
+                                                                        device_meta,
                                                                         ctrl_tx,
                                                                     ))
                                                                     .await;
@@ -475,7 +455,7 @@ async fn usb_device_manager(
                                                         }
                                                         let device_meta = Device {
                                                             uuid,
-                                                            transport: odyssey_hub_common::device::Transport::UsbHub,
+                                                            transport: odyssey_hub_common::device::Transport::UsbMux,
                                                         };
                                                         let _ = message_channel_clone
                                                             .send(Message::Disconnect(device_meta))
@@ -517,41 +497,52 @@ async fn usb_device_manager(
                         "Attempting to connect to direct USB device PID: 0x{:04x}",
                         pid
                     );
-                    match UsbLink::connect_usb(dev_info.clone()).await {
-                        Ok(link) => {
-                            let device = link.device();
-                            let uuid = device.uuid;
-
+                    match VmDevice::connect_usb(dev_info.clone()).await {
+                        Ok(vm_device) => {
+                            let uuid = match vm_device.read_prop(protodongers::PropKind::Uuid).await
                             {
-                                let mut dh = device_handles.lock().await;
-                                if dh.contains_key(&uuid) {
-                                    info!(
-                                        "Device {:02x?} already in device_handles, skipping",
-                                        uuid
-                                    );
+                                Ok(protodongers::Props::Uuid(bytes)) => bytes,
+                                Ok(other) => {
+                                    warn!("Expected Uuid prop, got {:?}, skipping device", other);
                                     continue;
                                 }
+                                Err(e) => {
+                                    warn!("Failed to read UUID from USB device: {}", e);
+                                    continue;
+                                }
+                            };
 
-                                info!("Discovered direct USB device with UUID {:02x?}", uuid);
-
-                                let (tx, rx) = mpsc::channel(32);
-
-                                let handle = tokio::spawn(device_handler_task(
-                                    Box::new(link),
-                                    rx,
-                                    screen_calibrations.clone(),
-                                    device_offsets.clone(),
-                                    device_shot_delays.clone(),
-                                    shot_delay_watch.clone(),
-                                    event_sender.clone(),
-                                ));
-
-                                dh.insert(uuid, handle);
-
-                                let _ = message_channel
-                                    .send(Message::Connect(device.clone(), tx))
-                                    .await;
+                            let mut dh = device_handles.lock().await;
+                            if dh.contains_key(&uuid) {
+                                info!("Device {:02x?} already in device_handles, skipping", uuid);
+                                continue;
                             }
+
+                            info!("Discovered direct USB device with UUID {:02x?}", uuid);
+
+                            let device_meta = Device {
+                                uuid,
+                                transport: odyssey_hub_common::device::Transport::Usb,
+                            };
+
+                            let (tx, rx) = mpsc::channel(32);
+
+                            let handle = tokio::spawn(device_handler_task(
+                                vm_device,
+                                device_meta.clone(),
+                                rx,
+                                screen_calibrations.clone(),
+                                device_offsets.clone(),
+                                device_shot_delays.clone(),
+                                shot_delay_watch.clone(),
+                                event_sender.clone(),
+                            ));
+
+                            dh.insert(uuid, handle);
+
+                            let _ = message_channel
+                                .send(Message::Connect(device_meta, tx))
+                                .await;
                         }
                         Err(e) => {
                             debug!("Failed to connect to USB device: {}", e);
@@ -581,7 +572,8 @@ async fn usb_device_manager(
 /// Per-device handler: receives packets from the link, processes control messages,
 /// watches for shot-delay changes, and emits events.
 async fn device_handler_task(
-    mut link: Box<dyn DeviceLink>,
+    vm_device: VmDevice,
+    device: Device,
     mut control_rx: mpsc::Receiver<DeviceTaskMessage>,
     screen_calibrations: Arc<
         ArcSwap<
@@ -593,7 +585,6 @@ async fn device_handler_task(
     shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
     event_sender: broadcast::Sender<Event>,
 ) {
-    let device = link.device();
     info!(
         "Starting device handler for device UUID {:02x?}",
         device.uuid
@@ -628,128 +619,124 @@ async fn device_handler_task(
     // Keeping these local avoids a global registry and ties filter lifetime to the device task.
     let mut fv_state = FoveatedAimpointState::new();
     let mut prev_accel_timestamp: Option<u32> = None;
+    let mut madgwick = ahrs::Madgwick::<f32>::new(1.0 / 100.0, 0.1);
+    let mut orientation = Rotation3::identity();
 
-    // Enable device streams by sending StreamUpdate packets
-    use protodongers::{PacketType, StreamUpdate, StreamUpdateAction};
-    info!("Enabling streams for device {:02x?}", device.uuid);
+    let general_settings = match vm_device.read_all_config().await {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            warn!(
+                "Failed to read camera config for device {:02x?}: {}",
+                device.uuid, e
+            );
+            return;
+        }
+    };
+    let camera_model_nf = general_settings.camera_model_nf.clone();
+    let camera_model_wf = general_settings.camera_model_wf.clone();
+    let stereo_iso = general_settings.stereo_iso.clone();
 
-    // Enable accelerometer stream
-    if let Err(e) = link
-        .send(Packet {
-            id: 0,
-            data: PacketData::StreamUpdate(StreamUpdate {
-                packet_id: PacketType::AccelReport(),
-                action: StreamUpdateAction::Enable,
-            }),
-        })
-        .await
-    {
-        warn!("Failed to enable AccelReport stream: {}", e);
+    // Start sensor streams via VmDevice helpers so each stream reserves a slot
+    let mut sensor_streams: SelectAll<BoxStream<'static, DeviceStreamEvent>> = SelectAll::new();
+
+    match vm_device.clone().stream_combined_markers().await {
+        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed()),
+        Err(e) => warn!(
+            "Failed to start combined markers stream for {:02x?}: {}",
+            device.uuid, e
+        ),
+    }
+    match vm_device.clone().stream_poc_markers().await {
+        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed()),
+        Err(e) => warn!(
+            "Failed to start PoC markers stream for {:02x?}: {}",
+            device.uuid, e
+        ),
+    }
+    match vm_device.clone().stream_accel().await {
+        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed()),
+        Err(e) => warn!(
+            "Failed to start accelerometer stream for {:02x?}: {}",
+            device.uuid, e
+        ),
+    }
+    match vm_device.clone().stream_impact().await {
+        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::Impact).boxed()),
+        Err(e) => warn!(
+            "Failed to start impact stream for {:02x?}: {}",
+            device.uuid, e
+        ),
     }
 
-    // Enable combined markers stream
-    if let Err(e) = link
-        .send(Packet {
-            id: 0,
-            data: PacketData::StreamUpdate(StreamUpdate {
-                packet_id: PacketType::CombinedMarkersReport(),
-                action: StreamUpdateAction::Enable,
-            }),
-        })
-        .await
-    {
-        warn!("Failed to enable CombinedMarkersReport stream: {}", e);
-    }
+    // TODO separate subscribes to whichever vendor streams we want
+    // for tag in 0x81u8..=0xfeu8 {
+    //     match vm_device.clone().stream(PacketType::Vendor(tag)).await {
+    //         Ok(stream) => {
+    //             sensor_streams.push(
+    //                 stream
+    //                     .filter_map(|pd| async move {
+    //                         if let PacketData::Vendor(vtag, vdata) = pd {
+    //                             Some(DeviceStreamEvent::Vendor(vtag, vdata))
+    //                         } else {
+    //                             None
+    //                         }
+    //                     })
+    //                     .boxed(),
+    //             );
+    //         }
+    //         Err(_e) => {
+    //             // it's fine if certain vendor streams aren't available
+    //         }
+    //     }
+    // }
 
-    // Enable impact stream
-    if let Err(e) = link
-        .send(Packet {
-            id: 0,
-            data: PacketData::StreamUpdate(StreamUpdate {
-                packet_id: PacketType::ImpactReport(),
-                action: StreamUpdateAction::Enable,
-            }),
-        })
-        .await
-    {
-        warn!("Failed to enable ImpactReport stream: {}", e);
-    }
+    let mut sensor_stream = sensor_streams.fuse();
+    let mut shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx).fuse();
+    let mut control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx).fuse();
 
-    info!(
-        "Stream initialization complete for device {:02x?}",
-        device.uuid
-    );
-
-    // Wrap link in Arc<Mutex> so it can be shared between streams
-    let link = Arc::new(Mutex::new(link));
-
-    // Convert packet stream
-    let link_clone = link.clone();
-    let packet_stream = stream::unfold(link_clone, |link| async move {
-        let mut guard = link.lock().await;
-        let result = guard.recv().await;
-        drop(guard);
-        Some((DeviceHandlerEvent::Packet(result), link))
-    });
-
-    // Convert shot delay watcher to stream
-    let shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx)
-        .map(|val| DeviceHandlerEvent::ShotDelayChanged(val));
-
-    // Convert control message receiver to stream
-    // We map to Option<DeviceTaskMessage> and handle None in the loop
-    let control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx)
-        .map(|msg| DeviceHandlerEvent::ControlMessage(Some(msg)));
-
-    // Merge all three streams
-    // Note: merge() continues until ALL streams end, not when one ends
-    let merged = (packet_stream, shot_delay_stream, control_stream).merge();
-    tokio::pin!(merged);
-
-    while let Some(event) = merged.next().await {
-        match event {
-            DeviceHandlerEvent::Packet(pkt_result) => match pkt_result {
-                Ok(pkt) => {
-                    if let Err(e) = process_packet(
-                        &device,
-                        pkt.clone(),
-                        &event_sender,
-                        &device_offsets,
-                        &mut fv_state,
-                        &screen_calibrations,
-                        &mut prev_accel_timestamp,
-                    )
-                    .await
-                    {
-                        warn!("Error processing packet: {}", e);
+    loop {
+        tokio::select! {
+            maybe_evt = sensor_stream.next() => {
+                match maybe_evt {
+                    Some(evt) => {
+                        if let Err(e) = handle_stream_event(
+                            &device,
+                            evt,
+                            &event_sender,
+                            &device_offsets,
+                            &mut fv_state,
+                            &screen_calibrations,
+                            &mut prev_accel_timestamp,
+                            &mut madgwick,
+                            &mut orientation,
+                            &camera_model_nf,
+                            &camera_model_wf,
+                            &stereo_iso,
+                        ).await {
+                            warn!("Error processing stream event for {:02x?}: {}", device.uuid, e);
+                        }
+                    }
+                    None => {
+                        info!("Sensor streams ended for device {:02x?}", device.uuid);
+                        break;
                     }
                 }
-                Err(e) => {
-                    warn!("Device recv error: {}", e);
-                    break;
-                }
-            },
-
-            DeviceHandlerEvent::ShotDelayChanged(new_delay) => {
+            }
+            Some(new_delay) = shot_delay_stream.next() => {
                 current_shot_delay = new_delay;
                 info!(
                     "Shot delay updated for {:02x?} = {} ms",
                     device.uuid, current_shot_delay
                 );
-                // Update in-memory store as well (keeps server and task in sync)
                 device_shot_delays
                     .write()
                     .await
                     .insert(device.uuid, current_shot_delay as u16);
-                // Do not emit a ShotDelayChanged DeviceEvent here — the server RPCs
-                // and other code paths are responsible for broadcasting higher-level updates.
             }
-
-            DeviceHandlerEvent::ControlMessage(msg) => {
-                match msg {
+            maybe_msg = control_stream.next() => {
+                match maybe_msg {
                     Some(DeviceTaskMessage::ResetZero) => {
                         debug!("ResetZero requested for {:02x?}", device.uuid);
-                        // Clear stored offset
                         {
                             let mut guard = device_offsets.lock().await;
                             guard.remove(&device.uuid);
@@ -762,7 +749,6 @@ async fn device_handler_task(
                     }
                     Some(DeviceTaskMessage::SaveZero) => {
                         debug!("SaveZero requested for {:02x?}", device.uuid);
-                        // Persist device_offsets to disk via odyssey_hub_common::config
                         {
                             let guard = device_offsets.lock().await;
                             if let Err(e) =
@@ -784,18 +770,11 @@ async fn device_handler_task(
                             data.len(),
                             device.uuid
                         );
-                        let mut padded = [0u8; 98];
-                        let copy_len = std::cmp::min(data.len(), 98);
-                        padded[..copy_len].copy_from_slice(&data[..copy_len]);
-                        let vendor = VendorData {
-                            len: copy_len as u8,
-                            data: padded,
-                        };
-                        let pkt = Packet {
-                            id: 0,
-                            data: PacketData::Vendor(tag, vendor),
-                        };
-                        if let Err(e) = link.lock().await.send(pkt).await {
+                        let clipped_len = std::cmp::min(data.len(), 98);
+                        if let Err(e) = vm_device
+                            .write_vendor(tag, &data[..clipped_len])
+                            .await
+                        {
                             warn!("Failed to send vendor packet: {}", e);
                         }
                     }
@@ -804,7 +783,6 @@ async fn device_handler_task(
                             "SetShotDelay requested for {:02x?} = {} ms",
                             device.uuid, ms
                         );
-                        // Update in-memory store and notify watchers so handler and others observe change.
                         {
                             device_shot_delays.write().await.insert(device.uuid, ms);
                             let mut g = shot_delay_watch.write().await;
@@ -852,14 +830,12 @@ async fn device_handler_task(
                         let _ = event_sender.send(ev);
                     }
                     None => {
-                        // This shouldn't happen since we only map Some(msg)
-                        warn!(
-                            "Unexpected None in control message stream for {:02x?}",
-                            device.uuid
-                        );
+                        info!("Control channel closed for {:02x?}", device.uuid);
+                        break;
                     }
                 }
             }
+            else => break,
         }
     }
 
@@ -872,9 +848,9 @@ async fn device_handler_task(
 /// - Impact -> ImpactEvent
 /// - CombinedMarkers/Poc/Object -> TrackingEvent (basic representation)
 /// Additionally, it always emits a PacketEvent containing the raw ats_usb vm::Packet
-async fn process_packet(
+async fn handle_stream_event(
     device: &Device,
-    pkt: Packet,
+    event: DeviceStreamEvent,
     event_sender: &broadcast::Sender<Event>,
     device_offsets: &Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
     fv_state: &mut FoveatedAimpointState,
@@ -884,30 +860,40 @@ async fn process_packet(
         >,
     >,
     prev_accel_timestamp: &mut Option<u32>,
+    madgwick: &mut ahrs::Madgwick<f32>,
+    orientation: &mut Rotation3<f32>,
+    camera_model_nf: &opencv_ros_camera::RosOpenCvIntrinsics<f32>,
+    camera_model_wf: &opencv_ros_camera::RosOpenCvIntrinsics<f32>,
+    stereo_iso: &Isometry3<f32>,
 ) -> Result<()> {
-    // For convenience, keep a clone to forward as raw PacketEvent at the end.
-    let raw_pkt = pkt.clone();
-
-    // Map some packet types to high-level events and feed IMU into the provided foveated state.
-    match pkt.data {
-        PacketData::AccelReport(report) => {
+    match event {
+        DeviceStreamEvent::Accel(report) => {
             // Feed IMU into the handler-local foveated state
-            {
-                let elapsed_us = match prev_accel_timestamp {
-                    Some(p) => report.timestamp.wrapping_sub(*p) as u64,
-                    None => 0u64,
-                };
-                let dt = if elapsed_us == 0 {
-                    Duration::from_micros(10_000) // default small dt if unknown
-                } else {
-                    Duration::from_micros(elapsed_us)
-                };
-                // Use same axis ordering as vision module (negated xzy)
-                let accel = -report.accel.xzy();
-                let gyro = -report.gyro.xzy();
-                fv_state.predict(accel, gyro, dt);
-                *prev_accel_timestamp = Some(report.timestamp);
+            let elapsed_us = match prev_accel_timestamp {
+                Some(p) => report.timestamp.wrapping_sub(*p) as u64,
+                None => 0u64,
+            };
+            let dt = if elapsed_us == 0 {
+                Duration::from_micros(10_000) // default small dt if unknown
+            } else {
+                Duration::from_micros(elapsed_us)
+            };
+            // Use same axis ordering as vision module (negated xzy)
+            let accel = -report.accel.xzy();
+            let gyro = -report.gyro.xzy();
+            fv_state.predict(accel, gyro, dt);
+            *prev_accel_timestamp = Some(report.timestamp);
+
+            // Update Madgwick orientation filter to compute gravity vector later
+            if elapsed_us != 0 {
+                let sample_period = madgwick.sample_period_mut();
+                *sample_period = elapsed_us as f32 / 1_000_000.0;
             }
+            let _ = madgwick.update_imu(
+                &Vector3::new(report.gyro.x, report.gyro.y, report.gyro.z),
+                &Vector3::new(report.accel.x, report.accel.y, report.accel.z),
+            );
+            *orientation = madgwick.quat.to_rotation_matrix();
 
             let ev_kind = DeviceEventKind::AccelerometerEvent(AccelerometerEvent {
                 timestamp: report.timestamp,
@@ -916,29 +902,56 @@ async fn process_packet(
                 euler_angles: Vector3::zeros(),
             });
             let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(device.clone(), ev_kind)));
+
+            // Attempt to compute an updated tracking solution using the predicted state.
+            let sc = screen_calibrations.load();
+            let offset_opt = {
+                let guard = device_offsets.lock().await;
+                guard.get(&device.uuid).cloned()
+            };
+            let (pose_opt, aim_and_d_opt) = ats_helpers::raycast_update(&*sc, fv_state, offset_opt);
+            if let (Some((rotmat, transvec)), Some((pt, d))) = (pose_opt, aim_and_d_opt) {
+                let tracking_pose = transform_pose_for_client(rotmat, transvec);
+                let tracking = TrackingEvent {
+                    timestamp: report.timestamp,
+                    aimpoint: pt.coords,
+                    pose: tracking_pose,
+                    distance: d,
+                    screen_id: fv_state.screen_id as u32,
+                };
+                let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(
+                    device.clone(),
+                    DeviceEventKind::TrackingEvent(tracking),
+                )));
+            }
         }
-        PacketData::ImpactReport(report) => {
+        DeviceStreamEvent::Impact(report) => {
             let ev_kind = DeviceEventKind::ImpactEvent(ImpactEvent {
                 timestamp: report.timestamp,
             });
             let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(device.clone(), ev_kind)));
         }
-        PacketData::CombinedMarkersReport(report) => {
-            // Convert marker points to normalized coordinates (assume 0..4095 range)
-            let nf_markers: Vec<ats_cv::foveated::Marker> = report
-                .nf_points
-                .iter()
-                .map(|p| ats_cv::foveated::Marker {
-                    position: NaPoint2::new(p.x as f32 / 4095.0, p.y as f32 / 4095.0),
-                })
-                .collect();
-            let wf_markers: Vec<ats_cv::foveated::Marker> = report
-                .wf_points
-                .iter()
-                .map(|p| ats_cv::foveated::Marker {
-                    position: NaPoint2::new(p.x as f32 / 4095.0, p.y as f32 / 4095.0),
-                })
-                .collect();
+        DeviceStreamEvent::CombinedMarkers(report) => {
+            let nf_markers = build_markers_from_points(
+                report
+                    .nf_points
+                    .iter()
+                    .filter(|p| p.x != 0 || p.y != 0)
+                    .map(|p| Point2::new(p.x as f32, p.y as f32))
+                    .collect(),
+                camera_model_nf,
+                None,
+            );
+            let wf_markers = build_markers_from_points(
+                report
+                    .wf_points
+                    .iter()
+                    .filter(|p| p.x != 0 || p.y != 0)
+                    .map(|p| Point2::new(p.x as f32, p.y as f32))
+                    .collect(),
+                camera_model_wf,
+                Some(stereo_iso),
+            );
 
             // Observe markers in the handler-local foveated state and attempt raycast/raycast_update.
             let mut tracking_pose: Option<Pose> = None;
@@ -946,26 +959,33 @@ async fn process_packet(
             let mut distance = 0.0f32;
 
             let screen_id = {
-                // Use nominal gravity if IMU hasn't set it elsewhere
-                let gravity = UnitVector3::new_normalize(Vector3::new(0.0f32, 9.81f32, 0.0f32));
+                let gravity_vec = {
+                    let global_down = Vector3::z_axis().into_inner();
+                    let local = orientation.inverse_transform_vector(&global_down);
+                    let local = Vector3::new(local.x, local.z, local.y);
+                    UnitVector3::new_normalize(local)
+                };
 
                 // Observe markers directly from existing vectors (pass slices, avoid clones)
                 let _observed = fv_state.observe_markers(
                     &nf_markers,
                     &wf_markers,
-                    gravity,
+                    gravity_vec,
                     &*screen_calibrations.load(),
                 );
 
                 // Attempt to compute pose and aimpoint using raycast_update.
+                // Pass stored device offset (if any) so it affects the solution.
                 let sc = screen_calibrations.load();
-                let (pose_opt, aim_and_d_opt) = ats_helpers::raycast_update(&*sc, fv_state, None);
+                let offset_opt = {
+                    let guard = device_offsets.lock().await;
+                    guard.get(&device.uuid).cloned()
+                };
+                let (pose_opt, aim_and_d_opt) =
+                    ats_helpers::raycast_update(&*sc, fv_state, offset_opt);
 
                 if let Some((rotmat, transvec)) = pose_opt {
-                    tracking_pose = Some(Pose {
-                        rotation: rotmat,
-                        translation: Matrix3x1::new(transvec.x, transvec.y, transvec.z),
-                    });
+                    tracking_pose = Some(transform_pose_for_client(rotmat, transvec));
                 }
 
                 if let Some((pt, d)) = aim_and_d_opt {
@@ -976,23 +996,11 @@ async fn process_packet(
                 fv_state.screen_id as u32
             };
 
-            // If available, prefer stored device offset pose as additional context (non-blocking).
-            if tracking_pose.is_none() {
-                let pose_opt = {
-                    let guard = device_offsets.lock().await;
-                    guard.get(&device.uuid).cloned().map(|iso| Pose {
-                        rotation: iso.rotation.to_rotation_matrix().into_inner(),
-                        translation: Matrix3x1::new(
-                            iso.translation.vector.x,
-                            iso.translation.vector.y,
-                            iso.translation.vector.z,
-                        ),
-                    })
-                };
-                if let Some(p) = pose_opt {
-                    tracking_pose = Some(p);
-                }
-            }
+            // If raycast_update didn't produce a pose (and thus no aimpoint), short-circuit.
+            let tracking_pose = match tracking_pose {
+                Some(p) => p,
+                None => return Ok(()),
+            };
 
             let tracking = TrackingEvent {
                 timestamp: 0,
@@ -1006,38 +1014,47 @@ async fn process_packet(
                 DeviceEventKind::TrackingEvent(tracking),
             )));
         }
-        PacketData::PocMarkersReport(report) => {
-            // Treat PoC points similarly to CombinedMarkersReport's nearfield
-            let nf_markers: Vec<ats_cv::foveated::Marker> = report
-                .points
-                .iter()
-                .map(|p| ats_cv::foveated::Marker {
-                    position: NaPoint2::new(p.x as f32 / 4095.0, p.y as f32 / 4095.0),
-                })
-                .collect();
+        DeviceStreamEvent::PocMarkers(report) => {
+            let nf_markers = build_markers_from_points(
+                report
+                    .points
+                    .iter()
+                    .filter(|p| p.x != 0 || p.y != 0)
+                    .map(|p| Point2::new(p.x as f32, p.y as f32))
+                    .collect(),
+                camera_model_nf,
+                None,
+            );
 
             let mut tracking_pose: Option<Pose> = None;
             let mut aimpoint = Vector2::new(0.0f32, 0.0f32);
             let mut distance = 0.0f32;
 
             let screen_id = {
-                let gravity = UnitVector3::new_normalize(Vector3::new(0.0f32, 9.81f32, 0.0f32));
+                let gravity_vec = {
+                    let global_down = Vector3::z_axis().into_inner();
+                    let local = orientation.inverse_transform_vector(&global_down);
+                    let local = Vector3::new(local.x, local.z, local.y);
+                    UnitVector3::new_normalize(local)
+                };
                 let wf_empty: Vec<ats_cv::foveated::Marker> = Vec::new();
                 let _observed = fv_state.observe_markers(
                     &nf_markers,
                     &wf_empty,
-                    gravity,
+                    gravity_vec,
                     &*screen_calibrations.load(),
                 );
 
                 let sc = screen_calibrations.load();
-                let (pose_opt, aim_and_d_opt) = ats_helpers::raycast_update(&*sc, fv_state, None);
+                let offset_opt = {
+                    let guard = device_offsets.lock().await;
+                    guard.get(&device.uuid).cloned()
+                };
+                let (pose_opt, aim_and_d_opt) =
+                    ats_helpers::raycast_update(&*sc, fv_state, offset_opt);
 
                 if let Some((rotmat, transvec)) = pose_opt {
-                    tracking_pose = Some(Pose {
-                        rotation: rotmat,
-                        translation: Matrix3x1::new(transvec.x, transvec.y, transvec.z),
-                    });
+                    tracking_pose = Some(transform_pose_for_client(rotmat, transvec));
                 }
                 if let Some((pt, d)) = aim_and_d_opt {
                     aimpoint = pt.coords;
@@ -1046,22 +1063,11 @@ async fn process_packet(
                 fv_state.screen_id as u32
             };
 
-            if tracking_pose.is_none() {
-                let pose_opt = {
-                    let guard = device_offsets.lock().await;
-                    guard.get(&device.uuid).cloned().map(|iso| Pose {
-                        rotation: iso.rotation.to_rotation_matrix().into_inner(),
-                        translation: Matrix3x1::new(
-                            iso.translation.vector.x,
-                            iso.translation.vector.y,
-                            iso.translation.vector.z,
-                        ),
-                    })
-                };
-                if let Some(p) = pose_opt {
-                    tracking_pose = Some(p);
-                }
-            }
+            // If raycast_update didn't produce a pose (and thus no aimpoint), short-circuit.
+            let tracking_pose = match tracking_pose {
+                Some(p) => p,
+                None => return Ok(()),
+            };
 
             let tracking = TrackingEvent {
                 timestamp: 0,
@@ -1075,21 +1081,47 @@ async fn process_packet(
                 DeviceEventKind::TrackingEvent(tracking),
             )));
         }
-        _ => {
-            // other packet types ignored for high-level events here
+        DeviceStreamEvent::Vendor(tag, vendor) => {
+            let vm_pkt = Packet {
+                id: 0,
+                data: PacketData::Vendor(tag, vendor),
+            };
+            let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(
+                device.clone(),
+                DeviceEventKind::PacketEvent(vm_pkt),
+            )));
         }
     }
-
-    // Always emit the raw PacketEvent for consumers that expect raw packets.
-    // Construct ats_usb::packets::vm::Packet using the raw data.
-    let vm_pkt = ats_usb::packets::vm::Packet {
-        id: raw_pkt.id,
-        data: raw_pkt.data,
-    };
-    let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(
-        device.clone(),
-        DeviceEventKind::PacketEvent(vm_pkt),
-    )));
-
     Ok(())
+}
+
+fn transform_pose_for_client(rotmat: Matrix3<f32>, transvec: Vector3<f32>) -> Pose {
+    let flip = Matrix3::new(1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0);
+    let rotation = flip * rotmat * flip;
+    let translation = flip * Matrix3x1::new(transvec.x, transvec.y, transvec.z);
+    Pose {
+        rotation,
+        translation,
+    }
+}
+
+fn build_markers_from_points(
+    raw_points: Vec<Point2<f32>>,
+    camera_model: &RosOpenCvIntrinsics<f32>,
+    stereo_iso: Option<&Isometry3<f32>>,
+) -> Vec<ats_cv::foveated::Marker> {
+    if raw_points.is_empty() {
+        return Vec::new();
+    }
+    let undistorted = undistort_points(camera_model, &raw_points);
+    let intrinsics = ros_opencv_intrinsics_type_convert(camera_model);
+    undistorted
+        .into_iter()
+        .map(|pt| {
+            let normalized = to_normalized_image_coordinates(pt, &intrinsics, stereo_iso);
+            ats_cv::foveated::Marker {
+                position: NaPoint2::new(normalized.x, normalized.y),
+            }
+        })
+        .collect()
 }

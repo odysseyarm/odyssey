@@ -31,7 +31,7 @@ macro_rules! icon_from_bytes {
 /// **Needs to be called after the app is launched**
 ///
 /// I have found that a reliable and simple way is to just use the main App component as the entry point
-pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) -> TrayIcon {
+pub fn use_tray_menu(_cancellation_token: tokio_util::sync::CancellationToken) -> TrayIcon {
     // Loading the image we are going to use as the tray icon
     let icon = icon_from_bytes!("/assets/images/tray-icon.png");
 

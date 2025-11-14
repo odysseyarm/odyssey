@@ -1,5 +1,5 @@
-use crate::ffi_common::TrackingEvent;
 use odyssey_hub_client::tracking_history::TrackingHistory as TrackingHistoryInner;
+use odyssey_hub_common::events::TrackingEvent;
 use std::sync::{Arc, Mutex};
 
 pub struct TrackingHistory {
