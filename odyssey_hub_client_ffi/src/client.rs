@@ -2,9 +2,10 @@ use futures_util::stream::StreamExt;
 use odyssey_hub_client::client::Client;
 use std::ffi::c_void;
 
-use crate::ffi_common::{Device, ScreenInfo};
 use crate::funny::{Vector2f32, Vector3f32};
 use crate::Handle;
+
+use odyssey_hub_common as common;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -67,7 +68,7 @@ pub extern "C" fn client_get_device_list(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
-    callback: extern "C" fn(UserObj, ClientError, *mut Device, usize),
+    callback: extern "C" fn(UserObj, ClientError, *mut common::device::Device, usize),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -77,11 +78,11 @@ pub extern "C" fn client_get_device_list(
         let result = client.get_device_list().await;
         match result {
             Ok(dl) => {
-                let devices: Vec<Device> = dl.into_iter().map(Into::into).collect();
+                let devices: Vec<common::device::Device> = dl.into_iter().map(Into::into).collect();
                 let len = devices.len();
                 let ptr = unsafe {
-                    let layout = std::alloc::Layout::array::<Device>(len).unwrap();
-                    let ptr = std::alloc::alloc(layout) as *mut Device;
+                    let layout = std::alloc::Layout::array::<common::device::Device>(len).unwrap();
+                    let ptr = std::alloc::alloc(layout) as *mut common::device::Device;
                     ptr.copy_from_nonoverlapping(devices.as_ptr(), len);
                     ptr
                 };
@@ -97,7 +98,7 @@ pub extern "C" fn client_start_stream(
     handle: *const crate::Handle,
     client: *mut Client,
     userdata: UserObj,
-    callback: extern "C" fn(UserObj, ClientError, std::mem::MaybeUninit<crate::ffi_common::Event>),
+    callback: extern "C" fn(UserObj, ClientError, std::mem::MaybeUninit<common::events::Event>),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -161,17 +162,15 @@ pub extern "C" fn client_reset_zero(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
-    device: Device,
+    device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
     let client = unsafe { &mut *client };
 
-    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
-
     tokio::spawn(async move {
-        let result = client.reset_zero(device_owned).await;
+        let result = client.reset_zero(device).await;
 
         let error = if result.is_ok() {
             ClientError::None
@@ -188,7 +187,7 @@ pub extern "C" fn client_zero(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
-    device: Device,
+    device: common::device::Device,
     translation: Vector3f32,
     target: Vector2f32,
     callback: extern "C" fn(UserObj, ClientError),
@@ -207,10 +206,8 @@ pub extern "C" fn client_zero(
         y: target.y,
     };
 
-    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
-
     tokio::spawn(async move {
-        let result = client.zero(device_owned, translation, target).await;
+        let result = client.zero(device, translation, target).await;
         let error = if result.is_ok() {
             ClientError::None
         } else {
@@ -225,17 +222,15 @@ pub extern "C" fn client_reset_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
-    device: Device,
+    device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
     let client = unsafe { &mut *client };
 
-    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
-
     tokio::spawn(async move {
-        let result = client.reset_shot_delay(device_owned).await;
+        let result = client.reset_shot_delay(device).await;
 
         match result {
             Ok(delay) => callback(userdata, ClientError::None, delay),
@@ -249,17 +244,15 @@ pub extern "C" fn client_get_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
-    device: Device,
+    device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
     let client = unsafe { &mut *client };
 
-    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
-
     tokio::spawn(async move {
-        let result = client.get_shot_delay(device_owned).await;
+        let result = client.get_shot_delay(device).await;
 
         match result {
             Ok(delay) => callback(userdata, ClientError::None, delay),
@@ -273,7 +266,7 @@ pub extern "C" fn client_set_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
-    device: Device,
+    device: common::device::Device,
     delay_ms: u16,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
@@ -281,10 +274,8 @@ pub extern "C" fn client_set_shot_delay(
     let _guard = handle.tokio_rt.enter();
     let client = unsafe { &mut *client };
 
-    let device_owned: odyssey_hub_common::device::Device = device.clone().into();
-
     tokio::spawn(async move {
-        let result = client.set_shot_delay(device_owned, delay_ms).await;
+        let result = client.set_shot_delay(device, delay_ms).await;
 
         let error = if result.is_ok() {
             ClientError::None
@@ -302,7 +293,7 @@ pub extern "C" fn client_get_screen_info_by_id(
     client: *mut Client,
     userdata: UserObj,
     screen_id: u8,
-    callback: extern "C" fn(UserObj, ClientError, ScreenInfo),
+    callback: extern "C" fn(UserObj, ClientError, common::ScreenInfo),
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -313,12 +304,9 @@ pub extern "C" fn client_get_screen_info_by_id(
         match result {
             Ok(info) => callback(userdata, ClientError::None, info.into()),
             Err(_) => {
-                let dummy_screen_info = ScreenInfo {
+                let dummy_screen_info = common::ScreenInfo {
                     id: 0,
-                    tl: Vector2f32 { x: 0.0, y: 0.0 },
-                    tr: Vector2f32 { x: 0.0, y: 0.0 },
-                    bl: Vector2f32 { x: 0.0, y: 0.0 },
-                    br: Vector2f32 { x: 0.0, y: 0.0 },
+                    bounds: [nalgebra::Vector2::zeros(); 4],
                 };
                 callback(userdata, ClientError::NotConnected, dummy_screen_info);
             }

@@ -10,7 +10,7 @@ nalgebra = "0.34"
 odyssey_hub_common = { path = "../odyssey_hub_common" }
 prost = "0.12.4"
 tonic = { version = "0.11.0", features = ["prost"] }
-ats_usb = { git = "https://github.com/odysseyarm/ats-vision-tool" }
+ats_usb = { git = "https://github.com/odysseyarm/vmgui" }
 postcard = "1"
 
 [build-dependencies]

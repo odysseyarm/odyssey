@@ -7,7 +7,7 @@ velopack:
     # --- paths / ids ---
     $nsisDir  = Join-Path $PWD.Path '..\target\dx\odyssey_desktop\bundle\windows\bundle\nsis'
     $tempRoot = Join-Path $env:LOCALAPPDATA 'Temp\OdysseyDesktop'
-    $packId   = 'Odyssey.Desktop'
+    $packId   = 'Odyssium.Desktop'
     $exeName  = 'odyssey_desktop.exe'   # your real exe
 
     # pick latest NSIS installer and parse version
@@ -50,6 +50,6 @@ velopack:
     Write-Host "  packDir    = $packDir"
     Write-Host "  mainExe    = $mainExe"
 
-    vpk pack --packId $packId --packVersion $packVersion --packDir $packDir --mainExe $mainExe --channel win-x64-alpha
+    vpk pack --packId $packId --packVersion $packVersion --packDir $packDir --mainExe $mainExe --channel win-x64-pre-alpha
 
     Write-Output "Velopack built for $packId $packVersion (dir=$packDir, exe=$mainExe)"

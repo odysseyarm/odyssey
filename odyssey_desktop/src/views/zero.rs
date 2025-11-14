@@ -17,6 +17,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
 
     // one Signal<bool> per slot: true means “zero on next shot”
     let mut device_signals = use_signal(|| Vec::<DeviceSignals>::new());
+    let last_device_snapshot = use_signal(|| Vec::<[u8; 6]>::new());
 
     // for positioning the crosshair overlay
     let mut crosshair_manager_div = use_signal(|| None);
@@ -29,7 +30,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
         let center = rect_signal.read().center();
         (center.x / ws.width, center.y / ws.height)
     });
-    tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
+    // tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
 
     // ensure we can safely index [0 .. devices.len())
     {
@@ -61,8 +62,8 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                         .await
                                     {
                                         tracing::error!(
-                                            "Failed to zero device {:x}: {}",
-                                            dev.uuid(),
+                                            "Failed to zero device {:x?}: {}",
+                                            dev.uuid,
                                             e
                                         );
                                     }
@@ -71,78 +72,65 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                             }
                         }
                     }
-                    oe::DeviceEventKind::ConnectEvent => {
-                        if let Some(key) = hub.peek().device_key(&device) {
-                            spawn(async move {
-                                device_signals.write()[key].shot_delay.set(
-                                    hub.peek()
-                                        .client
-                                        .peek()
-                                        .clone()
-                                        .get_shot_delay(device)
-                                        .await
-                                        .unwrap(),
-                                )
-                            });
-                        } else {
-                            tracing::error!(
-                                "Connected device not found in device signals. Potential race"
-                            )
-                        }
-                    }
-                    oe::DeviceEventKind::DisconnectEvent => {
-                        if let Some(key) = hub.peek().device_key(&device) {
-                            device_signals.write()[key].shooting.set(false);
-                        }
-                    }
                     _ => {}
                 },
             }
         }
     });
 
-    use_hook(|| {
-        let devices = devices.clone();
+    {
         let hub = hub.clone();
         let mut device_signals = device_signals.clone();
+        let mut last_device_snapshot = last_device_snapshot.clone();
+        let device_entries: Vec<(usize, odyssey_hub_common::device::Device)> = devices
+            .iter()
+            .map(|(slot, dev)| (slot, dev.clone()))
+            .collect();
+        let snapshot: Vec<[u8; 6]> = device_entries.iter().map(|(_, dev)| dev.uuid).collect();
 
-        spawn(async move {
-            {
-                let mut w = device_signals.write();
-                w.resize_with(devices.len(), || Default::default());
+        use_effect(move || {
+            if last_device_snapshot.peek().as_slice() == snapshot.as_slice() {
+                return ();
             }
+            last_device_snapshot.set(snapshot.clone());
 
-            for (_, device) in devices.iter() {
-                let device = device.clone();
-                let hub = hub.clone();
-                let mut device_signals = device_signals.clone();
-
-                spawn(async move {
-                    if let Some(key) = hub.peek().device_key(&device) {
-                        match hub
-                            .peek()
-                            .client
-                            .peek()
-                            .clone()
-                            .get_shot_delay(device.clone())
-                            .await
-                        {
-                            Ok(delay) => {
-                                device_signals.write()[key].shot_delay.set(delay);
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to get shot delay: {e}");
-                            }
+            spawn({
+                let device_entries = device_entries.clone();
+                async move {
+                    {
+                        let mut w = device_signals.write();
+                        if w.len() > device_entries.len() {
+                            w.truncate(device_entries.len());
+                        } else if w.len() < device_entries.len() {
+                            w.resize_with(device_entries.len(), || Default::default());
                         }
-                    } else {
-                        tracing::error!(
-                            "Connected device not found in device signals. Potential race"
-                        );
                     }
-                });
-            }
+
+                    for (slot, device) in device_entries {
+                        let hub = hub.clone();
+                        let mut device_signals = device_signals.clone();
+                        spawn(async move {
+                            match hub
+                                .peek()
+                                .client
+                                .peek()
+                                .clone()
+                                .get_shot_delay(device.clone())
+                                .await
+                            {
+                                Ok(delay) => {
+                                    device_signals.write()[slot].shot_delay.set(delay);
+                                }
+                                Err(e) => tracing::error!("Failed to get shot delay: {e}"),
+                            }
+                        });
+                    }
+                }
+            });
+
+            ()
         });
-    });
+    }
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -166,7 +154,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                         class: "flex flex-col gap-2",
                                         span {
                                             class: "text-gray-900 dark:text-white",
-                                            {format!("0x{:x}", device.uuid())},
+                                            {format!("0x{:x?}", device.uuid)},
                                         }
                                         ul { class: "flex flex-col gap-2",
                                             li { class: "flex items-center gap-3",
@@ -193,8 +181,8 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         let dev = dev.clone();
                                                         async move {
                                                             match (hub().client)().reset_zero(dev.clone()).await {
-                                                                Ok(_) => tracing::info!("Cleared zero for {:x}", dev.uuid()),
-                                                                Err(e) => tracing::error!("Failed to reset zero {:x}: {}", dev.uuid(), e),
+                                                                Ok(_) => tracing::info!("Cleared zero for {:x?}", dev.uuid),
+                                                                Err(e) => tracing::error!("Failed to reset zero {:x?}: {}", dev.uuid, e),
                                                             }
                                                         }
                                                     }
@@ -205,8 +193,8 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         let dev = dev.clone();
                                                         async move {
                                                             match (hub().client)().clear_zero(dev.clone()).await {
-                                                                Ok(_) => tracing::info!("Cleared zero for {:x}", dev.uuid()),
-                                                                Err(e) => tracing::error!("Failed to clear zero {:x}: {}", dev.uuid(), e),
+                                                                Ok(_) => tracing::info!("Cleared zero for {:x?}", dev.uuid),
+                                                                Err(e) => tracing::error!("Failed to clear zero {:x?}: {}", dev.uuid, e),
                                                             }
                                                         }
                                                     }
@@ -217,8 +205,8 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                         let dev = dev.clone();
                                                         async move {
                                                             match (hub().client)().save_zero(dev.clone()).await {
-                                                                Ok(_) => tracing::info!("Saved zero for {:x}", dev.uuid()),
-                                                                Err(e) => tracing::error!("Failed to save zero {:x}: {}", dev.uuid(), e),
+                                                                Ok(_) => tracing::info!("Saved zero for {:x?}", dev.uuid),
+                                                                Err(e) => tracing::error!("Failed to save zero {:x?}: {}", dev.uuid, e),
                                                             }
                                                         }
                                                     }
@@ -324,8 +312,8 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                             let delay = *device_signals.peek()[slot].shot_delay.peek();
                                                             async move {
                                                                 match (hub().client)().set_shot_delay(dev.clone(), delay).await {
-                                                                    Ok(_) => tracing::info!("Set shot delay {}ms for {:x}", delay, dev.uuid()),
-                                                                    Err(e) => tracing::error!("Failed to set shot delay {:x}: {}", dev.uuid(), e),
+                                                                    Ok(_) => tracing::info!("Set shot delay {}ms for {:x?}", delay, dev.uuid),
+                                                                    Err(e) => tracing::error!("Failed to set shot delay {:x?}: {}", dev.uuid, e),
                                                                 }
                                                             }
                                                         }
@@ -343,10 +331,10 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                             async move {
                                                                 match (hub().client)().reset_shot_delay(dev.clone()).await {
                                                                     Ok(delay_ms) => {
-                                                                        tracing::info!("Reset shot delay for {:x}", dev.uuid());
+                                                                        tracing::info!("Reset shot delay for {:x?}", dev.uuid);
                                                                         device_signals.write()[slot].shot_delay.set(delay_ms);
                                                                     }
-                                                                    Err(e) => tracing::error!("Failed to reset shot delay {:x}: {}", dev.uuid(), e),
+                                                                    Err(e) => tracing::error!("Failed to reset shot delay {:x?}: {}", dev.uuid, e),
                                                                 }
                                                             }
                                                         }
@@ -365,13 +353,13 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                                                             async move {
                                                                 match (hub().client)().set_shot_delay(dev.clone(), delay).await {
                                                                     Ok(_) => {
-                                                                        tracing::info!("Set shot delay {}ms for {:x}", delay, dev.uuid());
+                                                                        tracing::info!("Set shot delay {}ms for {:x?}", delay, dev.uuid);
                                                                         match (hub().client)().save_shot_delay(dev.clone()).await {
-                                                                            Ok(_) => tracing::info!("Saved shot delay for {:x}", dev.uuid()),
-                                                                            Err(e) => tracing::error!("Failed to save shot delay {:x}: {}", dev.uuid(), e),
+                                                                            Ok(_) => tracing::info!("Saved shot delay for {:x?}", dev.uuid),
+                                                                            Err(e) => tracing::error!("Failed to save shot delay {:x?}: {}", dev.uuid, e),
                                                                         }
                                                                     }
-                                                                    Err(e) => tracing::error!("Failed to set shot delay {:x}: {}", dev.uuid(), e),
+                                                                    Err(e) => tracing::error!("Failed to set shot delay {:x?}: {}", dev.uuid, e),
                                                                 }
                                                             }
                                                         }

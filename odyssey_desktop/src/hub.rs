@@ -1,58 +1,95 @@
 use std::collections::HashMap;
 
-use dioxus::prelude::*;
+use dioxus::{logger::tracing, prelude::*};
 use futures::StreamExt;
 use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events as oe;
 use slab::Slab;
+use tokio::sync::broadcast;
 
 #[derive(Clone)]
 pub struct HubContext {
     pub client: SyncSignal<Client>,
     pub devices: SyncSignal<Slab<Device>>,
     pub latest_event: Signal<Option<oe::Event>>,
+    tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     device_keys: SyncSignal<HashMap<odyssey_hub_common::device::Device, usize>>,
 }
 
 impl HubContext {
     pub fn new() -> Self {
+        let (tracking_events, _) = broadcast::channel(128);
         Self {
             client: SyncSignal::new_maybe_sync(Client::default()),
             devices: SyncSignal::new_maybe_sync(Slab::new()),
             latest_event: Signal::new(None),
+            tracking_events,
             device_keys: SyncSignal::new_maybe_sync(HashMap::new()),
         }
     }
 
-    pub async fn run(&mut self) {
-        self.client.write().connect().await.unwrap();
+    fn replace_devices(&mut self, list: Vec<Device>) {
+        let mut devices = self.devices.write();
+        let mut keys = self.device_keys.write();
+        devices.clear();
+        keys.clear();
 
-        let list = (self.client)().get_device_list().await.unwrap();
-        for d in list {
-            self.devices.write().insert(d);
+        for device in list {
+            let idx = devices.insert(device.clone());
+            keys.insert(device, idx);
         }
+    }
 
-        let mut stream = (self.client)().subscribe_events().await.unwrap();
-        while let Some(evt) = stream.next().await {
+    pub async fn run(&mut self) {
+        let (device_list_stream, event_stream) = {
+            let mut client = self.client.write();
+            client.connect().await.unwrap();
+
+            let list = client.get_device_list().await.unwrap();
+            let device_list_stream = client.subscribe_device_list().await.unwrap();
+            let event_stream = client.subscribe_events().await.unwrap();
+            drop(client);
+            self.replace_devices(list);
+
+            (device_list_stream, event_stream)
+        };
+
+        let mut devices_signal = self.devices.clone();
+        let mut device_keys = self.device_keys.clone();
+        tokio::spawn(async move {
+            let mut device_list_stream = device_list_stream;
+            while let Some(update) = device_list_stream.next().await {
+                match update {
+                    Ok(list) => {
+                        tracing::debug!("Device list update: {} devices", list.len());
+                        let mut devices = devices_signal.write();
+                        let mut keys = device_keys.write();
+                        devices.clear();
+                        keys.clear();
+                        for device in list {
+                            let idx = devices.insert(device.clone());
+                            keys.insert(device, idx);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Device list stream error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut event_stream = event_stream;
+        while let Some(evt) = event_stream.next().await {
             let evt = evt.unwrap().into();
-            match &evt {
-                oe::Event::DeviceEvent(de) => match de {
-                    oe::DeviceEvent(device, kind) => match kind {
-                        oe::DeviceEventKind::ConnectEvent => {
-                            self.device_keys.write().insert(
-                                device.clone(),
-                                self.devices.write().insert(device.clone()),
-                            );
-                        }
-                        oe::DeviceEventKind::DisconnectEvent => {
-                            if let Some(device_key) = self.device_keys.write().remove(device) {
-                                self.devices.write().remove(device_key);
-                            }
-                        }
-                        _ => {}
-                    },
-                },
+            tracing::debug!("Hub event: {:?}", evt);
+            if let oe::Event::DeviceEvent(oe::DeviceEvent(
+                device,
+                oe::DeviceEventKind::TrackingEvent(tracking),
+            )) = &evt
+            {
+                let _ = self.tracking_events.send((device.clone(), *tracking));
             }
             self.latest_event.set(Some(evt));
         }
@@ -60,5 +97,9 @@ impl HubContext {
 
     pub fn device_key(&self, device: &Device) -> Option<usize> {
         self.device_keys.peek().get(device).cloned()
+    }
+
+    pub fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {
+        self.tracking_events.subscribe()
     }
 }

@@ -79,8 +79,8 @@ impl From<common::device::Transport> for proto::Transport {
     fn from(t: common::device::Transport) -> Self {
         match t {
             common::device::Transport::Usb => Self::Usb,
-            common::device::Transport::UsbHub => Self::UsbHub,
-            common::device::Transport::UdpHub => Self::Udp,
+            common::device::Transport::UsbMux => Self::UsbMux,
+            common::device::Transport::UdpMux => Self::UdpMux,
         }
     }
 }
@@ -88,8 +88,8 @@ impl From<proto::Transport> for common::device::Transport {
     fn from(t: proto::Transport) -> Self {
         match t {
             proto::Transport::Usb => common::device::Transport::Usb,
-            proto::Transport::UsbHub => common::device::Transport::UsbHub,
-            proto::Transport::Udp => common::device::Transport::UdpHub,
+            proto::Transport::UsbMux => common::device::Transport::UsbMux,
+            proto::Transport::UdpMux => common::device::Transport::UdpMux,
         }
     }
 }
@@ -142,9 +142,9 @@ impl From<common::events::Event> for proto::Event {
                             proto::device_event::TrackingEvent {
                                 timestamp: e.timestamp,
                                 aimpoint: Some(proto::Vector2::from(e.aimpoint)),
-                                pose: e.pose.map(|p| proto::Pose {
-                                    rotation: Some(proto::Matrix3x3::from(p.rotation)),
-                                    translation: Some(proto::Matrix3x1::from(p.translation)),
+                                pose: Some(proto::Pose {
+                                    rotation: Some(proto::Matrix3x3::from(e.pose.rotation)),
+                                    translation: Some(proto::Matrix3x1::from(e.pose.translation)),
                                 }),
                                 distance: e.distance,
                                 screen_id: e.screen_id,
@@ -216,10 +216,13 @@ impl From<proto::Event> for common::events::Event {
                 common::events::DeviceEventKind::TrackingEvent(common::events::TrackingEvent {
                     timestamp: e.timestamp,
                     aimpoint: e.aimpoint.expect("aimpoint").into(),
-                    pose: e.pose.map(|p| common::events::Pose {
-                        rotation: p.rotation.expect("rotation").into(),
-                        translation: p.translation.expect("translation").into(),
-                    }),
+                    pose: {
+                        let p = e.pose.expect("pose");
+                        common::events::Pose {
+                            rotation: p.rotation.expect("rotation").into(),
+                            translation: p.translation.expect("translation").into(),
+                        }
+                    },
                     distance: e.distance,
                     screen_id: e.screen_id,
                 })
