@@ -17,6 +17,3 @@ BOARD = "dongle"
 [patch.crates-io]
 minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
 minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
-
-[patch."https://github.com/odysseyarm/protodonge-rs"]
-protodongers = { path = "../../protodonge-rs" }

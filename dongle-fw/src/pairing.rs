@@ -16,11 +16,16 @@ pub fn is_active() -> bool {
 
 pub fn enter() {
     PAIRING.store(true, Ordering::Relaxed);
+    // Reset pairing capture flag for new pairing session
+    crate::ble::central::reset_pairing_capture();
     // Wake any waiters
     PAIRING_DONE.signal(());
     // Signal scan to restart
     SCAN_RESTART_COUNTER.fetch_add(1, Ordering::Relaxed);
     SCAN_RESTART.signal(());
+    // Signal central loop to restart immediately
+    defmt::info!("Signaling RESTART_CENTRAL from pairing::enter()");
+    crate::ble::central::RESTART_CENTRAL.signal(());
 }
 
 pub fn cancel() {

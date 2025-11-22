@@ -6,6 +6,8 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 
 pub mod central;
+pub mod device_task;
+pub mod pairing_scanner;
 pub mod security;
 
 pub use central::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager};

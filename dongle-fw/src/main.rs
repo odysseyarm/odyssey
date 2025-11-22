@@ -216,8 +216,7 @@ async fn main(mut spawner: Spawner) {
         p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
         p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
     );
-    // Match example scanner minimal memory; adjust if needed by features
-    static SDC_MEM: StaticCell<sdc::Mem<5408>> = StaticCell::new();
+    static SDC_MEM: StaticCell<sdc::Mem<22624>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(sdc::Mem::new());
     use embassy_nrf::mode::Async as RngAsync;
     static RNG: StaticCell<rng::Rng<'static, RngAsync>> = StaticCell::new();
@@ -238,13 +237,13 @@ async fn main(mut spawner: Spawner) {
         .unwrap()
         .support_le_2m_phy()
         .unwrap()
-        .central_count(1)
+        .central_count(MAX_DEVICES as u8)
         .unwrap()
         .buffer_cfg(
             DefaultPacketPool::MTU as u16,
             DefaultPacketPool::MTU as u16,
-            3,
-            3,
+            (MAX_DEVICES * 3) as u8, // TX buffers
+            (MAX_DEVICES * 3) as u8, // RX buffers
         )
         .unwrap()
         .build(sdc_p, rng, mpsl, &mut *sdc_mem)
@@ -252,8 +251,8 @@ async fn main(mut spawner: Spawner) {
 
     // Host resources and stack
     info!("trouble-host initialization");
-    // Need 2 L2CAP channels per device (control + data), so 16 channels for 8 devices
-    static RESOURCES: StaticCell<trouble_host::HostResources<Pool, { MAX_DEVICES }, 16>> =
+    // Reduced L2CAP channel count to save RAM (was 16)
+    static RESOURCES: StaticCell<trouble_host::HostResources<Pool, { MAX_DEVICES }, 8>> =
         StaticCell::new();
     let resources = RESOURCES.init(trouble_host::HostResources::new());
     static STACK_CELL: StaticCell<trouble_host::Stack<'static, Controller, Pool>> =
@@ -341,8 +340,12 @@ async fn main(mut spawner: Spawner) {
         settings,
         active_connections,
         stack,
-        host.central,
+        spawner,
     ));
+
+    // Start pairing scanner (uses its own Central instance, finds devices and adds to targets)
+    spawner.must_spawn(ble::pairing_scanner::pairing_scanner_task(stack, settings));
+
     spawner.must_spawn(bond_storage_task(settings));
 }
 
@@ -457,16 +460,16 @@ async fn ble_task(
     settings: &'static Settings,
     active_connections: &'static ActiveConnections,
     stack: &'static trouble_host::Stack<'static, Controller, Pool>,
-    central: trouble_host::prelude::Central<'static, Controller, Pool>,
+    spawner: embassy_executor::Spawner,
 ) -> ! {
     defmt::info!("ble_task: Creating BleManager");
-    let mut ble_manager = BleManager::<Controller, Pool>::new(
+    let mut ble_manager = BleManager::new(
         device_packets,
         device_queues,
         settings,
         active_connections,
         stack,
-        central,
+        spawner,
     );
     defmt::info!("ble_task: Starting BleManager run loop");
     ble_manager.run().await
@@ -486,7 +489,9 @@ async fn usb_rx_task(
         let mut cfg = crate::usb::usb_config_receiver();
         loop {
             if let Some(v) = cfg.try_get() {
-                if v { break; }
+                if v {
+                    break;
+                }
             }
             // wait for any value, then loop to check
             let _ = cfg.get().await;
@@ -554,7 +559,11 @@ async fn host_responses_tx_task(
         // Wait for configuration (watch, multi-consumer)
         let mut cfg = crate::usb::usb_config_receiver();
         loop {
-            if let Some(v) = cfg.try_get() { if v { break; } }
+            if let Some(v) = cfg.try_get() {
+                if v {
+                    break;
+                }
+            }
             let _ = cfg.get().await;
         }
         info!("USB TX host task: configured");
@@ -570,7 +579,11 @@ async fn host_responses_tx_task(
             {
                 Ok(msg) => msg,
                 Err(_) => {
-                    if let Some(v) = cfg.try_get() { if !v { break; } }
+                    if let Some(v) = cfg.try_get() {
+                        if !v {
+                            break;
+                        }
+                    }
                     continue;
                 }
             };
@@ -603,7 +616,11 @@ async fn device_packets_tx_task(
         // Wait for configuration (watch, multi-consumer)
         let mut cfg = crate::usb::usb_config_receiver();
         loop {
-            if let Some(v) = cfg.try_get() { if v { break; } }
+            if let Some(v) = cfg.try_get() {
+                if v {
+                    break;
+                }
+            }
             let _ = cfg.get().await;
         }
         info!("USB TX data task: configured");
@@ -618,7 +635,11 @@ async fn device_packets_tx_task(
             {
                 Ok(pkt) => pkt,
                 Err(_) => {
-                    if let Some(v) = cfg.try_get() { if !v { break; } }
+                    if let Some(v) = cfg.try_get() {
+                        if !v {
+                            break;
+                        }
+                    }
                     continue;
                 }
             };

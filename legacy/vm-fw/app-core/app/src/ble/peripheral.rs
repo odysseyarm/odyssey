@@ -1,5 +1,5 @@
 use embassy_futures::join::join;
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
@@ -131,7 +131,8 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
     loop {
         if let Err(e) = runner.run().await {
             let e = defmt::Debug2Format(&e);
-            panic!("[ble_task] error: {:?}", e);
+            defmt::error!("[ble_task] error: {:?}", e);
+            // Don't panic, just continue and retry
         }
     }
 }
@@ -398,7 +399,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     defmt::info!("[custom_task] Spawning 4 independent tasks: control_tx, control_rx, data_tx, data_rx");
 
     // Run 4 independent tasks - one for each direction on each channel
-    use embassy_futures::select::{Either4, select4};
+    use embassy_futures::select::{select4, Either4};
     match select4(
         control_tx_task(stack, control_writer, l2cap_channels.control_tx),
         control_rx_task(stack, control_reader, l2cap_channels.control_rx),

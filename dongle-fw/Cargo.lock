@@ -1779,6 +1779,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
+source = "git+https://github.com/odysseyarm/protodonge-rs.git#9b769d1099fc77caaed28bbf16a6968dde19a6f3"
 dependencies = [
  "ats_common",
  "defmt 1.0.1",
