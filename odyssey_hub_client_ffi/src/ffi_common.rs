@@ -80,7 +80,7 @@ type DeviceId = u64;
 #[derive(Clone, Copy)]
 pub struct AccessoryInfo {
     pub name: *const c_char, // C string
-    pub ty: odyssey_hub_common::AccessoryType,
+    pub ty: odyssey_hub_common::accessory::AccessoryType,
     pub assignment: DeviceId,
 }
 
@@ -380,8 +380,8 @@ impl From<ats_usb::packets::vm::Packet> for PacketEvent {
     }
 }
 
-impl From<common::AccessoryInfo> for AccessoryInfo {
-    fn from(info: common::AccessoryInfo) -> Self {
+impl From<common::accessory::AccessoryInfo> for AccessoryInfo {
+    fn from(info: common::accessory::AccessoryInfo) -> Self {
         AccessoryInfo {
             name: std::ffi::CString::new(info.name).unwrap().into_raw(),
             ty: info.ty,
