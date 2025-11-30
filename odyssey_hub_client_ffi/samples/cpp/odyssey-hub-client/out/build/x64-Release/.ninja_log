@@ -1,6 +1,7 @@
-# ninja log v5
-3	435	7728750161970331	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	631291c54d5c7bf2
-3	382	7728750501005872	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	631291c54d5c7bf2
-4	276	7728751931755707	odyssey-hub-client.exe	f2948d9a9838799f
-5	403	7728771778711165	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	631291c54d5c7bf2
-404	589	7728771779778139	odyssey-hub-client.exe	f2948d9a9838799f
+# ninja log v6
+5	506	7859312899782709	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	f20afc035eedfa42
+507	835	7859312904787002	odyssey-hub-client.exe	992ecfaeb7e6445c
+3	611	7861911717787855	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	f20afc035eedfa42
+611	984	7861911723869178	odyssey-hub-client.exe	992ecfaeb7e6445c
+4	579	7861913534819177	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	f20afc035eedfa42
+580	754	7861913540580247	odyssey-hub-client.exe	992ecfaeb7e6445c

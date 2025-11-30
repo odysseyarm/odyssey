@@ -39,7 +39,7 @@
 				{
 					"directoryIndex" : 0,
 					"id" : "odyssey-hub-client::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-odyssey-hub-client-RelWithDebInfo-bce7690dcb611cd287f7.json",
+					"jsonFile" : "target-odyssey-hub-client-RelWithDebInfo-4decb9bf9ee50583cb95.json",
 					"name" : "odyssey-hub-client",
 					"projectIndex" : 0
 				}
@@ -55,6 +55,6 @@
 	"version" : 
 	{
 		"major" : 2,
-		"minor" : 7
+		"minor" : 8
 	}
 }
