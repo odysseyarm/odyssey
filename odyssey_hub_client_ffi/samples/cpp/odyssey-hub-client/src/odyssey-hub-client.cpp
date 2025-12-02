@@ -35,8 +35,8 @@ struct DeviceData {
         : history(capacity) {}
 };
 
-std::mutex                                    g_mutex;
-std::unordered_map<uint64_t, DeviceData*>     g_devices;
+std::mutex                                g_mutex;
+std::unordered_map<uint64_t, DeviceData*> g_devices;
 
 // Forward declarations
 
@@ -46,6 +46,7 @@ void startStreams(std::shared_ptr<ohc::Handle> handle,
 void streamCallback(ohc::UserObj, ohc::ClientError error, ohc::Event reply);
 void handleDeviceEvent(const ohc::DeviceEvent &event);
 void requestShotDelay(uint64_t uuid, const ohc::Device &device);
+void deviceListCallback(ohc::UserObj, ohc::ClientError, ohc::Device*, uintptr_t);
 
 // Connection handling
 
@@ -66,6 +67,17 @@ void clientConnectCallback(ohc::UserObj userdata, ohc::ClientError error) {
     if (error == ohc::ClientError::NONE) {
         std::cout << "Connected to hub" << std::endl;
         startStreams(state->handle, state->client);
+
+        std::thread([]{
+            if (!g_state) return;
+            ohc::client_get_device_list(
+                g_state->handle.get(),
+                g_state->client.get(),
+                ohc::UserObj{nullptr},
+                deviceListCallback
+            );
+        }).detach();
+
     } else {
         switch (error) {
         case ohc::ClientError::CONNECT_FAILURE:
@@ -84,11 +96,12 @@ void startStreams(std::shared_ptr<ohc::Handle> handle,
     ohc::client_start_stream(
         handle.get(),
         client.get(),
-        ohc::UserObj{nullptr},   // no userdata needed here
+        ohc::UserObj{nullptr}, // no userdata needed here
         streamCallback
     );
 }
 
+// Shot delay query
 void requestShotDelay(uint64_t uuid, const ohc::Device &device) {
     if (!g_state) return;
 
@@ -124,8 +137,29 @@ void requestShotDelay(uint64_t uuid, const ohc::Device &device) {
     }).detach();
 }
 
-// Streaming and events
+// Initial device list callback
+void deviceListCallback(ohc::UserObj, ohc::ClientError error,
+                        ohc::Device* list, uintptr_t count) {
+    if (error != ohc::ClientError::NONE) return;
 
+    std::lock_guard<std::mutex> lk(g_mutex);
+
+    for (uintptr_t i = 0; i < count; ++i) {
+        auto &d = list[i];
+        uint64_t uuid = ohc::device_uuid(d);
+
+        if (!g_devices.count(uuid)) {
+            std::cout << "Device 0x" << std::hex << uuid << std::dec
+                      << " already connected at startup\n";
+
+            auto *dd = new DeviceData(1000);
+            g_devices[uuid] = dd;
+            requestShotDelay(uuid, d);
+        }
+    }
+}
+
+// Streaming and events
 void streamCallback(ohc::UserObj, ohc::ClientError error, ohc::Event reply) {
     if (error != ohc::ClientError::NONE) {
         end.store(true);
@@ -149,7 +183,7 @@ void handleDeviceEvent(const ohc::DeviceEvent &ev) {
                   << ": Connected" << std::endl;
 
         if (!g_devices.count(uuid)) {
-            auto *dd = new DeviceData(1000); // Allocate once per device
+            auto *dd = new DeviceData(1000); // allocate once per device
             g_devices[uuid] = dd;
             requestShotDelay(uuid, ev.device);
         }
@@ -168,7 +202,7 @@ void handleDeviceEvent(const ohc::DeviceEvent &ev) {
     switch (ev.kind.tag) {
     case ohc::DeviceEventKind::Tag::DISCONNECT_EVENT:
         std::cout << "Disconnected" << std::endl;
-        // you could delete dd here if you want to free on disconnect, but in real code you probably will not use new and delete, and consider lock-free queues
+        // optional: delete dd and erase from map here
         break;
 
     case ohc::DeviceEventKind::Tag::TRACKING_EVENT: {
@@ -215,16 +249,28 @@ void handleDeviceEvent(const ohc::DeviceEvent &ev) {
         std::cout << "Shot delay updated: " << dd->shotDelayMS << " ms\n";
         break;
 
-    case ohc::DeviceEventKind::Tag::ACCELEROMETER_EVENT:
+    case ohc::DeviceEventKind::Tag::ACCELEROMETER_EVENT: {
+        auto& a = ev.kind.ACCELEROMETER_EVENT._0;
+        std::cout << "Accel xyz: "
+            << a.accel.x << " "
+            << a.accel.y << " "
+            << a.accel.z << ", "
+            << "Gyro xyz: "
+            << a.gyro.x << " "
+            << a.gyro.y << " "
+            << a.gyro.z << std::endl;
+        break;
+    }
+
     default:
-        // ignore
+        std::cout << "Ignoring" << std::endl;
         break;
     }
 }
 
 int main() {
     ClientState state;
-    g_state = &state; // used by requestShotDelay
+    g_state = &state; // used by requestShotDelay / device list
 
     std::thread connectThread(handleConnectEvent, &state);
     connectThread.detach();
