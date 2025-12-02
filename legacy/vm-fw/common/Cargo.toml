@@ -1,0 +1,71 @@
+[package]
+name = "common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Core embassy dependencies
+embassy-sync = "0.7.2"
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-usb = { version = "0.5.1", default-features = false }
+embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
+embassy-embedded-hal = "0.5.0"
+embassy-futures = "0.1.2"
+embassy-nrf = "0.8.0"  # Needed for USB and common types
+
+# Hardware abstraction
+embedded-hal-async = "1.0.0"
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+embedded-storage = "0.3.1"
+
+# Utilities
+once_cell = { version = "1.21.3", default-features = false }
+static_cell = "2.1.1"
+bytemuck = "1.24.0"
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+futures-util = { version = "0.3", default-features = false, features = ["async-await"] }
+postcard = { version = "1.1.3", features = ["use-defmt"] }
+heapless = "0.9.1"
+
+# Storage and serialization
+cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
+minicbor = { version = "2", features = ["derive"] }
+minicbor-serde = { version = "0.6" }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+
+# Device-specific
+paj7025 = { path = "../../paj7025", features = ["nrf"] }
+protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false }
+
+# Debug
+defmt-rtt = "1.0.0"
+defmt = "1.0.1"
+cortex-m-rt = "0.7.5"
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+panic-probe = "1.0.0"
+
+# Other
+nrf-pac = "0.1.0"
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", default-features = false }
+
+[features]
+default = ["defmt"]
+defmt = [
+    "embassy-usb/defmt",
+    "embassy-embedded-hal/defmt",
+    "panic-probe/print-defmt",
+    "embassy-futures/defmt",
+    "embassy-executor/defmt",
+    "embassy-time/defmt",
+    "postcard/defmt"
+]
+
+# https://github.com/dustinblackman/cargo-run-bin
+[package.metadata.bin]
+probe-rs-tools = { version = "0.27.0", locked = true, bins = ["probe-rs"] }
+
+[patch.crates-io]
+minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }

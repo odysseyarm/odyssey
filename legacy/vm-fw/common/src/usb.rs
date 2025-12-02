@@ -1,14 +1,54 @@
+use core::cmp::max;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use defmt::info;
 use embassy_nrf::Peri;
+use embassy_nrf::interrupt::typelevel::Binding;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
 use static_cell::{ConstStaticCell, StaticCell};
 
-use crate::Irqs;
+pub struct UsbConfigHandle {
+    signal: &'static Signal<ThreadModeRawMutex, bool>,
+    flag: &'static AtomicBool,
+}
+
+impl Copy for UsbConfigHandle {}
+impl Clone for UsbConfigHandle {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl UsbConfigHandle {
+    fn new(signal: &'static Signal<ThreadModeRawMutex, bool>, flag: &'static AtomicBool) -> Self {
+        Self { signal, flag }
+    }
+
+    pub fn is_configured(&self) -> bool {
+        self.flag.load(Ordering::Acquire)
+    }
+
+    pub async fn wait_until_configured(&self) {
+        if self.is_configured() {
+            return;
+        }
+        loop {
+            let configured = self.signal.wait().await;
+            if configured {
+                return;
+            }
+        }
+    }
+}
+
+use crate::utils::static_byte_buffer;
 
 pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
 pub type StaticUsbDevice = UsbDevice<'static, UsbDriver>;
@@ -23,16 +63,22 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
 }
 
-pub fn usb_device(
+static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
+
+pub fn usb_device<Irqs>(
     usbd: Peri<'static, USBD>,
+    irqs: Irqs,
+    vbus: HardwareVbusDetect,
 ) -> (
     StaticUsbDevice,
     Endpoint<'static, In>,
     Endpoint<'static, Out>,
-    &'static Signal<ThreadModeRawMutex, bool>,
-) {
-    let vbus = HardwareVbusDetect::new(Irqs);
-    let driver = UsbDriver::new(usbd, Irqs, vbus);
+    UsbConfigHandle,
+)
+where
+    Irqs: Binding<embassy_nrf::interrupt::typelevel::USBD, embassy_nrf::usb::InterruptHandler<USBD>> + Copy + 'static,
+{
+    let driver = UsbDriver::new(usbd, irqs, vbus);
 
     let mut config = UsbConfig::new(VID, PID);
     config.manufacturer = Some("Odyssey Arm");
@@ -74,9 +120,10 @@ pub fn usb_device(
 
     static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> = ConstStaticCell::new(Signal::new());
     let signal = SIGNAL.take();
+    USB_CONFIGURED.store(false, Ordering::Release);
 
     static HANDLER: StaticCell<MyHandler> = StaticCell::new();
-    let handler = HANDLER.init(MyHandler::new(signal));
+    let handler = HANDLER.init(MyHandler::new(signal, &USB_CONFIGURED));
 
     builder.handler(&mut *handler);
 
@@ -90,21 +137,64 @@ pub fn usb_device(
     drop(function);
 
     let usb = builder.build();
-    (usb, ep_in, ep_out, signal)
+    let config_handle = UsbConfigHandle::new(signal, &USB_CONFIGURED);
+    (usb, ep_in, ep_out, config_handle)
 }
 
 struct MyHandler {
     signal: &'static Signal<ThreadModeRawMutex, bool>,
+    flag: &'static AtomicBool,
 }
 
 impl MyHandler {
-    pub fn new(signal: &'static Signal<ThreadModeRawMutex, bool>) -> Self {
-        Self { signal }
+    pub fn new(signal: &'static Signal<ThreadModeRawMutex, bool>, flag: &'static AtomicBool) -> Self {
+        Self { signal, flag }
     }
 }
 
 impl embassy_usb::Handler for MyHandler {
     fn configured(&mut self, configured: bool) {
+        self.flag.store(configured, Ordering::Release);
+        info!("USB configured event: {}", configured);
         self.signal.signal(configured);
     }
+}
+
+pub async fn read_transfer<'d>(ep: &mut Endpoint<'d, Out>, buf: &mut [u8]) -> Result<usize, EndpointError> {
+    let max_packet = max(ep.info().max_packet_size, 1) as usize;
+    let mut offset = 0;
+
+    loop {
+        if offset == buf.len() {
+            return Err(EndpointError::BufferOverflow);
+        }
+        let n = ep.read(&mut buf[offset..]).await?;
+        offset += n;
+
+        if n < max_packet {
+            break;
+        }
+    }
+
+    Ok(offset)
+}
+
+pub async fn write_transfer<'d>(
+    ep: &mut Endpoint<'d, In>,
+    payload: &[u8],
+    send_zlp: bool,
+) -> Result<(), EndpointError> {
+    let max_packet = max(ep.info().max_packet_size, 1) as usize;
+
+    for chunk in payload.chunks(max_packet) {
+        if !chunk.is_empty() {
+            ep.write(chunk).await?;
+        }
+    }
+
+    if send_zlp && payload.len() % max_packet == 0 {
+        ep.write(&[]).await?;
+    }
+
+    Ok(())
 }

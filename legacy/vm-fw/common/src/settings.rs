@@ -32,8 +32,6 @@ use paj7025::Paj7025Error;
 use protodongers::wire::{CameraCalibrationParams, StereoCalibrationParams};
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
-#[cfg(context = "atslite1")]
-use trouble_host::prelude::*;
 
 use crate::Paj;
 
@@ -43,7 +41,6 @@ static NODE_PAJS: StorageListNode<PajsSettings> = StorageListNode::new("settings
 static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("settings/general");
 static NODE_TRANSIENT: StorageListNode<TransientSettings> = StorageListNode::new("settings/transient");
 
-#[cfg(context = "atslite1")]
 static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
 
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -56,7 +53,6 @@ static SETTINGS_PTR: core::sync::atomic::AtomicPtr<Settings> =
 
 /// Get a reference to settings. Only safe to call after init_settings has been called.
 /// This is primarily for BLE peripheral to access settings.
-#[cfg(context = "atslite1")]
 pub unsafe fn get_settings() -> &'static mut Settings {
     let ptr = SETTINGS_PTR.load(core::sync::atomic::Ordering::Acquire);
     unsafe { &mut *ptr }
@@ -176,7 +172,6 @@ pub async fn init_settings(
         .await
         .unwrap();
 
-    #[cfg(context = "atslite1")]
     let h_ble_bond = NODE_BLE_BOND
         .attach_with_default(&LIST, BleBondSettings::default)
         .await
@@ -190,7 +185,6 @@ pub async fn init_settings(
             g
         },
         transient: h_transient.load(),
-        #[cfg(context = "atslite1")]
         ble_bond: h_ble_bond.load(),
     };
 
@@ -204,7 +198,6 @@ pub struct Settings {
     pub pajs: PajsSettings,
     pub general: GeneralSettings,
     pub transient: TransientSettings,
-    #[cfg(context = "atslite1")]
     pub ble_bond: BleBondSettings,
 }
 
@@ -235,7 +228,6 @@ impl Settings {
         settings_flush_now();
     }
 
-    #[cfg(context = "atslite1")]
     pub fn ble_bond_write(&self) {
         embassy_futures::block_on(async {
             let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
@@ -245,7 +237,6 @@ impl Settings {
     }
 
     #[allow(dead_code)]
-    #[cfg(context = "atslite1")]
     pub fn ble_bond_clear(&mut self) {
         self.ble_bond = BleBondSettings::default();
         embassy_futures::block_on(async {
@@ -598,7 +589,6 @@ impl Default for TransientSettings {
     }
 }
 
-#[cfg(context = "atslite1")]
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct BleBondSettings {
     #[n(0)]
@@ -613,7 +603,6 @@ pub struct BleBondSettings {
     pub irk: Option<[u8; 16]>,
 }
 
-#[cfg(context = "atslite1")]
 impl Default for BleBondSettings {
     fn default() -> Self {
         Self {
@@ -626,42 +615,43 @@ impl Default for BleBondSettings {
     }
 }
 
-#[cfg(context = "atslite1")]
 impl BleBondSettings {
-    pub fn from_bond_info(info: &BondInformation) -> Self {
+    pub fn from_bond_info(info: &trouble_host::prelude::BondInformation) -> Self {
         let mut bd_addr = [0u8; 6];
         bd_addr.copy_from_slice(info.identity.bd_addr.raw());
         Self {
             bd_addr,
             ltk: info.ltk.to_le_bytes(),
             security_level: match info.security_level {
-                SecurityLevel::NoEncryption => 0,
-                SecurityLevel::Encrypted => 1,
-                SecurityLevel::EncryptedAuthenticated => 2,
+                trouble_host::prelude::SecurityLevel::NoEncryption => 0,
+                trouble_host::prelude::SecurityLevel::Encrypted => 1,
+                trouble_host::prelude::SecurityLevel::EncryptedAuthenticated => 2,
             },
             is_bonded: info.is_bonded,
             irk: info.identity.irk.map(|irk| irk.to_le_bytes()),
         }
     }
 
-    pub fn to_bond_info(&self) -> Option<BondInformation> {
+    pub fn to_bond_info(&self) -> Option<trouble_host::prelude::BondInformation> {
         if !self.is_bonded {
             return None;
         }
 
-        Some(BondInformation {
-            identity: Identity {
-                bd_addr: BdAddr::new(self.bd_addr),
-                irk: self.irk.map(|irk| IdentityResolvingKey::from_le_bytes(irk)),
+        Some(trouble_host::prelude::BondInformation {
+            identity: trouble_host::prelude::Identity {
+                bd_addr: trouble_host::prelude::BdAddr::new(self.bd_addr),
+                irk: self
+                    .irk
+                    .map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
             },
             security_level: match self.security_level {
-                0 => SecurityLevel::NoEncryption,
-                1 => SecurityLevel::Encrypted,
-                2 => SecurityLevel::EncryptedAuthenticated,
-                _ => SecurityLevel::NoEncryption,
+                0 => trouble_host::prelude::SecurityLevel::NoEncryption,
+                1 => trouble_host::prelude::SecurityLevel::Encrypted,
+                2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
+                _ => trouble_host::prelude::SecurityLevel::NoEncryption,
             },
             is_bonded: self.is_bonded,
-            ltk: LongTermKey::from_le_bytes(self.ltk),
+            ltk: trouble_host::prelude::LongTermKey::from_le_bytes(self.ltk),
         })
     }
 }

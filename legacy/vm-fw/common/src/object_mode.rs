@@ -4,88 +4,53 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use defmt::Format;
 use embassy_futures::join::join4;
 use embassy_futures::select::{Either, Either3, select, select3};
-use embassy_nrf::Peri;
 use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::watch::Watch;
-use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
+use embassy_usb::driver::EndpointError;
 use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
-use protodongers::{ConfigKind, Packet, PacketData as P, PacketType, PropKind, Props, ReadRegisterResponse, wire};
 
 use crate::fodtrigger::FodTrigger;
-#[cfg(context = "vm")]
-use crate::imu::bmi::{Imu, ImuInterrupt};
-#[cfg(context = "atslite1")]
-use crate::imu::icm::{Imu, ImuInterrupt};
+use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet};
+use crate::protodongers::{
+    self, ConfigKind, Packet, PacketData, PacketType, PropKind, Props, ReadRegisterResponse, wire,
+};
 use crate::settings::{PajsSettings, Settings};
-use crate::utils::device_id;
-use crate::{CommonContext, Paj, PajGroup};
+use crate::usb::{self, UsbConfigHandle};
+use crate::utils::impl_from;
+use crate::{Paj, PajGroup};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
-#[cfg(context = "vm")]
-#[allow(unreachable_code)]
-pub async fn object_mode<'d, const N: usize, T: embassy_nrf::timer::Instance>(
-    mut ctx: CommonContext<N>,
-    timer: Peri<'d, T>,
-) -> Result<CommonContext<N>, Paj7025Error<DeviceError<Error, Infallible>>> {
-    defmt::info!("Entering Object Mode");
-    let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
-    let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
-    let pkt_channel = Channel::<Packet, 64>::new();
-    let stream_infos = StreamInfos::new();
-    let exit = Watch::<_, _, 4>::new();
-    let exit0 = exit.receiver().unwrap();
-    let _exit1 = exit.receiver().unwrap();
-    let _exit2 = exit.receiver().unwrap();
-    let _exit3 = exit.receiver().unwrap();
-
-    // Also handle BLE L2CAP packets using the same request handler
-    let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
-
-    let a = usb_rcv_loop(
-        ctx.paj7025r2_group.0,
-        ctx.paj7025r3_group.0,
-        &stream_infos,
-        pkt_channel.sender(),
-        &mut pkt_rcv,
-        ctx.settings,
-        &l2cap_channels,
-    );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &l2cap_channels);
-    let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
-    let d = obj_loop(
-        ctx.paj7025r2_group,
-        ctx.paj7025r3_group,
-        ctx.fod_set_ch,
-        ctx.fod_clr_ch,
-        timer,
-        pkt_channel.sender(),
-        &stream_infos,
-    );
-    // TODO turn these into tasks
-    let r = join4(a, b, c, d).await;
-
-    r.0?
-    // ctx.paj = paj.into_inner().as_dynamic_mode();
-    // ctx
+/// Context structure for object_mode - platform-agnostic
+pub struct ObjectModeContext<'d, P: Platform> {
+    pub paj7025r2_group: PajGroup<'d>,
+    pub paj7025r3_group: PajGroup<'d>,
+    pub fod_set_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
+    pub fod_clr_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
+    pub timer: embassy_nrf::Peri<'d, P::Timer>,
+    pub imu: P::Imu,
+    pub imu_int: P::ImuInterrupt,
+    pub usb_snd: Endpoint<'static, In>,
+    pub usb_rcv: Endpoint<'static, Out>,
+    pub usb_configured: UsbConfigHandle,
+    pub settings: &'d mut Settings,
+    pub l2cap_channels: P::L2capChannels,
 }
 
-#[cfg(context = "atslite1")]
 #[allow(unreachable_code)]
-pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
-    mut ctx: CommonContext,
-    timer: Peri<'d, T>,
-) -> Result<CommonContext, Paj7025Error<DeviceError<Error, Infallible>>> {
-    defmt::info!("Entering Object Mode");
+pub async fn object_mode<'d, P: Platform>(
+    mut ctx: ObjectModeContext<'d, P>,
+) -> Result<ObjectModeContext<'d, P>, Paj7025Error<DeviceError<Error, Infallible>>> {
+    defmt::info!("Entering Object Mode on {}", P::NAME);
     let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
     let pkt_channel = Channel::<Packet, 64>::new();
@@ -96,35 +61,37 @@ pub async fn object_mode<'d, T: embassy_nrf::timer::Instance>(
     let _exit2 = exit.receiver().unwrap();
     let _exit3 = exit.receiver().unwrap();
 
-    // Also handle BLE L2CAP packets using the same request handler
-    let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
-
     let a = usb_rcv_loop(
         ctx.paj7025r2_group.0,
         ctx.paj7025r3_group.0,
         &stream_infos,
         pkt_channel.sender(),
         &mut pkt_rcv,
+        ctx.usb_configured,
         ctx.settings,
-        &l2cap_channels,
+        &ctx.l2cap_channels,
+        P::device_id(),
     );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &l2cap_channels);
-    let c = imu_loop(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &ctx.l2cap_channels);
+    let c = imu_loop::<P>(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
         ctx.paj7025r2_group,
         ctx.paj7025r3_group,
         ctx.fod_set_ch,
         ctx.fod_clr_ch,
-        timer,
+        ctx.timer,
         pkt_channel.sender(),
         &stream_infos,
     );
     // TODO turn these into tasks
     let r = join4(a, b, c, d).await;
 
-    r.0?
-    // ctx.paj = paj.into_inner().as_dynamic_mode();
-    // ctx
+    // All tasks return Result<Infallible, Error>, meaning they never succeed
+    // If any task returns, it's because of an error
+    match r.0 {
+        Ok(_) => unreachable!("usb_rcv_loop should never return Ok"),
+        Err(e) => Err(e),
+    }
 }
 
 const MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
@@ -146,15 +113,17 @@ enum PacketSource {
     Ble,
 }
 
-async fn usb_rcv_loop(
+async fn usb_rcv_loop<L: L2capChannels>(
     paj7025r2: &AsyncMutex<NoopRawMutex, Paj>,
     paj7025r3: &AsyncMutex<NoopRawMutex, Paj>,
     stream_infos: &StreamInfos,
     pkt_snd: Sender<'_, Packet, 64>,
     pkt_rcv: &mut PacketReader<'_>,
+    usb_configured: UsbConfigHandle,
     settings: &mut Settings,
-    l2cap_channels: &crate::ble::l2cap_bridge::L2capChannels,
-) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
+    l2cap_channels: &L,
+    device_id: [u8; 8],
+) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Select between USB and BLE packets (control and data)
         // When USB is disabled, the USB future will pend forever, allowing BLE to be selected
@@ -164,8 +133,10 @@ async fn usb_rcv_loop(
                     match pkt_rcv.wait_for_packet().await {
                         Ok(pkt) => break pkt,
                         Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                            // USB disabled - pend forever to allow BLE path to be selected
-                            core::future::pending::<()>().await;
+                            defmt::info!("USB not configured; waiting for host connection...");
+                            usb_configured.wait_until_configured().await;
+                            defmt::info!("USB configured; resuming packet handling");
+                            continue;
                         }
                         Err(e) => {
                             defmt::error!("Failed to read USB packet: {}", e);
@@ -174,8 +145,8 @@ async fn usb_rcv_loop(
                     }
                 }
             },
-            l2cap_channels.control_rx.receive(),
-            l2cap_channels.data_rx.receive(),
+            l2cap_channels.control_rx().receive(),
+            l2cap_channels.data_rx().receive(),
         )
         .await
         {
@@ -196,7 +167,7 @@ async fn usb_rcv_loop(
         );
 
         let response = match pkt.data {
-            P::WriteRegister(register) => {
+            PacketData::WriteRegister(register) => {
                 let paj = match register.port {
                     protodongers::Port::Nf => paj7025r2,
                     protodongers::Port::Wf => paj7025r3,
@@ -216,13 +187,9 @@ async fn usb_rcv_loop(
                     .bank_1_sync_updated_flag()
                     .write_async(|x| x.set_value(1))
                     .await?;
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
-            P::ReadRegister(register) => {
+            PacketData::ReadRegister(register) => {
                 let paj = match register.port {
                     protodongers::Port::Nf => paj7025r2,
                     protodongers::Port::Wf => paj7025r3,
@@ -232,23 +199,19 @@ async fn usb_rcv_loop(
                 paj.read_register(register.bank, register.address, &mut data).await?;
                 Some(Packet {
                     id: pkt.id,
-                    data: P::ReadRegisterResponse(ReadRegisterResponse {
+                    data: PacketData::ReadRegisterResponse(ReadRegisterResponse {
                         bank: register.bank,
                         address: register.address,
                         data: data[0],
                     }),
                 })
             }
-            P::WriteConfig(config) => {
+            PacketData::WriteConfig(config) => {
                 let wire_config: wire::GeneralConfig = config.into();
                 settings.general.set_general_config(&wire_config);
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
-            P::ReadConfig(kind) => {
+            PacketData::ReadConfig(kind) => {
                 defmt::info!("[app] building ReadConfig response for {:?}", kind);
                 let wire_config = match kind {
                     ConfigKind::ImpactThreshold => {
@@ -267,30 +230,26 @@ async fn usb_rcv_loop(
                 };
                 Some(Packet {
                     id: pkt.id,
-                    data: P::ReadConfigResponse(wire_config.into()),
+                    data: PacketData::ReadConfigResponse(wire_config.into()),
                 })
             }
-            P::FlashSettings() => {
+            PacketData::FlashSettings() => {
                 settings.pajs =
                     PajsSettings::read_from_pajs(&mut *paj7025r2.lock().await, &mut *paj7025r3.lock().await).await?;
                 settings.write();
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
-            P::ReadProp(kind) => {
+            PacketData::ReadProp(kind) => {
                 let prop = match kind {
-                    PropKind::Uuid => Props::Uuid(device_id()[..6].try_into().unwrap()),
+                    PropKind::Uuid => Props::Uuid(device_id[..6].try_into().unwrap()),
                     PropKind::ProductId => Props::ProductId(crate::usb::PID),
                 };
                 Some(Packet {
                     id: pkt.id,
-                    data: P::ReadPropResponse(prop),
+                    data: PacketData::ReadPropResponse(prop),
                 })
             }
-            P::StreamUpdate(s) => {
+            PacketData::StreamUpdate(s) => {
                 use protodongers::StreamUpdateAction as S;
                 match s.action {
                     S::Enable => stream_infos.enable(pkt.id, s.packet_id),
@@ -299,34 +258,30 @@ async fn usb_rcv_loop(
                 }
                 Some(Packet {
                     id: pkt.id,
-                    data: P::Ack(),
+                    data: PacketData::Ack(),
                 })
             }
-            P::WriteMode(mode) => {
+            PacketData::WriteMode(mode) => {
                 settings.transient.mode = mode;
                 settings.transient_write();
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
-            P::ReadVersion() => Some(Packet {
+            PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,
-                data: P::ReadVersionResponse(protodongers::Version::new([MAJOR, MINOR, PATCH])),
+                data: PacketData::ReadVersionResponse(protodongers::Version::new([MAJOR, MINOR, PATCH])),
             }),
-            P::ObjectReportRequest() => None,
-            P::Ack() => None,
-            P::ReadConfigResponse(_) => None,
-            P::ReadPropResponse(_) => None,
-            P::ObjectReport(_) => None,
-            P::CombinedMarkersReport(_) => None,
-            P::PocMarkersReport(_) => None,
-            P::AccelReport(_) => None,
-            P::ImpactReport(_) => None,
-            P::Vendor(_, _) => None,
-            P::ReadRegisterResponse(_) => None,
-            P::ReadVersionResponse(_) => None,
+            PacketData::ObjectReportRequest() => None,
+            PacketData::Ack() => None,
+            PacketData::ReadConfigResponse(_) => None,
+            PacketData::ReadPropResponse(_) => None,
+            PacketData::ObjectReport(_) => None,
+            PacketData::CombinedMarkersReport(_) => None,
+            PacketData::PocMarkersReport(_) => None,
+            PacketData::AccelReport(_) => None,
+            PacketData::ImpactReport(_) => None,
+            PacketData::Vendor(_, _) => None,
+            PacketData::ReadRegisterResponse(_) => None,
+            PacketData::ReadVersionResponse(_) => None,
         };
 
         if let Some(r) = response
@@ -340,14 +295,14 @@ async fn usb_rcv_loop(
                 PacketSource::Ble => {
                     // Route to correct L2CAP channel - each has dedicated L2CAP connection
                     // Use try_send to avoid blocking if channel is full (BLE task not draining)
-                    if crate::ble::l2cap_bridge::is_control_packet(&r) {
-                        if l2cap_channels.control_tx.try_send(r).is_err() {
+                    if is_control_packet(&r) {
+                        if l2cap_channels.control_tx().try_send(r).is_err() {
                             defmt::warn!("[app] Dropped control response - channel full");
                         } else {
                             defmt::debug!("[app] Control response queued for BLE");
                         }
                     } else {
-                        if l2cap_channels.data_tx.try_send(r).is_err() {
+                        if l2cap_channels.data_tx().try_send(r).is_err() {
                             defmt::warn!("[app] Dropped data response - channel full");
                         } else {
                             defmt::debug!("[app] Data response queued for BLE");
@@ -360,11 +315,11 @@ async fn usb_rcv_loop(
     }
 }
 
-async fn usb_snd_loop(
+async fn usb_snd_loop<L: L2capChannels>(
     mut pkt_writer: PacketWriter<'_>,
     pkt_rcv: Receiver<'_, Packet, 64>,
     mut exit: ExitReceiver<'_>,
-    l2cap_channels: &crate::ble::l2cap_bridge::L2capChannels,
+    l2cap_channels: &L,
 ) -> ! {
     loop {
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
@@ -376,70 +331,73 @@ async fn usb_snd_loop(
         let _ = pkt_writer.write_packet(&pkt).await;
 
         // Also send via BLE - route to correct L2CAP channel
-        if crate::ble::l2cap_bridge::is_control_packet(&pkt) {
+        if is_control_packet(&pkt) {
             // Control packets must be sent (blocking)
-            l2cap_channels.control_tx.send(pkt.clone()).await;
+            l2cap_channels.control_tx().send(pkt.clone()).await;
         } else {
             // Streaming data - drop if channel full to avoid blocking object_mode
-            let _ = l2cap_channels.data_tx.try_send(pkt.clone());
+            let _ = l2cap_channels.data_tx().try_send(pkt.clone());
         }
     }
     todo!()
 }
 
-#[cfg(context = "vm")]
-async fn imu_loop<const N: usize>(
-    imu: &mut Imu<N>,
-    imu_int: &mut ImuInterrupt,
+async fn imu_loop<P: Platform>(
+    imu: &mut P::Imu,
+    imu_int: &mut P::ImuInterrupt,
     pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
 ) {
-    // ---- Sensor time: 24-bit free-running counter, 39.0625 µs per tick ----
-    const TS_BITS: u32 = 24;
-    const TS_MASK: u32 = (1 << TS_BITS) - 1; // 0x00FF_FFFF
-    const TICK_US_NUM: u32 = 625;
-    const TICK_US_DEN_SHIFT: u32 = 4;
+    // ---- Sensor time: simple counter for timestamp ----
+    // Platform-specific timing can be added via trait methods if needed
+    let mut ts_micros: u32 = 0;
 
-    // ---- Unit scales ----
+    // ---- Unit scales (default for BMI270, platforms may differ) ----
     // Accelerometer full-scale: 16 g -> 2048 LSB/g
     const ACC_LSB_PER_G: f32 = 2048.0;
     const G: f32 = 9.806_65;
 
-    // Gyro full-scale: 250 dps -> 16.384 LSB/(deg/s)
+    // Gyro full-scale: 250 dps -> 65.536 LSB/(deg/s)
     const GYRO_LSB_PER_DPS: f32 = 65.536;
     const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
 
-    let mut last_ts_raw: Option<u32> = None; // last 24-bit sensor-time value
-    let mut ts_micros: u32 = 0; // accumulated time in µs (wraps ~71.6 min)
-
     loop {
         imu_int.wait().await;
-        let pkt = imu.get_data().await.unwrap();
 
-        let ts_raw = pkt.time & TS_MASK; // keep only 24 bits
-        let dt_ticks_u32 = match last_ts_raw {
-            Some(prev) => (ts_raw.wrapping_sub(prev)) & TS_MASK,
-            None => 0,
+        // Read accelerometer and gyroscope data from the platform-specific IMU
+        let acc = match imu.read_accel().await {
+            Ok(data) => data,
+            Err(e) => {
+                defmt::error!("Failed to read accelerometer: {}", defmt::Debug2Format(&e));
+                continue;
+            }
         };
-        last_ts_raw = Some(ts_raw);
 
-        // ticks → µs: dt * (625/16)  (use u64 for the mul, then cast back)
-        let dt_us = (((dt_ticks_u32 as u64) * (TICK_US_NUM as u64)) >> TICK_US_DEN_SHIFT) as u32;
-        ts_micros = ts_micros.wrapping_add(dt_us);
+        let gyr = match imu.read_gyro().await {
+            Ok(data) => data,
+            Err(e) => {
+                defmt::error!("Failed to read gyroscope: {}", defmt::Debug2Format(&e));
+                continue;
+            }
+        };
 
-        // --- convert to SI ---
-        let accel = Vector3::new(-pkt.acc.x, -pkt.acc.y, pkt.acc.z).cast::<f32>() / ACC_LSB_PER_G * G;
+        // Simple timestamp increment (~100Hz sampling = 10ms per sample)
+        // TODO: Platform-specific timestamp handling via trait methods
+        ts_micros = ts_micros.wrapping_add(10_000);
 
-        let gx = -(pkt.gyr.x as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
-        let gy = -(pkt.gyr.y as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
-        let gz = (pkt.gyr.z as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        // Convert to SI units (using BMI270 scaling - platforms may override)
+        let accel = Vector3::new(-acc[0], -acc[1], acc[2]).cast::<f32>() / ACC_LSB_PER_G * G;
+
+        let gx = -(gyr[0] as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gy = -(gyr[1] as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gz = (gyr[2] as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
 
         if stream_infos.imu.enabled() {
             let id = stream_infos.imu.req_id();
             let pkt = Packet {
                 id,
-                data: P::AccelReport(protodongers::AccelReport {
-                    timestamp: ts_micros, // µs since loop start (u32)
+                data: PacketData::AccelReport(protodongers::AccelReport {
+                    timestamp: ts_micros,
                     accel,
                     gyro: Vector3::new(gx, gy, gz),
                 }),
@@ -451,69 +409,15 @@ async fn imu_loop<const N: usize>(
     }
 }
 
-#[cfg(context = "atslite1")]
-async fn imu_loop(
-    imu: &mut Imu,
-    imu_int: &mut ImuInterrupt,
-    pkt_snd: Sender<'_, Packet, 64>,
-    stream_infos: &StreamInfos,
-) {
-    static BUFFER: static_cell::ConstStaticCell<[u32; 521]> = static_cell::ConstStaticCell::new([0; 521]);
-    let buffer = BUFFER.take();
-    let mut ts_micros = 0;
-    // TODO handle ODR change and impact stream
-    loop {
-        imu_int.wait().await;
-        let _items = imu.read_fifo(buffer).await.unwrap();
-        let pkt = bytemuck::from_bytes::<icm426xx::fifo::FifoPacket4>(&bytemuck::cast_slice(buffer)[4..24]);
-        // CLKIN ticks (32 kHz)
-        ts_micros += 1000 * (pkt.timestamp() as u32) / 32;
-        // TODO make the driver handle scale
-        // 32768 LSB/g
-        let ax = pkt.accel_data_x();
-        let ay = pkt.accel_data_y();
-        let az = pkt.accel_data_z();
-        // 262.144 LSB/(º/s)
-        let gx = pkt.gyro_data_x();
-        let gy = pkt.gyro_data_y();
-        let gz = pkt.gyro_data_z();
-
-        let (ax, ay, az) = (ax, -ay, -az);
-        let (gx, gy, gz) = (gx, -gy, -gz);
-
-        if stream_infos.imu.enabled() {
-            // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
-            // defmt::info!("ax={} ay={} az={} gx={} gy={} gz={}", ax, ay, az, gx, gy, gz);
-            let id = stream_infos.imu.req_id();
-            let pkt = Packet {
-                id,
-                data: P::AccelReport(protodongers::AccelReport {
-                    timestamp: ts_micros,
-                    accel: Vector3::new(ax, ay, az).cast() / 32768.0 * 9.806650,
-                    gyro: Vector3::new(
-                        (gx as f32 / 262.144).to_radians(),
-                        (gy as f32 / 262.144).to_radians(),
-                        (gz as f32 / 262.144).to_radians(),
-                    ),
-                }),
-            };
-            let r = pkt_snd.try_send(pkt);
-            if r.is_err() {
-                defmt::warn!("Failed to send IMU data due to full channel");
-            }
-        }
-    }
-}
-
-async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
+async fn obj_loop<T: embassy_nrf::timer::Instance>(
     r2_group: PajGroup<'_>,
     r3_group: PajGroup<'_>,
-    ppi_set: Peri<'d, AnyConfigurableChannel>,
-    ppi_clr: Peri<'d, AnyConfigurableChannel>,
-    timer: Peri<'d, T>,
+    ppi_set: embassy_nrf::Peri<'_, AnyConfigurableChannel>,
+    ppi_clr: embassy_nrf::Peri<'_, AnyConfigurableChannel>,
+    timer: embassy_nrf::Peri<'_, T>,
     pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
-) -> Result<!, Paj7025Error<DeviceError<Error, Infallible>>> {
+) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     let (r2, r2_fod, nf_ch) = r2_group;
     let (r3, r3_fod, wf_ch) = r3_group;
 
@@ -533,28 +437,12 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
     // TODO freezes everything when used with raw usb driver
     trigger.start();
 
-    // let mut r2_fod = embassy_nrf::gpio::Output::new(r2_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
-    // let mut r3_fod = embassy_nrf::gpio::Output::new(r3_fod, embassy_nrf::gpio::Level::Low, embassy_nrf::gpio::OutputDrive::Standard);
-
     loop {
         if stream_infos.marker.enabled() {
-            // defmt::info!("Waiting tick");
             trigger.wait_tick().await;
-            // defmt::info!("Tick waited");
-
-            // r2_fod.set_high();
-            // r3_fod.set_high();
-            // embassy_time::Timer::after_micros(1).await;
-            // r2_fod.set_low();
-            // r3_fod.set_low();
-
-            // embassy_time::Timer::after_millis(5).await;
 
             let mut objs = [[paj7025::types::ObjectFormat1::DEFAULT; 16]; 2];
 
-            // TODO figure out why u2048x doesn't work or get rid of it
-            // objs[0] = paj7025::parse_bank5(r2.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
-            // objs[1] = paj7025::parse_bank5(r3.lock().await.ll.output().bank_5().read_async().await?.value().to_le_bytes());
             let mut bytes: [u8; 256] = [0; 256];
             r2.lock().await.read_register(5, 0, &mut bytes).await?;
             objs[0] = paj7025::parse_bank5(bytes);
@@ -565,7 +453,7 @@ async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
-                data: P::CombinedMarkersReport(protodongers::CombinedMarkersReport {
+                data: PacketData::CombinedMarkersReport(protodongers::CombinedMarkersReport {
                     nf_points: objs[0].map(|o| {
                         if o.cx().value() == 4095 && o.cy().value() == 4095 {
                             nalgebra::Point2::origin()
@@ -604,7 +492,7 @@ impl<'a> PacketReader<'a> {
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
         let mut data = [0; 1024];
         defmt::debug!("Read transfer start");
-        let n = self.rcv.read_transfer(&mut data).await?;
+        let n = usb::read_transfer(&mut self.rcv, &mut data).await?;
         defmt::debug!("Read transfer done");
         Ok(postcard::from_bytes(&data[..n])?)
     }
@@ -617,7 +505,7 @@ pub struct PacketWriter<'a> {
 impl PacketWriter<'_> {
     pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
         let payload = postcard::to_vec::<_, 1024>(pkt)?;
-        self.snd.write_transfer(&payload, true).await?;
+        usb::write_transfer(self.snd, &payload, true).await?;
         Ok(())
     }
 }
