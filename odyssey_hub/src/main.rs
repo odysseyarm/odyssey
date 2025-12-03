@@ -1,15 +1,7 @@
-use futures::stream::{self, StreamExt};
-use futures_concurrency::prelude::*;
 use odyssey_hub_server::{self, Message};
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
-
-/// Events from the main merged stream
-enum MainEvent {
-    ServerExited,
-    StatusHandlerExited,
-}
 
 #[tokio::main]
 async fn main() {
@@ -33,42 +25,48 @@ async fn main() {
         }
     });
 
-    // Convert server task to stream
-    let server_stream = stream::once(async move {
-        let result = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token)).await;
-        println!("Server exited with: {:?}", result);
-        MainEvent::ServerExited
-    });
+    // Spawn server in background
+    let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token));
 
-    // Convert status handler to stream
-    let status_stream = stream::once(async move {
-        handle_server_status(receiver).await;
-        MainEvent::StatusHandlerExited
-    });
+    // Handle status messages
+    handle_server_status(receiver).await;
 
-    // Merge both streams
-    let merged = (server_stream, status_stream).merge();
-    tokio::pin!(merged);
-
-    // Wait for either to complete
-    while let Some(_event) = merged.next().await {
-        break;
-    }
+    // Wait for server task to complete
+    let result = server_handle.await;
+    println!("Server exited with: {:?}", result);
 }
 
 async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>) {
     loop {
         match receiver.recv().await {
-            Some(Message::ServerInit(Ok(()))) => {
+            Some(Message::ServerInit(Ok(_))) => {
                 tracing::info!("Server started");
             }
-            Some(Message::ServerInit(Err(_))) => {
-                tracing::error!("Server start error");
+            Some(Message::ServerInit(Err(e))) => {
+                // Check if another instance is already running
+                if e.kind() == std::io::ErrorKind::AddrInUse {
+                    tracing::warn!("Another instance is already running. Notifying it to bring window to front...");
+
+                    // Try to connect to the existing instance and call BringToFront
+                    let mut client = odyssey_hub_client::client::Client::default();
+                    if let Ok(()) = client.connect().await {
+                        if let Ok(()) = client.bring_to_front().await {
+                            tracing::info!("Successfully notified existing instance");
+                        } else {
+                            tracing::warn!("Failed to notify existing instance");
+                        }
+                    }
+                } else {
+                    tracing::error!("Server start error: {}", e);
+                }
                 break;
             }
             Some(Message::Stop) => {
                 tracing::info!("Server stopped");
                 break;
+            }
+            Some(Message::BringToFront) => {
+                tracing::info!("Bring to front (no GUI in standalone mode)");
             }
             None => {
                 tracing::info!("Server channel closed");

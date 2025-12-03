@@ -33,6 +33,9 @@ service Service {
   rpc SaveShotDelay(Device) returns (EmptyReply) {}
   rpc SubscribeShotDelay(SubscribeShotDelayRequest)
       returns (stream GetShotDelayReply) {}
+
+  // Window control
+  rpc BringToFront(EmptyRequest) returns (EmptyReply) {}
 }
 
 // --- Basic math types ---
@@ -196,4 +199,5 @@ message ZeroRequest {
 }
 
 message SubscribeEventsRequest {}
+message EmptyRequest {}
 message EmptyReply {}

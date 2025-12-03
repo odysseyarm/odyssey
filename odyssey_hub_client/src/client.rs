@@ -56,6 +56,16 @@ impl Client {
         }
     }
 
+    pub async fn bring_to_front(&mut self) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::EmptyRequest {});
+            service_client.bring_to_front(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn subscribe_device_list(
         &mut self,
     ) -> anyhow::Result<

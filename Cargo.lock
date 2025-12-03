@@ -4742,6 +4742,7 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "interprocess 2.0.0",
+ "odyssey_hub_client",
  "odyssey_hub_server",
  "odyssey_hub_server_interface",
  "serde",

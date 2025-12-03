@@ -27,7 +27,31 @@ use crate::{accessories::accessory_manager, device_tasks::device_tasks};
 
 pub enum Message {
     ServerInit(Result<Vec<odyssey_hub_common::config::ConfigCorruptionEvent>, std::io::Error>),
+    BringToFront,
     Stop,
+}
+
+#[derive(Debug)]
+pub enum ServerError {
+    SocketAlreadyInUse,
+    IoError(std::io::Error),
+    Other(anyhow::Error),
+}
+
+impl From<std::io::Error> for ServerError {
+    fn from(err: std::io::Error) -> Self {
+        if err.kind() == std::io::ErrorKind::AddrInUse {
+            ServerError::SocketAlreadyInUse
+        } else {
+            ServerError::IoError(err)
+        }
+    }
+}
+
+impl From<anyhow::Error> for ServerError {
+    fn from(err: anyhow::Error) -> Self {
+        ServerError::Other(err)
+    }
 }
 
 /// Events from the run_server merged stream
@@ -108,12 +132,25 @@ impl AsyncRead for LocalSocketStream {
 pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
-) -> anyhow::Result<()> {
+) -> Result<(), ServerError> {
     let name = if GenericNamespaced::is_supported() {
         "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
     } else {
         "/tmp/odyhub.sock".to_fs_name::<GenericFilePath>()?
     };
+
+    // Check if another instance is already running by trying to connect
+    use interprocess::local_socket::tokio::prelude::LocalSocketStream as ConnectStream;
+    use interprocess::local_socket::traits::tokio::Stream;
+    if let Ok(_) = ConnectStream::connect(name.clone()).await {
+        // Another instance is running
+        let _ = sender.send(Message::ServerInit(Err(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "Another instance is already running",
+        ))));
+        return Err(ServerError::SocketAlreadyInUse);
+    }
+
     // Create our listener. In a more robust program, we'd check for an
     // existing socket file that has not been deleted for whatever reason,
     // ensure it's a socket file and not a normal file, and delete it.
@@ -126,9 +163,15 @@ pub async fn run_server(
         }
         listener_opts.security_descriptor(sd)
     };
-    let listener = listener_opts
-        .create_tokio()
-        .map_err(|e| anyhow::anyhow!("Failed to create socket listener: {}", e))?;
+    let listener = match listener_opts.create_tokio() {
+        Ok(l) => l,
+        Err(e) => {
+            // Send error message before returning
+            let error_kind = e.kind();
+            let _ = sender.send(Message::ServerInit(Err(e)));
+            return Err(ServerError::from(std::io::Error::from(error_kind)));
+        }
+    };
     let listener = futures::stream::unfold((), |()| async {
         let conn = listener.accept().await;
         dbg!(&conn);
@@ -223,6 +266,7 @@ pub async fn run_server(
         shot_delay_watch: shot_delay_watch.clone(),
         accessory_map: accessory_map.clone(),
         accessory_map_sender: accessory_map_sender.clone(),
+        app_message_sender: sender.clone(),
         accessory_info_sender,
     };
 
