@@ -96,13 +96,18 @@ fn app() -> Element {
                 });
 
                 // Handle status messages (this future has access to Signal)
-                tokio::select! {
-                    _ = server_handle => {
-                        tracing::info!("Server task ended");
-                    }
-                    _ = handle_server_status(receiver, config_corruptions, server_ready) => {
-                        tracing::info!("Status handler ended");
-                    }
+                let should_exit =
+                    handle_server_status(receiver, config_corruptions, server_ready).await;
+
+                // Wait for server task to complete
+                let _ = server_handle.await;
+                tracing::info!("Server task ended");
+
+                // If we detected another instance, close the app
+                if should_exit {
+                    tracing::info!("Closing app due to another instance running");
+                    use dioxus::desktop::window;
+                    window().close();
                 }
             }
         }
@@ -314,7 +319,7 @@ async fn handle_server_status(
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>,
     mut config_corruptions: Signal<Vec<odyssey_hub_common::config::ConfigCorruptionEvent>>,
     mut server_ready: Signal<bool>,
-) {
+) -> bool {
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(corruptions))) => {
@@ -340,16 +345,41 @@ async fn handle_server_status(
                 server_ready.set(true);
             }
             Some(Message::ServerInit(Err(e))) => {
-                tracing::error!("Server start error: {}", e);
-                break;
+                // Check if it's an "address already in use" error (another instance running)
+                if e.kind() == std::io::ErrorKind::AddrInUse {
+                    tracing::warn!("Another instance is already running. Bringing it to front...");
+
+                    // Try to connect to the existing instance and call BringToFront
+                    let mut client = odyssey_hub_client::client::Client::default();
+                    if let Ok(()) = client.connect().await {
+                        if let Ok(()) = client.bring_to_front().await {
+                            tracing::info!("Successfully brought existing instance to front");
+                        } else {
+                            tracing::warn!("Failed to bring existing instance to front");
+                        }
+                    }
+
+                    // Return true to signal we should exit due to another instance
+                    return true;
+                } else {
+                    tracing::error!("Server start error: {}", e);
+                    return false;
+                }
+            }
+            Some(Message::BringToFront) => {
+                tracing::info!("Received BringToFront request");
+                // Bring window to front using Dioxus window API
+                use dioxus::desktop::window;
+                window().set_focus();
+                window().set_visible(true);
             }
             Some(Message::Stop) => {
                 tracing::info!("Server stopped");
-                break;
+                return false;
             }
             None => {
                 tracing::info!("Server channel closed");
-                break;
+                return false;
             }
         }
     }

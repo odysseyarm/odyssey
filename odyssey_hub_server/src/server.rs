@@ -48,6 +48,9 @@ pub struct Server {
     pub accessory_map:
         Arc<std::sync::Mutex<HashMap<[u8; 6], (common::accessory::AccessoryInfo, bool)>>>,
     pub accessory_map_sender: broadcast::Sender<common::accessory::AccessoryMap>,
+
+    /// Message sender to communicate with the desktop app
+    pub app_message_sender: mpsc::UnboundedSender<crate::Message>,
     pub accessory_info_sender: watch::Sender<HashMap<[u8; 6], common::accessory::AccessoryInfo>>, // incoming updates
 }
 
@@ -325,6 +328,18 @@ impl Service for Server {
         });
 
         Ok(Response::new(ReceiverStream::new(out)))
+    }
+
+    async fn bring_to_front(
+        &self,
+        _req: tonic::Request<EmptyRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        // Send message to desktop app to bring window to front
+        if let Err(e) = self.app_message_sender.send(crate::Message::BringToFront) {
+            tracing::error!("Failed to send BringToFront message: {}", e);
+            return Err(Status::internal("Failed to bring window to front"));
+        }
+        Ok(Response::new(EmptyReply {}))
     }
 
     async fn set_shot_delay(
