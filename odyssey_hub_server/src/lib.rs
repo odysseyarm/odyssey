@@ -26,7 +26,7 @@ use tonic::transport::server::Connected;
 use crate::{accessories::accessory_manager, device_tasks::device_tasks};
 
 pub enum Message {
-    ServerInit(Result<(), std::io::Error>),
+    ServerInit(Result<Vec<odyssey_hub_common::config::ConfigCorruptionEvent>, std::io::Error>),
     Stop,
 }
 
@@ -126,41 +126,81 @@ pub async fn run_server(
         }
         listener_opts.security_descriptor(sd)
     };
-    let listener = listener_opts.create_tokio().unwrap();
+    let listener = listener_opts
+        .create_tokio()
+        .map_err(|e| anyhow::anyhow!("Failed to create socket listener: {}", e))?;
     let listener = futures::stream::unfold((), |()| async {
         let conn = listener.accept().await;
         dbg!(&conn);
         Some((conn.map(LocalSocketStream), ()))
     });
 
-    sender.send(Message::ServerInit(Ok(()))).unwrap();
-    println!("Server running at {:?}", name);
-
-    let (sender, receiver) = mpsc::channel(12);
+    let (device_sender, receiver) = mpsc::channel(12);
 
     let (event_sender, _) = broadcast::channel(12);
 
-    let screen_calibrations = odyssey_hub_common::config::screen_calibrations_async()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load screen calibrations: {}", e))?;
-    let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(screen_calibrations)));
+    // Collect config corruption events to send via ServerInit message
+    let mut startup_corruptions = Vec::new();
+
+    // Load screen calibrations
+    let screen_result = odyssey_hub_common::config::screen_calibrations_async().await;
+    for (screen_id, path, error) in &screen_result.corrupted_screens {
+        tracing::error!("Screen {} calibration corrupted: {}", screen_id, error);
+        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
+            file_type: odyssey_hub_common::config::ConfigFileType::ScreenCalibration,
+            file_path: path.display().to_string(),
+            error_message: error.clone(),
+            using_default: true,
+        });
+    }
+    let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(
+        screen_result.calibrations,
+    )));
 
     println!("Screen calibrations loaded: {:?}", screen_calibrations);
 
-    let device_offsets = odyssey_hub_common::config::device_offsets_async()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load device offsets: {}", e))?;
-    let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets));
+    // Load device offsets
+    let device_offsets_result = odyssey_hub_common::config::device_offsets_async().await;
+    if let Some((path, error)) = device_offsets_result.corruption_info() {
+        tracing::error!("Device offsets corrupted: {}", error);
+        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
+            file_type: odyssey_hub_common::config::ConfigFileType::DeviceOffsets,
+            file_path: path.display().to_string(),
+            error_message: error,
+            using_default: true,
+        });
+    }
+    let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets_result.into_value()));
 
-    let device_shot_delays = odyssey_hub_common::config::device_shot_delays_async()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load device shot delays: {}", e))?;
+    // Load device shot delays
+    let device_shot_delays_result = odyssey_hub_common::config::device_shot_delays_async().await;
+    if let Some((path, error)) = device_shot_delays_result.corruption_info() {
+        tracing::error!("Device shot delays corrupted: {}", error);
+        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
+            file_type: odyssey_hub_common::config::ConfigFileType::DeviceShotDelays,
+            file_path: path.display().to_string(),
+            error_message: error,
+            using_default: true,
+        });
+    }
+    let device_shot_delays = Arc::new(tokio::sync::RwLock::new(
+        device_shot_delays_result.into_value(),
+    ));
 
-    let device_shot_delays = Arc::new(tokio::sync::RwLock::new(device_shot_delays));
     let shot_delay_watch = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
-    let accessory_info_map = odyssey_hub_common::config::accessory_map_async()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load accessory map: {}", e))?;
+
+    // Load accessory map
+    let accessory_map_result = odyssey_hub_common::config::accessory_map_async().await;
+    if let Some((path, error)) = accessory_map_result.corruption_info() {
+        tracing::error!("Accessory map corrupted: {}", error);
+        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
+            file_type: odyssey_hub_common::config::ConfigFileType::AccessoryMap,
+            file_path: path.display().to_string(),
+            error_message: error,
+            using_default: true,
+        });
+    }
+    let accessory_info_map = accessory_map_result.into_value();
 
     let (accessory_info_sender, accessory_info_receiver) =
         tokio::sync::watch::channel(accessory_info_map.clone());
@@ -188,8 +228,14 @@ pub async fn run_server(
 
     let dl = server.device_list.clone();
 
+    // Send server init message with corruption info
+    if let Err(e) = sender.send(Message::ServerInit(Ok(startup_corruptions))) {
+        tracing::warn!("Failed to send server init message: {}", e);
+    }
+    println!("Server running at {:?}", name);
+
     // Clone values before moving into streams
-    let sender_clone = sender.clone();
+    let device_sender_clone = device_sender.clone();
     let screen_calibrations_clone = screen_calibrations.clone();
     let device_offsets_clone = device_offsets.clone();
     let device_shot_delays_clone = device_shot_delays.clone();
@@ -208,7 +254,7 @@ pub async fn run_server(
     let device_tasks_stream = stream::once(async move {
         tracing::info!("device_tasks_stream: starting");
         let result = device_tasks(
-            sender_clone,
+            device_sender_clone,
             screen_calibrations_clone,
             device_offsets_clone,
             device_shot_delays_clone,
