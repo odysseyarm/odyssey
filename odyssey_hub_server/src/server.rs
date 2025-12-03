@@ -111,10 +111,12 @@ impl Server {
         if let Some(v) = self.device_shot_delays.read().await.get(&uuid).copied() {
             return v;
         }
-        match common::config::device_shot_delays_async().await {
-            Ok(m) => m.get(&uuid).copied().unwrap_or(0),
-            Err(_) => 0,
-        }
+        common::config::device_shot_delays_async()
+            .await
+            .into_value()
+            .get(&uuid)
+            .copied()
+            .unwrap_or(0)
     }
 
     async fn set_shot_delay_live(&self, uuid: [u8; 6], ms: u16) {
@@ -246,14 +248,12 @@ impl Service for Server {
         }
 
         // Re-load (optional but keeps canonical formatting)
-        let fresh = match common::config::accessory_map_async().await {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!(
-                    "Saved but failed to reload accessory info map: {e}; using incoming"
-                );
-                incoming
-            }
+        let fresh_result = common::config::accessory_map_async().await;
+        let fresh = if fresh_result.is_corrupted() {
+            tracing::warn!("Saved but file is corrupted on reload; using incoming");
+            incoming
+        } else {
+            fresh_result.into_value()
         };
 
         // Notify watchers of info updates
