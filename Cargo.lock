@@ -4709,7 +4709,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey_desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ats_usb",
  "btleplug",
