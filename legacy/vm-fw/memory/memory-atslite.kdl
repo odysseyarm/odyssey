@@ -1,43 +1,73 @@
 // Memory layout for nRF5340 (atslite1)
+// Dual-bank DFU for app core (direct XIP), swap-based DFU for network core
 
 vars {
     page_size "4K"
-    app_flash_size "348K"      // 0x057000 (aligned)
-    app_dfu_flash_size "352K"  // 0x058000 = app + 4K (aligned)
+    stage1_bootloader_size "8K"   // First-stage bootloader
+    stage2_bootloader_size "40K"  // Second-stage bootloader (DFU)
+    stage2_state_size "page_size"
+    app_bank_size "420K"          // Each app bank (A and B)
+    netcore_swap_size "100K"      // Network core secondary partition (in app flash)
+    settings_size "8K"            // Minimum 8KB required by settings module
 }
 
 regions {
     flash origin=0x0000_0000 length="1M" {
-        bootloader       origin=0x0000_0000 length="24K"
-        bootloader_state origin=0x0000_6000 length="page_size" align="page_size"
-        app_flash        origin=0x0000_7000 length="app_flash_size" align="page_size"
-        dfu              origin=0x0005_E000 length="app_dfu_flash_size" align="page_size"
-        settings         origin=0x000B_6000 length="28K" align="page_size"
+        stage1_bootloader origin=0x0000_0000 length="stage1_bootloader_size"
+        stage2_bootloader origin=0x0000_2000 length="stage2_bootloader_size"
+        bootloader_state  origin=0x0000_C000 length="stage2_state_size" align="page_size"
+        app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
+        app_bank_b        origin=0x0007_6000 length="app_bank_size" align="page_size"
+        netcore_secondary origin=0x000D_F000 length="netcore_swap_size" align="page_size"
+        settings          origin=0x000F_8000 length="settings_size" align="page_size"
     }
 
     ram origin=0x2000_0000 length="512K" {
         low_ram  origin=0x2000_0000 length="256K"
         high_ram origin=0x2004_0000 length="256K" {
+            locked_ram origin=0x2006_FF00 length=0x100  // 256 bytes for bootloader communication
             icmsg_rx origin=0x2007_0000 length=0x2000
             icmsg_tx origin=0x2007_8000 length=0x2000
         }
     }
 
-    netcore_flash origin=0x0100_0000 length="256K"
+    netcore_flash origin=0x0100_0000 length="256K" {
+        netcore_bootloader origin=0x0100_0000 length="8K"
+        netcore_primary    origin=0x0100_2000 length="248K"
+    }
     netcore_ram   origin=0x2100_0000 length="64K"
 }
 
 symbols {
+    __stage2_bootloader_start "flash.stage2_bootloader.origin"
+    __stage2_bootloader_end   "flash.stage2_bootloader.end"
     __bootloader_state_start  "flash.bootloader_state.origin"
     __bootloader_state_end    "flash.bootloader_state.end"
-    __bootloader_active_start "flash.app_flash.origin"
-    __bootloader_active_end   "flash.app_flash.end"
-    __bootloader_dfu_start    "flash.dfu.origin"
-    __bootloader_dfu_end      "flash.dfu.end"
+
+    // Direct bank access symbols
+    __bootloader_app_a_start  "flash.app_bank_a.origin"
+    __bootloader_app_a_end    "flash.app_bank_a.end"
+    __bootloader_app_b_start  "flash.app_bank_b.origin"
+    __bootloader_app_b_end    "flash.app_bank_b.end"
+
+    // Legacy symbols for embassy-boot compatibility (default to bank A)
+    __bootloader_active_start "flash.app_bank_a.origin"
+    __bootloader_active_end   "flash.app_bank_a.end"
+    __bootloader_dfu_start    "flash.app_bank_b.origin"
+    __bootloader_dfu_end      "flash.app_bank_b.end"
+
+    __bootloader_netcore_secondary_start "flash.netcore_secondary.origin"
+    __bootloader_netcore_secondary_end   "flash.netcore_secondary.end"
     __settings_start          "flash.settings.origin"
     __settings_end            "flash.settings.end"
+    __locked_ram_start        "ram.high_ram.locked_ram.origin"
+    __locked_ram_end          "ram.high_ram.locked_ram.end"
     __icmsg_tx_start          "ram.high_ram.icmsg_tx.origin"
     __icmsg_tx_end            "ram.high_ram.icmsg_tx.end"
     __icmsg_rx_start          "ram.high_ram.icmsg_rx.origin"
     __icmsg_rx_end            "ram.high_ram.icmsg_rx.end"
+    __netcore_bootloader_start "netcore_flash.netcore_bootloader.origin"
+    __netcore_bootloader_end   "netcore_flash.netcore_bootloader.end"
+    __netcore_primary_start    "netcore_flash.netcore_primary.origin"
+    __netcore_primary_end      "netcore_flash.netcore_primary.end"
 }

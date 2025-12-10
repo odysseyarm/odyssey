@@ -29,8 +29,8 @@ heapless = "0.9.1"
 
 # Storage and serialization
 cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
-minicbor = { version = "2", features = ["derive"] }
-minicbor-serde = { version = "0.6" }
+minicbor = { git = "https://github.com/Abrahamh08/minicbor", features = ["derive"] }
+minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 # Device-specific

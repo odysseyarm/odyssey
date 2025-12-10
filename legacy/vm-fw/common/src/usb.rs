@@ -54,7 +54,6 @@ pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
 pub type StaticUsbDevice = UsbDevice<'static, UsbDriver>;
 
 pub const VID: u16 = 0x1915;
-pub const PID: u16 = 0x520F;
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{4d36e96c-e325-11ce-bfc1-08002be10318}"];
 
@@ -66,9 +65,11 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
 static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
 
 pub fn usb_device<Irqs>(
+    pid: u16,
     usbd: Peri<'static, USBD>,
     irqs: Irqs,
     vbus: HardwareVbusDetect,
+    builder_callback: impl FnOnce(&mut embassy_usb::Builder<'static, UsbDriver>),
 ) -> (
     StaticUsbDevice,
     Endpoint<'static, In>,
@@ -80,7 +81,7 @@ where
 {
     let driver = UsbDriver::new(usbd, irqs, vbus);
 
-    let mut config = UsbConfig::new(VID, PID);
+    let mut config = UsbConfig::new(VID, pid);
     config.manufacturer = Some("Odyssey Arm");
     config.product = Some("ATS USB Legacy");
     // config.serial_number = Some("...");
@@ -106,17 +107,7 @@ where
     );
 
     // Add the Microsoft OS Descriptor (MSOS/MOD) descriptor.
-    // We tell Windows that this entire device is compatible with the "WINUSB" feature,
-    // which causes it to use the built-in WinUSB driver automatically, which in turn
-    // can be used by libusb/rusb software without needing a custom driver or INF file.
-    // In principle you might want to call msos_feature() just on a specific function,
-    // if your device also has other functions that still use standard class drivers.
     builder.msos_descriptor(windows_version::WIN8_1, 0);
-    builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
-    builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
-        "DeviceInterfaceGUIDs",
-        msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
-    ));
 
     static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> = ConstStaticCell::new(Signal::new());
     let signal = SIGNAL.take();
@@ -127,9 +118,20 @@ where
 
     builder.handler(&mut *handler);
 
+    // Call the builder callback to allow adding additional interfaces (e.g., DFU)
+    builder_callback(&mut builder);
+
     // Add a vendor-specific function (class 0xFF), and corresponding interface,
     // that uses our custom handler.
+    // We tell Windows that this specific function is compatible with the "WINUSB" feature,
+    // which causes it to use the built-in WinUSB driver automatically, which in turn
+    // can be used by libusb/rusb software without needing a custom driver or INF file.
     let mut function = builder.function(0xFF, 0, 0);
+    function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+    function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+        "DeviceInterfaceGUIDs",
+        msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+    ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);
     let ep_out = alt.endpoint_bulk_out(None, 64);
@@ -157,6 +159,59 @@ impl embassy_usb::Handler for MyHandler {
         self.flag.store(configured, Ordering::Release);
         info!("USB configured event: {}", configured);
         self.signal.signal(configured);
+    }
+
+    fn control_out(
+        &mut self,
+        req: embassy_usb::control::Request,
+        data: &[u8],
+    ) -> Option<embassy_usb::control::OutResponse> {
+        use embassy_usb::control::{OutResponse, Recipient, RequestType};
+        use protodongers::control::device::DeviceMsg;
+
+        // Vendor|Interface, request SEND=0x30, wIndex=0
+        if req.request_type == RequestType::Vendor
+            && req.recipient == Recipient::Interface
+            && req.request == 0x30
+            && req.index == 0
+        {
+            match postcard::from_bytes::<DeviceMsg>(data) {
+                Ok(msg) => {
+                    crate::device_control::try_send_cmd(msg);
+                    Some(OutResponse::Accepted)
+                }
+                Err(_) => Some(OutResponse::Rejected),
+            }
+        } else {
+            None
+        }
+    }
+
+    fn control_in<'a>(
+        &'a mut self,
+        req: embassy_usb::control::Request,
+        buf: &'a mut [u8],
+    ) -> Option<embassy_usb::control::InResponse<'a>> {
+        use embassy_usb::control::{InResponse, Recipient, RequestType};
+
+        // Vendor|Interface, request RECV=0x31, wIndex=0
+        if req.request_type == RequestType::Vendor
+            && req.recipient == Recipient::Interface
+            && req.request == 0x31
+            && req.index == 0
+        {
+            if let Some(msg) = crate::device_control::try_recv_event() {
+                match postcard::to_slice(&msg, buf) {
+                    Ok(out) => Some(InResponse::Accepted(out)),
+                    Err(_) => Some(InResponse::Rejected),
+                }
+            } else {
+                // No event pending: return zero-length success
+                Some(InResponse::Accepted(&[]))
+            }
+        } else {
+            None
+        }
     }
 }
 

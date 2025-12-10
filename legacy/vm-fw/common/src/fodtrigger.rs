@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use embassy_nrf::Peri;
-use embassy_nrf::gpio::{AnyPin, Level, Output, OutputDrive};
+use embassy_nrf::gpio::{AnyPin, Level, OutputDrive};
 use embassy_nrf::gpiote::{self, OutputChannel, OutputChannelPolarity};
 use embassy_nrf::interrupt::typelevel::Interrupt;
 use embassy_nrf::ppi::{self, Ppi};
@@ -23,11 +23,11 @@ pub struct FodTrigger<'d, T: Instance> {
 
 impl<'d, T: Instance> FodTrigger<'d, T> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new<C1: gpiote::Channel, C2: gpiote::Channel>(
         nf: Peri<'d, AnyPin>,
         wf: Peri<'d, AnyPin>,
-        gpiote_nf_ch: Peri<'d, gpiote::AnyChannel>,
-        gpiote_wf_ch: Peri<'d, gpiote::AnyChannel>,
+        gpiote_nf_ch: Peri<'d, C1>,
+        gpiote_wf_ch: Peri<'d, C2>,
 
         timer_peri: Peri<'d, T>,
         ppi_set_ch: Peri<'d, ppi::AnyConfigurableChannel>,
@@ -37,10 +37,20 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         timer_interval_ms: u32,
         fod_hold_us: u32,
     ) -> Self {
-        let nf_out = Output::new(nf, Level::Low, OutputDrive::Standard);
-        let wf_out = Output::new(wf, Level::Low, OutputDrive::Standard);
-        let nf_ch = OutputChannel::new(gpiote_nf_ch, nf_out, OutputChannelPolarity::Set);
-        let wf_ch = OutputChannel::new(gpiote_wf_ch, wf_out, OutputChannelPolarity::Set);
+        let nf_ch = OutputChannel::new(
+            gpiote_nf_ch,
+            nf,
+            Level::Low,
+            OutputDrive::Standard,
+            OutputChannelPolarity::Set,
+        );
+        let wf_ch = OutputChannel::new(
+            gpiote_wf_ch,
+            wf,
+            Level::Low,
+            OutputDrive::Standard,
+            OutputChannelPolarity::Set,
+        );
 
         let mut timer = Timer::new(timer_peri);
         timer.set_frequency(freq);

@@ -31,9 +31,9 @@ type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopR
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
 /// Context structure for object_mode - platform-agnostic
-pub struct ObjectModeContext<'d, P: Platform> {
-    pub paj7025r2_group: PajGroup<'d>,
-    pub paj7025r3_group: PajGroup<'d>,
+pub struct ObjectModeContext<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: embassy_nrf::gpiote::Channel> {
+    pub paj7025r2_group: PajGroup<'d, C1>,
+    pub paj7025r3_group: PajGroup<'d, C2>,
     pub fod_set_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
     pub fod_clr_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
     pub timer: embassy_nrf::Peri<'d, P::Timer>,
@@ -47,9 +47,10 @@ pub struct ObjectModeContext<'d, P: Platform> {
 }
 
 #[allow(unreachable_code)]
-pub async fn object_mode<'d, P: Platform>(
-    mut ctx: ObjectModeContext<'d, P>,
-) -> Result<ObjectModeContext<'d, P>, Paj7025Error<DeviceError<Error, Infallible>>> {
+pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: embassy_nrf::gpiote::Channel>(
+    pid: u16,
+    mut ctx: ObjectModeContext<'d, P, C1, C2>,
+) -> Result<ObjectModeContext<'d, P, C1, C2>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode on {}", P::NAME);
     let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
@@ -62,6 +63,7 @@ pub async fn object_mode<'d, P: Platform>(
     let _exit3 = exit.receiver().unwrap();
 
     let a = usb_rcv_loop(
+        pid,
         ctx.paj7025r2_group.0,
         ctx.paj7025r3_group.0,
         &stream_infos,
@@ -114,6 +116,7 @@ enum PacketSource {
 }
 
 async fn usb_rcv_loop<L: L2capChannels>(
+    pid: u16,
     paj7025r2: &AsyncMutex<NoopRawMutex, Paj>,
     paj7025r3: &AsyncMutex<NoopRawMutex, Paj>,
     stream_infos: &StreamInfos,
@@ -242,7 +245,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::ReadProp(kind) => {
                 let prop = match kind {
                     PropKind::Uuid => Props::Uuid(device_id[..6].try_into().unwrap()),
-                    PropKind::ProductId => Props::ProductId(crate::usb::PID),
+                    PropKind::ProductId => Props::ProductId(pid),
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -409,9 +412,13 @@ async fn imu_loop<P: Platform>(
     }
 }
 
-async fn obj_loop<T: embassy_nrf::timer::Instance>(
-    r2_group: PajGroup<'_>,
-    r3_group: PajGroup<'_>,
+async fn obj_loop<
+    T: embassy_nrf::timer::Instance,
+    C1: embassy_nrf::gpiote::Channel,
+    C2: embassy_nrf::gpiote::Channel,
+>(
+    r2_group: PajGroup<'_, C1>,
+    r3_group: PajGroup<'_, C2>,
     ppi_set: embassy_nrf::Peri<'_, AnyConfigurableChannel>,
     ppi_clr: embassy_nrf::Peri<'_, AnyConfigurableChannel>,
     timer: embassy_nrf::Peri<'_, T>,
