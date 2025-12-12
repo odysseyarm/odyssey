@@ -33,7 +33,7 @@ regions {
 
     netcore_flash origin=0x0100_0000 length="256K" {
         netcore_bootloader origin=0x0100_0000 length="8K"
-        netcore_primary    origin=0x0100_2000 length="248K"
+        netcore_primary    origin=0x0100_2000 length="248K" align="page_size"
     }
     netcore_ram   origin=0x2100_0000 length="64K"
 }
