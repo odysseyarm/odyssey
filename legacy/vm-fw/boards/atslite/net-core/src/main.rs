@@ -103,8 +103,6 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    const FIRMWARE_VERSION: u32 = 2;
-
     let config = Config::default();
     let p = embassy_nrf::init(config);
 
@@ -112,11 +110,6 @@ async fn main(spawner: Spawner) {
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     clear_boot_state(nvmc);
-
-    loop {
-        defmt::info!("NetCore Firmware v{} starting", FIRMWARE_VERSION);
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(2500)).await;
-    }
 
     let mut ipc = Ipc::new(p.IPC, Irqs);
     ipc.event0.configure_trigger([IpcChannel::Channel0]);

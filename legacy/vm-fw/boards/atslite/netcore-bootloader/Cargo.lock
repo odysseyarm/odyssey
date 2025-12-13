@@ -23,10 +23,10 @@ dependencies = [
  "embassy-executor",
  "embassy-nrf",
  "embassy-sync",
- "embassy-time",
  "embedded-storage",
  "memory-spec",
  "nrf-pac 0.1.0 (git+https://github.com/embassy-rs/nrf-pac.git)",
+ "panic-halt",
  "panic-probe",
  "pcd",
 ]
@@ -299,7 +299,6 @@ dependencies = [
  "embassy-futures",
  "embassy-hal-internal",
  "embassy-sync",
- "embassy-time",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -366,9 +365,6 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-hal-internal",
  "embassy-sync",
- "embassy-time",
- "embassy-time-driver",
- "embassy-time-queue-utils",
  "embassy-usb-driver",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
@@ -393,38 +389,6 @@ dependencies = [
  "embedded-io-async",
  "futures-core",
  "futures-sink",
- "heapless",
-]
-
-[[package]]
-name = "embassy-time"
-version = "0.5.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
-dependencies = [
- "cfg-if",
- "critical-section",
- "document-features",
- "embassy-time-driver",
- "embedded-hal 0.2.7",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "futures-core",
-]
-
-[[package]]
-name = "embassy-time-driver"
-version = "0.2.1"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
-dependencies = [
- "document-features",
-]
-
-[[package]]
-name = "embassy-time-queue-utils"
-version = "0.3.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
-dependencies = [
- "embassy-executor-timer-queue",
  "heapless",
 ]
 
@@ -789,6 +753,12 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "panic-halt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de96540e0ebde571dc55c73d60ef407c653844e6f9a1e2fdbd40c07b9252d812"
 
 [[package]]
 name = "panic-probe"

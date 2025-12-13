@@ -546,7 +546,7 @@ impl<'d> embassy_usb_dfu::DualBankWriter for DualBankFlashWriter<'d> {
         };
 
         // Create boot state with correct active and pending slots
-        let mut state = BootState {
+        let state = BootState {
             magic: BOOT_STATE_MAGIC,
             active_slot,
             pending_slot: target_slot,
@@ -719,9 +719,7 @@ fn check_dfu_state(
     }
 
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
-    const BOOT_MAGIC: u32 = 0xB0070000;
     const SWAP_MAGIC: u32 = 0x00BAD00D;
-    const ERASED: u32 = 0xFFFFFFFF;
 
     // Read the state partition to check for DFU detach marker
     // Embassy-boot state format:
@@ -1209,9 +1207,13 @@ async fn main(_spawner: Spawner) -> ! {
         }
         defmt::info!("Network core bootloader started");
 
-        // Poll for netcore bootloader result with a bounded timeout so we don't hang here.
+        // Poll for netcore bootloader result without timeout.
+        // For large images (up to 196KB), this could take significant time.
+        // We poll indefinitely but with a safety mechanism: if we exceed 2 minutes,
+        // we trigger a system reset to retry on next boot.
         let poll = async {
             let mut ticks: u32 = 0;
+            const MAX_TICKS: u32 = 1200; // 2 minutes at 100ms per tick
             loop {
                 if let Some(status) = pcd.status.get_status() {
                     defmt::info!("Netcore DFU status from net bootloader: {}", status as u32);
@@ -1230,6 +1232,15 @@ async fn main(_spawner: Spawner) -> ! {
                         break;
                     }
                 }
+
+                // Safety mechanism: if we've been waiting too long (2 minutes), reset
+                if ticks >= MAX_TICKS {
+                    defmt::error!(
+                        "Netcore DFU taking too long (>2 min) - resetting to retry on next boot"
+                    );
+                    cortex_m::peripheral::SCB::sys_reset();
+                }
+
                 if ticks % 10 == 0 {
                     let magic = unsafe {
                         core::ptr::read_volatile(&pcd.status.magic as *const _ as *const u32)
@@ -1238,32 +1249,19 @@ async fn main(_spawner: Spawner) -> ! {
                         core::ptr::read_volatile(&pcd.status.status as *const _ as *const u32)
                     };
                     defmt::info!(
-                        "Waiting for netcore DFU status... magic={:#x} raw_status={:#x}",
+                        "Waiting for netcore DFU status... ticks={}/{} magic={:#x} raw_status={:#x}",
+                        ticks,
+                        MAX_TICKS,
                         magic,
                         raw_status
                     );
                 }
-                Timer::after(Duration::from_millis(50)).await;
+                Timer::after(Duration::from_millis(100)).await;
                 ticks += 1;
             }
         };
-        if embassy_time::with_timeout(Duration::from_secs(10), poll)
-            .await
-            .is_err()
-        {
-            let magic =
-                unsafe { core::ptr::read_volatile(&pcd.status.magic as *const _ as *const u32) };
-            let raw_status =
-                unsafe { core::ptr::read_volatile(&pcd.status.status as *const _ as *const u32) };
-            defmt::info!(
-                "Netcore DFU status wait done (timeout) magic={:#x} raw_status={:#x}; clearing and continuing boot",
-                magic,
-                raw_status
-            );
-            pcd.cmd.clear();
-            pcd.status.clear();
-            netcore_dfu_pending = false;
-        }
+        // Poll indefinitely (with internal safety reset at 2 minutes)
+        poll.await;
     }
 
     // Check locked RAM flag set by runtime detach to force DFU entry.
@@ -1371,6 +1369,31 @@ async fn main(_spawner: Spawner) -> ! {
 
         defmt::info!("USB device built, starting run loop");
         dev.run().await;
+    }
+
+    // Final safety check: ensure netcore DFU is not in progress
+    {
+        let pcd = get_pcd_region();
+        if let Some(status) = pcd.status.get_status() {
+            if status == PcdStatusCode::Updating {
+                defmt::error!("CRITICAL: Netcore DFU still updating before app boot - resetting!");
+                cortex_m::asm::dsb();
+                cortex_m::peripheral::SCB::sys_reset();
+            }
+        }
+    }
+
+    // Stop the network core before booting the app to prevent double initialization
+    // The app will start the network core itself
+    {
+        use embassy_nrf::pac::reset::vals::Forceoff;
+
+        defmt::info!("Stopping network core before booting app");
+        embassy_nrf::pac::RESET_S
+            .network()
+            .forceoff()
+            .write(|w| w.set_forceoff(Forceoff::HOLD));
+        defmt::info!("Network core stopped");
     }
 
     // Lock the locked RAM region before booting to prevent app from tampering

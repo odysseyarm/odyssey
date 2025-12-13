@@ -1398,9 +1398,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "embassy-nrf"
-version = "0.7.0"
-
-[[patch.unused]]
 name = "protodongers"
 version = "0.1.0"
+
+[[patch.unused]]
+name = "embassy-nrf"
+version = "0.7.0"

@@ -3,13 +3,14 @@
 
 use core::cell::RefCell;
 
-use defmt::*;
+#[cfg(feature = "rtt")]
 use defmt_rtt as _;
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
 use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
-use embassy_time::{Duration, Timer};
-use embedded_storage::nor_flash::NorFlash;
 use nrf_pac as pac;
+#[cfg(not(feature = "rtt"))]
+use panic_halt as _;
+#[cfg(feature = "rtt")]
 use panic_probe as _;
 use pcd::{PcdRegion, PcdStatusCode};
 
@@ -30,15 +31,13 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
     // as it prevents a hard fault when accessing flash 'too early' after boot.
-    for _ in 0..10000000 {
-        cortex_m::asm::nop();
-    }
+    // for _ in 0..10000000 {
+    //     cortex_m::asm::nop();
+    // }
 
-    info!("NetCore bootloader starting");
+    #[cfg(feature = "defmt")]
+    defmt::info!("NetCore bootloader starting");
 
-    // Allow debugger attach before touching flash.
-    // Timer::after(Duration::from_secs(5)).await;
-    // info!("Attach window done, proceeding");
     let flash: Mutex<NoopRawMutex, RefCell<Nvmc<'_>>> = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
     // Access PCD region in shared SRAM
@@ -49,7 +48,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
         let image_addr = pcd.cmd.get_image_addr();
         let image_size = pcd.cmd.get_image_size();
-        info!(
+        #[cfg(feature = "defmt")]
+        defmt::info!(
             "PCD valid: addr={:#x}, size={} (reserved0={}, reserved1={})",
             image_addr,
             image_size,
@@ -66,7 +66,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
         match result {
             Ok(()) => {
-                info!("Update copy/verify complete");
+                #[cfg(feature = "defmt")]
+                defmt::info!("Update copy/verify complete");
                 pcd.status.set_status(PcdStatusCode::Success);
                 // Ensure status is visible to app core before any further actions.
                 cortex_m::asm::dsb();
@@ -74,17 +75,20 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 clear_state_flag(&flash);
             }
             Err(()) => {
-                warn!("Update failed (copy/verify)");
+                #[cfg(feature = "defmt")]
+                defmt::warn!("Update failed (copy/verify)");
                 pcd.status.set_status(PcdStatusCode::FailedCopy);
             }
         }
     } else {
-        info!("No PCD cmd: magic=0x{:08x}", unsafe {
+        #[cfg(feature = "defmt")]
+        defmt::info!("No PCD cmd: magic=0x{:08x}", unsafe {
             core::ptr::read_volatile(&pcd.cmd.magic as *const _ as *const u32)
         });
     }
 
-    info!("Booting net application");
+    #[cfg(feature = "defmt")]
+    defmt::info!("Booting net application");
     boot_app()
 }
 
@@ -142,19 +146,30 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
 
     let active_len = dst_end.saturating_sub(dst_addr);
     let _dfu_len = dfu_end.saturating_sub(dfu_start);
-    info!(
+    #[cfg(feature = "defmt")]
+    defmt::info!(
         "Dest range {:#x}-{:#x}, active_len {}, src range {:#x}-{:#x}, dfu_len {}",
-        dst_addr, dst_end, active_len, dfu_start, dfu_end, _dfu_len
+        dst_addr,
+        dst_end,
+        active_len,
+        dfu_start,
+        dfu_end,
+        _dfu_len
     );
 
     if size == 0 || size > active_len {
-        warn!("Invalid size {}, active_len {}", size, active_len);
+        #[cfg(feature = "defmt")]
+        defmt::warn!("Invalid size {}, active_len {}", size, active_len);
         return Err(());
     }
     if src_addr < dfu_start || src_addr + size > dfu_end {
-        warn!(
+        #[cfg(feature = "defmt")]
+        defmt::warn!(
             "Src out of range: addr {:#x} len {} (dfu {:#x}-{:#x})",
-            src_addr, size, dfu_start, dfu_end
+            src_addr,
+            size,
+            dfu_start,
+            dfu_end
         );
         return Err(());
     }
@@ -162,7 +177,8 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
     // Erase destination range page-by-page.
     let end = dst_addr + size;
     let page_aligned_end = (end + PAGE_SIZE as u32 - 1) & !(PAGE_SIZE as u32 - 1);
-    info!(
+    #[cfg(feature = "defmt")]
+    defmt::info!(
         "Erase/write dst {:#x}-{:#x}, src {:#x}-{:#x}",
         dst_addr,
         page_aligned_end,
@@ -170,13 +186,15 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         src_addr + size
     );
     if let Err(_e) = erase_abs(dst_addr, page_aligned_end) {
-        warn!("NVMC erase error");
+        #[cfg(feature = "defmt")]
+        defmt::warn!("NVMC erase error");
         return Err(());
     }
 
     let src = unsafe { core::slice::from_raw_parts(src_addr as *const u8, size as usize) };
     if let Err(_e) = write_abs(dst_addr, src) {
-        warn!("NVMC write error");
+        #[cfg(feature = "defmt")]
+        defmt::warn!("NVMC write error");
         return Err(());
     }
     // Ensure flash write completes before verify.
@@ -192,14 +210,19 @@ fn verify_copy(dst_addr: u32, src: &[u8]) -> Result<(), ()> {
     unsafe {
         core::ptr::copy_nonoverlapping(dst_addr as *const u8, buf.as_mut_ptr(), len);
     }
-    info!("Verify len {}", len);
-    info!("Flash head: {=[u8]:x}", &buf[..len]);
-    info!("Src   head: {=[u8]:x}", &src[..len]);
+    #[cfg(feature = "defmt")]
+    {
+        defmt::info!("Verify len {}", len);
+        defmt::info!("Flash head: {=[u8]:x}", &buf[..len]);
+        defmt::info!("Src   head: {=[u8]:x}", &src[..len]);
+    }
     if buf[..len] == src[..len] {
-        info!("Verify OK ({} bytes checked)", len);
+        #[cfg(feature = "defmt")]
+        defmt::info!("Verify OK ({} bytes checked)", len);
         Ok(())
     } else {
-        warn!(
+        #[cfg(feature = "defmt")]
+        defmt::warn!(
             "Verify failed: flash {:?} != src {:?}",
             &buf[..len],
             &src[..len]
