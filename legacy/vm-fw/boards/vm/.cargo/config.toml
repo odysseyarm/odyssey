@@ -1,0 +1,5 @@
+[profile.release]
+debug = 2
+
+[patch."https://github.com/odysseyarm/protodonge-rs"]
+protodongers = { path = "../../patch/protodonge-rs" }

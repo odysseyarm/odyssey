@@ -6,8 +6,8 @@ vars {
     stage1_bootloader_size "8K"   // First-stage bootloader
     stage2_bootloader_size "40K"  // Second-stage bootloader (DFU)
     stage2_state_size "page_size"
-    app_bank_size "420K"          // Each app bank (A and B)
-    netcore_swap_size "100K"      // Network core secondary partition (in app flash)
+    app_bank_size "380K"          // Each app bank (A and B)
+    netcore_swap_size "200K"      // Network core secondary partition (in app flash)
     settings_size "8K"            // Minimum 8KB required by settings module
 }
 
@@ -17,9 +17,9 @@ regions {
         stage2_bootloader origin=0x0000_2000 length="stage2_bootloader_size"
         bootloader_state  origin=0x0000_C000 length="stage2_state_size" align="page_size"
         app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
-        app_bank_b        origin=0x0007_6000 length="app_bank_size" align="page_size"
-        netcore_secondary origin=0x000D_F000 length="netcore_swap_size" align="page_size"
-        settings          origin=0x000F_8000 length="settings_size" align="page_size"
+        app_bank_b        origin=0x0006_C000 length="app_bank_size" align="page_size"
+        netcore_secondary origin=0x000C_B000 length="netcore_swap_size" align="page_size"
+        settings          origin=0x000F_D000 length="settings_size" align="page_size"
     }
 
     ram origin=0x2000_0000 length="512K" {
@@ -32,8 +32,8 @@ regions {
     }
 
     netcore_flash origin=0x0100_0000 length="256K" {
-        netcore_bootloader origin=0x0100_0000 length="8K"
-        netcore_primary    origin=0x0100_2000 length="248K" align="page_size"
+        netcore_bootloader origin=0x0100_0000 length="192K"
+        netcore_primary    origin=0x0103_0000 length="64K" align="page_size"
     }
     netcore_ram   origin=0x2100_0000 length="64K"
 }

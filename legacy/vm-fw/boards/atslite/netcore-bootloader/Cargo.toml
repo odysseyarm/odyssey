@@ -1,0 +1,61 @@
+[package]
+edition = "2021"
+name = "atslite-netcore-bootloader"
+version = "0.1.0"
+description = "Network core bootloader for atslite with IPC firmware update support"
+license = "MIT OR Apache-2.0"
+
+[build-dependencies]
+memory-spec = "0.3.0"
+
+[dependencies]
+cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+embassy-nrf = { git = "https://github.com/Abrahamh08/embassy", features = ["nrf5340-net", "time", "time-driver-rtc1"] }
+embassy-executor = { git = "https://github.com/Abrahamh08/embassy", features = ["arch-cortex-m", "executor-thread"] }
+embassy-time = { git = "https://github.com/Abrahamh08/embassy", features = ["tick-hz-32_768"] }
+embedded-storage = "0.3"
+embassy-boot = { git = "https://github.com/Abrahamh08/embassy" }
+embassy-sync = { git = "https://github.com/Abrahamh08/embassy" }
+nrf-pac = { git = "https://github.com/embassy-rs/nrf-pac.git", features = ["nrf5340-net"] }
+
+pcd = { path = "../pcd" }
+defmt = { version = "1.0.1", default-features = false, optional = true }
+defmt-rtt = { version = "0.4.0", default-features = false, optional = true }
+panic-probe = { version = "0.3.1", features = ["print-defmt"], optional = true }
+
+[features]
+default = ["defmt"]
+defmt = ["dep:defmt", "dep:defmt-rtt", "panic-probe/print-defmt"]
+
+[profile.dev]
+debug = 2
+debug-assertions = true
+incremental = false
+opt-level = 'z'
+overflow-checks = true
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 'z'
+panic = "abort"
+strip = false
+overflow-checks = false
+
+[profile.dev.build-override]
+codegen-units = 8
+debug = false
+debug-assertions = false
+opt-level = 0
+overflow-checks = false
+
+[profile.release.build-override]
+codegen-units = 8
+debug = false
+debug-assertions = false
+opt-level = 0
+overflow-checks = false

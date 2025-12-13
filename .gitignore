@@ -6,3 +6,5 @@ __pycache__
 .bin
 *.hex
 patches
+target
+target-*

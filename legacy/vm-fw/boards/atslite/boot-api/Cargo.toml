@@ -1,0 +1,12 @@
+[package]
+name = "atslite-boot-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embassy-nrf = { version = "0.8.0", features = ["nrf5340-app-s", "unstable-pac"] }
+embedded-storage = "0.3"
+defmt = { version = "0.3", optional = true }
+
+[features]
+defmt = ["dep:defmt"]

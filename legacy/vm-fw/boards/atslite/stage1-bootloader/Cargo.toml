@@ -1,0 +1,58 @@
+[package]
+edition = "2021"
+name = "atslite-stage1-bootloader"
+version = "0.1.0"
+description = "First-stage bootloader for atslite with direct-XIP"
+license = "MIT OR Apache-2.0"
+
+[build-dependencies]
+memory-spec = "0.1.0"
+
+[dependencies]
+defmt = { version = "1", optional = true }
+defmt-rtt = { version = "1", optional = true }
+
+embassy-nrf = { version = "0.8.0", features = ["nrf5340-app-s"], default-features = false }
+cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+embassy-boot = { version = "0.6.1", default-features = false }
+embedded-storage = "0.3"
+cfg-if = "1.0.0"
+
+[features]
+defmt = [
+    "dep:defmt",
+    "dep:defmt-rtt",
+    "embassy-boot/defmt",
+    "embassy-nrf/defmt",
+]
+
+[profile.dev]
+debug = 2
+debug-assertions = true
+incremental = false
+opt-level = 'z'
+overflow-checks = true
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 'z'
+overflow-checks = false
+
+[profile.dev.build-override]
+codegen-units = 8
+debug = false
+debug-assertions = false
+opt-level = 0
+overflow-checks = false
+
+[profile.release.build-override]
+codegen-units = 8
+debug = false
+debug-assertions = false
+opt-level = 0
+overflow-checks = false

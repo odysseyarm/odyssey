@@ -1,0 +1,15 @@
+[patch."https://github.com/odysseyarm/protodonge-rs"]
+protodongers = { path = "../../patch/protodonge-rs" }
+
+[patch."https://github.com/Abrahamh08/embassy"]
+embassy-usb-dfu = { path = "../../patch/embassy/embassy-usb-dfu" }
+
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip nrf5340_xxAA"
+
+rustflags = [
+  "-C", "force-frame-pointers=yes",
+]

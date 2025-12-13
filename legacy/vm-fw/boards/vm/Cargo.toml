@@ -1,0 +1,46 @@
+[package]
+name = "vm-board"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+common = { path = "../../common" }
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-nrf = { version = "0.8.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "defmt", "unstable-pac"] }
+embassy-sync = "0.7.2"
+embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
+embassy-usb = { version = "0.5.1", default-features = false }
+embassy-embedded-hal = "0.5.0"
+embassy-futures = "0.1.2"
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+defmt = "1.0.1"
+defmt-rtt = "1.0.0"
+panic-probe = "1.0.0"
+static_cell = "2.1.1"
+bytemuck = "1.24.0"
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
+
+# VM-specific: BMI270 IMU
+bmi2 = { git = "https://github.com/Abrahamh08/bmi2", branch = "async", features = ["async"] }
+
+# PAJ sensor dependencies
+paj7025 = { path = "../../../paj7025", features = ["nrf"] }
+
+# BLE (not used by VM, but required by common)
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool"] }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci", default-features = false, features = ["defmt"] }
+
+[build-dependencies]
+memory-spec = "0.3.0"
+
+[patch.crates-io]
+minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
