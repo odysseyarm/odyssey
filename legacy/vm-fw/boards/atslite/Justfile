@@ -53,8 +53,8 @@ build: build-stage1 build-app-a build-bootloader build-netcore-bootloader build-
     llvm-objcopy -O ihex {{output_dir}}/netcore-bootloader.elf {{output_dir}}/netcore-bootloader.hex
     llvm-objcopy -O ihex {{output_dir}}/net-core.elf {{output_dir}}/net-core.hex
     llvm-objcopy -O binary {{output_dir}}/app-a.elf {{output_dir}}/app-a.bin
+    llvm-objcopy -O binary {{output_dir}}/stage2-bootloader.elf {{output_dir}}/stage2-bootloader.bin
     llvm-objcopy -O binary {{output_dir}}/net-core.elf {{output_dir}}/net-core.bin
-    llvm-objcopy -O binary {{output_dir}}/net-core.elf {{output_dir}}/net-core-dfu.bin
     mergehex -o {{output_dir}}/merged.hex -m {{output_dir}}/stage1-bootloader.hex {{output_dir}}/stage2-bootloader.hex {{output_dir}}/app-a.hex {{output_dir}}/netcore-bootloader.hex {{output_dir}}/net-core.hex
 
 # Build complete dual-bank firmware with both app banks and DFU binaries
@@ -70,9 +70,9 @@ build-dual-bank: build-stage1 build-app-a build-app-b build-bootloader build-net
     llvm-objcopy -O ihex {{output_dir}}/app-b.elf {{output_dir}}/app-b.hex
     llvm-objcopy -O ihex {{output_dir}}/stage2-bootloader.elf {{output_dir}}/stage2-bootloader.hex
     llvm-objcopy -O ihex {{output_dir}}/net-core.elf {{output_dir}}/net-core.hex
-    llvm-objcopy -O binary {{output_dir}}/app-a.elf {{output_dir}}/app-a-dfu.bin
-    llvm-objcopy -O binary {{output_dir}}/app-b.elf {{output_dir}}/app-b-dfu.bin
-    llvm-objcopy -O binary {{output_dir}}/net-core.elf {{output_dir}}/net-core-dfu.bin
+    llvm-objcopy -O binary {{output_dir}}/app-a.elf {{output_dir}}/app-a.bin
+    llvm-objcopy -O binary {{output_dir}}/app-b.elf {{output_dir}}/app-b.bin
+    llvm-objcopy -O binary {{output_dir}}/net-core.elf {{output_dir}}/net-core.bin
     mergehex -o {{output_dir}}/merged-dual.hex -m {{output_dir}}/stage1-bootloader.hex {{output_dir}}/stage2-bootloader.hex {{output_dir}}/app-a.hex {{output_dir}}/app-b.hex {{output_dir}}/net-core.hex
 
 # Flash ATSlite firmware

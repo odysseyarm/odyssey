@@ -28,7 +28,7 @@ fn main() {
 
     let netcore_bootloader = &regions["netcore_flash"]["netcore_bootloader"];
     let netcore_primary = &regions["netcore_flash"]["netcore_primary"];
-    let netcore_secondary = &regions["flash"]["netcore_secondary"];
+    let dfu_region = &regions["flash"]["dfu"];
     let netcore_ram = &regions["netcore_ram"];
 
     // For netcore bootloader, swap TX and RX from the app core's perspective
@@ -69,16 +69,16 @@ PROVIDE(__pcd_region_end = {:#010x});
         netcore_bootloader.length() / 1024,
         netcore_primary.origin(),
         active_len,
-        netcore_secondary.origin(),
-        netcore_secondary.length(),
+        dfu_region.origin(),
+        dfu_region.length(),
         state_origin,
         state_len,
         netcore_ram.origin(),
         netcore_ram.length() / 1024,
         netcore_primary.origin(),
         netcore_primary.origin() + active_len,
-        netcore_secondary.origin(),
-        netcore_secondary.origin() + netcore_secondary.length(),
+        dfu_region.origin(),
+        dfu_region.origin() + dfu_region.length(),
         state_origin,
         state_origin + state_len,
         icmsg_tx.origin(),
@@ -101,11 +101,11 @@ PROVIDE(__pcd_region_end = {:#010x});
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_dfu_start={:#x}",
-        netcore_secondary.origin()
+        dfu_region.origin()
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_dfu_end={:#x}",
-        netcore_secondary.origin() + netcore_secondary.length()
+        dfu_region.origin() + dfu_region.length()
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_state_start={:#x}",

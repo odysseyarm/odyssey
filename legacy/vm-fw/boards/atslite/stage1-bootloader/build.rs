@@ -26,39 +26,41 @@ fn main() {
     let stage1_bootloader = &regions["flash"]["stage1_bootloader"];
     let stage2_bootloader = &regions["flash"]["stage2_bootloader"];
     let bootloader_state = &regions["flash"]["bootloader_state"];
-    let bank_a = &regions["flash"]["app_bank_a"];
-    let bank_b = &regions["flash"]["app_bank_b"];
+    let dfu = &regions["flash"]["dfu"];
     let low_ram = &regions["ram"]["low_ram"];
 
+    // embassy-boot expects:
+    // - ACTIVE: primary stage2 bootloader slot
+    // - DFU: secondary slot for bootloader updates
+    // - STATE: swap state partition
     let memory_x = format!(
         "\
 MEMORY
 {{
-  FLASH                             : ORIGIN = {:#010x}, LENGTH = {:#08x}
-  RAM                         (rwx) : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  FLASH  : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  ACTIVE : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  DFU    : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  STATE  : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  RAM    : ORIGIN = {:#010x}, LENGTH = {:#08x}
 }}
 
-__stage2_bootloader_start = {:#010x};
-__stage2_bootloader_end = {:#010x};
-__bootloader_state_start = {:#010x};
-__bootloader_state_end = {:#010x};
-__app_bank_a_start = {:#010x};
-__app_bank_a_end = {:#010x};
-__app_bank_b_start = {:#010x};
-__app_bank_b_end = {:#010x};
+__bootloader_state_start = ORIGIN(STATE);
+__bootloader_state_end = ORIGIN(STATE) + LENGTH(STATE);
+__bootloader_active_start = ORIGIN(ACTIVE);
+__bootloader_active_end = ORIGIN(ACTIVE) + LENGTH(ACTIVE);
+__bootloader_dfu_start = ORIGIN(DFU);
+__bootloader_dfu_end = ORIGIN(DFU) + LENGTH(DFU);
 ",
         stage1_bootloader.origin(),
         stage1_bootloader.length(),
+        stage2_bootloader.origin(),
+        stage2_bootloader.length(),
+        dfu.origin(),
+        dfu.length(),
+        bootloader_state.origin(),
+        bootloader_state.length(),
         low_ram.origin(),
         low_ram.length(),
-        stage2_bootloader.origin(),
-        stage2_bootloader.origin() + stage2_bootloader.length(),
-        bootloader_state.origin(),
-        bootloader_state.origin() + bootloader_state.length(),
-        bank_a.origin(),
-        bank_a.origin() + bank_a.length(),
-        bank_b.origin(),
-        bank_b.origin() + bank_b.length(),
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

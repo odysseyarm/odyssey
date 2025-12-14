@@ -100,9 +100,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "cc"
-version = "1.2.48"
+version = "1.2.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c481bdbf0ed3b892f6f806287d72acd515b352a4ec27a208489b8c1bc839633a"
+checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -287,6 +287,7 @@ version = "0.6.1"
 dependencies = [
  "defmt",
  "digest",
+ "document-features",
  "embassy-embedded-hal",
  "embassy-sync",
  "embedded-storage",
@@ -320,7 +321,7 @@ dependencies = [
  "critical-section",
  "document-features",
  "embassy-executor-macros",
- "embassy-executor-timer-queue 0.1.0",
+ "embassy-executor-timer-queue",
 ]
 
 [[package]]
@@ -336,11 +337,6 @@ dependencies = [
 [[package]]
 name = "embassy-executor-timer-queue"
 version = "0.1.0"
-
-[[package]]
-name = "embassy-executor-timer-queue"
-version = "0.1.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
 
 [[package]]
 name = "embassy-futures"
@@ -378,7 +374,6 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.8.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if",
@@ -444,9 +439,8 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-utils"
 version = "0.3.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
 dependencies = [
- "embassy-executor-timer-queue 0.1.0 (git+https://github.com/Abrahamh08/embassy)",
+ "embassy-executor-timer-queue",
  "heapless",
 ]
 
@@ -1400,7 +1394,3 @@ dependencies = [
 [[patch.unused]]
 name = "protodongers"
 version = "0.1.0"
-
-[[patch.unused]]
-name = "embassy-nrf"
-version = "0.7.0"

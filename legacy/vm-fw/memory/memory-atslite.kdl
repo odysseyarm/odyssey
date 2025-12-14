@@ -3,11 +3,11 @@
 
 vars {
     page_size "4K"
-    stage1_bootloader_size "8K"   // First-stage bootloader
-    stage2_bootloader_size "40K"  // Second-stage bootloader (DFU)
-    stage2_state_size "page_size"
+    stage1_bootloader_size "8K"   // First-stage bootloader (swap orchestrator)
+    stage2_bootloader_size "40K"  // Second-stage bootloader (DFU handler)
+    stage2_state_size "page_size" // Swap state for stage2 bootloader
     app_bank_size "380K"          // Each app bank (A and B)
-    netcore_swap_size "200K"      // Network core secondary partition (in app flash)
+    dfu_size "200K"               // Shared DFU staging area (bootloader/netcore updates)
     settings_size "8K"            // Minimum 8KB required by settings module
 }
 
@@ -18,7 +18,7 @@ regions {
         bootloader_state  origin=0x0000_C000 length="stage2_state_size" align="page_size"
         app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
         app_bank_b        origin=0x0006_C000 length="app_bank_size" align="page_size"
-        netcore_secondary origin=0x000C_B000 length="netcore_swap_size" align="page_size"
+        dfu               origin=0x000C_B000 length="dfu_size" align="page_size"
         settings          origin=0x000F_D000 length="settings_size" align="page_size"
     }
 
@@ -50,14 +50,9 @@ symbols {
     __bootloader_app_b_start  "flash.app_bank_b.origin"
     __bootloader_app_b_end    "flash.app_bank_b.end"
 
-    // Legacy symbols for embassy-boot compatibility (default to bank A)
-    __bootloader_active_start "flash.app_bank_a.origin"
-    __bootloader_active_end   "flash.app_bank_a.end"
-    __bootloader_dfu_start    "flash.app_bank_b.origin"
-    __bootloader_dfu_end      "flash.app_bank_b.end"
-
-    __bootloader_netcore_secondary_start "flash.netcore_secondary.origin"
-    __bootloader_netcore_secondary_end   "flash.netcore_secondary.end"
+    // Shared DFU staging area (for bootloader/netcore updates)
+    __bootloader_dfu_start "flash.dfu.origin"
+    __bootloader_dfu_end   "flash.dfu.end"
     __settings_start          "flash.settings.origin"
     __settings_end            "flash.settings.end"
     __locked_ram_start        "ram.high_ram.locked_ram.origin"

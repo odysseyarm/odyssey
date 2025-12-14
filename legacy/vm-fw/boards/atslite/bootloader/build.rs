@@ -28,7 +28,7 @@ fn main() {
     let bootloader_state = &regions["flash"]["bootloader_state"];
     let bank_a = &regions["flash"]["app_bank_a"];
     let bank_b = &regions["flash"]["app_bank_b"];
-    let netcore_secondary = &regions["flash"]["netcore_secondary"];
+    let dfu = &regions["flash"]["dfu"];
     let settings = &regions["flash"]["settings"];
     let low_ram = &regions["ram"]["low_ram"];
     let locked_ram = &regions["ram"]["high_ram"]["locked_ram"];
@@ -67,8 +67,8 @@ __bootloader_app_a_start = {:#010x};
 __bootloader_app_a_end = {:#010x};
 __bootloader_app_b_start = {:#010x};
 __bootloader_app_b_end = {:#010x};
-__bootloader_netcore_secondary_start = {:#010x};
-__bootloader_netcore_secondary_end = {:#010x};
+__bootloader_dfu_region_start = {:#010x};
+__bootloader_dfu_region_end = {:#010x};
 
 __locked_ram_start = {:#010x};
 __locked_ram_end = {:#010x};
@@ -100,8 +100,8 @@ ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
         bank_a.origin() + bank_a.length(),
         bank_b.origin(),
         bank_b.origin() + bank_b.length(),
-        netcore_secondary.origin(),
-        netcore_secondary.origin() + netcore_secondary.length(),
+        dfu.origin(),
+        dfu.origin() + dfu.length(),
         locked_ram.origin(),
         locked_ram.origin() + locked_ram.length()
     );

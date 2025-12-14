@@ -250,9 +250,9 @@ impl DfuForwarder for IpcForwarder {
         let pcd = get_pcd_region();
 
         extern "C" {
-            static __bootloader_netcore_secondary_start: u32;
+            static __bootloader_dfu_region_start: u32;
         }
-        let dfu_addr = unsafe { &__bootloader_netcore_secondary_start as *const u32 as u32 };
+        let dfu_addr = unsafe { &__bootloader_dfu_region_start as *const u32 as u32 };
 
         pcd.cmd.set_update(dfu_addr, total_size as u32);
         defmt::info!("Set PCD command: addr={:#x}, size={}", dfu_addr, total_size);
@@ -366,8 +366,8 @@ impl<'d> DualBankFlashWriter<'d> {
             static __bootloader_app_a_end: u32;
             static __bootloader_app_b_start: u32;
             static __bootloader_app_b_end: u32;
-            static __bootloader_netcore_secondary_start: u32;
-            static __bootloader_netcore_secondary_end: u32;
+            static __bootloader_dfu_region_start: u32;
+            static __bootloader_dfu_region_end: u32;
         }
 
         unsafe {
@@ -381,9 +381,15 @@ impl<'d> DualBankFlashWriter<'d> {
                     &__bootloader_app_b_end as *const u32 as usize,
                 ),
                 DfuTarget::NetCore => {
-                    // Force netcore DFU writes into the app DFU slot (netcore_secondary)
-                    let start = &__bootloader_netcore_secondary_start as *const u32 as usize;
-                    let end = &__bootloader_netcore_secondary_end as *const u32 as usize;
+                    // Netcore DFU writes to the shared DFU region
+                    let start = &__bootloader_dfu_region_start as *const u32 as usize;
+                    let end = &__bootloader_dfu_region_end as *const u32 as usize;
+                    (start, end)
+                }
+                DfuTarget::Bootloader => {
+                    // Bootloader DFU writes to the shared DFU region (swap-based update)
+                    let start = &__bootloader_dfu_region_start as *const u32 as usize;
+                    let end = &__bootloader_dfu_region_end as *const u32 as usize;
                     (start, end)
                 }
             }
@@ -503,10 +509,9 @@ impl<'d> embassy_usb_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 );
 
                 extern "C" {
-                    static __bootloader_netcore_secondary_start: u32;
+                    static __bootloader_dfu_region_start: u32;
                 }
-                let dfu_addr =
-                    unsafe { &__bootloader_netcore_secondary_start as *const u32 as u32 };
+                let dfu_addr = unsafe { &__bootloader_dfu_region_start as *const u32 as u32 };
 
                 // Set PCD command in RAM (for soft reset)
                 let pcd = get_pcd_region();
@@ -534,6 +539,14 @@ impl<'d> embassy_usb_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                     defmt::info!("Netcore DFU info written to flash for persistence across reset");
                 }
 
+                return Ok(());
+            }
+            DfuTarget::Bootloader => {
+                defmt::info!("Bootloader DFU completed, will swap on reset");
+                // Bootloader update uses swap mechanism via stage1
+                // The DFU region already contains the new bootloader
+                // Stage1 will perform the swap on next boot
+                // Just trigger a reset to let stage1 handle it
                 return Ok(());
             }
         };
@@ -986,11 +999,42 @@ fn flag_dfu_requested(
     });
 }
 
+/// Background task to feed the watchdog
+#[embassy_executor::task]
+async fn watchdog_feeder(mut wdt_handle: embassy_nrf::wdt::WatchdogHandle) {
+    use embassy_time::{Duration, Timer};
+
+    defmt::info!("Watchdog feeder task started (feeding every 30s)");
+
+    loop {
+        wdt_handle.pet();
+        Timer::after(Duration::from_secs(30)).await;
+    }
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) -> ! {
     let p = embassy_nrf::init(Default::default());
 
     defmt::info!("Starting bootloader");
+
+    // Start watchdog (60s timeout for DFU operations)
+    // This will continue running in the app, which MUST feed it
+    let mut wdt_config = embassy_nrf::wdt::Config::default();
+    wdt_config.timeout_ticks = 32768 * 60; // 60 second timeout
+    wdt_config.action_during_sleep = embassy_nrf::wdt::SleepConfig::RUN;
+    wdt_config.action_during_debug_halt = embassy_nrf::wdt::HaltConfig::PAUSE;
+    let (_wdt, [wdt_handle]) = match embassy_nrf::wdt::Watchdog::try_new(p.WDT0, wdt_config) {
+        Ok(wdt) => wdt,
+        Err(_) => {
+            defmt::error!("Failed to initialize watchdog");
+            cortex_m::peripheral::SCB::sys_reset();
+        }
+    };
+
+    // Spawn watchdog feeder task
+    spawner.spawn(watchdog_feeder(wdt_handle).expect("Failed to spawn watchdog feeder"));
+
     let flash = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
     // ============================================================================
@@ -1424,6 +1468,22 @@ async fn main(_spawner: Spawner) -> ! {
                 w.set_write(false); // Lock writes
             });
             defmt::info!("Locked RAM region {}", region);
+        }
+    }
+
+    // Mark this boot as successful to prevent stage1 from rolling back
+    // IMPORTANT: This must be called ONLY when booting the app, NOT when entering DFU mode
+    // Otherwise it would clear the DFU request flag (SWAP_MAGIC) that the app wrote
+    {
+        use embassy_boot::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterConfig};
+
+        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+        let mut aligned_buf = AlignedBuffer([0; 4]);
+        let mut updater = BlockingFirmwareUpdater::new(config, &mut aligned_buf.0);
+
+        defmt::info!("Marking boot as successful before booting app");
+        if let Err(e) = updater.mark_booted() {
+            defmt::error!("Failed to mark boot: {:?}", e);
         }
     }
 

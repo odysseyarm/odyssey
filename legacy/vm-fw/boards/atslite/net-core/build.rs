@@ -27,7 +27,7 @@ fn main() {
     let regions = memoryspec.regions();
 
     let netcore_primary = &regions["netcore_flash"]["netcore_primary"];
-    let netcore_secondary = &regions["flash"]["netcore_secondary"];
+    let dfu_region = &regions["flash"]["dfu"];
     let netcore_ram = &regions["netcore_ram"];
 
     // For net-core, swap TX and RX from the app core's perspective
@@ -38,7 +38,7 @@ fn main() {
     // NVMC pages are 4096 bytes.
     let page_size: u64 = 4096;
     let active_len = netcore_primary.length().saturating_sub(page_size);
-    let dfu_len = netcore_secondary.length();
+    let dfu_len = dfu_region.length();
     if dfu_len < active_len + page_size {
         eprintln!("DFU slot must be at least one page larger than active");
         std::process::exit(1);
@@ -78,8 +78,8 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
 ",
         netcore_primary.origin(),
         active_len,
-        netcore_secondary.origin(),
-        netcore_secondary.length(),
+        dfu_region.origin(),
+        dfu_region.length(),
         state_origin,
         state_len,
         icmsg_tx.origin(),
@@ -105,11 +105,11 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_dfu_start={:#x}",
-        netcore_secondary.origin()
+        dfu_region.origin()
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_dfu_end={:#x}",
-        netcore_secondary.origin() + netcore_secondary.length()
+        dfu_region.origin() + dfu_region.length()
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_state_start={:#x}",

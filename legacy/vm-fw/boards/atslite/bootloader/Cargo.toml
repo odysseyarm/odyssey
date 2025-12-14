@@ -26,7 +26,7 @@ icmsg = { git = "https://github.com/0e4ef622/icmsg-rs", default-features = false
 embedded-hal-async = "1.0.0"
 embedded-storage = "0.3"
 embassy-executor = { git = "https://github.com/Abrahamh08/embassy", features = ["arch-cortex-m", "executor-thread"] }
-embassy-time = { git = "https://github.com/Abrahamh08/embassy" }
+embassy-time = { git = "https://github.com/Abrahamh08/embassy", features = ["defmt-timestamp-uptime-tms"] }
 static_cell = "2.1.1"
 futures = { version = "0.3", default-features = false, features = ["async-await"] }
 

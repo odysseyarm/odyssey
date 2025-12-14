@@ -65,12 +65,66 @@ In DFU mode:
 
 See the main application documentation for NetCore update procedures.
 
+## Watchdog Requirements
+
+**CRITICAL**: Stage 2 bootloader starts a hardware watchdog (WDT0) with a **60-second timeout**. This watchdog **cannot be stopped** once started and persists after booting into the application.
+
+**Why stage2 starts the watchdog**: Starting the watchdog in stage2 (instead of stage1) allows the watchdog configuration to be updated via stage2 bootloader updates, providing more flexibility for future changes.
+
+### Application Requirements
+
+Your application **MUST** feed the watchdog to prevent system resets. The watchdog was started by the stage2 bootloader and you need to obtain a handle to it.
+
+**Option 1**: Get a WatchdogHandle from the already-running watchdog:
+
+```rust
+// The watchdog is already running (started by bootloader)
+// We just need to get a handle to feed it
+use embassy_nrf::wdt::{Watchdog, Config, SleepConfig, HaltConfig};
+
+let mut wdt_config = Config::default();
+wdt_config.timeout_ticks = 32768 * 60;
+wdt_config.action_during_sleep = SleepConfig::RUN;
+wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
+
+let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config)
+    .expect("Watchdog already running");
+
+// Feed it periodically
+wdt_handle.pet();
+```
+
+**Option 2**: Use a background task (recommended):
+
+```rust
+#[embassy_executor::task]
+async fn watchdog_feeder(mut wdt_handle: embassy_nrf::wdt::WatchdogHandle) {
+    use embassy_time::{Duration, Timer};
+    
+    loop {
+        wdt_handle.pet();
+        Timer::after(Duration::from_secs(30)).await;
+    }
+}
+
+// In your main function:
+let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config)
+    .expect("Watchdog already running");
+spawner.spawn(watchdog_feeder(wdt_handle).expect("Failed to spawn watchdog feeder"));
+```
+
+**Note**: The stage2 bootloader automatically feeds the watchdog during operation. Your app continues this after boot.
+
 ## Features
 
-- USB DFU 1.1 compatible
+- USB DFU 1.1 compatible with 3 alt interfaces:
+  - Alt 0: Inactive App Bank (for app updates)
+  - Alt 1: Network Core (for netcore updates)
+  - Alt 2: Bootloader (for bootloader self-updates via swap)
 - Automatic WinUSB driver assignment (Windows)
 - Image validation with magic numbers and CRC
-- DirectXIP boot support via stage 1 integration
+- Swap-based bootloader self-update with rollback protection
+- Calls `mark_booted()` on successful boot to prevent rollback
 
 ## See Also
 

@@ -11,19 +11,22 @@ memory-spec = "0.1.0"
 [dependencies]
 defmt = { version = "1", optional = true }
 defmt-rtt = { version = "1", optional = true }
+panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
+panic-halt = "0.2"
 
-embassy-nrf = { version = "0.8.0", features = ["nrf5340-app-s"], default-features = false }
 cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7.5"
-embassy-boot = { version = "0.6.1", default-features = false }
-embedded-storage = "0.3"
-cfg-if = "1.0.0"
+embassy-nrf = { git = "https://github.com/Abrahamh08/embassy", features = ["nrf5340-app-s"] }
+embassy-boot-nrf = { git = "https://github.com/Abrahamh08/embassy" }
+embassy-sync = { git = "https://github.com/Abrahamh08/embassy" }
 
 [features]
+default = []
 defmt = [
     "dep:defmt",
     "dep:defmt-rtt",
-    "embassy-boot/defmt",
+    "dep:panic-probe",
+    "embassy-boot-nrf/defmt",
     "embassy-nrf/defmt",
 ]
 

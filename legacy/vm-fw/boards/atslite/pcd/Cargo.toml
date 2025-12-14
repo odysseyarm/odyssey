@@ -1,0 +1,9 @@
+[package]
+name = "pcd"
+version = "0.1.0"
+edition = "2021"
+description = "Peripheral CPU DFU library for nRF5340 network core updates"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# No dependencies - pure data structures
