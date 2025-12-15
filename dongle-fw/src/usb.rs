@@ -16,7 +16,7 @@ use crate::Irqs;
 pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
 
 pub const VID: u16 = 0x1915;
-pub const PID: u16 = 0x5210; // Dongle PID
+pub const PID: u16 = 0x5212; // Dongle PID
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{4d36e96c-e325-11ce-bfc1-08002be10318}"];
 

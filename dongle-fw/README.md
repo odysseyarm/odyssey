@@ -4,7 +4,7 @@ nRF52840 USB dongle firmware that acts as a BLE-to-USB mux for up to 7 vm-fw dev
 
 ## Features
 
-- **USB Communication**: VID 0x1915, PID 0x5210
+- **USB Communication**: VID 0x1915, PID 0x5212
 - **Mux Protocol (bulk)**: Postcard-encoded MuxMsg over USB bulk endpoints
 - **BLE Central**: Connects to up to 7 peripheral devices simultaneously using Nordic S140 SoftDevice
 - **Device Management**: Add/remove devices to bond with by UUID
@@ -206,7 +206,7 @@ If you see "SoftDevice assert", common causes:
 
 ### USB Not Detected
 
-- Verify VID/PID (0x1915:0x5210)
+- Verify VID/PID (0x1915:0x5212)
 - Check USB cable supports data (not charge-only)
 - Try different USB port
 - Check WinUSB driver installed (Windows)

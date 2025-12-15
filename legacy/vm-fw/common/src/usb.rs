@@ -169,12 +169,10 @@ impl embassy_usb::Handler for MyHandler {
         use embassy_usb::control::{OutResponse, Recipient, RequestType};
         use protodongers::control::device::DeviceMsg;
 
-        // Vendor|Interface, request SEND=0x30, wIndex=0
-        if req.request_type == RequestType::Vendor
-            && req.recipient == Recipient::Interface
-            && req.request == 0x30
-            && req.index == 0
-        {
+        // Vendor|Interface, request SEND=0x30
+        // Note: We don't check wIndex - the combination of Vendor request type
+        // and request code 0x30 uniquely identifies our vendor interface
+        if req.request_type == RequestType::Vendor && req.recipient == Recipient::Interface && req.request == 0x30 {
             match postcard::from_bytes::<DeviceMsg>(data) {
                 Ok(msg) => {
                     crate::device_control::try_send_cmd(msg);
@@ -194,12 +192,10 @@ impl embassy_usb::Handler for MyHandler {
     ) -> Option<embassy_usb::control::InResponse<'a>> {
         use embassy_usb::control::{InResponse, Recipient, RequestType};
 
-        // Vendor|Interface, request RECV=0x31, wIndex=0
-        if req.request_type == RequestType::Vendor
-            && req.recipient == Recipient::Interface
-            && req.request == 0x31
-            && req.index == 0
-        {
+        // Vendor|Interface, request RECV=0x31
+        // Note: We don't check wIndex - the combination of Vendor request type
+        // and request code 0x31 uniquely identifies our vendor interface
+        if req.request_type == RequestType::Vendor && req.recipient == Recipient::Interface && req.request == 0x31 {
             if let Some(msg) = crate::device_control::try_recv_event() {
                 match postcard::to_slice(&msg, buf) {
                     Ok(out) => Some(InResponse::Accepted(out)),

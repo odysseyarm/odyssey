@@ -296,6 +296,16 @@ async fn main(spawner: Spawner) {
     // BLE controller and tasks
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller).unwrap());
+
+    // Initialize watchdog (started by stage2 bootloader)
+    use embassy_nrf::wdt::{Watchdog, Config as WdtConfig, SleepConfig, HaltConfig};
+    let mut wdt_config = WdtConfig::default();
+    wdt_config.timeout_ticks = 32768 * 60;
+    wdt_config.action_during_sleep = SleepConfig::RUN;
+    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
+    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config)
+        .expect("Watchdog init failed");
+    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
     let l2cap_channels = AtsliteL2capChannels::new();
 
     // Build object mode context
@@ -385,6 +395,14 @@ async fn pmic_irq_task(
 #[embassy_executor::task]
 async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> ! {
     anim.run().await
+}
+
+#[embassy_executor::task]
+async fn watchdog_feeder(mut wdt_handle: embassy_nrf::wdt::WatchdogHandle) {
+    loop {
+        embassy_time::Timer::after_secs(30).await;
+        wdt_handle.pet();
+    }
 }
 
 #[embassy_executor::task]

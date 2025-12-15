@@ -74,7 +74,13 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         &ctx.l2cap_channels,
         P::device_id(),
     );
-    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0, &ctx.l2cap_channels);
+    let b = usb_snd_loop(
+        pkt_writer,
+        pkt_channel.receiver(),
+        exit0,
+        ctx.usb_configured,
+        &ctx.l2cap_channels,
+    );
     let c = imu_loop::<P>(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
         ctx.paj7025r2_group,
@@ -128,8 +134,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
     device_id: [u8; 8],
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
-        // Select between USB and BLE packets (control and data)
-        // When USB is disabled, the USB future will pend forever, allowing BLE to be selected
+        // USB takes priority - when USB is configured, ignore BLE completely
+        // When USB is not configured, only listen to BLE
         let (src, pkt) = match select3(
             async {
                 loop {
@@ -148,8 +154,22 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     }
                 }
             },
-            l2cap_channels.control_rx().receive(),
-            l2cap_channels.data_rx().receive(),
+            async {
+                // Only listen to BLE control when USB is not configured
+                if usb_configured.is_configured() {
+                    core::future::pending().await
+                } else {
+                    l2cap_channels.control_rx().receive().await
+                }
+            },
+            async {
+                // Only listen to BLE data when USB is not configured
+                if usb_configured.is_configured() {
+                    core::future::pending().await
+                } else {
+                    l2cap_channels.data_rx().receive().await
+                }
+            },
         )
         .await
         {
@@ -193,13 +213,20 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 None
             }
             PacketData::ReadRegister(register) => {
+                defmt::debug!("[app] ReadRegister: acquiring paj lock");
                 let paj = match register.port {
                     protodongers::Port::Nf => paj7025r2,
                     protodongers::Port::Wf => paj7025r3,
                 };
                 let mut paj = paj.lock().await;
+                defmt::debug!(
+                    "[app] ReadRegister: lock acquired, reading bank={}, addr={}",
+                    register.bank,
+                    register.address
+                );
                 let mut data: [u8; 1] = [0];
                 paj.read_register(register.bank, register.address, &mut data).await?;
+                defmt::debug!("[app] ReadRegister: read complete, data={}", data[0]);
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::ReadRegisterResponse(ReadRegisterResponse {
@@ -292,6 +319,11 @@ async fn usb_rcv_loop<L: L2capChannels>(
         {
             match src {
                 PacketSource::Usb => {
+                    defmt::debug!(
+                        "[app] Sending response via USB: id={}, data={:?}",
+                        r.id,
+                        defmt::Debug2Format(&r.data)
+                    );
                     pkt_snd.send(r).await;
                     defmt::debug!("[app] Response sent via USB");
                 }
@@ -322,24 +354,28 @@ async fn usb_snd_loop<L: L2capChannels>(
     mut pkt_writer: PacketWriter<'_>,
     pkt_rcv: Receiver<'_, Packet, 64>,
     mut exit: ExitReceiver<'_>,
+    usb_configured: UsbConfigHandle,
     l2cap_channels: &L,
 ) -> ! {
     loop {
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
             break;
         };
-        defmt::trace!("Sending packet: {}", defmt::Debug2Format(&pkt));
+        defmt::trace!(
+            "[usb_snd_loop] Broadcasting streaming packet: {}",
+            defmt::Debug2Format(&pkt)
+        );
 
-        // Try to send via USB (may fail if USB is disabled)
-        let _ = pkt_writer.write_packet(&pkt).await;
-
-        // Also send via BLE - route to correct L2CAP channel
-        if is_control_packet(&pkt) {
-            // Control packets must be sent (blocking)
-            l2cap_channels.control_tx().send(pkt.clone()).await;
+        // USB takes priority - if USB is connected, only send to USB
+        if usb_configured.is_configured() {
+            let _ = pkt_writer.write_packet(&pkt).await;
         } else {
-            // Streaming data - drop if channel full to avoid blocking object_mode
-            let _ = l2cap_channels.data_tx().try_send(pkt.clone());
+            // USB not connected, send to BLE only
+            if is_control_packet(&pkt) {
+                let _ = l2cap_channels.control_tx().try_send(pkt);
+            } else {
+                let _ = l2cap_channels.data_tx().try_send(pkt);
+            }
         }
     }
     todo!()
@@ -512,6 +548,7 @@ pub struct PacketWriter<'a> {
 impl PacketWriter<'_> {
     pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
         let payload = postcard::to_vec::<_, 1024>(pkt)?;
+        defmt::debug!("[USB] write_packet: payload_len={}, pkt_id={}", payload.len(), pkt.id);
         usb::write_transfer(self.snd, &payload, true).await?;
         Ok(())
     }
