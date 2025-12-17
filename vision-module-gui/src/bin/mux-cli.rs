@@ -44,7 +44,7 @@ fn list_dongles() -> Result<Vec<nusb::DeviceInfo>, String> {
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
         .into_iter()
-        .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5210)
+        .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
         .collect();
 
     Ok(devices)
@@ -55,7 +55,7 @@ async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice, Str
 
     if devices.is_empty() {
         return Err(
-            "No dongle found (VID:0x1915 PID:0x5210). Please connect a dongle.".to_string(),
+            "No dongle found (VID:0x1915 PID:0x5212). Please connect a dongle.".to_string(),
         );
     }
 
@@ -95,7 +95,7 @@ async fn cmd_devices() -> Result<(), String> {
     let devices = list_dongles()?;
 
     if devices.is_empty() {
-        println!("No dongles found (VID:0x1915 PID:0x5210)");
+        println!("No dongles found (VID:0x1915 PID:0x5212)");
     } else {
         println!("Available dongles:");
         for (i, info) in devices.iter().enumerate() {
@@ -270,7 +270,7 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
     use nusb::transfer::{Bulk, Interrupt, In, Out};
     let devices = list_dongles()?;
     if devices.is_empty() {
-        return Err("No dongle found (VID:0x1915 PID:0x5210)".to_string());
+        return Err("No dongle found (VID:0x1915 PID:0x5212)".to_string());
     }
     let device_info = if let Some(idx) = device_index {
         devices.get(idx).cloned().ok_or_else(|| format!(
