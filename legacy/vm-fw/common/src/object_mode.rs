@@ -17,6 +17,7 @@ use paj7025::Paj7025Error;
 
 use crate::fodtrigger::FodTrigger;
 use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet};
+use crate::protodongers::control::device::TransportMode;
 use crate::protodongers::{
     self, ConfigKind, Packet, PacketData, PacketType, PropKind, Props, ReadRegisterResponse, wire,
 };
@@ -44,6 +45,8 @@ pub struct ObjectModeContext<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, 
     pub usb_configured: UsbConfigHandle,
     pub settings: &'d mut Settings,
     pub l2cap_channels: P::L2capChannels,
+    /// Function to read current data mode (USB vs BLE).
+    pub data_mode: fn() -> TransportMode,
 }
 
 #[allow(unreachable_code)]
@@ -73,6 +76,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         ctx.settings,
         &ctx.l2cap_channels,
         P::device_id(),
+        ctx.data_mode,
     );
     let b = usb_snd_loop(
         pkt_writer,
@@ -80,6 +84,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         exit0,
         ctx.usb_configured,
         &ctx.l2cap_channels,
+        ctx.data_mode,
     );
     let c = imu_loop::<P>(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
     let d = obj_loop(
@@ -132,39 +137,48 @@ async fn usb_rcv_loop<L: L2capChannels>(
     settings: &mut Settings,
     l2cap_channels: &L,
     device_id: [u8; 8],
+    data_mode: fn() -> TransportMode,
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
-        // USB takes priority - when USB is configured, ignore BLE completely
-        // When USB is not configured, only listen to BLE
+        // Always listen for USB control regardless of data transport; gate USB data by mode.
+        let mode = data_mode();
+        let usb_enabled = usb_configured.is_configured();
+        let ble_enabled = matches!(mode, TransportMode::Ble);
         let (src, pkt) = match select3(
             async {
                 loop {
-                    match pkt_rcv.wait_for_packet().await {
-                        Ok(pkt) => break pkt,
-                        Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                            defmt::info!("USB not configured; waiting for host connection...");
-                            usb_configured.wait_until_configured().await;
-                            defmt::info!("USB configured; resuming packet handling");
-                            continue;
-                        }
-                        Err(e) => {
-                            defmt::error!("Failed to read USB packet: {}", e);
-                            embassy_time::Timer::after_millis(100).await;
+                    if !usb_enabled {
+                        core::future::pending().await
+                    } else {
+                        match pkt_rcv.wait_for_packet().await {
+                            Ok(pkt) => break pkt,
+                            Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
+                                // Endpoint disabled - wait for USB to actually be reconfigured
+                                // This blocks until the USB configured event fires
+                                defmt::debug!("USB endpoint disabled; waiting for reconfiguration...");
+                                usb_configured.wait_for_event().await;
+                                defmt::debug!("USB reconfigured; resuming packet handling");
+                                continue;
+                            }
+                            Err(e) => {
+                                defmt::error!("Failed to read USB packet: {}", e);
+                                embassy_time::Timer::after_millis(100).await;
+                            }
                         }
                     }
                 }
             },
             async {
-                // Only listen to BLE control when USB is not configured
-                if usb_configured.is_configured() {
+                // Listen to BLE control when BLE mode is active
+                if !ble_enabled {
                     core::future::pending().await
                 } else {
                     l2cap_channels.control_rx().receive().await
                 }
             },
             async {
-                // Only listen to BLE data when USB is not configured
-                if usb_configured.is_configured() {
+                // Listen to BLE data when BLE mode is active
+                if !ble_enabled {
                     core::future::pending().await
                 } else {
                     l2cap_channels.data_rx().receive().await
@@ -177,6 +191,12 @@ async fn usb_rcv_loop<L: L2capChannels>(
             Either3::Second(pkt) => (PacketSource::Ble, pkt),
             Either3::Third(pkt) => (PacketSource::Ble, pkt),
         };
+
+        // If we're in BLE mode, drop any USB-originating data packets (keep control).
+        if matches!(mode, TransportMode::Ble) && matches!(src, PacketSource::Usb) && !is_control_packet(&pkt) {
+            defmt::debug!("[app] ignoring USB data packet while in BLE mode");
+            continue;
+        }
 
         match src {
             PacketSource::Usb => defmt::info!("[app] src=USB"),
@@ -356,6 +376,7 @@ async fn usb_snd_loop<L: L2capChannels>(
     mut exit: ExitReceiver<'_>,
     usb_configured: UsbConfigHandle,
     l2cap_channels: &L,
+    data_mode: fn() -> TransportMode,
 ) -> ! {
     loop {
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
@@ -366,16 +387,23 @@ async fn usb_snd_loop<L: L2capChannels>(
             defmt::Debug2Format(&pkt)
         );
 
-        // USB takes priority - if USB is connected, only send to USB
-        if usb_configured.is_configured() {
+        let mode = data_mode();
+        let usb_enabled = usb_configured.is_configured() && matches!(mode, TransportMode::Usb);
+        let ble_enabled = matches!(mode, TransportMode::Ble);
+
+        // USB takes priority - if USB is enabled, only send to USB
+        if usb_enabled {
             let _ = pkt_writer.write_packet(&pkt).await;
-        } else {
+        } else if ble_enabled {
             // USB not connected, send to BLE only
             if is_control_packet(&pkt) {
                 let _ = l2cap_channels.control_tx().try_send(pkt);
             } else {
                 let _ = l2cap_channels.data_tx().try_send(pkt);
             }
+        } else {
+            // Neither mode active; drop
+            defmt::debug!("[usb_snd_loop] Dropping packet because no data mode active");
         }
     }
     todo!()
@@ -387,49 +415,38 @@ async fn imu_loop<P: Platform>(
     pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
 ) {
-    // ---- Sensor time: simple counter for timestamp ----
-    // Platform-specific timing can be added via trait methods if needed
-    let mut ts_micros: u32 = 0;
-
-    // ---- Unit scales (default for BMI270, platforms may differ) ----
-    // Accelerometer full-scale: 16 g -> 2048 LSB/g
-    const ACC_LSB_PER_G: f32 = 2048.0;
+    // ---- Unit scales from platform ----
     const G: f32 = 9.806_65;
-
-    // Gyro full-scale: 250 dps -> 65.536 LSB/(deg/s)
-    const GYRO_LSB_PER_DPS: f32 = 65.536;
     const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
 
     loop {
         imu_int.wait().await;
 
-        // Read accelerometer and gyroscope data from the platform-specific IMU
-        let acc = match imu.read_accel().await {
+        // Read IMU data with timestamp from the platform-specific IMU
+        let imu_data = match imu.read_data().await {
             Ok(data) => data,
             Err(e) => {
-                defmt::error!("Failed to read accelerometer: {}", defmt::Debug2Format(&e));
+                defmt::error!("Failed to read IMU data: {}", defmt::Debug2Format(&e));
                 continue;
             }
         };
 
-        let gyr = match imu.read_gyro().await {
-            Ok(data) => data,
-            Err(e) => {
-                defmt::error!("Failed to read gyroscope: {}", defmt::Debug2Format(&e));
-                continue;
-            }
-        };
+        let acc = imu_data.accel;
+        let gyr = imu_data.gyro;
+        let ts_micros = imu_data.timestamp_micros;
 
-        // Simple timestamp increment (~100Hz sampling = 10ms per sample)
-        // TODO: Platform-specific timestamp handling via trait methods
-        ts_micros = ts_micros.wrapping_add(10_000);
+        // Apply platform-specific axis transforms
+        let acc_transformed = P::transform_accel(acc);
+        let gyr_transformed = P::transform_gyro(gyr);
 
-        // Convert to SI units (using BMI270 scaling - platforms may override)
-        let accel = Vector3::new(-acc[0], -acc[1], acc[2]).cast::<f32>() / ACC_LSB_PER_G * G;
+        // Convert to SI units using platform-specific scaling
+        let accel = Vector3::new(acc_transformed[0], acc_transformed[1], acc_transformed[2]).cast::<f32>()
+            / P::ACC_LSB_PER_G
+            * G;
 
-        let gx = -(gyr[0] as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
-        let gy = -(gyr[1] as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
-        let gz = (gyr[2] as f32 / GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gx = (gyr_transformed[0] as f32 / P::GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gy = (gyr_transformed[1] as f32 / P::GYRO_LSB_PER_DPS) * DEG_TO_RAD;
+        let gz = (gyr_transformed[2] as f32 / P::GYRO_LSB_PER_DPS) * DEG_TO_RAD;
 
         if stream_infos.imu.enabled() {
             let id = stream_infos.imu.req_id();

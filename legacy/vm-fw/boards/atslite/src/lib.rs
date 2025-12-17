@@ -17,6 +17,7 @@ pub mod power;
 pub mod power_button;
 pub mod device_control_task;
 pub mod power_state;
+pub mod transport_mode;
 
 // Re-export common
 pub use common;

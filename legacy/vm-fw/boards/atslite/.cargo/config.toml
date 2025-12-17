@@ -8,7 +8,7 @@ embassy-usb-dfu = { path = "../../patch/embassy/embassy-usb-dfu" }
 target = "thumbv8m.main-none-eabihf"
 
 [env]
-DEFMT_LOG = "debug"
+DEFMT_LOG = "info"
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 runner = "probe-rs run --chip nrf5340_xxAA"

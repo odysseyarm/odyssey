@@ -46,6 +46,12 @@ impl UsbConfigHandle {
             }
         }
     }
+
+    /// Wait for the next USB configuration event (configured or unconfigured)
+    /// This always waits for an actual event, unlike wait_until_configured which returns immediately if already configured
+    pub async fn wait_for_event(&self) {
+        self.signal.wait().await;
+    }
 }
 
 use crate::utils::static_byte_buffer;

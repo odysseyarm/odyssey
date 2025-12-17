@@ -3,8 +3,10 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
+use protodongers::control::device::TransportMode;
 use trouble_host::prelude::*;
 
+use crate::transport_mode;
 use common::settings;
 
 /// Max number of connections
@@ -24,6 +26,7 @@ pub async fn run<C>(controller: C)
 where
     C: Controller,
 {
+    defmt::info!("[adv] advertising task starting");
     let address = Address::random(defmt::unwrap!(crate::utils::device_id()[0..6].try_into()));
 
     let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
@@ -34,14 +37,24 @@ where
     // Safety: init_settings is called before BLE task is spawned
     let settings = unsafe { settings::get_settings() };
 
-    // TODO: Re-enable bonding once trouble-host API is updated
-    let mut bond_stored = false;
-    // let mut bond_stored = if let Some(bond_info) = settings.ble_bond.to_bond_info() {
-    //     stack.add_bond_information(bond_info).unwrap();
-    //     true
-    // } else {
-    //     false
-    // };
+    // Restore any persisted bond into the host so reconnections encrypt without re-pairing.
+    let mut bond_stored = if let Some(bond_info) = settings.ble_bond.to_bond_info() {
+        match stack.add_bond_information(bond_info) {
+            Ok(()) => {
+                defmt::info!("Restored bond from settings into host");
+                true
+            }
+            Err(e) => {
+                defmt::warn!(
+                    "Failed to restore bond into host: {:?}",
+                    defmt::Debug2Format(&e)
+                );
+                false
+            }
+        }
+    } else {
+        false
+    };
 
     let Host {
         mut peripheral,
@@ -56,6 +69,10 @@ where
 
     let _ = join(ble_task(runner), async {
         loop {
+            defmt::info!(
+                "[adv] advertising loop restarting (bond_stored={})",
+                bond_stored
+            );
             // Race advertise against restart signal to allow restart even when not connected
             let adv_fut = advertise("Trouble Example", &mut peripheral, &server);
             let restart_fut = ADV_RESTART_SIGNAL.wait();
@@ -91,15 +108,40 @@ where
                         // run until any task ends (connection closed or pairing state change)
                         match select3(a, b, c).await {
                             Either3::First(result) => {
-                                // gatt_events_task completed
+                                // gatt_events_task completed - this means disconnect was detected
                                 let _ = result;
                                 defmt::info!(
-                                    "[adv] gatt_events_task completed, restarting advertising"
+                                    "[adv] gatt_events_task completed (disconnect detected), restarting advertising"
                                 );
+                                ADV_RESTART_SIGNAL.signal(());
                             }
                             Either3::Second(_) => {
-                                // custom_task completed (L2CAP failure or connection issue)
-                                defmt::info!("[adv] custom_task completed, restarting advertising");
+                                // custom_task completed (L2CAP tasks exited)
+                                // This can happen if L2CAP errors out before gatt_events_task sees the disconnect
+                                // We need to wait a bit for the disconnect event to arrive
+                                defmt::info!("[adv] custom_task completed, waiting for disconnect event");
+                                let disconnect_wait = async {
+                                    loop {
+                                        match conn.next().await {
+                                            GattConnectionEvent::Disconnected { .. } => {
+                                                defmt::info!("[adv] disconnect event received after custom_task exit");
+                                                break;
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                };
+                                // Wait up to 1 second for disconnect event
+                                match embassy_time::with_timeout(embassy_time::Duration::from_secs(1), disconnect_wait).await {
+                                    Ok(_) => {
+                                        defmt::info!("[adv] disconnect confirmed, restarting advertising");
+                                    }
+                                    Err(_) => {
+                                        defmt::warn!("[adv] disconnect event timeout, forcing disconnect");
+                                        let _ = conn.raw().disconnect();
+                                    }
+                                }
+                                ADV_RESTART_SIGNAL.signal(());
                             }
                             Either3::Third(_) => {
                                 // Restart signal: disconnect and wait for disconnect event
@@ -125,6 +167,7 @@ where
                                         defmt::warn!("[adv] disconnect timeout, forcing restart");
                                     }
                                 }
+                                ADV_RESTART_SIGNAL.signal(());
                             }
                         }
                     }
@@ -169,6 +212,8 @@ async fn gatt_events_task(
                     "[peripheral] Disconnected: {:?}",
                     defmt::Debug2Format(&reason)
                 );
+                defmt::info!("[peripheral] signaling advertising restart after disconnect");
+                ADV_RESTART_SIGNAL.signal(());
                 break reason;
             }
             GattConnectionEvent::PairingComplete {
@@ -180,6 +225,13 @@ async fn gatt_events_task(
                     settings.ble_bond = common::settings::BleBondSettings::from_bond_info(&bond);
                     settings.ble_bond_write();
                     *bond_stored = true;
+
+                    // Signal pairing completion with the bonded device address
+                    let addr = settings.ble_bond.bd_addr;
+                    PAIRING_COMPLETE_SIGNAL.signal(addr);
+
+                    // Clear pairing mode
+                    PAIRING.store(false, Ordering::Relaxed);
                 }
                 cancel_pairing_mode();
             }
@@ -215,6 +267,17 @@ async fn gatt_events_task(
         "[gatt_events_task] completed with reason: {:?}",
         defmt::Debug2Format(&reason)
     );
+
+    // Only clear bond on authentication failures; transient link losses should keep bonds
+    // so we can reconnect without re-pairing.
+    if let Err(err) = reason.to_result() {
+        // Keep bond across transient disconnects; only explicit auth failures elsewhere should clear.
+        defmt::warn!(
+            "[gatt_events_task] Disconnect reason {:?}, keeping bond",
+            defmt::Debug2Format(&err)
+        );
+    }
+
     Ok(())
 }
 
@@ -324,7 +387,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     const MAX_L2CAP_ACCEPT_ATTEMPTS: u8 = 5;
     let mut accept_attempts = 0u8;
 
-    let mut l2cap_control_channel = loop {
+    let l2cap_control_channel = loop {
         match embassy_time::with_timeout(
             embassy_time::Duration::from_secs(10),
             L2capChannel::accept(
@@ -367,7 +430,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     };
 
     accept_attempts = 0; // Reset for second channel
-    let mut l2cap_data_channel = loop {
+    let l2cap_data_channel = loop {
         match embassy_time::with_timeout(
             embassy_time::Duration::from_secs(10),
             L2capChannel::accept(
@@ -410,6 +473,16 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     };
 
     // Get or initialize L2CAP bridge channels
+    // Only enable the L2CAP bridge when BLE mode is active; pairing can still proceed in USB mode.
+    while transport_mode::get() != TransportMode::Ble {
+        let mode = transport_mode::get();
+        defmt::info!(
+            "[custom_task] transport mode {:?}, waiting to enable L2CAP bridge",
+            mode
+        );
+        transport_mode::wait_for_change().await;
+    }
+
     let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
 
     defmt::info!("[custom_task] L2CAP bridge ready, splitting channels");
@@ -482,6 +555,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             "[control_tx_task] L2CAP control send failed: {:?}",
                             defmt::Debug2Format(&e)
                         );
+                        ADV_RESTART_SIGNAL.signal(());
                         return;
                     }
                     Err(_) => {
@@ -495,6 +569,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             defmt::error!(
                                 "[control_tx_task] Too many consecutive timeouts, exiting"
                             );
+                            ADV_RESTART_SIGNAL.signal(());
                             return;
                         }
                     }
@@ -538,6 +613,7 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             defmt::Debug2Format(&e)
                         );
                         // Send errors are fatal - channel is broken
+                        ADV_RESTART_SIGNAL.signal(());
                         return;
                     }
                     Err(_) => {
@@ -551,6 +627,7 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             defmt::error!(
                                 "[data_tx_task] Too many consecutive timeouts, connection appears dead"
                             );
+                            ADV_RESTART_SIGNAL.signal(());
                             return;
                         }
                     }
@@ -573,6 +650,8 @@ async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
     let mut rx_buf = [0u8; 1024];
 
     loop {
+        // Control channel doesn't need timeout - control packets are infrequent
+        // The BLE stack will notify us via error if connection dies
         match channel.receive(stack, &mut rx_buf).await {
             Ok(len) => {
                 defmt::info!("[control_rx_task] RX control: {} bytes", len);
@@ -591,6 +670,7 @@ async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                     "[control_rx_task] L2CAP control receive error: {:?}",
                     defmt::Debug2Format(&e)
                 );
+                ADV_RESTART_SIGNAL.signal(());
                 return;
             }
         }
@@ -607,6 +687,8 @@ async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
     let mut rx_buf = [0u8; 1024];
 
     loop {
+        // No timeout needed - if connection dies, channel.receive() will error
+        // The gatt_events_task handles disconnect detection
         match channel.receive(stack, &mut rx_buf).await {
             Ok(len) => match postcard::from_bytes::<common::protodongers::Packet>(&rx_buf[..len]) {
                 Ok(pkt) => {
@@ -623,6 +705,7 @@ async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                     "[data_rx_task] L2CAP data receive error: {:?}",
                     defmt::Debug2Format(&e)
                 );
+                ADV_RESTART_SIGNAL.signal(());
                 return;
             }
         }
@@ -634,6 +717,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 static ADV_RESTART_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
 static PAIRING: AtomicBool = AtomicBool::new(false);
+static PAIRING_COMPLETE_SIGNAL: Signal<ThreadModeRawMutex, [u8; 6]> = Signal::new();
 
 static REQ_DISCONNECT: AtomicBool = AtomicBool::new(false);
 
@@ -657,4 +741,8 @@ pub fn cancel_pairing_mode() {
 
 pub fn is_pairing_active() -> bool {
     PAIRING.load(Ordering::Relaxed)
+}
+
+pub async fn wait_for_pairing_complete() -> [u8; 6] {
+    PAIRING_COMPLETE_SIGNAL.wait().await
 }

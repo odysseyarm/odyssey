@@ -391,8 +391,8 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "cfg-noodle"
-version = "0.5.0"
-source = "git+https://github.com/tweedegolf/cfg-noodle#545f24162a56531f00239da2f53d5351f786f2c9"
+version = "0.6.0"
+source = "git+https://github.com/tweedegolf/cfg-noodle#87e468b5594b5c57d11aa326c950273713707419"
 dependencies = [
  "cordyceps",
  "crc",
@@ -831,7 +831,7 @@ dependencies = [
 [[package]]
 name = "embassy-boot"
 version = "0.6.1"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "digest",
  "document-features",
@@ -845,7 +845,7 @@ dependencies = [
 [[package]]
 name = "embassy-embedded-hal"
 version = "0.5.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "defmt 1.0.1",
  "embassy-futures",
@@ -863,7 +863,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor"
 version = "0.9.1"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "cordyceps",
  "cortex-m",
@@ -877,7 +877,7 @@ dependencies = [
 [[package]]
 name = "embassy-executor-macros"
 version = "0.7.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -888,12 +888,12 @@ dependencies = [
 [[package]]
 name = "embassy-executor-timer-queue"
 version = "0.1.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 
 [[package]]
 name = "embassy-futures"
 version = "0.1.2"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "defmt 1.0.1",
 ]
@@ -901,7 +901,7 @@ dependencies = [
 [[package]]
 name = "embassy-hal-internal"
 version = "0.3.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -912,12 +912,12 @@ dependencies = [
 [[package]]
 name = "embassy-net-driver"
 version = "0.2.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 
 [[package]]
 name = "embassy-net-driver-channel"
 version = "0.3.2"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "embassy-futures",
  "embassy-net-driver",
@@ -927,7 +927,7 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.8.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if",
@@ -958,7 +958,7 @@ dependencies = [
 [[package]]
 name = "embassy-sync"
 version = "0.7.2"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -972,7 +972,7 @@ dependencies = [
 [[package]]
 name = "embassy-time"
 version = "0.5.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -988,7 +988,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.2.1"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "document-features",
 ]
@@ -996,7 +996,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-utils"
 version = "0.3.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "embassy-executor-timer-queue",
  "heapless 0.8.0",
@@ -1005,7 +1005,7 @@ dependencies = [
 [[package]]
 name = "embassy-usb"
 version = "0.5.1"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "defmt 1.0.1",
  "embassy-futures",
@@ -1019,7 +1019,7 @@ dependencies = [
 [[package]]
 name = "embassy-usb-dfu"
 version = "0.2.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "bitflags 2.10.0",
  "cortex-m",
@@ -1034,7 +1034,7 @@ dependencies = [
 [[package]]
 name = "embassy-usb-driver"
 version = "0.2.0"
-source = "git+https://github.com/Abrahamh08/embassy#a382238225ea55ee478bbde9ddb7d0d37cf004b5"
+source = "git+https://github.com/Abrahamh08/embassy#574868282518ceb81bddcb03bee38fc5b6208a5a"
 dependencies = [
  "defmt 1.0.1",
  "embedded-io-async",
@@ -2198,11 +2198,11 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
 name = "sequential-storage"
-version = "5.0.1"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0779e7aa11fe1e0a6a0bfb6abcdcc8852c6b74e3946d2ce93d24963dafc4a271"
+checksum = "634c2d26969edcb6b2c24c35cce4849c42199cd3ad32c69f6e5e02365ab60e76"
 dependencies = [
- "defmt 0.3.100",
+ "defmt 1.0.1",
  "embedded-storage-async",
 ]
 

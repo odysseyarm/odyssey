@@ -12,11 +12,17 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::DeviceError;
 
-type Bmi2Type<const N: usize> =
-    Bmi2<SpiInterface<embedded_hal_bus::spi::ExclusiveDevice<Spim<'static>, Output<'static>, Delay>>, Delay, N>;
+type Bmi2Type<const N: usize> = Bmi2<
+    SpiInterface<embedded_hal_bus::spi::ExclusiveDevice<Spim<'static>, Output<'static>, Delay>>,
+    Delay,
+    N,
+>;
 
 pub struct VmImu<const N: usize> {
     inner: Bmi2Type<N>,
+    // BMI270 timestamp tracking state
+    last_ts_raw: Option<u32>,
+    ts_micros: u32,
 }
 
 pub struct VmImuInterrupt {
@@ -28,17 +34,36 @@ impl<const N: usize> common::platform::Imu for VmImu<N> {
     type Error = Error<DeviceError<spim::Error, Infallible>>;
     type Interrupt = VmImuInterrupt;
 
-    fn read_accel(&mut self) -> impl Future<Output = Result<[i16; 3], Self::Error>> {
+    fn read_data(
+        &mut self,
+    ) -> impl Future<Output = Result<common::platform::ImuData, Self::Error>> {
         async move {
-            let data = self.inner.get_acc_data().await?;
-            Ok([data.x, data.y, data.z])
-        }
-    }
+            // BMI270 timestamp constants
+            const TS_BITS: u32 = 24;
+            const TS_MASK: u32 = (1 << TS_BITS) - 1; // 0x00FF_FFFF
+            const TICK_US_NUM: u32 = 625;
+            const TICK_US_DEN_SHIFT: u32 = 4;
 
-    fn read_gyro(&mut self) -> impl Future<Output = Result<[i16; 3], Self::Error>> {
-        async move {
-            let data = self.inner.get_gyr_data().await?;
-            Ok([data.x, data.y, data.z])
+            let pkt = self.inner.get_data().await?;
+
+            // Calculate timestamp delta
+            let ts_raw = pkt.time & TS_MASK; // keep only 24 bits
+            let dt_ticks_u32 = match self.last_ts_raw {
+                Some(prev) => (ts_raw.wrapping_sub(prev)) & TS_MASK,
+                None => 0,
+            };
+            self.last_ts_raw = Some(ts_raw);
+
+            // ticks → µs: dt * (625/16)  (use u64 for the mul, then cast back)
+            let dt_us =
+                (((dt_ticks_u32 as u64) * (TICK_US_NUM as u64)) >> TICK_US_DEN_SHIFT) as u32;
+            self.ts_micros = self.ts_micros.wrapping_add(dt_us);
+
+            Ok(common::platform::ImuData {
+                accel: [pkt.acc.x as i32, pkt.acc.y as i32, pkt.acc.z as i32],
+                gyro: [pkt.gyr.x as i32, pkt.gyr.y as i32, pkt.gyr.z as i32],
+                timestamp_micros: self.ts_micros,
+            })
         }
     }
 }
@@ -132,5 +157,12 @@ where
     .await?;
     imu.set_int_latch(IntLatch::None).await?;
 
-    Ok((VmImu { inner: imu }, VmImuInterrupt { irq }))
+    Ok((
+        VmImu {
+            inner: imu,
+            last_ts_raw: None,
+            ts_micros: 0,
+        },
+        VmImuInterrupt { irq },
+    ))
 }

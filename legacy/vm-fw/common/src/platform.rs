@@ -3,28 +3,31 @@
 /// Each board crate (vm-board, atslite-board) implements these traits
 /// to provide platform-specific functionality while keeping the core
 /// logic in this common library platform-agnostic.
-
 use core::future::Future;
 
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 
-use crate::protodongers::{Packet, PacketType};
-
 use crate::Paj;
+use crate::protodongers::{Packet, PacketType};
 use crate::settings::Settings;
+
+/// IMU data with timestamp
+pub struct ImuData {
+    pub accel: [i32; 3],
+    pub gyro: [i32; 3],
+    pub timestamp_micros: u32,
+}
 
 /// IMU (Inertial Measurement Unit) abstraction
 pub trait Imu {
     type Error: core::fmt::Debug;
     type Interrupt;
 
-    /// Read accelerometer data [x, y, z] in raw ADC units
-    fn read_accel(&mut self) -> impl Future<Output = Result<[i16; 3], Self::Error>>;
-
-    /// Read gyroscope data [x, y, z] in raw ADC units
-    fn read_gyro(&mut self) -> impl Future<Output = Result<[i16; 3], Self::Error>>;
+    /// Read IMU data (accel + gyro + timestamp) from sensor
+    /// The timestamp should be in microseconds and wrap-safe for timing calculations
+    fn read_data(&mut self) -> impl Future<Output = Result<ImuData, Self::Error>>;
 }
 
 /// IMU interrupt source abstraction
@@ -63,6 +66,18 @@ pub trait Platform {
 
     /// Platform name for logging
     const NAME: &'static str;
+
+    /// IMU accelerometer scaling: LSB per g
+    const ACC_LSB_PER_G: f32;
+
+    /// IMU gyroscope scaling: LSB per degree/second
+    const GYRO_LSB_PER_DPS: f32;
+
+    /// IMU axis transform function: takes raw [x, y, z] and returns transformed [x, y, z]
+    fn transform_accel(raw: [i32; 3]) -> [i32; 3];
+
+    /// IMU gyro axis transform function: takes raw [x, y, z] and returns transformed [x, y, z]
+    fn transform_gyro(raw: [i32; 3]) -> [i32; 3];
 
     /// Device ID for this platform
     fn device_id() -> [u8; 8];

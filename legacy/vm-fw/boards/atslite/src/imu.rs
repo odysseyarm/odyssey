@@ -12,6 +12,8 @@ use icm426xx::{ICM42688, Ready};
 
 pub struct AtsliteImu {
     inner: ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>,
+    // Accumulated timestamp in microseconds
+    ts_micros: u32,
 }
 
 pub struct AtsliteImuInterrupt {
@@ -27,7 +29,9 @@ impl common::platform::Imu for AtsliteImu {
     type Error = ImuError;
     type Interrupt = AtsliteImuInterrupt;
 
-    fn read_accel(&mut self) -> impl Future<Output = Result<[i16; 3], Self::Error>> {
+    fn read_data(
+        &mut self,
+    ) -> impl Future<Output = Result<common::platform::ImuData, Self::Error>> {
         async move {
             // Read from FIFO - buffer for 521 u32 words as in the old implementation
             let mut buffer = [0u32; 521];
@@ -42,36 +46,26 @@ impl common::platform::Imu for AtsliteImu {
                 &bytemuck::cast_slice(&buffer)[4..24],
             );
 
-            // Read accel data with axis transformation (flip Y and Z)
-            let ax = pkt.accel_data_x() as i16;
-            let ay = -pkt.accel_data_y() as i16;
-            let az = -pkt.accel_data_z() as i16;
+            // Read raw sensor data - axis transforms done in common lib via Platform trait
+            // Keep as i32 to avoid truncation
+            let ax = pkt.accel_data_x();
+            let ay = pkt.accel_data_y();
+            let az = pkt.accel_data_z();
 
-            Ok([ax, ay, az])
-        }
-    }
+            let gx = pkt.gyro_data_x();
+            let gy = pkt.gyro_data_y();
+            let gz = pkt.gyro_data_z();
 
-    fn read_gyro(&mut self) -> impl Future<Output = Result<[i16; 3], Self::Error>> {
-        async move {
-            // Read from FIFO - buffer for 521 u32 words as in the old implementation
-            let mut buffer = [0u32; 521];
-            let _items = self
-                .inner
-                .read_fifo(&mut buffer)
-                .await
-                .map_err(|_| ImuError)?;
+            // Accumulate timestamp delta from FIFO (CLKIN ticks at 32 kHz)
+            // The timestamp is the delta since last sample, convert to microseconds: ticks * 1000 / 32
+            let timestamp_delta = 1000 * (pkt.timestamp() as u32) / 32;
+            self.ts_micros = self.ts_micros.wrapping_add(timestamp_delta);
 
-            // Parse the first FIFO packet (skip 4 bytes header, read 20-byte packet)
-            let pkt = bytemuck::from_bytes::<icm426xx::fifo::FifoPacket4>(
-                &bytemuck::cast_slice(&buffer)[4..24],
-            );
-
-            // Read gyro data with axis transformation (flip Y and Z)
-            let gx = pkt.gyro_data_x() as i16;
-            let gy = -pkt.gyro_data_y() as i16;
-            let gz = -pkt.gyro_data_z() as i16;
-
-            Ok([gx, gy, gz])
+            Ok(common::platform::ImuData {
+                accel: [ax, ay, az],
+                gyro: [gx, gy, gz],
+                timestamp_micros: self.ts_micros,
+            })
         }
     }
 }
@@ -149,5 +143,11 @@ where
 
     defmt::info!("ICM42688 initialized");
 
-    (AtsliteImu { inner: imu }, AtsliteImuInterrupt { int1 })
+    (
+        AtsliteImu {
+            inner: imu,
+            ts_micros: 0,
+        },
+        AtsliteImuInterrupt { int1 },
+    )
 }

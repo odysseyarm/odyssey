@@ -745,6 +745,8 @@ async fn send_mux_msg(
 
 #[embassy_executor::task]
 async fn control_exec_task(settings: &'static Settings) -> ! {
+    // Drop any stale events once at startup, but do not clear per-iteration or we risk racing the host and dropping responses (e.g., ClearBondsResponse).
+    control::clear_events();
     loop {
         use UsbMuxCtrlMsg as C;
         let cmd = control::recv_cmd().await;
@@ -763,6 +765,8 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
             }
             C::ClearBonds => {
                 info!("CTL ClearBonds received");
+                // Cancel any in-progress pairing to avoid overlapping control events
+                pairing::cancel();
                 // Capture current bonds to purge from host DB
                 let bonds = settings.get_all_bonds().await;
                 let mut to_purge: HVec<BondData, { MAX_DEVICES }> = HVec::new();

@@ -5,6 +5,7 @@
 use defmt_rtt as _;
 use panic_probe as _;
 
+use atslite_board::transport_mode;
 use atslite_boot_api::BootConfirmation;
 use core::cell::RefCell;
 use embassy_boot::{BlockingFirmwareState, FirmwareUpdaterConfig};
@@ -23,6 +24,7 @@ use embassy_time::{Delay, Timer};
 use embassy_usb_dfu::consts::DfuAttributes;
 use embassy_usb_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
 use npm1300_rs::{self, NPM1300};
+use protodongers::control::device::TransportMode;
 use static_cell::StaticCell;
 
 use atslite_board::{
@@ -269,11 +271,6 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
 
-    // Initialize device control channels
-    let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
-    common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
-    spawner.spawn(atslite_board::device_control_task::device_control_task().unwrap());
-
     // Settings flash - borrow NVMC from the shared mutex
     let nvmc_async = nvmc.lock(|_f| {
         // Create a new Nvmc by stealing the peripheral - this is safe because
@@ -289,6 +286,15 @@ async fn main(spawner: Spawner) {
             .unwrap()
     };
 
+    // Default transport mode to BLE after settings are initialized
+    transport_mode::set(TransportMode::Ble);
+    defmt::info!("Transport mode initialized to BLE");
+
+    // Initialize device control channels after settings are ready
+    let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
+    common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+    spawner.spawn(atslite_board::device_control_task::device_control_task().unwrap());
+
     // Confirm this boot as successful so the bootloader keeps the current slot active.
     // Adjust PMIC limit after USB enumerates
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
@@ -298,13 +304,12 @@ async fn main(spawner: Spawner) {
     spawner.spawn(ble_task(controller).unwrap());
 
     // Initialize watchdog (started by stage2 bootloader)
-    use embassy_nrf::wdt::{Watchdog, Config as WdtConfig, SleepConfig, HaltConfig};
+    use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
     let mut wdt_config = WdtConfig::default();
     wdt_config.timeout_ticks = 32768 * 60;
     wdt_config.action_during_sleep = SleepConfig::RUN;
     wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
-    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config)
-        .expect("Watchdog init failed");
+    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
     spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
     let l2cap_channels = AtsliteL2capChannels::new();
 
@@ -322,6 +327,7 @@ async fn main(spawner: Spawner) {
         usb_configured: usb_cfg,
         settings: settings_ref,
         l2cap_channels,
+        data_mode: transport_mode::get,
     };
 
     defmt::info!("Initialization complete; entering object mode");

@@ -54,6 +54,11 @@ pub fn try_recv_event() -> Option<UsbMuxCtrlMsg> {
     None
 }
 
+/// Drop all pending events (used to clear stale responses before handling a new request)
+pub fn clear_events() {
+    while try_recv_event().is_some() {}
+}
+
 #[allow(dead_code)]
 // Async receive of events (device -> host)
 pub async fn recv_event() -> UsbMuxCtrlMsg {
