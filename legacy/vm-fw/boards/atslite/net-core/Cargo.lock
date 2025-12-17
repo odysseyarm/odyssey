@@ -149,7 +149,6 @@ checksum = "8ec610d8f49840a5b376c69663b6369e71f4b34484b9b2eb29fb918d92516cb9"
 dependencies = [
  "bare-metal",
  "bitfield",
- "critical-section",
  "embedded-hal 0.2.7",
  "volatile-register",
 ]
@@ -373,9 +372,9 @@ dependencies = [
 
 [[package]]
 name = "embassy-nrf"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8d63429d74ab5786cde7c9dc9a0338ea162a4da95e204ac5345c5ae36831fdb"
+checksum = "de748eaafda21aab46925973e593f377ed4482e9f4de63a729c79a7b0e4a327a"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if",
@@ -796,6 +795,7 @@ dependencies = [
  "embedded-storage",
  "icmsg",
  "memory-spec",
+ "nrf-mpsl",
  "nrf-sdc",
  "panic-probe",
  "static_cell",
@@ -814,10 +814,11 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git#5ce36312f7bf39ed73638ecbe1f2a5351da7f6f8"
+source = "git+https://github.com/alexmoon/nrf-sdc.git#d4d244d5ce21f59fa2263333cb1d8f2a5d997145"
 dependencies = [
  "cfg-if",
  "cortex-m",
+ "critical-section",
  "defmt 1.0.1",
  "embassy-nrf",
  "embassy-sync",
@@ -830,7 +831,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git#5ce36312f7bf39ed73638ecbe1f2a5351da7f6f8"
+source = "git+https://github.com/alexmoon/nrf-sdc.git#d4d244d5ce21f59fa2263333cb1d8f2a5d997145"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -838,9 +839,9 @@ dependencies = [
 
 [[package]]
 name = "nrf-pac"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d334027d6703534f2a80de0794ae435c0e029358d28278533d3935e69b221b01"
+checksum = "ae76c372d1838abeccf1d397688cd4bd90fe3213410c51cb74c6769fdf075067"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -849,7 +850,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc.git#5ce36312f7bf39ed73638ecbe1f2a5351da7f6f8"
+source = "git+https://github.com/alexmoon/nrf-sdc.git#d4d244d5ce21f59fa2263333cb1d8f2a5d997145"
 dependencies = [
  "bt-hci",
  "critical-section",
@@ -867,7 +868,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/alexmoon/nrf-sdc.git#5ce36312f7bf39ed73638ecbe1f2a5351da7f6f8"
+source = "git+https://github.com/alexmoon/nrf-sdc.git#d4d244d5ce21f59fa2263333cb1d8f2a5d997145"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1522,9 +1523,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "protodongers"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "embassy-usb-dfu"
 version = "0.2.0"
+
+[[patch.unused]]
+name = "protodongers"
+version = "0.1.0"

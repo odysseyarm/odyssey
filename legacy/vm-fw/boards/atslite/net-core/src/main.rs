@@ -17,7 +17,7 @@ use bt_hci::{
 use defmt::{Debug2Format, unwrap};
 use embassy_executor::Spawner;
 use embassy_nrf::{
-    config::Config,
+    interrupt::{InterruptExt as _, Priority},
     ipc::{self, Ipc, IpcChannel},
     mode::Async,
     nvmc::{Nvmc, PAGE_SIZE},
@@ -101,9 +101,44 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
+const IRQS: &'static [embassy_nrf::interrupt::Interrupt] = {
+    use embassy_nrf::interrupt::Interrupt::*;
+    &[
+        CLOCK_POWER,
+        RADIO,
+        RNG,
+        GPIOTE,
+        WDT,
+        TIMER0,
+        ECB,
+        AAR_CCM,
+        TEMP,
+        RTC0,
+        IPC,
+        SERIAL0,
+        EGU0,
+        RTC1,
+        TIMER1,
+        TIMER2,
+        SWI0,
+        SWI1,
+        SWI2,
+        SWI3,
+    ]
+};
+
+fn set_irq_prios(p: Priority) {
+    for irq in IRQS {
+        irq.set_priority(p);
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let config = Config::default();
+    set_irq_prios(Priority::P2);
+    let mut config = embassy_nrf::config::Config::default();
+    config.gpiote_interrupt_priority = Priority::P2;
+    config.time_interrupt_priority = Priority::P2;
     let p = embassy_nrf::init(config);
 
     // Mark firmware as booted by erasing the state page.
