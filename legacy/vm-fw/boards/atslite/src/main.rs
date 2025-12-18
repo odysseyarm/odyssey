@@ -7,6 +7,8 @@ use panic_probe as _;
 
 use atslite_board::transport_mode;
 use atslite_boot_api::BootConfirmation;
+use better_dfu::consts::DfuAttributes;
+use better_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
 use core::cell::RefCell;
 use embassy_boot::{BlockingFirmwareState, FirmwareUpdaterConfig};
 use embassy_embedded_hal::adapter::BlockingAsync;
@@ -21,8 +23,6 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::{Delay, Timer};
-use embassy_usb_dfu::consts::DfuAttributes;
-use embassy_usb_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
 use npm1300_rs::{self, NPM1300};
 use protodongers::control::device::TransportMode;
 use static_cell::StaticCell;
@@ -157,13 +157,15 @@ async fn main(spawner: Spawner) {
     let pmic = PMIC.init(AsyncMutex::new(pmic_dev));
 
     // Handle PMIC IRQ pin
-    spawner.spawn(pmic_irq_task(board.pmic.irq.into(), pmic).unwrap());
+    spawner
+        .spawn(pmic_irq_task(board.pmic.irq.into(), pmic))
+        .unwrap();
 
     // Initialize PMIC LED animator
     let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
         .await
         .unwrap();
-    spawner.spawn(led_task(anim).unwrap());
+    spawner.spawn(led_task(anim)).unwrap();
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
@@ -175,8 +177,12 @@ async fn main(spawner: Spawner) {
         .unwrap();
     pmic_leds.set_state(LedState::TurningOn).await;
     let pwr_btn_task = pwr_btn;
-    spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
-    spawner.spawn(power_state::power_state_task(pmic, pmic_leds).unwrap());
+    spawner
+        .spawn(power_button_task(pwr_btn_task, pmic, pmic_leds))
+        .unwrap();
+    spawner
+        .spawn(power_state::power_state_task(pmic, pmic_leds))
+        .unwrap();
 
     // Initialize PAJ sensors
     let mut paj_cfg = embassy_nrf::spim::Config::default();
@@ -269,7 +275,7 @@ async fn main(spawner: Spawner) {
             );
         },
     );
-    spawner.spawn(usb::run_usb(usb_dev).unwrap());
+    spawner.spawn(usb::run_usb(usb_dev)).unwrap();
 
     // Settings flash - borrow NVMC from the shared mutex
     let nvmc_async = nvmc.lock(|_f| {
@@ -293,15 +299,17 @@ async fn main(spawner: Spawner) {
     // Initialize device control channels after settings are ready
     let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
     common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
-    spawner.spawn(atslite_board::device_control_task::device_control_task().unwrap());
+    spawner
+        .spawn(atslite_board::device_control_task::device_control_task())
+        .unwrap();
 
     // Confirm this boot as successful so the bootloader keeps the current slot active.
     // Adjust PMIC limit after USB enumerates
-    spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
+    spawner.spawn(usb_pmic_config_task(usb_cfg, pmic)).unwrap();
 
     // BLE controller and tasks
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
-    spawner.spawn(ble_task(controller).unwrap());
+    spawner.spawn(ble_task(controller)).unwrap();
 
     // Initialize watchdog (started by stage2 bootloader)
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
@@ -310,7 +318,7 @@ async fn main(spawner: Spawner) {
     wdt_config.action_during_sleep = SleepConfig::RUN;
     wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
     let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
-    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
+    spawner.spawn(watchdog_feeder(wdt_handle)).unwrap();
     let l2cap_channels = AtsliteL2capChannels::new();
 
     // Build object mode context

@@ -3,6 +3,8 @@
 
 use core::cell::RefCell;
 
+use better_dfu::consts::DfuAttributes;
+use better_dfu::{Control, NullDualBankWriter, NullForwarder, ResetImmediate, usb_dfu};
 use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
@@ -10,12 +12,10 @@ use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::nvmc::PAGE_SIZE;
 use embassy_nrf::{
     peripherals,
-    usb::{vbus_detect::HardwareVbusDetect, Driver},
+    usb::{Driver, vbus_detect::HardwareVbusDetect},
 };
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_usb::{msos, Builder};
-use embassy_usb_dfu::consts::DfuAttributes;
-use embassy_usb_dfu::{usb_dfu, Control, ResetImmediate};
+use embassy_usb::{Builder, msos};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
@@ -43,7 +43,7 @@ fn main() -> ! {
     let mut aligned_buf = embassy_boot::AlignedBuffer([0; PAGE_SIZE]);
     let mut boot = embassy_boot::BootLoader::new(config);
     let state = boot.prepare_boot(aligned_buf.as_mut()).unwrap();
-    
+
     if state == embassy_boot::State::DfuDetach {
         // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
@@ -65,6 +65,9 @@ fn main() -> ! {
             updater,
             DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH,
             ResetImmediate,
+            NullForwarder,
+            NullDualBankWriter,
+            false, // active_bank_is_a (doesn't matter for single-bank)
         );
         let mut builder = Builder::new(
             driver,
@@ -84,14 +87,14 @@ fn main() -> ! {
         builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
         builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
 
-        usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state, |_func| {
+        usb_dfu::<_, _, _, _, _, _, 4096>(&mut builder, &mut state, |_func| {
             // You likely don't have to add these function level headers if your USB device is not composite
             // (i.e. if your device does not expose another interface in addition to DFU)
             // func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
         });
 
         let mut dev = builder.build();
-        
+
         embassy_futures::block_on(dev.run());
     }
 

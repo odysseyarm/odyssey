@@ -24,6 +24,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "better-dfu"
+version = "0.2.0"
+dependencies = [
+ "bitflags 2.9.1",
+ "cortex-m",
+ "embassy-boot",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-storage",
+]
+
+[[package]]
 name = "bitfield"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -334,22 +348,6 @@ dependencies = [
  "embassy-usb-driver",
  "embedded-io-async",
  "heapless",
-]
-
-[[package]]
-name = "embassy-usb-dfu"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9084bd90d04a3e4e36b6d826c70978c644efad12e53cae2a656e4ecaf92674e2"
-dependencies = [
- "bitflags 2.9.1",
- "cortex-m",
- "embassy-boot",
- "embassy-futures",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-storage",
 ]
 
 [[package]]
@@ -774,6 +772,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vm-bootloader"
 version = "0.1.0"
 dependencies = [
+ "better-dfu",
  "cfg-if",
  "cortex-m",
  "cortex-m-rt",
@@ -784,7 +783,6 @@ dependencies = [
  "embassy-nrf",
  "embassy-sync",
  "embassy-usb",
- "embassy-usb-dfu",
  "memory-spec",
 ]
 
@@ -811,7 +809,3 @@ checksum = "c8d71a593cc5c42ad7876e2c1fda56f314f3754c084128833e64f1345ff8a03a"
 dependencies = [
  "memchr",
 ]
-
-[[patch.unused]]
-name = "protodongers"
-version = "0.1.0"

@@ -588,9 +588,16 @@ async fn host_responses_tx_task(
                 }
             };
 
+            // Take endpoint from mutex to avoid holding lock during USB write
             let mut ep_opt = ep_mutex.lock().await;
-            if let Some(ep) = ep_opt.as_mut() {
-                if send_mux_msg(&response, &mut write_buf, ep).await.is_err() {
+            let ep = ep_opt.take();
+            drop(ep_opt); // Explicitly drop the guard to release the lock
+
+            if let Some(mut endpoint) = ep {
+                let result = send_mux_msg(&response, &mut write_buf, &mut endpoint).await;
+                // Always return endpoint to mutex, even on error
+                *ep_mutex.lock().await = Some(endpoint);
+                if result.is_err() {
                     warn!("USB TX: error sending host response");
                     break;
                 }
@@ -598,8 +605,8 @@ async fn host_responses_tx_task(
         }
         warn!("USB TX host task: deconfigured");
     }
-}
 
+}
 // Sends device packets to USB endpoint
 #[embassy_executor::task]
 async fn device_packets_tx_task(
@@ -645,9 +652,16 @@ async fn device_packets_tx_task(
             };
             let msg = MuxMsg::DevicePacket(device_pkt);
 
+            // Take endpoint from mutex to avoid holding lock during USB write
             let mut ep_opt = ep_mutex.lock().await;
-            if let Some(ep) = ep_opt.as_mut() {
-                if send_mux_msg(&msg, &mut write_buf, ep).await.is_err() {
+            let ep = ep_opt.take();
+            drop(ep_opt); // Explicitly drop the guard to release the lock
+
+            if let Some(mut endpoint) = ep {
+                let result = send_mux_msg(&msg, &mut write_buf, &mut endpoint).await;
+                // Always return endpoint to mutex, even on error
+                *ep_mutex.lock().await = Some(endpoint);
+                if result.is_err() {
                     warn!("USB TX: error sending device packet");
                     break;
                 }

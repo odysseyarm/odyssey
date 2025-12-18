@@ -5,6 +5,8 @@ use core::cell::RefCell;
 use core::future::Future;
 use core::task::Poll;
 
+use better_dfu::consts::DfuAttributes;
+use better_dfu::{Control, DfuForwarder, DfuTarget, ResetImmediate, usb_dfu};
 use cortex_m_rt::exception;
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
@@ -19,8 +21,6 @@ use embassy_nrf::{
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::{Builder, msos};
-use embassy_usb_dfu::consts::DfuAttributes;
-use embassy_usb_dfu::{Control, DfuForwarder, DfuTarget, ResetImmediate, usb_dfu};
 use embedded_storage::nor_flash::NorFlash;
 use panic_probe as _;
 
@@ -397,7 +397,7 @@ impl<'d> DualBankFlashWriter<'d> {
     }
 }
 
-impl<'d> embassy_usb_dfu::DualBankWriter for DualBankFlashWriter<'d> {
+impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
     fn write_for_target(
         &mut self,
         target: DfuTarget,
@@ -1033,7 +1033,9 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     // Spawn watchdog feeder task
-    spawner.spawn(watchdog_feeder(wdt_handle).expect("Failed to spawn watchdog feeder"));
+    spawner
+        .spawn(watchdog_feeder(wdt_handle))
+        .expect("Failed to spawn watchdog feeder");
 
     let flash = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 

@@ -1521,11 +1521,3 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[patch.unused]]
-name = "protodongers"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "embassy-usb-dfu"
-version = "0.2.0"

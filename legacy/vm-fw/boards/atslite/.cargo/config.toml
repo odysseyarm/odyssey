@@ -1,8 +1,8 @@
-[patch."https://github.com/odysseyarm/protodonge-rs"]
-protodongers = { path = "../../patch/protodonge-rs" }
+# [patch."https://github.com/odysseyarm/protodonge-rs"]
+# protodongers = { path = "../../patches/protodonge-rs" }
 
-[patch."https://github.com/Abrahamh08/embassy"]
-embassy-usb-dfu = { path = "../../patch/embassy/embassy-usb-dfu" }
+# [patch."https://github.com/Abrahamh08/embassy"]
+# embassy-usb-dfu = { path = "../../patches/embassy/embassy-usb-dfu" }
 
 [build]
 target = "thumbv8m.main-none-eabihf"

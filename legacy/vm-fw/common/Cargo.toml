@@ -11,7 +11,7 @@ embassy-usb = { version = "0.5.1", default-features = false }
 embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
 embassy-embedded-hal = "0.5.0"
 embassy-futures = "0.1.2"
-embassy-nrf = "0.8.0"  # Needed for USB and common types
+embassy-nrf = "0.9.0"
 
 # Hardware abstraction
 embedded-hal-async = "1.0.0"
@@ -46,7 +46,7 @@ cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 panic-probe = "1.0.0"
 
 # Other
-nrf-pac = "0.1.0"
+nrf-pac = "0.2.0"
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", default-features = false }
 
 [features]

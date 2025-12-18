@@ -18,16 +18,16 @@ target = "thumbv8m.main-none-eabihf"
 [env]
 DEFMT_LOG = "info"
 
-[patch."https://github.com/Abrahamh08/embassy"]
-embassy-usb-dfu = { path = "../../../patch/embassy/embassy-usb-dfu" }
-embassy-usb = { path = "../../../patch/embassy/embassy-usb" }
-embassy-usb-driver = { path = "../../../patch/embassy/embassy-usb-driver" }
-embassy-boot = { path = "../../../patch/embassy/embassy-boot" }
-embassy-nrf = { path = "../../../patch/embassy/embassy-nrf" }
-embassy-sync = { path = "../../../patch/embassy/embassy-sync" }
-embassy-executor = { path = "../../../patch/embassy/embassy-executor" }
-embassy-time = { path = "../../../patch/embassy/embassy-time" }
-embassy-time-driver = { path = "../../../patch/embassy/embassy-time-driver" }
-embassy-futures = { path = "../../../patch/embassy/embassy-futures" }
-embassy-embedded-hal = { path = "../../../patch/embassy/embassy-embedded-hal" }
-embassy-hal-internal = { path = "../../../patch/embassy/embassy-hal-internal" }
+# [patch."https://github.com/Abrahamh08/embassy"]
+# embassy-usb-dfu = { path = "../../../patches/embassy/embassy-usb-dfu" }
+# embassy-usb = { path = "../../../patches/embassy/embassy-usb" }
+# embassy-usb-driver = { path = "../../../patches/embassy/embassy-usb-driver" }
+# embassy-boot = { path = "../../../patches/embassy/embassy-boot" }
+# embassy-nrf = { path = "../../../patches/embassy/embassy-nrf" }
+# embassy-sync = { path = "../../../patches/embassy/embassy-sync" }
+# embassy-executor = { path = "../../../patches/embassy/embassy-executor" }
+# embassy-time = { path = "../../../patches/embassy/embassy-time" }
+# embassy-time-driver = { path = "../../../patches/embassy/embassy-time-driver" }
+# embassy-futures = { path = "../../../patches/embassy/embassy-futures" }
+# embassy-embedded-hal = { path = "../../../patches/embassy/embassy-embedded-hal" }
+# embassy-hal-internal = { path = "../../../patches/embassy/embassy-hal-internal" }

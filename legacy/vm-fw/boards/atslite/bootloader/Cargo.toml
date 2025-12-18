@@ -13,20 +13,20 @@ defmt = { version = "1", optional = true }
 defmt-rtt = { version = "1", optional = true }
 panic-probe = { version = "1.0.0", features = ["defmt", "print-defmt"] }
 
-embassy-nrf = { git = "https://github.com/Abrahamh08/embassy", features = ["nrf5340-app-s", "unstable-pac", "time-driver-rtc1", "defmt"] }
-embassy-boot = { git = "https://github.com/Abrahamh08/embassy" }
+embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "unstable-pac", "time-driver-rtc1", "defmt"] }
+embassy-boot = "0.6.1"
 cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
-embassy-sync = { git = "https://github.com/Abrahamh08/embassy" }
+embassy-sync = "0.7.2"
 cortex-m-rt = "0.7.5"
 cfg-if = "1.0.0"
-embassy-usb-dfu = { git = "https://github.com/Abrahamh08/embassy", features = ["dfu", "cortex-m"] }
-embassy-usb = { git = "https://github.com/Abrahamh08/embassy", default-features = false }
-embassy-futures = { git = "https://github.com/Abrahamh08/embassy" }
+better-dfu = { path = "../../../../../better-dfu", features = ["dfu", "cortex-m"] }
+embassy-usb = { version = "0.5.1", default-features = false }
+embassy-futures = "0.1.2"
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs", default-features = false }
 embedded-hal-async = "1.0.0"
 embedded-storage = "0.3"
-embassy-executor = { git = "https://github.com/Abrahamh08/embassy", features = ["arch-cortex-m", "executor-thread"] }
-embassy-time = { git = "https://github.com/Abrahamh08/embassy", features = ["defmt-timestamp-uptime-tms"] }
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
 static_cell = "2.1.1"
 futures = { version = "0.3", default-features = false, features = ["async-await"] }
 
@@ -39,7 +39,7 @@ defmt = [
     "dep:defmt-rtt",
     "embassy-boot/defmt",
     "embassy-nrf/defmt",
-    "embassy-usb-dfu/defmt",
+    "better-dfu/defmt",
     "embassy-sync/defmt",
     "embassy-time/defmt",
 ]
