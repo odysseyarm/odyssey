@@ -5,8 +5,8 @@ use arrayvec::ArrayVec;
 use ats_common::{ros_opencv_intrinsics_type_convert, ScreenCalibration};
 use ats_usb::device::VmDevice;
 use ats_usb::packets::vm::{
-    AccelReport, CombinedMarkersReport, ImpactReport, Packet, PacketData, PacketType,
-    PocMarkersReport, VendorData,
+    AccelReport, CombinedMarkersReport, ImpactReport, Packet, PacketData, PocMarkersReport,
+    VendorData,
 };
 use nalgebra::{
     Isometry3, Matrix3, Matrix3x1, Point2, Rotation3, Translation3, UnitQuaternion, UnitVector3,
@@ -149,7 +149,7 @@ async fn usb_device_manager(
             for (idx, (stored_info, _slot)) in hm_guard.iter().enumerate() {
                 let still_present = devices.iter().any(|d| {
                     d.vendor_id() == 0x1915
-                        && d.product_id() == 0x5210
+                        && d.product_id() == 0x5212
                         && d.id() == stored_info.id()
                 });
                 if !still_present {
@@ -176,184 +176,199 @@ async fn usb_device_manager(
         }
 
         for dev_info in &devices {
-            if dev_info.vendor_id() == 0x1915
-                && matches!(dev_info.product_id(), 0x520f | 0x5210 | 0x5211)
-            {
-                let pid = dev_info.product_id();
-                if pid == 0x5210 {
-                    // Hub/dongle - check if we're already managing this hub
-                    let hub_managers_guard = hub_managers.lock().await;
-                    let already_managed = hub_managers_guard
-                        .iter()
-                        .any(|(stored_info, _)| stored_info.id() == dev_info.id());
-                    drop(hub_managers_guard); // Release lock before connecting
+            if dev_info.vendor_id() != 0x1915 {
+                continue;
+            }
 
-                    if already_managed {
-                        trace!("Hub already being managed, skipping: {:?}", dev_info.id());
+            let pid = dev_info.product_id();
+
+            // Skip non-ATS devices
+            if !matches!(pid, 0x520f | 0x5210 | 0x5211 | 0x5212) {
+                continue;
+            }
+
+            // For ATS Lites (0x5210), check transport mode first - skip if not in USB mode
+            if pid == 0x5210 {
+                match VmDevice::probe_transport_mode(dev_info).await {
+                    Ok(protodongers::control::device::TransportMode::Usb) => {
+                        debug!("ATS Lite is in USB mode, will proceed with connection");
+                    }
+                    Ok(mode) => {
+                        debug!("ATS Lite is in {:?} mode (not USB), skipping device", mode);
                         continue;
                     }
+                    Err(e) => {
+                        debug!("Failed to probe transport mode for ATS Lite: {}", e);
+                        continue;
+                    }
+                }
+            }
 
-                    info!("Attempting to connect to hub/dongle device");
-                    match ats_usb::device::MuxDevice::connect_usb(dev_info.clone()).await {
-                        Ok(hub) => {
-                            info!("Connected USB hub device: {:?}", dev_info);
+            if pid == 0x5212 {
+                // Hub/dongle (0x5212) - check if we're already managing this hub
+                let hub_managers_guard = hub_managers.lock().await;
+                let already_managed = hub_managers_guard
+                    .iter()
+                    .any(|(stored_info, _)| stored_info.id() == dev_info.id());
+                drop(hub_managers_guard); // Release lock before connecting
 
-                            // Subscribe to device list changes
-                            if let Err(e) = hub.subscribe_device_list().await {
-                                tracing::error!("Failed to subscribe to device list: {}", e);
-                                return;
-                            }
-                            tracing::info!("Subscribed to device list changes");
+                if already_managed {
+                    trace!("Hub already being managed, skipping: {:?}", dev_info.id());
+                    continue;
+                }
 
-                            // TODO repeated code
-                            // Create device handlers for current hub snapshot
-                            match hub.request_devices().await {
-                                Ok(list) => {
-                                    info!("Hub returned {} devices", list.len());
-                                    for addr in list.iter() {
-                                        info!(
-                                            "Processing hub device with BLE address: {:02x?}",
-                                            addr
-                                        );
-                                        let addr_copy = *addr;
+                info!("Attempting to connect to hub/dongle device");
+                match ats_usb::device::MuxDevice::connect_usb(dev_info.clone()).await {
+                    Ok(hub) => {
+                        info!("Connected USB hub device: {:?}", dev_info);
 
-                                        match ats_usb::device::VmDevice::connect_via_mux(
-                                            hub.clone(),
-                                            addr_copy,
-                                        )
-                                        .await
-                                        {
-                                            Ok(vm_device) => {
-                                                // Read actual UUID from device
-                                                let uuid = match vm_device
-                                                    .read_prop(protodongers::PropKind::Uuid)
-                                                    .await
-                                                {
-                                                    Ok(protodongers::Props::Uuid(uuid_bytes)) => {
-                                                        uuid_bytes
-                                                    }
-                                                    Ok(other) => {
-                                                        warn!(
-                                                            "Expected Uuid prop, got {:?}",
-                                                            other
-                                                        );
-                                                        // Fall back to BLE address as UUID
-                                                        addr_copy
-                                                    }
-                                                    Err(e) => {
-                                                        warn!(
-                                                            "Failed to read UUID from device: {}",
-                                                            e
-                                                        );
-                                                        // Fall back to BLE address as UUID
-                                                        addr_copy
-                                                    }
-                                                };
+                        // Subscribe to device list changes
+                        if let Err(e) = hub.subscribe_device_list().await {
+                            tracing::error!("Failed to subscribe to device list: {}", e);
+                            return;
+                        }
+                        tracing::info!("Subscribed to device list changes");
 
-                                                info!(
-                                                    "Hub device {:02x?} has UUID {:02x?}",
-                                                    addr_copy, uuid
-                                                );
+                        // TODO repeated code
+                        // Create device handlers for current hub snapshot
+                        match hub.request_devices().await {
+                            Ok(list) => {
+                                info!("Hub returned {} devices", list.len());
+                                for addr in list.iter() {
+                                    info!("Processing hub device with BLE address: {:02x?}", addr);
+                                    let addr_copy = *addr;
 
-                                                let device_meta = Device {
-                                                    uuid,
-                                                    transport:
-                                                        odyssey_hub_common::device::Transport::UsbMux,
-                                                };
-                                                let (ctrl_tx, ctrl_rx) =
-                                                    mpsc::channel::<DeviceTaskMessage>(32);
-
-                                                let dh_handle = tokio::spawn(device_handler_task(
-                                                    vm_device,
-                                                    device_meta.clone(),
-                                                    ctrl_rx,
-                                                    screen_calibrations.clone(),
-                                                    device_offsets.clone(),
-                                                    device_shot_delays.clone(),
-                                                    shot_delay_watch.clone(),
-                                                    event_sender.clone(),
-                                                ));
-
-                                                {
-                                                    let mut dh = device_handles.lock().await;
-                                                    if !dh.contains_key(&uuid) {
-                                                        dh.insert(uuid, dh_handle);
-                                                    }
+                                    match ats_usb::device::VmDevice::connect_via_mux(
+                                        hub.clone(),
+                                        addr_copy,
+                                    )
+                                    .await
+                                    {
+                                        Ok(vm_device) => {
+                                            // Read actual UUID from device
+                                            let uuid = match vm_device
+                                                .read_prop(protodongers::PropKind::Uuid)
+                                                .await
+                                            {
+                                                Ok(protodongers::Props::Uuid(uuid_bytes)) => {
+                                                    uuid_bytes
                                                 }
+                                                Ok(other) => {
+                                                    warn!("Expected Uuid prop, got {:?}", other);
+                                                    // Fall back to BLE address as UUID
+                                                    addr_copy
+                                                }
+                                                Err(e) => {
+                                                    warn!("Failed to read UUID from device: {}", e);
+                                                    // Fall back to BLE address as UUID
+                                                    addr_copy
+                                                }
+                                            };
 
-                                                let _ = message_channel
-                                                    .send(Message::Connect(device_meta, ctrl_tx))
-                                                    .await;
+                                            info!(
+                                                "Hub device {:02x?} has UUID {:02x?}",
+                                                addr_copy, uuid
+                                            );
+
+                                            let device_meta = Device {
+                                                uuid,
+                                                transport:
+                                                    odyssey_hub_common::device::Transport::UsbMux,
+                                            };
+                                            let (ctrl_tx, ctrl_rx) =
+                                                mpsc::channel::<DeviceTaskMessage>(32);
+
+                                            let dh_handle = tokio::spawn(device_handler_task(
+                                                vm_device,
+                                                device_meta.clone(),
+                                                ctrl_rx,
+                                                screen_calibrations.clone(),
+                                                device_offsets.clone(),
+                                                device_shot_delays.clone(),
+                                                shot_delay_watch.clone(),
+                                                event_sender.clone(),
+                                            ));
+
+                                            {
+                                                let mut dh = device_handles.lock().await;
+                                                if !dh.contains_key(&uuid) {
+                                                    dh.insert(uuid, dh_handle);
+                                                }
                                             }
-                                            Err(e) => {
-                                                warn!(
-                                                    "Failed to connect to hub device {:02x?}: {}",
-                                                    addr_copy, e
-                                                );
-                                            }
+
+                                            let _ = message_channel
+                                                .send(Message::Connect(device_meta, ctrl_tx))
+                                                .await;
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to connect to hub device {:02x?}: {}",
+                                                addr_copy, e
+                                            );
                                         }
                                     }
                                 }
-                                Err(e) => {
-                                    debug!("Failed to request device list from hub: {}", e);
-                                }
                             }
+                            Err(e) => {
+                                debug!("Failed to request device list from hub: {}", e);
+                            }
+                        }
 
-                            // Hub manager task: handle device snapshots
-                            let hub_clone = hub.clone();
-                            let device_handles_clone = device_handles.clone();
-                            let message_channel_clone = message_channel.clone();
-                            let sc_clone = screen_calibrations.clone();
-                            let doff_clone = device_offsets.clone();
-                            let dsd_clone = device_shot_delays.clone();
-                            let swatch_clone = shot_delay_watch.clone();
-                            let ev_clone = event_sender.clone();
-                            let hub_info = dev_info.clone();
+                        // Hub manager task: handle device snapshots
+                        let hub_clone = hub.clone();
+                        let device_handles_clone = device_handles.clone();
+                        let message_channel_clone = message_channel.clone();
+                        let sc_clone = screen_calibrations.clone();
+                        let doff_clone = device_offsets.clone();
+                        let dsd_clone = device_shot_delays.clone();
+                        let swatch_clone = shot_delay_watch.clone();
+                        let ev_clone = event_sender.clone();
+                        let hub_info = dev_info.clone();
 
-                            let hub_manager_handle = tokio::spawn(async move {
-                                tracing::info!("Hub manager task started for hub {:?}", hub_info);
+                        let hub_manager_handle = tokio::spawn(async move {
+                            tracing::info!("Hub manager task started for hub {:?}", hub_info);
 
-                                // Note: Initial devices were already processed before this task started
-                                // Now we just listen for changes via subscription
+                            // Note: Initial devices were already processed before this task started
+                            // Now we just listen for changes via subscription
 
-                                // Create snapshot stream from hub - will receive DevicesSnapshot
-                                // messages automatically when devices connect/disconnect
-                                let snapshot_stream =
-                                    stream::unfold(hub_clone.clone(), |hub| async move {
-                                        match hub.receive_snapshot().await {
-                                            Ok(devs) => Some((HubEvent::Snapshot(Ok(devs)), hub)),
-                                            Err(e) => Some((HubEvent::Snapshot(Err(e)), hub)),
-                                        }
-                                    });
+                            // Create snapshot stream from hub - will receive DevicesSnapshot
+                            // messages automatically when devices connect/disconnect
+                            let snapshot_stream =
+                                stream::unfold(hub_clone.clone(), |hub| async move {
+                                    match hub.receive_snapshot().await {
+                                        Ok(devs) => Some((HubEvent::Snapshot(Ok(devs)), hub)),
+                                        Err(e) => Some((HubEvent::Snapshot(Err(e)), hub)),
+                                    }
+                                });
 
-                                tokio::pin!(snapshot_stream);
+                            tokio::pin!(snapshot_stream);
 
-                                while let Some(event) = snapshot_stream.next().await {
-                                    match event {
-                                        HubEvent::Snapshot(snapshot_result) => {
-                                            match snapshot_result {
-                                                Ok(devs) => {
-                                                    tracing::info!("Hub received device snapshot with {} devices: {:02x?}", devs.len(), devs);
-                                                    use std::collections::HashSet;
-                                                    let new_set: HashSet<[u8; 6]> =
-                                                        devs.into_iter().collect();
-                                                    let existing_set: HashSet<[u8; 6]> = {
-                                                        let dh = device_handles_clone.lock().await;
-                                                        dh.keys().cloned().collect()
-                                                    };
+                            while let Some(event) = snapshot_stream.next().await {
+                                match event {
+                                    HubEvent::Snapshot(snapshot_result) => {
+                                        match snapshot_result {
+                                            Ok(devs) => {
+                                                tracing::info!("Hub received device snapshot with {} devices: {:02x?}", devs.len(), devs);
+                                                use std::collections::HashSet;
+                                                let new_set: HashSet<[u8; 6]> =
+                                                    devs.into_iter().collect();
+                                                let existing_set: HashSet<[u8; 6]> = {
+                                                    let dh = device_handles_clone.lock().await;
+                                                    dh.keys().cloned().collect()
+                                                };
 
-                                                    tracing::info!("Device diff - new: {:02x?}, existing: {:02x?}, added: {:02x?}, removed: {:02x?}",
+                                                tracing::info!("Device diff - new: {:02x?}, existing: {:02x?}, added: {:02x?}, removed: {:02x?}",
                                                         new_set, existing_set,
                                                         new_set.difference(&existing_set).copied().collect::<Vec<_>>(),
                                                         existing_set.difference(&new_set).copied().collect::<Vec<_>>());
 
-                                                    // Added devices
-                                                    for addr in new_set.difference(&existing_set) {
-                                                        let addr_copy = *addr;
-                                                        tracing::info!("DevicesSnapshot: Adding new device {:02x?}", addr_copy);
+                                                // Added devices
+                                                for addr in new_set.difference(&existing_set) {
+                                                    let addr_copy = *addr;
+                                                    tracing::info!("DevicesSnapshot: Adding new device {:02x?}", addr_copy);
 
-                                                        // Connect via VmDevice to properly handle streaming
-                                                        match ats_usb::device::VmDevice::connect_via_mux(
+                                                    // Connect via VmDevice to properly handle streaming
+                                                    match ats_usb::device::VmDevice::connect_via_mux(
                                                             hub_clone.clone(),
                                                             addr_copy,
                                                         )
@@ -430,123 +445,121 @@ async fn usb_device_manager(
                                                                 );
                                                             }
                                                         }
-                                                    }
+                                                }
 
-                                                    // Removed devices
-                                                    let to_remove: Vec<[u8; 6]> = {
-                                                        let dh = device_handles_clone.lock().await;
-                                                        dh.keys()
-                                                            .cloned()
-                                                            .filter(|a| !new_set.contains(a))
-                                                            .collect()
-                                                    };
-                                                    for addr in to_remove {
-                                                        let uuid = addr;
-                                                        tracing::info!(
-                                                            "DevicesSnapshot: Removing device {:02x?}",
-                                                            uuid
-                                                        );
-                                                        if let Some(handle) = device_handles_clone
-                                                            .lock()
-                                                            .await
-                                                            .remove(&uuid)
-                                                        {
-                                                            handle.abort();
-                                                        }
-                                                        let device_meta = Device {
+                                                // Removed devices
+                                                let to_remove: Vec<[u8; 6]> = {
+                                                    let dh = device_handles_clone.lock().await;
+                                                    dh.keys()
+                                                        .cloned()
+                                                        .filter(|a| !new_set.contains(a))
+                                                        .collect()
+                                                };
+                                                for addr in to_remove {
+                                                    let uuid = addr;
+                                                    tracing::info!(
+                                                        "DevicesSnapshot: Removing device {:02x?}",
+                                                        uuid
+                                                    );
+                                                    if let Some(handle) = device_handles_clone
+                                                        .lock()
+                                                        .await
+                                                        .remove(&uuid)
+                                                    {
+                                                        handle.abort();
+                                                    }
+                                                    let device_meta = Device {
                                                             uuid,
                                                             transport: odyssey_hub_common::device::Transport::UsbMux,
                                                         };
-                                                        let _ = message_channel_clone
-                                                            .send(Message::Disconnect(device_meta))
-                                                            .await;
-                                                    }
+                                                    let _ = message_channel_clone
+                                                        .send(Message::Disconnect(device_meta))
+                                                        .await;
                                                 }
-                                                Err(e) => {
-                                                    tracing::error!(
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(
                                                 "Hub manager receive error - hub likely disconnected: {:?}",
                                                 e
                                             );
-                                                    // Exit immediately on channel closed or other errors
-                                                    break;
-                                                }
+                                                // Exit immediately on channel closed or other errors
+                                                break;
                                             }
                                         }
                                     }
                                 }
-                                tracing::info!("Hub manager task ended for hub {:?}", hub_info);
-                            });
-
-                            // Store hub manager handle for tracking (runs indefinitely until hub is disconnected)
-                            {
-                                let mut hm = hub_managers.lock().await;
-                                // Store with a dummy slot - we track the handle itself
-                                let hub_slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(
-                                    hub_manager_handle,
-                                )));
-                                hm.push((dev_info.clone(), hub_slot));
                             }
-                        }
-                        Err(e) => {
-                            warn!("Failed to connect to USB hub device: {}", e);
+                            tracing::info!("Hub manager task ended for hub {:?}", hub_info);
+                        });
+
+                        // Store hub manager handle for tracking (runs indefinitely until hub is disconnected)
+                        {
+                            let mut hm = hub_managers.lock().await;
+                            // Store with a dummy slot - we track the handle itself
+                            let hub_slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(
+                                hub_manager_handle,
+                            )));
+                            hm.push((dev_info.clone(), hub_slot));
                         }
                     }
-                } else {
-                    // Direct USB device (VmDevice)
-                    info!(
-                        "Attempting to connect to direct USB device PID: 0x{:04x}",
-                        pid
-                    );
-                    match VmDevice::connect_usb(dev_info.clone()).await {
-                        Ok(vm_device) => {
-                            let uuid = match vm_device.read_prop(protodongers::PropKind::Uuid).await
-                            {
-                                Ok(protodongers::Props::Uuid(bytes)) => bytes,
-                                Ok(other) => {
-                                    warn!("Expected Uuid prop, got {:?}, skipping device", other);
-                                    continue;
-                                }
-                                Err(e) => {
-                                    warn!("Failed to read UUID from USB device: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            let mut dh = device_handles.lock().await;
-                            if dh.contains_key(&uuid) {
-                                info!("Device {:02x?} already in device_handles, skipping", uuid);
+                    Err(e) => {
+                        warn!("Failed to connect to USB hub device: {}", e);
+                    }
+                }
+            } else {
+                // Direct USB device (VmDevice) - 0x520F, 0x5210 (USB mode only), or 0x5211
+                info!(
+                    "Attempting to connect to direct USB device PID: 0x{:04x}",
+                    pid
+                );
+                match VmDevice::connect_usb(dev_info.clone()).await {
+                    Ok(vm_device) => {
+                        let uuid = match vm_device.read_prop(protodongers::PropKind::Uuid).await {
+                            Ok(protodongers::Props::Uuid(bytes)) => bytes,
+                            Ok(other) => {
+                                warn!("Expected Uuid prop, got {:?}, skipping device", other);
                                 continue;
                             }
+                            Err(e) => {
+                                warn!("Failed to read UUID from USB device: {}", e);
+                                continue;
+                            }
+                        };
 
-                            info!("Discovered direct USB device with UUID {:02x?}", uuid);
-
-                            let device_meta = Device {
-                                uuid,
-                                transport: odyssey_hub_common::device::Transport::Usb,
-                            };
-
-                            let (tx, rx) = mpsc::channel(32);
-
-                            let handle = tokio::spawn(device_handler_task(
-                                vm_device,
-                                device_meta.clone(),
-                                rx,
-                                screen_calibrations.clone(),
-                                device_offsets.clone(),
-                                device_shot_delays.clone(),
-                                shot_delay_watch.clone(),
-                                event_sender.clone(),
-                            ));
-
-                            dh.insert(uuid, handle);
-
-                            let _ = message_channel
-                                .send(Message::Connect(device_meta, tx))
-                                .await;
+                        let mut dh = device_handles.lock().await;
+                        if dh.contains_key(&uuid) {
+                            info!("Device {:02x?} already in device_handles, skipping", uuid);
+                            continue;
                         }
-                        Err(e) => {
-                            debug!("Failed to connect to USB device: {}", e);
-                        }
+
+                        info!("Discovered direct USB device with UUID {:02x?}", uuid);
+
+                        let device_meta = Device {
+                            uuid,
+                            transport: odyssey_hub_common::device::Transport::Usb,
+                        };
+
+                        let (tx, rx) = mpsc::channel(32);
+
+                        let handle = tokio::spawn(device_handler_task(
+                            vm_device,
+                            device_meta.clone(),
+                            rx,
+                            screen_calibrations.clone(),
+                            device_offsets.clone(),
+                            device_shot_delays.clone(),
+                            shot_delay_watch.clone(),
+                            event_sender.clone(),
+                        ));
+
+                        dh.insert(uuid, handle);
+
+                        let _ = message_channel
+                            .send(Message::Connect(device_meta, tx))
+                            .await;
+                    }
+                    Err(e) => {
+                        debug!("Failed to connect to USB device: {}", e);
                     }
                 }
             }
