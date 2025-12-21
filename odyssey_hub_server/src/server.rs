@@ -32,6 +32,9 @@ pub struct Server {
     /// Pub/Sub of low-level events used by existing pipeline.
     pub event_sender: broadcast::Sender<common::events::Event>,
 
+    /// Notifies subscribers when device list changes (Connect/Disconnect)
+    pub device_list_change_sender: broadcast::Sender<()>,
+
     /// Static data referenced by device_handlers (unchanged here, but kept to satisfy lib.rs construction)
     pub screen_calibrations: Arc<
         ArcSwap<
@@ -70,9 +73,7 @@ impl Server {
         mpsc::Receiver<Result<DeviceListReply, Status>>,
         JoinHandle<()>,
     ) {
-        // We don't have a watch channel for device list because lib.rs currently pushes
-        // connect/disconnect events via event_sender. We'll mirror that to drive updates.
-        let mut ev_rx = self.event_sender.subscribe();
+        let mut change_rx = self.device_list_change_sender.subscribe();
         let (tx, rx) = mpsc::channel::<Result<DeviceListReply, Status>>(16);
 
         // Send initial snapshot
@@ -85,8 +86,8 @@ impl Server {
         let device_list = self.device_list.clone();
         let handle = tokio::spawn(async move {
             loop {
-                match ev_rx.recv().await {
-                    Ok(common::events::Event::DeviceEvent(_)) => {
+                match change_rx.recv().await {
+                    Ok(()) => {
                         // Build a fresh snapshot and push
                         let snap: Vec<common::device::Device> = {
                             let guard = device_list.lock();

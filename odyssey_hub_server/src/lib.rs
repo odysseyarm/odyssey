@@ -182,6 +182,9 @@ pub async fn run_server(
 
     let (event_sender, _) = broadcast::channel(12);
 
+    // Dedicated channel for device list changes (Connect/Disconnect)
+    let (device_list_change_sender, _) = broadcast::channel::<()>(12);
+
     // Collect config corruption events to send via ServerInit message
     let mut startup_corruptions = Vec::new();
 
@@ -260,6 +263,7 @@ pub async fn run_server(
     let server = server::Server {
         device_list: Default::default(),
         event_sender: event_sender.clone(),
+        device_list_change_sender: device_list_change_sender.clone(),
         screen_calibrations: screen_calibrations.clone(),
         device_offsets: device_offsets.clone(),
         device_shot_delays: device_shot_delays.clone(),
@@ -326,14 +330,21 @@ pub async fn run_server(
     });
 
     // Convert event forwarding to stream
+    let device_list_change_clone = device_list_change_sender.clone();
     let event_fwd_stream = stream::unfold(
-        (receiver, dl_clone2, event_sender_clone3),
-        |(mut recv, dl, event_sender)| async move {
+        (
+            receiver,
+            dl_clone2,
+            event_sender_clone3,
+            device_list_change_clone,
+        ),
+        |(mut recv, dl, event_sender, list_change_sender)| async move {
             match recv.recv().await {
                 Some(message) => {
                     match message {
                         device_tasks::Message::Connect(d1, sender) => {
                             dl.lock().push((d1.clone(), sender));
+                            let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::Disconnect(d) => {
                             let mut dl = dl.lock();
@@ -341,12 +352,17 @@ pub async fn run_server(
                             if let Some(i) = i {
                                 dl.remove(i);
                             }
+                            drop(dl);
+                            let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::Event(e) => {
                             event_sender.send(e).unwrap();
                         }
                     }
-                    Some((ServerEvent::EventForward, (recv, dl, event_sender)))
+                    Some((
+                        ServerEvent::EventForward,
+                        (recv, dl, event_sender, list_change_sender),
+                    ))
                 }
                 None => None,
             }
