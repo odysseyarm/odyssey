@@ -1,12 +1,12 @@
-use embassy_nrf::Peri;
 use core::sync::atomic::{AtomicBool, Ordering};
+use embassy_nrf::Peri;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::watch::Watch;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::DynReceiver;
+use embassy_sync::watch::Watch;
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Builder, Config as UsbConfig, msos};
 use static_cell::{ConstStaticCell, StaticCell};
@@ -145,12 +145,21 @@ impl embassy_usb::Handler for MyHandler {
             && req.request == 0x31
             && req.index == 0
         {
+            defmt::trace!("Control IN: host polling for event");
             if let Some(msg) = crate::control::try_recv_event() {
+                defmt::info!(
+                    "Control IN: sending event to host: {:?}",
+                    defmt::Debug2Format(&msg)
+                );
                 match postcard::to_slice(&msg, buf) {
                     Ok(out) => Some(InResponse::Accepted(out)),
-                    Err(_) => Some(InResponse::Rejected),
+                    Err(_) => {
+                        defmt::error!("Control IN: failed to serialize event");
+                        Some(InResponse::Rejected)
+                    }
                 }
             } else {
+                defmt::trace!("Control IN: no event pending");
                 // No event pending: return zero-length success to indicate "no data".
                 Some(InResponse::Accepted(&[]))
             }
@@ -164,10 +173,8 @@ impl embassy_usb::Handler for MyHandler {
 pub static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
 static USB_CONFIG_WATCH: Watch<ThreadModeRawMutex, bool, 4> = Watch::new();
 
-pub fn is_configured() -> bool {
-    USB_CONFIGURED.load(Ordering::Acquire)
-}
-
 pub fn usb_config_receiver() -> DynReceiver<'static, bool> {
-    USB_CONFIG_WATCH.dyn_receiver().expect("usb config watch receivers exhausted")
+    USB_CONFIG_WATCH
+        .dyn_receiver()
+        .expect("usb config watch receivers exhausted")
 }

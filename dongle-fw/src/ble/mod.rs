@@ -13,6 +13,6 @@ pub mod security;
 pub use central::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager};
 
 /// Channel for sending packets from BLE devices to USB
-/// Increased to 64 to better absorb bursts without stalling BLE RX.
-pub type DevicePacketChannel = Channel<ThreadModeRawMutex, protodongers::mux::DevicePacket, 64>;
+/// Reduced to 32 to save RAM (was 64)
+pub type DevicePacketChannel = Channel<ThreadModeRawMutex, protodongers::mux::DevicePacket, 32>;
 // Device queues and connection tracking are defined in `ble::central`.

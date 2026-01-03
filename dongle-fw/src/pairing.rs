@@ -39,9 +39,9 @@ pub fn cancel() {
 
 pub fn enter_with_timeout(timeout: Duration) {
     enter();
-    critical_section::with(|cs| {
-        *DEADLINE.try_lock_with(|m| m.borrow_mut(cs)) = Some(Instant::now() + timeout);
-    });
+    if let Ok(mut guard) = DEADLINE.try_lock() {
+        *guard = Some(Instant::now() + timeout);
+    }
 }
 
 pub fn take_timeout() -> bool {
@@ -68,8 +68,7 @@ pub async fn pairing_led_task(mut blue: embassy_nrf::gpio::Output<'static>) -> !
             blue.set_high();
             Timer::after(Duration::from_millis(200)).await;
             // Check timeout
-            critical_section::with(|cs| {
-                let mut deadline = DEADLINE.try_lock_with(|m| m.borrow_mut(cs));
+            if let Ok(mut deadline) = DEADLINE.try_lock() {
                 if let Some(dl) = *deadline {
                     if Instant::now() >= dl {
                         cancel();
@@ -77,7 +76,7 @@ pub async fn pairing_led_task(mut blue: embassy_nrf::gpio::Output<'static>) -> !
                         *deadline = None;
                     }
                 }
-            });
+            }
         } else {
             // Idle: ensure LED off
             blue.set_high();

@@ -38,7 +38,12 @@ pub fn try_send_event(evt: UsbMuxCtrlMsg) {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
         let ch: &Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4> = unsafe { &*p };
-        let _ = ch.try_send(evt);
+        match ch.try_send(evt) {
+            Ok(()) => defmt::trace!("Control event queued successfully"),
+            Err(_) => defmt::warn!("Control event channel full, event dropped!"),
+        }
+    } else {
+        defmt::error!("Control EVT_PTR is null, cannot send event!");
     }
 }
 

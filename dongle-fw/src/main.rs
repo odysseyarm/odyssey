@@ -157,11 +157,11 @@ async fn main(mut spawner: Spawner) {
 
     // Initialize USB device and logging
     #[cfg(feature = "rtt")]
-    let (ep_in, ep_out, usb_signal) = {
+    let (ep_in, ep_out) = {
         use static_cell::StaticCell;
 
         // When using RTT, build USB device without serial logger
-        let (builder, ep_in, ep_out, usb_signal) = usb::usb_device(p.USBD);
+        let (builder, ep_in, ep_out, _usb_signal) = usb::usb_device(p.USBD);
         let usb_device = builder.build();
 
         static USB_DEVICE: StaticCell<embassy_usb::UsbDevice<'static, usb::UsbDriver>> =
@@ -172,22 +172,22 @@ async fn main(mut spawner: Spawner) {
         spawner.must_spawn(usb_device_task(usb));
 
         defmt::info!("RTT logger ready");
-        (ep_in, ep_out, usb_signal)
+        (ep_in, ep_out)
     };
 
     #[cfg(not(feature = "rtt"))]
-    let (ep_in, ep_out, usb_signal) = {
-        let (builder, ep_in, ep_out, usb_signal) = usb::usb_device(p.USBD);
+    let (ep_in, ep_out) = {
+        let (builder, ep_in, ep_out, _usb_signal) = usb::usb_device(p.USBD);
         // Initialize USB serial logger (consumes builder and spawns USB device task)
         defmt_serial::init(&mut spawner, builder);
         defmt::info!("USB serial logger initialized");
-        (ep_in, ep_out, usb_signal)
+        (ep_in, ep_out)
     };
 
-    for _ in 0..3 {
-        defmt::info!("Hello, World!");
-        Timer::after_secs(1).await;
-    }
+    // for _ in 0..3 {
+    //     defmt::info!("Hello, World!");
+    //     Timer::after_secs(1).await;
+    // }
 
     // Initialize nrf-mpsl (required even without BLE for flash access coordination)
     info!("MPSL initialization");
@@ -309,9 +309,13 @@ async fn main(mut spawner: Spawner) {
     // Now build the host and start its tasks
     let host = stack.build();
     let (rx, control, tx) = host.runner.split();
+    info!("Spawning host_rx_task");
     spawner.must_spawn(host_rx_task(rx));
+    info!("Spawning host_ctrl_task");
     spawner.must_spawn(host_ctrl_task(control));
+    info!("Spawning host_tx_task");
     spawner.must_spawn(host_tx_task(tx));
+    info!("Spawning host_mgmt_task");
     spawner.must_spawn(host_mgmt_task(stack));
 
     // Initialize channels for BLE <-> USB communication
@@ -327,16 +331,11 @@ async fn main(mut spawner: Spawner) {
     // Store global references for use in control task
     ble::central::set_global_refs(active_connections, device_queues).await;
 
-    spawner.must_spawn(usb_rx_task(
-        ep_out,
-        device_queues,
-        active_connections,
-        usb_signal,
-    ));
+    spawner.must_spawn(usb_rx_task(ep_out, device_queues, active_connections));
     // Initialize shared EP mutex and spawn independent TX tasks
     let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
-    spawner.must_spawn(host_responses_tx_task(ep_mutex, usb_signal));
-    spawner.must_spawn(device_packets_tx_task(ep_mutex, device_packets, usb_signal));
+    spawner.must_spawn(host_responses_tx_task(ep_mutex));
+    spawner.must_spawn(device_packets_tx_task(ep_mutex, device_packets));
     spawner.must_spawn(control_exec_task(settings));
     // Start BLE manager (central)
     info!("Starting BLE manager task");
@@ -487,7 +486,6 @@ async fn usb_rx_task(
     mut ep_out: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::Out>,
     device_queues: &'static ble::central::DeviceQueues,
     active_connections: &'static ActiveConnections,
-    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
     loop {
         info!("USB RX task: waiting for USB configuration");
@@ -557,7 +555,6 @@ async fn host_responses_tx_task(
         ThreadModeRawMutex,
         Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
     >,
-    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
     let mut write_buf = [0u8; 256];
 
@@ -620,7 +617,6 @@ async fn device_packets_tx_task(
         Option<embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::In>>,
     >,
     device_packets: &'static DevicePacketChannel,
-    usb_signal: &'static embassy_sync::signal::Signal<ThreadModeRawMutex, bool>,
 ) {
     let mut write_buf = [0u8; 256];
 
@@ -826,22 +822,4 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
             _ => {}
         }
     }
-}
-
-#[exception]
-unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
-    // nRF52840-DK: Turn on LED1 (P0.13) to indicate hardfault
-    let red = unsafe { embassy_nrf::peripherals::P0_08::steal() };
-    let blue = unsafe { embassy_nrf::peripherals::P0_12::steal() };
-    let _blue = embassy_nrf::gpio::Output::new(
-        blue,
-        embassy_nrf::gpio::Level::High,
-        embassy_nrf::gpio::OutputDrive::Standard,
-    );
-    let _red = embassy_nrf::gpio::Output::new(
-        red,
-        embassy_nrf::gpio::Level::Low,
-        embassy_nrf::gpio::OutputDrive::Standard,
-    );
-    loop {}
 }

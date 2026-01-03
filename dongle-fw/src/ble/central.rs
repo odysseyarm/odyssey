@@ -116,7 +116,7 @@ pub fn adv_matches_pairing(data: &[u8]) -> bool {
 }
 
 // Device queue and connection tracking
-pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 64>;
+pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 32>;
 
 pub struct DeviceQueues {
     queues: AsyncMutex<
@@ -217,11 +217,6 @@ impl ActiveConnections {
         }
     }
 
-    pub async fn contains(&self, uuid: &Uuid) -> bool {
-        let map = self.connections.lock().await;
-        map.contains_key(uuid)
-    }
-
     #[allow(dead_code)]
     pub async fn count(&self) -> usize {
         let map = self.connections.lock().await;
@@ -303,7 +298,6 @@ impl BleManager {
 
         loop {
             let targets = self.settings.get_scan_targets().await;
-            let pairing = crate::pairing::is_active();
 
             // Spawn tasks for any existing targets (not newly paired during this session)
             for addr in targets.iter() {
