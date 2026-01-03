@@ -20,6 +20,7 @@ embassy-sync = "0.7.2"
 cortex-m-rt = "0.7.5"
 cfg-if = "1.0.0"
 better-dfu = { path = "../../../../../better-dfu", features = ["dfu", "cortex-m"] }
+better-boot = { path = "../../../../../better-boot" }
 embassy-usb = { version = "0.5.1", default-features = false }
 embassy-futures = "0.1.2"
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs", default-features = false }
@@ -40,6 +41,7 @@ defmt = [
     "embassy-boot/defmt",
     "embassy-nrf/defmt",
     "better-dfu/defmt",
+    "better-boot/defmt",
     "embassy-sync/defmt",
     "embassy-time/defmt",
 ]

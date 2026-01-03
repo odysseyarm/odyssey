@@ -18,6 +18,7 @@ embassy-usb = { version = "0.5.1", default-features = false }
 embassy-embedded-hal = "0.5.0"
 embassy-futures = "0.1.2"
 embassy-boot = { version = "0.6.1" }
+better-boot = { path = "../../../../better-boot", features = ["defmt"] }
 better-dfu = { path = "../../../../better-dfu", features = ["application", "cortex-m"] }
 embedded-hal-bus = { version = "0.3.0", features = ["async"] }
 embedded-hal-async = "1.0.0"

@@ -1,7 +1,7 @@
 use embassy_nrf::gpio::Input;
 use embassy_time::{Duration, Instant, Timer};
 
-const LONG_PRESS: Duration = Duration::from_secs(1);
+const LONG_PRESS: Duration = Duration::from_millis(500);
 const DEBOUNCE_MS: u64 = 30;
 const POLL_MS: u64 = 20;
 
@@ -43,6 +43,8 @@ where
             defmt::info!("Long press detected - powering off");
             leds.lock_and_set_state(crate::pmic_leds::LedState::TurningOff)
                 .await;
+            // Show the turning off animation for a moment so user sees feedback
+            Timer::after_millis(1000).await;
             // Ensure release before powering off
             btn.wait_for_high().await;
             let _ = crate::power::handle_long_press_power_off(pmic).await;

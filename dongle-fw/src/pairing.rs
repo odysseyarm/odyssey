@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 
@@ -7,7 +9,7 @@ static PAIRING: AtomicBool = AtomicBool::new(false);
 static PAIRING_DONE: Signal<ThreadModeRawMutex, ()> = Signal::new();
 static SCAN_RESTART: Signal<ThreadModeRawMutex, ()> = Signal::new();
 static SCAN_RESTART_COUNTER: AtomicU32 = AtomicU32::new(0);
-static mut DEADLINE: Option<Instant> = None;
+static DEADLINE: Mutex<CriticalSectionRawMutex, Option<Instant>> = Mutex::new(None);
 static TIMEOUT_HIT: AtomicBool = AtomicBool::new(false);
 
 pub fn is_active() -> bool {
@@ -37,9 +39,9 @@ pub fn cancel() {
 
 pub fn enter_with_timeout(timeout: Duration) {
     enter();
-    unsafe {
-        DEADLINE = Some(Instant::now() + timeout);
-    }
+    critical_section::with(|cs| {
+        *DEADLINE.try_lock_with(|m| m.borrow_mut(cs)) = Some(Instant::now() + timeout);
+    });
 }
 
 pub fn take_timeout() -> bool {
@@ -66,15 +68,16 @@ pub async fn pairing_led_task(mut blue: embassy_nrf::gpio::Output<'static>) -> !
             blue.set_high();
             Timer::after(Duration::from_millis(200)).await;
             // Check timeout
-            unsafe {
-                if let Some(dl) = DEADLINE {
+            critical_section::with(|cs| {
+                let mut deadline = DEADLINE.try_lock_with(|m| m.borrow_mut(cs));
+                if let Some(dl) = *deadline {
                     if Instant::now() >= dl {
                         cancel();
                         TIMEOUT_HIT.store(true, Ordering::Release);
-                        DEADLINE = None;
+                        *deadline = None;
                     }
                 }
-            }
+            });
         } else {
             // Idle: ensure LED off
             blue.set_high();

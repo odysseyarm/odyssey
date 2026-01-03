@@ -1,14 +1,40 @@
 # Building for Different Hardware Variants
 
-This firmware supports two hardware configurations with different memory layouts:
+This firmware supports two hardware configurations with different memory layouts.
 
-## Building
+## Quick Start
+
+Use `just` commands (see [Justfile](../Justfile) for all available commands):
 
 ### For Dongle (Default)
 ```bash
+# Build release firmware
+just build-release
+
+# Flash via DFU (put dongle in bootloader mode first)
+just dfu-release
+
+# Build and flash in one step
+just flash-release
+```
+
+### For DK
+```bash
+# Build DK firmware with RTT logging
+just build-dk
+
+# Flash to DK via probe-rs
+just flash-dk
+
+# Run with RTT logs
+just run-dk
+```
+
+## Manual Building
+
+### For Dongle
+```bash
 cargo build --release
-# or simply
-cargo build
 ```
 
 ### For DK
@@ -17,30 +43,6 @@ cargo build --release --config .cargo/config-dk.toml --features rtt
 ```
 
 **Note**: The DK build uses the `rtt` feature to enable RTT logging instead of USB serial logging.
-
-## Flashing
-
-### Dongle
-```bash
-# Put dongle in bootloader mode first
-nrfutil pkg generate --hw-version 52 --sd-req 0x00 --application-version 1 \
-    --application target/thumbv7em-none-eabihf/release/dongle-fw \
-    dongle-fw.zip
-
-nrfutil dfu usb-serial -pkg dongle-fw.zip -p <PORT>
-```
-
-### DK
-```bash
-# Using probe-rs (recommended)
-cargo run --release --config .cargo/config-dk.toml --features rtt
-
-# Or using probe-rs directly
-probe-rs run --chip nRF52840_xxAA target/thumbv7em-none-eabihf/release/dongle-fw
-
-# View RTT logs (in a separate terminal)
-probe-rs attach --chip nRF52840_xxAA
-```
 
 ## Feature Flags
 

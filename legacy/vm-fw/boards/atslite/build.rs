@@ -40,7 +40,7 @@ fn main() {
     };
     println!("cargo:info=Building for {}", app_bank);
 
-    let bootloader_state = &regions["flash"]["bootloader_state"];
+    let stage2_state = &regions["flash"]["stage2_state"];
     let settings = &regions["flash"]["settings"];
     let low_ram = &regions["ram"]["low_ram"];
     let icmsg_rx = &regions["ram"]["high_ram"]["icmsg_rx"];
@@ -50,7 +50,7 @@ fn main() {
         "\
 MEMORY
 {{
-  BOOTLOADER_STATE                  : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  STAGE2_STATE                      : ORIGIN = {:#010x}, LENGTH = {:#08x}
   FLASH                             : ORIGIN = {:#010x}, LENGTH = {:#08x}
   SETTINGS                          : ORIGIN = {:#010x}, LENGTH = {:#08x}
   RAM                         (rwx) : ORIGIN = {:#010x}, LENGTH = {:#08x}
@@ -69,8 +69,8 @@ ERROR: the RAM and ICMSG_RX regions are overlapping\");
 ASSERT(ORIGIN(ICMSG_RX) + LENGTH(ICMSG_RX) <= ORIGIN(ICMSG_TX), \"
 ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
 ",
-        bootloader_state.origin(),
-        bootloader_state.length(),
+        stage2_state.origin(),
+        stage2_state.length(),
         app_flash.origin(),
         app_flash.length(),
         settings.origin(),

@@ -495,6 +495,11 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         "[custom_task] Spawning 4 independent tasks: control_tx, control_rx, data_tx, data_rx"
     );
 
+    // L2CAP channels established - mark BLE as connected for LED state
+    crate::pmic_leds::set_ble_connected(true);
+    crate::power_state::update_led_for_ble_state().await;
+    defmt::info!("[custom_task] BLE connected - LED state updated");
+
     // Run 4 independent tasks - one for each direction on each channel
     use embassy_futures::select::{Either4, select4};
     match select4(
@@ -511,7 +516,10 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         Either4::Fourth(_) => defmt::info!("[custom_task] data_rx_task exited"),
     }
 
-    defmt::info!("[custom_task] exiting - L2CAP channels closed");
+    // L2CAP channels closed - mark BLE as disconnected
+    crate::pmic_leds::set_ble_connected(false);
+    crate::power_state::update_led_for_ble_state().await;
+    defmt::info!("[custom_task] exiting - L2CAP channels closed, BLE disconnected");
 }
 
 // Control TX task - sends control responses to dongle

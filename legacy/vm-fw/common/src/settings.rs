@@ -153,6 +153,12 @@ pub async fn init_settings(
     pajr3: &mut Paj,
 ) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
     let region = get_settings_region();
+    defmt::info!(
+        "[settings] Settings flash region: {:#010x}..{:#010x} (size={}KB)",
+        region.start,
+        region.end,
+        (region.end - region.start) / 1024
+    );
     assert!((region.end - region.start) as usize >= 2 * PAGE_SIZE);
 
     // Start I/O worker
@@ -179,15 +185,20 @@ pub async fn init_settings(
         .await
         .unwrap();
 
+    let pajs = h_pajs.load();
+    let general = {
+        let g = h_general.load();
+        ACCEL_ODR.store(g.accel_config.accel_odr, Ordering::Relaxed);
+        g
+    };
+    let transient = h_transient.load();
+    let ble_bond = h_ble_bond.load();
+
     let s = Settings {
-        pajs: h_pajs.load(),
-        general: {
-            let g = h_general.load();
-            ACCEL_ODR.store(g.accel_config.accel_odr, Ordering::Relaxed);
-            g
-        },
-        transient: h_transient.load(),
-        ble_bond: h_ble_bond.load(),
+        pajs,
+        general,
+        transient,
+        ble_bond,
     };
 
     s.apply(pajr2, pajr3).await?;

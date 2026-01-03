@@ -5,6 +5,7 @@ use core::cell::RefCell;
 use core::future::Future;
 use core::task::Poll;
 
+use better_boot::{BootState, BootStateManager, STATE_MAGIC};
 use better_dfu::consts::DfuAttributes;
 use better_dfu::{Control, DfuForwarder, DfuTarget, ResetImmediate, usb_dfu};
 use cortex_m_rt::exception;
@@ -33,16 +34,6 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 /// Locked RAM structure for bootloader communication
 use pcd::{PcdRegion, PcdStatusCode};
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct BootState {
-    magic: u32,
-    active_slot: u8,
-    pending_slot: u8,
-    boot_counter: u8,
-    _reserved: u8,
-}
-
 // Simple app core DFU request flag in high RAM
 #[repr(C)]
 struct AppDfuFlag {
@@ -50,9 +41,8 @@ struct AppDfuFlag {
     dfu_requested: u32,
 }
 
-const BOOT_STATE_MAGIC: u32 = 0xB007_10AD;
-const BOOT_STATE_SLOT_A: u8 = 0;
-const BOOT_STATE_SLOT_B: u8 = 1;
+const SLOT_A: u8 = 0;
+const SLOT_B: u8 = 1;
 const APP_DFU_FLAG_MAGIC: u32 = 0xDF00B071;
 const NETCORE_DFU_MAGIC: u32 = 0x4E45_5444; // "NETD"
 const ERASED_WORD: u32 = 0xFFFF_FFFF;
@@ -500,8 +490,8 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
         // Persist which bank should be preferred on next boot.
         let actual_target = self.map_target(target);
         let target_slot = match actual_target {
-            DfuTarget::AppBankA => BOOT_STATE_SLOT_A,
-            DfuTarget::AppBankB => BOOT_STATE_SLOT_B,
+            DfuTarget::AppBankA => SLOT_A,
+            DfuTarget::AppBankB => SLOT_B,
             DfuTarget::NetCore => {
                 defmt::info!(
                     "Setting netcore DFU pending via PCD, size: {}",
@@ -542,29 +532,59 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 return Ok(());
             }
             DfuTarget::Bootloader => {
-                defmt::info!("Bootloader DFU completed, will swap on reset");
+                defmt::info!("Bootloader DFU completed, marking for swap via stage1");
                 // Bootloader update uses swap mechanism via stage1
                 // The DFU region already contains the new bootloader
-                // Stage1 will perform the swap on next boot
-                // Just trigger a reset to let stage1 handle it
+                // Write SWAP_MAGIC to stage1_state so stage1 performs the swap on next boot
+
+                extern "C" {
+                    static __stage1_state_start: u32;
+                }
+                let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as usize };
+
+                self.flash.lock(|flash_cell| {
+                    let mut flash = flash_cell.borrow_mut();
+
+                    // Erase stage1 state page
+                    let page_start = stage1_state_addr & !(PAGE_SIZE - 1);
+                    let page_end = page_start + PAGE_SIZE;
+
+                    if let Err(_) = flash.erase(page_start as u32, page_end as u32) {
+                        defmt::error!("Failed to erase stage1 state page");
+                        return Err(());
+                    }
+
+                    // Write SWAP_MAGIC to request bootloader swap
+                    if let Err(_) = flash.write(
+                        stage1_state_addr as u32,
+                        &better_boot::SWAP_MAGIC.to_le_bytes(),
+                    ) {
+                        defmt::error!("Failed to write SWAP_MAGIC to stage1 state");
+                        return Err(());
+                    }
+
+                    defmt::info!("Stage1 state marked for bootloader swap");
+                    Ok(())
+                })?;
+
                 return Ok(());
             }
         };
 
         // Determine active slot based on which bank is currently running
         let active_slot = if self.active_bank_is_a {
-            BOOT_STATE_SLOT_A
+            SLOT_A
         } else {
-            BOOT_STATE_SLOT_B
+            SLOT_B
         };
 
         // Create boot state with correct active and pending slots
         let state = BootState {
-            magic: BOOT_STATE_MAGIC,
+            magic: STATE_MAGIC,
             active_slot,
             pending_slot: target_slot,
             boot_counter: 0,
-            _reserved: 0,
+            reserved: 0,
         };
 
         // Clear DFU state so the bootloader doesn't re-enter DFU on next boot.
@@ -589,7 +609,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
             }
 
             // Write BOOT_MAGIC + boot state (active/pending/attempts)
-            if let Err(_) = flash.write(state_addr as u32, &0xB007_0000u32.to_le_bytes()) {
+            if let Err(_) = flash.write(state_addr as u32, &better_boot::BOOT_MAGIC.to_le_bytes()) {
                 defmt::error!("Failed to write BOOT_MAGIC at {:#x}", state_addr);
                 return Err(());
             }
@@ -672,19 +692,38 @@ fn select_boot_bank(
         // Decide which slot to boot
         let mut chosen_slot = active_slot;
 
+        // Rollback threshold: if boot_counter exceeds this, rollback to active_slot
+        const MAX_BOOT_ATTEMPTS: u8 = 2;
+
         // Try pending slot if it's different, valid, and attempts below limit
         if pending_slot != active_slot {
             let pending_valid = match pending_slot {
-                BOOT_STATE_SLOT_A => slot_a_valid,
-                BOOT_STATE_SLOT_B => slot_b_valid,
+                SLOT_A => slot_a_valid,
+                SLOT_B => slot_b_valid,
                 _ => false,
             };
 
-            if pending_valid {
-                // Try pending slot once; increment boot_counter so rollback can occur on next boot if not confirmed.
+            // Check if we've exceeded boot attempts (rollback condition)
+            if state.boot_counter >= MAX_BOOT_ATTEMPTS {
+                // Rollback: too many failed boot attempts
+                defmt::warn!(
+                    "Boot counter {} >= {}, rolling back to active slot {}",
+                    state.boot_counter,
+                    MAX_BOOT_ATTEMPTS,
+                    active_slot
+                );
+                state.pending_slot = active_slot;
+                state.boot_counter = 0;
+                chosen_slot = active_slot;
+            } else if pending_valid {
+                // Try pending slot; increment boot_counter so rollback can occur on next boot if not confirmed.
                 chosen_slot = pending_slot;
                 state.boot_counter = state.boot_counter.saturating_add(1);
-                defmt::info!("Booting pending slot {}", pending_slot);
+                defmt::info!(
+                    "Booting pending slot {} (attempt {})",
+                    pending_slot,
+                    state.boot_counter
+                );
             } else {
                 // Pending invalid; clear pending
                 state.pending_slot = active_slot;
@@ -697,13 +736,32 @@ fn select_boot_bank(
         }
 
         // Write back updated boot state (e.g., incremented attempts or cleared pending)
-        if let Err(_) = write_boot_state(flash, &state) {
-            defmt::warn!("Failed to persist boot state");
+        defmt::info!(
+            "[PRE-WRITE] About to write boot state: active={}, pending={}, attempts={}",
+            state.active_slot,
+            state.pending_slot,
+            state.boot_counter
+        );
+        match write_boot_state(flash, &state) {
+            Ok(()) => {
+                defmt::info!("[POST-WRITE] Boot state written successfully");
+                // Verify what was written
+                let verify_state = read_boot_state(flash);
+                defmt::info!(
+                    "[VERIFY] Read back: active={}, pending={}, attempts={}",
+                    verify_state.active_slot,
+                    verify_state.pending_slot,
+                    verify_state.boot_counter
+                );
+            }
+            Err(_) => {
+                defmt::warn!("Failed to persist boot state");
+            }
         }
 
         let (offset, name) = match chosen_slot {
-            BOOT_STATE_SLOT_A if slot_a_valid => (bank_a_start, "Bank A"),
-            BOOT_STATE_SLOT_B if slot_b_valid => (bank_b_start, "Bank B"),
+            SLOT_A if slot_a_valid => (bank_a_start, "Bank A"),
+            SLOT_B if slot_b_valid => (bank_b_start, "Bank B"),
             _ => {
                 // Fallback behavior if chosen slot invalid
                 if slot_a_valid {
@@ -732,13 +790,12 @@ fn check_dfu_state(
     }
 
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
-    const SWAP_MAGIC: u32 = 0x00BAD00D;
 
     // Read the state partition to check for DFU detach marker
     // Embassy-boot state format:
     // - 0xFFFFFFFF = Erased (no state) - boot normally
-    // - 0xB0070000 = Booted - boot normally
-    // - 0x00BAD00D = Swap/DFU requested - enter DFU mode
+    // - 0xD0D0D0D0 = BOOT_MAGIC - boot normally
+    // - 0xF0F0F0F0 = SWAP_MAGIC - enter DFU mode
     flash.lock(|flash_cell| {
         let _flash = flash_cell.borrow();
         let state_word = unsafe { core::ptr::read_volatile(state_addr as *const u32) };
@@ -755,94 +812,41 @@ fn check_dfu_state(
         );
 
         // Enter DFU only if explicitly requested.
-        state_word == SWAP_MAGIC
+        state_word == better_boot::SWAP_MAGIC
     })
 }
 
-fn read_boot_state(
-    flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
-) -> BootState {
+fn get_boot_state_manager() -> BootStateManager {
     extern "C" {
         static __bootloader_state_start: u32;
     }
-    let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
-    let state_ptr = state_addr + core::mem::size_of::<u32>();
+    let state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
+    BootStateManager::new(state_addr)
+}
 
-    flash.lock(|_flash_cell| {
-        let state = unsafe { core::ptr::read_volatile(state_ptr as *const BootState) };
-        if state.magic == BOOT_STATE_MAGIC {
-            state
-        } else {
-            BootState {
-                magic: BOOT_STATE_MAGIC,
-                active_slot: BOOT_STATE_SLOT_A,
-                pending_slot: BOOT_STATE_SLOT_A,
-                boot_counter: 0,
-                _reserved: 0,
-            }
-        }
-    })
+fn read_boot_state(
+    _flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
+) -> BootState {
+    get_boot_state_manager().read()
 }
 
 fn write_boot_state(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
     state: &BootState,
 ) -> Result<(), ()> {
-    extern "C" {
-        static __bootloader_state_start: u32;
-    }
-    let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
-    let state_ptr = state_addr + core::mem::size_of::<u32>();
-
+    let manager = get_boot_state_manager();
     flash.lock(|flash_cell| {
         let mut flash = flash_cell.borrow_mut();
-
-        // Erase containing page, then write state
-        let page_start = state_addr & !(PAGE_SIZE - 1);
-        let page_end = page_start + PAGE_SIZE;
-
-        flash
-            .erase(page_start as u32, page_end as u32)
-            .map_err(|_| ())?;
-
-        // First word reserved for BOOT_MAGIC (DFU state)
-        flash
-            .write(state_addr as u32, &0xB007_0000u32.to_le_bytes())
-            .map_err(|_| ())?;
-
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
-            )
-        };
-
-        flash.write(state_ptr as u32, bytes).map_err(|_| ())?;
-        Ok(())
+        manager
+            .write_boot_state(&mut *flash, state, PAGE_SIZE as u32)
+            .map_err(|_| ())
     })
 }
 
 fn snapshot_state_words() -> (u32, BootState) {
-    extern "C" {
-        static __bootloader_state_start: u32;
-    }
-
-    let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
-    let flag_word = unsafe { core::ptr::read_volatile(state_addr as *const u32) };
-    let state_ptr = state_addr + core::mem::size_of::<u32>();
-    let raw_state = unsafe { core::ptr::read_volatile(state_ptr as *const BootState) };
-    let state = if raw_state.magic == BOOT_STATE_MAGIC {
-        raw_state
-    } else {
-        BootState {
-            magic: BOOT_STATE_MAGIC,
-            active_slot: BOOT_STATE_SLOT_A,
-            pending_slot: BOOT_STATE_SLOT_A,
-            boot_counter: 0,
-            _reserved: 0,
-        }
-    };
-
+    let manager = get_boot_state_manager();
+    let flag_word = manager.read_magic();
+    let state = manager.read();
     (flag_word, state)
 }
 
@@ -934,7 +938,6 @@ fn flag_dfu_requested(
     extern "C" {
         static __bootloader_state_start: u32;
     }
-    const SWAP_MAGIC: u32 = 0x00BAD00D;
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
 
     flash.lock(|flash_cell| {
@@ -944,10 +947,10 @@ fn flag_dfu_requested(
         let state_ptr = state_addr + core::mem::size_of::<u32>();
         let mut current_state = preserved_state;
         let flash_state = unsafe { core::ptr::read_volatile(state_ptr as *const BootState) };
-        if flash_state.magic == BOOT_STATE_MAGIC {
+        if flash_state.magic == STATE_MAGIC {
             current_state = flash_state;
         }
-        if current_state.magic != BOOT_STATE_MAGIC {
+        if current_state.magic != STATE_MAGIC {
             defmt::warn!(
                 "State magic invalid when flagging DFU; RAM flag set, skipping flash update"
             );
@@ -964,7 +967,7 @@ fn flag_dfu_requested(
         }
 
         // Write SWAP_MAGIC to request DFU on next boot.
-        if let Err(_) = flash.write(state_addr as u32, &SWAP_MAGIC.to_le_bytes()) {
+        if let Err(_) = flash.write(state_addr as u32, &better_boot::SWAP_MAGIC.to_le_bytes()) {
             defmt::warn!("Failed to write SWAP_MAGIC at {:#x}", state_addr);
             return;
         }
@@ -1088,6 +1091,7 @@ async fn main(spawner: Spawner) -> ! {
     //     }
     //     defmt::info!("[DEBUG] Network core started for debugging");
     // }
+    // embassy_time::Timer::after(embassy_time::Duration::from_millis(5000)).await;
     // ============================================================================
 
     // Check if network core DFU is pending via PCD
@@ -1338,6 +1342,88 @@ async fn main(spawner: Spawner) -> ! {
     // Select which bank to boot from (dual-bank logic)
     let (boot_offset, boot_bank_name, _boot_state) = select_boot_bank(&flash);
 
+    // DISABLED: Writing to stage1_state at 0xC000 causes flash retention corruption
+    // in adjacent page 0xD000 (stage2_state) within seconds.
+    // This is a hardware issue - erasing flash page affects neighboring pages.
+    // Stage1 rollback is only needed for bootloader updates, not app bank switching.
+    // TODO: Investigate nRF5340 errata or use non-adjacent pages
+    if false {
+        extern "C" {
+            static __stage1_state_start: u32;
+        }
+
+        let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as u32 };
+
+        defmt::info!(
+            "Marking stage2 bootloader boot as successful for stage1 (writing to state at {:#010x})",
+            stage1_state_addr
+        );
+
+        // Read stage2_state BEFORE erasing stage1_state to check if erase affects it
+        extern "C" {
+            static __bootloader_state_start: u32;
+        }
+        let stage2_state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
+        let stage2_before = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
+        defmt::info!(
+            "[PRE-ERASE] stage2_state at {:#010x} = {:#010x}",
+            stage2_state_addr,
+            stage2_before
+        );
+
+        // Use better-boot to write stage1 state
+        let stage1_manager = BootStateManager::new(stage1_state_addr);
+        let stage1_state = BootState {
+            magic: STATE_MAGIC,
+            active_slot: 0,
+            pending_slot: 0,
+            boot_counter: 0,
+            reserved: 0,
+        };
+
+        flash.lock(|flash_cell| {
+            let mut flash = flash_cell.borrow_mut();
+
+            if let Err(_) =
+                stage1_manager.write_boot_state(&mut *flash, &stage1_state, PAGE_SIZE as u32)
+            {
+                defmt::error!("Failed to write stage1 state");
+                return;
+            }
+
+            defmt::info!("Stage1 state written successfully");
+
+            // Ensure flash operations complete
+            cortex_m::asm::dsb();
+            cortex_m::asm::isb();
+
+            // CRITICAL: Add delay to allow flash cell voltage to fully settle
+            // nRF5340 flash cells need time after erase/write before adjacent operations
+            for _ in 0..100000 {
+                cortex_m::asm::nop();
+            }
+
+            // Check if stage2_state was affected
+            let stage2_after = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
+            defmt::info!(
+                "[POST-WRITE] stage2_state at {:#010x} = {:#010x}",
+                stage2_state_addr,
+                stage2_after
+            );
+
+            // Verify what was written to stage1
+            let verify_magic = stage1_manager.read_magic();
+            let verify_state = stage1_manager.read();
+            defmt::info!(
+                "Stage1 state verified: magic={:#010x}, active={}, pending={}, counter={}",
+                verify_magic,
+                verify_state.active_slot,
+                verify_state.pending_slot,
+                verify_state.boot_counter
+            );
+        });
+    }
+
     if should_enter_dfu {
         defmt::info!("DFU mode");
 
@@ -1473,20 +1559,89 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    // Mark this boot as successful to prevent stage1 from rolling back
-    // IMPORTANT: This must be called ONLY when booting the app, NOT when entering DFU mode
-    // Otherwise it would clear the DFU request flag (SWAP_MAGIC) that the app wrote
-    {
-        use embassy_boot::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterConfig};
-
-        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
-        let mut aligned_buf = AlignedBuffer([0; 4]);
-        let mut updater = BlockingFirmwareUpdater::new(config, &mut aligned_buf.0);
-
-        defmt::info!("Marking boot as successful before booting app");
-        if let Err(e) = updater.mark_booted() {
-            defmt::error!("Failed to mark boot: {:?}", e);
+    // MOVED: stage1_state write now happens earlier (after select_boot_bank)
+    // to avoid flash corruption issues when erasing right before app jump
+    if false {
+        extern "C" {
+            static __stage1_state_start: u32;
         }
+
+        let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as u32 };
+
+        // embassy-boot's mark_booted() writes the magic value 0xD0D0D0D0 to the state partition
+
+        defmt::info!(
+            "Marking stage2 bootloader boot as successful for stage1 (writing to state at {:#010x})",
+            stage1_state_addr
+        );
+
+        // Read stage2_state BEFORE erasing stage1_state to check if erase affects it
+        extern "C" {
+            static __bootloader_state_start: u32;
+        }
+        let stage2_state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
+        let stage2_before = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
+        defmt::info!(
+            "[PRE-ERASE] stage2_state at {:#010x} = {:#010x}",
+            stage2_state_addr,
+            stage2_before
+        );
+
+        flash.lock(|flash_cell| {
+            let mut flash = flash_cell.borrow_mut();
+
+            // Erase the stage1 state page
+            let page_start = stage1_state_addr & !(PAGE_SIZE as u32 - 1);
+            let page_end = page_start + PAGE_SIZE as u32;
+
+            defmt::info!(
+                "[ERASE] Erasing stage1 page: start={:#010x}, end={:#010x}, size={}",
+                page_start,
+                page_end,
+                page_end - page_start
+            );
+
+            if let Err(_) = flash.erase(page_start, page_end) {
+                defmt::error!("Failed to erase stage1 state page at {:#x}", page_start);
+                return;
+            }
+
+            defmt::info!("[ERASE] Stage1 state page erased successfully");
+
+            // CRITICAL: Ensure erase completes before any other operations
+            cortex_m::asm::dsb();
+            cortex_m::asm::isb();
+
+            // Check if stage2_state was affected by the erase
+            let stage2_after_erase =
+                unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
+            defmt::info!(
+                "[POST-ERASE] stage2_state at {:#010x} = {:#010x}",
+                stage2_state_addr,
+                stage2_after_erase
+            );
+
+            // Write BOOT_MAGIC to mark stage2 bootloader as successfully booted
+            if let Err(_) = flash.write(stage1_state_addr, &better_boot::BOOT_MAGIC.to_le_bytes()) {
+                defmt::error!(
+                    "Failed to write BOOT_MAGIC to stage1 state at {:#x}",
+                    stage1_state_addr
+                );
+                return;
+            }
+
+            // Verify the write
+            let verify = unsafe { core::ptr::read_volatile(stage1_state_addr as *const u32) };
+            defmt::info!("Stage1 state marked booted: magic={:#010x}", verify);
+
+            // Check stage2_state one more time after writing to stage1
+            let stage2_final = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
+            defmt::info!(
+                "[FINAL] stage2_state at {:#010x} = {:#010x}",
+                stage2_state_addr,
+                stage2_final
+            );
+        });
     }
 
     defmt::info!(

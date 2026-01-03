@@ -126,12 +126,18 @@ const USB_MUX_VERSION: UsbMuxVersion = UsbMuxVersion {
     firmware_semver: [0, 1, 0],
 };
 
+#[exception]
+unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
+    // Reset the device on hard fault (typically from panic)
+    cortex_m::peripheral::SCB::sys_reset();
+}
+
 #[embassy_executor::main]
 async fn main(mut spawner: Spawner) {
     defmt::info!("Booted");
     let p = embassy_nrf::init(Default::default());
 
-    embassy_time::Timer::after_millis(2000).await;
+    // embassy_time::Timer::after_millis(2000).await;
 
     // nRF52840-DK LEDs: P0.13, P0.14, P0.15, P0.16 (all white)
     // Using P0.13 as "red" (status), P0.14 as "blue" (pairing)
@@ -605,7 +611,6 @@ async fn host_responses_tx_task(
         }
         warn!("USB TX host task: deconfigured");
     }
-
 }
 // Sends device packets to USB endpoint
 #[embassy_executor::task]
@@ -789,13 +794,9 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                         let _ = to_purge.push(*bd);
                     }
                 }
-                // Ask host task to purge; wait briefly for completion
+                // Ask host task to purge; wait for completion to avoid desync
                 HOST_MGMT_CH.send(HostMgmtCmd::PurgeBonds(to_purge)).await;
-                let _ = embassy_time::with_timeout(
-                    embassy_time::Duration::from_millis(500),
-                    HOST_MGMT_DONE.wait(),
-                )
-                .await;
+                HOST_MGMT_DONE.wait().await;
                 // Now clear persisted + runtime state
                 settings.bonds_clear().await;
                 settings.scan_list_clear().await;

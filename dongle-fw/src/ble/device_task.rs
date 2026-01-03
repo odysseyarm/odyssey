@@ -342,7 +342,7 @@ async fn run_connection(
                         return;
                     }
                     Err(_) => {
-                        warn!("L2CAP send timeout; will retry next packet");
+                        warn!("L2CAP send timeout; packet dropped");
                     }
                 }
                 let elapsed = Instant::now() - start;

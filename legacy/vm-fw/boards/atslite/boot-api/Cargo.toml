@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "unstable-pac"] }
 embedded-storage = "0.3"
+better-boot = { path = "../../../../../better-boot" }
 defmt = { version = "0.3", optional = true }
 
 [features]
-defmt = ["dep:defmt"]
+defmt = ["dep:defmt", "better-boot/defmt"]

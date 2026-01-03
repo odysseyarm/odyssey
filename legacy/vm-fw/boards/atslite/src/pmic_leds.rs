@@ -10,6 +10,7 @@ use npm1300_rs::NPM1300;
 use npm1300_rs::leds::LedMode;
 
 static CMD_CH: Channel<ThreadModeRawMutex, LedCmd, 4> = Channel::new();
+static BLE_CONNECTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Copy, Clone, Debug)]
 pub enum LedIdx {
@@ -63,6 +64,42 @@ impl LedState {
             LedState::Off | LedState::ProgramError | LedState::BattShutoff => (250, 0),
 
             LedState::BattCharging | LedState::BleBattCharging => (1000, 4000),
+        }
+    }
+
+    /// Helper to compute the correct LED state based on battery status and BLE connection.
+    /// Returns the BLE variant if connected, non-BLE variant otherwise.
+    pub fn from_battery(charging: bool, soc: f32, ble_connected: bool) -> Self {
+        if charging {
+            if ble_connected {
+                LedState::BleBattCharging
+            } else {
+                LedState::BattCharging
+            }
+        } else if soc <= 0.0 {
+            if ble_connected {
+                LedState::BleBattShutoff
+            } else {
+                LedState::BattShutoff
+            }
+        } else if soc <= 25.0 {
+            if ble_connected {
+                LedState::BleBattLow
+            } else {
+                LedState::BattLow
+            }
+        } else if soc <= 65.0 {
+            if ble_connected {
+                LedState::BleBattMed
+            } else {
+                LedState::BattMed
+            }
+        } else {
+            if ble_connected {
+                LedState::BleBattHigh
+            } else {
+                LedState::BattHigh
+            }
         }
     }
 }
@@ -125,6 +162,16 @@ pub async fn set_state_seamless_global(s: LedState) {
     let _ = CMD_CH.send(LedCmd::SetSeamless(s)).await;
 }
 
+/// Set BLE connection state. This is called from BLE peripheral task when connecting/disconnecting.
+pub fn set_ble_connected(connected: bool) {
+    BLE_CONNECTED.store(connected, Ordering::Relaxed);
+}
+
+/// Get current BLE connection state.
+pub fn is_ble_connected() -> bool {
+    BLE_CONNECTED.load(Ordering::Relaxed)
+}
+
 fn frame_durations(state: LedState) -> (Duration, Duration) {
     let (on, off) = state.frames();
     (Duration::from_millis(on), Duration::from_millis(off))
@@ -136,7 +183,13 @@ fn color_for(state: LedState, frame_idx: u8) -> (bool, bool, bool) {
         // immediate/solid-ish
         LedState::Off => RGB_OFF,
         LedState::ProgramError => RGB_WHT,
-        LedState::Pairing => { if frame_idx == 0 { RGB_BLU } else { RGB_OFF } },
+        LedState::Pairing => {
+            if frame_idx == 0 {
+                RGB_BLU
+            } else {
+                RGB_OFF
+            }
+        }
         LedState::TurningOff => {
             if frame_idx == 0 {
                 RGB_RED
@@ -243,7 +296,12 @@ where
             pmic.configure_led1_mode(LedMode::Host).await?;
             pmic.configure_led2_mode(LedMode::Host).await?;
         }
-        let mut me = Self { pmic, red, green, blue };
+        let mut me = Self {
+            pmic,
+            red,
+            green,
+            blue,
+        };
         let _ = me.turn_rgb(false, false, false).await;
         Ok((me, PmicLedsHandle::new()))
     }
@@ -298,7 +356,11 @@ where
                             state = new;
                             frame_idx = 0;
                             (on_dur, _) = frame_durations(state);
-                            frame_len = if frames_in_state(state) == 1 { on_dur } else { on_dur };
+                            frame_len = if frames_in_state(state) == 1 {
+                                on_dur
+                            } else {
+                                on_dur
+                            };
                             frame_start = Instant::now();
                             self.apply_frame(state, frame_idx).await;
                         }
@@ -323,14 +385,23 @@ where
         let _ = self.turn_rgb(r, g, b).await;
     }
 
-    async fn turn_rgb(&mut self, r: bool, g: bool, b: bool) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>> {
+    async fn turn_rgb(
+        &mut self,
+        r: bool,
+        g: bool,
+        b: bool,
+    ) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>> {
         self.set_chan(self.red, r).await?;
         self.set_chan(self.green, g).await?;
         self.set_chan(self.blue, b).await?;
         Ok(())
     }
 
-    async fn set_chan(&mut self, ch: LedIdx, on: bool) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>> {
+    async fn set_chan(
+        &mut self,
+        ch: LedIdx,
+        on: bool,
+    ) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>> {
         let mut pmic = self.pmic.lock().await;
         match (ch, on) {
             (LedIdx::Ch0, true) => pmic.enable_led0().await,
@@ -342,6 +413,3 @@ where
         }
     }
 }
-
-
-

@@ -20,7 +20,6 @@ pub struct AtsliteImuInterrupt {
     int1: Input<'static>,
 }
 
-// TODO: Update to new icm426xx API - the library API has changed significantly
 #[derive(Debug)]
 pub struct ImuError;
 

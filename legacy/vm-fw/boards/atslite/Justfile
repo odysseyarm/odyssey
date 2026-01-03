@@ -39,23 +39,26 @@ build-net:
 build-netcore-bootloader:
     cd netcore-bootloader && cargo build --release --target thumbv8m.main-none-eabi
 
-# Build complete ATSlite firmware (bank A only for compatibility)
-build: build-stage1 build-app-a build-bootloader build-netcore-bootloader build-net
+# Build complete ATSlite firmware with both banks
+build: build-stage1 build-app-a build-app-b build-bootloader build-netcore-bootloader build-net
     mkdir -p {{output_dir}}
     cp stage1-bootloader/target/thumbv8m.main-none-eabihf/release/atslite-stage1-bootloader {{output_dir}}/stage1-bootloader.elf
     cp target-bank-a/thumbv8m.main-none-eabihf/release/app {{output_dir}}/app-a.elf
+    cp target-bank-b/thumbv8m.main-none-eabihf/release/app {{output_dir}}/app-b.elf
     cp bootloader/target/thumbv8m.main-none-eabihf/release/atslite-bootloader {{output_dir}}/stage2-bootloader.elf
     cp netcore-bootloader/target/thumbv8m.main-none-eabi/release/atslite-netcore-bootloader {{output_dir}}/netcore-bootloader.elf
     cp {{net_core}}/target/thumbv8m.main-none-eabi/release/net-core {{output_dir}}/net-core.elf
     llvm-objcopy -O ihex {{output_dir}}/stage1-bootloader.elf {{output_dir}}/stage1-bootloader.hex
     llvm-objcopy -O ihex {{output_dir}}/app-a.elf {{output_dir}}/app-a.hex
+    llvm-objcopy -O ihex {{output_dir}}/app-b.elf {{output_dir}}/app-b.hex
     llvm-objcopy -O ihex {{output_dir}}/stage2-bootloader.elf {{output_dir}}/stage2-bootloader.hex
     llvm-objcopy -O ihex {{output_dir}}/netcore-bootloader.elf {{output_dir}}/netcore-bootloader.hex
     llvm-objcopy -O ihex {{output_dir}}/net-core.elf {{output_dir}}/net-core.hex
     llvm-objcopy -O binary {{output_dir}}/app-a.elf {{output_dir}}/app-a.bin
+    llvm-objcopy -O binary {{output_dir}}/app-b.elf {{output_dir}}/app-b.bin
     llvm-objcopy -O binary {{output_dir}}/stage2-bootloader.elf {{output_dir}}/stage2-bootloader.bin
     llvm-objcopy -O binary {{output_dir}}/net-core.elf {{output_dir}}/net-core.bin
-    mergehex -o {{output_dir}}/merged.hex -m {{output_dir}}/stage1-bootloader.hex {{output_dir}}/stage2-bootloader.hex {{output_dir}}/app-a.hex {{output_dir}}/netcore-bootloader.hex {{output_dir}}/net-core.hex
+    mergehex -o {{output_dir}}/merged.hex -m {{output_dir}}/stage1-bootloader.hex {{output_dir}}/stage2-bootloader.hex {{output_dir}}/app-a.hex {{output_dir}}/app-b.hex {{output_dir}}/netcore-bootloader.hex {{output_dir}}/net-core.hex
 
 # Build complete dual-bank firmware with both app banks and DFU binaries
 build-dual-bank: build-stage1 build-app-a build-app-b build-bootloader build-net
@@ -78,28 +81,33 @@ build-dual-bank: build-stage1 build-app-a build-app-b build-bootloader build-net
 # Flash ATSlite firmware
 flash: build
     nrfjprog --program {{output_dir}}/merged.hex --sectorerase --verify --reset
-    # Clear bootloader state page so boot state starts erased (0xFFFFFFFF)
-    nrfjprog --erasepage 0xC000
+    # Clear bootloader state pages so boot state starts erased (0xFFFFFFFF)
+    nrfjprog --erasepage 0xF9000
+    nrfjprog --erasepage 0xFA000
 
 # Flash with chip erase
 flash-chiperase: build
     nrfjprog --program {{output_dir}}/merged.hex --chiperase --verify --reset
-    nrfjprog --erasepage 0xC000
+    nrfjprog --erasepage 0xFC000
+    nrfjprog --erasepage 0xFD000
 
 # Flash with recover
 flash-recover: build
     nrfjprog --program {{output_dir}}/merged.hex --recover --verify --reset
-    nrfjprog --erasepage 0xC000
+    nrfjprog --erasepage 0xFC000
+    nrfjprog --erasepage 0xFD000
 
 # Flash dual-bank with chip erase
 flash-dual-chiperase: build-dual-bank
     nrfjprog --program {{output_dir}}/merged-dual.hex --chiperase --verify --reset
-    nrfjprog --erasepage 0xC000
+    nrfjprog --erasepage 0xFC000
+    nrfjprog --erasepage 0xFD000
 
 # Flash dual-bank with recover
 flash-dual-recover: build-dual-bank
     nrfjprog --program {{output_dir}}/merged-dual.hex --recover --verify --reset
-    nrfjprog --erasepage 0xC000
+    nrfjprog --erasepage 0xFC000
+    nrfjprog --erasepage 0xFD000
 
 # Flash application only
 flash-app: build-app

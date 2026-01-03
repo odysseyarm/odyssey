@@ -25,7 +25,7 @@ fn main() {
 
     let stage1_bootloader = &regions["flash"]["stage1_bootloader"];
     let stage2_bootloader = &regions["flash"]["stage2_bootloader"];
-    let bootloader_state = &regions["flash"]["bootloader_state"];
+    let stage1_state = &regions["flash"]["stage1_state"];
     let dfu = &regions["flash"]["dfu"];
     let low_ram = &regions["ram"]["low_ram"];
 
@@ -57,8 +57,8 @@ __bootloader_dfu_end = ORIGIN(DFU) + LENGTH(DFU);
         stage2_bootloader.length(),
         dfu.origin(),
         dfu.length(),
-        bootloader_state.origin(),
-        bootloader_state.length(),
+        stage1_state.origin(),
+        stage1_state.length(),
         low_ram.origin(),
         low_ram.length(),
     );

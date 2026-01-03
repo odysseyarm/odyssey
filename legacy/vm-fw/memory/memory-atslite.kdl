@@ -5,9 +5,10 @@ vars {
     page_size "4K"
     stage1_bootloader_size "8K"   // First-stage bootloader (swap orchestrator)
     stage2_bootloader_size "40K"  // Second-stage bootloader (DFU handler)
-    stage2_state_size "page_size" // Swap state for stage2 bootloader
-    app_bank_size "380K"          // Each app bank (A and B)
-    dfu_size "200K"               // Shared DFU staging area (bootloader/netcore updates)
+    stage1_state_size "page_size" // State for stage1 bootloader (stage2 swap)
+    stage2_state_size "page_size" // State for stage2 bootloader (app bank switching)
+    app_bank_size "364K"          // Each app bank (A and B) - reduced by 16K for state partitions + guards
+    dfu_size "200K"               // Shared DFU staging area
     settings_size "8K"            // Minimum 8KB required by settings module
 }
 
@@ -15,11 +16,14 @@ regions {
     flash origin=0x0000_0000 length="1M" {
         stage1_bootloader origin=0x0000_0000 length="stage1_bootloader_size"
         stage2_bootloader origin=0x0000_2000 length="stage2_bootloader_size"
-        bootloader_state  origin=0x0000_C000 length="stage2_state_size" align="page_size"
-        app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
-        app_bank_b        origin=0x0006_C000 length="app_bank_size" align="page_size"
-        dfu               origin=0x000C_B000 length="dfu_size" align="page_size"
-        settings          origin=0x000F_D000 length="settings_size" align="page_size"
+        app_bank_a        origin=0x0000_C000 length="app_bank_size" align="page_size"
+        app_bank_b        origin=0x0006_7000 length="app_bank_size" align="page_size"
+        dfu               origin=0x000C_2000 length="dfu_size" align="page_size"
+        // Boot states far from settings to avoid corruption bug
+        stage1_state      origin=0x000F_9000 length="stage1_state_size" align="page_size"
+        stage2_state      origin=0x000F_A000 length="stage2_state_size" align="page_size"
+        // Guard pages at 0xFB000, 0xFC000, 0xFD000 - protect boot state from settings corruption
+        settings          origin=0x000F_E000 length="settings_size" align="page_size"
     }
 
     ram origin=0x2000_0000 length="512K" {
@@ -41,8 +45,14 @@ regions {
 symbols {
     __stage2_bootloader_start "flash.stage2_bootloader.origin"
     __stage2_bootloader_end   "flash.stage2_bootloader.end"
-    __bootloader_state_start  "flash.bootloader_state.origin"
-    __bootloader_state_end    "flash.bootloader_state.end"
+    __stage1_state_start      "flash.stage1_state.origin"
+    __stage1_state_end        "flash.stage1_state.end"
+    __stage2_state_start      "flash.stage2_state.origin"
+    __stage2_state_end        "flash.stage2_state.end"
+
+    // Backward compatibility: __bootloader_state points to stage2_state
+    __bootloader_state_start  "flash.stage2_state.origin"
+    __bootloader_state_end    "flash.stage2_state.end"
 
     // Direct bank access symbols
     __bootloader_app_a_start  "flash.app_bank_a.origin"

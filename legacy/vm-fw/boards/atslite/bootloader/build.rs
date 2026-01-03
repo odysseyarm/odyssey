@@ -25,7 +25,8 @@ fn main() {
 
     // Now using stage2_bootloader instead of bootloader
     let bootloader = &regions["flash"]["stage2_bootloader"];
-    let bootloader_state = &regions["flash"]["bootloader_state"];
+    let stage1_state = &regions["flash"]["stage1_state"];
+    let stage2_state = &regions["flash"]["stage2_state"];
     let bank_a = &regions["flash"]["app_bank_a"];
     let bank_b = &regions["flash"]["app_bank_b"];
     let dfu = &regions["flash"]["dfu"];
@@ -45,7 +46,7 @@ fn main() {
 MEMORY
 {{
   FLASH                             : ORIGIN = {:#010x}, LENGTH = {:#08x}
-  BOOTLOADER_STATE                  : ORIGIN = {:#010x}, LENGTH = {:#08x}
+  STAGE2_STATE                      : ORIGIN = {:#010x}, LENGTH = {:#08x}
   ACTIVE                            : ORIGIN = {:#010x}, LENGTH = {:#08x}
   DFU                               : ORIGIN = {:#010x}, LENGTH = {:#08x}
   SETTINGS                          : ORIGIN = {:#010x}, LENGTH = {:#08x}
@@ -54,8 +55,11 @@ MEMORY
   ICMSG_TX                          : ORIGIN = {:#010x}, LENGTH = {:#06x}
 }}
 
-__bootloader_state_start = ORIGIN(BOOTLOADER_STATE);
-__bootloader_state_end = ORIGIN(BOOTLOADER_STATE) + LENGTH(BOOTLOADER_STATE);
+__bootloader_state_start = ORIGIN(STAGE2_STATE);
+__bootloader_state_end = ORIGIN(STAGE2_STATE) + LENGTH(STAGE2_STATE);
+
+__stage1_state_start = {:#010x};
+__stage1_state_end = {:#010x};
 
 __bootloader_active_start = ORIGIN(ACTIVE);
 __bootloader_active_end = ORIGIN(ACTIVE) + LENGTH(ACTIVE);
@@ -82,8 +86,8 @@ ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
 ",
         bootloader.origin(),
         bootloader.length(),
-        bootloader_state.origin(),
-        bootloader_state.length(),
+        stage2_state.origin(),
+        stage2_state.length(),
         bank_a.origin(),
         active_len,
         bank_b.origin(),
@@ -96,6 +100,8 @@ ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
         icmsg_rx.length(),
         icmsg_tx.origin(),
         icmsg_tx.length(),
+        stage1_state.origin(),
+        stage1_state.origin() + stage1_state.length(),
         bank_a.origin(),
         bank_a.origin() + bank_a.length(),
         bank_b.origin(),

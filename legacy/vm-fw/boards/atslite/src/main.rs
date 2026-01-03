@@ -6,11 +6,10 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use atslite_board::transport_mode;
-use atslite_boot_api::BootConfirmation;
+
 use better_dfu::consts::DfuAttributes;
 use better_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
 use core::cell::RefCell;
-use embassy_boot::{BlockingFirmwareState, FirmwareUpdaterConfig};
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
 use embassy_nrf::{
@@ -118,17 +117,7 @@ async fn main(spawner: Spawner) {
 
     let board: Board = split_board!(p);
 
-    // Confirm this boot as successful so the bootloader keeps the current slot active.
-    // Log state before/after to verify the flag is cleared.
-    log_boot_state("before confirm");
-    nvmc.lock(|flash_cell| {
-        let mut flash = flash_cell.borrow_mut();
-        match BootConfirmation::confirm_boot_with(&mut flash) {
-            Ok(()) => defmt::info!("Boot confirmed"),
-            Err(()) => defmt::warn!("Boot confirmation failed"),
-        }
-    });
-    log_boot_state("after confirm");
+    // Boot confirmation moved to later (after IMU init)
 
     // Initialize PMIC over TWIM
     let mut twim_cfg = twim::Config::default();
@@ -238,12 +227,15 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    // Mark firmware as booted and create DFU runtime state
-    let config = FirmwareUpdaterConfig::from_linkerfile_blocking(nvmc, nvmc);
-    static MAGIC: StaticCell<embassy_boot::AlignedBuffer<4>> = StaticCell::new();
-    let magic = MAGIC.init(embassy_boot::AlignedBuffer([0; 4]));
-    let mut firmware_state = BlockingFirmwareState::from_config(config, &mut magic.0);
-    firmware_state.mark_booted().expect("Failed to mark booted");
+    // Confirm boot using boot-api wrapper (which caches state for DFU requests)
+    log_boot_state("before mark_booted");
+
+    nvmc.lock(|flash_cell| {
+        let mut flash = flash_cell.borrow_mut();
+        atslite_boot_api::BootConfirmation::mark_booted(&mut *flash).expect("Failed to mark boot");
+    });
+
+    log_boot_state("after mark_booted");
 
     // USB initialization with DFU runtime interface
     static DFU_STATE: StaticCell<Control<AppDfuMarker<'static>, ResetImmediate>> =
@@ -277,6 +269,12 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(usb::run_usb(usb_dev)).unwrap();
 
+    // CRITICAL: Wait for flash writes to fully settle before stealing NVMC peripheral.
+    // On nRF5340, flash writes continue in hardware after NVMC API returns.
+    // Reinitializing NVMC (via new()) while flash controller is busy corrupts recent writes.
+    // This 200ms delay ensures boot confirmation write at 0xD000 is fully complete.
+    Timer::after_millis(200).await;
+
     // Settings flash - borrow NVMC from the shared mutex
     let nvmc_async = nvmc.lock(|_f| {
         // Create a new Nvmc by stealing the peripheral - this is safe because
@@ -291,6 +289,9 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap()
     };
+
+    // Check boot state after settings init to see if corruption happened
+    log_boot_state("after settings init");
 
     // Default transport mode to BLE after settings are initialized
     transport_mode::set(TransportMode::Ble);
@@ -473,6 +474,8 @@ async fn handle_pending_ship(
         }
     }
     defmt::trace!("Pending ship but VBUS present -> wait for removal");
+    // Keep red charging LED on in faux-off mode with VBUS present
+    leds.set_state(LedState::BattCharging).await;
     embassy_futures::select::select(
         async {
             power::VBUS_REMOVED_SIG.wait().await;
