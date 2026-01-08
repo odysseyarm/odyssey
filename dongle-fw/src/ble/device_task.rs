@@ -42,7 +42,7 @@ pub async fn device_connection_task(
                 max_latency: 0,
                 min_event_length: Duration::from_micros(0),
                 max_event_length: Duration::from_micros(0),
-                supervision_timeout: Duration::from_secs(10),
+                supervision_timeout: Duration::from_secs(2),
             },
             scan_config: ScanConfig {
                 filter_accept_list: &[(AddrKind::RANDOM, &target)],
