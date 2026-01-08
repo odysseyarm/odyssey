@@ -59,7 +59,7 @@ fn resize_canvas(desktop: &DesktopContext, width: f64, height: f64) {
 pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
     let mut root_div = use_signal(|| None);
     let mut rect_signal = use_signal(Rect::zero);
-    let mut known_devices = use_signal(Vec::<usize>::new);
+    let known_devices = use_signal(Vec::<usize>::new);
 
     let desktop = window();
     ensure_bootstrap(&desktop);
@@ -94,14 +94,17 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
                 loop {
                     match receiver.recv().await {
                         Ok((device, tracking)) => {
+                            tracing::info!("CrosshairManager received tracking event for device {:?}: aimpoint=({}, {})", device.uuid, tracking.aimpoint.x, tracking.aimpoint.y);
                             let rect = rect_signal.read();
                             let width = rect.size.width as f64;
                             let height = rect.size.height as f64;
                             if width <= 0.0 || height <= 0.0 {
+                                tracing::warn!("Canvas size invalid: {}x{}", width, height);
                                 continue;
                             }
 
                             if let Some(key) = hub.peek().device_key(&device) {
+                                tracing::debug!("Device key: {}", key);
                                 let image_src = CROSSHAIR_IMAGES
                                     [key.min(CROSSHAIR_IMAGES.len() - 1)]
                                 .to_string();

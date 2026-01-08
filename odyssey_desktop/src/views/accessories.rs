@@ -1,10 +1,6 @@
 use dioxus::prelude::*;
 use futures::StreamExt;
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroU64,
-    time::Duration,
-};
+use std::{collections::HashMap, num::NonZeroU64, time::Duration};
 
 use crate::hub; // HubContext
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType};

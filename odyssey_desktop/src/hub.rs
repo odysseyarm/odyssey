@@ -42,56 +42,113 @@ impl HubContext {
     }
 
     pub async fn run(&mut self) {
-        let (device_list_stream, event_stream) = {
-            let mut client = self.client.write();
-            client.connect().await.unwrap();
-
-            let list = client.get_device_list().await.unwrap();
-            let device_list_stream = client.subscribe_device_list().await.unwrap();
-            let event_stream = client.subscribe_events().await.unwrap();
-            drop(client);
-            self.replace_devices(list);
-
-            (device_list_stream, event_stream)
-        };
-
-        let mut devices_signal = self.devices.clone();
-        let mut device_keys = self.device_keys.clone();
-        tokio::spawn(async move {
-            let mut device_list_stream = device_list_stream;
-            while let Some(update) = device_list_stream.next().await {
-                match update {
-                    Ok(list) => {
-                        tracing::debug!("Device list update: {} devices", list.len());
-                        let mut devices = devices_signal.write();
-                        let mut keys = device_keys.write();
-                        devices.clear();
-                        keys.clear();
-                        for device in list {
-                            let idx = devices.insert(device.clone());
-                            keys.insert(device, idx);
-                        }
+        loop {
+            tracing::info!("Hub connecting to server...");
+            let (device_list_stream, event_stream) = {
+                let mut client = self.client.write();
+                match client.connect().await {
+                    Ok(_) => {
+                        tracing::info!("Hub connected successfully");
                     }
                     Err(e) => {
-                        tracing::error!("Device list stream error: {}", e);
-                        break;
+                        tracing::error!("Failed to connect to hub server: {}", e);
+                        drop(client);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
                     }
                 }
-            }
-        });
 
-        let mut event_stream = event_stream;
-        while let Some(evt) = event_stream.next().await {
-            let evt = evt.unwrap().into();
-            tracing::debug!("Hub event: {:?}", evt);
-            if let oe::Event::DeviceEvent(oe::DeviceEvent(
-                device,
-                oe::DeviceEventKind::TrackingEvent(tracking),
-            )) = &evt
-            {
-                let _ = self.tracking_events.send((device.clone(), *tracking));
+                let list = match client.get_device_list().await {
+                    Ok(list) => list,
+                    Err(e) => {
+                        tracing::error!("Failed to get device list: {}", e);
+                        drop(client);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+
+                let device_list_stream = match client.subscribe_device_list().await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        tracing::error!("Failed to subscribe to device list: {}", e);
+                        drop(client);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+
+                let event_stream = match client.subscribe_events().await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        tracing::error!("Failed to subscribe to events: {}", e);
+                        drop(client);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+
+                drop(client);
+                self.replace_devices(list);
+
+                (device_list_stream, event_stream)
+            };
+
+            let mut devices_signal = self.devices.clone();
+            let mut device_keys = self.device_keys.clone();
+            tokio::spawn(async move {
+                let mut device_list_stream = device_list_stream;
+                while let Some(update) = device_list_stream.next().await {
+                    match update {
+                        Ok(list) => {
+                            tracing::debug!("Device list update: {} devices", list.len());
+                            let mut devices = devices_signal.write();
+                            let mut keys = device_keys.write();
+                            devices.clear();
+                            keys.clear();
+                            for device in list {
+                                let idx = devices.insert(device.clone());
+                                keys.insert(device, idx);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Device list stream error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            let mut event_stream = event_stream;
+            while let Some(evt) = event_stream.next().await {
+                let evt = evt.unwrap().into();
+                tracing::debug!("Hub event: {:?}", evt);
+                if let oe::Event::DeviceEvent(oe::DeviceEvent(
+                    device,
+                    oe::DeviceEventKind::TrackingEvent(tracking),
+                )) = &evt
+                {
+                    tracing::trace!(
+                        "Hub received TrackingEvent for device {:?}: aimpoint=({}, {}), screen_id={}",
+                        device.uuid,
+                        tracking.aimpoint.x,
+                        tracking.aimpoint.y,
+                        tracking.screen_id
+                    );
+                    let result = self.tracking_events.send((device.clone(), *tracking));
+                    if let Err(e) = result {
+                        tracing::warn!(
+                            "Failed to broadcast tracking event: {} (no subscribers?)",
+                            e
+                        );
+                    }
+                }
+                self.latest_event.set(Some(evt));
             }
-            self.latest_event.set(Some(evt));
+
+            // Stream ended, reconnect after a delay
+            tracing::warn!("Event stream ended, reconnecting in 2 seconds...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         }
     }
 
