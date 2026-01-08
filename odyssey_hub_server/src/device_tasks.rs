@@ -225,7 +225,7 @@ async fn usb_device_manager(
                         // Subscribe to device list changes
                         if let Err(e) = hub.subscribe_device_list().await {
                             tracing::error!("Failed to subscribe to device list: {}", e);
-                            return;
+                            continue;
                         }
                         tracing::info!("Subscribed to device list changes");
 
@@ -328,16 +328,48 @@ async fn usb_device_manager(
                         let hub_manager_handle = tokio::spawn(async move {
                             tracing::info!("Hub manager task started for hub {:?}", hub_info);
 
-                            // Note: Initial devices were already processed before this task started
-                            // Now we just listen for changes via subscription
+                            // Track devices managed by this hub for cleanup on exit
+                            let mut hub_devices = std::collections::HashSet::<[u8; 6]>::new();
+
+                            // Request devices again to catch any that connected between the initial
+                            // request and this task starting (closes race condition window)
+                            match hub_clone.request_devices().await {
+                                Ok(list) => {
+                                    if !list.is_empty() {
+                                        tracing::info!("Hub manager found {} devices on startup, processing...", list.len());
+                                        // Send a synthetic snapshot event to process these devices
+                                        // This will be handled by the snapshot processing logic below
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to request devices in hub manager: {}",
+                                        e
+                                    );
+                                }
+                            }
 
                             // Create snapshot stream from hub - will receive DevicesSnapshot
                             // messages automatically when devices connect/disconnect
+                            tracing::info!("Creating snapshot stream for hub");
                             let snapshot_stream =
                                 stream::unfold(hub_clone.clone(), |hub| async move {
+                                    tracing::debug!("Waiting for device snapshot from hub...");
                                     match hub.receive_snapshot().await {
-                                        Ok(devs) => Some((HubEvent::Snapshot(Ok(devs)), hub)),
-                                        Err(e) => Some((HubEvent::Snapshot(Err(e)), hub)),
+                                        Ok(devs) => {
+                                            tracing::info!(
+                                                "receive_snapshot returned Ok with {} devices",
+                                                devs.len()
+                                            );
+                                            Some((HubEvent::Snapshot(Ok(devs)), hub))
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "receive_snapshot returned Err: {:?}",
+                                                e
+                                            );
+                                            Some((HubEvent::Snapshot(Err(e)), hub))
+                                        }
                                     }
                                 });
 
@@ -428,6 +460,7 @@ async fn usb_device_manager(
                                                                         device_handles_clone.lock().await;
                                                                     if !dh.contains_key(&uuid) {
                                                                         dh.insert(uuid, dh_handle);
+                                                                        hub_devices.insert(uuid);
                                                                     }
                                                                 }
 
@@ -467,6 +500,7 @@ async fn usb_device_manager(
                                                         .remove(&uuid)
                                                     {
                                                         handle.abort();
+                                                        hub_devices.remove(&uuid);
                                                     }
                                                     let device_meta = Device {
                                                             uuid,
@@ -488,6 +522,28 @@ async fn usb_device_manager(
                                         }
                                     }
                                 }
+                            }
+
+                            // Cleanup: remove all devices managed by this hub
+                            tracing::info!(
+                                "Hub manager task ending for hub {:?}, cleaning up {} devices",
+                                hub_info,
+                                hub_devices.len()
+                            );
+                            for uuid in hub_devices {
+                                if let Some(handle) =
+                                    device_handles_clone.lock().await.remove(&uuid)
+                                {
+                                    handle.abort();
+                                    tracing::info!("Aborted device handler for {:02x?}", uuid);
+                                }
+                                let device_meta = Device {
+                                    uuid,
+                                    transport: odyssey_hub_common::device::Transport::UsbMux,
+                                };
+                                let _ = message_channel_clone
+                                    .send(Message::Disconnect(device_meta))
+                                    .await;
                             }
                             tracing::info!("Hub manager task ended for hub {:?}", hub_info);
                         });
@@ -565,17 +621,31 @@ async fn usb_device_manager(
             }
         }
 
-        // Retain only running device tasks
+        // Retain only running device tasks and send disconnect messages for finished tasks
         {
             let mut dh = device_handles.lock().await;
+            let mut finished_devices = Vec::new();
+
             dh.retain(|uuid, handle| {
                 if handle.is_finished() {
                     info!("Device {:02x?} task finished", uuid);
+                    finished_devices.push(*uuid);
                     false
                 } else {
                     true
                 }
             });
+
+            drop(dh); // Release lock before sending messages
+
+            // Send disconnect messages for all finished devices
+            for uuid in finished_devices {
+                let device_meta = Device {
+                    uuid,
+                    transport: odyssey_hub_common::device::Transport::Usb,
+                };
+                let _ = message_channel.send(Message::Disconnect(device_meta)).await;
+            }
         }
 
         sleep(Duration::from_secs(2)).await;
@@ -587,7 +657,7 @@ async fn usb_device_manager(
 async fn device_handler_task(
     vm_device: VmDevice,
     device: Device,
-    mut control_rx: mpsc::Receiver<DeviceTaskMessage>,
+    control_rx: mpsc::Receiver<DeviceTaskMessage>,
     screen_calibrations: Arc<
         ArcSwap<
             ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
@@ -604,7 +674,7 @@ async fn device_handler_task(
     );
 
     // Ensure shot-delay watch exists and subscribe
-    let mut shot_delay_rx = {
+    let shot_delay_rx = {
         let mut map = shot_delay_watch.write().await;
         if let Some(tx) = map.get(&device.uuid) {
             tx.subscribe()
@@ -653,28 +723,40 @@ async fn device_handler_task(
     let mut sensor_streams: SelectAll<BoxStream<'static, DeviceStreamEvent>> = SelectAll::new();
 
     match vm_device.clone().stream_combined_markers().await {
-        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed()),
+        Ok(stream) => {
+            info!("Combined markers stream started for {:02x?}", device.uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed());
+        }
         Err(e) => warn!(
             "Failed to start combined markers stream for {:02x?}: {}",
             device.uuid, e
         ),
     }
     match vm_device.clone().stream_poc_markers().await {
-        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed()),
+        Ok(stream) => {
+            info!("PoC markers stream started for {:02x?}", device.uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed());
+        }
         Err(e) => warn!(
             "Failed to start PoC markers stream for {:02x?}: {}",
             device.uuid, e
         ),
     }
     match vm_device.clone().stream_accel().await {
-        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed()),
+        Ok(stream) => {
+            info!("Accelerometer stream started for {:02x?}", device.uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed());
+        }
         Err(e) => warn!(
             "Failed to start accelerometer stream for {:02x?}: {}",
             device.uuid, e
         ),
     }
     match vm_device.clone().stream_impact().await {
-        Ok(stream) => sensor_streams.push(stream.map(DeviceStreamEvent::Impact).boxed()),
+        Ok(stream) => {
+            info!("Impact stream started for {:02x?}", device.uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::Impact).boxed());
+        }
         Err(e) => warn!(
             "Failed to start impact stream for {:02x?}: {}",
             device.uuid, e
@@ -706,6 +788,11 @@ async fn device_handler_task(
     let mut sensor_stream = sensor_streams.fuse();
     let mut shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx).fuse();
     let mut control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx).fuse();
+
+    info!(
+        "Device handler task entering main loop for {:02x?}",
+        device.uuid
+    );
 
     loop {
         tokio::select! {
