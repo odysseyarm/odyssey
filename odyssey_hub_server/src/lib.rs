@@ -180,7 +180,7 @@ pub async fn run_server(
 
     let (device_sender, receiver) = mpsc::channel(12);
 
-    let (event_sender, _) = broadcast::channel(12);
+    let (event_sender, _) = broadcast::channel(256);
 
     // Dedicated channel for device list changes (Connect/Disconnect)
     let (device_list_change_sender, _) = broadcast::channel::<()>(12);
@@ -342,17 +342,89 @@ pub async fn run_server(
             match recv.recv().await {
                 Some(message) => {
                     match message {
-                        device_tasks::Message::Connect(d1, sender) => {
-                            dl.lock().push((d1.clone(), sender));
+                        device_tasks::Message::Connect(d1, channels) => {
+                            tracing::info!("Processing connect for device {:02x?}", d1.uuid);
+                            let mut dl_guard = dl.lock();
+
+                            // Check if device already exists (by UUID only)
+                            if let Some(existing_idx) =
+                                dl_guard.iter().position(|(d, _)| d.uuid == d1.uuid)
+                            {
+                                // Update existing device
+                                tracing::info!("Device {:02x?} already exists, updating", d1.uuid);
+                                if let Some(commands_tx) = channels.commands {
+                                    dl_guard[existing_idx] = (d1.clone(), commands_tx);
+                                } else {
+                                    // Keep existing channel
+                                    dl_guard[existing_idx].0 = d1.clone();
+                                }
+                            } else {
+                                // Add new device
+                                if let Some(commands_tx) = channels.commands {
+                                    dl_guard.push((d1.clone(), commands_tx));
+                                } else {
+                                    // Device has no commands channel (control only), still add to list but with a dummy channel
+                                    let (dummy_tx, _dummy_rx) = tokio::sync::mpsc::channel(1);
+                                    dl_guard.push((d1.clone(), dummy_tx));
+                                }
+                            }
+                            drop(dl_guard);
+                            tracing::info!("Added/updated device {:02x?} in device list, sending list_change notification", d1.uuid);
                             let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::Disconnect(d) => {
+                            tracing::info!("Processing disconnect for device {:02x?}", d.uuid);
                             let mut dl = dl.lock();
-                            let i = dl.iter().position(|a| (*a).0 == d);
+                            // Match by UUID only (transport is just a property now)
+                            let i = dl.iter().position(|a| a.0.uuid == d.uuid);
                             if let Some(i) = i {
+                                tracing::info!(
+                                    "Removing device {:02x?} from device list (index {})",
+                                    d.uuid,
+                                    i
+                                );
                                 dl.remove(i);
+                            } else {
+                                tracing::warn!(
+                                    "Device {:02x?} not found in device list for disconnect",
+                                    d.uuid
+                                );
                             }
                             drop(dl);
+                            tracing::info!(
+                                "Sending list_change notification for disconnect of {:02x?}",
+                                d.uuid
+                            );
+                            let _ = list_change_sender.send(());
+                        }
+                        device_tasks::Message::UpdateDevice(updated_device) => {
+                            tracing::info!(
+                                "Processing device update for {:02x?}",
+                                updated_device.uuid
+                            );
+                            let mut dl = dl.lock();
+                            // Find the device by UUID only
+                            if let Some(entry) =
+                                dl.iter_mut().find(|(d, _)| d.uuid == updated_device.uuid)
+                            {
+                                tracing::info!(
+                                    "Updating device {:02x?} capabilities from {:?} to {:?}",
+                                    updated_device.uuid,
+                                    entry.0.capabilities,
+                                    updated_device.capabilities
+                                );
+                                entry.0 = updated_device;
+                            } else {
+                                tracing::warn!(
+                                    "Device {:02x?} not found in device list for update",
+                                    updated_device.uuid
+                                );
+                            }
+                            drop(dl);
+                            tracing::info!(
+                                "Sending list_change notification for update of {:02x?}",
+                                updated_device.uuid
+                            );
                             let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::Event(e) => {

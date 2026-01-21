@@ -1,4 +1,4 @@
-use crate::components::crosshair_manager::CrosshairManager;
+use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub;
 use dioxus::{html::geometry::euclid::Rect, logger::tracing, prelude::*};
 use odyssey_hub_common::events as oe;
@@ -12,7 +12,11 @@ struct DeviceSignals {
 }
 
 #[component]
-pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
+pub fn Zero(
+    hub: Signal<hub::HubContext>,
+    /// Pass the tracking sender directly to work across VirtualDoms
+    tracking_sender: TrackingSender,
+) -> Element {
     let devices = (hub().devices)();
 
     // one Signal<bool> per slot: true means “zero on next shot”
@@ -395,7 +399,7 @@ pub fn Zero(hub: Signal<hub::HubContext>) -> Element {
                         }
                     }
                 },
-                CrosshairManager { hub },
+                CrosshairManager { hub, tracking_sender: Some(tracking_sender) },
             }
 
             button {

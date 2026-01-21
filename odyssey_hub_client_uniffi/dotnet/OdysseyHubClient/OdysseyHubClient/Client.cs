@@ -91,6 +91,38 @@ namespace Radiosity.OdysseyHubClient
         }
 
         /// <summary>
+        /// Subscribe to device list updates, writing each snapshot to the provided channel.
+        /// The channel receives the full device list whenever any device connects or disconnects.
+        /// </summary>
+        public Task SubscribeDeviceList(ChannelWriter<(uniffi.Device[]?, uniffi.ClientException?)> channelWriter)
+        {
+            return Task.Run(async () =>
+            {
+                var stream = await _inner.SubscribeDeviceList();
+                while (true)
+                {
+                    try
+                    {
+                        var deviceList = await stream.Next();
+                        await channelWriter.WriteAsync((deviceList, null));
+                    }
+                    catch (uniffi.ClientException error)
+                    {
+                        await channelWriter.WriteAsync((null, error));
+                        switch (error)
+                        {
+                            case uniffi.ClientException.NotConnected:
+                            case uniffi.ClientException.StreamEnd:
+                            default:
+                                channelWriter.Complete();
+                                return;
+                        }
+                    }
+                }
+            });
+        }
+
+        /// <summary>
         /// Subscribe to accessory map updates, writing each snapshot to the provided channel.
         /// </summary>
         public Task SubscribeAccessoryMap(ChannelWriter<(uniffi.AccessoryMapEntry[]?, uniffi.ClientException?)> channelWriter)

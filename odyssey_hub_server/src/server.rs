@@ -89,9 +89,9 @@ impl Server {
                 match change_rx.recv().await {
                     Ok(()) => {
                         // Build a fresh snapshot and push
-                        let snap: Vec<common::device::Device> = {
+                        let snap = {
                             let guard = device_list.lock();
-                            guard.iter().map(|(d, _tx)| d.clone()).collect()
+                            guard.iter().map(|(d, _tx)| d.clone()).collect::<Vec<_>>()
                         };
                         if tx
                             .send(Ok(DeviceListReply {

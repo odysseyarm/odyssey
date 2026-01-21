@@ -17,6 +17,7 @@ pub enum DeviceEventKind {
     ZeroResult(bool),
     SaveZeroResult(bool),
     PacketEvent(ats_usb::packets::vm::Packet),
+    CapabilitiesChanged,
 }
 
 #[repr(C)]

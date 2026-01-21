@@ -13,7 +13,7 @@ pub struct HubContext {
     pub client: SyncSignal<Client>,
     pub devices: SyncSignal<Slab<Device>>,
     pub latest_event: Signal<Option<oe::Event>>,
-    tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
+    pub tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     device_keys: SyncSignal<HashMap<odyssey_hub_common::device::Device, usize>>,
 }
 
@@ -128,7 +128,7 @@ impl HubContext {
                     oe::DeviceEventKind::TrackingEvent(tracking),
                 )) = &evt
                 {
-                    tracing::trace!(
+                    tracing::info!(
                         "Hub received TrackingEvent for device {:?}: aimpoint=({}, {}), screen_id={}",
                         device.uuid,
                         tracking.aimpoint.x,
@@ -140,6 +140,11 @@ impl HubContext {
                         tracing::warn!(
                             "Failed to broadcast tracking event: {} (no subscribers?)",
                             e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Successfully broadcast tracking event to {} subscribers",
+                            self.tracking_events.receiver_count()
                         );
                     }
                 }

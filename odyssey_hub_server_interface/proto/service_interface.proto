@@ -5,13 +5,11 @@ package odyssey.service_interface;
 service Service {
   // Devices
   rpc GetDeviceList(DeviceListRequest) returns (DeviceListReply) {}
-  rpc SubscribeDeviceList(SubscribeDeviceListRequest)
-      returns (stream DeviceListReply) {}
+  rpc SubscribeDeviceList(SubscribeDeviceListRequest) returns (stream DeviceListReply) {}
 
   // Accessories
   rpc GetAccessoryMap(AccessoryMapRequest) returns (AccessoryMapReply) {}
-  rpc SubscribeAccessoryMap(SubscribeAccessoryMapRequest)
-      returns (stream AccessoryMapReply) {}
+  rpc SubscribeAccessoryMap(SubscribeAccessoryMapRequest) returns (stream AccessoryMapReply) {}
   rpc UpdateAccessoryInfoMap(AccessoryInfoMap) returns (EmptyReply) {}
 
   // Screen info
@@ -31,8 +29,7 @@ service Service {
   rpc GetShotDelay(Device) returns (GetShotDelayReply) {}
   rpc SetShotDelay(SetShotDelayRequest) returns (EmptyReply) {}
   rpc SaveShotDelay(Device) returns (EmptyReply) {}
-  rpc SubscribeShotDelay(SubscribeShotDelayRequest)
-      returns (stream GetShotDelayReply) {}
+  rpc SubscribeShotDelay(SubscribeShotDelayRequest) returns (stream GetShotDelayReply) {}
 
   // Window control
   rpc BringToFront(EmptyRequest) returns (EmptyReply) {}
@@ -80,9 +77,24 @@ enum Transport {
   UDPMux = 2;
 }
 
+enum EventsTransport {
+  WIRED = 0; // Events transmitted via wired USB
+  BLUETOOTH = 1; // Events transmitted via BLE (wireless)
+}
+
 message Device {
   bytes uuid = 1;
   Transport transport = 2;
+  FirmwareVersion firmware_version = 3; // Optional - check if present before using
+  uint32 capabilities = 4; // Bitfield: 0x01 = CONTROL, 0x02 = EVENTS
+  EventsTransport events_transport = 5;
+  bool events_connected = 6; // Whether events are currently being received
+}
+
+message FirmwareVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+  uint32 patch = 3;
 }
 
 // --- Events ---
@@ -105,12 +117,24 @@ message DeviceEvent {
     uint32 screen_id = 5;
   }
 
-  message ImpactEvent { uint32 timestamp = 1; }
+  message ImpactEvent {
+    uint32 timestamp = 1;
+  }
 
-  message PacketEvent { bytes bytes = 1; }
+  message PacketEvent {
+    bytes bytes = 1;
+  }
 
-  message ZeroResultEvent { bool success = 1; }
-  message SaveZeroResultEvent { bool success = 1; }
+  message ZeroResultEvent {
+    bool success = 1;
+  }
+  message SaveZeroResultEvent {
+    bool success = 1;
+  }
+
+  message CapabilitiesChangedEvent {
+    // Empty message - device capabilities are in the Device message
+  }
 
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
@@ -119,18 +143,23 @@ message DeviceEvent {
     PacketEvent packet = 7;
     ZeroResultEvent zero_result = 8;
     SaveZeroResultEvent save_zero_result = 9;
+    CapabilitiesChangedEvent capabilities_changed = 10;
   }
 }
 
 message Event {
-  oneof event_oneof { DeviceEvent device = 1; }
+  oneof event_oneof {
+    DeviceEvent device = 1;
+  }
 }
 
 // --- Device list ---
 
 message DeviceListRequest {}
 message SubscribeDeviceListRequest {}
-message DeviceListReply { repeated Device device_list = 1; }
+message DeviceListReply {
+  repeated Device device_list = 1;
+}
 
 // --- Accessories ---
 
@@ -156,14 +185,24 @@ message AccessoryStatus {
 
 message AccessoryMapRequest {}
 message SubscribeAccessoryMapRequest {}
-message AccessoryMapReply { map<uint64, AccessoryStatus> accessory_map = 1; }
-message AccessoryInfoMap { map<uint64, AccessoryInfo> accessory_info_map = 1; }
+message AccessoryMapReply {
+  map<uint64, AccessoryStatus> accessory_map = 1;
+}
+message AccessoryInfoMap {
+  map<uint64, AccessoryInfo> accessory_info_map = 1;
+}
 
 // --- Shot delay ---
 
-message SubscribeShotDelayRequest { Device device = 1; }
-message ResetShotDelayReply { uint32 delay_ms = 1; }
-message GetShotDelayReply { uint32 delay_ms = 1; }
+message SubscribeShotDelayRequest {
+  Device device = 1;
+}
+message ResetShotDelayReply {
+  uint32 delay_ms = 1;
+}
+message GetShotDelayReply {
+  uint32 delay_ms = 1;
+}
 message SetShotDelayRequest {
   Device device = 1;
   uint32 delay_ms = 2;
@@ -178,7 +217,9 @@ message ScreenBounds {
   Vector2 br = 3;
 }
 
-message ScreenInfoByIdRequest { uint32 id = 1; }
+message ScreenInfoByIdRequest {
+  uint32 id = 1;
+}
 message ScreenInfoReply {
   uint32 id = 1;
   ScreenBounds bounds = 2;

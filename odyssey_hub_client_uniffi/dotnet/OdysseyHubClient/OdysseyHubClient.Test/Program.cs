@@ -67,9 +67,59 @@ Console.WriteLine("Devices printed!");
     Console.WriteLine("\t\tBottom Right: \t{0}", screen_info.br);
 }
 
+// Track connected devices to detect connect/disconnect
+HashSet<byte[]> connectedDeviceUuids = new HashSet<byte[]>(new ByteArrayComparer());
+
+Channel<(Ohc.uniffi.Device[]?, Ohc.uniffi.ClientException?)> deviceListChannel = Channel.CreateUnbounded<(Ohc.uniffi.Device[]?, Ohc.uniffi.ClientException?)>();
 Channel<(Ohc.uniffi.Event?, Ohc.uniffi.ClientException?)> eventChannel = Channel.CreateUnbounded<(Ohc.uniffi.Event?, Ohc.uniffi.ClientException?)>();
+
 await Task.WhenAny(
+    client.SubscribeDeviceList(deviceListChannel.Writer),
     client.SubscribeEvents(eventChannel.Writer),
+    Task.Run(async () => {
+        Console.WriteLine("Starting device list loop");
+        await foreach ((var deviceList, var err) in deviceListChannel.Reader.ReadAllAsync()) {
+            if (err == null && deviceList != null) {
+                var currentUuids = new HashSet<byte[]>(deviceList.Select(d => d.uuid), new ByteArrayComparer());
+
+                // Find newly connected devices
+                foreach (var device in deviceList) {
+                    if (!connectedDeviceUuids.Contains(device.uuid)) {
+                        Console.WriteLine("Device connected");
+                        PrintDevice(device);
+                        // Resetting on connect is currently redundant because the device zero isometry is the identity on connect
+                        // await client.ResetZero(device);
+                        // _ = Task.Run(async () => {
+                        //     await Task.Delay(5000);
+                        //     // negative Y is up, positive X is right
+                        //     // the following translation says the bore is 0.0381 meters above the device in the device's local coordinate system
+                        //     var translation = new Ohc.uniffi.Vector3f32(0, -0.0381f, 0);
+                        //     // zero target is middle of the screen
+                        //     var target = new Ohc.uniffi.Vector2f32(0.5f, 0.5f);
+                        //     await client.Zero(device, translation, target);
+                        //     Console.WriteLine("Zeroed device");
+                        // });
+                        Task malfunction_zero_task = client.WriteVendor(device, 0x84, [0x00]);
+                        await malfunction_zero_task;
+                        Task device_type_task = client.WriteVendor(device, 0x90, []);
+                        await device_type_task;
+                    }
+                }
+
+                // Find disconnected devices
+                foreach (var uuid in connectedDeviceUuids) {
+                    if (!currentUuids.Contains(uuid)) {
+                        Console.WriteLine("Device disconnected");
+                        Console.WriteLine("\tUUID: 0x{0}", BitConverter.ToString(uuid));
+                    }
+                }
+
+                connectedDeviceUuids = currentUuids;
+            } else if (err != null) {
+                Console.WriteLine(err.Message);
+            }
+        }
+    }),
     Task.Run(async () => {
         Console.WriteLine("Starting event loop");
         await foreach ((var @event, var err) in eventChannel.Reader.ReadAllAsync()) {
@@ -105,28 +155,6 @@ await Task.WhenAny(
                                 Console.WriteLine("Printing impact event:");
                                 Console.WriteLine("\ttimestamp: {0}", impact.v1.timestamp);
                                 break;
-                            case Ohc.uniffi.DeviceEventKind.ConnectEvent _:
-                                Console.WriteLine("Device connected");
-                                // Resetting on connect is currently redundant because the device zero isometry is the identity on connect
-                                // await client.ResetZero(deviceEvent.v1.device);
-                                // _ = Task.Run(async () => {
-                                //     await Task.Delay(5000);
-                                //     // negative Y is up, positive X is right
-                                //     // the following translation says the bore is 0.0381 meters above the device in the device's local coordinate system
-                                //     var translation = new Ohc.uniffi.Vector3f32(0, -0.0381f, 0);
-                                //     // zero target is middle of the screen
-                                //     var target = new Ohc.uniffi.Vector2f32(0.5f, 0.5f);
-                                //     await client.Zero(deviceEvent.v1.device, translation, target);
-                                //     Console.WriteLine("Zeroed device");
-                                // });
-                                Task malfunction_zero_task = client.WriteVendor(deviceEvent.v1.device, 0x84, [0x00]);
-                                await malfunction_zero_task;
-                                Task device_type_task = client.WriteVendor(deviceEvent.v1.device, 0x90, []);
-                                await device_type_task;
-                                break;
-                            case Ohc.uniffi.DeviceEventKind.DisconnectEvent _:
-                                Console.WriteLine("Device disconnected");
-                                break;
                             case Ohc.uniffi.DeviceEventKind.ZeroResult zeroResult:
                                 if (zeroResult.v1) {
                                     Console.WriteLine("Zero result: success");
@@ -146,6 +174,9 @@ await Task.WhenAny(
                                         break;
                                 }
                                 break;
+                            case Ohc.uniffi.DeviceEventKind.CapabilitiesChanged _:
+                                Console.WriteLine("Device capabilities changed");
+                                break;
                             default:
                                 break;
                         }
@@ -160,3 +191,21 @@ await Task.WhenAny(
     })
 );
 
+// Helper class to compare byte arrays in HashSet
+class ByteArrayComparer : IEqualityComparer<byte[]>
+{
+    public bool Equals(byte[]? x, byte[]? y)
+    {
+        if (x == null || y == null) return x == y;
+        return x.SequenceEqual(y);
+    }
+
+    public int GetHashCode(byte[] obj)
+    {
+        if (obj == null) return 0;
+        int hash = 17;
+        foreach (byte b in obj)
+            hash = hash * 31 + b;
+        return hash;
+    }
+}
