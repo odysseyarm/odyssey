@@ -29,3 +29,9 @@ inherits = "dev"
 
 [profile.android-dev]
 inherits = "dev"
+
+[patch."https://github.com/odysseyarm/protodonge-rs"]
+protodongers = { path = "D:/ody/protodonge-rs" }
+
+[patch."https://github.com/odysseyarm/vmgui"]
+ats_usb = { path = "D:/ody/ats-vision-tool/ats_usb" }

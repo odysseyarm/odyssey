@@ -313,3 +313,68 @@ pub extern "C" fn client_get_screen_info_by_id(
         }
     });
 }
+
+#[no_mangle]
+pub extern "C" fn client_subscribe_device_list(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    callback: extern "C" fn(UserObj, ClientError, *mut common::device::Device, usize),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    tokio::spawn(async move {
+        match client.subscribe_device_list().await {
+            Ok(mut stream) => loop {
+                match stream.next().await {
+                    Some(Ok(device_list)) => {
+                        let devices: Vec<common::device::Device> =
+                            device_list.into_iter().map(Into::into).collect();
+                        let len = devices.len();
+                        let ptr = if len > 0 {
+                            unsafe {
+                                let layout =
+                                    std::alloc::Layout::array::<common::device::Device>(len)
+                                        .unwrap();
+                                let ptr = std::alloc::alloc(layout) as *mut common::device::Device;
+                                ptr.copy_from_nonoverlapping(devices.as_ptr(), len);
+                                ptr
+                            }
+                        } else {
+                            std::ptr::null_mut()
+                        };
+                        callback(userdata, ClientError::None, ptr, len);
+                    }
+                    None => {
+                        callback(
+                            userdata,
+                            ClientError::StreamEnd,
+                            std::ptr::null_mut(),
+                            0,
+                        );
+                        break;
+                    }
+                    Some(Err(_)) => {
+                        callback(
+                            userdata,
+                            ClientError::StreamEnd,
+                            std::ptr::null_mut(),
+                            0,
+                        );
+                        break;
+                    }
+                }
+            },
+            Err(_) => {
+                callback(
+                    userdata,
+                    ClientError::NotConnected,
+                    std::ptr::null_mut(),
+                    0,
+                );
+            }
+        }
+    });
+}

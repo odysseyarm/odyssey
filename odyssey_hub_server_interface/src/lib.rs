@@ -99,6 +99,19 @@ impl From<common::device::Device> for proto::Device {
         Self {
             uuid: d.uuid.to_vec(),
             transport: proto::Transport::from(d.transport) as i32,
+            firmware_version: d.firmware_version.map(|v| proto::FirmwareVersion {
+                major: v[0] as u32,
+                minor: v[1] as u32,
+                patch: v[2] as u32,
+            }),
+            capabilities: d.capabilities.bits() as u32,
+            events_transport: match d.events_transport {
+                common::device::EventsTransport::Wired => proto::EventsTransport::Wired as i32,
+                common::device::EventsTransport::Bluetooth => {
+                    proto::EventsTransport::Bluetooth as i32
+                }
+            },
+            events_connected: d.events_connected,
         }
     }
 }
@@ -115,6 +128,15 @@ impl From<proto::Device> for common::device::Device {
         common::device::Device {
             uuid,
             transport: proto::Transport::try_from(d.transport).unwrap().into(),
+            capabilities: common::device::DeviceCapabilities::new(d.capabilities as u8),
+            firmware_version: d
+                .firmware_version
+                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16]),
+            events_transport: match proto::EventsTransport::try_from(d.events_transport).unwrap() {
+                proto::EventsTransport::Wired => common::device::EventsTransport::Wired,
+                proto::EventsTransport::Bluetooth => common::device::EventsTransport::Bluetooth,
+            },
+            events_connected: d.events_connected,
         }
     }
 }
@@ -175,8 +197,12 @@ impl From<common::events::Event> for proto::Event {
                         proto::device_event::DeviceEventOneof::SaveZeroResult(
                             proto::device_event::SaveZeroResultEvent { success },
                         )
-                    } // Removed:
-                      // ConnectEvent / DisconnectEvent / ShotDelayChangedEvent
+                    }
+                    common::events::DeviceEventKind::CapabilitiesChanged => {
+                        proto::device_event::DeviceEventOneof::CapabilitiesChanged(
+                            proto::device_event::CapabilitiesChangedEvent {},
+                        )
+                    }
                 };
                 proto::Event {
                     event_oneof: Some(proto::event::EventOneof::Device(proto::DeviceEvent {
@@ -244,6 +270,9 @@ impl From<proto::Event> for common::events::Event {
             }
             proto::device_event::DeviceEventOneof::SaveZeroResult(e) => {
                 common::events::DeviceEventKind::SaveZeroResult(e.success)
+            }
+            proto::device_event::DeviceEventOneof::CapabilitiesChanged(_) => {
+                common::events::DeviceEventKind::CapabilitiesChanged
             }
         };
         common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind))

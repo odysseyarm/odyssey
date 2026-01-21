@@ -20,6 +20,10 @@ macro_rules! impl_from_simple {
 pub struct Device {
     pub uuid: Vec<u8>,
     pub transport: common::device::Transport,
+    pub capabilities: u8,
+    pub firmware_version: Option<Vec<u16>>,
+    pub events_transport: common::device::EventsTransport,
+    pub events_connected: bool,
 }
 
 #[derive(uniffi::Enum, Clone)]
@@ -39,11 +43,10 @@ pub enum DeviceEventKind {
     AccelerometerEvent(AccelerometerEvent),
     TrackingEvent(TrackingEvent),
     ImpactEvent(ImpactEvent),
-    ConnectEvent,
-    DisconnectEvent,
     ZeroResult(bool),
     SaveZeroResult(bool),
     PacketEvent(PacketEvent),
+    CapabilitiesChanged,
 }
 
 #[derive(uniffi::Record, Clone)]
@@ -222,19 +225,27 @@ impl From<TrackingEvent> for common::events::TrackingEvent {
 
 impl From<common::device::Device> for Device {
     fn from(device: common::device::Device) -> Self {
-        return Self {
+        Self {
             uuid: device.uuid.into(),
             transport: device.transport,
-        };
+            capabilities: device.capabilities.bits(),
+            firmware_version: device.firmware_version.map(|v| v.to_vec()),
+            events_transport: device.events_transport,
+            events_connected: device.events_connected,
+        }
     }
 }
 
 impl From<Device> for common::device::Device {
     fn from(device: Device) -> Self {
-        return Self {
+        Self {
             uuid: device.uuid.try_into().unwrap(),
             transport: device.transport,
-        };
+            capabilities: common::device::DeviceCapabilities::new(device.capabilities),
+            firmware_version: device.firmware_version.map(|v| v.try_into().unwrap()),
+            events_transport: device.events_transport,
+            events_connected: device.events_connected,
+        }
     }
 }
 
@@ -285,6 +296,9 @@ impl From<common::events::Event> for Event {
                                 ty: p.ty().into(),
                                 data: p.data.into(),
                             })
+                        }
+                        common::events::DeviceEventKind::CapabilitiesChanged => {
+                            DeviceEventKind::CapabilitiesChanged
                         }
                     },
                 })

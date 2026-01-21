@@ -1,6 +1,6 @@
 // src/components/crosshair_manager.rs
 
-use std::sync::Once;
+use std::sync::atomic::AtomicU64;
 
 use dioxus::{
     desktop::{window, DesktopContext},
@@ -10,7 +10,20 @@ use dioxus::{
     prelude::*,
 };
 use futures::StreamExt;
+use odyssey_hub_common::{device::Device, events::TrackingEvent};
 use tokio::sync::broadcast;
+
+/// Wrapper for broadcast::Sender that implements PartialEq (always false, triggers re-render)
+/// This is needed because Dioxus #[component] requires PartialEq on all props
+#[derive(Clone)]
+pub struct TrackingSender(pub broadcast::Sender<(Device, TrackingEvent)>);
+
+impl PartialEq for TrackingSender {
+    fn eq(&self, _other: &Self) -> bool {
+        // Always return false to ensure component updates when sender changes
+        false
+    }
+}
 
 const CROSSHAIR_IMAGES: [Asset; 6] = [
     asset!("/assets/images/crosshairs/crosshair-red.png"),
@@ -21,7 +34,6 @@ const CROSSHAIR_IMAGES: [Asset; 6] = [
     asset!("/assets/images/crosshairs/crosshair-gray.png"),
 ];
 const BOOTSTRAP_SCRIPT: &str = include_str!("crosshair_canvas.js");
-static BOOTSTRAP_ONCE: Once = Once::new();
 
 #[derive(Clone, Debug)]
 struct CrosshairUpdate {
@@ -37,15 +49,11 @@ fn eval_script(desktop: &DesktopContext, script: &str) {
     }
 }
 
-fn ensure_bootstrap(desktop: &DesktopContext) {
-    let cloned = desktop.clone();
-    BOOTSTRAP_ONCE.call_once(move || {
-        eval_script(&cloned, BOOTSTRAP_SCRIPT);
-    });
+fn bootstrap(desktop: &DesktopContext) {
+    eval_script(desktop, BOOTSTRAP_SCRIPT);
 }
 
 fn resize_canvas(desktop: &DesktopContext, width: f64, height: f64) {
-    ensure_bootstrap(desktop);
     eval_script(
         desktop,
         &format!(
@@ -55,14 +63,30 @@ fn resize_canvas(desktop: &DesktopContext, width: f64, height: f64) {
     );
 }
 
+/// Unique ID counter for CrosshairManager instances to ensure fresh subscriptions
+static CROSSHAIR_MANAGER_ID: AtomicU64 = AtomicU64::new(0);
+
 #[component]
-pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
+pub fn CrosshairManager(
+    hub: Signal<crate::hub::HubContext>,
+    /// Pass the broadcast sender directly to avoid Signal issues across VirtualDoms
+    #[props(optional)]
+    tracking_sender: Option<TrackingSender>,
+) -> Element {
+    // Generate a unique ID for this component instance
+    let instance_id =
+        use_hook(|| CROSSHAIR_MANAGER_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+
     let mut root_div = use_signal(|| None);
     let mut rect_signal = use_signal(Rect::zero);
     let known_devices = use_signal(Vec::<usize>::new);
 
     let desktop = window();
-    ensure_bootstrap(&desktop);
+
+    // Bootstrap the crosshair canvas JS once per component instance (i.e., per window)
+    use_hook(|| {
+        bootstrap(&desktop);
+    });
 
     let crosshair_updates = use_coroutine({
         let desktop = desktop.clone();
@@ -70,7 +94,6 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
             let desktop = desktop.clone();
             async move {
                 while let Some(update) = rx.next().await {
-                    ensure_bootstrap(&desktop);
                     let script = format!(
                         "window.__odysseyCrosshair?.draw({key}, {x:.2}, {y:.2}, {src:?});",
                         key = update.key,
@@ -85,16 +108,27 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
     });
 
     {
+        // Use the directly passed sender if available, otherwise try to get from hub Signal
+        // The direct sender is needed for cross-VirtualDom scenarios (like new windows)
+        let sender = tracking_sender
+            .clone()
+            .map(|ts| ts.0)
+            .unwrap_or_else(|| hub.peek().tracking_events.clone());
         let hub = hub.clone();
         let rect_signal = rect_signal.clone();
         let crosshair_updates = crosshair_updates.clone();
         use_future(move || {
-            let mut receiver = hub.peek().subscribe_tracking();
+            let mut receiver = sender.subscribe();
+            tracing::info!(
+                "CrosshairManager[{}]: subscribed to tracking events",
+                instance_id
+            );
             async move {
+                tracing::info!("CrosshairManager[{}]: entering event loop", instance_id);
                 loop {
                     match receiver.recv().await {
                         Ok((device, tracking)) => {
-                            tracing::info!("CrosshairManager received tracking event for device {:?}: aimpoint=({}, {})", device.uuid, tracking.aimpoint.x, tracking.aimpoint.y);
+                            tracing::debug!("CrosshairManager[{}] received tracking event for device {:?}: aimpoint=({}, {})", instance_id, device.uuid, tracking.aimpoint.x, tracking.aimpoint.y);
                             let rect = rect_signal.read();
                             let width = rect.size.width as f64;
                             let height = rect.size.height as f64;
@@ -104,7 +138,7 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
                             }
 
                             if let Some(key) = hub.peek().device_key(&device) {
-                                tracing::debug!("Device key: {}", key);
+                                tracing::trace!("Device key: {}", key);
                                 let image_src = CROSSHAIR_IMAGES
                                     [key.min(CROSSHAIR_IMAGES.len() - 1)]
                                 .to_string();
@@ -119,7 +153,13 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Closed) => {
+                            tracing::warn!(
+                                "CrosshairManager[{}]: tracking channel closed",
+                                instance_id
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -135,7 +175,6 @@ pub fn CrosshairManager(hub: Signal<crate::hub::HubContext>) -> Element {
             let current_keys: Vec<usize> = devices.iter().map(|(key, _)| key).collect();
             let previous = known_devices.peek().clone();
             for key in previous.iter().filter(|k| !current_keys.contains(k)) {
-                ensure_bootstrap(&desktop);
                 eval_script(
                     &desktop,
                     &format!("window.__odysseyCrosshair?.clearKey({key});"),
