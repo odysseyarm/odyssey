@@ -43,7 +43,7 @@ nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["
 
 # ATSlite-specific: BLE
 trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "dev-disable-csprng-seed-requirement"] }
-bt-hci = { version = "0.6", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.7", default-features = false, features = ["defmt"] }
 embassy-net-driver-channel = { git = "https://github.com/Abrahamh08/embassy" }
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }
 
@@ -54,8 +54,8 @@ paj7025 = { path = "../../../paj7025", features = ["nrf"] }
 postcard = { version = "1.1.3", features = ["use-defmt"] }
 
 # IO traits
-embedded-io = "0.6.1"
-embedded-io-async = "0.6.1"
+embedded-io = "0.7"
+embedded-io-async = "0.7"
 
 [build-dependencies]
 memory-spec = "0.3.0"

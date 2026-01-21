@@ -88,6 +88,11 @@ async fn handle_cmd(
             common::device_control::try_send_event(DeviceMsg::ReadVersionResponse(version));
         }
 
+        DeviceMsg::ReadUuid() => {
+            let uuid: [u8; 6] = crate::utils::device_id()[..6].try_into().unwrap();
+            common::device_control::try_send_event(DeviceMsg::ReadUuidResponse(uuid));
+        }
+
         DeviceMsg::ClearBond => {
             info!("Clearing bond...");
             // Clear the bond
