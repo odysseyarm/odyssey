@@ -325,6 +325,7 @@ async fn run_connection(
                 }
             };
             let is_control = is_control_packet(&device_pkt.pkt);
+
             if let Ok(data) = postcard::to_slice(&device_pkt.pkt, &mut tx_buf) {
                 let writer = if is_control {
                     &mut control_writer

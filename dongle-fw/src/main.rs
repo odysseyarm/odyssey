@@ -28,7 +28,7 @@ pub static HOST_RESPONSES: HostResponseChannel = Channel::new();
 
 // Device list subscription flag
 pub static DEVICE_LIST_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
-use embassy_time::Timer;
+// use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
 // Using trouble-host + nrf-sdc
 use protodongers::control::usb_mux::{BondStoreError, PairingError, UsbMuxCtrlMsg, UsbMuxVersion};

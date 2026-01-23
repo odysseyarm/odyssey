@@ -230,7 +230,10 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     .bank_1_sync_updated_flag()
                     .write_async(|x| x.set_value(1))
                     .await?;
-                None
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::Ack(),
+                })
             }
             PacketData::ReadRegister(register) => {
                 defmt::debug!("[app] ReadRegister: acquiring paj lock");
@@ -257,9 +260,14 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 })
             }
             PacketData::WriteConfig(config) => {
+                defmt::info!("[app] WriteConfig received: {:?}", defmt::Debug2Format(&config));
                 let wire_config: wire::GeneralConfig = config.into();
+                defmt::info!("[app] WriteConfig converted: {:?}", defmt::Debug2Format(&wire_config));
                 settings.general.set_general_config(&wire_config);
-                None
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::Ack(),
+                })
             }
             PacketData::ReadConfig(kind) => {
                 defmt::info!("[app] building ReadConfig response for {:?}", kind);
@@ -284,10 +292,19 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 })
             }
             PacketData::FlashSettings() => {
+                defmt::info!(
+                    "[app] FlashSettings received. Current impact_threshold={}, suppress_ms={}",
+                    settings.general.impact_threshold,
+                    settings.general.suppress_ms
+                );
                 settings.pajs =
                     PajsSettings::read_from_pajs(&mut *paj7025r2.lock().await, &mut *paj7025r3.lock().await).await?;
                 settings.write();
-                None
+                defmt::info!("[app] FlashSettings: settings written to flash");
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::Ack(),
+                })
             }
             PacketData::ReadProp(kind) => {
                 let prop = match kind {
@@ -314,7 +331,10 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::WriteMode(mode) => {
                 settings.transient.mode = mode;
                 settings.transient_write();
-                None
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::Ack(),
+                })
             }
             PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,

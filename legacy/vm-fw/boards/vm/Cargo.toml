@@ -34,7 +34,7 @@ bmi2 = { git = "https://github.com/Abrahamh08/bmi2", branch = "async", features 
 paj7025 = { path = "../../../paj7025", features = ["nrf"] }
 
 # BLE (not used by VM, but required by common)
-trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32"] }
 bt-hci = { git = "https://github.com/embassy-rs/bt-hci", default-features = false, features = ["defmt"] }
 
 [build-dependencies]
