@@ -34,6 +34,17 @@ pub async fn device_connection_task(
     let mut central = host.central;
 
     loop {
+        // Check if we're still supposed to be connecting to this device
+        // (bond may have been cleared while we were disconnected)
+        let targets = settings.get_scan_targets().await;
+        if !targets.contains(&target.into_inner()) {
+            info!(
+                "Device {:02x} no longer in scan targets, stopping task",
+                target
+            );
+            return;
+        }
+
         // Connect to the device
         let config = ConnectConfig {
             connect_params: ConnectParams {

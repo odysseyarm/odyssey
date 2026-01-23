@@ -299,6 +299,10 @@ impl BleManager {
         loop {
             let targets = self.settings.get_scan_targets().await;
 
+            // Remove addresses from spawned_tasks that are no longer in targets
+            // (their tasks have exited after bond was cleared)
+            spawned_tasks.retain(|addr| targets.contains(addr));
+
             // Spawn tasks for any existing targets (not newly paired during this session)
             for addr in targets.iter() {
                 if !spawned_tasks.contains(addr) {
