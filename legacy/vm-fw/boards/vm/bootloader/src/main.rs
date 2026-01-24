@@ -22,6 +22,8 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
 });
 
+const DEVICE_INTERFACE_GUIDS: &[&str] = &["{265744E6-40E8-41C4-AE17-F6F2EB187F1C}"];
+
 #[entry]
 fn main() -> ! {
     let p = embassy_nrf::init(Default::default());
@@ -86,11 +88,19 @@ fn main() -> ! {
         //
         builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
         builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+        builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+            "DeviceInterfaceGUIDs",
+            msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+        ));
 
-        usb_dfu::<_, _, _, _, _, _, 4096>(&mut builder, &mut state, |_func| {
+        usb_dfu::<_, _, _, _, _, _, 4096>(&mut builder, &mut state, |func| {
             // You likely don't have to add these function level headers if your USB device is not composite
             // (i.e. if your device does not expose another interface in addition to DFU)
-            // func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+            func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+            func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+                "DeviceInterfaceGUIDs",
+                msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+            ));
         });
 
         let mut dev = builder.build();
