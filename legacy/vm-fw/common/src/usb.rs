@@ -61,8 +61,6 @@ pub type StaticUsbDevice = UsbDevice<'static, UsbDriver>;
 
 pub const VID: u16 = 0x1915;
 
-const DEVICE_INTERFACE_GUIDS: &[&str] = &["{4d36e96c-e325-11ce-bfc1-08002be10318}"];
-
 #[embassy_executor::task]
 pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
@@ -72,6 +70,7 @@ static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
 
 pub fn usb_device<Irqs>(
     pid: u16,
+    guid: &'static str,
     usbd: Peri<'static, USBD>,
     irqs: Irqs,
     vbus: HardwareVbusDetect,
@@ -100,7 +99,7 @@ where
 
     let config_descriptor = static_byte_buffer!(256);
     let bos_descriptor = static_byte_buffer!(256);
-    let msos_descriptor = static_byte_buffer!(256);
+    let msos_descriptor = static_byte_buffer!(512);
     let control_buf = static_byte_buffer!(64);
 
     let mut builder = embassy_usb::Builder::new(
@@ -136,7 +135,7 @@ where
     function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
         "DeviceInterfaceGUIDs",
-        msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+        msos::PropertyData::RegMultiSz(&[guid]),
     ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);

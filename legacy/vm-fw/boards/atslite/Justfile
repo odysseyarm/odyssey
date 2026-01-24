@@ -138,3 +138,71 @@ attach-net-bootloader:
 # Reset device
 reset:
     nrfjprog --reset
+
+# Generate a release entry in manifests/releases.alpha.json from current build
+gen-release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MANIFEST="../../../../manifests/releases.alpha.json"
+    BUILD_DIR="{{output_dir}}"
+
+    # Check that build files exist
+    for f in app-a.bin app-b.bin net-core.bin stage2-bootloader.bin; do
+        if [ ! -f "$BUILD_DIR/$f" ]; then
+            echo "Error: $BUILD_DIR/$f not found. Run 'just build' first."
+            exit 1
+        fi
+    done
+
+    # Compute sha256 and size for each file
+    APP_A_SHA=$(sha256sum "$BUILD_DIR/app-a.bin" | cut -d' ' -f1)
+    APP_A_SIZE=$(stat -c%s "$BUILD_DIR/app-a.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/app-a.bin")
+
+    APP_B_SHA=$(sha256sum "$BUILD_DIR/app-b.bin" | cut -d' ' -f1)
+    APP_B_SIZE=$(stat -c%s "$BUILD_DIR/app-b.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/app-b.bin")
+
+    NET_CORE_SHA=$(sha256sum "$BUILD_DIR/net-core.bin" | cut -d' ' -f1)
+    NET_CORE_SIZE=$(stat -c%s "$BUILD_DIR/net-core.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/net-core.bin")
+
+    BOOTLOADER_SHA=$(sha256sum "$BUILD_DIR/stage2-bootloader.bin" | cut -d' ' -f1)
+    BOOTLOADER_SIZE=$(stat -c%s "$BUILD_DIR/stage2-bootloader.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/stage2-bootloader.bin")
+
+    TODAY=$(date +%Y-%m-%d)
+
+    # Create the new firmware entry JSON
+    NEW_ENTRY=$(cat <<EOF
+    {
+      "version": "{{version}}",
+      "files": {
+        "app-a": {
+          "sha256": "$APP_A_SHA",
+          "size": $APP_A_SIZE
+        },
+        "app-b": {
+          "sha256": "$APP_B_SHA",
+          "size": $APP_B_SIZE
+        },
+        "net-core": {
+          "sha256": "$NET_CORE_SHA",
+          "size": $NET_CORE_SIZE
+        },
+        "stage2-bootloader": {
+          "sha256": "$BOOTLOADER_SHA",
+          "size": $BOOTLOADER_SIZE
+        }
+      },
+      "released": "$TODAY"
+    }
+    EOF
+    )
+
+    # Use jq to prepend the new entry to the firmwares array
+    jq --argjson entry "$NEW_ENTRY" '.devices.atslite.firmwares = [$entry] + .devices.atslite.firmwares' "$MANIFEST" > "$MANIFEST.tmp"
+    mv "$MANIFEST.tmp" "$MANIFEST"
+
+    echo "Added release {{version}} to $MANIFEST"
+    echo "  app-a: $APP_A_SHA ($APP_A_SIZE bytes)"
+    echo "  app-b: $APP_B_SHA ($APP_B_SIZE bytes)"
+    echo "  net-core: $NET_CORE_SHA ($NET_CORE_SIZE bytes)"
+    echo "  stage2-bootloader: $BOOTLOADER_SHA ($BOOTLOADER_SIZE bytes)"

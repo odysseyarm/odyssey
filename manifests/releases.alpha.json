@@ -4,26 +4,26 @@
     "atslite": {
       "firmwares": [
         {
-          "version": "0.1.1",
+          "version": "0.1.2",
           "files": {
             "app-a": {
-              "sha256": "cbba46a74900d5907f11a8c446f85232b164f3574699514d88d85c6e941a2440",
-              "size": 370144
+              "sha256": "78b804cf412e3ac8cb9cefd3995cdc4a0bc49e61d1c95b3ba248c0ac384c53aa",
+              "size": 370336
             },
             "app-b": {
-              "sha256": "bf5f2d8c4d82edb6faa1ac2b110ea1af9186d7795a86d4bed7837691f8d37b47",
-              "size": 370144
+              "sha256": "2ef49430852f10ab3bbaa484c0bf54f3eec311e4414011dfba3cbb69dfd0b0d9",
+              "size": 370336
             },
             "net-core": {
               "sha256": "7bc5806f1be2803d7eab516ebf05fe966186c2791ef66bfcb2acb8d234f69990",
               "size": 170600
             },
             "stage2-bootloader": {
-              "sha256": "58dfd9a477f627552d66b6434e3bcaa41a4564f6798ae3391c939716837c6b20",
-              "size": 38624
+              "sha256": "d9342922e956e07d3cf3775df4e0c246e501687cf8e3ba2f1b5e3588ed4a9196",
+              "size": 41280
             }
           },
-          "released": "2026-01-23"
+          "released": "2026-01-24"
         }
       ]
     }

@@ -40,6 +40,9 @@ use common::{
     object_mode::{ObjectModeContext, object_mode},
     settings, usb,
 };
+use embassy_usb::msos;
+
+const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 
 unsafe extern "C" {
     static __bootloader_state_start: u32;
@@ -249,6 +252,7 @@ async fn main(spawner: Spawner) {
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5210, // Atslite PID
+        DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,
         vbus,
@@ -262,6 +266,10 @@ async fn main(spawner: Spawner) {
                     // Apply WINUSB to DFU interface for Windows compatibility
                     func.msos_feature(embassy_usb::msos::CompatibleIdFeatureDescriptor::new(
                         "WINUSB", "",
+                    ));
+                    func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+                        "DeviceInterfaceGUIDs",
+                        msos::PropertyData::RegMultiSz(&[DEVICE_INTERFACE_GUID]),
                     ));
                 },
             );

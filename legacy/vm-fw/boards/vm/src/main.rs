@@ -25,6 +25,8 @@ use common::{
 };
 use vm_board::{VmPlatform, imu, l2cap::VmL2capChannels, pins::Board, split_board};
 
+const DEVICE_INTERFACE_GUID: &str = "{4d36e96c-e325-11ce-bfc1-08002be10318}";
+
 // Interrupt bindings for nRF52840 peripherals
 bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
@@ -66,7 +68,14 @@ async fn main(spawner: Spawner) {
     // 3. Initialize USB device
     defmt::info!("Initializing USB device...");
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
-    let (usb_dev, usb_snd, usb_rcv, usb_signal) = usb::usb_device(0x520F, p.USBD, Irqs, vbus, |_| {}); // USB VM PID
+    let (usb_dev, usb_snd, usb_rcv, usb_signal) = usb::usb_device(
+        0x520F, // USB VM PID
+        DEVICE_INTERFACE_GUID,
+        p.USBD,
+        Irqs,
+        vbus,
+        |_| {},
+    );
     spawner.spawn(usb::run_usb(usb_dev)).unwrap();
     defmt::info!("USB device spawned");
 
