@@ -49,7 +49,7 @@ pub async fn device_connection_task(
         let config = ConnectConfig {
             connect_params: ConnectParams {
                 min_connection_interval: Duration::from_micros(7500),
-                max_connection_interval: Duration::from_micros(15000),
+                max_connection_interval: Duration::from_micros(30000),
                 max_latency: 0,
                 min_event_length: Duration::from_micros(0),
                 max_event_length: Duration::from_micros(0),
@@ -194,21 +194,21 @@ pub async fn device_connection_task(
         }
 
         // Create L2CAP channels
-        const PAYLOAD_LEN: u16 = 1024;
+        const PAYLOAD_LEN: u16 = 2510;
         const L2CAP_MTU: u16 = 251;
 
         let l2cap_control_config = L2capChannelConfig {
             mtu: Some(PAYLOAD_LEN - 6),
             mps: Some(L2CAP_MTU - 4),
-            flow_policy: CreditFlowPolicy::Every(5),
-            initial_credits: Some(16),
+            flow_policy: CreditFlowPolicy::Every(50),
+            initial_credits: Some(200),
         };
 
         let l2cap_data_config = L2capChannelConfig {
             mtu: Some(PAYLOAD_LEN - 6),
             mps: Some(L2CAP_MTU - 4),
-            flow_policy: CreditFlowPolicy::Every(5),
-            initial_credits: Some(8),
+            flow_policy: CreditFlowPolicy::Every(50),
+            initial_credits: Some(200),
         };
 
         info!(

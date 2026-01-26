@@ -350,31 +350,35 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
 
     // PSM for L2CAP channel - must match dongle
     // Two separate L2CAP channels for control and data
-    const L2CAP_PSM_CONTROL: u16 = 0x0080;
+    const L2CAP_PSM_CTRL: u16 = 0x0080;
     const L2CAP_PSM_DATA: u16 = 0x0081;
-    const L2CAP_MTU: u16 = 251;
-    const PAYLOAD_LEN: u16 = 512;
+
+    const PAYLOAD_LEN_CTRL: u16 = 512;
+    const L2CAP_MTU_CTRL: u16 = 251;
+
+    const PAYLOAD_LEN_THROUGHPUT: u16 = 2510;
+    const L2CAP_MTU_THROUGHPUT: u16 = 251;
 
     // Setup L2CAP channel acceptance with separate configs
     // Control channel: 16 credits for reliable control packet delivery
     let l2cap_control_config = L2capChannelConfig {
-        mtu: Some(PAYLOAD_LEN - 6),
-        mps: Some(L2CAP_MTU - 4),
+        mtu: Some(PAYLOAD_LEN_CTRL - 6),
+        mps: Some(L2CAP_MTU_CTRL - 4),
         flow_policy: CreditFlowPolicy::Every(5),
         initial_credits: Some(16),
     };
 
     // Data channel: 8 credits to prevent pool exhaustion and leave room for control packets
     let l2cap_data_config = L2capChannelConfig {
-        mtu: Some(PAYLOAD_LEN - 6),
-        mps: Some(L2CAP_MTU - 4),
+        mtu: Some(PAYLOAD_LEN_THROUGHPUT - 6),
+        mps: Some(L2CAP_MTU_THROUGHPUT - 4),
         flow_policy: CreditFlowPolicy::Every(5),
         initial_credits: Some(8),
     };
 
     defmt::info!(
         "[custom_task] Accepting L2CAP channels on PSM {:04x} (control) and {:04x} (data)",
-        L2CAP_PSM_CONTROL,
+        L2CAP_PSM_CTRL,
         L2CAP_PSM_DATA
     );
 
@@ -393,7 +397,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
             L2capChannel::accept(
                 stack,
                 conn.raw(),
-                &[L2CAP_PSM_CONTROL, L2CAP_PSM_DATA],
+                &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
                 &l2cap_control_config,
             ),
         )
@@ -436,7 +440,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
             L2capChannel::accept(
                 stack,
                 conn.raw(),
-                &[L2CAP_PSM_CONTROL, L2CAP_PSM_DATA],
+                &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
                 &l2cap_data_config,
             ),
         )
