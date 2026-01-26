@@ -7,23 +7,23 @@
           "version": "0.1.2",
           "files": {
             "app-a": {
-              "sha256": "78b804cf412e3ac8cb9cefd3995cdc4a0bc49e61d1c95b3ba248c0ac384c53aa",
-              "size": 370336
+              "sha256": "81424338465bafdc17b198a4f2eb4df3e9cbc845f1daa3e125268b36c391c6b3",
+              "size": 370464
             },
             "app-b": {
-              "sha256": "2ef49430852f10ab3bbaa484c0bf54f3eec311e4414011dfba3cbb69dfd0b0d9",
-              "size": 370336
+              "sha256": "abb788642a10fb54f7ed62e8376ef11aa97471e4c0db51d35860bf81aef17c31",
+              "size": 370464
             },
             "net-core": {
               "sha256": "7bc5806f1be2803d7eab516ebf05fe966186c2791ef66bfcb2acb8d234f69990",
               "size": 170600
             },
             "stage2-bootloader": {
-              "sha256": "d9342922e956e07d3cf3775df4e0c246e501687cf8e3ba2f1b5e3588ed4a9196",
+              "sha256": "a5cb586625877855d07de1e47e7911b3466cfad162f2e0241ccfbd4fab15aa67",
               "size": 41280
             }
           },
-          "released": "2026-01-24"
+          "released": "2026-01-26"
         }
       ]
     }

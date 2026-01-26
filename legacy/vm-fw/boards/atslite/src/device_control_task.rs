@@ -4,8 +4,6 @@
 use defmt::info;
 use protodongers::control::device::{DeviceMsg, PairingError, TransportMode, Version};
 
-const FIRMWARE_VERSION: [u16; 3] = [0, 1, 0]; // TODO: Get from build
-
 #[embassy_executor::task]
 pub async fn device_control_task() {
     info!("Device control task started");
@@ -78,13 +76,10 @@ pub async fn device_control_task() {
     }
 }
 
-async fn handle_cmd(
-    cmd: DeviceMsg,
-    pairing_deadline: &mut Option<embassy_time::Instant>,
-) {
+async fn handle_cmd(cmd: DeviceMsg, pairing_deadline: &mut Option<embassy_time::Instant>) {
     match cmd {
         DeviceMsg::ReadVersion() => {
-            let version = Version::new(FIRMWARE_VERSION);
+            let version = Version::new(crate::utils::FIRMWARE_VERSION);
             common::device_control::try_send_event(DeviceMsg::ReadVersionResponse(version));
         }
 

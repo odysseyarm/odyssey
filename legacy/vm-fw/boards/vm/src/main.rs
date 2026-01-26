@@ -23,7 +23,7 @@ use common::{
     object_mode::{ObjectModeContext, object_mode},
     settings, usb,
 };
-use vm_board::{VmPlatform, imu, l2cap::VmL2capChannels, pins::Board, split_board};
+use vm_board::{VmPlatform, imu, l2cap::VmL2capChannels, pins::Board, split_board, utils};
 
 const DEVICE_INTERFACE_GUID: &str = "{4d36e96c-e325-11ce-bfc1-08002be10318}";
 
@@ -203,6 +203,8 @@ async fn main(spawner: Spawner) {
         usb_configured: usb_signal,
         settings: settings_ref,
         l2cap_channels: VmL2capChannels::new(),
+        data_mode: || common::protodongers::control::device::TransportMode::Usb,
+        version: utils::FIRMWARE_VERSION,
     };
 
     defmt::info!("VM initialization complete! Entering object mode...");

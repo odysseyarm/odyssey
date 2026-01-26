@@ -345,6 +345,7 @@ async fn main(spawner: Spawner) {
         settings: settings_ref,
         l2cap_channels,
         data_mode: transport_mode::get,
+        version: utils::FIRMWARE_VERSION,
     };
 
     defmt::info!("Initialization complete; entering object mode");

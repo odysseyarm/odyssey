@@ -47,6 +47,8 @@ pub struct ObjectModeContext<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, 
     pub l2cap_channels: P::L2capChannels,
     /// Function to read current data mode (USB vs BLE).
     pub data_mode: fn() -> TransportMode,
+    /// Firmware version [major, minor, patch].
+    pub version: [u16; 3],
 }
 
 #[allow(unreachable_code)]
@@ -77,6 +79,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         &ctx.l2cap_channels,
         P::device_id(),
         ctx.data_mode,
+        ctx.version,
     );
     let b = usb_snd_loop(
         pkt_writer,
@@ -107,19 +110,6 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
     }
 }
 
-const MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
-    Ok(v) => v,
-    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
-};
-const MINOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
-    Ok(v) => v,
-    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
-};
-const PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
-    Ok(v) => v,
-    Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
-};
-
 #[derive(Debug, Clone, Copy)]
 enum PacketSource {
     Usb,
@@ -138,6 +128,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     l2cap_channels: &L,
     device_id: [u8; 8],
     data_mode: fn() -> TransportMode,
+    version: [u16; 3],
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Always listen for USB control regardless of data transport; gate USB data by mode.
@@ -338,7 +329,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
             }
             PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,
-                data: PacketData::ReadVersionResponse(protodongers::Version::new([MAJOR, MINOR, PATCH])),
+                data: PacketData::ReadVersionResponse(protodongers::Version::new(version)),
             }),
             PacketData::ObjectReportRequest() => None,
             PacketData::Ack() => None,

@@ -1433,7 +1433,7 @@ async fn main(spawner: Spawner) -> ! {
 
         let mut config_descriptor = [0; 256];
         let mut bos_descriptor = [0; 256];
-        let mut msos_descriptor = [0; 256];
+        let mut msos_descriptor = [0; 512];
         let mut control_buf = [0; 4096];
 
         // Create DFU control with dual-bank writer and IPC forwarder
