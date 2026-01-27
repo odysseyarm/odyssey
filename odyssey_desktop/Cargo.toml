@@ -1,6 +1,6 @@
 [package]
 name = "odyssey_desktop"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 default-run = "odyssey_desktop"
 
@@ -27,8 +27,8 @@ nalgebra = "0.34.0"
 btleplug = "0.11.8"
 uuid = "1.18.0"
 velopack = { version = "0.0.1298", features = ["async"] }
-dfu-nusb = "0.1.1"
+dfu-nusb = { git = "https://github.com/florg-32/dfu-nusb", branch = "bump-nusb-0.2" }
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
-dioxus-cli = { version = "0.7.1", locked = true, bins = ["dx"] }
+dioxus-cli = { version = "0.7.3", locked = true, bins = ["dx"] }

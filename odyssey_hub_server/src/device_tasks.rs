@@ -384,9 +384,9 @@ async fn usb_device_manager(
                                                                     addr_copy, uuid
                                                                 );
 
-                                                                // Read firmware version
-                                                                let version = match vm_device.read_version().await {
-                                                                    Ok(v) => {
+                                                                // Read firmware version via packet interface (works over BLE)
+                                                                let version = match vm_device.request(protodongers::PacketData::ReadVersion()).await {
+                                                                    Ok(protodongers::PacketData::ReadVersionResponse(v)) => {
                                                                         tracing::info!(
                                                                             "BLE device {:02x?} firmware version: {}.{}.{}",
                                                                             uuid,
@@ -395,6 +395,10 @@ async fn usb_device_manager(
                                                                             v.firmware_semver[2]
                                                                         );
                                                                         Some([v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]])
+                                                                    }
+                                                                    Ok(other) => {
+                                                                        tracing::warn!("Unexpected response reading version from BLE device {:02x?}: {:?}", uuid, other);
+                                                                        None
                                                                     }
                                                                     Err(e) => {
                                                                         tracing::warn!("Failed to read version from BLE device {:02x?}: {}", uuid, e);
@@ -476,40 +480,36 @@ async fn usb_device_manager(
                                                         }
                                                 }
 
-                                                // Removed devices
-                                                let to_remove: Vec<[u8; 6]> = {
-                                                    let dh = device_handles_clone.lock().await;
-                                                    dh.keys()
-                                                        .cloned()
-                                                        .filter(|a| !new_set.contains(a))
-                                                        .collect()
-                                                };
+                                                // Removed devices - only remove devices that were managed by THIS hub
+                                                let to_remove: Vec<[u8; 6]> = hub_devices
+                                                    .iter()
+                                                    .cloned()
+                                                    .filter(|a| !new_set.contains(a))
+                                                    .collect();
                                                 for addr in to_remove {
                                                     let uuid = addr;
                                                     tracing::info!(
-                                                        "DevicesSnapshot: Removing device {:02x?}",
+                                                        "DevicesSnapshot: BLE device {:02x?} disconnected from hub",
                                                         uuid
                                                     );
-                                                    if let Some((_cmd_tx, handle)) =
-                                                        device_handles_clone
-                                                            .lock()
-                                                            .await
-                                                            .remove(&uuid)
-                                                    {
-                                                        handle.abort();
-                                                        hub_devices.remove(&uuid);
+
+                                                    // Remove from hub_devices tracking
+                                                    hub_devices.remove(&uuid);
+
+                                                    // Check if this device has a handler - if so, send RemoveEventsDevice
+                                                    // instead of destroying it (it might still have USB control)
+                                                    let dh = device_handles_clone.lock().await;
+                                                    if let Some((cmd_tx, _handle)) = dh.get(&uuid) {
+                                                        // Device handler exists - send RemoveEventsDevice to let it decide
+                                                        // whether to continue (if it has USB control) or exit
+                                                        tracing::info!(
+                                                            "Sending RemoveEventsDevice to {:02x?} (may still have USB control)",
+                                                            uuid
+                                                        );
+                                                        let _ = cmd_tx.send(DeviceTaskMessage::RemoveEventsDevice).await;
                                                     }
-                                                    let device_meta = Device {
-                                                            uuid,
-                                                            transport: odyssey_hub_common::device::Transport::UsbMux,
-                                                            capabilities: odyssey_hub_common::device::DeviceCapabilities::empty(),
-                                                            firmware_version: None,
-                                                            events_transport: odyssey_hub_common::device::EventsTransport::Bluetooth,
-                                                            events_connected: false, // Disconnect message
-                                                        };
-                                                    let _ = message_channel_clone
-                                                        .send(Message::Disconnect(device_meta))
-                                                        .await;
+                                                    // Don't abort the handler or send Disconnect here -
+                                                    // the handler will do that itself if it has no remaining connections
                                                 }
                                             }
                                             Err(e) => {
@@ -579,31 +579,66 @@ async fn usb_device_manager(
                             // Read UUID - use control plane for devices that support it (ATS Lite), packets for others
                             let uuid = if pid == 0x5210 {
                                 // ATS Lite - use control plane (works in any transport mode)
-                                match vm_device.read_uuid().await {
-                                    Ok(uuid) => uuid,
-                                    Err(e) => {
-                                        warn!(
-                                            "ATS Lite: Failed to read UUID via control: {}, skipping",
-                                            e
-                                        );
-                                        continue;
+                                // Retry up to 3 times with delays
+                                let mut uuid_result = None;
+                                for attempt in 1..=3 {
+                                    match vm_device.read_uuid().await {
+                                        Ok(uuid) => {
+                                            uuid_result = Some(uuid);
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            if attempt < 3 {
+                                                debug!(
+                                                    "ATS Lite: Failed to read UUID via control (attempt {}): {}, retrying...",
+                                                    attempt, e
+                                                );
+                                                sleep(Duration::from_millis(500)).await;
+                                            } else {
+                                                warn!(
+                                                    "ATS Lite: Failed to read UUID via control after 3 attempts: {}, skipping",
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
                                 }
+                                match uuid_result {
+                                    Some(uuid) => uuid,
+                                    None => continue,
+                                }
                             } else {
-                                // Other devices - use packet-based reading
-                                match vm_device.read_prop(protodongers::PropKind::Uuid).await {
-                                    Ok(protodongers::Props::Uuid(bytes)) => bytes,
-                                    Ok(other) => {
-                                        warn!(
-                                            "Expected Uuid prop, got {:?}, skipping device",
-                                            other
-                                        );
-                                        continue;
+                                // Other devices - use packet-based reading with retries
+                                let mut uuid_result = None;
+                                for attempt in 1..=3 {
+                                    match vm_device.read_prop(protodongers::PropKind::Uuid).await {
+                                        Ok(protodongers::Props::Uuid(bytes)) => {
+                                            uuid_result = Some(bytes);
+                                            break;
+                                        }
+                                        Ok(other) => {
+                                            warn!(
+                                                "Expected Uuid prop, got {:?}, skipping device",
+                                                other
+                                            );
+                                            break; // Don't retry on wrong response type
+                                        }
+                                        Err(e) => {
+                                            if attempt < 3 {
+                                                debug!(
+                                                    "Failed to read UUID (attempt {}): {}, retrying...",
+                                                    attempt, e
+                                                );
+                                                sleep(Duration::from_millis(500)).await;
+                                            } else {
+                                                warn!("Failed to read UUID after 3 attempts: {}, skipping device", e);
+                                            }
+                                        }
                                     }
-                                    Err(e) => {
-                                        warn!("Failed to read UUID: {}, skipping device", e);
-                                        continue;
-                                    }
+                                }
+                                match uuid_result {
+                                    Some(uuid) => uuid,
+                                    None => continue,
                                 }
                             };
 
@@ -1320,6 +1355,26 @@ async fn device_handler_task(
                             device.uuid
                         );
 
+                        // Read firmware version from USB control device if not already available
+                        if device.firmware_version.is_none() {
+                            match control_vm_device.read_version().await {
+                                Ok(v) => {
+                                    info!(
+                                        "Read firmware version from USB control for {:02x?}: {}.{}.{}",
+                                        device.uuid, v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]
+                                    );
+                                    device.firmware_version = Some([
+                                        v.firmware_semver[0],
+                                        v.firmware_semver[1],
+                                        v.firmware_semver[2],
+                                    ]);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to read firmware version from USB control for {:02x?}: {}", device.uuid, e);
+                                }
+                            }
+                        }
+
                         // Store the control device
                         connections.control_device = Some(control_vm_device);
 
@@ -1385,19 +1440,7 @@ async fn device_handler_task(
                             let _ = event_sender.send(ev);
                         } else {
                             // No control device, exit
-                            info!("Device {:02x?} has no control device, sending disconnect and exiting", device.uuid);
-
-                            // Send Disconnect message for current device state before exiting
-                            let disconnect_device = Device {
-                                uuid: device.uuid,
-                                transport: device.transport,
-                                capabilities: device.capabilities.clone(),
-                                firmware_version: device.firmware_version,
-                                events_transport: device.events_transport,
-                                events_connected: device.events_connected,
-                            };
-                            let _ = message_channel.send(Message::Disconnect(disconnect_device)).await;
-
+                            info!("Device {:02x?} has no control device, exiting", device.uuid);
                             break;
                         }
                     }
@@ -1411,7 +1454,22 @@ async fn device_handler_task(
         }
     }
 
-    info!("Device handler task ending for {:02x?}", device.uuid);
+    // Always send Disconnect message when handler ends
+    info!(
+        "Device handler task ending for {:02x?}, sending disconnect",
+        device.uuid
+    );
+    let disconnect_device = Device {
+        uuid: device.uuid,
+        transport: device.transport,
+        capabilities: device.capabilities.clone(),
+        firmware_version: device.firmware_version,
+        events_transport: device.events_transport,
+        events_connected: device.events_connected,
+    };
+    let _ = message_channel
+        .send(Message::Disconnect(disconnect_device))
+        .await;
 }
 
 /// Process a single inbound Packet and emit appropriate events.
