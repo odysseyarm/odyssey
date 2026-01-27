@@ -49,7 +49,7 @@ pub async fn device_connection_task(
         let config = ConnectConfig {
             connect_params: ConnectParams {
                 min_connection_interval: Duration::from_micros(7500),
-                max_connection_interval: Duration::from_micros(30000),
+                max_connection_interval: Duration::from_micros(7500),
                 max_latency: 0,
                 min_event_length: Duration::from_micros(0),
                 max_event_length: Duration::from_micros(0),
