@@ -1,5 +1,6 @@
 mod accessories;
 mod device_tasks;
+pub mod firmware;
 mod server;
 
 use std::{pin::Pin, sync::Arc};
