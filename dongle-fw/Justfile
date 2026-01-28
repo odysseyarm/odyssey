@@ -10,10 +10,11 @@ app_ver   := "1"
 key_file  := ""
 
 # Serial
-dfu_port  := "COM20"
+dfu_port  := "COM67"
 # dfu_port  := "COM65"
 baud      := "115200"
 dev_port  := "COM14"
+# dev_port  := "COM64"
 
 ROOT      := "."
 

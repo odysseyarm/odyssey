@@ -61,6 +61,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
     let pkt_channel = Channel::<Packet, 64>::new();
     let stream_infos = StreamInfos::new();
+    let impact_settings = ImpactSettings::new(&ctx.settings.general);
     let exit = Watch::<_, _, 4>::new();
     let exit0 = exit.receiver().unwrap();
     let _exit1 = exit.receiver().unwrap();
@@ -80,6 +81,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         P::device_id(),
         ctx.data_mode,
         ctx.version,
+        &impact_settings,
     );
     let b = usb_snd_loop(
         pkt_writer,
@@ -89,7 +91,13 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         &ctx.l2cap_channels,
         ctx.data_mode,
     );
-    let c = imu_loop::<P>(&mut ctx.imu, &mut ctx.imu_int, pkt_channel.sender(), &stream_infos);
+    let c = imu_loop::<P>(
+        &mut ctx.imu,
+        &mut ctx.imu_int,
+        pkt_channel.sender(),
+        &stream_infos,
+        &impact_settings,
+    );
     let d = obj_loop(
         ctx.paj7025r2_group,
         ctx.paj7025r3_group,
@@ -129,6 +137,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     device_id: [u8; 8],
     data_mode: fn() -> TransportMode,
     version: [u16; 3],
+    impact_settings: &ImpactSettings,
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Always listen for USB control regardless of data transport; gate USB data by mode.
@@ -255,6 +264,12 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 let wire_config: wire::GeneralConfig = config.into();
                 defmt::info!("[app] WriteConfig converted: {:?}", defmt::Debug2Format(&wire_config));
                 settings.general.set_general_config(&wire_config);
+                // Update atomic impact settings for imu_loop
+                match &wire_config {
+                    wire::GeneralConfig::ImpactThreshold(v) => impact_settings.set_threshold(*v),
+                    wire::GeneralConfig::SuppressMs(v) => impact_settings.set_suppress_ms(*v),
+                    _ => {}
+                }
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::Ack(),
@@ -425,10 +440,14 @@ async fn imu_loop<P: Platform>(
     imu_int: &mut P::ImuInterrupt,
     pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
+    impact_settings: &ImpactSettings,
 ) {
     // ---- Unit scales from platform ----
     const G: f32 = 9.806_65;
     const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
+
+    // Track last impact time for suppression
+    let mut last_impact_ts_micros: Option<u32> = None;
 
     loop {
         imu_int.wait().await;
@@ -471,6 +490,39 @@ async fn imu_loop<P: Platform>(
             };
             if pkt_snd.try_send(pkt).is_err() {
                 defmt::warn!("Failed to send IMU data due to full channel");
+            }
+        }
+
+        // Impact detection
+        if stream_infos.impact.enabled() {
+            // Calculate acceleration magnitude in g's (divide by G to get g's from m/s^2)
+            let accel_magnitude_g = accel.magnitude() / G;
+
+            // Check if magnitude exceeds threshold
+            let threshold_g = impact_settings.threshold() as f32;
+            if accel_magnitude_g >= threshold_g {
+                // Check suppression window
+                let suppress_us = (impact_settings.suppress_ms() as u32) * 1000;
+                let should_send = match last_impact_ts_micros {
+                    Some(last_ts) => {
+                        // Handle timestamp wraparound
+                        let elapsed = ts_micros.wrapping_sub(last_ts);
+                        elapsed >= suppress_us
+                    }
+                    None => true,
+                };
+
+                if should_send {
+                    last_impact_ts_micros = Some(ts_micros);
+                    let id = stream_infos.impact.req_id();
+                    let pkt = Packet {
+                        id,
+                        data: PacketData::ImpactReport(protodongers::ImpactReport { timestamp: ts_micros }),
+                    };
+                    if pkt_snd.try_send(pkt).is_err() {
+                        defmt::warn!("Failed to send impact report due to full channel");
+                    }
+                }
             }
         }
     }
@@ -655,5 +707,35 @@ impl StreamInfo {
 
     fn set_enable(&self, enable: bool) {
         self.enable.store(enable, Ordering::Release);
+    }
+}
+
+struct ImpactSettings {
+    threshold: AtomicU8,
+    suppress_ms: AtomicU8,
+}
+
+impl ImpactSettings {
+    fn new(settings: &crate::settings::GeneralSettings) -> Self {
+        Self {
+            threshold: AtomicU8::new(settings.impact_threshold),
+            suppress_ms: AtomicU8::new(settings.suppress_ms),
+        }
+    }
+
+    fn threshold(&self) -> u8 {
+        self.threshold.load(Ordering::Relaxed)
+    }
+
+    fn suppress_ms(&self) -> u8 {
+        self.suppress_ms.load(Ordering::Relaxed)
+    }
+
+    fn set_threshold(&self, val: u8) {
+        self.threshold.store(val, Ordering::Relaxed);
+    }
+
+    fn set_suppress_ms(&self, val: u8) {
+        self.suppress_ms.store(val, Ordering::Relaxed);
     }
 }
