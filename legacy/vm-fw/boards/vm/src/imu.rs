@@ -75,11 +75,53 @@ impl common::platform::ImuInterrupt for VmImuInterrupt {
     }
 }
 
+const VALID_ODRS_BMI270: &[(u16, bmi2::types::Odr)] = {
+    use bmi2::types::Odr;
+    &[
+        (1, Odr::Odr0p78),
+        (2, Odr::Odr1p5),
+        (3, Odr::Odr3p1),
+        (6, Odr::Odr6p25),
+        (13, Odr::Odr12p5),
+        (25, Odr::Odr25),
+        (50, Odr::Odr50),
+        (100, Odr::Odr100),
+        (200, Odr::Odr200),
+        (400, Odr::Odr400),
+        (800, Odr::Odr800),
+        (1600, Odr::Odr1k6),
+        (3200, Odr::Odr3k2),
+        (6400, Odr::Odr6k4),
+        (12800, Odr::Odr12k8),
+    ]
+};
+
+fn nearest_odr_index(hz: u16) -> usize {
+    let mut best = 0;
+    for (i, &(val, _)) in VALID_ODRS_BMI270.iter().enumerate() {
+        let curr_diff = (hz as i32 - VALID_ODRS_BMI270[best].0 as i32).unsigned_abs();
+        let new_diff = (hz as i32 - val as i32).unsigned_abs();
+        if new_diff < curr_diff {
+            best = i;
+        }
+    }
+    best
+}
+
+fn round_odr_bmi270(hz: u16) -> bmi2::types::Odr {
+    VALID_ODRS_BMI270[nearest_odr_index(hz)].1
+}
+
+pub fn round_accel_odr_hz(hz: u16) -> u16 {
+    VALID_ODRS_BMI270[nearest_odr_index(hz)].0
+}
+
 pub async fn init<SPI, IRQ, const N: usize, const MAX: u16>(
     spi: Peri<'static, SPI>,
     irqs: IRQ,
     pins: common::utils::SpiPins,
     irq: Peri<'static, AnyPin>,
+    accel_odr: u16,
 ) -> Result<(VmImu<N>, VmImuInterrupt), Error<DeviceError<spim::Error, Infallible>>>
 where
     SPI: spim::Instance,
@@ -101,9 +143,9 @@ where
 
     imu.init(&config::BMI270_CONFIG_FILE).await?;
     let acc_conf = {
-        use bmi2::types::{AccBwp, AccConf, Odr, PerfMode};
+        use bmi2::types::{AccBwp, AccConf, PerfMode};
         AccConf {
-            odr: Odr::Odr100,
+            odr: round_odr_bmi270(accel_odr),
             bwp: AccBwp::Osr4Avg1,
             filter_perf: PerfMode::Perf,
         }

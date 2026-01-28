@@ -157,10 +157,15 @@ async fn main(spawner: Spawner) {
         cs: board.bmi270.cs.into(),
     };
 
-    let (imu, imu_int) =
-        imu::init::<_, _, 2048, 256>(p.SPI2, Irqs, imu_spi_pins, board.bmi270.irq.into())
-            .await
-            .unwrap();
+    let (imu, imu_int) = imu::init::<_, _, 2048, 256>(
+        p.SPI2,
+        Irqs,
+        imu_spi_pins,
+        board.bmi270.irq.into(),
+        common::settings::accel_odr(),
+    )
+    .await
+    .unwrap();
 
     defmt::info!("BMI270 IMU initialized");
 
@@ -177,6 +182,10 @@ async fn main(spawner: Spawner) {
     )
     .await
     .unwrap();
+
+    // Clamp accel_odr to nearest valid value for this platform's sensor
+    settings_ref.general.accel_config.accel_odr =
+        imu::round_accel_odr_hz(settings_ref.general.accel_config.accel_odr);
 
     defmt::info!("Settings initialized and applied to PAJ sensors");
 

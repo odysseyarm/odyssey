@@ -227,6 +227,7 @@ async fn main(spawner: Spawner) {
         p.TIMER1, // Use TIMER1 for IMU, save TIMER0 for object mode
         p.PPI_CH0.into(),
         p.GPIOTE_CH0,
+        common::settings::accel_odr(),
     )
     .await;
 
@@ -297,6 +298,10 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap()
     };
+
+    // Clamp accel_odr to nearest valid value for this platform's sensor
+    settings_ref.general.accel_config.accel_odr =
+        imu::round_accel_odr_hz(settings_ref.general.accel_config.accel_odr);
 
     // Check boot state after settings init to see if corruption happened
     log_boot_state("after settings init");

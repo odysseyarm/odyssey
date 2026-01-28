@@ -76,6 +76,47 @@ impl common::platform::ImuInterrupt for AtsliteImuInterrupt {
     }
 }
 
+const VALID_ODRS_ICM42688: &[(u16, icm426xx::config::AccelOdr)] = {
+    use icm426xx::config::AccelOdr;
+    &[
+        (2, AccelOdr::_1_5625Hz),
+        (3, AccelOdr::_3_125Hz),
+        (6, AccelOdr::_6_25Hz),
+        (13, AccelOdr::_12_5Hz),
+        (25, AccelOdr::_25Hz),
+        (50, AccelOdr::_50Hz),
+        (100, AccelOdr::_100Hz),
+        (200, AccelOdr::_200Hz),
+        (500, AccelOdr::_500Hz),
+        (1000, AccelOdr::_1kHz),
+        (2000, AccelOdr::_2kHz),
+        (4000, AccelOdr::_4kHz),
+        (8000, AccelOdr::_8kHz),
+        (16000, AccelOdr::_16kHz),
+        (32000, AccelOdr::_32kHz),
+    ]
+};
+
+fn nearest_odr_index(hz: u16) -> usize {
+    let mut best = 0;
+    for (i, &(val, _)) in VALID_ODRS_ICM42688.iter().enumerate() {
+        let curr_diff = (hz as i32 - VALID_ODRS_ICM42688[best].0 as i32).unsigned_abs();
+        let new_diff = (hz as i32 - val as i32).unsigned_abs();
+        if new_diff < curr_diff {
+            best = i;
+        }
+    }
+    best
+}
+
+fn round_odr_icm42688(hz: u16) -> icm426xx::config::AccelOdr {
+    VALID_ODRS_ICM42688[nearest_odr_index(hz)].1
+}
+
+pub fn round_accel_odr_hz(hz: u16) -> u16 {
+    VALID_ODRS_ICM42688[nearest_odr_index(hz)].0
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     spim_instance: Peri<'static, SPIM4>,
@@ -88,6 +129,7 @@ pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     clkin_timer_instance: Peri<'static, T>,
     clkin_ppi_ch: Peri<'static, ppi::AnyConfigurableChannel>,
     clkin_gpiote_ch: Peri<'static, C>,
+    accel_odr: u16,
 ) -> (AtsliteImu, AtsliteImuInterrupt)
 where
     crate::Irqs: interrupt::typelevel::Binding<
@@ -129,9 +171,9 @@ where
     let imu = ICM42688::new(spi_device);
     let mut imu_config = icm426xx::Config::default();
     {
-        use icm426xx::config::{AccelMode, AccelOdr, Drive, GyroOdr, Pin9Function, Polarity};
+        use icm426xx::config::{AccelMode, Drive, GyroOdr, Pin9Function, Polarity};
         imu_config.gyro.odr = GyroOdr::_100Hz;
-        imu_config.accel.odr = AccelOdr::_100Hz;
+        imu_config.accel.odr = round_odr_icm42688(accel_odr);
         imu_config.accel.mode = AccelMode::LowNoise;
         imu_config.int1.drive = Drive::PushPull;
         imu_config.int1.polarity = Polarity::ActiveLow;

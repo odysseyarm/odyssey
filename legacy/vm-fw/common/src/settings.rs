@@ -60,6 +60,10 @@ pub unsafe fn get_settings() -> &'static mut Settings {
 
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
+pub fn accel_odr() -> u16 {
+    ACCEL_ODR.load(Ordering::Relaxed)
+}
+
 #[embassy_executor::task]
 async fn settings_worker(
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,

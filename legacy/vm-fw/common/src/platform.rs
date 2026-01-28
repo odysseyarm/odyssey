@@ -79,6 +79,9 @@ pub trait Platform {
     /// IMU gyro axis transform function: takes raw [x, y, z] and returns transformed [x, y, z]
     fn transform_gyro(raw: [i32; 3]) -> [i32; 3];
 
+    /// Round an accelerometer ODR value (Hz) to the nearest valid value for this platform's sensor.
+    fn round_accel_odr(hz: u16) -> u16;
+
     /// Device ID for this platform
     fn device_id() -> [u8; 8];
 }

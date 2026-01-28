@@ -82,6 +82,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         ctx.data_mode,
         ctx.version,
         &impact_settings,
+        P::round_accel_odr,
     );
     let b = usb_snd_loop(
         pkt_writer,
@@ -138,6 +139,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     data_mode: fn() -> TransportMode,
     version: [u16; 3],
     impact_settings: &ImpactSettings,
+    round_accel_odr: fn(u16) -> u16,
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Always listen for USB control regardless of data transport; gate USB data by mode.
@@ -261,8 +263,12 @@ async fn usb_rcv_loop<L: L2capChannels>(
             }
             PacketData::WriteConfig(config) => {
                 defmt::info!("[app] WriteConfig received: {:?}", defmt::Debug2Format(&config));
-                let wire_config: wire::GeneralConfig = config.into();
+                let mut wire_config: wire::GeneralConfig = config.into();
                 defmt::info!("[app] WriteConfig converted: {:?}", defmt::Debug2Format(&wire_config));
+                // Clamp accel_odr to nearest valid value for this platform
+                if let wire::GeneralConfig::AccelConfig(ref mut ac) = wire_config {
+                    ac.accel_odr = round_accel_odr(ac.accel_odr);
+                }
                 settings.general.set_general_config(&wire_config);
                 // Update atomic impact settings for imu_loop
                 match &wire_config {

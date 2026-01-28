@@ -30,6 +30,10 @@ impl common::platform::Platform for AtslitePlatform {
         [raw[0], -raw[1], -raw[2]]
     }
 
+    fn round_accel_odr(hz: u16) -> u16 {
+        crate::imu::round_accel_odr_hz(hz)
+    }
+
     fn device_id() -> [u8; 8] {
         crate::utils::device_id()
     }
