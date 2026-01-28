@@ -7,6 +7,7 @@ use dioxus::{
 };
 use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use tokio_util::sync::CancellationToken;
 use velopack::VelopackApp;
@@ -25,6 +26,28 @@ mod views;
 
 fn main() {
     VelopackApp::build().run();
+
+    // Set up tracing to write to both stdout and a log file before Dioxus launches
+    if cfg!(target_os = "windows") {
+        let local_app_data = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
+        let log_dir = std::path::PathBuf::from(&local_app_data)
+            .join("Odyssium.Desktop")
+            .join("logs");
+        std::fs::create_dir_all(&log_dir).expect("Failed to create log directory");
+
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_dir.join("latest.log"))
+            .expect("Failed to open log file");
+
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+            .with(fmt::layer().compact())
+            .with(fmt::layer().with_ansi(false).with_writer(log_file))
+            .init();
+    }
 
     if cfg!(target_os = "windows") {
         let user_data_dir = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");

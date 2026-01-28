@@ -122,13 +122,13 @@ impl HubContext {
             let mut event_stream = event_stream;
             while let Some(evt) = event_stream.next().await {
                 let evt = evt.unwrap().into();
-                tracing::debug!("Hub event: {:?}", evt);
+                tracing::trace!("Hub event: {:?}", evt);
                 if let oe::Event::DeviceEvent(oe::DeviceEvent(
                     device,
                     oe::DeviceEventKind::TrackingEvent(tracking),
                 )) = &evt
                 {
-                    tracing::info!(
+                    tracing::trace!(
                         "Hub received TrackingEvent for device {:?}: aimpoint=({}, {}), screen_id={}",
                         device.uuid,
                         tracking.aimpoint.x,
@@ -137,7 +137,7 @@ impl HubContext {
                     );
                     let result = self.tracking_events.send((device.clone(), *tracking));
                     if let Err(e) = result {
-                        tracing::warn!(
+                        tracing::trace!(
                             "Failed to broadcast tracking event: {} (no subscribers?)",
                             e
                         );
