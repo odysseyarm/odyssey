@@ -4,6 +4,28 @@
     "atslite": {
       "firmwares": [
         {
+          "version": "0.1.4",
+          "files": {
+            "app-a": {
+              "sha256": "8ce6e247940e3c8d5ccd595b090a8bfa9b6c5f08af1dcba94d5c8b034266669f",
+              "size": 371296
+            },
+            "app-b": {
+              "sha256": "f74423753ce76ae23cf7ef0457779a8c504f0c8697ee223f93197e334176e2df",
+              "size": 371296
+            },
+            "net-core": {
+              "sha256": "7bc5806f1be2803d7eab516ebf05fe966186c2791ef66bfcb2acb8d234f69990",
+              "size": 170600
+            },
+            "stage2-bootloader": {
+              "sha256": "a5cb586625877855d07de1e47e7911b3466cfad162f2e0241ccfbd4fab15aa67",
+              "size": 41280
+            }
+          },
+          "released": "2026-01-28"
+        },
+        {
           "version": "0.1.3",
           "files": {
             "app-a": {
