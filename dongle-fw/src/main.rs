@@ -489,16 +489,9 @@ async fn usb_rx_task(
 ) {
     loop {
         info!("USB RX task: waiting for USB configuration");
-        // Wait until configured before attempting to read (multi-consumer watch)
-        let mut cfg = crate::usb::usb_config_receiver();
-        loop {
-            if let Some(v) = cfg.try_get() {
-                if v {
-                    break;
-                }
-            }
-            // wait for any value, then loop to check
-            let _ = cfg.get().await;
+        // Wait until configured before attempting to read
+        while !crate::usb::USB_CONFIGURED.load(core::sync::atomic::Ordering::Acquire) {
+            embassy_time::Timer::after_millis(10).await;
         }
 
         let mut read_buf = [0u8; 512];
@@ -559,17 +552,12 @@ async fn host_responses_tx_task(
     let mut write_buf = [0u8; 256];
 
     loop {
-        // Wait for configuration (watch, multi-consumer)
-        let mut cfg = crate::usb::usb_config_receiver();
-        loop {
-            if let Some(v) = cfg.try_get() {
-                if v {
-                    break;
-                }
-            }
-            let _ = cfg.get().await;
+        // Wait for configuration
+        while !crate::usb::USB_CONFIGURED.load(core::sync::atomic::Ordering::Acquire) {
+            embassy_time::Timer::after_millis(10).await;
         }
         info!("USB TX host task: configured");
+        let mut cfg = crate::usb::usb_config_receiver();
 
         // Inner running loop
         loop {
@@ -621,17 +609,12 @@ async fn device_packets_tx_task(
     let mut write_buf = [0u8; 256];
 
     loop {
-        // Wait for configuration (watch, multi-consumer)
-        let mut cfg = crate::usb::usb_config_receiver();
-        loop {
-            if let Some(v) = cfg.try_get() {
-                if v {
-                    break;
-                }
-            }
-            let _ = cfg.get().await;
+        // Wait for configuration
+        while !crate::usb::USB_CONFIGURED.load(core::sync::atomic::Ordering::Acquire) {
+            embassy_time::Timer::after_millis(10).await;
         }
         info!("USB TX data task: configured");
+        let mut cfg = crate::usb::usb_config_receiver();
 
         loop {
             // Bounded wait to detect deconfigure while idle

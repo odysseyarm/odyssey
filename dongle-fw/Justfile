@@ -10,8 +10,8 @@ app_ver   := "1"
 key_file  := ""
 
 # Serial
-dfu_port  := "COM67"
-# dfu_port  := "COM65"
+# dfu_port  := "COM67"
+dfu_port  := "COM65"
 baud      := "115200"
 dev_port  := "COM14"
 # dev_port  := "COM64"
@@ -46,3 +46,9 @@ paths:
 
 attach:
     defmt-print --log-format oneline -e {{ROOT}}/target/thumbv7em-none-eabihf/release/dongle-fw serial --dtr --path {{dev_port}}
+
+flash-dk:
+    cargo run --release --config .cargo/config-dk.toml --features rtt
+
+attach-dk:
+    probe-rs attach --chip nRF52840_xxAA {{ROOT}}/target/thumbv7em-none-eabihf/release/dongle-fw

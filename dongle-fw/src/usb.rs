@@ -100,10 +100,28 @@ impl MyHandler {
 }
 
 impl embassy_usb::Handler for MyHandler {
+    fn reset(&mut self) {
+        defmt::info!("USB bus reset");
+        // Clear configured state on bus reset - this ensures clean re-enumeration
+        // when device is plugged in before PC boot or after failed enumeration
+        USB_CONFIGURED.store(false, Ordering::Release);
+        USB_CONFIG_WATCH.sender().send(false);
+        self.signal.signal(false);
+    }
+
+    fn addressed(&mut self, addr: u8) {
+        defmt::info!("USB addressed: {}", addr);
+    }
+
     fn configured(&mut self, configured: bool) {
+        defmt::info!("USB configured: {}", configured);
         USB_CONFIGURED.store(configured, Ordering::Release);
         USB_CONFIG_WATCH.sender().send(configured);
         self.signal.signal(configured);
+    }
+
+    fn suspended(&mut self, suspended: bool) {
+        defmt::debug!("USB suspended: {}", suspended);
     }
 
     fn control_out(
