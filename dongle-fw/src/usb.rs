@@ -1,4 +1,3 @@
-use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_nrf::Peri;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
@@ -104,7 +103,6 @@ impl embassy_usb::Handler for MyHandler {
         defmt::info!("USB bus reset");
         // Clear configured state on bus reset - this ensures clean re-enumeration
         // when device is plugged in before PC boot or after failed enumeration
-        USB_CONFIGURED.store(false, Ordering::Release);
         USB_CONFIG_WATCH.sender().send(false);
         self.signal.signal(false);
     }
@@ -115,7 +113,6 @@ impl embassy_usb::Handler for MyHandler {
 
     fn configured(&mut self, configured: bool) {
         defmt::info!("USB configured: {}", configured);
-        USB_CONFIGURED.store(configured, Ordering::Release);
         USB_CONFIG_WATCH.sender().send(configured);
         self.signal.signal(configured);
     }
@@ -187,8 +184,7 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
-// Global configured flag + watch for multi-task gating (Signal is single-consumer)
-pub static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
+// Global watch for multi-task gating (Signal is single-consumer)
 static USB_CONFIG_WATCH: Watch<ThreadModeRawMutex, bool, 4> = Watch::new();
 
 pub fn usb_config_receiver() -> DynReceiver<'static, bool> {
