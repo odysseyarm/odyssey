@@ -17,6 +17,11 @@ use std::sync::{Arc, Mutex};
 pub enum FirmwareUpdateState {
     /// No update available or not yet checked
     Idle,
+    /// Update is available but device lacks USB control (needs to be plugged in via USB)
+    NeedsUsbConnection {
+        current: [u16; 3],
+        available: String,
+    },
     /// Update is available
     Available {
         current: [u16; 3],
@@ -130,60 +135,92 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
     let mut local_state = use_signal(|| manager.get_state(&device_uuid));
 
     // Poll the manager for state updates every 100ms
-    use_future(move || {
+    {
         let manager = manager.clone();
-        async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                let new_state = manager.get_state(&device_uuid);
-                local_state.set(new_state);
+        use_future(move || {
+            let manager = manager.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    let new_state = manager.get_state(&device_uuid);
+                    local_state.set(new_state);
+                }
             }
-        }
-    });
+        });
+    }
 
-    // Check if update is available when manifest or device changes
-    use_effect({
-        let device = device.clone();
-        let manager = props.manager.clone();
-        move || {
-            // Only check for updates if device has USB control capability
-            if !device.capabilities.contains(DeviceCapabilities::CONTROL) {
-                return;
-            }
+    // Check if update is available - runs on every render when props change
+    // We do this synchronously during render rather than in use_effect because
+    // use_effect captures values and won't see prop changes
+    {
+        let current_state = manager.get_state(&device_uuid);
 
-            // Don't reset state if we're in the middle of an update
-            let current_state = manager.get_state(&device_uuid);
-            if !matches!(
-                current_state,
-                FirmwareUpdateState::Idle | FirmwareUpdateState::Available { .. }
-            ) {
-                return;
-            }
-
+        // Only update state if we're not in the middle of an update
+        if matches!(
+            current_state,
+            FirmwareUpdateState::Idle
+                | FirmwareUpdateState::Available { .. }
+                | FirmwareUpdateState::NeedsUsbConnection { .. }
+        ) {
             if let (Some(manifest), Some(fw_version)) =
                 (manifest(), device.firmware_version.as_ref())
             {
                 let device_version = [fw_version[0], fw_version[1], fw_version[2]];
 
-                if let Some((vid, pid, device_type)) = firmware::find_any_known_device() {
+                // Check if there's a compatible update available using any known device type
+                let mut update_available: Option<(String, String)> = None;
+
+                for &(_vid, _pid, device_type) in firmware::DEVICE_MAP {
                     if let Some(available_fw) =
                         firmware::find_compatible_firmware(&manifest, device_type, device_version)
                     {
-                        let new_state = FirmwareUpdateState::Available {
+                        update_available =
+                            Some((device_type.to_string(), available_fw.version.clone()));
+                        break;
+                    }
+                }
+
+                if let Some((device_type, available_version)) = update_available {
+                    // Check if device has USB control capability
+                    if device.capabilities.contains(DeviceCapabilities::CONTROL) {
+                        // Device has USB control - can update directly
+                        if let Some((vid, pid, _)) = firmware::find_any_known_device() {
+                            let new_state = FirmwareUpdateState::Available {
+                                current: device_version,
+                                available: available_version.clone(),
+                                device_type,
+                                vid,
+                                pid,
+                            };
+                            if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
+                                tracing::info!(
+                                    "Update available for {:02x?}: {}.{}.{} -> {}",
+                                    device_uuid,
+                                    device_version[0],
+                                    device_version[1],
+                                    device_version[2],
+                                    available_version
+                                );
+                            }
+                            manager.set_state(device_uuid, new_state);
+                        }
+                    } else {
+                        // Device doesn't have USB control - prompt user to plug in USB
+                        let new_state = FirmwareUpdateState::NeedsUsbConnection {
                             current: device_version,
-                            available: available_fw.version.clone(),
-                            device_type: device_type.to_string(),
-                            vid,
-                            pid,
+                            available: available_version.clone(),
                         };
-                        if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
+                        if !matches!(
+                            current_state,
+                            FirmwareUpdateState::NeedsUsbConnection { .. }
+                        ) {
                             tracing::info!(
-                                "Update available for {:02x?}: {}.{}.{} -> {}",
+                                "Update available for {:02x?}: {}.{}.{} -> {} (needs USB connection)",
                                 device_uuid,
                                 device_version[0],
                                 device_version[1],
                                 device_version[2],
-                                available_fw.version
+                                available_version
                             );
                         }
                         manager.set_state(device_uuid, new_state);
@@ -191,12 +228,27 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 }
             }
         }
-    });
+    }
 
     let state = local_state();
 
     match state {
         FirmwareUpdateState::Idle => rsx! {},
+        FirmwareUpdateState::NeedsUsbConnection { available, .. } => {
+            rsx! {
+                div {
+                    class: "flex items-center gap-2",
+                    span {
+                        class: "text-xs text-yellow-600 dark:text-yellow-400",
+                        "Update available: v{available}"
+                    }
+                    span {
+                        class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                        "Plug in USB to update"
+                    }
+                }
+            }
+        }
         FirmwareUpdateState::Available {
             available,
             device_type,
@@ -510,6 +562,7 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
 
     let state_display = match &current_state {
         FirmwareUpdateState::Idle => "Idle".to_string(),
+        FirmwareUpdateState::NeedsUsbConnection { .. } => "Plug in USB to update".to_string(),
         FirmwareUpdateState::Available { .. } => "Update available".to_string(),
         FirmwareUpdateState::Downloading => "Downloading...".to_string(),
         FirmwareUpdateState::Detaching => "Preparing device...".to_string(),
