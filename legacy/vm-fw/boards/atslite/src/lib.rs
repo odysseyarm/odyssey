@@ -11,11 +11,11 @@ pub mod utils;
 
 // ATSlite-specific modules
 pub mod battery_model;
+pub mod device_control_task;
 pub mod nrf5340_init;
 pub mod pmic_leds;
 pub mod power;
 pub mod power_button;
-pub mod device_control_task;
 pub mod power_state;
 pub mod transport_mode;
 
@@ -29,7 +29,7 @@ pub use platform::AtslitePlatform;
 pub use embassy_executor;
 pub use embassy_nrf;
 
-use embassy_nrf::{bind_interrupts, interrupt, pac, peripherals, spim, twim};
+use embassy_nrf::{bind_interrupts, cryptocell_rng, interrupt, pac, peripherals, spim, twim};
 
 bind_interrupts!(pub struct Irqs {
     SERIAL0 => spim::InterruptHandler<peripherals::SERIAL0>;
@@ -40,6 +40,7 @@ bind_interrupts!(pub struct Irqs {
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
     TIMER0 => TimerIrq;
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
+    CRYPTOCELL => cryptocell_rng::InterruptHandler<peripherals::CC_RNG>;
 });
 
 pub struct TimerIrq;

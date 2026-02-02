@@ -112,21 +112,29 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
 async fn main(spawner: Spawner) {
     defmt::info!("ATSlite board initialization starting...");
 
+    defmt::info!("Calling nrf5340_init::init()...");
     let (_cp, p) = nrf5340_init::init();
+    defmt::info!("nrf5340_init complete");
 
     // Initialize NVMC in a StaticCell so it can be shared between DFU and settings
+    defmt::info!("Initializing NVMC...");
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
+    defmt::info!("NVMC initialized");
 
+    defmt::info!("Splitting board peripherals...");
     let board: Board = split_board!(p);
+    defmt::info!("Board peripherals split");
 
     // Boot confirmation moved to later (after IMU init)
 
     // Initialize PMIC over TWIM
+    defmt::info!("Initializing PMIC...");
     let mut twim_cfg = twim::Config::default();
     twim_cfg.frequency = twim::Frequency::K400;
     static TWIM_BUF: StaticCell<[u8; 0]> = StaticCell::new();
     let twim_buf = TWIM_BUF.init([0u8; 0]);
+    defmt::info!("Creating TWIM...");
     let twim = Twim::new(
         p.SERIAL2,
         Irqs,
@@ -135,48 +143,58 @@ async fn main(spawner: Spawner) {
         twim_cfg,
         twim_buf,
     );
+    defmt::info!("TWIM created");
 
     static PMIC: StaticCell<AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>> =
         StaticCell::new();
+    defmt::info!("Creating NPM1300...");
     let mut pmic_dev = NPM1300::new(twim, Delay);
+    defmt::info!("Running pmic_setup...");
     power::pmic_setup(&mut pmic_dev).await.unwrap();
+    defmt::info!("Running configure_and_start_charging...");
     power::configure_and_start_charging(
         &mut pmic_dev,
         npm1300_rs::sysreg::VbusInCurrentLimit::MA100,
     )
     .await
     .unwrap();
+    defmt::info!("PMIC configured");
     let pmic = PMIC.init(AsyncMutex::new(pmic_dev));
 
     // Handle PMIC IRQ pin
-    spawner
-        .spawn(pmic_irq_task(board.pmic.irq.into(), pmic))
-        .unwrap();
+    defmt::info!("Spawning pmic_irq_task...");
+    spawner.spawn(pmic_irq_task(board.pmic.irq.into(), pmic).unwrap());
 
     // Initialize PMIC LED animator
+    defmt::info!("Creating PmicLedAnimator...");
     let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
         .await
         .unwrap();
-    spawner.spawn(led_task(anim)).unwrap();
+    defmt::info!("Spawning led_task...");
+    spawner.spawn(led_task(anim).unwrap());
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
     // Power button handling
+    defmt::info!("Power button handling...");
     let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
+    defmt::info!("handle_boot_vbus_policy...");
     handle_boot_vbus_policy(pmic, pmic_leds).await.unwrap();
+    defmt::info!("handle_pending_ship...");
     handle_pending_ship(pmic, pmic_leds, &mut pwr_btn)
         .await
         .unwrap();
+    defmt::info!("Setting LED state TurningOn...");
     pmic_leds.set_state(LedState::TurningOn).await;
     let pwr_btn_task = pwr_btn;
-    spawner
-        .spawn(power_button_task(pwr_btn_task, pmic, pmic_leds))
-        .unwrap();
-    spawner
-        .spawn(power_state::power_state_task(pmic, pmic_leds))
-        .unwrap();
+    defmt::info!("Spawning power_button_task...");
+    spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
+    defmt::info!("Spawning power_state_task...");
+    spawner.spawn(power_state::power_state_task(pmic, pmic_leds).unwrap());
+    defmt::info!("Power tasks spawned");
 
     // Initialize PAJ sensors
+    defmt::info!("Initializing PAJ sensors...");
     let mut paj_cfg = embassy_nrf::spim::Config::default();
     paj_cfg.frequency = embassy_nrf::spim::Frequency::M8;
     paj_cfg.mode = embassy_nrf::spim::MODE_3;
@@ -196,15 +214,24 @@ async fn main(spawner: Spawner) {
         cs: board.paj7025r3.cs.into(),
     };
 
+    defmt::info!("Creating SPI devices...");
     let dev_r2 = common::utils::make_spi_dev(p.SERIAL0, Irqs, paj7025r2_spi, paj_cfg.clone());
+    defmt::info!("SPI dev_r2 created");
     let dev_r3 = common::utils::make_spi_dev(p.SERIAL1, Irqs, paj7025r3_spi, paj_cfg);
+    defmt::info!("SPI dev_r3 created");
 
+    defmt::info!("Waiting 1ms...");
     Timer::after_millis(1).await;
+    defmt::info!("Timer done");
 
+    defmt::info!("Initializing PAJ7025R2...");
     let mut paj7025r2 = Paj::init(dev_r2).await.unwrap();
+    defmt::info!("Initializing PAJ7025R3...");
     let mut paj7025r3 = Paj::init(dev_r3).await.unwrap();
+    defmt::info!("Configuring PAJ sensors...");
     paj7025r2.init_settings(true, 0x10, 0x00).await.unwrap();
     paj7025r3.init_settings(true, 0x10, 0x02).await.unwrap();
+    defmt::info!("PAJ sensors configured");
 
     static PAJ7025R2_MUTEX: StaticCell<AsyncMutex<NoopRawMutex, Paj>> = StaticCell::new();
     static PAJ7025R3_MUTEX: StaticCell<AsyncMutex<NoopRawMutex, Paj>> = StaticCell::new();
@@ -212,6 +239,7 @@ async fn main(spawner: Spawner) {
     let paj_r3_mutex = PAJ7025R3_MUTEX.init(AsyncMutex::new(paj7025r3));
 
     // Initialize IMU (icm42688)
+    defmt::info!("Initializing IMU...");
     unsafe {
         // Erratum workaround
         (0x5000_ac04 as *mut u32).write_volatile(1);
@@ -230,6 +258,7 @@ async fn main(spawner: Spawner) {
         common::settings::accel_odr(),
     )
     .await;
+    defmt::info!("IMU initialized");
 
     // Confirm boot using boot-api wrapper (which caches state for DFU requests)
     log_boot_state("before mark_booted");
@@ -276,7 +305,7 @@ async fn main(spawner: Spawner) {
             );
         },
     );
-    spawner.spawn(usb::run_usb(usb_dev)).unwrap();
+    spawner.spawn(usb::run_usb(usb_dev).unwrap());
 
     // CRITICAL: Wait for flash writes to fully settle before stealing NVMC peripheral.
     // On nRF5340, flash writes continue in hardware after NVMC API returns.
@@ -305,6 +334,7 @@ async fn main(spawner: Spawner) {
 
     // Check boot state after settings init to see if corruption happened
     log_boot_state("after settings init");
+    defmt::info!("Settings initialization complete");
 
     // Default transport mode to BLE after settings are initialized
     transport_mode::set(TransportMode::Ble);
@@ -313,17 +343,36 @@ async fn main(spawner: Spawner) {
     // Initialize device control channels after settings are ready
     let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
     common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
-    spawner
-        .spawn(atslite_board::device_control_task::device_control_task())
-        .unwrap();
+    spawner.spawn(atslite_board::device_control_task::device_control_task().unwrap());
 
-    // Confirm this boot as successful so the bootloader keeps the current slot active.
+    // Confirm this boot as successful so the bootloader keeps the current slot active
     // Adjust PMIC limit after USB enumerates
-    spawner.spawn(usb_pmic_config_task(usb_cfg, pmic)).unwrap();
+    spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
+
+    // Generate cryptographically secure seed for trouble-host PRNG using CryptoCell
+    // CryptoCell must be explicitly disabled after use to allow CPU sleep
+    defmt::info!("Generating BLE seed from CryptoCell...");
+    let ble_seed = {
+        use embassy_nrf::cryptocell_rng::CcRng;
+        let mut seed = [0u8; 32];
+        defmt::info!("Creating CcRng...");
+        let mut cc_rng = CcRng::new_blocking(p.CC_RNG);
+        defmt::info!("Filling seed bytes...");
+        cc_rng.blocking_fill_bytes(&mut seed);
+        defmt::info!("Dropping CcRng...");
+        drop(cc_rng);
+        // Disable CryptoCell subsystem to allow CPU sleep
+        defmt::info!("Disabling CryptoCell...");
+        embassy_nrf::pac::CRYPTOCELL
+            .enable()
+            .write(|w| w.set_enable(false));
+        defmt::info!("CryptoCell disabled, seed generated");
+        seed
+    };
 
     // BLE controller and tasks
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
-    spawner.spawn(ble_task(controller)).unwrap();
+    spawner.spawn(ble_task(controller, ble_seed).unwrap());
 
     // Initialize watchdog (started by stage2 bootloader)
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
@@ -332,7 +381,7 @@ async fn main(spawner: Spawner) {
     wdt_config.action_during_sleep = SleepConfig::RUN;
     wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
     let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
-    spawner.spawn(watchdog_feeder(wdt_handle)).unwrap();
+    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
     let l2cap_channels = AtsliteL2capChannels::new();
 
     // Build object mode context
@@ -444,8 +493,8 @@ async fn power_button_task(
 }
 
 #[embassy_executor::task]
-async fn ble_task(controller: ble::host::BleController) {
-    ble::peripheral::run(controller).await;
+async fn ble_task(controller: ble::host::BleController, seed: [u8; 32]) {
+    ble::peripheral::run(controller, seed).await;
 }
 
 #[embassy_executor::task]

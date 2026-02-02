@@ -46,7 +46,6 @@ cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 panic-probe = "1.0.0"
 
 # Other
-nrf-pac = "0.2.0"
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", default-features = false }
 
 [features]
@@ -69,3 +68,13 @@ probe-rs-tools = { version = "0.27.0", locked = true, bins = ["probe-rs"] }
 minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
 minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }

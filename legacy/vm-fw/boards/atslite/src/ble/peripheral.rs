@@ -4,6 +4,8 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use protodongers::control::device::TransportMode;
+use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
 use trouble_host::prelude::*;
 
 use crate::transport_mode;
@@ -22,7 +24,7 @@ type Pool = DefaultPacketPool;
 struct Server {}
 
 /// Run the BLE stack.
-pub async fn run<C>(controller: C)
+pub async fn run<C>(controller: C, seed: [u8; 32])
 where
     C: Controller,
 {
@@ -32,7 +34,10 @@ where
     let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         HostResources::new();
 
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+    let mut host_seed_rng = ChaCha20Rng::from_seed(seed);
+    let stack = trouble_host::new(controller, &mut resources)
+        .set_random_address(address)
+        .set_random_generator_seed(&mut host_seed_rng);
 
     // Safety: init_settings is called before BLE task is spawned
     let settings = unsafe { settings::get_settings() };

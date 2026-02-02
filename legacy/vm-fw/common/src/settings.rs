@@ -166,9 +166,7 @@ pub async fn init_settings(
     assert!((region.end - region.start) as usize >= 2 * PAGE_SIZE);
 
     // Start I/O worker
-    spawner
-        .spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)))
-        .unwrap();
+    spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
 
     // Attach nodes with defaults (hydrates via worker)
     let h_pajs = NODE_PAJS
@@ -558,7 +556,7 @@ impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
             impact_threshold: 5,
-            suppress_ms: 200,
+            suppress_ms: 100,
             accel_config: Default::default(),
             gyro_config: Default::default(),
             camera_model_nf: CameraCalibrationParams {

@@ -1,6 +1,6 @@
 [package]
 name = "atslite-board"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 
 [[bin]]
@@ -42,7 +42,7 @@ nrf-fuel-gauge = { git = "https://github.com/Abrahamh08/nrf-fuel-gauge" }
 nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf_fuel_gauge", "nrf5340"] }
 
 # ATSlite-specific: BLE
-trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32", "l2cap-rx-queue-size-16", "dev-disable-csprng-seed-requirement"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32", "l2cap-rx-queue-size-16"] }
 bt-hci = { version = "0.7", default-features = false, features = ["defmt"] }
 embassy-net-driver-channel = { git = "https://github.com/Abrahamh08/embassy" }
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }
@@ -52,6 +52,10 @@ paj7025 = { path = "../../../paj7025", features = ["nrf"] }
 
 # Serialization
 postcard = { version = "1.1.3", features = ["use-defmt"] }
+
+# RNG for trouble-host security
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
 
 # IO traits
 embedded-io = "0.7"
@@ -70,6 +74,16 @@ debug = 2           # Keep DWARF for probe-rs RTT locations
 minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
 minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 
 # [patch."https://github.com/odysseyarm/protodonge-rs"]
 # protodongers = { path = "../../patches/protodonge-rs" }

@@ -4,70 +4,26 @@
     "atslite": {
       "firmwares": [
         {
-          "version": "0.1.4",
+          "version": "0.1.5",
           "files": {
             "app-a": {
-              "sha256": "8ce6e247940e3c8d5ccd595b090a8bfa9b6c5f08af1dcba94d5c8b034266669f",
-              "size": 371296
+              "sha256": "c4834f11bade12c1f7216fc2f05ec90a240051868a18bf0af33ad6a926e7a108",
+              "size": 376992
             },
             "app-b": {
-              "sha256": "f74423753ce76ae23cf7ef0457779a8c504f0c8697ee223f93197e334176e2df",
-              "size": 371296
+              "sha256": "fd25213f1d99a2cbce3d31ac0e680356b50536fad744af6b988bb67f93174d15",
+              "size": 376992
             },
             "net-core": {
-              "sha256": "7bc5806f1be2803d7eab516ebf05fe966186c2791ef66bfcb2acb8d234f69990",
+              "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
               "size": 170600
             },
             "stage2-bootloader": {
-              "sha256": "a5cb586625877855d07de1e47e7911b3466cfad162f2e0241ccfbd4fab15aa67",
+              "sha256": "c5330ea81c79e06858304f87de4c72cf178599ce33c29d87d5690837700409df",
               "size": 41280
             }
           },
-          "released": "2026-01-28"
-        },
-        {
-          "version": "0.1.3",
-          "files": {
-            "app-a": {
-              "sha256": "a3abaf788171d5c10eef79aa08933e519a19e74d3dd01747f2b1abde495e933f",
-              "size": 370464
-            },
-            "app-b": {
-              "sha256": "e1ffb6135e10389c6c5813e1665be6fff7689b5664b45a5da73a57cc4d3210f0",
-              "size": 370464
-            },
-            "net-core": {
-              "sha256": "7bc5806f1be2803d7eab516ebf05fe966186c2791ef66bfcb2acb8d234f69990",
-              "size": 170600
-            },
-            "stage2-bootloader": {
-              "sha256": "a5cb586625877855d07de1e47e7911b3466cfad162f2e0241ccfbd4fab15aa67",
-              "size": 41280
-            }
-          },
-          "released": "2026-01-26"
-        },
-        {
-          "version": "0.1.2",
-          "files": {
-            "app-a": {
-              "sha256": "81424338465bafdc17b198a4f2eb4df3e9cbc845f1daa3e125268b36c391c6b3",
-              "size": 370464
-            },
-            "app-b": {
-              "sha256": "abb788642a10fb54f7ed62e8376ef11aa97471e4c0db51d35860bf81aef17c31",
-              "size": 370464
-            },
-            "net-core": {
-              "sha256": "7bc5806f1be2803d7eab516ebf05fe966186c2791ef66bfcb2acb8d234f69990",
-              "size": 170600
-            },
-            "stage2-bootloader": {
-              "sha256": "a5cb586625877855d07de1e47e7911b3466cfad162f2e0241ccfbd4fab15aa67",
-              "size": 41280
-            }
-          },
-          "released": "2026-01-26"
+          "released": "2026-02-02"
         }
       ]
     }

@@ -224,9 +224,10 @@ impl Default for GeneralSettings {
                         dist_coeffs: [-0.0183234196, 0.0833942071, 0.0, 0.0, -0.0357658006],
                     },
                     stereo_iso: Default::default(),
-                    suppress_ms: 200,
+                    suppress_ms: 100,
                     _padding: [0; 40],
-                }.into(),
+                }
+                .into(),
             },
             accel_odr: &ACCEL_ODR,
         }

@@ -224,6 +224,7 @@ async fn main(mut spawner: Spawner) {
     );
     static SDC_MEM: StaticCell<sdc::Mem<22624>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(sdc::Mem::new());
+
     use embassy_nrf::mode::Async as RngAsync;
     static RNG: StaticCell<rng::Rng<'static, RngAsync>> = StaticCell::new();
     let rng: &'static mut rng::Rng<'static, RngAsync> = RNG.init(rng::Rng::new(p.RNG, Irqs));
