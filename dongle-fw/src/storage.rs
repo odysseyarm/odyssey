@@ -19,7 +19,7 @@ use cfg_noodle::minicbor::{CborLen, Decode, Encode};
 use cfg_noodle::mutex::raw_impls::cs::CriticalSectionRawMutex as NoodleRawMutex;
 use cfg_noodle::sequential_storage::cache::NoCache;
 use cfg_noodle::{StorageList, StorageListNode};
-use defmt::info;
+use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
 use embassy_nrf::nvmc::PAGE_SIZE;
@@ -404,11 +404,11 @@ pub async fn init_settings(
 
     // Start I/O worker first so it can service read hydration for attached nodes
     // TEMP: Use very long interval to avoid periodic flash writes during debugging
-    spawner.must_spawn(settings_worker(
+    spawner.spawn(unwrap!(settings_worker(
         flash_dev,
         region.clone(),
         Duration::from_secs(10),
-    ));
+    )));
 
     // Attach nodes (worker will hydrate once SoftDevice is ready)
     let h_bonds = NODE_BONDS
@@ -443,4 +443,3 @@ pub async fn init_settings(
 }
 
 // Softdevice gating removed: storage starts immediately.
-

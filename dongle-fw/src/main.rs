@@ -14,7 +14,7 @@ use {defmt_rtt as _, panic_probe as _};
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use cortex_m_rt::{ExceptionFrame, exception};
-use defmt::{error, info, warn};
+use defmt::{error, info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_nrf::{bind_interrupts, peripherals, usb as nrf_usb};
 use embassy_nrf::{peripherals::RNG as NRF_RNG, rng};
@@ -169,7 +169,7 @@ async fn main(mut spawner: Spawner) {
         let usb = USB_DEVICE.init(usb_device);
 
         // Spawn USB device task
-        spawner.must_spawn(usb_device_task(usb));
+        spawner.spawn(unwrap!(usb_device_task(usb)));
 
         defmt::info!("RTT logger ready");
         (ep_in, ep_out)
@@ -214,7 +214,7 @@ async fn main(mut spawner: Spawner) {
         >(mpsl_p, Irqs, lfclk_cfg, session_mem)
         .unwrap(),
     );
-    spawner.must_spawn(mpsl_task(mpsl));
+    spawner.spawn(unwrap!(mpsl_task(mpsl)));
 
     // SDC init
     info!("SDC initialization");
@@ -222,7 +222,7 @@ async fn main(mut spawner: Spawner) {
         p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
         p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
     );
-    static SDC_MEM: StaticCell<sdc::Mem<22624>> = StaticCell::new();
+    static SDC_MEM: StaticCell<sdc::Mem<22648>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(sdc::Mem::new());
 
     use embassy_nrf::mode::Async as RngAsync;
@@ -233,17 +233,11 @@ async fn main(mut spawner: Spawner) {
     let sdc = sdc::Builder::new()
         .unwrap()
         .support_scan()
-        .unwrap()
         .support_ext_scan()
-        .unwrap()
         .support_central()
-        .unwrap()
         .support_ext_central()
-        .unwrap()
         .support_phy_update_central()
-        .unwrap()
         .support_le_2m_phy()
-        .unwrap()
         .central_count(MAX_DEVICES as u8)
         .unwrap()
         .buffer_cfg(
@@ -283,7 +277,7 @@ async fn main(mut spawner: Spawner) {
         embassy_nrf::gpio::Level::High,
         embassy_nrf::gpio::OutputDrive::Standard,
     );
-    spawner.must_spawn(pairing::pairing_led_task(blue));
+    spawner.spawn(unwrap!(pairing::pairing_led_task(blue)));
 
     // Initialize settings using MPSL-coordinated flash access
     let flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
@@ -311,13 +305,13 @@ async fn main(mut spawner: Spawner) {
     let host = stack.build();
     let (rx, control, tx) = host.runner.split();
     info!("Spawning host_rx_task");
-    spawner.must_spawn(host_rx_task(rx));
+    spawner.spawn(unwrap!(host_rx_task(rx)));
     info!("Spawning host_ctrl_task");
-    spawner.must_spawn(host_ctrl_task(control));
+    spawner.spawn(unwrap!(host_ctrl_task(control)));
     info!("Spawning host_tx_task");
-    spawner.must_spawn(host_tx_task(tx));
+    spawner.spawn(unwrap!(host_tx_task(tx)));
     info!("Spawning host_mgmt_task");
-    spawner.must_spawn(host_mgmt_task(stack));
+    spawner.spawn(unwrap!(host_mgmt_task(stack)));
 
     // Initialize channels for BLE <-> USB communication
     static DEVICE_PACKETS: StaticCell<DevicePacketChannel> = StaticCell::new();
@@ -332,27 +326,33 @@ async fn main(mut spawner: Spawner) {
     // Store global references for use in control task
     ble::central::set_global_refs(active_connections, device_queues).await;
 
-    spawner.must_spawn(usb_rx_task(ep_out, device_queues, active_connections));
+    spawner.spawn(unwrap!(usb_rx_task(
+        ep_out,
+        device_queues,
+        active_connections
+    )));
     // Initialize shared EP mutex and spawn independent TX tasks
     let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
-    spawner.must_spawn(host_responses_tx_task(ep_mutex));
-    spawner.must_spawn(device_packets_tx_task(ep_mutex, device_packets));
-    spawner.must_spawn(control_exec_task(settings));
+    spawner.spawn(unwrap!(host_responses_tx_task(ep_mutex)));
+    spawner.spawn(unwrap!(device_packets_tx_task(ep_mutex, device_packets)));
+    spawner.spawn(unwrap!(control_exec_task(settings)));
     // Start BLE manager (central)
     info!("Starting BLE manager task");
-    spawner.must_spawn(ble_task(
+    spawner.spawn(unwrap!(ble_task(
         device_packets,
         device_queues,
         settings,
         active_connections,
         stack,
         spawner,
-    ));
+    )));
 
     // Start pairing scanner (uses its own Central instance, finds devices and adds to targets)
-    spawner.must_spawn(ble::pairing_scanner::pairing_scanner_task(stack, settings));
+    spawner.spawn(unwrap!(ble::pairing_scanner::pairing_scanner_task(
+        stack, settings
+    )));
 
-    spawner.must_spawn(bond_storage_task(settings));
+    spawner.spawn(unwrap!(bond_storage_task(settings)));
 }
 
 // Hardware VBUS detect is used; no SoftDevice VBUS forwarding needed.
@@ -491,10 +491,11 @@ async fn usb_rx_task(
     loop {
         info!("USB RX task: waiting for USB configuration");
         let mut cfg = crate::usb::usb_config_receiver();
-        loop {
-            if cfg.changed().await {
-                break;
-            }
+        // First check if already configured, otherwise wait for change to true
+        if cfg.try_get().unwrap_or(false) {
+            // Already configured
+        } else {
+            cfg.changed_and(|&v| v).await;
         }
 
         let mut read_buf = [0u8; 512];
@@ -557,10 +558,11 @@ async fn host_responses_tx_task(
     loop {
         // Wait for configuration
         let mut cfg = crate::usb::usb_config_receiver();
-        loop {
-            if cfg.changed().await {
-                break;
-            }
+        // First check if already configured, otherwise wait for change to true
+        if cfg.try_get().unwrap_or(false) {
+            // Already configured
+        } else {
+            cfg.changed_and(|&v| v).await;
         }
         info!("USB TX host task: configured");
 
@@ -584,19 +586,19 @@ async fn host_responses_tx_task(
                 }
             };
 
-            // Take endpoint from mutex to avoid holding lock during USB write
-            let mut ep_opt = ep_mutex.lock().await;
-            let ep = ep_opt.take();
-            drop(ep_opt); // Explicitly drop the guard to release the lock
-
-            if let Some(mut endpoint) = ep {
-                let result = send_mux_msg(&response, &mut write_buf, &mut endpoint).await;
-                // Always return endpoint to mutex, even on error
-                *ep_mutex.lock().await = Some(endpoint);
+            // Hold the mutex lock while doing I/O - the other task will wait for the lock
+            // rather than getting None and dropping its message
+            let mut ep_guard = ep_mutex.lock().await;
+            if let Some(ref mut endpoint) = *ep_guard {
+                let result = send_mux_msg(&response, &mut write_buf, endpoint).await;
+                drop(ep_guard); // Release lock after I/O
                 if result.is_err() {
                     warn!("USB TX: error sending host response");
                     break;
                 }
+            } else {
+                drop(ep_guard);
+                warn!("USB TX host: endpoint not initialized");
             }
         }
         warn!("USB TX host task: deconfigured");
@@ -616,13 +618,16 @@ async fn device_packets_tx_task(
     loop {
         // Wait for configuration
         let mut cfg = crate::usb::usb_config_receiver();
-        loop {
-            if cfg.changed().await {
-                break;
-            }
+        // First check if already configured, otherwise wait for change to true
+        if cfg.try_get().unwrap_or(false) {
+            // Already configured
+        } else {
+            cfg.changed_and(|&v| v).await;
         }
         info!("USB TX data task: configured");
 
+        let mut idle_count: u32 = 0;
+        let mut tx_count: u32 = 0;
         loop {
             // Bounded wait to detect deconfigure while idle
             let device_pkt = match embassy_time::with_timeout(
@@ -633,6 +638,11 @@ async fn device_packets_tx_task(
             {
                 Ok(pkt) => pkt,
                 Err(_) => {
+                    idle_count += 1;
+                    // Log every ~5 seconds of idle (20 * 250ms)
+                    if idle_count % 20 == 0 {
+                        info!("USB TX data: idle {}s, sent {}", idle_count / 4, tx_count);
+                    }
                     if let Some(v) = cfg.try_get() {
                         if !v {
                             break;
@@ -641,21 +651,25 @@ async fn device_packets_tx_task(
                     continue;
                 }
             };
+            idle_count = 0;
             let msg = MuxMsg::DevicePacket(device_pkt);
 
-            // Take endpoint from mutex to avoid holding lock during USB write
-            let mut ep_opt = ep_mutex.lock().await;
-            let ep = ep_opt.take();
-            drop(ep_opt); // Explicitly drop the guard to release the lock
-
-            if let Some(mut endpoint) = ep {
-                let result = send_mux_msg(&msg, &mut write_buf, &mut endpoint).await;
-                // Always return endpoint to mutex, even on error
-                *ep_mutex.lock().await = Some(endpoint);
-                if result.is_err() {
-                    warn!("USB TX: error sending device packet");
+            // Hold the mutex lock while doing I/O - the other task will wait for the lock
+            // rather than getting None and dropping its message
+            let mut ep_guard = ep_mutex.lock().await;
+            if let Some(ref mut endpoint) = *ep_guard {
+                let result = send_mux_msg(&msg, &mut write_buf, endpoint).await;
+                drop(ep_guard); // Release lock after I/O
+                if result.is_ok() {
+                    tx_count += 1;
+                } else {
+                    // Actual error from USB driver - endpoint likely disabled/stalled
+                    warn!("USB TX data: write failed after {} sent", tx_count);
                     break;
                 }
+            } else {
+                drop(ep_guard);
+                warn!("USB TX data: endpoint not initialized");
             }
         }
         warn!("USB TX data task: deconfigured");
@@ -676,6 +690,8 @@ async fn handle_usb_rx(
         );
         ()
     })?;
+
+    defmt::info!("Received USB message: {:?}", defmt::Debug2Format(&msg));
 
     match msg {
         MuxMsg::RequestDevices => {
@@ -741,11 +757,18 @@ async fn send_mux_msg(
     // Encode using postcard (standard for USB in ats_usb)
     let data = postcard::to_slice(msg, write_buf).map_err(|_| ())?;
 
-    // Use write_transfer to handle large packets automatically
-    EndpointIn::write_transfer(ep_in, data, true)
-        .await
-        .map_err(|_| ())?;
-    Ok(())
+    defmt::trace!("write_transfer start, {} bytes", data.len());
+    let result = EndpointIn::write_transfer(ep_in, data, true).await;
+    match result {
+        Ok(()) => {
+            defmt::trace!("write_transfer done");
+            Ok(())
+        }
+        Err(e) => {
+            warn!("USB TX write_transfer error: {:?}", defmt::Debug2Format(&e));
+            Err(())
+        }
+    }
 }
 
 #[embassy_executor::task]

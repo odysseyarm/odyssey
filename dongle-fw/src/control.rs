@@ -81,7 +81,12 @@ pub fn try_send_cmd(cmd: UsbMuxCtrlMsg) {
     let p = CMD_PTR.load(Ordering::Acquire);
     if !p.is_null() {
         let ch: &Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4> = unsafe { &*p };
-        let _ = ch.try_send(cmd);
+        match ch.try_send(cmd) {
+            Ok(()) => defmt::info!("Control cmd queued successfully"),
+            Err(_) => defmt::error!("Control cmd channel full, command dropped!"),
+        }
+    } else {
+        defmt::error!("Control CMD_PTR is null, cannot send command!");
     }
 }
 

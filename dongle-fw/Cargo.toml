@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread", "defmt"] }
-embassy-nrf = { version = "0.8.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "nfc-pins-as-gpio", "defmt"] }
+embassy-nrf = { version = "0.9.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "nfc-pins-as-gpio", "defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-usb = { version = "0.5.1", features = ["defmt"] }
 embassy-usb-driver = "0.2.0"
@@ -17,10 +17,10 @@ embassy-embedded-hal = "0.5.0"
 defmt-rtt = { version = "0.4", optional = true }
 panic-probe = { version = "0.3", features = ["print-defmt"], optional = true }
 
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "bb61f8a", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "defmt", "security", "scan"] }
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c", default-features = false, features = ["defmt", "nrf52840", "central", "peripheral"] }
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "11d5c3c", default-features = false, features = ["nrf52840", "defmt", "critical-section-impl"] }
-bt-hci = "0.6.0"
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "1212da1", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "defmt", "security", "scan"] }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["defmt", "nrf52840", "central", "peripheral"] }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["nrf52840", "defmt", "critical-section-impl"] }
+bt-hci = "0.7.0"
 
 cortex-m-rt = "0.7.5"
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
@@ -63,5 +63,12 @@ codegen-units = 1
 
 [patch.crates-io]
 kdl = { git = "https://github.com/Abrahamh08/kdl-rs", rev = "bb49e5a671f4186046a2acb2df0342e4c0a498ab" }
-
-embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "da4af0a7ae67d8ec592edf5eff9bbaed2d9e439a" }
+embassy-usb = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-usb-driver = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-nrf = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-time = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-time-driver = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-futures = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-sync = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-embedded-hal = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-executor = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }

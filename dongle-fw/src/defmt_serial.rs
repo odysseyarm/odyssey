@@ -39,9 +39,9 @@ pub fn init(spawner: &mut Spawner, mut builder: Builder<'static, Driver>) {
     // Run the USB device.
     unsafe {
         USB_FUT.init(usb.run());
-        unwrap!(spawner.spawn(usb_task()));
+        spawner.spawn(unwrap!(usb_task()));
         LOG_FUT.init(log_loop(class));
-        unwrap!(spawner.spawn(log_task()));
+        spawner.spawn(unwrap!(log_task()));
     }
 }
 

@@ -307,22 +307,22 @@ impl BleManager {
             for addr in targets.iter() {
                 if !spawned_tasks.contains(addr) {
                     info!("Spawning device task for {:02x}", *addr);
-                    if self
-                        .spawner
-                        .spawn(crate::ble::device_task::device_connection_task(
-                            self.stack,
-                            self.device_packets,
-                            self.active_connections,
-                            self.device_queues,
-                            self.settings,
-                            trouble_host::prelude::BdAddr::new(*addr),
-                        ))
-                        .is_ok()
-                    {
-                        let _ = spawned_tasks.push(*addr);
-                        info!("Device task spawned for {:02x}", *addr);
-                    } else {
-                        error!("Failed to spawn device task for {:02x} (pool full)", *addr);
+                    match crate::ble::device_task::device_connection_task(
+                        self.stack,
+                        self.device_packets,
+                        self.active_connections,
+                        self.device_queues,
+                        self.settings,
+                        trouble_host::prelude::BdAddr::new(*addr),
+                    ) {
+                        Ok(token) => {
+                            self.spawner.spawn(token);
+                            let _ = spawned_tasks.push(*addr);
+                            info!("Device task spawned for {:02x}", *addr);
+                        }
+                        Err(_) => {
+                            error!("Failed to spawn device task for {:02x} (pool full)", *addr);
+                        }
                     }
                 }
             }

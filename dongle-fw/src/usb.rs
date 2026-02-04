@@ -17,7 +17,7 @@ pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
 pub const VID: u16 = 0x1915;
 pub const PID: u16 = 0x5212; // Dongle PID
 
-const DEVICE_INTERFACE_GUIDS: &[&str] = &["{4d36e96c-e325-11ce-bfc1-08002be10318}"];
+const DEVICE_INTERFACE_GUIDS: &[&str] = &["{B0714FF4-0D68-4222-A73A-7CE3B8B9A601}"];
 
 macro_rules! static_byte_buffer {
     ($size:expr) => {{
@@ -100,7 +100,7 @@ impl MyHandler {
 
 impl embassy_usb::Handler for MyHandler {
     fn reset(&mut self) {
-        defmt::info!("USB bus reset");
+        defmt::warn!("USB bus reset");
         // Clear configured state on bus reset - this ensures clean re-enumeration
         // when device is plugged in before PC boot or after failed enumeration
         USB_CONFIG_WATCH.sender().send(false);
@@ -118,7 +118,7 @@ impl embassy_usb::Handler for MyHandler {
     }
 
     fn suspended(&mut self, suspended: bool) {
-        defmt::debug!("USB suspended: {}", suspended);
+        defmt::info!("USB suspended: {}", suspended);
     }
 
     fn control_out(
