@@ -150,9 +150,6 @@ pub fn Zero(
                         for (slot, device) in devices {
                             {
                                 let firing = (device_signals.read()[slot].shooting)();
-                                const PRIMARY: &str = "py-2.5 px-4 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700";
-                                const DANGER: &str = "py-2.5 px-4 text-xs text-gray-900 focus:outline-none bg-white rounded-lg border border-red-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-red-600 dark:hover:text-white dark:hover:bg-gray-700";
-
                                 rsx! {
                                     li {
                                         class: "flex flex-col gap-2",
@@ -164,7 +161,7 @@ pub fn Zero(
                                             li { class: "flex items-center gap-3",
                                                 if firing {
                                                     button {
-                                                        class: DANGER,
+                                                        class: "btn-secondary-danger",
                                                         onclick: move |_| {
                                                             device_signals.write()[slot].shooting.set(false);
                                                         },
@@ -172,14 +169,14 @@ pub fn Zero(
                                                     }
                                                 } else {
                                                     button {
-                                                        class: PRIMARY,
+                                                        class: "btn-secondary",
                                                         onclick: move |_| {
                                                             device_signals.write()[slot].shooting.set(true);
                                                         },
                                                         "Zero on shot"
                                                     }
                                                 }
-                                                button { class: PRIMARY, onclick: {
+                                                button { class: "btn-secondary", onclick: {
                                                     let dev = device.clone();
                                                     move |_| {
                                                         let dev = dev.clone();
@@ -191,7 +188,7 @@ pub fn Zero(
                                                         }
                                                     }
                                                 }, "Reset Zero" }
-                                                button { class: PRIMARY, onclick: {
+                                                button { class: "btn-secondary", onclick: {
                                                     let dev = device.clone();
                                                     move |_| {
                                                         let dev = dev.clone();
@@ -203,7 +200,7 @@ pub fn Zero(
                                                         }
                                                     }
                                                 }, "Clear Zero" }
-                                                button { class: PRIMARY, onclick: {
+                                                button { class: "btn-secondary", onclick: {
                                                     let dev = device.clone();
                                                     move |_| {
                                                         let dev = dev.clone();
@@ -308,7 +305,7 @@ pub fn Zero(
 
                                                 // Set button
                                                 button {
-                                                    class: PRIMARY,
+                                                    class: "btn-secondary",
                                                     onclick: {
                                                         let dev = device.clone();
                                                         move |_| {
@@ -327,7 +324,7 @@ pub fn Zero(
 
                                                 // Reset button
                                                 button {
-                                                    class: PRIMARY,
+                                                    class: "btn-secondary",
                                                     onclick: {
                                                         let dev = device.clone();
                                                         move |_| {
@@ -348,7 +345,7 @@ pub fn Zero(
 
                                                 // Save button (sets before saving)
                                                 button {
-                                                    class: PRIMARY,
+                                                    class: "btn-secondary",
                                                     onclick: {
                                                         let dev = device.clone();
                                                         move |_| {

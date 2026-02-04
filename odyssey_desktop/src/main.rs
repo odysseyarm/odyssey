@@ -20,7 +20,6 @@ use components::update::UpdateBanner;
 
 mod components;
 mod hub;
-mod styles;
 mod tray;
 mod views;
 
@@ -305,7 +304,7 @@ fn ConfigCorruptionModal(
                 div {
                     class: "bg-gray-50 dark:bg-gray-900 px-6 py-4 flex justify-end gap-3 flex-shrink-0",
                     button {
-                        class: "px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors",
+                        class: "btn-danger",
                         onclick: move |_| {
                             // Delete corrupted files
                             let corruptions_to_delete = corruptions.read().clone();
@@ -324,7 +323,7 @@ fn ConfigCorruptionModal(
                         "Delete Files"
                     }
                     button {
-                        class: "px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors",
+                        class: "btn-primary",
                         onclick: move |_| {
                             corruptions.write().clear();
                             show_modal.set(false);

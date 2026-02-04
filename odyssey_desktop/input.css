@@ -1,1 +1,33 @@
 @import "tailwindcss";
+
+@layer components {
+    /* Secondary/outline button - light background with border */
+    .btn-secondary {
+        @apply py-2.5 px-4 text-xs text-gray-900 bg-white rounded-lg border border-gray-200
+           hover:bg-gray-100 hover:text-blue-700
+           focus:outline-none focus:z-10 focus:ring-4 focus:ring-gray-100
+           dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600
+           dark:hover:bg-gray-700 dark:hover:text-white
+           dark:focus:ring-gray-700;
+    }
+
+    /* Danger variant of secondary button */
+    .btn-secondary-danger {
+        @apply btn-secondary border-red-200 dark:border-red-600;
+    }
+
+    /* Primary filled button */
+    .btn-primary {
+        @apply px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded font-medium transition-colors;
+    }
+
+    /* Small primary button */
+    .btn-primary-sm {
+        @apply px-2 py-1 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded;
+    }
+
+    /* Danger filled button */
+    .btn-danger {
+        @apply px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded font-medium transition-colors;
+    }
+}

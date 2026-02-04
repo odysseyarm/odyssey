@@ -268,7 +268,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         "Update available: v{available}"
                     }
                     button {
-                        class: "px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded",
+                        class: "btn-primary-sm",
                         onclick: move |_| {
                             let manager = manager.clone();
                             let manifest = manifest.clone();
