@@ -13,7 +13,21 @@
 
     /* Danger variant of secondary button */
     .btn-secondary-danger {
-        @apply btn-secondary border-red-200 dark:border-red-600;
+        @apply py-2.5 px-4 text-xs text-gray-900 bg-white rounded-lg border border-red-200
+           hover:bg-gray-100 hover:text-blue-700
+           focus:outline-none focus:z-10 focus:ring-4 focus:ring-gray-100
+           dark:bg-gray-800 dark:text-gray-400 dark:border-red-600
+           dark:hover:bg-gray-700 dark:hover:text-white
+           dark:focus:ring-gray-700;
+    }
+
+    /* Success variant of secondary button */
+    .btn-secondary-success {
+        @apply py-2.5 px-4 text-xs rounded-lg border
+           bg-emerald-50 border-emerald-200 text-emerald-700
+           focus:outline-none focus:z-10 focus:ring-4 focus:ring-gray-100
+           dark:bg-gray-800 dark:border-emerald-600/60 dark:text-emerald-500
+           dark:focus:ring-gray-700;
     }
 
     /* Primary filled button */
