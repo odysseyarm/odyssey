@@ -1,6 +1,6 @@
 [package]
 name = "dongle-fw"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 
 [dependencies]
@@ -17,7 +17,7 @@ embassy-embedded-hal = "0.5.0"
 defmt-rtt = { version = "0.4", optional = true }
 panic-probe = { version = "0.3", features = ["print-defmt"], optional = true }
 
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "1212da1", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "defmt", "security", "scan"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "1212da1", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "default-packet-pool-size-64", "defmt", "security", "scan"] }
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["defmt", "nrf52840", "central", "peripheral"] }
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["nrf52840", "defmt", "critical-section-impl"] }
 bt-hci = "0.7.0"

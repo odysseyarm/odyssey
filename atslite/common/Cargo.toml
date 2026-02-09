@@ -1,0 +1,74 @@
+[package]
+name = "atslite-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core
+defmt = "1.0.1"
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+static_cell = "2.1.1"
+bytemuck = "1.24.0"
+
+# Embassy
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "defmt", "unstable-pac"] }
+embassy-sync = "0.7.2"
+embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
+embassy-usb = { version = "0.5.1", default-features = false }
+embassy-embedded-hal = "0.5.0"
+embassy-futures = "0.1.2"
+
+# HAL
+embedded-hal-async = "1.0.0"
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+embedded-io = "0.7"
+embedded-io-async = "0.7"
+
+# Power management
+npm1300-rs = { git = "https://github.com/Abrahamh08/npm1300-rs" }
+nrf-fuel-gauge = { git = "https://github.com/Abrahamh08/nrf-fuel-gauge" }
+nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf_fuel_gauge", "nrf5340"] }
+
+# IMU
+icm426xx = { git = "https://github.com/Abrahamh08/icm426xx", default-features = false, features = ["async"] }
+
+# Vision sensor
+pag7665qn = { path = "../../pag7665qn" }
+
+# Math
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+
+# BLE
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32", "l2cap-rx-queue-size-16"] }
+bt-hci = { version = "0.7", default-features = false, features = ["defmt"] }
+icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }
+
+# Protocol
+protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+postcard = { version = "1.1.3", features = ["use-defmt"] }
+
+# Settings persistence
+cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
+
+# RNG
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+
+[features]
+default = []
+
+[patch.crates-io]
+minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-derive = { git = "https://github.com/Abrahamh08/minicbor" }
+minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }

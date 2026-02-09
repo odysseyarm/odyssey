@@ -1033,53 +1033,53 @@ async fn main(spawner: Spawner) -> ! {
     // ============================================================================
     // DEBUG: Uncomment this block to always start the network core for debugging
     // ============================================================================
-    // {
-    //     defmt::info!("[DEBUG] Starting network core for debugging");
-    //     use embassy_nrf::pac::reset::vals::Forceoff;
-    //     use embassy_nrf::pac::spu::vals;
+    {
+        defmt::info!("[DEBUG] Starting network core for debugging");
+        use embassy_nrf::pac::reset::vals::Forceoff;
+        use embassy_nrf::pac::spu::vals;
 
-    //     unsafe {
-    //         // Configure SPU to allow network core access
-    //         let spu = embassy_nrf::pac::SPU_S;
+        unsafe {
+            // Configure SPU to allow network core access
+            let spu = embassy_nrf::pac::SPU_S;
 
-    //         // Configure EXTDOMAIN[0] for network core access
-    //         spu.extdomain(0).perm().write(|w| {
-    //             w.set_securemapping(vals::ExtdomainPermSecuremapping::NON_SECURE);
-    //         });
+            // Configure EXTDOMAIN[0] for network core access
+            spu.extdomain(0).perm().write(|w| {
+                w.set_securemapping(vals::ExtdomainPermSecuremapping::NON_SECURE);
+            });
 
-    //         // Erratum 161 workaround
-    //         (0x50005618 as *mut u32).write_volatile(1);
+            // Erratum 161 workaround
+            (0x50005618 as *mut u32).write_volatile(1);
 
-    //         // Release network core reset
-    //         embassy_nrf::pac::RESET_S
-    //             .network()
-    //             .forceoff()
-    //             .write(|w| w.set_forceoff(Forceoff::RELEASE));
+            // Release network core reset
+            embassy_nrf::pac::RESET_S
+                .network()
+                .forceoff()
+                .write(|w| w.set_forceoff(Forceoff::RELEASE));
 
-    //         // Delay 5us (at 64MHz)
-    //         cortex_m::asm::delay(5 * 64);
+            // Delay 5us (at 64MHz)
+            cortex_m::asm::delay(5 * 64);
 
-    //         // Hold
-    //         embassy_nrf::pac::RESET_S
-    //             .network()
-    //             .forceoff()
-    //             .write(|w| w.set_forceoff(Forceoff::HOLD));
+            // Hold
+            embassy_nrf::pac::RESET_S
+                .network()
+                .forceoff()
+                .write(|w| w.set_forceoff(Forceoff::HOLD));
 
-    //         // Delay 1us (at 64MHz)
-    //         cortex_m::asm::delay(1 * 64);
+            // Delay 1us (at 64MHz)
+            cortex_m::asm::delay(1 * 64);
 
-    //         // Release again
-    //         embassy_nrf::pac::RESET_S
-    //             .network()
-    //             .forceoff()
-    //             .write(|w| w.set_forceoff(Forceoff::RELEASE));
+            // Release again
+            embassy_nrf::pac::RESET_S
+                .network()
+                .forceoff()
+                .write(|w| w.set_forceoff(Forceoff::RELEASE));
 
-    //         // Clear erratum workaround
-    //         (0x50005618 as *mut u32).write_volatile(0);
-    //     }
-    //     defmt::info!("[DEBUG] Network core started for debugging");
-    // }
-    // embassy_time::Timer::after(embassy_time::Duration::from_millis(5000)).await;
+            // Clear erratum workaround
+            (0x50005618 as *mut u32).write_volatile(0);
+        }
+        defmt::info!("[DEBUG] Network core started for debugging");
+    }
+    embassy_time::Timer::after(embassy_time::Duration::from_millis(5000)).await;
     // ============================================================================
 
     // Check if network core DFU is pending via PCD

@@ -198,7 +198,7 @@ gen-release version:
     )
 
     # Use jq to prepend the new entry to the firmwares array
-    jq --argjson entry "$NEW_ENTRY" '.devices.atslite.firmwares = [$entry] + .devices.atslite.firmwares' "$MANIFEST" > "$MANIFEST.tmp"
+    jq --argjson entry "$NEW_ENTRY" '.devices["legacy-atslite1"].firmwares = [$entry] + .devices["legacy-atslite1"].firmwares' "$MANIFEST" > "$MANIFEST.tmp"
     mv "$MANIFEST.tmp" "$MANIFEST"
 
     echo "Added release {{version}} to $MANIFEST"

@@ -1,0 +1,38 @@
+[package]
+name = "donger-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+defmt = "1.0.1"
+embassy-usb = "0.5.1"
+embassy-sync = "0.7.2"
+embassy-executor = { version = "0.9.1", optional = true }
+static_cell = { version = "2.1", optional = true }
+postcard = { version = "1.1", default-features = false, optional = true }
+cobs = { version = "0.4.0", default-features = false }
+
+[dependencies.protodongers]
+git = "https://github.com/odysseyarm/protodonge-rs"
+default-features = false
+features = ["defmt"]
+
+[dependencies.embassy-nrf]
+version = "0.9.0"
+optional = true
+
+[features]
+default = []
+atslite = ["dep:embassy-nrf", "dep:embassy-executor", "dep:static_cell", "dep:postcard"]
+
+[patch.crates-io]
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }

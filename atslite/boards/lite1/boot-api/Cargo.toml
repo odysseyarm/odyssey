@@ -1,0 +1,16 @@
+[package]
+name = "lite1-boot-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "unstable-pac"] }
+embedded-storage = "0.3"
+better-boot = { path = "../../../../better-boot" }
+defmt = { version = "0.3", optional = true }
+
+[features]
+defmt = ["dep:defmt", "better-boot/defmt"]
+
+[patch.crates-io]
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }

@@ -1,8 +1,30 @@
 {
   "version": 1,
   "devices": {
-    "atslite": {
+    "legacy-atslite1": {
       "firmwares": [
+        {
+          "version": "0.1.6",
+          "files": {
+            "app-a": {
+              "sha256": "65111c4d2381ddfd32675ec1b6201c3e1694271bf0fd88d8e454a177f29f1b1d",
+              "size": 380000
+            },
+            "app-b": {
+              "sha256": "2ed6417846638b626308b740ddb0ce50a236de33bc2f3aa5c5407050f95ce8b2",
+              "size": 380000
+            },
+            "net-core": {
+              "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
+              "size": 170600
+            },
+            "stage2-bootloader": {
+              "sha256": "4b8b5e0e0fe83cc46656a46927cb0ad92eee35dada2ec934b179dfb3bd0f147e",
+              "size": 41432
+            }
+          },
+          "released": "2026-02-09"
+        },
         {
           "version": "0.1.5",
           "files": {

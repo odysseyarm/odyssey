@@ -1,0 +1,33 @@
+[unstable]
+#build-std = ["core"]
+#build-std-features = ["panic_immediate_abort"]
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip nrf5340_xxAA"
+
+rustflags = [
+  # Code-size optimizations.
+  #"-Z", "trap-unreachable=no",
+  #"-C", "no-vectorize-loops",
+  "-C", "force-frame-pointers=yes",
+]
+
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[env]
+DEFMT_LOG = "info"
+
+# [patch."https://github.com/Abrahamh08/embassy"]
+# embassy-usb-dfu = { path = "../../../patches/embassy/embassy-usb-dfu" }
+# embassy-usb = { path = "../../../patches/embassy/embassy-usb" }
+# embassy-usb-driver = { path = "../../../patches/embassy/embassy-usb-driver" }
+# embassy-boot = { path = "../../../patches/embassy/embassy-boot" }
+# embassy-nrf = { path = "../../../patches/embassy/embassy-nrf" }
+# embassy-sync = { path = "../../../patches/embassy/embassy-sync" }
+# embassy-executor = { path = "../../../patches/embassy/embassy-executor" }
+# embassy-time = { path = "../../../patches/embassy/embassy-time" }
+# embassy-time-driver = { path = "../../../patches/embassy/embassy-time-driver" }
+# embassy-futures = { path = "../../../patches/embassy/embassy-futures" }
+# embassy-embedded-hal = { path = "../../../patches/embassy/embassy-embedded-hal" }
+# embassy-hal-internal = { path = "../../../patches/embassy/embassy-hal-internal" }

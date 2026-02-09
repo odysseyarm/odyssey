@@ -13,7 +13,7 @@ mod settings_region {
 }
 
 use core::convert::Infallible;
-use core::sync::atomic::{AtomicU16, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU16, Ordering};
 
 use cfg_noodle::flash::Flash;
 use cfg_noodle::minicbor::{CborLen, Decode, Encode};
@@ -36,6 +36,27 @@ use static_cell::StaticCell;
 use crate::Paj;
 
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
+
+/// Pointer to the active StorageList (either our own LIST or an external one).
+/// Set during init_settings or init_legacy_settings.
+static ACTIVE_LIST: AtomicPtr<StorageList<NoodleRawMutex>> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Function pointer for flushing settings. Points to our own settings_flush_now
+/// or an external flush function (e.g. from atslite-common).
+static FLUSH_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+fn active_list() -> &'static StorageList<NoodleRawMutex> {
+    let ptr = ACTIVE_LIST.load(Ordering::Acquire);
+    assert!(!ptr.is_null(), "settings not initialized");
+    unsafe { &*ptr }
+}
+
+fn flush() {
+    let ptr = FLUSH_FN.load(Ordering::Acquire);
+    assert!(!ptr.is_null(), "settings not initialized");
+    let f: fn() = unsafe { core::mem::transmute(ptr) };
+    f();
+}
 
 static NODE_PAJS: StorageListNode<PajsSettings> = StorageListNode::new("settings/pajs");
 static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("settings/general");
@@ -150,6 +171,13 @@ pub fn settings_flush_now() {
     SETTINGS_FLUSH.signal(());
 }
 
+fn set_active(list: &'static StorageList<NoodleRawMutex>, flush_fn: fn()) {
+    ACTIVE_LIST.store(list as *const _ as *mut _, Ordering::Release);
+    FLUSH_FN.store(flush_fn as *mut (), Ordering::Release);
+}
+
+/// Self-contained init: spawns its own worker on the module's own LIST.
+/// Used by boards that don't share settings infrastructure with another crate (e.g. VM board).
 pub async fn init_settings(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
@@ -167,6 +195,8 @@ pub async fn init_settings(
 
     // Start I/O worker
     spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
+
+    set_active(&LIST, settings_flush_now);
 
     // Attach nodes with defaults (hydrates via worker)
     let h_pajs = NODE_PAJS
@@ -209,6 +239,52 @@ pub async fn init_settings(
     Ok(settings_ref)
 }
 
+/// Attach legacy settings nodes to an *external* StorageList (e.g. from atslite-common).
+/// The caller must have already started the worker task on that list.
+/// Does NOT spawn a worker or manage BLE bond (that's handled by the external crate).
+pub async fn init_legacy_settings(
+    list: &'static StorageList<NoodleRawMutex>,
+    flush_fn: fn(),
+    pajr2: &mut Paj,
+    pajr3: &mut Paj,
+) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
+    set_active(list, flush_fn);
+
+    let h_pajs = NODE_PAJS
+        .attach_with_default(list, PajsSettings::default)
+        .await
+        .unwrap();
+    let h_general = NODE_GENERAL
+        .attach_with_default(list, GeneralSettings::default)
+        .await
+        .unwrap();
+    let h_transient = NODE_TRANSIENT
+        .attach_with_default(list, TransientSettings::default)
+        .await
+        .unwrap();
+
+    let pajs = h_pajs.load();
+    let general = {
+        let g = h_general.load();
+        ACCEL_ODR.store(g.accel_config.accel_odr, Ordering::Relaxed);
+        g
+    };
+    let transient = h_transient.load();
+
+    let s = Settings {
+        pajs,
+        general,
+        transient,
+        // BLE bond is managed by the external crate; use default placeholder
+        ble_bond: BleBondSettings::default(),
+    };
+
+    s.apply(pajr2, pajr3).await?;
+    let settings_ref = SETTINGS_CELL.init(s);
+    SETTINGS_PTR.store(settings_ref as *mut Settings, core::sync::atomic::Ordering::Release);
+    Ok(settings_ref)
+}
+
 pub struct Settings {
     pub pajs: PajsSettings,
     pub general: GeneralSettings,
@@ -226,39 +302,43 @@ impl Settings {
     }
 
     pub fn write(&self) {
+        let list = active_list();
         embassy_futures::block_on(async {
-            let mut hp = NODE_PAJS.attach(&LIST).await.unwrap();
-            let mut hg = NODE_GENERAL.attach(&LIST).await.unwrap();
+            let mut hp = NODE_PAJS.attach(list).await.unwrap();
+            let mut hg = NODE_GENERAL.attach(list).await.unwrap();
             hp.write(&self.pajs).await.unwrap();
             hg.write(&self.general).await.unwrap();
         });
-        settings_flush_now();
+        flush();
     }
 
     pub fn transient_write(&self) {
+        let list = active_list();
         embassy_futures::block_on(async {
-            let mut ht = NODE_TRANSIENT.attach(&LIST).await.unwrap();
+            let mut ht = NODE_TRANSIENT.attach(list).await.unwrap();
             ht.write(&self.transient).await.unwrap();
         });
-        settings_flush_now();
+        flush();
     }
 
     pub fn ble_bond_write(&self) {
+        let list = active_list();
         embassy_futures::block_on(async {
-            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
+            let mut hb = NODE_BLE_BOND.attach(list).await.unwrap();
             hb.write(&self.ble_bond).await.unwrap();
         });
-        settings_flush_now();
+        flush();
     }
 
     #[allow(dead_code)]
     pub fn ble_bond_clear(&mut self) {
         self.ble_bond = BleBondSettings::default();
+        let list = active_list();
         embassy_futures::block_on(async {
-            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
+            let mut hb = NODE_BLE_BOND.attach(list).await.unwrap();
             hb.write(&self.ble_bond).await.unwrap();
         });
-        settings_flush_now();
+        flush();
     }
 }
 

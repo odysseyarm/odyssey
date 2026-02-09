@@ -200,15 +200,15 @@ pub async fn device_connection_task(
         let l2cap_control_config = L2capChannelConfig {
             mtu: Some(PAYLOAD_LEN - 6),
             mps: Some(L2CAP_MTU - 4),
-            flow_policy: CreditFlowPolicy::Every(50),
-            initial_credits: Some(200),
+            flow_policy: CreditFlowPolicy::Every(4),
+            initial_credits: Some(16),
         };
 
         let l2cap_data_config = L2capChannelConfig {
             mtu: Some(PAYLOAD_LEN - 6),
             mps: Some(L2CAP_MTU - 4),
-            flow_policy: CreditFlowPolicy::Every(50),
-            initial_credits: Some(200),
+            flow_policy: CreditFlowPolicy::Every(4),
+            initial_credits: Some(16),
         };
 
         info!(
@@ -322,22 +322,31 @@ async fn run_connection(
     let tx_fut = async {
         let mut tx_buf = [0u8; 1024];
         loop {
-            if embassy_time::with_timeout(Duration::from_millis(0), shutdown.wait())
-                .await
-                .is_ok()
+            let device_pkt = match embassy_futures::select::select(
+                device_queue.receive(),
+                shutdown.wait(),
+            )
+            .await
             {
-                return;
-            }
-            let device_pkt = match device_queue.try_receive() {
-                Ok(pkt) => pkt,
-                Err(_) => {
-                    Timer::after(Duration::from_micros(200)).await;
-                    continue;
-                }
+                embassy_futures::select::Either::First(pkt) => pkt,
+                embassy_futures::select::Either::Second(()) => return,
             };
             let is_control = is_control_packet(&device_pkt.pkt);
 
             if let Ok(data) = postcard::to_slice(&device_pkt.pkt, &mut tx_buf) {
+                let ch = if is_control { "ctrl" } else { "data" };
+                if matches!(
+                    device_pkt.pkt.data,
+                    protodongers::PacketData::WriteConfig(_)
+                        | protodongers::PacketData::FlashSettings()
+                ) {
+                    info!(
+                        "BLE TX [{}]: id={} {:?}",
+                        ch,
+                        device_pkt.pkt.id,
+                        defmt::Debug2Format(&device_pkt.pkt.data)
+                    );
+                }
                 let writer = if is_control {
                     &mut control_writer
                 } else {
@@ -349,17 +358,20 @@ async fn run_connection(
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
-                        error!("L2CAP send failed: {:?}", defmt::Debug2Format(&e));
+                        error!("L2CAP send failed [{}]: {:?}", ch, defmt::Debug2Format(&e));
                         shutdown.signal(());
                         return;
                     }
                     Err(_) => {
-                        warn!("L2CAP send timeout; packet dropped");
+                        warn!(
+                            "L2CAP send timeout [{}]; packet dropped id={}",
+                            ch, device_pkt.pkt.id
+                        );
                     }
                 }
                 let elapsed = Instant::now() - start;
                 if elapsed >= Duration::from_millis(100) {
-                    warn!("L2CAP send took {} ms", elapsed.as_millis());
+                    warn!("L2CAP send [{}] took {} ms", ch, elapsed.as_millis());
                 }
             } else {
                 error!("Failed to serialize packet");
@@ -371,12 +383,6 @@ async fn run_connection(
     let ctrl_rx_fut = async {
         let mut rx_buf = [0u8; 1024];
         loop {
-            if embassy_time::with_timeout(Duration::from_millis(0), shutdown.wait())
-                .await
-                .is_ok()
-            {
-                return;
-            }
             match control_reader.receive(stack, &mut rx_buf).await {
                 Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
                     Ok(pkt) => {
@@ -401,12 +407,6 @@ async fn run_connection(
     let data_rx_fut = async {
         let mut rx_buf = [0u8; 1024];
         loop {
-            if embassy_time::with_timeout(Duration::from_millis(0), shutdown.wait())
-                .await
-                .is_ok()
-            {
-                return;
-            }
             match data_reader.receive(stack, &mut rx_buf).await {
                 Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
                     Ok(pkt) => {

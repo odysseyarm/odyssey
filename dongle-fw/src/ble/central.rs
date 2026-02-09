@@ -199,7 +199,9 @@ impl ActiveConnections {
         if result && DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
             let devices = self.get_all().await;
             let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
-            crate::HOST_RESPONSES.send(response).await;
+            if crate::HOST_RESPONSES.try_send(response).is_err() {
+                defmt::warn!("HOST_RESPONSES full, dropped DevicesSnapshot (add)");
+            }
         }
 
         result
@@ -213,7 +215,9 @@ impl ActiveConnections {
         if DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
             let devices = self.get_all().await;
             let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
-            crate::HOST_RESPONSES.send(response).await;
+            if crate::HOST_RESPONSES.try_send(response).is_err() {
+                defmt::warn!("HOST_RESPONSES full, dropped DevicesSnapshot (remove)");
+            }
         }
     }
 

@@ -1,0 +1,78 @@
+// Memory layout for nRF5340 (lite1)
+// Dual-bank DFU for app core (direct XIP), swap-based DFU for network core
+
+vars {
+    page_size "4K"
+    stage1_bootloader_size "8K"   // First-stage bootloader (swap orchestrator)
+    stage2_bootloader_size "44K"  // Second-stage bootloader (DFU handler)
+    stage1_state_size "page_size" // State for stage1 bootloader (stage2 swap)
+    stage2_state_size "page_size" // State for stage2 bootloader (app bank switching)
+    app_bank_size "376K"          // Each app bank (A and B) - app uses ~368KB
+    dfu_size "176K"               // Shared DFU staging area (netcore ~167KB + 4K scratch page)
+    settings_size "8K"            // Minimum 8KB required by settings module
+}
+
+regions {
+    flash origin=0x0000_0000 length="1M" {
+        stage1_bootloader origin=0x0000_0000 length="stage1_bootloader_size"
+        stage2_bootloader origin=0x0000_2000 length="stage2_bootloader_size"
+        app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
+        app_bank_b        origin=0x0006_B000 length="app_bank_size" align="page_size"
+        dfu               origin=0x000C_9000 length="dfu_size" align="page_size"
+        // Boot states far from settings to avoid corruption bug
+        stage1_state      origin=0x000F_9000 length="stage1_state_size" align="page_size"
+        stage2_state      origin=0x000F_A000 length="stage2_state_size" align="page_size"
+        // Guard pages at 0xFB000, 0xFC000, 0xFD000 - protect boot state from settings corruption
+        settings          origin=0x000F_E000 length="settings_size" align="page_size"
+    }
+
+    ram origin=0x2000_0000 length="512K" {
+        low_ram  origin=0x2000_0000 length="256K"
+        high_ram origin=0x2004_0000 length="256K" {
+            locked_ram origin=0x2006_FF00 length=0x100  // 256 bytes for bootloader communication
+            icmsg_rx origin=0x2007_0000 length=0x2000
+            icmsg_tx origin=0x2007_8000 length=0x2000
+        }
+    }
+
+    netcore_flash origin=0x0100_0000 length="256K" {
+        netcore_bootloader origin=0x0100_0000 length="60K"
+        netcore_primary    origin=0x0100_F000 length="172K" align="page_size"
+    }
+    netcore_ram   origin=0x2100_0000 length="64K"
+}
+
+symbols {
+    __stage2_bootloader_start "flash.stage2_bootloader.origin"
+    __stage2_bootloader_end   "flash.stage2_bootloader.end"
+    __stage1_state_start      "flash.stage1_state.origin"
+    __stage1_state_end        "flash.stage1_state.end"
+    __stage2_state_start      "flash.stage2_state.origin"
+    __stage2_state_end        "flash.stage2_state.end"
+
+    // Backward compatibility: __bootloader_state points to stage2_state
+    __bootloader_state_start  "flash.stage2_state.origin"
+    __bootloader_state_end    "flash.stage2_state.end"
+
+    // Direct bank access symbols
+    __bootloader_app_a_start  "flash.app_bank_a.origin"
+    __bootloader_app_a_end    "flash.app_bank_a.end"
+    __bootloader_app_b_start  "flash.app_bank_b.origin"
+    __bootloader_app_b_end    "flash.app_bank_b.end"
+
+    // Shared DFU staging area (for bootloader/netcore updates)
+    __bootloader_dfu_start "flash.dfu.origin"
+    __bootloader_dfu_end   "flash.dfu.end"
+    __settings_start          "flash.settings.origin"
+    __settings_end            "flash.settings.end"
+    __locked_ram_start        "ram.high_ram.locked_ram.origin"
+    __locked_ram_end          "ram.high_ram.locked_ram.end"
+    __icmsg_tx_start          "ram.high_ram.icmsg_tx.origin"
+    __icmsg_tx_end            "ram.high_ram.icmsg_tx.end"
+    __icmsg_rx_start          "ram.high_ram.icmsg_rx.origin"
+    __icmsg_rx_end            "ram.high_ram.icmsg_rx.end"
+    __netcore_bootloader_start "netcore_flash.netcore_bootloader.origin"
+    __netcore_bootloader_end   "netcore_flash.netcore_bootloader.end"
+    __netcore_primary_start    "netcore_flash.netcore_primary.origin"
+    __netcore_primary_end      "netcore_flash.netcore_primary.end"
+}

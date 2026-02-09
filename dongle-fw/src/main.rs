@@ -509,7 +509,7 @@ async fn usb_rx_task(
             .await
             {
                 Ok(Ok(n)) => {
-                    info!("USB RX: received {} bytes", n);
+                    defmt::trace!("USB RX: received {} bytes", n);
                     if let Err(_e) =
                         handle_usb_rx(&read_buf[..n], device_queues, active_connections).await
                     {
@@ -681,42 +681,61 @@ async fn handle_usb_rx(
     device_queues: &ble::central::DeviceQueues,
     active_connections: &ActiveConnections,
 ) -> Result<(), ()> {
-    // Decode using postcard (standard for USB in ats_usb)
-    let msg: MuxMsg = postcard::from_bytes(data).map_err(|e| {
-        error!(
-            "Failed to deserialize USB packet ({} bytes): {:?}",
-            data.len(),
-            defmt::Debug2Format(&e)
-        );
-        ()
-    })?;
+    defmt::trace!("handle_usb_rx: {} bytes", data.len());
 
-    defmt::info!("Received USB message: {:?}", defmt::Debug2Format(&msg));
+    // Parse potentially multiple postcard messages from one USB transfer
+    let mut remaining = data;
+    while !remaining.is_empty() {
+        let (msg, rest): (MuxMsg, &[u8]) = postcard::take_from_bytes(remaining).map_err(|e| {
+            error!(
+                "Failed to deserialize USB packet ({} bytes remaining of {} total): {:?}",
+                remaining.len(),
+                data.len(),
+                defmt::Debug2Format(&e)
+            );
+            ()
+        })?;
+        remaining = rest;
+
+        handle_usb_msg(msg, device_queues, active_connections).await;
+    }
+
+    Ok(())
+}
+
+async fn handle_usb_msg(
+    msg: MuxMsg,
+    device_queues: &ble::central::DeviceQueues,
+    active_connections: &ActiveConnections,
+) {
+    // Only log WriteConfig/FlashSettings to avoid RTT overflow
+    if let MuxMsg::SendTo(s) = &msg {
+        if matches!(
+            s.pkt.data,
+            protodongers::PacketData::WriteConfig(_) | protodongers::PacketData::FlashSettings()
+        ) {
+            defmt::info!("RX: {:?}", defmt::Debug2Format(&s.pkt.data));
+        }
+    }
 
     match msg {
         MuxMsg::RequestDevices => {
             let devices = active_connections.get_all().await;
             let response = MuxMsg::DevicesSnapshot(devices);
-            HOST_RESPONSES.send(response).await;
+            if HOST_RESPONSES.try_send(response).is_err() {
+                warn!("HOST_RESPONSES full, dropped DevicesSnapshot");
+            }
         }
         MuxMsg::SendTo(send_to_msg) => {
             // Route message to the specific device's queue
             let device_uuid = &send_to_msg.dev;
-            info!("SendTo message for device {:02x}", device_uuid);
+            defmt::trace!("SendTo message for device {:02x}", device_uuid);
             if let Some(queue) = device_queues.get_queue(device_uuid).await {
                 let device_pkt = DevicePacket {
                     dev: send_to_msg.dev,
                     pkt: send_to_msg.pkt,
                 };
-                // Use try_send to avoid blocking if queue is full (BLE task not draining fast enough)
-                match queue.try_send(device_pkt) {
-                    Ok(()) => {
-                        info!("Packet queued successfully for device {:02x}", device_uuid);
-                    }
-                    Err(_) => {
-                        warn!("Device queue full for {:02x}, packet dropped", device_uuid);
-                    }
-                }
+                queue.send(device_pkt).await;
             } else {
                 error!(
                     "No queue found for device {:02x} - device not connected",
@@ -726,7 +745,9 @@ async fn handle_usb_rx(
         }
         MuxMsg::ReadVersion() => {
             let response = MuxMsg::ReadVersionResponse(VERSION);
-            HOST_RESPONSES.send(response).await;
+            if HOST_RESPONSES.try_send(response).is_err() {
+                warn!("HOST_RESPONSES full, dropped ReadVersionResponse");
+            }
         }
         MuxMsg::SubscribeDeviceList => {
             info!("Subscribing to device list changes");
@@ -743,8 +764,6 @@ async fn handle_usb_rx(
             );
         }
     }
-
-    Ok(())
 }
 
 async fn send_mux_msg(

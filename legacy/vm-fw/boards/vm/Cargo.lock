@@ -368,7 +368,6 @@ dependencies = [
  "minicbor 2.1.1",
  "minicbor-serde",
  "nalgebra",
- "nrf-pac",
  "once_cell",
  "opencv-ros-camera",
  "paj7025",

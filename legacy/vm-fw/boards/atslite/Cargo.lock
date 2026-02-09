@@ -54,6 +54,9 @@ name = "arbitrary-int"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "825297538d77367557b912770ca3083f778a196054b3ee63b22673c4a3cae0a5"
+dependencies = [
+ "defmt 0.3.100",
+]
 
 [[package]]
 name = "arbitrary-int"
@@ -126,9 +129,10 @@ dependencies = [
 
 [[package]]
 name = "atslite-board"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "atslite-boot-api",
+ "atslite-common",
  "better-boot",
  "better-dfu",
  "bt-hci",
@@ -177,6 +181,41 @@ dependencies = [
  "defmt 0.3.100",
  "embassy-nrf",
  "embedded-storage",
+]
+
+[[package]]
+name = "atslite-common"
+version = "0.1.0"
+dependencies = [
+ "bt-hci",
+ "bytemuck",
+ "cfg-noodle",
+ "cortex-m",
+ "defmt 1.0.1",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
+ "embassy-nrf",
+ "embassy-sync 0.7.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "icm426xx",
+ "icmsg",
+ "nalgebra",
+ "npm1300-rs",
+ "nrf-fuel-gauge",
+ "nrfxlib-sys",
+ "pag7665qn",
+ "postcard",
+ "protodongers",
+ "rand_chacha",
+ "rand_core 0.6.4",
+ "static_cell",
+ "trouble-host",
 ]
 
 [[package]]
@@ -1911,6 +1950,18 @@ checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
 dependencies = [
  "elliptic-curve",
  "primeorder",
+]
+
+[[package]]
+name = "pag7665qn"
+version = "0.1.0"
+dependencies = [
+ "arbitrary-int 1.3.0",
+ "bitbybit",
+ "bytemuck",
+ "defmt 0.3.100",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
 ]
 
 [[package]]

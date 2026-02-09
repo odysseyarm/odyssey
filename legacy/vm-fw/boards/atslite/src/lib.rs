@@ -1,25 +1,26 @@
 #![no_std]
 #![feature(never_type)]
 
-// ATSlite board implementation modules
-pub mod ble;
+// ATSlite board implementation modules - board-specific
+pub mod battery_model;
 pub mod imu;
 pub mod l2cap;
 pub mod pins;
 pub mod platform;
-pub mod utils;
 
-// ATSlite-specific modules
-pub mod battery_model;
-pub mod device_control_task;
-pub mod nrf5340_init;
-pub mod pmic_leds;
-pub mod power;
-pub mod power_button;
-pub mod power_state;
-pub mod transport_mode;
+// Re-export from atslite-common
+pub use atslite_common::ble;
+pub use atslite_common::device_control;
+pub use atslite_common::device_control_task;
+pub use atslite_common::nrf5340_init;
+pub use atslite_common::pmic_leds;
+pub use atslite_common::power;
+pub use atslite_common::power_button;
+pub use atslite_common::power_state;
+pub use atslite_common::transport_mode;
+pub use atslite_common::utils;
 
-// Re-export common
+// Re-export common (vm-fw common for object mode, settings, etc.)
 pub use common;
 
 // Re-export platform implementation

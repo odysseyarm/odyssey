@@ -190,7 +190,14 @@ async fn main(spawner: Spawner) {
     defmt::info!("Spawning power_button_task...");
     spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
     defmt::info!("Spawning power_state_task...");
-    spawner.spawn(power_state::power_state_task(pmic, pmic_leds).unwrap());
+    spawner.spawn(
+        power_state::power_state_task(
+            pmic,
+            pmic_leds,
+            &atslite_board::battery_model::BATTERY_MODEL,
+        )
+        .unwrap(),
+    );
     defmt::info!("Power tasks spawned");
 
     // Initialize PAJ sensors
@@ -270,6 +277,14 @@ async fn main(spawner: Spawner) {
 
     log_boot_state("after mark_booted");
 
+    // Initialize device control channels BEFORE USB so they're ready when the
+    // host sends control requests immediately after enumeration.
+    // Channels are created once and registered in BOTH common (USB handler) and
+    // atslite_common (device_control_task) so they share the same queues.
+    let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
+    common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+    atslite_common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+
     // USB initialization with DFU runtime interface
     static DFU_STATE: StaticCell<Control<AppDfuMarker<'static>, ResetImmediate>> =
         StaticCell::new();
@@ -320,13 +335,26 @@ async fn main(spawner: Spawner) {
         // will reset, so there's no conflict.
         BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) })
     });
+    // Phase 1: Start shared settings worker (owned by atslite-common)
+    use atslite_common::settings as shared_settings;
+    shared_settings::init_core(&spawner, nvmc_async).await;
+
+    // Phase 2: Attach legacy board-specific nodes to the shared LIST
     let settings_ref = {
         let mut r2 = paj_r2_mutex.lock().await;
         let mut r3 = paj_r3_mutex.lock().await;
-        settings::init_settings(&spawner, nvmc_async, &mut *r2, &mut *r3)
-            .await
-            .unwrap()
+        settings::init_legacy_settings(
+            &shared_settings::LIST,
+            shared_settings::settings_flush_now,
+            &mut *r2,
+            &mut *r3,
+        )
+        .await
+        .unwrap()
     };
+
+    // Phase 3: Attach BLE bond node and set atslite-common SETTINGS_PTR
+    shared_settings::init_nodes().await;
 
     // Clamp accel_odr to nearest valid value for this platform's sensor
     settings_ref.general.accel_config.accel_odr =
@@ -340,9 +368,7 @@ async fn main(spawner: Spawner) {
     transport_mode::set(TransportMode::Ble);
     defmt::info!("Transport mode initialized to BLE");
 
-    // Initialize device control channels after settings are ready
-    let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
-    common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+    // Spawn the device control task (channels already registered before USB init)
     spawner.spawn(atslite_board::device_control_task::device_control_task().unwrap());
 
     // Confirm this boot as successful so the bootloader keeps the current slot active
