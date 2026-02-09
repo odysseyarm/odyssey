@@ -7,10 +7,9 @@ use protodongers::control::device::{DeviceMsg, PairingError, TransportMode, Vers
 use crate::ble::peripheral;
 use crate::device_control;
 use crate::transport_mode;
-use crate::utils::FIRMWARE_VERSION;
 
 #[embassy_executor::task]
-pub async fn device_control_task() {
+pub async fn device_control_task(firmware_version: [u16; 3]) {
     info!("Device control task started");
 
     // If pairing is active, we multiplex between incoming commands and the pairing wait/timeout
@@ -52,7 +51,7 @@ pub async fn device_control_task() {
                         }
                         other => {
                             // Process other commands normally
-                            handle_cmd(other, &mut pairing_deadline).await;
+                            handle_cmd(other, &mut pairing_deadline, firmware_version).await;
                             continue;
                         }
                     }
@@ -77,14 +76,18 @@ pub async fn device_control_task() {
 
         let cmd = device_control::recv_cmd().await;
         info!("Received control command: {:?}", cmd);
-        handle_cmd(cmd, &mut pairing_deadline).await;
+        handle_cmd(cmd, &mut pairing_deadline, firmware_version).await;
     }
 }
 
-async fn handle_cmd(cmd: DeviceMsg, pairing_deadline: &mut Option<embassy_time::Instant>) {
+async fn handle_cmd(
+    cmd: DeviceMsg,
+    pairing_deadline: &mut Option<embassy_time::Instant>,
+    firmware_version: [u16; 3],
+) {
     match cmd {
         DeviceMsg::ReadVersion() => {
-            let version = Version::new(FIRMWARE_VERSION);
+            let version = Version::new(firmware_version);
             device_control::try_send_event(DeviceMsg::ReadVersionResponse(version));
         }
 

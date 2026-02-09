@@ -4,23 +4,23 @@
     "legacy-atslite1": {
       "firmwares": [
         {
-          "version": "0.1.6",
+          "version": "0.1.7",
           "files": {
             "app-a": {
-              "sha256": "65111c4d2381ddfd32675ec1b6201c3e1694271bf0fd88d8e454a177f29f1b1d",
-              "size": 380000
+              "sha256": "b525db72bb3347003654aa9f78de18ef823dc87248033633d952c5a3bc4e28ff",
+              "size": 380256
             },
             "app-b": {
-              "sha256": "2ed6417846638b626308b740ddb0ce50a236de33bc2f3aa5c5407050f95ce8b2",
-              "size": 380000
+              "sha256": "016c0d2a408683fdf8e83cf401fe5d9d728aaa0866a83e7f76f006efcf7365d2",
+              "size": 380256
             },
             "net-core": {
               "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
               "size": 170600
             },
             "stage2-bootloader": {
-              "sha256": "4b8b5e0e0fe83cc46656a46927cb0ad92eee35dada2ec934b179dfb3bd0f147e",
-              "size": 41432
+              "sha256": "a8eafcb0bdb0a95fb9f0c55582015bb44ded2e771575b1bcfc8b71405f348d98",
+              "size": 41280
             }
           },
           "released": "2026-02-09"

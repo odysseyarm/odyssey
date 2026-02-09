@@ -43,6 +43,13 @@ use common::{
 use embassy_usb::msos;
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
+const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";
+
+const FIRMWARE_VERSION: [u16; 3] = [
+    env!("CARGO_PKG_VERSION_MAJOR").as_bytes()[0] as u16 - b'0' as u16,
+    env!("CARGO_PKG_VERSION_MINOR").as_bytes()[0] as u16 - b'0' as u16,
+    env!("CARGO_PKG_VERSION_PATCH").as_bytes()[0] as u16 - b'0' as u16,
+];
 
 unsafe extern "C" {
     static __bootloader_state_start: u32;
@@ -314,7 +321,7 @@ async fn main(spawner: Spawner) {
                     ));
                     func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
                         "DeviceInterfaceGUIDs",
-                        msos::PropertyData::RegMultiSz(&[DEVICE_INTERFACE_GUID]),
+                        msos::PropertyData::RegMultiSz(&[DFU_INTERFACE_GUID]),
                     ));
                 },
             );
@@ -369,7 +376,8 @@ async fn main(spawner: Spawner) {
     defmt::info!("Transport mode initialized to BLE");
 
     // Spawn the device control task (channels already registered before USB init)
-    spawner.spawn(atslite_board::device_control_task::device_control_task().unwrap());
+    spawner
+        .spawn(atslite_board::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
 
     // Confirm this boot as successful so the bootloader keeps the current slot active
     // Adjust PMIC limit after USB enumerates
@@ -425,7 +433,7 @@ async fn main(spawner: Spawner) {
         settings: settings_ref,
         l2cap_channels,
         data_mode: transport_mode::get,
-        version: utils::FIRMWARE_VERSION,
+        version: FIRMWARE_VERSION,
     };
 
     defmt::info!("Initialization complete; entering object mode");

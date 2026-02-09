@@ -40,6 +40,12 @@ use lite1::{
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 
+const FIRMWARE_VERSION: [u16; 3] = [
+    env!("CARGO_PKG_VERSION_MAJOR").as_bytes()[0] as u16 - b'0' as u16,
+    env!("CARGO_PKG_VERSION_MINOR").as_bytes()[0] as u16 - b'0' as u16,
+    env!("CARGO_PKG_VERSION_PATCH").as_bytes()[0] as u16 - b'0' as u16,
+];
+
 // Default accelerometer ODR in Hz (matches legacy atslite)
 const DEFAULT_ACCEL_ODR: u16 = 100;
 
@@ -257,7 +263,7 @@ async fn main(spawner: Spawner) {
     // Initialize device control channels and spawn the task
     let (ctrl_evt_ch, ctrl_cmd_ch) = lite1::device_control::init();
     lite1::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
-    spawner.spawn(lite1::device_control_task::device_control_task().unwrap());
+    spawner.spawn(lite1::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
 
     // Default transport mode to BLE
     transport_mode::set(TransportMode::Ble);

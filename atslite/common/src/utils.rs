@@ -1,18 +1,3 @@
-const MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
-    Ok(v) => v,
-    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
-};
-const MINOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
-    Ok(v) => v,
-    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
-};
-const PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
-    Ok(v) => v,
-    Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
-};
-
-pub const FIRMWARE_VERSION: [u16; 3] = [MAJOR, MINOR, PATCH];
-
 pub fn device_id() -> [u8; 8] {
     let ficr = embassy_nrf::pac::FICR;
     let low = ficr.info().deviceid(0).read();

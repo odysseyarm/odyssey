@@ -41,7 +41,7 @@ struct AppDfuFlag {
     dfu_requested: u32,
 }
 
-const DEVICE_INTERFACE_GUIDS: &[&str] = &["{A4769731-EC56-49FF-9924-613E5B3D4D6C}"];
+const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F}"];
 
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;

@@ -112,7 +112,13 @@ where
     );
 
     // Add the Microsoft OS Descriptor (MSOS/MOD) descriptor.
+    // Device-level headers are always needed; function-level headers are for composite devices.
     builder.msos_descriptor(windows_version::WIN8_1, 0);
+    builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+    builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+        "DeviceInterfaceGUIDs",
+        msos::PropertyData::RegMultiSz(&[guid]),
+    ));
 
     static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> = ConstStaticCell::new(Signal::new());
     let signal = SIGNAL.take();
