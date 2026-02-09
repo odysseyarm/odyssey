@@ -20,10 +20,10 @@ const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/donger/releases/d
 
 /// Known device types mapped by VID:PID
 pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
-    (0x1915, 0x5210, "atslite"),
+    (0x1915, 0x5210, "legacy-atslite1"),
     (0x1915, 0x5211, "poc"),
     (0x1915, 0x5212, "dongle"),
-    (0x1915, 0x5213, "ats"),
+    (0x1915, 0x5213, "atslite1"),
 ];
 
 /// Top-level firmware manifest
