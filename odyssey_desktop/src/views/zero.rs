@@ -5,10 +5,14 @@ use odyssey_hub_common::events as oe;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
+/// Save zero result: None = idle, Some(Ok(())) = saved, Some(Err(msg)) = error
+type SaveStatus = Option<Result<(), String>>;
+
 #[derive(Default)]
 struct DeviceSignals {
     shooting: Signal<bool>,
     shot_delay: Signal<u16>,
+    save_zero_status: Signal<SaveStatus>,
 }
 
 #[component]
@@ -53,7 +57,14 @@ pub fn Zero(
                     oe::DeviceEventKind::ImpactEvent { .. } => {
                         println!("ImpactEvent for device: {:?}", device);
                         if let Some(key) = ctx.device_key(&device) {
-                            if *device_signals.peek()[key].shooting.peek() {
+                            let shooting = *device_signals.peek()[key].shooting.peek();
+                            tracing::info!(
+                                "device_key found for {:02x?}: slot={}, shooting={}",
+                                device.uuid,
+                                key,
+                                shooting
+                            );
+                            if shooting {
                                 let zr = *zero_screen_ratio.peek();
                                 let dev = device.clone();
                                 spawn(async move {
@@ -74,6 +85,11 @@ pub fn Zero(
                                 });
                                 device_signals.write()[key].shooting.set(false);
                             }
+                        } else {
+                            tracing::warn!(
+                                "device_key NOT found for {:02x?} (device_keys mismatch). Event device: {:?}",
+                                device.uuid, device
+                            );
                         }
                     }
                     _ => {}
@@ -200,18 +216,44 @@ pub fn Zero(
                                                         }
                                                     }
                                                 }, "Clear Zero" }
-                                                button { class: "btn-secondary", onclick: {
-                                                    let dev = device.clone();
-                                                    move |_| {
-                                                        let dev = dev.clone();
-                                                        async move {
-                                                            match (hub().client)().save_zero(dev.clone()).await {
-                                                                Ok(_) => tracing::info!("Saved zero for {:x?}", dev.uuid),
-                                                                Err(e) => tracing::error!("Failed to save zero {:x?}: {}", dev.uuid, e),
+                                                {
+                                                    let save_status = (device_signals.read()[slot].save_zero_status)();
+                                                    let (btn_class, label) = match &save_status {
+                                                        None => ("btn-secondary", "Save Zero".to_string()),
+                                                        Some(Ok(())) => ("btn-secondary-success", "Saved".to_string()),
+                                                        Some(Err(e)) => ("btn-secondary-danger", format!("Error: {e}")),
+                                                    };
+                                                    rsx! {
+                                                        button { class: btn_class, onclick: {
+                                                            let dev = device.clone();
+                                                            move |_| {
+                                                                let dev = dev.clone();
+                                                                async move {
+                                                                    match (hub().client)().save_zero(dev.clone()).await {
+                                                                        Ok(_) => {
+                                                                            tracing::info!("Saved zero for {:x?}", dev.uuid);
+                                                                            device_signals.write()[slot].save_zero_status.set(Some(Ok(())));
+                                                                            // Reset back to idle after 2 seconds
+                                                                            spawn(async move {
+                                                                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                                                device_signals.write()[slot].save_zero_status.set(None);
+                                                                            });
+                                                                        }
+                                                                        Err(e) => {
+                                                                            let msg = e.to_string();
+                                                                            tracing::error!("Failed to save zero {:x?}: {}", dev.uuid, msg);
+                                                                            device_signals.write()[slot].save_zero_status.set(Some(Err(msg)));
+                                                                            spawn(async move {
+                                                                                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                                                                                device_signals.write()[slot].save_zero_status.set(None);
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
-                                                        }
+                                                        }, {label} }
                                                     }
-                                                }, "Save Zero" }
+                                                }
                                             }
                                             li {
                                                 class: "flex items-center gap-2",

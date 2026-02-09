@@ -841,21 +841,11 @@ async fn usb_device_manager(
                     dh.insert(uuid, (tx.clone(), handle));
                 }
 
-                // USB direct devices always have control, but only have commands if in USB transport mode
+                // Always pass the commands channel so server.device_list gets a working sender.
+                // The device handler task will process commands (like Zero) once events are available.
                 let channels = DeviceChannels {
                     control: None, // TODO: Add control channel when control protocol is integrated
-                    commands: if transport_mode == protodongers::control::device::TransportMode::Usb
-                    {
-                        Some(tx)
-                    } else {
-                        // BLE mode: no events, so no commands channel needed for client
-                        // Keep tx alive by spawning a task that holds it until cancelled
-                        tokio::spawn(async move {
-                            let _tx = tx; // Keep channel open
-                            std::future::pending::<()>().await
-                        });
-                        None
-                    },
+                    commands: Some(tx),
                 };
 
                 let _ = message_channel
@@ -1270,24 +1260,35 @@ async fn device_handler_task(
                             }
                         }
                     }
-                    Some(DeviceTaskMessage::Zero(trans, _point)) => {
-                        debug!(
-                            "Zero received - storing device offset for {:02x?}",
-                            device.uuid
+                    Some(DeviceTaskMessage::Zero(trans, point)) => {
+                        info!(
+                            "Zero received for {:02x?}, translation: {:?}, target: {:?}",
+                            device.uuid, trans.vector, point
                         );
-                        let iso = Isometry3::from_parts(
-                            Translation3::from(trans.vector),
-                            UnitQuaternion::identity(),
-                        );
-                        {
-                            let mut guard = device_offsets.lock().await;
-                            guard.insert(device.uuid, iso);
+                        let quat = {
+                            let sc = screen_calibrations.load();
+                            ats_helpers::calculate_zero_offset_quat(trans, point, &sc, &fv_state)
+                        };
+                        if let Some(quat) = quat {
+                            let iso = Isometry3::from_parts(trans, quat);
+                            info!("Zero offset computed for {:02x?}: {:?}", device.uuid, iso);
+                            {
+                                let mut guard = device_offsets.lock().await;
+                                guard.insert(device.uuid, iso);
+                            }
+                            let ev = Event::DeviceEvent(DeviceEvent(
+                                device.clone(),
+                                DeviceEventKind::ZeroResult(true),
+                            ));
+                            let _ = event_sender.send(ev);
+                        } else {
+                            warn!("Zero offset computation failed for {:02x?} (no valid pose)", device.uuid);
+                            let ev = Event::DeviceEvent(DeviceEvent(
+                                device.clone(),
+                                DeviceEventKind::ZeroResult(false),
+                            ));
+                            let _ = event_sender.send(ev);
                         }
-                        let ev = Event::DeviceEvent(DeviceEvent(
-                            device.clone(),
-                            DeviceEventKind::ZeroResult(true),
-                        ));
-                        let _ = event_sender.send(ev);
                     }
                     Some(DeviceTaskMessage::ClearZero) => {
                         debug!(
