@@ -1418,7 +1418,7 @@ async fn main(spawner: Spawner) -> ! {
         defmt::info!("Creating USB driver with VBUS detect");
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
         defmt::info!("USB driver created");
-        let mut config = embassy_usb::Config::new(0x1915, 0x5210);
+        let mut config = embassy_usb::Config::new(0x1915, 0x5211);
         config.manufacturer = Some("Nordic");
         config.product = Some("USB-DFU Bootloader");
         config.serial_number = Some("1235678");

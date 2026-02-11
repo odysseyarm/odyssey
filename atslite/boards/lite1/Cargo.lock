@@ -184,6 +184,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
+name = "better-boot"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "embedded-storage",
+]
+
+[[package]]
+name = "better-dfu"
+version = "0.2.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "cortex-m",
+ "defmt 1.0.1",
+ "embassy-boot",
+ "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
+ "embassy-sync 0.7.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-storage",
+]
+
+[[package]]
 name = "bilge"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -793,6 +816,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "embassy-boot"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21b8138aeafd7dd004d77bbf42a581060a018112ffaa3ffc1996da5d3867f345"
+dependencies = [
+ "defmt 1.0.1",
+ "digest",
+ "embassy-embedded-hal",
+ "embassy-sync 0.7.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
+ "embedded-storage",
+ "embedded-storage-async",
+ "signature",
+]
+
+[[package]]
 name = "embassy-embedded-hal"
 version = "0.5.0"
 source = "git+https://github.com/embassy-rs/embassy?rev=db65b00#db65b002a07a01cb973c7052428c3c5dc2ae853a"
@@ -991,6 +1029,7 @@ version = "0.5.1"
 source = "git+https://github.com/embassy-rs/embassy?rev=db65b00#db65b002a07a01cb973c7052428c3c5dc2ae853a"
 dependencies = [
  "bitflags 2.10.0",
+ "defmt 1.0.1",
  "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
  "embassy-net-driver-channel 0.3.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
  "embassy-sync 0.7.2 (git+https://github.com/embassy-rs/embassy?rev=db65b00)",
@@ -1509,9 +1548,10 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "lite1"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atslite-common",
+ "better-dfu",
  "bt-hci",
  "bytemuck",
  "cfg-noodle",
@@ -1535,6 +1575,7 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "icm426xx",
  "icmsg",
+ "lite1-boot-api",
  "memory-spec",
  "nalgebra",
  "npm1300-rs",
@@ -1548,6 +1589,16 @@ dependencies = [
  "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
+]
+
+[[package]]
+name = "lite1-boot-api"
+version = "0.1.0"
+dependencies = [
+ "better-boot",
+ "defmt 0.3.100",
+ "embassy-nrf",
+ "embedded-storage",
 ]
 
 [[package]]
@@ -2308,6 +2359,12 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 
 [[package]]
 name = "simba"

@@ -155,7 +155,7 @@ gen-release version:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    MANIFEST="../../../../../manifests/releases.alpha.json"
+    MANIFEST="../../../manifests/releases.alpha.json"
     BUILD_DIR="{{output_dir}}"
 
     # Check that build files exist

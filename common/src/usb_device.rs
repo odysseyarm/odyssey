@@ -91,6 +91,7 @@ pub type DeviceControlReceiver = fn() -> Option<protodongers::control::device::D
 /// The `builder_callback` allows adding additional interfaces (e.g., DFU).
 pub fn usb_device<Irqs>(
     pid: u16,
+    product_name: &'static str,
     guid: &'static str,
     usbd: Peri<'static, USBD>,
     irqs: Irqs,
@@ -113,7 +114,7 @@ where
 
     let mut config = UsbConfig::new(VID, pid);
     config.manufacturer = Some("Odyssey Arm");
-    config.product = Some("ATS USB Legacy");
+    config.product = Some(product_name);
     // config.serial_number = Some("...");
     config.max_power = 310;
     config.max_packet_size_0 = 64;

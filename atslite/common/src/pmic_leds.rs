@@ -145,6 +145,9 @@ impl PmicLedsHandle {
     }
 
     pub async fn set_state_seamless(&self, s: LedState) {
+        if self.locked.load(Ordering::Relaxed) {
+            return;
+        }
         CMD_CH.send(LedCmd::SetSeamless(s)).await;
     }
 

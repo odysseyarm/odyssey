@@ -48,6 +48,32 @@
           "released": "2026-02-02"
         }
       ]
+    },
+    "atslite1": {
+      "firmwares": [
+        {
+          "version": "0.1.1",
+          "files": {
+            "app-a": {
+              "sha256": "7ab39fda9a3466255ab7fd5176145a28e186ff492c98937ba3a3c9731fd3b963",
+              "size": 296980
+            },
+            "app-b": {
+              "sha256": "d295af8769eeb010c70d10886851a4bb49beaf2deceb76a98b73b6b7be777053",
+              "size": 296980
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-11"
+        }
+      ]
     }
   }
 }

@@ -42,7 +42,7 @@ async fn main(spawner: Spawner) {
     // USB config - match the common::usb setup exactly
     let mut usb_config = embassy_usb::Config::new(0x1915, 0x5211);
     usb_config.manufacturer = Some("Odyssey Arm");
-    usb_config.product = Some("ATS USB Legacy");
+    usb_config.product = Some("ATS USB");
     usb_config.max_power = 310;
     usb_config.max_packet_size_0 = 64;
     // Composite device settings (needed for MSOS)

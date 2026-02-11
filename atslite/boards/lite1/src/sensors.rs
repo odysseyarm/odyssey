@@ -147,16 +147,8 @@ impl ImuSensor for Icm42688Sensor {
             .wrapping_add(1000 * (pkt.timestamp() as u32) / 32);
 
         Ok(ImuData {
-            accel: [
-                pkt.accel_data_x() as i16,
-                pkt.accel_data_y() as i16,
-                pkt.accel_data_z() as i16,
-            ],
-            gyro: [
-                pkt.gyro_data_x() as i16,
-                pkt.gyro_data_y() as i16,
-                pkt.gyro_data_z() as i16,
-            ],
+            accel: [pkt.accel_data_x(), pkt.accel_data_y(), pkt.accel_data_z()],
+            gyro: [pkt.gyro_data_x(), pkt.gyro_data_y(), pkt.gyro_data_z()],
             timestamp_micros: self.ts_micros,
         })
     }

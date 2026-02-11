@@ -174,8 +174,8 @@ pub trait ImuSensor {
 
 /// IMU data structure
 pub struct ImuData {
-    pub accel: [i16; 3],
-    pub gyro: [i16; 3],
+    pub accel: [i32; 3],
+    pub gyro: [i32; 3],
     pub timestamp_micros: u32,
 }
 
@@ -584,8 +584,12 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
         let ts_micros = imu_data.timestamp_micros;
 
         // Apply axis transforms (POC2/lite1 specific)
-        let (ax, ay, az) = (-acc[1], acc[0], acc[2]);
-        let (gx, gy, gz) = (-gyr[1], gyr[0], gyr[2]);
+        // ICM on lite1 is rotated 90° CW vs legacy atslite (POC1).
+        // Legacy transform: [raw[0], -raw[1], -raw[2]]
+        // Rotation mapping: legacy_x = new_y, legacy_y = -new_x
+        // Combined: [raw[1], raw[0], -raw[2]]
+        let (ax, ay, az) = (acc[1], acc[0], -acc[2]);
+        let (gx, gy, gz) = (gyr[1], gyr[0], -gyr[2]);
 
         // Convert to SI units
         let accel = Vector3::new(
@@ -685,23 +689,10 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
                 }
             }
 
-            let n = {
+            {
                 let mut pag = pag.lock().await;
                 match pag.get_objects(&mut objs).await {
-                    Ok(Some(n)) => {
-                        if n > 0 {
-                            defmt::info!("[obj_loop] Got {} objects from PAG", n);
-                            // Log first object's coordinates for debugging
-                            let obj = &objs[0];
-                            defmt::info!(
-                                "[obj_loop] obj[0]: x={}, y={}, area={}",
-                                obj.x(),
-                                obj.y(),
-                                obj.area()
-                            );
-                        }
-                        n
-                    }
+                    Ok(Some(_)) => {}
                     Ok(None) => continue,
                     Err(e) => {
                         defmt::error!("[obj_loop] get_objects failed: {:?}", e);
@@ -711,11 +702,6 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
             };
 
             let id = stream_infos.marker.req_id();
-            defmt::info!(
-                "[obj_loop] Sending marker report with {} objects, id={}",
-                n,
-                id
-            );
             let pkt = Packet {
                 id,
                 data: PacketData::PocMarkersReport(protodongers::PocMarkersReport {

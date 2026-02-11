@@ -1,6 +1,6 @@
 [package]
 name = "lite1"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [[bin]]
@@ -16,6 +16,8 @@ path = "src/bin/usb_test.rs"
 pag7665qn = { path = "../../../pag7665qn" }
 donger-common = { path = "../../../common", features = ["atslite"] }
 atslite-common = { path = "../../common" }
+lite1-boot-api = { path = "boot-api", features = ["defmt"] }
+better-dfu = { path = "../../../better-dfu", features = ["application", "defmt", "cortex-m"] }
 
 # Embassy
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }

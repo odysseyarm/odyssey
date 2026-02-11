@@ -12,6 +12,9 @@ use panic_probe as _;
 
 use lite1::transport_mode;
 
+use better_dfu::consts::DfuAttributes;
+use better_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
+use core::cell::RefCell;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
 use embassy_nrf::{
@@ -21,9 +24,11 @@ use embassy_nrf::{
     spim::{self, Spim},
     twim::{self, Twim},
 };
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::{Delay, Timer};
+use embassy_usb::msos;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use npm1300_rs::NPM1300;
 use pag7665qn::{Pag7665Qn, mode};
@@ -39,6 +44,7 @@ use lite1::{
 };
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
+const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";
 
 const FIRMWARE_VERSION: [u16; 3] = [
     env!("CARGO_PKG_VERSION_MAJOR").as_bytes()[0] as u16 - b'0' as u16,
@@ -48,6 +54,24 @@ const FIRMWARE_VERSION: [u16; 3] = [
 
 // Default accelerometer ODR in Hz (matches legacy atslite)
 const DEFAULT_ACCEL_ODR: u16 = 100;
+
+struct AppDfuMarker<'a> {
+    flash: &'a Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
+}
+
+impl<'a> DfuMarker for AppDfuMarker<'a> {
+    fn mark_dfu(&mut self) {
+        defmt::info!("DFU Detach");
+        let result = self.flash.lock(|flash_cell| {
+            let mut flash = flash_cell.borrow_mut();
+            lite1_boot_api::BootConfirmation::request_dfu_with(&mut *flash)
+        });
+        match result {
+            Ok(()) => defmt::info!("DFU requested - SUCCESS"),
+            Err(()) => defmt::warn!("DFU requested - FAILED"),
+        }
+    }
+}
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -129,9 +153,16 @@ async fn main(spawner: Spawner) {
     );
     defmt::info!("Power tasks spawned");
 
-    // Initialize NVMC for settings storage (must be early so PAG settings can be restored)
-    defmt::info!("Initializing NVMC for settings...");
-    let nvmc_async = BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) });
+    // Initialize NVMC in a shared mutex so it can be used by both DFU and settings
+    defmt::info!("Initializing NVMC...");
+    static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
+    let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
+    defmt::info!("NVMC initialized");
+
+    // Initialize settings storage (must be early so PAG settings can be restored)
+    defmt::info!("Initializing settings...");
+    let nvmc_async =
+        nvmc.lock(|_| BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) }));
     lite1::settings::init_core(&spawner, nvmc_async).await;
     let settings = lite1::settings::init_nodes().await;
     lite1::settings::init_board_nodes(settings).await;
@@ -243,19 +274,46 @@ async fn main(spawner: Spawner) {
         int1: imu_int_input.int1,
     };
 
-    // USB initialization with vendor-specific bulk endpoints
+    // Confirm boot using boot-api (caches state for DFU requests)
+    nvmc.lock(|flash_cell| {
+        let mut flash = flash_cell.borrow_mut();
+        lite1_boot_api::BootConfirmation::mark_booted(&mut *flash).expect("Failed to mark boot");
+    });
+    defmt::info!("Boot confirmed");
+
+    // USB initialization with DFU runtime interface
+    static DFU_STATE: StaticCell<Control<AppDfuMarker<'static>, ResetImmediate>> =
+        StaticCell::new();
+    let dfu_state = DFU_STATE.init(Control::new(
+        AppDfuMarker { flash: nvmc },
+        DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH,
+        ResetImmediate,
+    ));
+
     defmt::info!("Initializing USB...");
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, _usb_snd, _usb_rcv, usb_cfg) = usb::usb_device(
         0x5211, // Lite1 PID
+        "ATS USB",
         DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,
         vbus,
         lite1::device_control::try_send_cmd,
         lite1::device_control::try_recv_event,
-        |_builder| {
-            // No additional interfaces for now (DFU can be added later)
+        |builder| {
+            usb_dfu(
+                builder,
+                dfu_state,
+                embassy_time::Duration::from_millis(2500),
+                |func| {
+                    func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+                    func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+                        "DeviceInterfaceGUIDs",
+                        msos::PropertyData::RegMultiSz(&[DFU_INTERFACE_GUID]),
+                    ));
+                },
+            );
         },
     );
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
