@@ -60,6 +60,25 @@ pub enum DeviceTaskMessage {
     SetShotDelay(u16),
     Zero(nalgebra::Translation3<f32>, nalgebra::Point2<f32>),
     ClearZero,
+    /// Read a sensor register. Reply channel returns the register value or an error.
+    ReadRegister {
+        port: u8,
+        bank: u8,
+        address: u8,
+        reply: tokio::sync::oneshot::Sender<Result<u8, String>>,
+    },
+    /// Write a sensor register. Reply channel returns success or an error.
+    WriteRegister {
+        port: u8,
+        bank: u8,
+        address: u8,
+        data: u8,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Persist current settings to device flash. Reply channel returns success or an error.
+    FlashSettings {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
     AddEventsDevice(VmDevice),
     /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
@@ -187,6 +206,27 @@ async fn usb_device_manager(
                             Err(_) => tracing::info!("Timed out waiting for hub manager to exit"),
                         }
                     });
+                }
+            }
+        }
+
+        // Clean up finished device handlers before checking for new connections.
+        // This ensures stale entries don't block reconnecting devices (e.g. after DFU).
+        {
+            let mut dh = device_handles.lock().await;
+            let mut to_remove_uuids = Vec::<[u8; 6]>::new();
+
+            for (uuid, (_cmd_tx, handle)) in dh.iter() {
+                if handle.is_finished() {
+                    info!("Device {:02x?} task finished, cleaning up", uuid);
+                    to_remove_uuids.push(*uuid);
+                }
+            }
+
+            for uuid in to_remove_uuids {
+                if let Some((_cmd_tx, handle)) = dh.remove(&uuid) {
+                    handle.abort();
+                    info!("Removed finished device handler for {:02x?}", uuid);
                 }
             }
         }
@@ -430,6 +470,18 @@ async fn usb_device_manager(
                                                                     }
                                                                 };
 
+                                                    let product_id = match vm_device
+                                                        .read_prop(
+                                                            protodongers::PropKind::ProductId,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(protodongers::Props::ProductId(id)) => {
+                                                            Some(id)
+                                                        }
+                                                        _ => None,
+                                                    };
+
                                                     let device_meta = Device {
                                                                     uuid,
                                                                     transport: odyssey_hub_common::device::Transport::UsbMux,
@@ -439,6 +491,7 @@ async fn usb_device_manager(
                                                                     firmware_version: version,
                                                                     events_transport: odyssey_hub_common::device::EventsTransport::Bluetooth,
                                                                     events_connected: true, // BLE mux has events
+                                                                    product_id,
                                                                 };
 
                                                     // Check if device is already connected via USB direct before creating handler
@@ -611,9 +664,9 @@ async fn usb_device_manager(
                 let (uuid, version, transport_mode, vm_device_temp) = {
                     match VmDevice::connect_usb_any_mode(dev_info.clone()).await {
                         Ok(vm_device) => {
-                            // Read UUID - use control plane for devices that support it (ATS Lite), packets for others
-                            let uuid = if pid == 0x5210 {
-                                // ATS Lite - use control plane (works in any transport mode)
+                            // Read UUID - use control plane for devices that support it (ATS Lite/Lite1), packets for others
+                            let uuid = if pid == 0x5210 || pid == 0x5211 {
+                                // ATS Lite/Lite1 - use control plane (works in any transport mode)
                                 // Retry up to 3 times with delays
                                 let mut uuid_result = None;
                                 for attempt in 1..=3 {
@@ -802,6 +855,7 @@ async fn usb_device_manager(
                     },
                     events_connected: transport_mode
                         == protodongers::control::device::TransportMode::Usb,
+                    product_id: Some(pid),
                 };
 
                 let (tx, rx) = mpsc::channel(32);
@@ -851,32 +905,6 @@ async fn usb_device_manager(
                 let _ = message_channel
                     .send(Message::Connect(device_meta, channels))
                     .await;
-            }
-        }
-
-        // Detect removed direct USB devices and abort their handlers (similar to hub removal logic)
-        // We need to track USB device info alongside handles to properly detect removal
-        {
-            let mut dh = device_handles.lock().await;
-            let mut to_remove_uuids = Vec::<[u8; 6]>::new();
-
-            // Only check finished handles for now
-            // USB enumeration-based removal will be handled when we track DeviceInfo alongside handles
-            for (uuid, (_cmd_tx, handle)) in dh.iter() {
-                // If handle is finished, mark for removal
-                if handle.is_finished() {
-                    info!("Device {:02x?} task finished", uuid);
-                    to_remove_uuids.push(*uuid);
-                }
-            }
-
-            // Remove finished devices
-            for uuid in to_remove_uuids {
-                if let Some((_cmd_tx, handle)) = dh.remove(&uuid) {
-                    handle.abort();
-                    info!("Removed finished device handler for {:02x?}", uuid);
-                    // Note: Device handler should have sent Disconnect message before exiting
-                }
             }
         }
 
@@ -1305,6 +1333,38 @@ async fn device_handler_task(
                         ));
                         let _ = event_sender.send(ev);
                     }
+                    Some(DeviceTaskMessage::ReadRegister { port, bank, address, reply }) => {
+                        let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
+                        if let Some(dev) = connections.control_device.as_ref()
+                            .or(connections.events_device.as_ref()) {
+                            let result = dev.read_register(port, bank, address).await
+                                .map_err(|e| e.to_string());
+                            let _ = reply.send(result);
+                        } else {
+                            let _ = reply.send(Err("no device available".into()));
+                        }
+                    }
+                    Some(DeviceTaskMessage::WriteRegister { port, bank, address, data, reply }) => {
+                        let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
+                        if let Some(dev) = connections.control_device.as_ref()
+                            .or(connections.events_device.as_ref()) {
+                            let result = dev.write_register(port, bank, address, data).await
+                                .map_err(|e| e.to_string());
+                            let _ = reply.send(result);
+                        } else {
+                            let _ = reply.send(Err("no device available".into()));
+                        }
+                    }
+                    Some(DeviceTaskMessage::FlashSettings { reply }) => {
+                        if let Some(dev) = connections.control_device.as_ref()
+                            .or(connections.events_device.as_ref()) {
+                            let result = dev.flash_settings().await
+                                .map_err(|e| e.to_string());
+                            let _ = reply.send(result);
+                        } else {
+                            let _ = reply.send(Err("no device available".into()));
+                        }
+                    }
                     Some(DeviceTaskMessage::AddEventsDevice(events_vm_device)) => {
                         info!(
                             "AddEventsDevice - adding BLE mux events device for {:02x?}",
@@ -1502,6 +1562,7 @@ async fn device_handler_task(
         firmware_version: device.firmware_version,
         events_transport: device.events_transport,
         events_connected: device.events_connected,
+        product_id: device.product_id,
     };
     let _ = message_channel
         .send(Message::Disconnect(disconnect_device))

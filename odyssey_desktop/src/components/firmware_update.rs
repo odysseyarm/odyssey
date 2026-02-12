@@ -162,29 +162,23 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 | FirmwareUpdateState::Available { .. }
                 | FirmwareUpdateState::NeedsUsbConnection { .. }
         ) {
-            if let (Some(manifest), Some(fw_version)) =
-                (manifest(), device.firmware_version.as_ref())
-            {
+            if let (Some(manifest), Some(fw_version), Some(pid)) = (
+                manifest(),
+                device.firmware_version.as_ref(),
+                device.product_id,
+            ) {
                 let device_version = [fw_version[0], fw_version[1], fw_version[2]];
 
-                // Check if there's a compatible update available using any known device type
-                let mut update_available: Option<(String, String)> = None;
-
-                for &(_vid, _pid, device_type) in firmware::DEVICE_MAP {
+                // Look up device type from its product ID
+                if let Some((vid, pid, device_type)) = firmware::device_info_from_pid(pid) {
                     if let Some(available_fw) =
                         firmware::find_compatible_firmware(&manifest, device_type, device_version)
                     {
-                        update_available =
-                            Some((device_type.to_string(), available_fw.version.clone()));
-                        break;
-                    }
-                }
+                        let available_version = available_fw.version.clone();
+                        let device_type = device_type.to_string();
 
-                if let Some((device_type, available_version)) = update_available {
-                    // Check if device has USB control capability
-                    if device.capabilities.contains(DeviceCapabilities::CONTROL) {
-                        // Device has USB control - can update directly
-                        if let Some((vid, pid, _)) = firmware::find_any_known_device() {
+                        // Check if device has USB control capability
+                        if device.capabilities.contains(DeviceCapabilities::CONTROL) {
                             let new_state = FirmwareUpdateState::Available {
                                 current: device_version,
                                 available: available_version.clone(),
@@ -203,27 +197,27 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                 );
                             }
                             manager.set_state(device_uuid, new_state);
+                        } else {
+                            // Device doesn't have USB control - prompt user to plug in USB
+                            let new_state = FirmwareUpdateState::NeedsUsbConnection {
+                                current: device_version,
+                                available: available_version.clone(),
+                            };
+                            if !matches!(
+                                current_state,
+                                FirmwareUpdateState::NeedsUsbConnection { .. }
+                            ) {
+                                tracing::info!(
+                                    "Update available for {:02x?}: {}.{}.{} -> {} (needs USB connection)",
+                                    device_uuid,
+                                    device_version[0],
+                                    device_version[1],
+                                    device_version[2],
+                                    available_version
+                                );
+                            }
+                            manager.set_state(device_uuid, new_state);
                         }
-                    } else {
-                        // Device doesn't have USB control - prompt user to plug in USB
-                        let new_state = FirmwareUpdateState::NeedsUsbConnection {
-                            current: device_version,
-                            available: available_version.clone(),
-                        };
-                        if !matches!(
-                            current_state,
-                            FirmwareUpdateState::NeedsUsbConnection { .. }
-                        ) {
-                            tracing::info!(
-                                "Update available for {:02x?}: {}.{}.{} -> {} (needs USB connection)",
-                                device_uuid,
-                                device_version[0],
-                                device_version[1],
-                                device_version[2],
-                                available_version
-                            );
-                        }
-                        manager.set_state(device_uuid, new_state);
                     }
                 }
             }

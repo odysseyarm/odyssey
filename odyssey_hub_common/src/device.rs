@@ -66,4 +66,6 @@ pub struct Device {
     pub events_transport: EventsTransport,
     /// Whether events/sensor data are currently being received
     pub events_connected: bool,
+    /// USB Product ID (e.g. 0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux)
+    pub product_id: Option<u16>,
 }
