@@ -504,6 +504,89 @@ impl Service for Server {
         }
     }
 
+    async fn read_register(
+        &self,
+        req: tonic::Request<ReadRegisterRequest>,
+    ) -> Result<Response<ReadRegisterReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::ReadRegister {
+                port: inner.port as u8,
+                bank: inner.bank as u8,
+                address: inner.address as u8,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(data)) => Ok(Response::new(ReadRegisterReply { data: data as u32 })),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("device"))
+        }
+    }
+
+    async fn write_register(
+        &self,
+        req: tonic::Request<WriteRegisterRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::WriteRegister {
+                port: inner.port as u8,
+                bank: inner.bank as u8,
+                address: inner.address as u8,
+                data: inner.data as u8,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("device"))
+        }
+    }
+
+    async fn flash_settings(
+        &self,
+        req: tonic::Request<FlashSettingsRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let dev: common::device::Device = req
+            .into_inner()
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::FlashSettings { reply: reply_tx })
+                .await
+                .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("device"))
+        }
+    }
+
     async fn clear_zero(
         &self,
         req: tonic::Request<Device>,

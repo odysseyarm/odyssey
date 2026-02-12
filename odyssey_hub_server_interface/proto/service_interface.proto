@@ -19,6 +19,9 @@ service Service {
 
   // Vendor & zero
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
+  rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
+  rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
+  rpc FlashSettings(FlashSettingsRequest) returns (EmptyReply) {}
   rpc ClearZero(Device) returns (EmptyReply) {}
   rpc ResetZero(Device) returns (EmptyReply) {}
   rpc SaveZero(Device) returns (EmptyReply) {}
@@ -89,6 +92,7 @@ message Device {
   uint32 capabilities = 4; // Bitfield: 0x01 = CONTROL, 0x02 = EVENTS
   EventsTransport events_transport = 5;
   bool events_connected = 6; // Whether events are currently being received
+  uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
 }
 
 message FirmwareVersion {
@@ -237,6 +241,28 @@ message ZeroRequest {
   Device device = 1;
   Vector3 translation = 2;
   Vector2 target = 3;
+}
+
+// --- Register / config ---
+
+message ReadRegisterRequest {
+  Device device = 1;
+  uint32 port = 2; // 0=Nf, 1=Wf
+  uint32 bank = 3;
+  uint32 address = 4;
+}
+message ReadRegisterReply {
+  uint32 data = 1;
+}
+message WriteRegisterRequest {
+  Device device = 1;
+  uint32 port = 2;
+  uint32 bank = 3;
+  uint32 address = 4;
+  uint32 data = 5;
+}
+message FlashSettingsRequest {
+  Device device = 1;
 }
 
 message SubscribeEventsRequest {}

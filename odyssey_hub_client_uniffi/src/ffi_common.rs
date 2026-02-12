@@ -24,6 +24,7 @@ pub struct Device {
     pub firmware_version: Option<Vec<u16>>,
     pub events_transport: common::device::EventsTransport,
     pub events_connected: bool,
+    pub product_id: Option<u16>,
 }
 
 #[derive(uniffi::Enum, Clone)]
@@ -232,6 +233,7 @@ impl From<common::device::Device> for Device {
             firmware_version: device.firmware_version.map(|v| v.to_vec()),
             events_transport: device.events_transport,
             events_connected: device.events_connected,
+            product_id: device.product_id,
         }
     }
 }
@@ -245,6 +247,7 @@ impl From<Device> for common::device::Device {
             firmware_version: device.firmware_version.map(|v| v.try_into().unwrap()),
             events_transport: device.events_transport,
             events_connected: device.events_connected,
+            product_id: device.product_id,
         }
     }
 }

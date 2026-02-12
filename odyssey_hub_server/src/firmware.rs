@@ -21,9 +21,8 @@ const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/donger/releases/d
 /// Known device types mapped by VID:PID
 pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
     (0x1915, 0x5210, "legacy-atslite1"),
-    (0x1915, 0x5211, "poc"),
+    (0x1915, 0x5211, "atslite1"),
     (0x1915, 0x5212, "dongle"),
-    (0x1915, 0x5213, "atslite1"),
 ];
 
 /// Top-level firmware manifest
@@ -99,6 +98,14 @@ pub fn device_type_from_vid_pid(vid: u16, pid: u16) -> Option<&'static str> {
         .iter()
         .find(|(v, p, _)| *v == vid && *p == pid)
         .map(|(_, _, name)| *name)
+}
+
+/// Get device type name and VID/PID from product ID alone
+pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
+    DEVICE_MAP
+        .iter()
+        .find(|(_, p, _)| *p == pid)
+        .map(|&(v, p, name)| (v, p, name))
 }
 
 /// Fetch the firmware manifest from GitHub

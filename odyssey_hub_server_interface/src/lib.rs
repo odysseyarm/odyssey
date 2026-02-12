@@ -112,6 +112,7 @@ impl From<common::device::Device> for proto::Device {
                 }
             },
             events_connected: d.events_connected,
+            product_id: d.product_id.unwrap_or(0) as u32,
         }
     }
 }
@@ -137,6 +138,11 @@ impl From<proto::Device> for common::device::Device {
                 proto::EventsTransport::Bluetooth => common::device::EventsTransport::Bluetooth,
             },
             events_connected: d.events_connected,
+            product_id: if d.product_id == 0 {
+                None
+            } else {
+                Some(d.product_id as u16)
+            },
         }
     }
 }

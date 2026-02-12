@@ -156,6 +156,62 @@ impl Client {
         }
     }
 
+    pub async fn read_register(
+        &mut self,
+        device: common::device::Device,
+        port: u8,
+        bank: u8,
+        address: u8,
+    ) -> anyhow::Result<u8> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::ReadRegisterRequest {
+                device: Some(device.into()),
+                port: port as u32,
+                bank: bank as u32,
+                address: address as u32,
+            });
+            let reply = service_client.read_register(request).await?.into_inner();
+            Ok(reply.data as u8)
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn write_register(
+        &mut self,
+        device: common::device::Device,
+        port: u8,
+        bank: u8,
+        address: u8,
+        data: u8,
+    ) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::WriteRegisterRequest {
+                device: Some(device.into()),
+                port: port as u32,
+                bank: bank as u32,
+                address: address as u32,
+                data: data as u32,
+            });
+            service_client.write_register(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn flash_settings(&mut self, device: common::device::Device) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::FlashSettingsRequest {
+                device: Some(device.into()),
+            });
+            service_client.flash_settings(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn reset_zero(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());

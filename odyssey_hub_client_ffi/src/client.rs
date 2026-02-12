@@ -158,6 +158,81 @@ pub extern "C" fn client_stop_stream(handle: *const Handle, client: *mut Client)
 }
 
 #[no_mangle]
+pub extern "C" fn client_read_register(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    device: common::device::Device,
+    port: u8,
+    bank: u8,
+    address: u8,
+    callback: extern "C" fn(UserObj, ClientError, u8),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    tokio::spawn(async move {
+        match client.read_register(device, port, bank, address).await {
+            Ok(data) => callback(userdata, ClientError::None, data),
+            Err(_) => callback(userdata, ClientError::NotConnected, 0),
+        }
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn client_write_register(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    device: common::device::Device,
+    port: u8,
+    bank: u8,
+    address: u8,
+    data: u8,
+    callback: extern "C" fn(UserObj, ClientError),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    tokio::spawn(async move {
+        let result = client
+            .write_register(device, port, bank, address, data)
+            .await;
+        let error = if result.is_ok() {
+            ClientError::None
+        } else {
+            ClientError::NotConnected
+        };
+        callback(userdata, error);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn client_flash_settings(
+    handle: *const Handle,
+    client: *mut Client,
+    userdata: UserObj,
+    device: common::device::Device,
+    callback: extern "C" fn(UserObj, ClientError),
+) {
+    let handle = unsafe { &*handle };
+    let _guard = handle.tokio_rt.enter();
+    let client = unsafe { &mut *client };
+
+    tokio::spawn(async move {
+        let result = client.flash_settings(device).await;
+        let error = if result.is_ok() {
+            ClientError::None
+        } else {
+            ClientError::NotConnected
+        };
+        callback(userdata, error);
+    });
+}
+
+#[no_mangle]
 pub extern "C" fn client_reset_zero(
     handle: *const Handle,
     client: *mut Client,
@@ -348,32 +423,17 @@ pub extern "C" fn client_subscribe_device_list(
                         callback(userdata, ClientError::None, ptr, len);
                     }
                     None => {
-                        callback(
-                            userdata,
-                            ClientError::StreamEnd,
-                            std::ptr::null_mut(),
-                            0,
-                        );
+                        callback(userdata, ClientError::StreamEnd, std::ptr::null_mut(), 0);
                         break;
                     }
                     Some(Err(_)) => {
-                        callback(
-                            userdata,
-                            ClientError::StreamEnd,
-                            std::ptr::null_mut(),
-                            0,
-                        );
+                        callback(userdata, ClientError::StreamEnd, std::ptr::null_mut(), 0);
                         break;
                     }
                 }
             },
             Err(_) => {
-                callback(
-                    userdata,
-                    ClientError::NotConnected,
-                    std::ptr::null_mut(),
-                    0,
-                );
+                callback(userdata, ClientError::NotConnected, std::ptr::null_mut(), 0);
             }
         }
     });

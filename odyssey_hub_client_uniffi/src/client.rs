@@ -375,6 +375,49 @@ impl Client {
     }
 
     #[uniffi::method]
+    pub async fn read_register(
+        &self,
+        device: Device,
+        port: u8,
+        bank: u8,
+        address: u8,
+    ) -> Result<u8, ClientError> {
+        self.inner
+            .write()
+            .await
+            .read_register(device.into(), port, bank, address)
+            .await
+            .map_err(|_| ClientError::NotConnected)
+    }
+
+    #[uniffi::method]
+    pub async fn write_register(
+        &self,
+        device: Device,
+        port: u8,
+        bank: u8,
+        address: u8,
+        data: u8,
+    ) -> Result<(), ClientError> {
+        self.inner
+            .write()
+            .await
+            .write_register(device.into(), port, bank, address, data)
+            .await
+            .map_err(|_| ClientError::NotConnected)
+    }
+
+    #[uniffi::method]
+    pub async fn flash_settings(&self, device: Device) -> Result<(), ClientError> {
+        self.inner
+            .write()
+            .await
+            .flash_settings(device.into())
+            .await
+            .map_err(|_| ClientError::NotConnected)
+    }
+
+    #[uniffi::method]
     pub async fn update_accessory_info_map(
         &self,
         entries: Vec<crate::ffi_common::AccessoryInfoMapEntry>,
