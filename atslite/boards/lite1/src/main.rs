@@ -372,6 +372,7 @@ async fn main(spawner: Spawner) {
         imu_int,
         device_id,
         product_id: 0x5211,
+        firmware_version: FIRMWARE_VERSION,
         settings,
     };
 

@@ -128,20 +128,6 @@ impl ImpactSettings {
     }
 }
 
-/// Firmware version extracted from Cargo.toml
-const MAJOR: u16 = match u16::from_str_radix(env!("CARGO_PKG_VERSION_MAJOR"), 10) {
-    Ok(v) => v,
-    Err(_) => 0,
-};
-const MINOR: u16 = match u16::from_str_radix(env!("CARGO_PKG_VERSION_MINOR"), 10) {
-    Ok(v) => v,
-    Err(_) => 0,
-};
-const PATCH: u16 = match u16::from_str_radix(env!("CARGO_PKG_VERSION_PATCH"), 10) {
-    Ok(v) => v,
-    Err(_) => 0,
-};
-
 /// Trait for PAG sensor interface (PAG7665QN)
 #[allow(async_fn_in_trait)]
 pub trait PagSensor {
@@ -243,6 +229,8 @@ where
     pub device_id: [u8; 6],
     /// Product ID
     pub product_id: u16,
+    /// Firmware version [major, minor, patch]
+    pub firmware_version: [u16; 3],
     /// Settings reference for persisting config changes
     pub settings: &'a mut crate::settings::Settings,
 }
@@ -282,6 +270,7 @@ where
         &l2cap,
         ctx.device_id,
         ctx.product_id,
+        ctx.firmware_version,
         &impact_settings,
         ctx.settings,
     );
@@ -314,6 +303,7 @@ async fn recv_loop<P: PagSensor>(
     l2cap: &L2capChannels,
     device_id: [u8; 6],
     product_id: u16,
+    firmware_version: [u16; 3],
     impact_settings: &ImpactSettings,
     settings: &mut crate::settings::Settings,
 ) {
@@ -401,9 +391,7 @@ async fn recv_loop<P: PagSensor>(
 
             PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,
-                data: PacketData::ReadVersionResponse(protodongers::Version::new([
-                    MAJOR, MINOR, PATCH,
-                ])),
+                data: PacketData::ReadVersionResponse(protodongers::Version::new(firmware_version)),
             }),
 
             PacketData::WriteConfig(config) => {

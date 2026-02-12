@@ -52,6 +52,28 @@
     "atslite1": {
       "firmwares": [
         {
+          "version": "0.1.2",
+          "files": {
+            "app-a": {
+              "sha256": "a782e29634ced4f2062a305e82d11db215d2b44d9252f791f4aaea4073a7258a",
+              "size": 297876
+            },
+            "app-b": {
+              "sha256": "a81dccf9c6bf2b695df77f13d250e9c27d2c5267b308796e38d893cbbabceef9",
+              "size": 297876
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-11"
+        },
+        {
           "version": "0.1.1",
           "files": {
             "app-a": {
