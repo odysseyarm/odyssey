@@ -9,8 +9,8 @@ use ats_usb::packets::vm::{
     VendorData,
 };
 use nalgebra::{
-    Isometry3, Matrix3, Matrix3x1, Point2, Rotation3, Translation3, UnitQuaternion, UnitVector3,
-    Vector2, Vector3,
+    Isometry3, Matrix3, Matrix3x1, Point2, Point3, Rotation3, Translation3, UnitQuaternion,
+    UnitVector3, Vector2, Vector3,
 };
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_common::events::{
@@ -58,7 +58,11 @@ pub enum DeviceTaskMessage {
     /// Set the shot delay (milliseconds) for this device. Server may send this
     /// to apply shot delay live to the running device task.
     SetShotDelay(u16),
-    Zero(nalgebra::Translation3<f32>, nalgebra::Point2<f32>),
+    Zero(
+        nalgebra::Translation3<f32>,
+        nalgebra::Point2<f32>,
+        Option<TrackingEvent>,
+    ),
     ClearZero,
     /// Read a sensor register. Reply channel returns the register value or an error.
     ReadRegister {
@@ -458,15 +462,15 @@ async fn usb_device_manager(
                                                                             v.firmware_semver[1],
                                                                             v.firmware_semver[2]
                                                                         );
-                                                                        Some([v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]])
+                                                                        [v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]]
                                                                     }
                                                                     Ok(other) => {
                                                                         tracing::warn!("Unexpected response reading version from BLE device {:02x?}: {:?}", uuid, other);
-                                                                        None
+                                                                        [0, 0, 0]
                                                                     }
                                                                     Err(e) => {
                                                                         tracing::warn!("Failed to read version from BLE device {:02x?}: {}", uuid, e);
-                                                                        None
+                                                                        [0, 0, 0]
                                                                     }
                                                                 };
 
@@ -477,9 +481,9 @@ async fn usb_device_manager(
                                                         .await
                                                     {
                                                         Ok(protodongers::Props::ProductId(id)) => {
-                                                            Some(id)
+                                                            id
                                                         }
-                                                        _ => None,
+                                                        _ => 0,
                                                     };
 
                                                     let device_meta = Device {
@@ -839,13 +843,16 @@ async fn usb_device_manager(
                     uuid,
                     transport: odyssey_hub_common::device::Transport::Usb,
                     capabilities,
-                    firmware_version: version.as_ref().map(|v| {
-                        [
-                            v.firmware_semver[0],
-                            v.firmware_semver[1],
-                            v.firmware_semver[2],
-                        ]
-                    }),
+                    firmware_version: version
+                        .as_ref()
+                        .map(|v| {
+                            [
+                                v.firmware_semver[0],
+                                v.firmware_semver[1],
+                                v.firmware_semver[2],
+                            ]
+                        })
+                        .unwrap_or([0, 0, 0]),
                     events_transport: if transport_mode
                         == protodongers::control::device::TransportMode::Usb
                     {
@@ -855,7 +862,7 @@ async fn usb_device_manager(
                     },
                     events_connected: transport_mode
                         == protodongers::control::device::TransportMode::Usb,
-                    product_id: Some(pid),
+                    product_id: pid,
                 };
 
                 let (tx, rx) = mpsc::channel(32);
@@ -1288,12 +1295,15 @@ async fn device_handler_task(
                             }
                         }
                     }
-                    Some(DeviceTaskMessage::Zero(trans, point)) => {
+                    Some(DeviceTaskMessage::Zero(trans, point, tracking_event)) => {
                         info!(
-                            "Zero received for {:02x?}, translation: {:?}, target: {:?}",
-                            device.uuid, trans.vector, point
+                            "Zero received for {:02x?}, translation: {:?}, target: {:?}, has_tracking_event: {}",
+                            device.uuid, trans.vector, point, tracking_event.is_some()
                         );
-                        let quat = {
+                        let quat = if let Some(te) = tracking_event {
+                            let sc = screen_calibrations.load();
+                            calculate_zero_offset_from_tracking_event(trans, point, &sc, &te)
+                        } else {
                             let sc = screen_calibrations.load();
                             ats_helpers::calculate_zero_offset_quat(trans, point, &sc, &fv_state)
                         };
@@ -1452,18 +1462,18 @@ async fn device_handler_task(
                         );
 
                         // Read firmware version from USB control device if not already available
-                        if device.firmware_version.is_none() {
+                        if device.firmware_version == [0, 0, 0] {
                             match control_vm_device.read_version().await {
                                 Ok(v) => {
                                     info!(
                                         "Read firmware version from USB control for {:02x?}: {}.{}.{}",
                                         device.uuid, v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]
                                     );
-                                    device.firmware_version = Some([
+                                    device.firmware_version = [
                                         v.firmware_semver[0],
                                         v.firmware_semver[1],
                                         v.firmware_semver[2],
-                                    ]);
+                                    ];
                                 }
                                 Err(e) => {
                                     warn!("Failed to read firmware version from USB control for {:02x?}: {}", device.uuid, e);
@@ -1865,6 +1875,54 @@ fn transform_pose_for_client(rotmat: Matrix3<f32>, transvec: Vector3<f32>) -> Po
         rotation,
         translation,
     }
+}
+
+/// Compute zero offset quaternion from a client-side TrackingEvent.
+/// The TrackingEvent pose has been through `transform_pose_for_client` (flip applied),
+/// so we undo the flip to recover the raw orientation/position before computing the offset.
+fn calculate_zero_offset_from_tracking_event(
+    zero_translation: Translation3<f32>,
+    zero_target_in_screen_space: Point2<f32>,
+    screen_calibrations: &arrayvec::ArrayVec<
+        (u8, ats_common::ScreenCalibration<f32>),
+        { (ats_common::MAX_SCREEN_ID + 1) as usize },
+    >,
+    te: &TrackingEvent,
+) -> Option<UnitQuaternion<f32>> {
+    let screen_id = te.screen_id as u8;
+    if screen_id > ats_common::MAX_SCREEN_ID {
+        return None;
+    }
+
+    // Undo the flip that transform_pose_for_client applied
+    let flip = Matrix3::new(1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0);
+    let raw_rotation = flip * te.pose.rotation * flip;
+    let raw_translation = flip * te.pose.translation;
+
+    let orientation = Rotation3::from_matrix_unchecked(raw_rotation);
+    let orientation = UnitQuaternion::from_rotation_matrix(&orientation);
+    let position: Vector3<f32> =
+        Vector3::new(raw_translation.x, raw_translation.y, raw_translation.z);
+
+    let screen_calibration = ats_helpers::get_screen_calibration(screen_calibrations, screen_id)?;
+    let inv_homography = screen_calibration.homography.try_inverse()?;
+
+    let zero_target_2d = inv_homography.transform_point(&zero_target_in_screen_space);
+    let zero_target_3d = Point3::new(zero_target_2d.x, zero_target_2d.y, 0.0);
+    let iso = Isometry3::from_parts(position.into(), orientation);
+    let zero_position = iso * Point3::from(zero_translation.vector);
+
+    let desired_direction = orientation.inverse_transform_vector(&{
+        let v = zero_target_3d - zero_position;
+        let norm = v.norm();
+        if norm.abs() < f32::EPSILON {
+            return None;
+        }
+        v / norm
+    });
+
+    let current_forward = Vector3::z();
+    UnitQuaternion::rotation_between(&current_forward, &desired_direction)
 }
 
 fn build_markers_from_points(

@@ -134,10 +134,10 @@ pub fn Home() -> Element {
                                                             class: "text-gray-500 dark:text-gray-400",
                                                             "Firmware:"
                                                         }
-                                                        if let Some(ref fw) = device.firmware_version {
+                                                        if device.firmware_version != [0, 0, 0] {
                                                             span {
                                                                 class: "text-gray-700 dark:text-gray-200 font-mono",
-                                                                "{fw[0]}.{fw[1]}.{fw[2]}"
+                                                                "{device.firmware_version[0]}.{device.firmware_version[1]}.{device.firmware_version[2]}"
                                                             }
                                                         } else {
                                                             span {

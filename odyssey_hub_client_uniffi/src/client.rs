@@ -314,7 +314,7 @@ impl Client {
         self.inner
             .write()
             .await
-            .zero(device.into(), translation, target)
+            .zero(device.into(), translation, target, None)
             .await
             .map_err(|_| ClientError::NotConnected)
             .map(|_| ())

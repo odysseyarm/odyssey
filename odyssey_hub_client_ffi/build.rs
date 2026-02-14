@@ -8,6 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
+    // C header
     let mut config: cbindgen::Config = Default::default();
     config.language = cbindgen::Language::C;
     config.cpp_compat = true;
@@ -19,10 +20,13 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
         .with_config(config)
         .with_include_guard("OHC_H")
         .with_item_prefix("ohc_")
+        .with_parse_deps(true)
+        .with_parse_include(&["odyssey_hub_common"])
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(crate_dir.to_string() + "/generated/include/ohc.h");
 
+    // C++ header
     let mut config: cbindgen::Config = Default::default();
     config.language = cbindgen::Language::Cxx;
     config.cpp_compat = true;
@@ -51,6 +55,8 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
         .with_config(config)
         .with_namespace("ohc")
         .with_include_guard("OHC_H")
+        .with_parse_deps(true)
+        .with_parse_include(&["odyssey_hub_common"])
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(crate_dir.to_string() + "/generated/include/ohc.hpp");

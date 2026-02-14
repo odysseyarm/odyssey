@@ -1,5 +1,7 @@
 pub mod client;
+pub mod event;
 pub mod funny;
+pub mod packet;
 pub mod tracking_history;
 
 #[allow(unused)]
