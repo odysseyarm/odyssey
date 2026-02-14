@@ -2,8 +2,13 @@ use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub;
 use dioxus::{html::geometry::euclid::Rect, logger::tracing, prelude::*};
 use odyssey_hub_common::events as oe;
+use std::collections::{HashMap, VecDeque};
+use std::time::Instant;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+
+/// Max number of tracking events to keep per device (~2 seconds at 100Hz)
+const TRACKING_HISTORY_CAP: usize = 200;
 
 /// Save zero result: None = idle, Some(Ok(())) = saved, Some(Err(msg)) = error
 type SaveStatus = Option<Result<(), String>>;
@@ -48,6 +53,37 @@ pub fn Zero(
         }
     }
 
+    // Per-device ring buffer of recent tracking events for shot-delay-compensated zeroing
+    let tracking_history: Signal<HashMap<[u8; 6], VecDeque<(Instant, oe::TrackingEvent)>>> =
+        use_signal(|| HashMap::new());
+
+    // Subscribe to tracking events and buffer them per-device
+    {
+        let sender = tracking_sender.0.clone();
+        let mut tracking_history = tracking_history.clone();
+        use_future(move || {
+            let mut receiver = sender.subscribe();
+            async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok((device, te)) => {
+                            let mut map = tracking_history.write();
+                            let buf = map
+                                .entry(device.uuid)
+                                .or_insert_with(|| VecDeque::with_capacity(TRACKING_HISTORY_CAP));
+                            buf.push_back((Instant::now(), te));
+                            while buf.len() > TRACKING_HISTORY_CAP {
+                                buf.pop_front();
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            }
+        });
+    }
+
     // fire off zero() when we see an ImpactEvent and the flag is set
     use_effect(move || {
         let ctx = hub();
@@ -66,6 +102,34 @@ pub fn Zero(
                             );
                             if shooting {
                                 let zr = *zero_screen_ratio.peek();
+                                let shot_delay_ms = *device_signals.peek()[key].shot_delay.peek();
+                                // Look up historical tracking event accounting for shot delay
+                                let historical_te = {
+                                    let map = tracking_history.peek();
+                                    if let Some(buf) = map.get(&device.uuid) {
+                                        if shot_delay_ms > 0 && !buf.is_empty() {
+                                            let target_time = Instant::now()
+                                                - std::time::Duration::from_millis(
+                                                    shot_delay_ms as u64,
+                                                );
+                                            // Find the entry closest to target_time
+                                            buf.iter()
+                                                .min_by_key(|(inst, _)| {
+                                                    if *inst > target_time {
+                                                        (*inst - target_time).as_micros()
+                                                    } else {
+                                                        (target_time - *inst).as_micros()
+                                                    }
+                                                })
+                                                .map(|(_, te)| *te)
+                                        } else {
+                                            // No delay or empty buffer — use most recent
+                                            buf.back().map(|(_, te)| *te)
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                };
                                 let dev = device.clone();
                                 spawn(async move {
                                     if let Err(e) = (ctx.client)()
@@ -73,6 +137,7 @@ pub fn Zero(
                                             dev.clone(),
                                             nalgebra::Vector3::new(0., -0.0635, 0.).into(),
                                             nalgebra::Vector2::new(zr.0, zr.1).into(),
+                                            historical_te,
                                         )
                                         .await
                                     {

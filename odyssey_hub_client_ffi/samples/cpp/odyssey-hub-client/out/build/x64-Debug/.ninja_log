@@ -1,3 +1,4 @@
-# ninja log v5
-1	8	0	clean	8c45b54705a541e8
-2	349	7728743790987218	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	ee0796cf803b2983
+# ninja log v6
+7	728	7926376854765750	CMakeFiles/odyssey-hub-client.dir/src/odyssey-hub-client.cpp.obj	a8d197c3215f343b
+729	1114	7926376861976468	odyssey-hub-client.exe	569345c5a3a9d4e
+8	252	7926391937286466	odyssey-hub-client.exe	569345c5a3a9d4e

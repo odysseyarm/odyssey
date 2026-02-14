@@ -227,12 +227,30 @@ impl Client {
         device: common::device::Device,
         translation: odyssey_hub_server_interface::Vector3,
         target: odyssey_hub_server_interface::Vector2,
+        tracking_event: Option<common::events::TrackingEvent>,
     ) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
+            let tracking_event_pb = tracking_event.map(|te| {
+                odyssey_hub_server_interface::device_event::TrackingEvent {
+                    timestamp: te.timestamp,
+                    aimpoint: Some(odyssey_hub_server_interface::Vector2::from(te.aimpoint)),
+                    pose: Some(odyssey_hub_server_interface::Pose {
+                        rotation: Some(odyssey_hub_server_interface::Matrix3x3::from(
+                            te.pose.rotation,
+                        )),
+                        translation: Some(odyssey_hub_server_interface::Matrix3x1::from(
+                            te.pose.translation,
+                        )),
+                    }),
+                    distance: te.distance,
+                    screen_id: te.screen_id,
+                }
+            });
             let request = tonic::Request::new(odyssey_hub_server_interface::ZeroRequest {
                 device: Some(device.into()),
                 translation: Some(translation.into()),
                 target: Some(target.into()),
+                tracking_event: tracking_event_pb,
             });
             service_client.zero(request).await?;
             Ok(())

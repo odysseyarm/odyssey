@@ -162,13 +162,13 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 | FirmwareUpdateState::Available { .. }
                 | FirmwareUpdateState::NeedsUsbConnection { .. }
         ) {
-            if let (Some(manifest), Some(fw_version), Some(pid)) = (
-                manifest(),
-                device.firmware_version.as_ref(),
-                device.product_id,
-            ) {
-                let device_version = [fw_version[0], fw_version[1], fw_version[2]];
+            if let Some(manifest) = manifest() {
+                let device_version = device.firmware_version;
+                let pid = device.product_id;
 
+                if device_version == [0, 0, 0] || pid == 0 {
+                    // No firmware version or product ID available, skip update check
+                } else
                 // Look up device type from its product ID
                 if let Some((vid, pid, device_type)) = firmware::device_info_from_pid(pid) {
                     if let Some(available_fw) =
@@ -374,11 +374,10 @@ async fn run_firmware_update(
     let device_uuid = device.uuid;
 
     let manifest = manifest.ok_or("No manifest available")?;
-    let fw_version = device
-        .firmware_version
-        .as_ref()
-        .ok_or("No firmware version")?;
-    let device_version = [fw_version[0], fw_version[1], fw_version[2]];
+    let device_version = device.firmware_version;
+    if device_version == [0, 0, 0] {
+        return Err("No firmware version".to_string());
+    }
 
     let firmware_entry =
         firmware::find_compatible_firmware(&manifest, &device_type, device_version)

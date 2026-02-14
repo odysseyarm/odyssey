@@ -99,11 +99,15 @@ impl From<common::device::Device> for proto::Device {
         Self {
             uuid: d.uuid.to_vec(),
             transport: proto::Transport::from(d.transport) as i32,
-            firmware_version: d.firmware_version.map(|v| proto::FirmwareVersion {
-                major: v[0] as u32,
-                minor: v[1] as u32,
-                patch: v[2] as u32,
-            }),
+            firmware_version: if d.firmware_version == [0, 0, 0] {
+                None
+            } else {
+                Some(proto::FirmwareVersion {
+                    major: d.firmware_version[0] as u32,
+                    minor: d.firmware_version[1] as u32,
+                    patch: d.firmware_version[2] as u32,
+                })
+            },
             capabilities: d.capabilities.bits() as u32,
             events_transport: match d.events_transport {
                 common::device::EventsTransport::Wired => proto::EventsTransport::Wired as i32,
@@ -112,7 +116,7 @@ impl From<common::device::Device> for proto::Device {
                 }
             },
             events_connected: d.events_connected,
-            product_id: d.product_id.unwrap_or(0) as u32,
+            product_id: d.product_id as u32,
         }
     }
 }
@@ -132,17 +136,14 @@ impl From<proto::Device> for common::device::Device {
             capabilities: common::device::DeviceCapabilities::new(d.capabilities as u8),
             firmware_version: d
                 .firmware_version
-                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16]),
+                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
+                .unwrap_or([0, 0, 0]),
             events_transport: match proto::EventsTransport::try_from(d.events_transport).unwrap() {
                 proto::EventsTransport::Wired => common::device::EventsTransport::Wired,
                 proto::EventsTransport::Bluetooth => common::device::EventsTransport::Bluetooth,
             },
             events_connected: d.events_connected,
-            product_id: if d.product_id == 0 {
-                None
-            } else {
-                Some(d.product_id as u16)
-            },
+            product_id: d.product_id as u16,
         }
     }
 }

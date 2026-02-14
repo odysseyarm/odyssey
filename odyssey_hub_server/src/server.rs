@@ -637,6 +637,7 @@ impl Service for Server {
             device,
             translation,
             target,
+            tracking_event,
         } = req.into_inner();
 
         let dev: common::device::Device = device
@@ -654,8 +655,22 @@ impl Service for Server {
         let trans = nalgebra::Translation3::from(translation_vec);
         let point = nalgebra::Point2::from(target_vec);
 
+        let te = tracking_event.map(|te| {
+            let pose = te.pose.unwrap();
+            common::events::TrackingEvent {
+                timestamp: te.timestamp,
+                aimpoint: te.aimpoint.unwrap().into(),
+                pose: common::events::Pose {
+                    rotation: pose.rotation.unwrap().into(),
+                    translation: pose.translation.unwrap().into(),
+                },
+                distance: te.distance,
+                screen_id: te.screen_id,
+            }
+        });
+
         if let Some(tx) = self.sender_for_uuid(dev.uuid) {
-            match tx.try_send(DeviceTaskMessage::Zero(trans, point)) {
+            match tx.try_send(DeviceTaskMessage::Zero(trans, point, te)) {
                 Ok(()) => Ok(Response::new(EmptyReply {})),
                 Err(_) => Err(Status::unavailable("device task not available")),
             }

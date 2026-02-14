@@ -230,10 +230,18 @@ impl From<common::device::Device> for Device {
             uuid: device.uuid.into(),
             transport: device.transport,
             capabilities: device.capabilities.bits(),
-            firmware_version: device.firmware_version.map(|v| v.to_vec()),
+            firmware_version: if device.firmware_version == [0, 0, 0] {
+                None
+            } else {
+                Some(device.firmware_version.to_vec())
+            },
             events_transport: device.events_transport,
             events_connected: device.events_connected,
-            product_id: device.product_id,
+            product_id: if device.product_id == 0 {
+                None
+            } else {
+                Some(device.product_id)
+            },
         }
     }
 }
@@ -244,10 +252,13 @@ impl From<Device> for common::device::Device {
             uuid: device.uuid.try_into().unwrap(),
             transport: device.transport,
             capabilities: common::device::DeviceCapabilities::new(device.capabilities),
-            firmware_version: device.firmware_version.map(|v| v.try_into().unwrap()),
+            firmware_version: device
+                .firmware_version
+                .map(|v| v.try_into().unwrap())
+                .unwrap_or([0, 0, 0]),
             events_transport: device.events_transport,
             events_connected: device.events_connected,
-            product_id: device.product_id,
+            product_id: device.product_id.unwrap_or(0),
         }
     }
 }

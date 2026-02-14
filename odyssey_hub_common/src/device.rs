@@ -10,6 +10,7 @@ pub enum Transport {
 }
 
 /// Device capabilities indicate what operations are available for a device
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DeviceCapabilities {
     bits: u8,
@@ -62,10 +63,11 @@ pub struct Device {
     pub uuid: [u8; 6],
     pub transport: Transport,
     pub capabilities: DeviceCapabilities,
-    pub firmware_version: Option<[u16; 3]>,
+    /// Firmware version [major, minor, patch], [0,0,0] if unknown
+    pub firmware_version: [u16; 3],
     pub events_transport: EventsTransport,
     /// Whether events/sensor data are currently being received
     pub events_connected: bool,
-    /// USB Product ID (e.g. 0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux)
-    pub product_id: Option<u16>,
+    /// USB Product ID (e.g. 0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0 if unknown
+    pub product_id: u16,
 }
