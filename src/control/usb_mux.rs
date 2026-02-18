@@ -1,6 +1,6 @@
 use crate::mux::Uuid;
 
-const SEMVER: [u16; 3] = [0, 1, 0];
+pub const SEMVER: [u16; 3] = [0, 1, 1];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -57,6 +57,9 @@ impl UsbMuxVersion {
 pub enum UsbMuxCtrlMsg {
     ReadVersion(),
     ReadVersionResponse(UsbMuxVersion),
+
+    ListBonds,
+    ListBondsResponse(heapless::Vec<Uuid, { crate::mux::MAX_DEVICES }>),
 
     ClearBonds,
     ClearBondsResponse(Result<(), ClearBondsError>),
