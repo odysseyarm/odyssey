@@ -38,9 +38,27 @@ pub fn usb_device(
     let vbus = HardwareVbusDetect::new(Irqs);
     let driver = UsbDriver::new(usbd, Irqs, vbus);
 
+    // Read unique device ID from FICR and format as hex serial number
+    static SERIAL_BUF: ConstStaticCell<[u8; 16]> = ConstStaticCell::new([0; 16]);
+    let serial_buf = SERIAL_BUF.take();
+    let ficr = embassy_nrf::pac::FICR;
+    let low = ficr.deviceid(0).read().to_le_bytes();
+    let high = ficr.deviceid(1).read().to_le_bytes();
+    let id_bytes: [u8; 8] = [
+        low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3],
+    ];
+    for (i, &b) in id_bytes.iter().enumerate() {
+        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+        serial_buf[i * 2] = HEX[(b >> 4) as usize];
+        serial_buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
+    }
+    // SAFETY: serial_buf contains only ASCII hex digits
+    let serial = unsafe { core::str::from_utf8_unchecked(serial_buf) };
+
     let mut config = UsbConfig::new(VID, PID);
     config.manufacturer = Some("Odyssey Arm");
     config.product = Some("Dongle USB Mux");
+    config.serial_number = Some(serial);
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;

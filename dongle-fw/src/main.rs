@@ -31,7 +31,7 @@ pub static DEVICE_LIST_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
 // use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
 // Using trouble-host + nrf-sdc
-use protodongers::control::usb_mux::{BondStoreError, PairingError, UsbMuxCtrlMsg, UsbMuxVersion};
+use protodongers::control::usb_mux::{BondStoreError, PairingError, UsbMuxCtrlMsg};
 use protodongers::mux::{DevicePacket, MAX_DEVICES, MuxMsg, Version};
 
 use static_cell::StaticCell;
@@ -117,14 +117,40 @@ bind_interrupts!(pub struct Irqs {
 
 // Hardware VBUS detect is used; no SoftwareVbusDetect needed.
 
-const VERSION: Version = Version {
-    protocol_semver: [0, 1, 0],
-    firmware_semver: [0, 1, 0],
-};
-const USB_MUX_VERSION: UsbMuxVersion = UsbMuxVersion {
-    protocol_semver: [0, 1, 0],
-    firmware_semver: [0, 1, 0],
-};
+const fn parse_firmware_semver(version: &str) -> [u16; 3] {
+    let bytes = version.as_bytes();
+    let mut out = [0u16; 3];
+    let mut i = 0;
+    let mut part = 0;
+    let mut saw_digit = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b >= b'0' && b <= b'9' {
+            saw_digit = true;
+            out[part] = out[part] * 10 + (b - b'0') as u16;
+        } else if b == b'.' {
+            if !saw_digit || part >= 2 {
+                panic!("invalid CARGO_PKG_VERSION");
+            }
+            part += 1;
+            saw_digit = false;
+        } else if b == b'-' || b == b'+' {
+            break;
+        } else {
+            panic!("invalid CARGO_PKG_VERSION");
+        }
+        i += 1;
+    }
+
+    if part != 2 || !saw_digit {
+        panic!("invalid CARGO_PKG_VERSION");
+    }
+
+    out
+}
+
+const FIRMWARE_SEMVER: [u16; 3] = parse_firmware_semver(env!("CARGO_PKG_VERSION"));
 
 #[exception]
 unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
@@ -744,7 +770,7 @@ async fn handle_usb_msg(
             }
         }
         MuxMsg::ReadVersion() => {
-            let response = MuxMsg::ReadVersionResponse(VERSION);
+            let response = MuxMsg::ReadVersionResponse(Version::new(FIRMWARE_SEMVER));
             if HOST_RESPONSES.try_send(response).is_err() {
                 warn!("HOST_RESPONSES full, dropped ReadVersionResponse");
             }
@@ -798,7 +824,22 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
         use UsbMuxCtrlMsg as C;
         let cmd = control::recv_cmd().await;
         match cmd {
-            C::ReadVersion() => control::try_send_event(C::ReadVersionResponse(USB_MUX_VERSION)),
+            C::ReadVersion() => {
+                control::try_send_event(C::ReadVersionResponse(
+                    protodongers::control::usb_mux::UsbMuxVersion::new(FIRMWARE_SEMVER),
+                ));
+            }
+            C::ListBonds => {
+                info!("CTL ListBonds received");
+                let bonds = settings.get_all_bonds().await;
+                let mut bonded = HVec::new();
+                for opt in bonds.slots.iter() {
+                    if let Some(bd) = opt {
+                        let _ = bonded.push(bd.bd_addr);
+                    }
+                }
+                control::try_send_event(C::ListBondsResponse(bonded));
+            }
             C::StartPairing(start) => {
                 info!("CTL StartPairing received, timeout_ms={}", start.timeout_ms);
                 let timeout = embassy_time::Duration::from_millis(start.timeout_ms as u64);

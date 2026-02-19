@@ -635,7 +635,8 @@ pub struct GeneralSettings {
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
-            impact_threshold: 5,
+            // 5g legacy equivalent in SI units.
+            impact_threshold: 49,
             suppress_ms: 100,
             accel_config: Default::default(),
             gyro_config: Default::default(),

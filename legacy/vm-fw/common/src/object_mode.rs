@@ -499,14 +499,14 @@ async fn imu_loop<P: Platform>(
             }
         }
 
-        // Impact detection
+        // Impact detection (threshold is in m/s^2)
         if stream_infos.impact.enabled() {
-            // Calculate acceleration magnitude in g's (divide by G to get g's from m/s^2)
-            let accel_magnitude_g = accel.magnitude() / G;
+            // Calculate acceleration magnitude in m/s^2
+            let accel_magnitude_ms2 = accel.magnitude();
 
             // Check if magnitude exceeds threshold
-            let threshold_g = impact_settings.threshold() as f32;
-            if accel_magnitude_g >= threshold_g {
+            let threshold_ms2 = impact_settings.threshold() as f32;
+            if accel_magnitude_ms2 >= threshold_ms2 {
                 // Check suppression window
                 let suppress_us = (impact_settings.suppress_ms() as u32) * 1000;
                 let should_send = match last_impact_ts_micros {

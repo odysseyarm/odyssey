@@ -607,12 +607,12 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
             }
         }
 
-        // Impact detection
+        // Impact detection (threshold is in m/s^2)
         if stream_infos.impact.enabled() {
-            let accel_magnitude_g = accel.magnitude() / G;
-            let threshold_g = impact_settings.threshold() as f32;
+            let accel_magnitude_ms2 = accel.magnitude();
+            let threshold_ms2 = impact_settings.threshold() as f32;
 
-            if accel_magnitude_g >= threshold_g {
+            if accel_magnitude_ms2 >= threshold_ms2 {
                 let suppress_us = (impact_settings.suppress_ms() as u32) * 1000;
                 let should_send = match last_impact_ts_micros {
                     Some(last_ts) => ts_micros.wrapping_sub(last_ts) >= suppress_us,

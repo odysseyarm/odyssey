@@ -198,8 +198,8 @@ A separate control plane is carried over EP0 control transfers using UsbMuxCtrlM
 
 Control messages include:
 - ReadVersion / ReadVersionResponse(UsbMuxVersion)
+- ListBonds / ListBondsResponse(Vec<Uuid>)
 - StartPairing(StartPairing) / StartPairingResponse
 - CancelPairing
 - PairingResult(Result<Uuid, PairingError>)
 - ClearBonds / ClearBondsResponse(Result<(), ClearBondsError>)
-
