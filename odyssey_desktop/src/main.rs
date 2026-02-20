@@ -15,6 +15,7 @@ use velopack::VelopackApp;
 use components::Navbar;
 use views::Accessories;
 use views::Home;
+use views::Pairing;
 
 use components::update::UpdateBanner;
 
@@ -77,6 +78,8 @@ enum Route {
     #[layout(Navbar)]
     #[route("/")]
     Home {},
+    #[route("/pairing")]
+    Pairing {},
     #[route("/accessories")]
     Accessories {},
 }

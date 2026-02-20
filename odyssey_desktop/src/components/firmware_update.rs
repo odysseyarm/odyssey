@@ -90,6 +90,7 @@ impl FirmwareUpdateManager {
         self.states.lock().unwrap().insert(uuid, state);
     }
 
+    #[allow(dead_code)]
     pub fn is_updating(&self, uuid: &[u8; 6]) -> bool {
         self.updating.lock().unwrap().contains(uuid)
     }
@@ -98,6 +99,7 @@ impl FirmwareUpdateManager {
         self.updating.lock().unwrap().insert(uuid);
     }
 
+    #[allow(dead_code)]
     pub fn remove_updating(&self, uuid: &[u8; 6]) {
         self.updating.lock().unwrap().remove(uuid);
     }
@@ -162,6 +164,8 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 | FirmwareUpdateState::Available { .. }
                 | FirmwareUpdateState::NeedsUsbConnection { .. }
         ) {
+            let mut next_state = FirmwareUpdateState::Idle;
+
             if let Some(manifest) = manifest() {
                 let device_version = device.firmware_version;
                 let pid = device.product_id;
@@ -196,7 +200,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                     available_version
                                 );
                             }
-                            manager.set_state(device_uuid, new_state);
+                            next_state = new_state;
                         } else {
                             // Device doesn't have USB control - prompt user to plug in USB
                             let new_state = FirmwareUpdateState::NeedsUsbConnection {
@@ -216,11 +220,13 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                     available_version
                                 );
                             }
-                            manager.set_state(device_uuid, new_state);
+                            next_state = new_state;
                         }
                     }
                 }
             }
+
+            manager.set_state(device_uuid, next_state);
         }
     }
 

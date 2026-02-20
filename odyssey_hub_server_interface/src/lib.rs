@@ -210,6 +210,17 @@ impl From<common::events::Event> for proto::Event {
                             proto::device_event::CapabilitiesChangedEvent {},
                         )
                     }
+                    common::events::DeviceEventKind::PairingResult {
+                        success,
+                        paired_address,
+                        error,
+                    } => proto::device_event::DeviceEventOneof::PairingResult(
+                        proto::device_event::PairingResultEvent {
+                            success,
+                            paired_address: paired_address.to_vec(),
+                            error,
+                        },
+                    ),
                 };
                 proto::Event {
                     event_oneof: Some(proto::event::EventOneof::Device(proto::DeviceEvent {
@@ -218,71 +229,113 @@ impl From<common::events::Event> for proto::Event {
                     })),
                 }
             }
+            common::events::Event::DonglePairingResult {
+                dongle_id,
+                success,
+                paired_address,
+                error,
+            } => proto::Event {
+                event_oneof: Some(proto::event::EventOneof::DonglePairingResult(
+                    proto::DonglePairingResultEvent {
+                        dongle_id,
+                        success,
+                        paired_address: paired_address.to_vec(),
+                        error,
+                    },
+                )),
+            },
         }
     }
 }
 
 impl From<proto::Event> for common::events::Event {
     fn from(event: proto::Event) -> Self {
-        let Some(proto::event::EventOneof::Device(d)) = event.event_oneof else {
-            panic!("proto::Event missing device variant");
-        };
-        let device: common::device::Device = match d.device {
-            Some(dev) => dev.into(),
-            None => panic!("proto::DeviceEvent missing device field"),
-        };
-        let kind = match d
-            .device_event_oneof
-            .expect("proto::DeviceEvent missing payload")
+        match event
+            .event_oneof
+            .expect("proto::Event missing event variant")
         {
-            proto::device_event::DeviceEventOneof::Accelerometer(e) => {
-                common::events::DeviceEventKind::AccelerometerEvent(
-                    common::events::AccelerometerEvent {
-                        timestamp: e.timestamp,
-                        accel: e.acceleration.expect("acceleration").into(),
-                        gyro: e.angular_velocity.expect("angular_velocity").into(),
-                        euler_angles: e.euler_angles.expect("euler_angles").into(),
-                    },
-                )
+            proto::event::EventOneof::DonglePairingResult(e) => {
+                let mut paired_address = [0u8; 6];
+                let len = e.paired_address.len().min(6);
+                paired_address[..len].copy_from_slice(&e.paired_address[..len]);
+                return common::events::Event::DonglePairingResult {
+                    dongle_id: e.dongle_id,
+                    success: e.success,
+                    paired_address,
+                    error: e.error,
+                };
             }
-            proto::device_event::DeviceEventOneof::Tracking(e) => {
-                common::events::DeviceEventKind::TrackingEvent(common::events::TrackingEvent {
-                    timestamp: e.timestamp,
-                    aimpoint: e.aimpoint.expect("aimpoint").into(),
-                    pose: {
-                        let p = e.pose.expect("pose");
-                        common::events::Pose {
-                            rotation: p.rotation.expect("rotation").into(),
-                            translation: p.translation.expect("translation").into(),
+            proto::event::EventOneof::Device(d) => {
+                let device: common::device::Device = match d.device {
+                    Some(dev) => dev.into(),
+                    None => panic!("proto::DeviceEvent missing device field"),
+                };
+                let kind = match d
+                    .device_event_oneof
+                    .expect("proto::DeviceEvent missing payload")
+                {
+                    proto::device_event::DeviceEventOneof::Accelerometer(e) => {
+                        common::events::DeviceEventKind::AccelerometerEvent(
+                            common::events::AccelerometerEvent {
+                                timestamp: e.timestamp,
+                                accel: e.acceleration.expect("acceleration").into(),
+                                gyro: e.angular_velocity.expect("angular_velocity").into(),
+                                euler_angles: e.euler_angles.expect("euler_angles").into(),
+                            },
+                        )
+                    }
+                    proto::device_event::DeviceEventOneof::Tracking(e) => {
+                        common::events::DeviceEventKind::TrackingEvent(
+                            common::events::TrackingEvent {
+                                timestamp: e.timestamp,
+                                aimpoint: e.aimpoint.expect("aimpoint").into(),
+                                pose: {
+                                    let p = e.pose.expect("pose");
+                                    common::events::Pose {
+                                        rotation: p.rotation.expect("rotation").into(),
+                                        translation: p.translation.expect("translation").into(),
+                                    }
+                                },
+                                distance: e.distance,
+                                screen_id: e.screen_id,
+                            },
+                        )
+                    }
+                    proto::device_event::DeviceEventOneof::Impact(e) => {
+                        common::events::DeviceEventKind::ImpactEvent(common::events::ImpactEvent {
+                            timestamp: e.timestamp,
+                        })
+                    }
+                    proto::device_event::DeviceEventOneof::Packet(
+                        proto::device_event::PacketEvent { bytes },
+                    ) => {
+                        let pkt: ats_usb::packets::vm::Packet =
+                            postcard::from_bytes(&bytes).expect("postcard deserialize Packet");
+                        common::events::DeviceEventKind::PacketEvent(pkt)
+                    }
+                    proto::device_event::DeviceEventOneof::ZeroResult(e) => {
+                        common::events::DeviceEventKind::ZeroResult(e.success)
+                    }
+                    proto::device_event::DeviceEventOneof::SaveZeroResult(e) => {
+                        common::events::DeviceEventKind::SaveZeroResult(e.success)
+                    }
+                    proto::device_event::DeviceEventOneof::CapabilitiesChanged(_) => {
+                        common::events::DeviceEventKind::CapabilitiesChanged
+                    }
+                    proto::device_event::DeviceEventOneof::PairingResult(e) => {
+                        let mut paired_address = [0u8; 6];
+                        let len = e.paired_address.len().min(6);
+                        paired_address[..len].copy_from_slice(&e.paired_address[..len]);
+                        common::events::DeviceEventKind::PairingResult {
+                            success: e.success,
+                            paired_address,
+                            error: e.error,
                         }
-                    },
-                    distance: e.distance,
-                    screen_id: e.screen_id,
-                })
-            }
-            proto::device_event::DeviceEventOneof::Impact(e) => {
-                common::events::DeviceEventKind::ImpactEvent(common::events::ImpactEvent {
-                    timestamp: e.timestamp,
-                })
-            }
-            proto::device_event::DeviceEventOneof::Packet(proto::device_event::PacketEvent {
-                bytes,
-            }) => {
-                let pkt: ats_usb::packets::vm::Packet =
-                    postcard::from_bytes(&bytes).expect("postcard deserialize Packet");
-                common::events::DeviceEventKind::PacketEvent(pkt)
-            }
-            proto::device_event::DeviceEventOneof::ZeroResult(e) => {
-                common::events::DeviceEventKind::ZeroResult(e.success)
-            }
-            proto::device_event::DeviceEventOneof::SaveZeroResult(e) => {
-                common::events::DeviceEventKind::SaveZeroResult(e.success)
-            }
-            proto::device_event::DeviceEventOneof::CapabilitiesChanged(_) => {
-                common::events::DeviceEventKind::CapabilitiesChanged
-            }
-        };
-        common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind))
+                    }
+                };
+                common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind))
+            } // close Device(d) arm
+        } // close match
     }
 }
 

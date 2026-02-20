@@ -475,7 +475,6 @@ dependencies = [
 [[package]]
 name = "ats_usb"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/vmgui#96b0a7d43386ba33e95ee33d39f160b0697d6408"
 dependencies = [
  "anyhow",
  "argmin",
@@ -2004,7 +2003,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2184,7 +2183,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3308,7 +3307,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4427,7 +4426,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4741,6 +4740,7 @@ dependencies = [
 name = "odyssey_desktop"
 version = "0.4.10"
 dependencies = [
+ "anyhow",
  "ats_usb",
  "btleplug",
  "dfu-nusb",
@@ -5550,7 +5550,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs#e5c32cbefdeceacf518b810a002b16dd19f88b2f"
+source = "git+https://github.com/odysseyarm/protodonge-rs#545e9cf82f7a04353a4cce34de9ca1c726f94646"
 dependencies = [
  "ats_common",
  "enumn",
@@ -6005,7 +6005,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6823,7 +6823,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8008,7 +8008,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

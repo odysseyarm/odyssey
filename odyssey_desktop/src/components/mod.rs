@@ -7,3 +7,6 @@ pub mod update;
 
 pub mod firmware_update;
 pub use firmware_update::{DeviceFirmwareUpdate, FirmwareUpdateManager, UpdatingDeviceRow};
+
+pub mod sensor_settings;
+pub use sensor_settings::SensorSettings;

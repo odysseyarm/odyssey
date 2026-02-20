@@ -186,17 +186,26 @@ pub async fn download_firmware(
     Ok(data)
 }
 
-/// Find a USB device by its UUID (MAC address) and return its VID/PID
-/// The UUID is typically the BLE MAC address stored in USB string descriptors
+/// Find a USB device by its UUID (MAC address) and return its VID/PID.
+/// Compares the UUID against USB serial number descriptors, which encode the
+/// BLE MAC address as a hex string (e.g. "AABBCCDDEEFF").
 pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
-    // Search through known device VID/PIDs
-    for &(vid, pid, _device_type) in DEVICE_MAP {
-        if let Ok(info) = find_device(vid, pid) {
-            if let Ok(device) = info.open().wait() {
-                // Try to read the serial number which often contains the UUID
-                // For now, just return the first matching device
-                // In a real implementation, we'd compare the serial number
-                return Some((vid, pid));
+    let uuid_hex = format!(
+        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5]
+    );
+    let devices = nusb::list_devices().wait().ok()?;
+    for dev in devices {
+        for &(vid, pid, _device_type) in DEVICE_MAP {
+            if dev.vendor_id() == vid && dev.product_id() == pid {
+                if let Some(serial) = dev.serial_number() {
+                    // Compare case-insensitively, ignoring colons/dashes
+                    let serial_clean: String =
+                        serial.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+                    if serial_clean.eq_ignore_ascii_case(&uuid_hex) {
+                        return Some((vid, pid));
+                    }
+                }
             }
         }
     }
@@ -269,7 +278,6 @@ pub enum DfuError {
 /// DFU interface class/subclass/protocol
 const DFU_CLASS: u8 = 0xFE;
 const DFU_SUBCLASS: u8 = 0x01;
-const DFU_PROTOCOL_RUNTIME: u8 = 0x01;
 const DFU_PROTOCOL_DFU_MODE: u8 = 0x02;
 
 /// Find a USB device by VID/PID

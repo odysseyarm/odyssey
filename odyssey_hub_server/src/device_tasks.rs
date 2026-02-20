@@ -5,8 +5,8 @@ use arrayvec::ArrayVec;
 use ats_common::{ros_opencv_intrinsics_type_convert, ScreenCalibration};
 use ats_usb::device::VmDevice;
 use ats_usb::packets::vm::{
-    AccelReport, CombinedMarkersReport, ImpactReport, Packet, PacketData, PocMarkersReport,
-    VendorData,
+    AccelReport, CombinedMarkersReport, ConfigKind, GeneralConfig, ImpactReport, Packet,
+    PacketData, PocMarkersReport, VendorData,
 };
 use nalgebra::{
     Isometry3, Matrix3, Matrix3x1, Point2, Point3, Rotation3, Translation3, UnitQuaternion,
@@ -79,24 +79,80 @@ pub enum DeviceTaskMessage {
         data: u8,
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    /// Read a device config value (impact threshold, suppress ms, etc.)
+    ReadConfig {
+        kind: u8,
+        reply: tokio::sync::oneshot::Sender<Result<u8, String>>,
+    },
+    /// Write a device config value.
+    WriteConfig {
+        kind: u8,
+        value: u8,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     /// Persist current settings to device flash. Reply channel returns success or an error.
     FlashSettings {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Start BLE pairing mode. Reply returns Ok(()) when pairing mode is entered.
+    /// The actual pairing result arrives as a PairingResult event.
+    StartPairing {
+        timeout_ms: u32,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Cancel an in-progress pairing operation.
+    CancelPairing {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Clear bond(s) on the device. For ATS: clears single bond. For dongle: clears all bonds.
+    ClearBond {
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
     AddEventsDevice(VmDevice),
     /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
     AddControlDevice(VmDevice),
+    /// Remove control device when direct USB disconnects
+    RemoveControlDevice,
     /// Remove events device when BLE mux disconnects
     RemoveEventsDevice,
 }
 
 /// Device connection channels
 pub struct DeviceChannels {
-    /// Control channel (only if device has CONTROL capability)
-    pub control: Option<mpsc::Sender<protodongers::control::device::DeviceMsg>>,
-    /// Commands channel for event-stream related operations (only if device has EVENTS capability)
+    /// Commands channel for device operations (register read/write, zero, etc.)
     pub commands: Option<mpsc::Sender<DeviceTaskMessage>>,
+}
+
+/// Commands that can be sent to a dongle (hub manager task).
+pub enum DongleTaskMessage {
+    StartPairing {
+        timeout_ms: u32,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    CancelPairing {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    ClearBonds {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+}
+
+/// Dongle metadata (for dongle list).
+#[derive(Clone, Debug)]
+pub struct DongleInfo {
+    pub id: String,                         // USB serial number
+    pub protocol_version: [u16; 3],         // mux endpoint protocol version
+    pub control_protocol_version: [u16; 3], // control endpoint protocol version
+    pub firmware_version: [u16; 3],
+    pub connected_devices: Vec<[u8; 6]>, // BLE addresses of connected ATS devices
+    pub bonded_devices: Vec<[u8; 6]>,    // BLE addresses of bonded ATS devices
+}
+
+fn semver_at_least(version: [u16; 3], required: [u16; 3]) -> bool {
+    version[0] > required[0]
+        || (version[0] == required[0] && version[1] > required[1])
+        || (version[0] == required[0] && version[1] == required[1] && version[2] >= required[2])
 }
 
 /// Messages emitted by device_tasks to the rest of the system.
@@ -104,6 +160,9 @@ pub enum Message {
     Connect(Device, DeviceChannels),
     Disconnect(Device),
     UpdateDevice(Device), // Update device metadata (e.g., capabilities changed)
+    DongleConnect(DongleInfo, mpsc::Sender<DongleTaskMessage>),
+    DongleUpdate(DongleInfo),
+    DongleDisconnect(String), // dongle id
     #[allow(dead_code)]
     Event(Event),
 }
@@ -170,6 +229,7 @@ async fn usb_device_manager(
         nusb::DeviceInfo,
         std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     )>::new()));
+    let mut direct_usb_id_to_uuid = std::collections::HashMap::<String, [u8; 6]>::new();
 
     loop {
         let devices = match nusb::list_devices().await {
@@ -180,6 +240,17 @@ async fn usb_device_manager(
                 continue;
             }
         };
+        tracing::info!("USB scan: {} device(s) enumerated", devices.len());
+        for dev in &devices {
+            tracing::info!(
+                "USB scan entry: id={:?} VID={:04x} PID={:04x} serial={:?}",
+                dev.id(),
+                dev.vendor_id(),
+                dev.product_id(),
+                dev.serial_number()
+            );
+            tracing::debug!("USB scan entry full: {:?}", dev);
+        }
 
         // Detect removed hubs and abort their managers (compare by DeviceInfo.id()).
         {
@@ -235,6 +306,7 @@ async fn usb_device_manager(
             }
         }
 
+        let mut present_direct_usb_ids = std::collections::HashSet::<String>::new();
         for dev_info in &devices {
             if dev_info.vendor_id() != 0x1915 {
                 continue;
@@ -316,6 +388,85 @@ async fn usb_device_manager(
                     // Track devices managed by this hub for cleanup on exit
                     let mut hub_devices = std::collections::HashSet::<[u8; 6]>::new();
 
+                    // Register dongle in dongle list
+                    let dongle_id = hub_info.serial_number().unwrap_or("unknown").to_string();
+                    let (dongle_protocol_version, dongle_fw_version) =
+                        match hub_clone.read_version().await {
+                            Ok(v) => {
+                                tracing::info!(
+                                    "Dongle protocol {}.{}.{} firmware {}.{}.{}",
+                                    v.protocol_semver[0],
+                                    v.protocol_semver[1],
+                                    v.protocol_semver[2],
+                                    v.firmware_semver[0],
+                                    v.firmware_semver[1],
+                                    v.firmware_semver[2]
+                                );
+                                (
+                                    [
+                                        v.protocol_semver[0],
+                                        v.protocol_semver[1],
+                                        v.protocol_semver[2],
+                                    ],
+                                    [
+                                        v.firmware_semver[0],
+                                        v.firmware_semver[1],
+                                        v.firmware_semver[2],
+                                    ],
+                                )
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to read dongle version: {}", e);
+                                ([0, 0, 0], [0, 0, 0])
+                            }
+                        };
+                    let dongle_control_protocol_version = match hub_clone.read_ctrl_version().await
+                    {
+                        Ok(v) => {
+                            tracing::info!(
+                                "Dongle control protocol {}.{}.{}",
+                                v.protocol_semver[0],
+                                v.protocol_semver[1],
+                                v.protocol_semver[2]
+                            );
+                            [
+                                v.protocol_semver[0],
+                                v.protocol_semver[1],
+                                v.protocol_semver[2],
+                            ]
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to read dongle control protocol version: {}", e);
+                            [0, 0, 0]
+                        }
+                    };
+                    let supports_list_bonds =
+                        semver_at_least(dongle_control_protocol_version, [0, 1, 1]);
+                    let bonded_devices = if supports_list_bonds {
+                        match hub_clone.list_bonds().await {
+                            Ok(bonds) => bonds.into_iter().collect(),
+                            Err(e) => {
+                                tracing::warn!("Failed to list dongle bonds: {}", e);
+                                vec![]
+                            }
+                        }
+                    } else {
+                        vec![]
+                    };
+                    let (dongle_cmd_tx, mut dongle_cmd_rx) = mpsc::channel::<DongleTaskMessage>(32);
+                    let dongle_info = DongleInfo {
+                        id: dongle_id.clone(),
+                        protocol_version: dongle_protocol_version,
+                        control_protocol_version: dongle_control_protocol_version,
+                        firmware_version: dongle_fw_version,
+                        connected_devices: vec![],
+                        bonded_devices,
+                    };
+                    let _ = message_channel_clone
+                        .send(Message::DongleConnect(dongle_info, dongle_cmd_tx))
+                        .await;
+                    tracing::info!("Registered dongle '{}' in dongle list", dongle_id);
+
                     // Request initial device list with retries
                     let initial_devices = {
                         let mut result = None;
@@ -386,7 +537,9 @@ async fn usb_device_manager(
 
                     tokio::pin!(combined_stream);
 
-                    while let Some(event) = combined_stream.next().await {
+                    loop {
+                        tokio::select! {
+                            Some(event) = combined_stream.next() => {
                         match event {
                             HubEvent::Snapshot(snapshot_result) => {
                                 match snapshot_result {
@@ -555,9 +708,7 @@ async fn usb_device_manager(
                                                         );
                                                         hub_devices.insert(uuid);
 
-                                                        // BLE mux devices only have commands channel (no control)
                                                         let channels = DeviceChannels {
-                                                            control: None,
                                                             commands: Some(ctrl_tx),
                                                         };
                                                         let _ = message_channel_clone
@@ -610,6 +761,33 @@ async fn usb_device_manager(
                                             // Don't abort the handler or send Disconnect here -
                                             // the handler will do that itself if it has no remaining connections
                                         }
+
+                                        // Notify dongle list subscribers of connected device changes
+                                        let bonded_devices = if supports_list_bonds {
+                                            match hub_clone.list_bonds().await {
+                                                Ok(bonds) => bonds.into_iter().collect(),
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "Failed to refresh dongle bonds: {}",
+                                                        e
+                                                    );
+                                                    vec![]
+                                                }
+                                            }
+                                        } else {
+                                            vec![]
+                                        };
+                                        let updated_info = DongleInfo {
+                                            id: dongle_id.clone(),
+                                            protocol_version: dongle_protocol_version,
+                                            control_protocol_version: dongle_control_protocol_version,
+                                            firmware_version: dongle_fw_version,
+                                            connected_devices: hub_devices.iter().copied().collect(),
+                                            bonded_devices,
+                                        };
+                                        let _ = message_channel_clone
+                                            .send(Message::DongleUpdate(updated_info))
+                                            .await;
                                     }
                                     Err(e) => {
                                         tracing::error!(
@@ -622,7 +800,69 @@ async fn usb_device_manager(
                                 }
                             }
                         }
-                    }
+                            } // close combined_stream arm
+
+                            Some(msg) = dongle_cmd_rx.recv() => {
+                                match msg {
+                                    DongleTaskMessage::StartPairing { timeout_ms, reply } => {
+                                        let r = hub_clone.start_pairing(timeout_ms).await.map_err(|e| e.to_string());
+                                        if r.is_ok() {
+                                            let hub_wait = hub_clone.clone();
+                                            let ev_tx = ev_clone.clone();
+                                            let did = dongle_id.clone();
+                                            tokio::spawn(async move {
+                                                let (success, paired_address, error) = match hub_wait.wait_pairing_event().await {
+                                                    Ok(ats_usb::device::PairingEvent::Result(addr)) => (true, addr, String::new()),
+                                                    Ok(ats_usb::device::PairingEvent::Timeout) => (false, [0; 6], "Pairing timed out".into()),
+                                                    Ok(ats_usb::device::PairingEvent::Cancelled) => (false, [0; 6], "Pairing cancelled".into()),
+                                                    Err(e) => (false, [0; 6], e.to_string()),
+                                                };
+                                                let _ = ev_tx.send(Event::DonglePairingResult {
+                                                    dongle_id: did,
+                                                    success,
+                                                    paired_address,
+                                                    error,
+                                                });
+                                            });
+                                        }
+                                        let _ = reply.send(r);
+                                    }
+                                    DongleTaskMessage::CancelPairing { reply } => {
+                                        let r = hub_clone.cancel_pairing().await.map_err(|e| e.to_string());
+                                        let _ = reply.send(r);
+                                    }
+                                    DongleTaskMessage::ClearBonds { reply } => {
+                                        let r = hub_clone.clear_bonds().await.map_err(|e| e.to_string());
+                                        if r.is_ok() {
+                                            let _ = message_channel_clone
+                                                .send(Message::DongleUpdate(DongleInfo {
+                                                    id: dongle_id.clone(),
+                                                    protocol_version: dongle_protocol_version,
+                                                    control_protocol_version:
+                                                        dongle_control_protocol_version,
+                                                    firmware_version: dongle_fw_version,
+                                                    connected_devices: hub_devices
+                                                        .iter()
+                                                        .copied()
+                                                        .collect(),
+                                                    bonded_devices: vec![],
+                                                }))
+                                                .await;
+                                        }
+                                        let _ = reply.send(r);
+                                    }
+                                }
+                            }
+
+                            else => break,
+                        } // close select!
+                    } // close loop
+
+                    // Unregister dongle
+                    let _ = message_channel_clone
+                        .send(Message::DongleDisconnect(dongle_id.clone()))
+                        .await;
+                    tracing::info!("Unregistered dongle '{}' from dongle list", dongle_id);
 
                     // Cleanup: remove BLE events from devices managed by this hub
                     tracing::info!(
@@ -658,6 +898,8 @@ async fn usb_device_manager(
             } else {
                 // Direct USB device (VmDevice) - 0x520F, 0x5210, or 0x5211
                 // First check if we should even connect to this device
+                let direct_usb_id = format!("{:?}", dev_info.id());
+                present_direct_usb_ids.insert(direct_usb_id.clone());
                 debug!(
                     "Found direct USB device PID: 0x{:04x}, checking if already connected",
                     pid
@@ -781,9 +1023,12 @@ async fn usb_device_manager(
                     // Keep vm_device alive - we'll either use it or drop it based on should_connect
                 };
 
+                // Cache mapping from opaque nusb id() to UUID once we've successfully probed.
+                direct_usb_id_to_uuid.insert(direct_usb_id, uuid);
+
                 // Now check if device is already connected BEFORE creating a new connection
                 let should_connect = {
-                    let mut dh = device_handles.lock().await;
+                    let dh = device_handles.lock().await;
                     info!(
                         "Checking if device {:02x?} is already connected (current handles: {})",
                         uuid,
@@ -904,14 +1149,40 @@ async fn usb_device_manager(
 
                 // Always pass the commands channel so server.device_list gets a working sender.
                 // The device handler task will process commands (like Zero) once events are available.
-                let channels = DeviceChannels {
-                    control: None, // TODO: Add control channel when control protocol is integrated
-                    commands: Some(tx),
-                };
+                let channels = DeviceChannels { commands: Some(tx) };
 
                 let _ = message_channel
                     .send(Message::Connect(device_meta, channels))
                     .await;
+            }
+        }
+
+        // Reconcile direct USB disconnects using opaque id() keys.
+        // This avoids requiring UUID re-probe success on every scan.
+        let missing_direct_usb_ids: Vec<String> = direct_usb_id_to_uuid
+            .keys()
+            .filter(|id| !present_direct_usb_ids.contains(*id))
+            .cloned()
+            .collect();
+        if !missing_direct_usb_ids.is_empty() {
+            let dh = device_handles.lock().await;
+            for id in missing_direct_usb_ids {
+                if let Some(uuid) = direct_usb_id_to_uuid.remove(&id) {
+                    if let Some((cmd_tx, _)) = dh.get(&uuid) {
+                        tracing::info!(
+                            "Direct USB device missing from scan, sending RemoveControlDevice: id={} uuid={:02x?}",
+                            id,
+                            uuid
+                        );
+                        let _ = cmd_tx.send(DeviceTaskMessage::RemoveControlDevice).await;
+                    } else {
+                        tracing::info!(
+                            "Direct USB device missing from scan but no active handler: id={} uuid={:02x?}",
+                            id,
+                            uuid
+                        );
+                    }
+                }
             }
         }
 
@@ -985,7 +1256,7 @@ async fn device_handler_task(
 
     // Read camera config if we have an events device (USB direct or BLE mux)
     // Only skip for USB devices in BLE transport mode (no events device yet)
-    let mut general_settings = if let Some(events_device) = connections.events_device.as_ref() {
+    let general_settings = if let Some(events_device) = connections.events_device.as_ref() {
         info!(
             "Reading camera config for device {:02x?} from events device",
             device.uuid
@@ -1124,74 +1395,15 @@ async fn device_handler_task(
     let mut shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx).fuse();
     let mut control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx).fuse();
 
-    // For devices with USB control, periodically check USB connection
-    // BLE mux devices (without USB control) don't need health checks - their connectivity is managed through the hub
-    let mut needs_health_check = connections.control_device.is_some();
-    let mut health_check = if needs_health_check {
-        tokio::time::interval(Duration::from_secs(1))
-    } else {
-        tokio::time::interval(Duration::from_secs(3600)) // Never tick if we don't need health checks
-    };
+    let pairing_in_progress = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     info!(
-        "Device handler task entering main loop for {:02x?}",
-        device.uuid
+        "Device handler task entering main loop for {:02x?}, has_sensor_streams={}",
+        device.uuid, has_sensor_streams
     );
 
     loop {
         tokio::select! {
-            _ = health_check.tick() => {
-                // For direct USB devices without sensor streams (BLE mode), check if USB is still connected
-                if needs_health_check {
-                    debug!("Health check: checking USB connection for device {:02x?}", device.uuid);
-                    // Try to read version to check if USB control is still working
-                    if let Some(control_dev) = connections.control_device.as_ref() {
-                        match control_dev.read_version().await {
-                            Ok(_) => {
-                                debug!("Health check: device {:02x?} still connected", device.uuid);
-                            }
-                            Err(e) => {
-                                info!("USB control disconnected for device {:02x?} (control read failed: {})", device.uuid, e);
-
-                                // If we have events device (BLE mux), keep running without control
-                                if connections.events_device.is_some() {
-                                    info!("Device {:02x?} has BLE mux events, removing control and continuing", device.uuid);
-
-                                    // Remove control device
-                                    connections.control_device = None;
-
-                                    // Remove CONTROL capability
-                                    device.capabilities.remove(DeviceCapabilities::CONTROL);
-
-                                    // Disable health check since we no longer have USB control
-                                    needs_health_check = false;
-
-                                    // Change transport from Usb to UsbMux since we only have BLE events now
-                                    device.transport = odyssey_hub_common::device::Transport::UsbMux;
-
-                                    // Send UpdateDevice to notify clients
-                                    let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
-
-                                    info!("Device {:02x?} continuing with BLE mux events only", device.uuid);
-                                } else {
-                                    // No events device, exit completely
-                                    info!("Device {:02x?} has no events device, exiting", device.uuid);
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        // No control device for health check
-                        if connections.events_device.is_none() {
-                            // No control and no events, exit
-                            warn!("Health check requested but no control or events device for {:02x?}", device.uuid);
-                            break;
-                        }
-                        // Has events device, just disable health check
-                        needs_health_check = false;
-                    }
-                }
-            }
             maybe_evt = sensor_streams.next(), if has_sensor_streams => {
                 match maybe_evt {
                     Some(evt) => {
@@ -1230,6 +1442,28 @@ async fn device_handler_task(
                     .insert(device.uuid, current_shot_delay as u16);
             }
             maybe_msg = control_stream.next() => {
+                let msg_name = match &maybe_msg {
+                    Some(DeviceTaskMessage::ResetZero) => "ResetZero",
+                    Some(DeviceTaskMessage::SaveZero) => "SaveZero",
+                    Some(DeviceTaskMessage::WriteVendor(..)) => "WriteVendor",
+                    Some(DeviceTaskMessage::SetShotDelay(..)) => "SetShotDelay",
+                    Some(DeviceTaskMessage::Zero(..)) => "Zero",
+                    Some(DeviceTaskMessage::ClearZero) => "ClearZero",
+                    Some(DeviceTaskMessage::ReadRegister { .. }) => "ReadRegister",
+                    Some(DeviceTaskMessage::WriteRegister { .. }) => "WriteRegister",
+                    Some(DeviceTaskMessage::ReadConfig { .. }) => "ReadConfig",
+                    Some(DeviceTaskMessage::WriteConfig { .. }) => "WriteConfig",
+                    Some(DeviceTaskMessage::FlashSettings { .. }) => "FlashSettings",
+                    Some(DeviceTaskMessage::StartPairing { .. }) => "StartPairing",
+                    Some(DeviceTaskMessage::CancelPairing { .. }) => "CancelPairing",
+                    Some(DeviceTaskMessage::ClearBond { .. }) => "ClearBond",
+                    Some(DeviceTaskMessage::AddEventsDevice(..)) => "AddEventsDevice",
+                    Some(DeviceTaskMessage::AddControlDevice(..)) => "AddControlDevice",
+                    Some(DeviceTaskMessage::RemoveControlDevice) => "RemoveControlDevice",
+                    Some(DeviceTaskMessage::RemoveEventsDevice) => "RemoveEventsDevice",
+                    None => "None (channel closed)",
+                };
+                info!("control_stream received '{}' for {:02x?}", msg_name, device.uuid);
                 match maybe_msg {
                     Some(DeviceTaskMessage::ResetZero) => {
                         debug!("ResetZero requested for {:02x?}", device.uuid);
@@ -1345,34 +1579,160 @@ async fn device_handler_task(
                     }
                     Some(DeviceTaskMessage::ReadRegister { port, bank, address, reply }) => {
                         let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
-                        if let Some(dev) = connections.control_device.as_ref()
-                            .or(connections.events_device.as_ref()) {
-                            let result = dev.read_register(port, bank, address).await
-                                .map_err(|e| e.to_string());
+                        if !device.events_connected {
+                            let _ = reply.send(Err("events transport not connected".into()));
+                        } else if let Some(dev) = connections.events_device.as_ref() {
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_register(port, bank, address)).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("read_register timed out".into()),
+                            };
                             let _ = reply.send(result);
                         } else {
-                            let _ = reply.send(Err("no device available".into()));
+                            let _ = reply.send(Err("events device not available".into()));
                         }
                     }
                     Some(DeviceTaskMessage::WriteRegister { port, bank, address, data, reply }) => {
                         let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
-                        if let Some(dev) = connections.control_device.as_ref()
-                            .or(connections.events_device.as_ref()) {
-                            let result = dev.write_register(port, bank, address, data).await
-                                .map_err(|e| e.to_string());
+                        if !device.events_connected {
+                            let _ = reply.send(Err("events transport not connected".into()));
+                        } else if let Some(dev) = connections.events_device.as_ref() {
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_register(port, bank, address, data)).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("write_register timed out".into()),
+                            };
                             let _ = reply.send(result);
                         } else {
-                            let _ = reply.send(Err("no device available".into()));
+                            let _ = reply.send(Err("events device not available".into()));
+                        }
+                    }
+                    Some(DeviceTaskMessage::ReadConfig { kind, reply }) => {
+                        let config_kind = match kind {
+                            0 => Some(ConfigKind::ImpactThreshold),
+                            1 => Some(ConfigKind::SuppressMs),
+                            _ => None,
+                        };
+                        if let Some(ck) = config_kind {
+                            if !device.events_connected {
+                                let _ = reply.send(Err("events transport not connected".into()));
+                            } else if let Some(dev) = connections.events_device.as_ref() {
+                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config(ck)).await {
+                                    Ok(Ok(gc)) => Ok(match gc {
+                                        GeneralConfig::ImpactThreshold(v) => v,
+                                        GeneralConfig::SuppressMs(v) => v,
+                                        _ => 0,
+                                    }),
+                                    Ok(Err(e)) => Err(e.to_string()),
+                                    Err(_) => Err("read_config timed out".into()),
+                                };
+                                let _ = reply.send(result);
+                            } else {
+                                let _ = reply.send(Err("events device not available".into()));
+                            }
+                        } else {
+                            let _ = reply.send(Err(format!("unknown config kind: {kind}")));
+                        }
+                    }
+                    Some(DeviceTaskMessage::WriteConfig { kind, value, reply }) => {
+                        let config = match kind {
+                            0 => Some(GeneralConfig::ImpactThreshold(value)),
+                            1 => Some(GeneralConfig::SuppressMs(value)),
+                            _ => None,
+                        };
+                        if let Some(gc) = config {
+                            if !device.events_connected {
+                                let _ = reply.send(Err("events transport not connected".into()));
+                            } else if let Some(dev) = connections.events_device.as_ref() {
+                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config(gc)).await {
+                                    Ok(r) => r.map_err(|e| e.to_string()),
+                                    Err(_) => Err("write_config timed out".into()),
+                                };
+                                let _ = reply.send(result);
+                            } else {
+                                let _ = reply.send(Err("events device not available".into()));
+                            }
+                        } else {
+                            let _ = reply.send(Err(format!("unknown config kind: {kind}")));
                         }
                     }
                     Some(DeviceTaskMessage::FlashSettings { reply }) => {
-                        if let Some(dev) = connections.control_device.as_ref()
-                            .or(connections.events_device.as_ref()) {
-                            let result = dev.flash_settings().await
-                                .map_err(|e| e.to_string());
+                        if !device.events_connected {
+                            let _ = reply.send(Err("events transport not connected".into()));
+                        } else if let Some(dev) = connections.events_device.as_ref() {
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.flash_settings()).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("flash_settings timed out".into()),
+                            };
                             let _ = reply.send(result);
                         } else {
-                            let _ = reply.send(Err("no device available".into()));
+                            let _ = reply.send(Err("events device not available".into()));
+                        }
+                    }
+                    Some(DeviceTaskMessage::StartPairing { timeout_ms, reply }) => {
+                        if let Some(dev) = connections.control_device.as_ref() {
+                            info!("StartPairing: sending start_pairing({}ms) to device {:02x?}", timeout_ms, device.uuid);
+                            let r = match tokio::time::timeout(Duration::from_secs(5), dev.start_pairing(timeout_ms)).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("start_pairing timed out".into()),
+                            };
+                            info!("StartPairing result for {:02x?}: {:?}", device.uuid, r);
+                            if r.is_ok() {
+                                pairing_in_progress.store(true, std::sync::atomic::Ordering::Relaxed);
+                                let pairing_flag = pairing_in_progress.clone();
+                                let dev_clone = dev.clone();
+                                let ev_tx = event_sender.clone();
+                                let dev_meta = device.clone();
+                                tokio::spawn(async move {
+                                    let (success, paired_address, error) = match dev_clone.wait_pairing_event().await {
+                                        Ok(addr) => (true, addr, String::new()),
+                                        Err(e) => (false, [0; 6], e.to_string()),
+                                    };
+                                    pairing_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    let event = odyssey_hub_common::events::Event::DeviceEvent(
+                                        odyssey_hub_common::events::DeviceEvent(
+                                            dev_meta,
+                                            odyssey_hub_common::events::DeviceEventKind::PairingResult {
+                                                success,
+                                                paired_address,
+                                                error,
+                                            },
+                                        ),
+                                    );
+                                    let _ = ev_tx.send(event);
+                                });
+                            }
+                            let _ = reply.send(r);
+                        } else {
+                            let _ = reply.send(Err("no control device available".into()));
+                        }
+                    }
+                    Some(DeviceTaskMessage::CancelPairing { reply }) => {
+                        if let Some(dev) = connections.control_device.as_ref() {
+                            info!("CancelPairing: sending cancel to device {:02x?}", device.uuid);
+                            let r = match tokio::time::timeout(Duration::from_secs(3), dev.cancel_pairing()).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("cancel_pairing timed out".into()),
+                            };
+                            info!("CancelPairing result for {:02x?}: {:?}", device.uuid, r);
+                            // Note: pairing_in_progress flag will be cleared by the wait_pairing_event
+                            // task when it receives the Cancelled result
+                            let _ = reply.send(r);
+                        } else {
+                            warn!("CancelPairing: no control device for {:02x?}", device.uuid);
+                            let _ = reply.send(Err("no control device available".into()));
+                        }
+                    }
+                    Some(DeviceTaskMessage::ClearBond { reply }) => {
+                        if let Some(dev) = connections.control_device.as_ref() {
+                            info!("ClearBond: sending clear to device {:02x?}", device.uuid);
+                            let r = match tokio::time::timeout(Duration::from_secs(3), dev.clear_bond()).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("clear_bond timed out".into()),
+                            };
+                            info!("ClearBond result for {:02x?}: {:?}", device.uuid, r);
+                            let _ = reply.send(r);
+                        } else {
+                            warn!("ClearBond: no control device for {:02x?}", device.uuid);
+                            let _ = reply.send(Err("no control device available".into()));
                         }
                     }
                     Some(DeviceTaskMessage::AddEventsDevice(events_vm_device)) => {
@@ -1421,18 +1781,19 @@ async fn device_handler_task(
                         // This is critical when a device starts in BLE mode (no config)
                         // and later gets BLE mux events added
                         info!("Reading device config from BLE mux device for {:02x?}", device.uuid);
-                        match events_vm_device.read_all_config().await {
-                            Ok(cfg) => {
+                        match tokio::time::timeout(Duration::from_secs(5), events_vm_device.read_all_config()).await {
+                            Ok(Ok(cfg)) => {
                                 info!("Updating device config for {:02x?} from BLE mux", device.uuid);
                                 // Update camera models from the new config
                                 camera_model_nf = cfg.camera_model_nf.clone();
                                 camera_model_wf = cfg.camera_model_wf.clone();
                                 stereo_iso = cfg.stereo_iso.clone();
-                                // Store the full config for future use
-                                general_settings = Some(cfg);
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 warn!("Failed to read device config from BLE mux {:02x?}: {}", device.uuid, e);
+                            }
+                            Err(_) => {
+                                warn!("read_all_config timed out for BLE mux {:02x?}", device.uuid);
                             }
                         }
 
@@ -1461,23 +1822,38 @@ async fn device_handler_task(
                             device.uuid
                         );
 
-                        // Read firmware version from USB control device if not already available
-                        if device.firmware_version == [0, 0, 0] {
-                            match control_vm_device.read_version().await {
-                                Ok(v) => {
+                        // Always refresh firmware version from USB control when it is (re)attached.
+                        // This is critical after DFU: device handler may still hold old version.
+                        match tokio::time::timeout(Duration::from_secs(3), control_vm_device.read_version()).await {
+                            Ok(Ok(v)) => {
+                                let new_fw = [v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]];
+                                if device.firmware_version != new_fw {
+                                    info!(
+                                        "Updating firmware version for {:02x?}: {}.{}.{} -> {}.{}.{}",
+                                        device.uuid,
+                                        device.firmware_version[0],
+                                        device.firmware_version[1],
+                                        device.firmware_version[2],
+                                        new_fw[0],
+                                        new_fw[1],
+                                        new_fw[2]
+                                    );
+                                } else {
                                     info!(
                                         "Read firmware version from USB control for {:02x?}: {}.{}.{}",
-                                        device.uuid, v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]
+                                        device.uuid, new_fw[0], new_fw[1], new_fw[2]
                                     );
-                                    device.firmware_version = [
-                                        v.firmware_semver[0],
-                                        v.firmware_semver[1],
-                                        v.firmware_semver[2],
-                                    ];
                                 }
-                                Err(e) => {
-                                    warn!("Failed to read firmware version from USB control for {:02x?}: {}", device.uuid, e);
-                                }
+                                device.firmware_version = new_fw;
+                            }
+                            Ok(Err(e)) => {
+                                warn!(
+                                    "Failed to read firmware version from USB control for {:02x?}: {}",
+                                    device.uuid, e
+                                );
+                            }
+                            Err(_) => {
+                                warn!("read_version timed out for USB control {:02x?}", device.uuid);
                             }
                         }
 
@@ -1500,12 +1876,37 @@ async fn device_handler_task(
                         ));
                         let _ = event_sender.send(ev);
 
-                        // Enable health check since we now have USB control that needs monitoring
-                        needs_health_check = true;
-                        health_check = tokio::time::interval(Duration::from_secs(1));
-
                         info!("USB control device added successfully for {:02x?}, capabilities: {:?}",
                               device.uuid, device.capabilities);
+                    }
+                    Some(DeviceTaskMessage::RemoveControlDevice) => {
+                        info!(
+                            "RemoveControlDevice - removing USB control for {:02x?}",
+                            device.uuid
+                        );
+
+                        connections.control_device = None;
+                        device.capabilities.remove(DeviceCapabilities::CONTROL);
+
+                        if connections.events_device.is_some() {
+                            device.transport = odyssey_hub_common::device::Transport::UsbMux;
+                            let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
+                            let ev = Event::DeviceEvent(DeviceEvent(
+                                device.clone(),
+                                DeviceEventKind::CapabilitiesChanged,
+                            ));
+                            let _ = event_sender.send(ev);
+                            info!(
+                                "Device {:02x?} continuing with BLE events only after USB disconnect",
+                                device.uuid
+                            );
+                        } else {
+                            info!(
+                                "Device {:02x?} has no events or control after USB disconnect, exiting",
+                                device.uuid
+                            );
+                            break;
+                        }
                     }
                     Some(DeviceTaskMessage::RemoveEventsDevice) => {
                         info!(
@@ -1556,7 +1957,10 @@ async fn device_handler_task(
                     }
                 }
             }
-            else => break,
+            else => {
+                warn!("select! else branch fired for {:02x?} — all branches disabled, breaking loop", device.uuid);
+                break;
+            },
         }
     }
 
