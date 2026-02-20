@@ -14,7 +14,7 @@ use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tokio_stream::StreamExt;
 use tonic::{Response, Status};
 
-use crate::device_tasks::DeviceTaskMessage;
+use crate::device_tasks::{DeviceTaskMessage, DongleInfo, DongleTaskMessage};
 
 // -- Interface (tonic) --
 use iface::service_server::Service;
@@ -51,6 +51,12 @@ pub struct Server {
     pub accessory_map:
         Arc<std::sync::Mutex<HashMap<[u8; 6], (common::accessory::AccessoryInfo, bool)>>>,
     pub accessory_map_sender: broadcast::Sender<common::accessory::AccessoryMap>,
+
+    /// Live dongle list (separate from device_list).
+    pub dongle_list: Arc<ParkingMutex<Vec<(DongleInfo, mpsc::Sender<DongleTaskMessage>)>>>,
+
+    /// Notifies subscribers when dongle list changes
+    pub dongle_list_change_sender: broadcast::Sender<()>,
 
     /// Message sender to communicate with the desktop app
     pub app_message_sender: mpsc::UnboundedSender<crate::Message>,
@@ -108,6 +114,55 @@ impl Server {
             }
         });
         (rx, handle)
+    }
+
+    // -------------------- Dongle list helpers --------------------
+    fn dongle_snapshot(&self) -> Vec<DongleInfo> {
+        self.dongle_list
+            .lock()
+            .iter()
+            .map(|(d, _)| d.clone())
+            .collect()
+    }
+
+    fn dongle_list_stream(
+        &self,
+    ) -> (
+        mpsc::Receiver<Result<DongleListReply, Status>>,
+        JoinHandle<()>,
+    ) {
+        let mut change_rx = self.dongle_list_change_sender.subscribe();
+        let (tx, rx) = mpsc::channel::<Result<DongleListReply, Status>>(16);
+
+        let snapshot = self.dongle_snapshot();
+        let _ = tx.try_send(Ok(dongle_list_reply_from(&snapshot)));
+
+        let dongle_list = self.dongle_list.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                match change_rx.recv().await {
+                    Ok(()) => {
+                        let snap = {
+                            let guard = dongle_list.lock();
+                            guard.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>()
+                        };
+                        if tx.send(Ok(dongle_list_reply_from(&snap))).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        (rx, handle)
+    }
+
+    fn dongle_sender_for_id(&self, id: &str) -> Option<mpsc::Sender<DongleTaskMessage>> {
+        let guard = self.dongle_list.lock();
+        guard
+            .iter()
+            .find(|(d, _)| d.id == id)
+            .map(|(_, tx)| tx.clone())
     }
 
     // -------------------- Shot delay helpers --------------------
@@ -174,6 +229,50 @@ impl Server {
     }
 }
 
+fn dongle_list_reply_from(dongles: &[DongleInfo]) -> DongleListReply {
+    DongleListReply {
+        dongle_list: dongles
+            .iter()
+            .map(|d| iface::Dongle {
+                id: d.id.clone(),
+                firmware_version: if d.firmware_version == [0, 0, 0] {
+                    None
+                } else {
+                    Some(iface::FirmwareVersion {
+                        major: d.firmware_version[0] as u32,
+                        minor: d.firmware_version[1] as u32,
+                        patch: d.firmware_version[2] as u32,
+                    })
+                },
+                connected_devices: d
+                    .connected_devices
+                    .iter()
+                    .map(|addr| addr.to_vec())
+                    .collect(),
+                protocol_version: if d.protocol_version == [0, 0, 0] {
+                    None
+                } else {
+                    Some(iface::FirmwareVersion {
+                        major: d.protocol_version[0] as u32,
+                        minor: d.protocol_version[1] as u32,
+                        patch: d.protocol_version[2] as u32,
+                    })
+                },
+                control_protocol_version: if d.control_protocol_version == [0, 0, 0] {
+                    None
+                } else {
+                    Some(iface::FirmwareVersion {
+                        major: d.control_protocol_version[0] as u32,
+                        minor: d.control_protocol_version[1] as u32,
+                        patch: d.control_protocol_version[2] as u32,
+                    })
+                },
+                bonded_devices: d.bonded_devices.iter().map(|addr| addr.to_vec()).collect(),
+            })
+            .collect(),
+    }
+}
+
 #[tonic::async_trait]
 impl Service for Server {
     // Stream associated types (use concrete tokio_stream wrappers; no futures_core)
@@ -181,6 +280,7 @@ impl Service for Server {
     type SubscribeAccessoryMapStream = ReceiverStream<Result<AccessoryMapReply, Status>>;
     type SubscribeEventsStream = ReceiverStream<Result<Event, Status>>;
     type SubscribeShotDelayStream = ReceiverStream<Result<GetShotDelayReply, Status>>;
+    type SubscribeDongleListStream = ReceiverStream<Result<DongleListReply, Status>>;
     // -------------------- Device list --------------------
     async fn get_device_list(
         &self,
@@ -563,6 +663,63 @@ impl Service for Server {
         }
     }
 
+    async fn read_config(
+        &self,
+        req: tonic::Request<ReadConfigRequest>,
+    ) -> Result<Response<ReadConfigReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::ReadConfig {
+                kind: inner.kind as u8,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(value)) => Ok(Response::new(ReadConfigReply {
+                    value: value as u32,
+                })),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("device"))
+        }
+    }
+
+    async fn write_config(
+        &self,
+        req: tonic::Request<WriteConfigRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::WriteConfig {
+                kind: inner.kind as u8,
+                value: inner.value as u8,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("device"))
+        }
+    }
+
     async fn flash_settings(
         &self,
         req: tonic::Request<FlashSettingsRequest>,
@@ -584,6 +741,176 @@ impl Service for Server {
             }
         } else {
             Err(Status::not_found("device"))
+        }
+    }
+
+    async fn start_pairing(
+        &self,
+        req: tonic::Request<StartPairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        tracing::info!("start_pairing RPC for device {:02x?}", dev.uuid);
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tracing::info!(
+                "start_pairing: sending message to device handler for {:02x?}",
+                dev.uuid
+            );
+            tx.send(DeviceTaskMessage::StartPairing {
+                timeout_ms: inner.timeout_ms,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("device task not available"))?;
+            tracing::info!(
+                "start_pairing: message sent, awaiting reply from {:02x?}",
+                dev.uuid
+            );
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            tracing::warn!(
+                "start_pairing: device {:02x?} not found in device list",
+                dev.uuid
+            );
+            Err(Status::not_found("device"))
+        }
+    }
+
+    async fn cancel_pairing(
+        &self,
+        req: tonic::Request<CancelPairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let dev: common::device::Device = req
+            .into_inner()
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        tracing::info!("cancel_pairing RPC for device {:02x?}", dev.uuid);
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::CancelPairing { reply: reply_tx })
+                .await
+                .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            tracing::warn!(
+                "cancel_pairing: device {:02x?} not found in device list",
+                dev.uuid
+            );
+            Err(Status::not_found("device"))
+        }
+    }
+
+    async fn clear_bond(
+        &self,
+        req: tonic::Request<ClearBondRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let dev: common::device::Device = req
+            .into_inner()
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        tracing::info!("clear_bond RPC for device {:02x?}", dev.uuid);
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::ClearBond { reply: reply_tx })
+                .await
+                .map_err(|_| Status::unavailable("device task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            tracing::warn!(
+                "clear_bond: device {:02x?} not found in device list",
+                dev.uuid
+            );
+            Err(Status::not_found("device"))
+        }
+    }
+
+    // -------------------- Dongle RPCs --------------------
+    async fn subscribe_dongle_list(
+        &self,
+        _req: tonic::Request<SubscribeDongleListRequest>,
+    ) -> Result<Response<Self::SubscribeDongleListStream>, Status> {
+        let (rx, _handle) = self.dongle_list_stream();
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn start_dongle_pairing(
+        &self,
+        req: tonic::Request<StartDonglePairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        if let Some(tx) = self.dongle_sender_for_id(&inner.dongle_id) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DongleTaskMessage::StartPairing {
+                timeout_ms: inner.timeout_ms,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("dongle task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("dongle task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("dongle"))
+        }
+    }
+
+    async fn cancel_dongle_pairing(
+        &self,
+        req: tonic::Request<CancelDonglePairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let id = req.into_inner().dongle_id;
+        if let Some(tx) = self.dongle_sender_for_id(&id) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DongleTaskMessage::CancelPairing { reply: reply_tx })
+                .await
+                .map_err(|_| Status::unavailable("dongle task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("dongle task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("dongle"))
+        }
+    }
+
+    async fn clear_dongle_bonds(
+        &self,
+        req: tonic::Request<ClearDongleBondsRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let id = req.into_inner().dongle_id;
+        if let Some(tx) = self.dongle_sender_for_id(&id) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DongleTaskMessage::ClearBonds { reply: reply_tx })
+                .await
+                .map_err(|_| Status::unavailable("dongle task not available"))?;
+            match reply_rx.await {
+                Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
+                Ok(Err(e)) => Err(Status::internal(e)),
+                Err(_) => Err(Status::internal("dongle task dropped reply")),
+            }
+        } else {
+            Err(Status::not_found("dongle"))
         }
     }
 

@@ -200,6 +200,83 @@ impl Client {
         }
     }
 
+    pub async fn read_config(
+        &mut self,
+        device: common::device::Device,
+        kind: u8,
+    ) -> anyhow::Result<u8> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::ReadConfigRequest {
+                device: Some(device.into()),
+                kind: kind as u32,
+            });
+            let reply = service_client.read_config(request).await?.into_inner();
+            Ok(reply.value as u8)
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn write_config(
+        &mut self,
+        device: common::device::Device,
+        kind: u8,
+        value: u8,
+    ) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::WriteConfigRequest {
+                device: Some(device.into()),
+                kind: kind as u32,
+                value: value as u32,
+            });
+            service_client.write_config(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn start_pairing(
+        &mut self,
+        device: common::device::Device,
+        timeout_ms: u32,
+    ) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::StartPairingRequest {
+                device: Some(device.into()),
+                timeout_ms,
+            });
+            service_client.start_pairing(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn cancel_pairing(&mut self, device: common::device::Device) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::CancelPairingRequest {
+                device: Some(device.into()),
+            });
+            service_client.cancel_pairing(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn clear_bond(&mut self, device: common::device::Device) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request = tonic::Request::new(odyssey_hub_server_interface::ClearBondRequest {
+                device: Some(device.into()),
+            });
+            service_client.clear_bond(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn flash_settings(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::FlashSettingsRequest {
@@ -382,4 +459,126 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+
+    // -------------------- Dongle methods --------------------
+
+    pub async fn subscribe_dongle_list(
+        &mut self,
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, tonic::Status>>> {
+        if let Some(service_client) = &mut self.service_client {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::SubscribeDongleListRequest {});
+            let stream = service_client
+                .subscribe_dongle_list(request)
+                .await?
+                .into_inner();
+
+            Ok(stream.map(|item| {
+                item.map(|reply| {
+                    reply
+                        .dongle_list
+                        .into_iter()
+                        .map(|d| DongleInfo {
+                            id: d.id,
+                            protocol_version: d
+                                .protocol_version
+                                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
+                                .unwrap_or([0, 0, 0]),
+                            control_protocol_version: d
+                                .control_protocol_version
+                                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
+                                .unwrap_or([0, 0, 0]),
+                            firmware_version: d
+                                .firmware_version
+                                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
+                                .unwrap_or([0, 0, 0]),
+                            connected_devices: d
+                                .connected_devices
+                                .iter()
+                                .filter_map(|bytes| {
+                                    if bytes.len() == 6 {
+                                        let mut addr = [0u8; 6];
+                                        addr.copy_from_slice(bytes);
+                                        Some(addr)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                            bonded_devices: d
+                                .bonded_devices
+                                .iter()
+                                .filter_map(|bytes| {
+                                    if bytes.len() == 6 {
+                                        let mut addr = [0u8; 6];
+                                        addr.copy_from_slice(bytes);
+                                        Some(addr)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                        })
+                        .collect()
+                })
+            }))
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn start_dongle_pairing(
+        &mut self,
+        dongle_id: String,
+        timeout_ms: u32,
+    ) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::StartDonglePairingRequest {
+                    dongle_id,
+                    timeout_ms,
+                });
+            service_client.start_dongle_pairing(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn cancel_dongle_pairing(&mut self, dongle_id: String) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::CancelDonglePairingRequest {
+                    dongle_id,
+                });
+            service_client.cancel_dongle_pairing(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
+    pub async fn clear_dongle_bonds(&mut self, dongle_id: String) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::ClearDongleBondsRequest {
+                    dongle_id,
+                });
+            service_client.clear_dongle_bonds(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+}
+
+/// Dongle metadata returned by the dongle list subscription.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DongleInfo {
+    pub id: String,
+    pub protocol_version: [u16; 3],         // mux endpoint protocol
+    pub control_protocol_version: [u16; 3], // control endpoint protocol
+    pub firmware_version: [u16; 3],
+    pub connected_devices: Vec<[u8; 6]>,
+    pub bonded_devices: Vec<[u8; 6]>,
 }

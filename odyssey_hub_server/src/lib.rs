@@ -260,6 +260,7 @@ pub async fn run_server(
     ));
 
     let (accessory_map_sender, _) = broadcast::channel(12);
+    let (dongle_list_change_sender, _) = broadcast::channel::<()>(16);
 
     let server = server::Server {
         device_list: Default::default(),
@@ -271,11 +272,14 @@ pub async fn run_server(
         shot_delay_watch: shot_delay_watch.clone(),
         accessory_map: accessory_map.clone(),
         accessory_map_sender: accessory_map_sender.clone(),
+        dongle_list: Default::default(),
+        dongle_list_change_sender: dongle_list_change_sender.clone(),
         app_message_sender: sender.clone(),
         accessory_info_sender,
     };
 
     let dl = server.device_list.clone();
+    let dongle_list = server.dongle_list.clone();
 
     // Send server init message with corruption info
     if let Err(e) = sender.send(Message::ServerInit(Ok(startup_corruptions))) {
@@ -332,14 +336,18 @@ pub async fn run_server(
 
     // Convert event forwarding to stream
     let device_list_change_clone = device_list_change_sender.clone();
+    let dongle_list_change_clone = dongle_list_change_sender.clone();
+    let dongle_list_clone = dongle_list.clone();
     let event_fwd_stream = stream::unfold(
         (
             receiver,
             dl_clone2,
             event_sender_clone3,
             device_list_change_clone,
+            dongle_list_clone,
+            dongle_list_change_clone,
         ),
-        |(mut recv, dl, event_sender, list_change_sender)| async move {
+        |(mut recv, dl, event_sender, list_change_sender, dongle_list, dongle_change_sender)| async move {
             match recv.recv().await {
                 Some(message) => {
                     match message {
@@ -428,13 +436,54 @@ pub async fn run_server(
                             );
                             let _ = list_change_sender.send(());
                         }
+                        device_tasks::Message::DongleConnect(info, cmd_tx) => {
+                            tracing::info!("Processing dongle connect: {}", info.id);
+                            let mut guard = dongle_list.lock();
+                            // Replace if already present
+                            if let Some(idx) = guard.iter().position(|(d, _)| d.id == info.id) {
+                                guard[idx] = (info, cmd_tx);
+                            } else {
+                                guard.push((info, cmd_tx));
+                            }
+                            drop(guard);
+                            let _ = dongle_change_sender.send(());
+                        }
+                        device_tasks::Message::DongleUpdate(info) => {
+                            tracing::debug!(
+                                "Processing dongle update: {} ({} connected devices)",
+                                info.id,
+                                info.connected_devices.len()
+                            );
+                            let mut guard = dongle_list.lock();
+                            if let Some(idx) = guard.iter().position(|(d, _)| d.id == info.id) {
+                                guard[idx].0 = info;
+                            }
+                            drop(guard);
+                            let _ = dongle_change_sender.send(());
+                        }
+                        device_tasks::Message::DongleDisconnect(id) => {
+                            tracing::info!("Processing dongle disconnect: {}", id);
+                            let mut guard = dongle_list.lock();
+                            if let Some(idx) = guard.iter().position(|(d, _)| d.id == id) {
+                                guard.remove(idx);
+                            }
+                            drop(guard);
+                            let _ = dongle_change_sender.send(());
+                        }
                         device_tasks::Message::Event(e) => {
                             event_sender.send(e).unwrap();
                         }
                     }
                     Some((
                         ServerEvent::EventForward,
-                        (recv, dl, event_sender, list_change_sender),
+                        (
+                            recv,
+                            dl,
+                            event_sender,
+                            list_change_sender,
+                            dongle_list,
+                            dongle_change_sender,
+                        ),
                     ))
                 }
                 None => None,

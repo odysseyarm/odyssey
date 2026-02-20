@@ -1615,7 +1615,7 @@ dependencies = [
 [[package]]
 name = "protodongers"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs.git#55c6152648e275a892ba7be76ce7024f7cc837c6"
+source = "git+https://github.com/odysseyarm/protodonge-rs.git#545e9cf82f7a04353a4cce34de9ca1c726f94646"
 dependencies = [
  "ats_common",
  "enumn",

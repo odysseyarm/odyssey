@@ -59,10 +59,9 @@ pub fn Zero(
 
     // Subscribe to tracking events and buffer them per-device
     {
-        let sender = tracking_sender.0.clone();
         let mut tracking_history = tracking_history.clone();
         use_future(move || {
-            let mut receiver = sender.subscribe();
+            let mut receiver = hub.peek().subscribe_tracking();
             async move {
                 loop {
                     match receiver.recv().await {
@@ -159,6 +158,7 @@ pub fn Zero(
                     }
                     _ => {}
                 },
+                _ => {}
             }
         }
     });

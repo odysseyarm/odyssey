@@ -2,6 +2,12 @@
 #[derive(Clone, Debug)]
 pub enum Event {
     DeviceEvent(DeviceEvent),
+    DonglePairingResult {
+        dongle_id: String,
+        success: bool,
+        paired_address: [u8; 6],
+        error: String,
+    },
 }
 
 #[repr(C)]
@@ -18,6 +24,11 @@ pub enum DeviceEventKind {
     SaveZeroResult(bool),
     PacketEvent(ats_usb::packets::vm::Packet),
     CapabilitiesChanged,
+    PairingResult {
+        success: bool,
+        paired_address: [u8; 6],
+        error: String,
+    },
 }
 
 #[repr(C)]

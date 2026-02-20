@@ -7,6 +7,7 @@ default-run = "odyssey_desktop"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1"
 futures = { version = "0.3.30", default-features = false, features = ["std", "async-await"] }
 futures-concurrency = "7.6.1"
 serialport = { version = "4.2.2", features = ["usbportinfo-interface"] }

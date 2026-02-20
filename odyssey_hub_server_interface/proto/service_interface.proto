@@ -21,6 +21,8 @@ service Service {
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
   rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
   rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
+  rpc ReadConfig(ReadConfigRequest) returns (ReadConfigReply) {}
+  rpc WriteConfig(WriteConfigRequest) returns (EmptyReply) {}
   rpc FlashSettings(FlashSettingsRequest) returns (EmptyReply) {}
   rpc ClearZero(Device) returns (EmptyReply) {}
   rpc ResetZero(Device) returns (EmptyReply) {}
@@ -33,6 +35,17 @@ service Service {
   rpc SetShotDelay(SetShotDelayRequest) returns (EmptyReply) {}
   rpc SaveShotDelay(Device) returns (EmptyReply) {}
   rpc SubscribeShotDelay(SubscribeShotDelayRequest) returns (stream GetShotDelayReply) {}
+
+  // Pairing & bonding (ATS devices)
+  rpc StartPairing(StartPairingRequest) returns (EmptyReply) {}
+  rpc CancelPairing(CancelPairingRequest) returns (EmptyReply) {}
+  rpc ClearBond(ClearBondRequest) returns (EmptyReply) {}
+
+  // Dongles
+  rpc SubscribeDongleList(SubscribeDongleListRequest) returns (stream DongleListReply) {}
+  rpc StartDonglePairing(StartDonglePairingRequest) returns (EmptyReply) {}
+  rpc CancelDonglePairing(CancelDonglePairingRequest) returns (EmptyReply) {}
+  rpc ClearDongleBonds(ClearDongleBondsRequest) returns (EmptyReply) {}
 
   // Window control
   rpc BringToFront(EmptyRequest) returns (EmptyReply) {}
@@ -140,6 +153,12 @@ message DeviceEvent {
     // Empty message - device capabilities are in the Device message
   }
 
+  message PairingResultEvent {
+    bool success = 1;
+    bytes paired_address = 2; // 6-byte BLE address on success
+    string error = 3; // error/status message
+  }
+
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
     TrackingEvent tracking = 3;
@@ -148,12 +167,21 @@ message DeviceEvent {
     ZeroResultEvent zero_result = 8;
     SaveZeroResultEvent save_zero_result = 9;
     CapabilitiesChangedEvent capabilities_changed = 10;
+    PairingResultEvent pairing_result = 11;
   }
+}
+
+message DonglePairingResultEvent {
+  string dongle_id = 1;
+  bool success = 2;
+  bytes paired_address = 3; // 6-byte BLE address on success
+  string error = 4; // error/status message
 }
 
 message Event {
   oneof event_oneof {
     DeviceEvent device = 1;
+    DonglePairingResultEvent dongle_pairing_result = 2;
   }
 }
 
@@ -262,8 +290,60 @@ message WriteRegisterRequest {
   uint32 address = 4;
   uint32 data = 5;
 }
+message ReadConfigRequest {
+  Device device = 1;
+  uint32 kind = 2; // 0=ImpactThreshold, 1=SuppressMs
+}
+message ReadConfigReply {
+  uint32 value = 1;
+}
+message WriteConfigRequest {
+  Device device = 1;
+  uint32 kind = 2;
+  uint32 value = 3;
+}
 message FlashSettingsRequest {
   Device device = 1;
+}
+
+// --- Pairing ---
+
+message StartPairingRequest {
+  Device device = 1;
+  uint32 timeout_ms = 2;
+}
+message CancelPairingRequest {
+  Device device = 1;
+}
+message ClearBondRequest {
+  Device device = 1;
+}
+
+// --- Dongles ---
+
+message Dongle {
+  string id = 1; // USB serial number or unique identifier
+  FirmwareVersion firmware_version = 2;
+  repeated bytes connected_devices = 3; // BLE addresses of connected devices
+  FirmwareVersion protocol_version = 4; // mux endpoint protocol version (legacy field name)
+  repeated bytes bonded_devices = 5; // BLE addresses of bonded devices
+  FirmwareVersion control_protocol_version = 6; // dongle control endpoint protocol version
+}
+
+message SubscribeDongleListRequest {}
+message DongleListReply {
+  repeated Dongle dongle_list = 1;
+}
+
+message StartDonglePairingRequest {
+  string dongle_id = 1;
+  uint32 timeout_ms = 2;
+}
+message CancelDonglePairingRequest {
+  string dongle_id = 1;
+}
+message ClearDongleBondsRequest {
+  string dongle_id = 1;
 }
 
 message SubscribeEventsRequest {}
