@@ -1,6 +1,6 @@
 use crate::mux::Uuid;
 
-const SEMVER: [u16; 3] = [0, 1, 1];
+const SEMVER: [u16; 3] = [0, 1, 2];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -15,7 +15,10 @@ pub enum PairingError {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "minicbor", derive(minicbor::Encode, minicbor::Decode, minicbor::CborLen))]
+#[cfg_attr(
+    feature = "minicbor",
+    derive(minicbor::Encode, minicbor::Decode, minicbor::CborLen)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TransportMode {
@@ -82,4 +85,11 @@ pub enum DeviceMsg {
     StartPairingResponse,
     CancelPairing,
     PairingResult(Result<Uuid, PairingError>),
+
+    ReadConfig(crate::ConfigKind),
+    ReadConfigResponse(crate::GeneralConfig),
+    WriteConfig(crate::GeneralConfig),
+    WriteConfigAck,
+    FlashSettings,
+    FlashSettingsAck,
 }
