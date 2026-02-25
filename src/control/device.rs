@@ -15,10 +15,13 @@ pub enum PairingError {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "minicbor", derive(minicbor::Encode, minicbor::Decode, minicbor::CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TransportMode {
+    #[cfg_attr(feature = "minicbor", n(0))]
     Usb = 0,
+    #[cfg_attr(feature = "minicbor", n(1))]
     Ble = 1,
 }
 
