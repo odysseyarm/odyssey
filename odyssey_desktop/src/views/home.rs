@@ -6,7 +6,8 @@ use dioxus::{
 
 use crate::components::crosshair_manager::TrackingSender;
 use crate::components::{
-    DeviceFirmwareUpdate, FirmwareUpdateManager, SensorSettings, UpdatingDeviceRow,
+    DeviceFirmwareUpdate, FirmwareUpdateManager, SensorSettings, TransportModePanel,
+    UpdatingDeviceRow,
 };
 use crate::hub;
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
@@ -153,6 +154,10 @@ pub fn Home() -> Element {
                                                         manager: manager.clone(),
                                                     }
                                                     SensorSettings {
+                                                        hub: hub,
+                                                        device: device.clone(),
+                                                    }
+                                                    TransportModePanel {
                                                         hub: hub,
                                                         device: device.clone(),
                                                     }

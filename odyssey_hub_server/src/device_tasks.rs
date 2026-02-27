@@ -108,6 +108,11 @@ pub enum DeviceTaskMessage {
     ClearBond {
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    /// Set the transport mode (USB or BLE). The device will persist this and apply after reboot.
+    SetTransportMode {
+        usb_mode: bool,
+        reply: tokio::sync::oneshot::Sender<Result<bool, String>>,
+    },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
     AddEventsDevice(VmDevice),
     /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
@@ -223,6 +228,12 @@ async fn usb_device_manager(
         [u8; 6],
         (mpsc::Sender<DeviceTaskMessage>, tokio::task::JoinHandle<()>),
     >::new()));
+    // UUIDs of handlers that were created as direct-USB connections (not BLE-mux primary).
+    // These do not need AddControlDevice on each scan pass — their control device is already
+    // embedded in the handler. Only UsbMux-primary handlers benefit from AddControlDevice.
+    let direct_usb_handler_uuids = Arc::new(tokio::sync::Mutex::new(
+        std::collections::HashSet::<[u8; 6]>::new(),
+    ));
 
     // Hub managers: Vec of (DeviceInfo, slot-with-joinhandle)
     let hub_managers = Arc::new(tokio::sync::Mutex::new(Vec::<(
@@ -303,6 +314,7 @@ async fn usb_device_manager(
                     handle.abort();
                     info!("Removed finished device handler for {:02x?}", uuid);
                 }
+                direct_usb_handler_uuids.lock().await.remove(&uuid);
             }
         }
 
@@ -1037,20 +1049,29 @@ async fn usb_device_manager(
 
                     // Check if device is already connected
                     if let Some((existing_cmd_tx, _existing_handle)) = dh.get(&uuid) {
-                        // Device already exists - try to add USB control
-                        info!(
-                            "Device {:02x?} already connected, sending AddControlDevice to merge USB control",
-                            uuid
-                        );
-
-                        // Send AddControlDevice message to the existing handler
-                        let result = existing_cmd_tx
-                            .send(DeviceTaskMessage::AddControlDevice(vm_device_temp.clone()))
-                            .await;
-                        info!(
-                            "AddControlDevice message sent for {:02x?}, result: {:?}",
-                            uuid, result
-                        );
+                        let is_direct = direct_usb_handler_uuids.lock().await.contains(&uuid);
+                        if is_direct {
+                            // Already a fully-established direct-USB handler — no merge needed.
+                            // Sending AddControlDevice every scan cycle would re-read transport
+                            // mode on stale VmDevice instances and corrupt the handler's state.
+                            info!(
+                                "Device {:02x?} already has direct-USB handler, skipping AddControlDevice",
+                                uuid
+                            );
+                        } else {
+                            // BLE-mux primary handler — merge incoming USB control.
+                            info!(
+                                "Device {:02x?} has BLE-mux handler, sending AddControlDevice to merge USB control",
+                                uuid
+                            );
+                            let result = existing_cmd_tx
+                                .send(DeviceTaskMessage::AddControlDevice(vm_device_temp.clone()))
+                                .await;
+                            info!(
+                                "AddControlDevice message sent for {:02x?}, result: {:?}",
+                                uuid, result
+                            );
+                        }
 
                         false // Skip creating new handler
                     } else {
@@ -1145,6 +1166,7 @@ async fn usb_device_manager(
                 {
                     let mut dh = device_handles.lock().await;
                     dh.insert(uuid, (tx.clone(), handle));
+                    direct_usb_handler_uuids.lock().await.insert(uuid);
                 }
 
                 // Always pass the commands channel so server.device_list gets a working sender.
@@ -1188,6 +1210,44 @@ async fn usb_device_manager(
 
         sleep(Duration::from_secs(2)).await;
     }
+}
+
+/// Start all sensor streams for a given events device.
+/// Returns a SelectAll of boxed streams.
+async fn start_sensor_streams(
+    events_device: &VmDevice,
+    uuid: [u8; 6],
+) -> SelectAll<BoxStream<'static, DeviceStreamEvent>> {
+    let mut sensor_streams: SelectAll<BoxStream<'static, DeviceStreamEvent>> = SelectAll::new();
+    match events_device.clone().stream_combined_markers().await {
+        Ok(stream) => {
+            info!("Combined markers stream started for {:02x?}", uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed());
+        }
+        Err(e) => warn!("Failed to start combined markers stream for {:02x?}: {}", uuid, e),
+    }
+    match events_device.clone().stream_poc_markers().await {
+        Ok(stream) => {
+            info!("PoC markers stream started for {:02x?}", uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed());
+        }
+        Err(e) => warn!("Failed to start PoC markers stream for {:02x?}: {}", uuid, e),
+    }
+    match events_device.clone().stream_accel().await {
+        Ok(stream) => {
+            info!("Accelerometer stream started for {:02x?}", uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed());
+        }
+        Err(e) => warn!("Failed to start accelerometer stream for {:02x?}: {}", uuid, e),
+    }
+    match events_device.clone().stream_impact().await {
+        Ok(stream) => {
+            info!("Impact stream started for {:02x?}", uuid);
+            sensor_streams.push(stream.map(DeviceStreamEvent::Impact).boxed());
+        }
+        Err(e) => warn!("Failed to start impact stream for {:02x?}: {}", uuid, e),
+    }
+    sensor_streams
 }
 
 /// Device connections - can have separate VmDevice instances for control vs events
@@ -1254,28 +1314,73 @@ async fn device_handler_task(
     let mut madgwick = ahrs::Madgwick::<f32>::new(1.0 / 100.0, 0.1);
     let mut orientation = Rotation3::identity();
 
-    // Read camera config if we have an events device (USB direct or BLE mux)
-    // Only skip for USB devices in BLE transport mode (no events device yet)
-    let general_settings = if let Some(events_device) = connections.events_device.as_ref() {
+    // Read camera config. Devices with bulk packet support (0x5200, etc.) use the events
+    // device. ATS Lite (0x5210) and Lite1 (0x5211) use the control plane (EP0) instead,
+    // since their bulk handler is gated on USB transport mode being active.
+    let supports_bulk_config = !matches!(device.product_id, 0x5210 | 0x5211);
+    let general_settings = if let Some(events_device) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
         info!(
-            "Reading camera config for device {:02x?} from events device",
+            "Reading camera config for device {:02x?} from events device (bulk)",
             device.uuid
         );
-        match events_device.read_all_config().await {
-            Ok(cfg) => {
+        match tokio::time::timeout(Duration::from_secs(5), events_device.read_all_config()).await {
+            Ok(Ok(cfg)) => {
                 info!(
                     "Successfully read camera config for device {:02x?}",
                     device.uuid
                 );
                 Some(cfg)
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 warn!(
                     "Failed to read camera config for device {:02x?}: {}",
                     device.uuid, e
                 );
                 None
             }
+            Err(_) => {
+                warn!(
+                    "read_all_config timed out for device {:02x?}, proceeding with defaults",
+                    device.uuid
+                );
+                None
+            }
+        }
+    } else if !supports_bulk_config {
+        if let Some(ctrl_device) = connections.control_device.as_ref() {
+            info!(
+                "Reading camera config for device {:02x?} via control plane",
+                device.uuid
+            );
+            match tokio::time::timeout(Duration::from_secs(10), ctrl_device.read_all_config_ctrl()).await {
+                Ok(Ok(cfg)) => {
+                    info!(
+                        "Successfully read camera config for device {:02x?} via control plane",
+                        device.uuid
+                    );
+                    Some(cfg)
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "Failed to read camera config for device {:02x?} via control plane: {}",
+                        device.uuid, e
+                    );
+                    None
+                }
+                Err(_) => {
+                    warn!(
+                        "read_all_config_ctrl timed out for device {:02x?}, proceeding with defaults",
+                        device.uuid
+                    );
+                    None
+                }
+            }
+        } else {
+            info!(
+                "Skipping camera config for device {:02x?} (no control device available)",
+                device.uuid
+            );
+            None
         }
     } else {
         info!(
@@ -1313,68 +1418,7 @@ async fn device_handler_task(
     let mut sensor_streams: SelectAll<BoxStream<'static, DeviceStreamEvent>> = SelectAll::new();
 
     if let Some(events_device) = connections.events_device.as_ref() {
-        match events_device.clone().stream_combined_markers().await {
-            Ok(stream) => {
-                info!("Combined markers stream started for {:02x?}", device.uuid);
-                sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed());
-            }
-            Err(e) => warn!(
-                "Failed to start combined markers stream for {:02x?}: {}",
-                device.uuid, e
-            ),
-        }
-        match events_device.clone().stream_poc_markers().await {
-            Ok(stream) => {
-                info!("PoC markers stream started for {:02x?}", device.uuid);
-                sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed());
-            }
-            Err(e) => warn!(
-                "Failed to start PoC markers stream for {:02x?}: {}",
-                device.uuid, e
-            ),
-        }
-        match events_device.clone().stream_accel().await {
-            Ok(stream) => {
-                info!("Accelerometer stream started for {:02x?}", device.uuid);
-                sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed());
-            }
-            Err(e) => warn!(
-                "Failed to start accelerometer stream for {:02x?}: {}",
-                device.uuid, e
-            ),
-        }
-        match events_device.clone().stream_impact().await {
-            Ok(stream) => {
-                info!("Impact stream started for {:02x?}", device.uuid);
-                sensor_streams.push(stream.map(DeviceStreamEvent::Impact).boxed());
-            }
-            Err(e) => warn!(
-                "Failed to start impact stream for {:02x?}: {}",
-                device.uuid, e
-            ),
-        }
-
-        // TODO separate subscribes to whichever vendor streams we want
-        // for tag in 0x81u8..=0xfeu8 {
-        //     match vm_device.clone().stream(PacketType::Vendor(tag)).await {
-        //         Ok(stream) => {
-        //             sensor_streams.push(
-        //                 stream
-        //                     .filter_map(|pd| async move {
-        //                         if let PacketData::Vendor(vtag, vdata) = pd {
-        //                             Some(DeviceStreamEvent::Vendor(vtag, vdata))
-        //                         } else {
-        //                             None
-        //                         }
-        //                     })
-        //                     .boxed(),
-        //             );
-        //         }
-        //         Err(_e) => {
-        //             // it's fine if certain vendor streams aren't available
-        //         }
-        //     }
-        // }
+        sensor_streams = start_sensor_streams(events_device, device.uuid).await;
     } else {
         info!(
             "Skipping sensor streams for device {:02x?} (no events device)",
@@ -1404,43 +1448,7 @@ async fn device_handler_task(
 
     loop {
         tokio::select! {
-            maybe_evt = sensor_streams.next(), if has_sensor_streams => {
-                match maybe_evt {
-                    Some(evt) => {
-                        if let Err(e) = handle_stream_event(
-                            &device,
-                            evt,
-                            &event_sender,
-                            &device_offsets,
-                            &mut fv_state,
-                            &screen_calibrations,
-                            &mut prev_accel_timestamp,
-                            &mut madgwick,
-                            &mut orientation,
-                            &camera_model_nf,
-                            &camera_model_wf,
-                            &stereo_iso,
-                        ).await {
-                            warn!("Error processing stream event for {:02x?}: {}", device.uuid, e);
-                        }
-                    }
-                    None => {
-                        info!("Sensor streams ended for device {:02x?}", device.uuid);
-                        break;
-                    }
-                }
-            }
-            Some(new_delay) = shot_delay_stream.next() => {
-                current_shot_delay = new_delay;
-                info!(
-                    "Shot delay updated for {:02x?} = {} ms",
-                    device.uuid, current_shot_delay
-                );
-                device_shot_delays
-                    .write()
-                    .await
-                    .insert(device.uuid, current_shot_delay as u16);
-            }
+            biased;
             maybe_msg = control_stream.next() => {
                 let msg_name = match &maybe_msg {
                     Some(DeviceTaskMessage::ResetZero) => "ResetZero",
@@ -1457,6 +1465,7 @@ async fn device_handler_task(
                     Some(DeviceTaskMessage::StartPairing { .. }) => "StartPairing",
                     Some(DeviceTaskMessage::CancelPairing { .. }) => "CancelPairing",
                     Some(DeviceTaskMessage::ClearBond { .. }) => "ClearBond",
+                    Some(DeviceTaskMessage::SetTransportMode { .. }) => "SetTransportMode",
                     Some(DeviceTaskMessage::AddEventsDevice(..)) => "AddEventsDevice",
                     Some(DeviceTaskMessage::AddControlDevice(..)) => "AddControlDevice",
                     Some(DeviceTaskMessage::RemoveControlDevice) => "RemoveControlDevice",
@@ -1581,12 +1590,32 @@ async fn device_handler_task(
                         let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
                         if !device.events_connected {
                             let _ = reply.send(Err("events transport not connected".into()));
-                        } else if let Some(dev) = connections.events_device.as_ref() {
+                        } else if let Some(dev) = connections.events_device.as_ref().cloned() {
+                            // Pause sensor streams to avoid PAG mutex contention on the firmware.
+                            // obj_loop holds the PAG mutex during get_objects(); if a ReadRegister
+                            // arrives while that lock is held, recv_loop blocks for the full
+                            // get_objects() duration. We send DisableAll first (an acknowledged
+                            // round-trip) so obj_loop stops before ReadRegister reaches the firmware.
+                            let had_streams = has_sensor_streams;
+                            if had_streams {
+                                sensor_streams = SelectAll::new();
+                                has_sensor_streams = false;
+                                // clear_all_streams() sends DisableAll and waits for Ack, ensuring
+                                // the firmware has processed DisableAll before we send ReadRegister.
+                                if let Err(e) = dev.clear_all_streams().await {
+                                    warn!("clear_all_streams failed before ReadRegister for {:02x?}: {}", device.uuid, e);
+                                }
+                            }
                             let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_register(port, bank, address)).await {
                                 Ok(r) => r.map_err(|e| e.to_string()),
                                 Err(_) => Err("read_register timed out".into()),
                             };
                             let _ = reply.send(result);
+                            // Restart streams now that the register read is done.
+                            if had_streams {
+                                sensor_streams = start_sensor_streams(&dev, device.uuid).await;
+                                has_sensor_streams = !sensor_streams.is_empty();
+                            }
                         } else {
                             let _ = reply.send(Err("events device not available".into()));
                         }
@@ -1595,12 +1624,25 @@ async fn device_handler_task(
                         let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
                         if !device.events_connected {
                             let _ = reply.send(Err("events transport not connected".into()));
-                        } else if let Some(dev) = connections.events_device.as_ref() {
+                        } else if let Some(dev) = connections.events_device.as_ref().cloned() {
+                            // Pause streams while writing registers for the same reason as ReadRegister.
+                            let had_streams = has_sensor_streams;
+                            if had_streams {
+                                sensor_streams = SelectAll::new();
+                                has_sensor_streams = false;
+                                if let Err(e) = dev.clear_all_streams().await {
+                                    warn!("clear_all_streams failed before WriteRegister for {:02x?}: {}", device.uuid, e);
+                                }
+                            }
                             let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_register(port, bank, address, data)).await {
                                 Ok(r) => r.map_err(|e| e.to_string()),
                                 Err(_) => Err("write_register timed out".into()),
                             };
                             let _ = reply.send(result);
+                            if had_streams {
+                                sensor_streams = start_sensor_streams(&dev, device.uuid).await;
+                                has_sensor_streams = !sensor_streams.is_empty();
+                            }
                         } else {
                             let _ = reply.send(Err("events device not available".into()));
                         }
@@ -1612,9 +1654,7 @@ async fn device_handler_task(
                             _ => None,
                         };
                         if let Some(ck) = config_kind {
-                            if !device.events_connected {
-                                let _ = reply.send(Err("events transport not connected".into()));
-                            } else if let Some(dev) = connections.events_device.as_ref() {
+                            if let Some(dev) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config(ck)).await {
                                     Ok(Ok(gc)) => Ok(match gc {
                                         GeneralConfig::ImpactThreshold(v) => v,
@@ -1625,8 +1665,19 @@ async fn device_handler_task(
                                     Err(_) => Err("read_config timed out".into()),
                                 };
                                 let _ = reply.send(result);
+                            } else if let Some(dev) = connections.control_device.as_ref() {
+                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config_ctrl(ck)).await {
+                                    Ok(Ok(gc)) => Ok(match gc {
+                                        GeneralConfig::ImpactThreshold(v) => v,
+                                        GeneralConfig::SuppressMs(v) => v,
+                                        _ => 0,
+                                    }),
+                                    Ok(Err(e)) => Err(e.to_string()),
+                                    Err(_) => Err("read_config_ctrl timed out".into()),
+                                };
+                                let _ = reply.send(result);
                             } else {
-                                let _ = reply.send(Err("events device not available".into()));
+                                let _ = reply.send(Err("no device available for read_config".into()));
                             }
                         } else {
                             let _ = reply.send(Err(format!("unknown config kind: {kind}")));
@@ -1639,32 +1690,40 @@ async fn device_handler_task(
                             _ => None,
                         };
                         if let Some(gc) = config {
-                            if !device.events_connected {
-                                let _ = reply.send(Err("events transport not connected".into()));
-                            } else if let Some(dev) = connections.events_device.as_ref() {
+                            if let Some(dev) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config(gc)).await {
                                     Ok(r) => r.map_err(|e| e.to_string()),
                                     Err(_) => Err("write_config timed out".into()),
                                 };
                                 let _ = reply.send(result);
+                            } else if let Some(dev) = connections.control_device.as_ref() {
+                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config_ctrl(gc)).await {
+                                    Ok(r) => r.map_err(|e| e.to_string()),
+                                    Err(_) => Err("write_config_ctrl timed out".into()),
+                                };
+                                let _ = reply.send(result);
                             } else {
-                                let _ = reply.send(Err("events device not available".into()));
+                                let _ = reply.send(Err("no device available for write_config".into()));
                             }
                         } else {
                             let _ = reply.send(Err(format!("unknown config kind: {kind}")));
                         }
                     }
                     Some(DeviceTaskMessage::FlashSettings { reply }) => {
-                        if !device.events_connected {
-                            let _ = reply.send(Err("events transport not connected".into()));
-                        } else if let Some(dev) = connections.events_device.as_ref() {
+                        if let Some(dev) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
                             let result = match tokio::time::timeout(Duration::from_secs(3), dev.flash_settings()).await {
                                 Ok(r) => r.map_err(|e| e.to_string()),
                                 Err(_) => Err("flash_settings timed out".into()),
                             };
                             let _ = reply.send(result);
+                        } else if let Some(dev) = connections.control_device.as_ref() {
+                            let result = match tokio::time::timeout(Duration::from_secs(5), dev.flash_settings_ctrl()).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("flash_settings_ctrl timed out".into()),
+                            };
+                            let _ = reply.send(result);
                         } else {
-                            let _ = reply.send(Err("events device not available".into()));
+                            let _ = reply.send(Err("no device available for flash_settings".into()));
                         }
                     }
                     Some(DeviceTaskMessage::StartPairing { timeout_ms, reply }) => {
@@ -1735,6 +1794,40 @@ async fn device_handler_task(
                             let _ = reply.send(Err("no control device available".into()));
                         }
                     }
+                    Some(DeviceTaskMessage::SetTransportMode { usb_mode, reply }) => {
+                        if let Some(dev) = connections.control_device.clone() {
+                            info!("SetTransportMode: usb_mode={} for device {:02x?}", usb_mode, device.uuid);
+                            let r = match tokio::time::timeout(Duration::from_secs(3), dev.set_transport_mode(usb_mode)).await {
+                                Ok(Ok(mode)) => Ok(matches!(mode, protodongers::control::device::TransportMode::Usb)),
+                                Ok(Err(e)) => Err(e.to_string()),
+                                Err(_) => Err("set_transport_mode timed out".into()),
+                            };
+                            info!("SetTransportMode result for {:02x?}: {:?}", device.uuid, r);
+                            if r.is_ok() {
+                                // Persist the new transport mode to flash before rebooting,
+                                // otherwise the device comes back on the old mode after reboot.
+                                info!("Flashing settings for {:02x?} to persist transport mode", device.uuid);
+                                match tokio::time::timeout(Duration::from_secs(5), dev.flash_settings_ctrl()).await {
+                                    Ok(Ok(())) => info!("Flash settings ok for {:02x?}", device.uuid),
+                                    Ok(Err(e)) => warn!("Flash settings failed for {:02x?}: {}", device.uuid, e),
+                                    Err(_) => warn!("Flash settings timed out for {:02x?}", device.uuid),
+                                }
+                            }
+                            // Reply to the RPC caller before rebooting.
+                            let _ = reply.send(r);
+                            // Reboot the device so it comes back clean in the new mode.
+                            // We don't wait for the full ack timeout — just fire and break
+                            // immediately so the device disappears from the UI before the
+                            // reboot completes. This prevents stale RPC calls (e.g.
+                            // ReadRegister) from hitting a dead device while it is resetting.
+                            info!("Rebooting device {:02x?} to apply transport mode change", device.uuid);
+                            let _ = tokio::time::timeout(Duration::from_millis(500), dev.reboot()).await;
+                            break;
+                        } else {
+                            warn!("SetTransportMode: no control device for {:02x?}", device.uuid);
+                            let _ = reply.send(Err("no control device available".into()));
+                        }
+                    }
                     Some(DeviceTaskMessage::AddEventsDevice(events_vm_device)) => {
                         info!(
                             "AddEventsDevice - adding BLE mux events device for {:02x?}",
@@ -1745,34 +1838,7 @@ async fn device_handler_task(
                         connections.events_device = Some(events_vm_device.clone());
 
                         // Start all sensor streams with the new events device
-                        match events_vm_device.clone().stream_combined_markers().await {
-                            Ok(stream) => {
-                                info!("Combined markers stream started for {:02x?}", device.uuid);
-                                sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed());
-                            }
-                            Err(e) => warn!("Failed to start combined markers stream for {:02x?}: {}", device.uuid, e),
-                        }
-                        match events_vm_device.clone().stream_poc_markers().await {
-                            Ok(stream) => {
-                                info!("PoC markers stream started for {:02x?}", device.uuid);
-                                sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed());
-                            }
-                            Err(e) => warn!("Failed to start PoC markers stream for {:02x?}: {}", device.uuid, e),
-                        }
-                        match events_vm_device.clone().stream_accel().await {
-                            Ok(stream) => {
-                                info!("Accelerometer stream started for {:02x?}", device.uuid);
-                                sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed());
-                            }
-                            Err(e) => warn!("Failed to start accelerometer stream for {:02x?}: {}", device.uuid, e),
-                        }
-                        match events_vm_device.clone().stream_impact().await {
-                            Ok(stream) => {
-                                info!("Impact stream started for {:02x?}", device.uuid);
-                                sensor_streams.push(stream.map(DeviceStreamEvent::Impact).boxed());
-                            }
-                            Err(e) => warn!("Failed to start impact stream for {:02x?}: {}", device.uuid, e),
-                        }
+                        sensor_streams = start_sensor_streams(&events_vm_device, device.uuid).await;
 
                         // Update has_sensor_streams flag
                         has_sensor_streams = !sensor_streams.is_empty();
@@ -1857,6 +1923,51 @@ async fn device_handler_task(
                             }
                         }
 
+                        // Re-read transport mode from the newly attached control device so
+                        // events_transport / events_connected reflect the current firmware state.
+                        let new_transport_mode = match tokio::time::timeout(
+                            Duration::from_secs(3),
+                            control_vm_device.get_transport_mode(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(mode)) => {
+                                info!(
+                                    "AddControlDevice: transport mode for {:02x?} = {:?}",
+                                    device.uuid, mode
+                                );
+                                Some(mode)
+                            }
+                            Ok(Err(e)) => {
+                                warn!(
+                                    "AddControlDevice: failed to read transport mode for {:02x?}: {}",
+                                    device.uuid, e
+                                );
+                                None
+                            }
+                            Err(_) => {
+                                warn!(
+                                    "AddControlDevice: get_transport_mode timed out for {:02x?}",
+                                    device.uuid
+                                );
+                                None
+                            }
+                        };
+                        if let Some(mode) = new_transport_mode {
+                            let is_usb = mode == protodongers::control::device::TransportMode::Usb;
+                            device.events_transport = if is_usb {
+                                odyssey_hub_common::device::EventsTransport::Wired
+                            } else {
+                                odyssey_hub_common::device::EventsTransport::Bluetooth
+                            };
+                            device.events_connected = is_usb;
+                            if is_usb {
+                                device.capabilities.insert(DeviceCapabilities::EVENTS);
+                            } else {
+                                device.capabilities.remove(DeviceCapabilities::EVENTS);
+                            }
+                        }
+
                         // Store the control device
                         connections.control_device = Some(control_vm_device);
 
@@ -1888,7 +1999,14 @@ async fn device_handler_task(
                         connections.control_device = None;
                         device.capabilities.remove(DeviceCapabilities::CONTROL);
 
-                        if connections.events_device.is_some() {
+                        // A UsbMux device has genuinely independent BLE events that survive
+                        // USB disconnect. A Usb-transport device's events are co-located with
+                        // the control connection that just disappeared, so always exit.
+                        let has_independent_ble_events = connections.events_device.is_some()
+                            && device.transport
+                                == odyssey_hub_common::device::Transport::UsbMux;
+
+                        if has_independent_ble_events {
                             device.transport = odyssey_hub_common::device::Transport::UsbMux;
                             let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
                             let ev = Event::DeviceEvent(DeviceEvent(
@@ -1901,8 +2019,12 @@ async fn device_handler_task(
                                 device.uuid
                             );
                         } else {
+                            // No independent events source — drop any stale wired events device
+                            // and exit so the device disappears from the UI.
+                            connections.events_device = None;
+                            sensor_streams.clear();
                             info!(
-                                "Device {:02x?} has no events or control after USB disconnect, exiting",
+                                "Device {:02x?} has no independent events after USB disconnect, exiting",
                                 device.uuid
                             );
                             break;
@@ -1953,6 +2075,43 @@ async fn device_handler_task(
                     }
                     None => {
                         info!("Control channel closed for {:02x?}", device.uuid);
+                        break;
+                    }
+                }
+            }
+            Some(new_delay) = shot_delay_stream.next() => {
+                current_shot_delay = new_delay;
+                info!(
+                    "Shot delay updated for {:02x?} = {} ms",
+                    device.uuid, current_shot_delay
+                );
+                device_shot_delays
+                    .write()
+                    .await
+                    .insert(device.uuid, current_shot_delay as u16);
+            }
+            maybe_evt = sensor_streams.next(), if has_sensor_streams => {
+                match maybe_evt {
+                    Some(evt) => {
+                        if let Err(e) = handle_stream_event(
+                            &device,
+                            evt,
+                            &event_sender,
+                            &device_offsets,
+                            &mut fv_state,
+                            &screen_calibrations,
+                            &mut prev_accel_timestamp,
+                            &mut madgwick,
+                            &mut orientation,
+                            &camera_model_nf,
+                            &camera_model_wf,
+                            &stereo_iso,
+                        ).await {
+                            warn!("Error processing stream event for {:02x?}: {}", device.uuid, e);
+                        }
+                    }
+                    None => {
+                        info!("Sensor streams ended for device {:02x?}", device.uuid);
                         break;
                     }
                 }

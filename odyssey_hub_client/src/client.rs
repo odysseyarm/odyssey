@@ -277,6 +277,24 @@ impl Client {
         }
     }
 
+    pub async fn set_transport_mode(
+        &mut self,
+        device: common::device::Device,
+        usb_mode: bool,
+    ) -> anyhow::Result<bool> {
+        if let Some(service_client) = &mut self.service_client {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::SetTransportModeRequest {
+                    device: Some(device.into()),
+                    usb_mode,
+                });
+            let reply = service_client.set_transport_mode(request).await?.into_inner();
+            Ok(reply.usb_mode)
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
+
     pub async fn flash_settings(&mut self, device: common::device::Device) -> anyhow::Result<()> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::FlashSettingsRequest {
