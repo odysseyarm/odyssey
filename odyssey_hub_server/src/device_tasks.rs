@@ -913,7 +913,8 @@ async fn usb_device_manager(
                 // Store hub manager handle for tracking (runs indefinitely until hub is disconnected)
                 {
                     let mut hm = hub_managers.lock().await;
-                    // Store with a dummy slot - we track the handle itself
+                    // Wrap in Arc<Mutex<Option<_>>> so the handle can be taken (consumed) later
+                    // while still being held behind a shared reference.
                     let hub_slot =
                         std::sync::Arc::new(tokio::sync::Mutex::new(Some(hub_manager_handle)));
                     hm.push((dev_info.clone(), hub_slot));
