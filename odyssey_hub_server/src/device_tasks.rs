@@ -664,8 +664,19 @@ async fn usb_device_manager(
                                                                 };
 
                                                     // Check if device is already connected via USB direct before creating handler
-                                                    let dh = device_handles_clone.lock().await;
+                                                    let mut dh = device_handles_clone.lock().await;
                                                     tracing::info!("BLE mux device {:02x?} discovered (hub path), checking if already connected. device_handles has {} entries", uuid, dh.len());
+
+                                                    // Evict stale entries whose handler task has already finished.
+                                                    // This can happen after SetTransportMode causes the handler to
+                                                    // break immediately, leaving a dead entry in device_handles.
+                                                    if let Some((_, existing_handle)) = dh.get(&uuid) {
+                                                        if existing_handle.is_finished() {
+                                                            tracing::info!("BLE: Device {:02x?} has a finished handler, evicting stale entry", uuid);
+                                                            dh.remove(&uuid);
+                                                        }
+                                                    }
+
                                                     if let Some((
                                                         existing_cmd_tx,
                                                         _existing_handle,
@@ -1040,12 +1051,27 @@ async fn usb_device_manager(
 
                 // Now check if device is already connected BEFORE creating a new connection
                 let should_connect = {
-                    let dh = device_handles.lock().await;
+                    let mut dh = device_handles.lock().await;
                     info!(
                         "Checking if device {:02x?} is already connected (current handles: {})",
                         uuid,
                         dh.len()
                     );
+
+                    // Evict stale entries whose handler task has already finished.
+                    // This can happen after SetTransportMode causes the handler to break
+                    // immediately, leaving a dead entry in device_handles. Without this
+                    // eviction the next scan pass would skip re-connecting the device.
+                    if let Some((_, existing_handle)) = dh.get(&uuid) {
+                        if existing_handle.is_finished() {
+                            info!(
+                                "Device {:02x?} has a finished handler, evicting stale entry",
+                                uuid
+                            );
+                            dh.remove(&uuid);
+                            direct_usb_handler_uuids.lock().await.remove(&uuid);
+                        }
+                    }
 
                     // Check if device is already connected
                     if let Some((existing_cmd_tx, _existing_handle)) = dh.get(&uuid) {
