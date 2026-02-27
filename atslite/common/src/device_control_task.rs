@@ -1,12 +1,32 @@
 //! Device control task - handles USB control endpoint commands
 //! Replaces triple-press bond clearing with CLI-based control
 
+use core::sync::atomic::{AtomicPtr, Ordering};
+
 use defmt::info;
 use protodongers::control::device::{DeviceMsg, PairingError, TransportMode, Version};
 
 use crate::ble::peripheral;
 use crate::device_control;
 use crate::transport_mode;
+
+/// Function pointer registered by each board to persist the transport mode to flash.
+/// Call `register_transport_mode_persist_fn` once during board init.
+static TRANSPORT_MODE_PERSIST_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Register a board-specific function that persists the transport mode to flash.
+/// Must be called before `device_control_task` starts.
+pub fn register_transport_mode_persist_fn(f: fn(TransportMode)) {
+    TRANSPORT_MODE_PERSIST_FN.store(f as *mut (), Ordering::Release);
+}
+
+fn persist_transport_mode(mode: TransportMode) {
+    let ptr = TRANSPORT_MODE_PERSIST_FN.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        let f: fn(TransportMode) = unsafe { core::mem::transmute(ptr) };
+        f(mode);
+    }
+}
 
 #[embassy_executor::task]
 pub async fn device_control_task(firmware_version: [u16; 3]) {
@@ -154,7 +174,48 @@ async fn handle_cmd(
                 // Drop any active BLE data sessions to keep transports exclusive
                 peripheral::request_disconnect();
             }
+            // Respond to the host BEFORE persisting so the USB control_in poll is
+            // answered before the blocking flash write stalls the executor.
             device_control::try_send_event(DeviceMsg::TransportModeStatus(mode));
+            // Persist mode to flash so it survives reboot
+            persist_transport_mode(mode);
+        }
+
+        DeviceMsg::Reboot => {
+            info!("Reboot requested, sending ack then resetting");
+            device_control::try_send_event(DeviceMsg::RebootAck);
+            // Small delay to allow the RebootAck to be polled by the host before reset
+            embassy_time::Timer::after_millis(50).await;
+            cortex_m::peripheral::SCB::sys_reset();
+        }
+
+        DeviceMsg::ReadConfig(kind) => {
+            let settings = unsafe { crate::settings::get_settings() };
+            let g = &settings.general;
+            use protodongers::{ConfigKind, GeneralConfig};
+            let config = match kind {
+                ConfigKind::ImpactThreshold => GeneralConfig::ImpactThreshold(g.impact_threshold),
+                ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
+                ConfigKind::AccelConfig => GeneralConfig::AccelConfig(g.accel_config.clone()),
+                ConfigKind::GyroConfig => GeneralConfig::GyroConfig(g.gyro_config.clone()),
+                ConfigKind::CameraModelNf => GeneralConfig::CameraModelNf(g.camera_model_nf.clone().into()),
+                ConfigKind::CameraModelWf => GeneralConfig::CameraModelWf(g.camera_model_wf.clone().into()),
+                ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone().into()),
+            };
+            device_control::try_send_event(DeviceMsg::ReadConfigResponse(config));
+        }
+
+        DeviceMsg::WriteConfig(config) => {
+            let settings = unsafe { crate::settings::get_settings() };
+            let wire_config = protodongers::wire::GeneralConfig::from(config);
+            settings.general.set_general_config(&wire_config);
+            device_control::try_send_event(DeviceMsg::WriteConfigAck);
+        }
+
+        DeviceMsg::FlashSettings => {
+            let settings = unsafe { crate::settings::get_settings() };
+            settings.general_write();
+            device_control::try_send_event(DeviceMsg::FlashSettingsAck);
         }
 
         _ => {

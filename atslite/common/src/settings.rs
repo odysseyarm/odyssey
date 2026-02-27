@@ -56,6 +56,14 @@ pub unsafe fn get_settings() -> &'static mut Settings {
     unsafe { &mut *ptr }
 }
 
+/// Persist the transport mode to flash via the atslite-common general settings node.
+/// Intended to be registered as the `transport_mode_persist_fn` on lite1.
+pub fn persist_transport_mode(mode: protodongers::control::device::TransportMode) {
+    let settings = unsafe { get_settings() };
+    settings.general.transport_mode = mode;
+    settings.general_write();
+}
+
 /// Check if settings have been initialized
 pub fn is_initialized() -> bool {
     !SETTINGS_PTR
@@ -242,6 +250,7 @@ impl Settings {
         settings_flush_now();
     }
 
+
     pub fn pag_write(&self) {
         embassy_futures::block_on(async {
             let mut hp = NODE_PAG.attach(&LIST).await.unwrap();
@@ -254,7 +263,7 @@ impl Settings {
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct GeneralSettings {
     #[n(0)]
-    pub transport_mode_is_usb: bool,
+    pub transport_mode: protodongers::control::device::TransportMode,
     #[n(1)]
     pub impact_threshold: u8,
     #[n(2)]
@@ -274,7 +283,7 @@ pub struct GeneralSettings {
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
-            transport_mode_is_usb: false,
+            transport_mode: protodongers::control::device::TransportMode::Ble,
             // 5g legacy equivalent in SI units.
             impact_threshold: 49,
             suppress_ms: 100,

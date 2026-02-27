@@ -126,7 +126,7 @@ where
     let config_descriptor = static_byte_buffer!(256);
     let bos_descriptor = static_byte_buffer!(256);
     let msos_descriptor = static_byte_buffer!(512);
-    let control_buf = static_byte_buffer!(64);
+    let control_buf = static_byte_buffer!(256);
 
     let mut builder = embassy_usb::Builder::new(
         driver,

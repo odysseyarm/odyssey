@@ -7,20 +7,20 @@ use protodongers::control::device::DeviceMsg;
 use static_cell::StaticCell;
 
 // Event channel: device -> host control messages (responses, async events)
-pub static CONTROL_EVT_CH: StaticCell<Channel<ThreadModeRawMutex, DeviceMsg, 4>> =
+pub static CONTROL_EVT_CH: StaticCell<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     StaticCell::new();
-static EVT_PTR: AtomicPtr<Channel<ThreadModeRawMutex, DeviceMsg, 4>> =
+static EVT_PTR: AtomicPtr<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     AtomicPtr::new(core::ptr::null_mut());
 
 // Command channel: host -> device control messages (requests)
-pub static CONTROL_CMD_CH: StaticCell<Channel<ThreadModeRawMutex, DeviceMsg, 4>> =
+pub static CONTROL_CMD_CH: StaticCell<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     StaticCell::new();
-static CMD_PTR: AtomicPtr<Channel<ThreadModeRawMutex, DeviceMsg, 4>> =
+static CMD_PTR: AtomicPtr<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     AtomicPtr::new(core::ptr::null_mut());
 
 pub fn init() -> (
-    &'static Channel<ThreadModeRawMutex, DeviceMsg, 4>,
-    &'static Channel<ThreadModeRawMutex, DeviceMsg, 4>,
+    &'static Channel<ThreadModeRawMutex, DeviceMsg, 8>,
+    &'static Channel<ThreadModeRawMutex, DeviceMsg, 8>,
 ) {
     (
         CONTROL_EVT_CH.init(Channel::new()),
@@ -29,8 +29,8 @@ pub fn init() -> (
 }
 
 pub fn register(
-    evt_ch: &'static Channel<ThreadModeRawMutex, DeviceMsg, 4>,
-    cmd_ch: &'static Channel<ThreadModeRawMutex, DeviceMsg, 4>,
+    evt_ch: &'static Channel<ThreadModeRawMutex, DeviceMsg, 8>,
+    cmd_ch: &'static Channel<ThreadModeRawMutex, DeviceMsg, 8>,
 ) {
     EVT_PTR.store(evt_ch as *const _ as *mut _, Ordering::Release);
     CMD_PTR.store(cmd_ch as *const _ as *mut _, Ordering::Release);
@@ -40,7 +40,7 @@ pub fn register(
 pub fn try_send_event(evt: DeviceMsg) {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
-        let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 4> = unsafe { &*p };
+        let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 8> = unsafe { &*p };
         let _ = ch.try_send(evt);
     }
 }
@@ -49,7 +49,7 @@ pub fn try_send_event(evt: DeviceMsg) {
 pub fn try_recv_event() -> Option<DeviceMsg> {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
-        let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 4> = unsafe { &*p };
+        let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 8> = unsafe { &*p };
         if let Ok(m) = ch.try_receive() {
             return Some(m);
         }
@@ -61,7 +61,7 @@ pub fn try_recv_event() -> Option<DeviceMsg> {
 pub fn try_send_cmd(cmd: DeviceMsg) {
     let p = CMD_PTR.load(Ordering::Acquire);
     if !p.is_null() {
-        let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 4> = unsafe { &*p };
+        let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 8> = unsafe { &*p };
         let _ = ch.try_send(cmd);
     }
 }
@@ -71,7 +71,7 @@ pub async fn recv_cmd() -> DeviceMsg {
     loop {
         let p = CMD_PTR.load(Ordering::Acquire);
         if !p.is_null() {
-            let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 4> = unsafe { &*p };
+            let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 8> = unsafe { &*p };
             if let Ok(m) = ch.try_receive() {
                 return m;
             }

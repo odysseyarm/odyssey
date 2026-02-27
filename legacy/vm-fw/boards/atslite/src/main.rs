@@ -23,7 +23,6 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::{Delay, Timer};
 use npm1300_rs::{self, NPM1300};
-use protodongers::control::device::TransportMode;
 use static_cell::StaticCell;
 
 use atslite_board::{
@@ -371,9 +370,15 @@ async fn main(spawner: Spawner) {
     log_boot_state("after settings init");
     defmt::info!("Settings initialization complete");
 
-    // Default transport mode to BLE after settings are initialized
-    transport_mode::set(TransportMode::Ble);
-    defmt::info!("Transport mode initialized to BLE");
+    // Load transport mode from persisted settings
+    let initial_transport_mode = settings_ref.general.transport_mode;
+    transport_mode::set(initial_transport_mode);
+    defmt::info!("Transport mode initialized from settings: {:?}", initial_transport_mode);
+
+    // Register the board-specific persist function for transport mode
+    atslite_board::device_control_task::register_transport_mode_persist_fn(
+        common::settings::persist_transport_mode,
+    );
 
     // Spawn the device control task (channels already registered before USB init)
     spawner

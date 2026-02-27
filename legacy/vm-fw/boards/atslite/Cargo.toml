@@ -1,6 +1,6 @@
 [package]
 name = "atslite-board"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 
 [[bin]]
@@ -43,7 +43,7 @@ nrf-fuel-gauge = { git = "https://github.com/Abrahamh08/nrf-fuel-gauge" }
 nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf_fuel_gauge", "nrf5340"] }
 
 # ATSlite-specific: BLE
-trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32", "l2cap-rx-queue-size-16"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-16", "l2cap-rx-queue-size-8"] }
 bt-hci = { version = "0.7", default-features = false, features = ["defmt"] }
 embassy-net-driver-channel = { git = "https://github.com/Abrahamh08/embassy" }
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }

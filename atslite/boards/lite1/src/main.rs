@@ -32,7 +32,6 @@ use embassy_usb::msos;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use npm1300_rs::NPM1300;
 use pag7665qn::{Pag7665Qn, mode};
-use protodongers::control::device::TransportMode;
 use static_cell::StaticCell;
 
 use donger_common::usb_device as usb;
@@ -292,7 +291,7 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Initializing USB...");
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
-    let (usb_dev, _usb_snd, _usb_rcv, usb_cfg) = usb::usb_device(
+    let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5211, // Lite1 PID
         "ATS USB",
         DEVICE_INTERFACE_GUID,
@@ -321,11 +320,17 @@ async fn main(spawner: Spawner) {
     // Initialize device control channels and spawn the task
     let (ctrl_evt_ch, ctrl_cmd_ch) = lite1::device_control::init();
     lite1::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+
+    // Register the board-specific persist function for transport mode before spawning the task
+    lite1::device_control_task::register_transport_mode_persist_fn(
+        lite1::settings::persist_transport_mode,
+    );
     spawner.spawn(lite1::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
 
-    // Default transport mode to BLE
-    transport_mode::set(TransportMode::Ble);
-    defmt::info!("Transport mode initialized to BLE");
+    // Load transport mode from persisted settings
+    let initial_transport_mode = settings.general.transport_mode;
+    transport_mode::set(initial_transport_mode);
+    defmt::info!("Transport mode initialized from settings: {:?}", initial_transport_mode);
 
     // Adjust PMIC limit after USB enumerates
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
@@ -374,6 +379,9 @@ async fn main(spawner: Spawner) {
         product_id: 0x5211,
         firmware_version: FIRMWARE_VERSION,
         settings,
+        usb_snd,
+        usb_rcv,
+        usb_configured: usb_cfg,
     };
 
     object_mode::run(ctx).await;

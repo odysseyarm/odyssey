@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Local crates
+donger-common = { path = "../../common", features = ["atslite"] }
+
 # Core
 defmt = "1.0.1"
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
@@ -40,8 +43,8 @@ pag7665qn = { path = "../../pag7665qn" }
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
 
 # BLE
-trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32", "l2cap-rx-queue-size-16"] }
-bt-hci = { version = "0.7", default-features = false, features = ["defmt"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-16", "l2cap-rx-queue-size-8"] }
+bt-hci = { version = "0.8", default-features = false, features = ["defmt"] }
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }
 
 # Protocol
@@ -57,6 +60,9 @@ rand_chacha = { version = "0.3", default-features = false }
 
 [features]
 default = []
+
+[patch."https://github.com/odysseyarm/protodonge-rs"]
+protodongers = { path = "../../../../protodonge-rs" }
 
 [patch.crates-io]
 minicbor = { git = "https://github.com/Abrahamh08/minicbor" }

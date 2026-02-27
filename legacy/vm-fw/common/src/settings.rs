@@ -79,6 +79,14 @@ pub unsafe fn get_settings() -> &'static mut Settings {
     unsafe { &mut *ptr }
 }
 
+/// Persist the transport mode to flash via the vm-fw general settings node.
+/// Intended to be registered as the `transport_mode_persist_fn` on legacy atslite.
+pub fn persist_transport_mode(mode: protodongers::control::device::TransportMode) {
+    let settings = unsafe { get_settings() };
+    settings.general.transport_mode = mode;
+    settings.write();
+}
+
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
 pub fn accel_odr() -> u16 {
@@ -630,6 +638,8 @@ pub struct GeneralSettings {
     pub camera_model_wf: CameraCalibrationParams,
     #[n(6)]
     pub stereo_iso: StereoCalibrationParams,
+    #[n(7)]
+    pub transport_mode: protodongers::control::device::TransportMode,
 }
 
 impl Default for GeneralSettings {
@@ -649,6 +659,7 @@ impl Default for GeneralSettings {
                 dist_coeffs: [0.039820533, -0.03993317, 0.00043006078, -0.0012057066, 0.005302235],
             },
             stereo_iso: Default::default(),
+            transport_mode: protodongers::control::device::TransportMode::Ble,
         }
     }
 }

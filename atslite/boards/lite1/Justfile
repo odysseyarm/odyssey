@@ -83,34 +83,66 @@ build-dual-bank: build-stage1 build-app-a build-app-b build-bootloader build-net
 
 # Flash lite1 firmware
 flash: build
-    nrfjprog --program {{output_dir}}/merged.hex --sectorerase --verify --reset
+    nrfjprog --program {{output_dir}}/netcore-bootloader.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --program {{output_dir}}/net-core.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --program {{output_dir}}/stage1-bootloader.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/stage2-bootloader.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/app-a.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/app-b.hex --sectorerase --verify
     # Clear bootloader state pages so boot state starts erased (0xFFFFFFFF)
     nrfjprog --erasepage 0xF9000
     nrfjprog --erasepage 0xFA000
+    nrfjprog --reset
 
 # Flash with chip erase
 flash-chiperase: build
-    nrfjprog --program {{output_dir}}/merged.hex --chiperase --verify --reset
+    nrfjprog --program {{output_dir}}/netcore-bootloader.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --program {{output_dir}}/net-core.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --chiperase --verify
+    nrfjprog --program {{output_dir}}/stage1-bootloader.hex --verify
+    nrfjprog --program {{output_dir}}/stage2-bootloader.hex --verify
+    nrfjprog --program {{output_dir}}/app-a.hex --verify
+    nrfjprog --program {{output_dir}}/app-b.hex --verify
     nrfjprog --erasepage 0xFC000
     nrfjprog --erasepage 0xFD000
+    nrfjprog --reset
 
 # Flash with recover
 flash-recover: build
-    nrfjprog --program {{output_dir}}/merged.hex --recover --verify --reset
+    nrfjprog --recover
+    nrfjprog --program {{output_dir}}/netcore-bootloader.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --program {{output_dir}}/net-core.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --program {{output_dir}}/stage1-bootloader.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/stage2-bootloader.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/app-a.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/app-b.hex --sectorerase --verify
     nrfjprog --erasepage 0xFC000
     nrfjprog --erasepage 0xFD000
+    nrfjprog --reset
 
 # Flash dual-bank with chip erase
 flash-dual-chiperase: build-dual-bank
-    nrfjprog --program {{output_dir}}/merged-dual.hex --chiperase --verify --reset
+    nrfjprog --program {{output_dir}}/net-core.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --chiperase --verify
+    nrfjprog --program {{output_dir}}/stage1-bootloader.hex --verify
+    nrfjprog --program {{output_dir}}/stage2-bootloader.hex --verify
+    nrfjprog --program {{output_dir}}/app-a.hex --verify
+    nrfjprog --program {{output_dir}}/app-b.hex --verify
     nrfjprog --erasepage 0xFC000
     nrfjprog --erasepage 0xFD000
+    nrfjprog --reset
 
 # Flash dual-bank with recover
 flash-dual-recover: build-dual-bank
-    nrfjprog --program {{output_dir}}/merged-dual.hex --recover --verify --reset
+    nrfjprog --recover
+    nrfjprog --program {{output_dir}}/net-core.hex --coprocessor CP_NETWORK --sectorerase --verify
+    nrfjprog --program {{output_dir}}/stage1-bootloader.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/stage2-bootloader.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/app-a.hex --sectorerase --verify
+    nrfjprog --program {{output_dir}}/app-b.hex --sectorerase --verify
     nrfjprog --erasepage 0xFC000
     nrfjprog --erasepage 0xFD000
+    nrfjprog --reset
 
 # Flash application only
 flash-app: build-app

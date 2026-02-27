@@ -6,10 +6,12 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_futures::join::join4;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either3, select3};
+use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Timer;
+use embassy_usb::driver::{EndpointError};
 use nalgebra::Vector3;
 use protodongers::control::device::TransportMode;
 use protodongers::wire::GeneralConfig;
@@ -18,6 +20,8 @@ use protodongers::{ConfigKind, Packet, PacketData, PacketType, Props, ReadRegist
 use crate::ble::l2cap_bridge::{self, L2capChannels};
 use crate::settings::PagSettings;
 use crate::transport_mode;
+
+pub use donger_common::usb_device::{UsbConfigHandle, read_transfer, write_transfer};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
@@ -233,13 +237,19 @@ where
     pub firmware_version: [u16; 3],
     /// Settings reference for persisting config changes
     pub settings: &'a mut crate::settings::Settings,
+    /// USB bulk IN endpoint for streaming data to host
+    pub usb_snd: Endpoint<'static, In>,
+    /// USB bulk OUT endpoint for receiving commands from host
+    pub usb_rcv: Endpoint<'static, Out>,
+    /// USB configuration state handle
+    pub usb_configured: UsbConfigHandle,
 }
 
 /// Run object mode - the main entry point
 ///
 /// This function runs the object mode loop, handling:
-/// - Incoming control packets from BLE L2CAP
-/// - Outgoing streaming data (markers, IMU, impact)
+/// - Incoming control packets from BLE L2CAP or USB bulk endpoint
+/// - Outgoing streaming data (markers, IMU, impact) via USB or BLE based on transport mode
 /// - Protocol handling (ReadConfig, WriteConfig, StreamUpdate, etc.)
 pub async fn run<P, I, PI, II>(mut ctx: ObjectModeContext<'_, P, I, PI, II>)
 where
@@ -260,10 +270,10 @@ where
     let l2cap = l2cap_bridge::get_or_init();
 
     // Run four concurrent tasks:
-    // 1. Receive and process control packets
+    // 1. Receive and process control packets (USB or BLE based on transport mode)
     // 2. Stream IMU data
     // 3. Stream marker data
-    // 4. Send streaming data to BLE
+    // 4. Send streaming data (USB or BLE based on transport mode)
     let recv_task = recv_loop(
         ctx.pag,
         &stream_infos,
@@ -273,6 +283,9 @@ where
         ctx.firmware_version,
         &impact_settings,
         ctx.settings,
+        &mut ctx.usb_rcv,
+        ctx.usb_configured,
+        pkt_channel.sender(),
     );
 
     let imu_task = imu_loop(
@@ -290,14 +303,14 @@ where
         &stream_infos,
     );
 
-    let stream_task = stream_loop(pkt_channel.receiver(), &l2cap);
+    let stream_task = stream_loop(pkt_channel.receiver(), &l2cap, &mut ctx.usb_snd, ctx.usb_configured);
 
     // Join all tasks - they run forever
     join4(recv_task, imu_task, obj_task, stream_task).await;
 }
 
-/// Receive loop - handles incoming packets from BLE L2CAP channels
-async fn recv_loop<P: PagSensor>(
+/// Receive loop - handles incoming packets from BLE L2CAP or USB bulk endpoint
+async fn recv_loop<P: PagSensor, const N: usize>(
     pag: &AsyncMutex<NoopRawMutex, P>,
     stream_infos: &StreamInfos,
     l2cap: &L2capChannels,
@@ -306,18 +319,78 @@ async fn recv_loop<P: PagSensor>(
     firmware_version: [u16; 3],
     impact_settings: &ImpactSettings,
     settings: &mut crate::settings::Settings,
+    usb_rcv: &mut Endpoint<'static, Out>,
+    usb_configured: UsbConfigHandle,
+    resp_snd: Sender<'_, Packet, N>,
 ) {
-    loop {
-        // Wait for transport mode to be BLE
-        while transport_mode::get() != TransportMode::Ble {
-            defmt::debug!("[object_mode] Waiting for BLE transport mode...");
-            transport_mode::wait_for_change().await;
-        }
+    let mut usb_buf = [0u8; 512];
 
-        // Listen on both control and data channels
-        let pkt = match select(l2cap.control_rx.receive(), l2cap.data_rx.receive()).await {
-            Either::First(pkt) => pkt,
-            Either::Second(pkt) => pkt,
+    loop {
+        let mode = transport_mode::get();
+        let usb_enabled = usb_configured.is_configured() && matches!(mode, TransportMode::Usb);
+        let ble_enabled = matches!(mode, TransportMode::Ble);
+
+        let (from_usb, pkt) = match select3(
+            async {
+                loop {
+                    if !usb_enabled {
+                        if matches!(mode, TransportMode::Usb) {
+                            // USB transport mode but not yet configured — poll until configured.
+                            // We use a short timer rather than the signal to avoid racing with
+                            // other waiters (Signal is single-consumer).
+                            embassy_time::Timer::after_millis(10).await;
+                            // Re-check: if now configured, fall through to read_transfer
+                            if !usb_configured.is_configured() {
+                                continue;
+                            }
+                        } else {
+                            // Not USB transport mode — wait forever
+                            core::future::pending::<()>().await;
+                        }
+                    }
+                    match read_transfer(usb_rcv, &mut usb_buf).await {
+                        Ok(n) => {
+                            match postcard::from_bytes::<Packet>(&usb_buf[..n]) {
+                                Ok(pkt) => break pkt,
+                                Err(e) => {
+                                    defmt::error!("[object_mode] USB packet deserialization failed: {:?}", defmt::Debug2Format(&e));
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(EndpointError::Disabled) => {
+                            defmt::debug!("[object_mode] USB endpoint disabled, waiting for reconfiguration...");
+                            usb_configured.wait_for_event().await;
+                            continue;
+                        }
+                        Err(e) => {
+                            defmt::error!("[object_mode] USB read error: {:?}", defmt::Debug2Format(&e));
+                            embassy_time::Timer::after_millis(10).await;
+                            continue;
+                        }
+                    }
+                }
+            },
+            async {
+                if !ble_enabled {
+                    core::future::pending::<Packet>().await
+                } else {
+                    l2cap.control_rx.receive().await
+                }
+            },
+            async {
+                if !ble_enabled {
+                    core::future::pending::<Packet>().await
+                } else {
+                    l2cap.data_rx.receive().await
+                }
+            },
+        )
+        .await
+        {
+            Either3::First(pkt) => (true, pkt),
+            Either3::Second(pkt) => (false, pkt),
+            Either3::Third(pkt) => (false, pkt),
         };
 
         let response = match pkt.data {
@@ -494,16 +567,23 @@ async fn recv_loop<P: PagSensor>(
             PacketData::ReadVersionResponse(_) => None,
         };
 
-        // Send response back via appropriate channel
+        // Send response back via the same transport the command came from
         if let Some(r) = response {
             if r.id != 255 {
-                if is_control_packet(&r) {
-                    if l2cap.control_tx.try_send(r).is_err() {
-                        defmt::warn!("[object_mode] Dropped control response - channel full");
-                    }
+                if from_usb {
+                    // Route through the stream_loop which handles USB write.
+                    // Use async send (not try_send) to ensure responses are never dropped
+                    // when the channel is momentarily full due to streaming data.
+                    resp_snd.send(r).await;
                 } else {
-                    if l2cap.data_tx.try_send(r).is_err() {
-                        defmt::warn!("[object_mode] Dropped data response - channel full");
+                    if is_control_packet(&r) {
+                        if l2cap.control_tx.try_send(r).is_err() {
+                            defmt::warn!("[object_mode] Dropped control response - channel full");
+                        }
+                    } else {
+                        if l2cap.data_tx.try_send(r).is_err() {
+                            defmt::warn!("[object_mode] Dropped data response - channel full");
+                        }
                     }
                 }
             }
@@ -511,10 +591,16 @@ async fn recv_loop<P: PagSensor>(
     }
 }
 
-/// Stream loop - sends streaming data packets to BLE
-async fn stream_loop<const N: usize>(pkt_rcv: Receiver<'_, Packet, N>, l2cap: &L2capChannels) {
+/// Stream loop - sends streaming/response packets to USB or BLE based on transport mode
+async fn stream_loop<const N: usize>(
+    pkt_rcv: Receiver<'_, Packet, N>,
+    l2cap: &L2capChannels,
+    usb_snd: &mut Endpoint<'static, In>,
+    usb_configured: UsbConfigHandle,
+) {
     defmt::info!("[stream_loop] Started");
     let mut pkt_count: u32 = 0;
+    let mut usb_snd_buf = [0u8; 1024];
 
     loop {
         let pkt = pkt_rcv.receive().await;
@@ -525,15 +611,45 @@ async fn stream_loop<const N: usize>(pkt_rcv: Receiver<'_, Packet, N>, l2cap: &L
             defmt::debug!("[stream_loop] Processed {} packets", pkt_count);
         }
 
-        // Route to correct L2CAP channel based on packet type
-        if is_control_packet(&pkt) {
-            if l2cap.control_tx.try_send(pkt).is_err() {
-                defmt::warn!("[stream_loop] Dropped control packet - channel full");
+        let mode = transport_mode::get();
+        let usb_active = usb_configured.is_configured() && matches!(mode, TransportMode::Usb);
+        let ble_active = matches!(mode, TransportMode::Ble);
+
+        if usb_active {
+            // Send via USB bulk IN endpoint
+            if matches!(pkt.data, PacketData::ReadRegisterResponse(_)) {
+                defmt::info!("[stream_loop] Sending ReadRegisterResponse id={=u8}", pkt.id);
+            }
+            match postcard::to_slice(&pkt, &mut usb_snd_buf) {
+                Ok(payload) => {
+                    match write_transfer(usb_snd, payload, true).await {
+                        Ok(()) => {
+                            if matches!(pkt.data, PacketData::ReadRegisterResponse(_)) {
+                                defmt::info!("[stream_loop] ReadRegisterResponse sent ok");
+                            }
+                        }
+                        Err(e) => {
+                            defmt::error!("[stream_loop] USB write error: {:?}", defmt::Debug2Format(&e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    defmt::error!("[stream_loop] USB packet serialization failed: {:?}", defmt::Debug2Format(&e));
+                }
+            }
+        } else if ble_active {
+            // Route to correct L2CAP channel based on packet type
+            if is_control_packet(&pkt) {
+                if l2cap.control_tx.try_send(pkt).is_err() {
+                    defmt::warn!("[stream_loop] Dropped control packet - channel full");
+                }
+            } else {
+                if l2cap.data_tx.try_send(pkt).is_err() {
+                    defmt::warn!("[stream_loop] Dropped data packet - channel full");
+                }
             }
         } else {
-            if l2cap.data_tx.try_send(pkt).is_err() {
-                defmt::warn!("[stream_loop] Dropped data packet - channel full");
-            }
+            defmt::debug!("[stream_loop] Dropping packet - no active transport");
         }
     }
 }
