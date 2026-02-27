@@ -842,6 +842,50 @@ impl Service for Server {
         }
     }
 
+    async fn set_transport_mode(
+        &self,
+        req: tonic::Request<SetTransportModeRequest>,
+    ) -> Result<Response<TransportModeReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        tracing::info!(
+            "set_transport_mode RPC for device {:02x?}, usb_mode={}",
+            dev.uuid,
+            inner.usb_mode
+        );
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            tracing::info!("set_transport_mode: device found, sending message to task");
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            tx.send(DeviceTaskMessage::SetTransportMode {
+                usb_mode: inner.usb_mode,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::unavailable("device task not available"))?;
+            tracing::info!("set_transport_mode: message sent, awaiting reply");
+            match reply_rx.await {
+                Ok(Ok(usb_mode)) => {
+                    tracing::info!("set_transport_mode: reply ok usb_mode={usb_mode}");
+                    Ok(Response::new(TransportModeReply { usb_mode }))
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("set_transport_mode: reply err: {e}");
+                    Err(Status::internal(e))
+                }
+                Err(_) => Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            tracing::warn!(
+                "set_transport_mode: device {:02x?} not found in device list",
+                dev.uuid
+            );
+            Err(Status::not_found("device"))
+        }
+    }
+
     // -------------------- Dongle RPCs --------------------
     async fn subscribe_dongle_list(
         &self,

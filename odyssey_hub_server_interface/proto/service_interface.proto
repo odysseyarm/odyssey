@@ -40,6 +40,7 @@ service Service {
   rpc StartPairing(StartPairingRequest) returns (EmptyReply) {}
   rpc CancelPairing(CancelPairingRequest) returns (EmptyReply) {}
   rpc ClearBond(ClearBondRequest) returns (EmptyReply) {}
+  rpc SetTransportMode(SetTransportModeRequest) returns (TransportModeReply) {}
 
   // Dongles
   rpc SubscribeDongleList(SubscribeDongleListRequest) returns (stream DongleListReply) {}
@@ -317,6 +318,13 @@ message CancelPairingRequest {
 }
 message ClearBondRequest {
   Device device = 1;
+}
+message SetTransportModeRequest {
+  Device device = 1;
+  bool usb_mode = 2; // true = USB, false = BLE
+}
+message TransportModeReply {
+  bool usb_mode = 1; // confirmed mode from device
 }
 
 // --- Dongles ---
