@@ -1102,9 +1102,9 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let pid = device.product_id;
     let is_paj = pid == PID_ATS_VM || pid == PID_ATS_LITE;
     let is_pag = pid == PID_ATS_PRO;
-    // Sensor settings require bulk endpoint access (EVENTS capability).
-    // Devices in BLE transport mode with only CONTROL capability cannot
-    // service bulk requests, so don't attempt to read/write config.
+    // Sensor settings require an events device (EVENTS capability) to send
+    // packet-based config requests. All config reads/writes work over both
+    // USB and BLE.
     let has_events = device.capabilities.contains(DeviceCapabilities::EVENTS);
     let should_render = (is_paj || is_pag) && has_events;
 

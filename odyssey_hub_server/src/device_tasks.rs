@@ -392,6 +392,7 @@ async fn usb_device_manager(
                 let dsd_clone = device_shot_delays.clone();
                 let swatch_clone = shot_delay_watch.clone();
                 let ev_clone = event_sender.clone();
+                let direct_usb_uuids_clone = direct_usb_handler_uuids.clone();
                 let hub_info = dev_info.clone();
 
                 let hub_manager_handle = tokio::spawn(async move {
@@ -654,12 +655,13 @@ async fn usb_device_manager(
                                                     let device_meta = Device {
                                                                     uuid,
                                                                     transport: odyssey_hub_common::device::Transport::UsbMux,
-                                                                    capabilities: odyssey_hub_common::device::DeviceCapabilities::new(
-                                                                        odyssey_hub_common::device::DeviceCapabilities::EVENTS
-                                                                    ),
+                                                                    // EVENTS capability and events_connected will be
+                                                                    // set to true by AddEventsDevice handler once
+                                                                    // streams are actually established.
+                                                                    capabilities: odyssey_hub_common::device::DeviceCapabilities::empty(),
                                                                     firmware_version: version,
                                                                     events_transport: odyssey_hub_common::device::EventsTransport::Bluetooth,
-                                                                    events_connected: true, // BLE mux has events
+                                                                    events_connected: false,
                                                                     product_id,
                                                                 };
 
@@ -703,10 +705,14 @@ async fn usb_device_manager(
                                                         let (ctrl_tx, ctrl_rx) =
                                                             mpsc::channel::<DeviceTaskMessage>(32);
 
-                                                        // BLE mux devices only have events, no control
+                                                        // Start with no events device; AddEventsDevice is
+                                                        // queued immediately below so it goes through the
+                                                        // same handler path as USB-first+BLE (which works).
+                                                        // This avoids a race where startup reads config
+                                                        // before streaming, staling the vm_device.
                                                         let connections = DeviceConnections {
                                                                         control_device: None,
-                                                                        events_device: Some(vm_device),
+                                                                        events_device: None,
                                                                         transport_mode: protodongers::control::device::TransportMode::Ble,
                                                                     };
 
@@ -721,6 +727,7 @@ async fn usb_device_manager(
                                                                 swatch_clone.clone(),
                                                                 ev_clone.clone(),
                                                                 message_channel_clone.clone(),
+                                                                direct_usb_uuids_clone.clone(),
                                                             ));
 
                                                         let mut dh =
@@ -731,14 +738,23 @@ async fn usb_device_manager(
                                                         );
                                                         hub_devices.insert(uuid);
 
+                                                        // Send Connect first so the client knows about
+                                                        // the device before UpdateDevice can arrive.
                                                         let channels = DeviceChannels {
-                                                            commands: Some(ctrl_tx),
+                                                            commands: Some(ctrl_tx.clone()),
                                                         };
                                                         let _ = message_channel_clone
                                                             .send(Message::Connect(
                                                                 device_meta,
                                                                 channels,
                                                             ))
+                                                            .await;
+
+                                                        // Queue AddEventsDevice so streams are started
+                                                        // via the handler (start_sensor_streams before
+                                                        // read_all_config, consistent with USB-first path).
+                                                        let _ = ctrl_tx
+                                                            .send(DeviceTaskMessage::AddEventsDevice(vm_device))
                                                             .await;
                                                     }
                                                 }
@@ -1188,6 +1204,7 @@ async fn usb_device_manager(
                     shot_delay_watch.clone(),
                     event_sender.clone(),
                     message_channel.clone(),
+                    direct_usb_handler_uuids.clone(),
                 ));
 
                 {
@@ -1312,6 +1329,7 @@ async fn device_handler_task(
     shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
     event_sender: broadcast::Sender<Event>,
     message_channel: mpsc::Sender<Message>,
+    direct_usb_handler_uuids: Arc<tokio::sync::Mutex<std::collections::HashSet<[u8; 6]>>>,
 ) {
     info!(
         "Starting device handler for device UUID {:02x?}",
@@ -1350,30 +1368,25 @@ async fn device_handler_task(
     let mut madgwick = ahrs::Madgwick::<f32>::new(1.0 / 100.0, 0.1);
     let mut orientation = Rotation3::identity();
 
-    // Read camera config. Devices with bulk packet support (0x5200, etc.) use the events
-    // device. ATS Lite (0x5210) and Lite1 (0x5211) use the control plane (EP0) instead,
-    // since their bulk handler is gated on USB transport mode being active.
-    let supports_bulk_config = !matches!(device.product_id, 0x5210 | 0x5211);
-    let general_settings = if let Some(events_device) = connections
-        .events_device
-        .as_ref()
-        .filter(|_| supports_bulk_config)
-    {
+    // All config (camera models, impact threshold, etc.) is readable over both
+    // USB and BLE via packet protocol. Prefer the events device; fall back to
+    // the control device only when no events device is present.
+    let general_settings = if let Some(events_device) = connections.events_device.as_ref() {
         info!(
-            "Reading camera config for device {:02x?} from events device (bulk)",
+            "Reading config for device {:02x?} from events device",
             device.uuid
         );
         match tokio::time::timeout(Duration::from_secs(5), events_device.read_all_config()).await {
             Ok(Ok(cfg)) => {
                 info!(
-                    "Successfully read camera config for device {:02x?}",
+                    "Successfully read config for device {:02x?}",
                     device.uuid
                 );
                 Some(cfg)
             }
             Ok(Err(e)) => {
                 warn!(
-                    "Failed to read camera config for device {:02x?}: {}",
+                    "Failed to read config for device {:02x?}: {}",
                     device.uuid, e
                 );
                 None
@@ -1386,47 +1399,39 @@ async fn device_handler_task(
                 None
             }
         }
-    } else if !supports_bulk_config {
-        if let Some(ctrl_device) = connections.control_device.as_ref() {
-            info!(
-                "Reading camera config for device {:02x?} via control plane",
-                device.uuid
-            );
-            match tokio::time::timeout(Duration::from_secs(10), ctrl_device.read_all_config_ctrl())
-                .await
-            {
-                Ok(Ok(cfg)) => {
-                    info!(
-                        "Successfully read camera config for device {:02x?} via control plane",
-                        device.uuid
-                    );
-                    Some(cfg)
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        "Failed to read camera config for device {:02x?} via control plane: {}",
-                        device.uuid, e
-                    );
-                    None
-                }
-                Err(_) => {
-                    warn!(
-                        "read_all_config_ctrl timed out for device {:02x?}, proceeding with defaults",
-                        device.uuid
-                    );
-                    None
-                }
+    } else if let Some(ctrl_device) = connections.control_device.as_ref() {
+        info!(
+            "Reading config for device {:02x?} via control plane (no events device)",
+            device.uuid
+        );
+        match tokio::time::timeout(Duration::from_secs(10), ctrl_device.read_all_config_ctrl())
+            .await
+        {
+            Ok(Ok(cfg)) => {
+                info!(
+                    "Successfully read config for device {:02x?} via control plane",
+                    device.uuid
+                );
+                Some(cfg)
             }
-        } else {
-            info!(
-                "Skipping camera config for device {:02x?} (no control device available)",
-                device.uuid
-            );
-            None
+            Ok(Err(e)) => {
+                warn!(
+                    "Failed to read config for device {:02x?} via control plane: {}",
+                    device.uuid, e
+                );
+                None
+            }
+            Err(_) => {
+                warn!(
+                    "read_all_config_ctrl timed out for device {:02x?}, proceeding with defaults",
+                    device.uuid
+                );
+                None
+            }
         }
     } else {
         info!(
-            "Skipping camera config for device {:02x?} (no events device)",
+            "Skipping config for device {:02x?} (no events or control device)",
             device.uuid
         );
         None
@@ -1714,7 +1719,9 @@ async fn device_handler_task(
                             _ => None,
                         };
                         if let Some(ck) = config_kind {
-                            if let Some(dev) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
+                            // read_config uses packet protocol — works over BLE and USB alike.
+                            // Only read_all_config (bulk camera data) is gated on USB transport mode.
+                            if let Some(dev) = connections.events_device.as_ref() {
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config(ck)).await {
                                     Ok(Ok(gc)) => Ok(match gc {
                                         GeneralConfig::ImpactThreshold(v) => v,
@@ -1750,7 +1757,8 @@ async fn device_handler_task(
                             _ => None,
                         };
                         if let Some(gc) = config {
-                            if let Some(dev) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
+                            // write_config uses packet protocol — works over BLE and USB alike.
+                            if let Some(dev) = connections.events_device.as_ref() {
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config(gc)).await {
                                     Ok(r) => r.map_err(|e| e.to_string()),
                                     Err(_) => Err("write_config timed out".into()),
@@ -1770,7 +1778,8 @@ async fn device_handler_task(
                         }
                     }
                     Some(DeviceTaskMessage::FlashSettings { reply }) => {
-                        if let Some(dev) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
+                        // flash_settings uses packet protocol — works over BLE and USB alike.
+                        if let Some(dev) = connections.events_device.as_ref() {
                             let result = match tokio::time::timeout(Duration::from_secs(3), dev.flash_settings()).await {
                                 Ok(r) => r.map_err(|e| e.to_string()),
                                 Err(_) => Err("flash_settings timed out".into()),
@@ -2033,10 +2042,16 @@ async fn device_handler_task(
                             } else {
                                 odyssey_hub_common::device::EventsTransport::Bluetooth
                             };
-                            device.events_connected = is_usb;
                             if is_usb {
+                                // USB transport mode: events come from USB, BLE not needed.
+                                device.events_connected = true;
                                 device.capabilities.insert(DeviceCapabilities::EVENTS);
+                            } else if connections.events_device.is_some() {
+                                // BLE transport mode but BLE events are already streaming —
+                                // preserve EVENTS capability and events_connected as-is.
                             } else {
+                                // BLE transport mode, no BLE events yet.
+                                device.events_connected = false;
                                 device.capabilities.remove(DeviceCapabilities::EVENTS);
                             }
                         }
@@ -2072,15 +2087,19 @@ async fn device_handler_task(
                         connections.control_device = None;
                         device.capabilities.remove(DeviceCapabilities::CONTROL);
 
-                        // A UsbMux device has genuinely independent BLE events that survive
-                        // USB disconnect. A Usb-transport device's events are co-located with
-                        // the control connection that just disappeared, so always exit.
+                        // A device with an active BLE events connection has genuinely independent
+                        // events that survive USB disconnect. A purely wired device's events are
+                        // co-located with the control connection that just disappeared, so exit.
                         let has_independent_ble_events = connections.events_device.is_some()
-                            && device.transport
-                                == odyssey_hub_common::device::Transport::UsbMux;
+                            && device.events_transport
+                                == odyssey_hub_common::device::EventsTransport::Bluetooth
+                            && device.events_connected;
 
                         if has_independent_ble_events {
                             device.transport = odyssey_hub_common::device::Transport::UsbMux;
+                            // No longer a direct-USB handler — USB control is gone. Remove from
+                            // the set so the next USB re-plug sends AddControlDevice correctly.
+                            direct_usb_handler_uuids.lock().await.remove(&device.uuid);
                             let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
                             let ev = Event::DeviceEvent(DeviceEvent(
                                 device.clone(),
