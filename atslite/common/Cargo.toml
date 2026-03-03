@@ -43,7 +43,7 @@ pag7665qn = { path = "../../pag7665qn" }
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
 
 # BLE
-trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-16", "l2cap-rx-queue-size-8"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool"] }
 bt-hci = { version = "0.8", default-features = false, features = ["defmt"] }
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs" }
 

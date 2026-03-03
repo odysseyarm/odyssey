@@ -420,205 +420,63 @@ impl Default for PajsSettings {
     }
 }
 
+async fn paj_apply_settings(
+    paj: &mut Paj,
+    s: &PajSettings,
+) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
+    paj.ll.control().bank_0().cmd_oahb().write_async(|x| x.set_value(s.area_threshold_max)).await?;
+    paj.ll.control().bank_c().cmd_oalb().write_async(|x| x.set_value(s.area_threshold_min)).await?;
+    paj.ll.control().bank_c().cmd_thd().write_async(|x| x.set_value(s.brightness_threshold)).await?;
+    paj.ll.control().bank_c().b_expo().write_async(|x| x.set_value(s.exposure_time)).await?;
+    paj.ll.control().bank_c().cmd_frame_period().write_async(|x| x.set_value(s.frame_period)).await?;
+    paj.ll.control().bank_0().cmd_frame_subtraction_on().write_async(|x| x.set_value(s.frame_subtraction)).await?;
+    paj.ll.control().bank_c().b_global().write_async(|x| x.set_value(s.gain_1)).await?;
+    paj.ll.control().bank_c().b_ggh().write_async(|x| x.set_value(s.gain_2)).await?;
+    paj.ll.control().bank_0().cmd_max_object_num().write_async(|x| x.set_value(s.max_object_cnt)).await?;
+    paj.ll.control().bank_0().cmd_nthd().write_async(|x| x.set_value(s.noise_threshold)).await?;
+    paj.ll.control().bank_0().cmd_dsp_operation_mode().write_async(|x| x.set_value(s.operation_mode)).await?;
+    paj.ll.control().bank_c().cmd_scale_resolution_x().write_async(|x| x.set_value(s.resolution_x)).await?;
+    paj.ll.control().bank_c().cmd_scale_resolution_y().write_async(|x| x.set_value(s.resolution_y)).await?;
+    paj.ll.control().bank_0().bank_0_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
+    paj.ll.control().bank_1().bank_1_sync_updated_flag().write_async(|x| x.set_value(1)).await?;
+    Ok(())
+}
+
+async fn paj_read_settings(
+    paj: &mut Paj,
+) -> Result<PajSettings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
+    Ok(PajSettings {
+        area_threshold_max: paj.ll.control().bank_0().cmd_oahb().read_async().await?.value(),
+        area_threshold_min: paj.ll.control().bank_c().cmd_oalb().read_async().await?.value(),
+        brightness_threshold: paj.ll.control().bank_c().cmd_thd().read_async().await?.value(),
+        exposure_time: paj.ll.control().bank_1().b_expo_r().read_async().await?.value(),
+        frame_period: paj.ll.control().bank_c().cmd_frame_period().read_async().await?.value(),
+        frame_subtraction: paj.ll.control().bank_0().cmd_frame_subtraction_on().read_async().await?.value(),
+        gain_1: paj.ll.control().bank_1().b_global_r().read_async().await?.value(),
+        gain_2: paj.ll.control().bank_1().b_ggh_r().read_async().await?.value(),
+        max_object_cnt: paj.ll.control().bank_0().cmd_max_object_num().read_async().await?.value(),
+        noise_threshold: paj.ll.control().bank_0().cmd_nthd().read_async().await?.value(),
+        operation_mode: paj.ll.control().bank_0().cmd_dsp_operation_mode().read_async().await?.value(),
+        resolution_x: paj.ll.control().bank_c().cmd_scale_resolution_x().read_async().await?.value(),
+        resolution_y: paj.ll.control().bank_c().cmd_scale_resolution_y().read_async().await?.value(),
+    })
+}
+
 impl PajsSettings {
     pub async fn apply(
         &self,
         pajr2: &mut Paj,
         pajr3: &mut Paj,
     ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
-        macro_rules! apply_one {
-            ($paj:expr, $s:expr) => {
-                async {
-                    let PajSettings {
-                        area_threshold_max,
-                        area_threshold_min,
-                        brightness_threshold,
-                        exposure_time,
-                        frame_period,
-                        frame_subtraction,
-                        gain_1,
-                        gain_2,
-                        max_object_cnt,
-                        noise_threshold,
-                        operation_mode,
-                        resolution_x,
-                        resolution_y,
-                        ..
-                    } = $s;
-
-                    $paj.ll
-                        .control()
-                        .bank_0()
-                        .cmd_oahb()
-                        .write_async(|x| x.set_value(area_threshold_max))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .cmd_oalb()
-                        .write_async(|x| x.set_value(area_threshold_min))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .cmd_thd()
-                        .write_async(|x| x.set_value(brightness_threshold))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .b_expo()
-                        .write_async(|x| x.set_value(exposure_time))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .cmd_frame_period()
-                        .write_async(|x| x.set_value(frame_period))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_0()
-                        .cmd_frame_subtraction_on()
-                        .write_async(|x| x.set_value(frame_subtraction))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .b_global()
-                        .write_async(|x| x.set_value(gain_1))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .b_ggh()
-                        .write_async(|x| x.set_value(gain_2))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_0()
-                        .cmd_max_object_num()
-                        .write_async(|x| x.set_value(max_object_cnt))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_0()
-                        .cmd_nthd()
-                        .write_async(|x| x.set_value(noise_threshold))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_0()
-                        .cmd_dsp_operation_mode()
-                        .write_async(|x| x.set_value(operation_mode))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .cmd_scale_resolution_x()
-                        .write_async(|x| x.set_value(resolution_x))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_c()
-                        .cmd_scale_resolution_y()
-                        .write_async(|x| x.set_value(resolution_y))
-                        .await?;
-
-                    $paj.ll
-                        .control()
-                        .bank_0()
-                        .bank_0_sync_updated_flag()
-                        .write_async(|x| x.set_value(1))
-                        .await?;
-                    $paj.ll
-                        .control()
-                        .bank_1()
-                        .bank_1_sync_updated_flag()
-                        .write_async(|x| x.set_value(1))
-                        .await?;
-                    Ok::<_, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>(())
-                }
-            };
-        }
-
-        apply_one!(pajr2, self.0).await?;
-        apply_one!(pajr3, self.1).await
+        paj_apply_settings(pajr2, &self.0).await?;
+        paj_apply_settings(pajr3, &self.1).await
     }
 
     pub async fn read_from_pajs(
         pajr2: &mut Paj,
         pajr3: &mut Paj,
     ) -> Result<Self, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
-        macro_rules! read_one {
-            ($paj:expr) => {{
-                Ok(PajSettings {
-                    area_threshold_max: $paj.ll.control().bank_0().cmd_oahb().read_async().await?.value(),
-                    area_threshold_min: $paj.ll.control().bank_c().cmd_oalb().read_async().await?.value(),
-                    brightness_threshold: $paj.ll.control().bank_c().cmd_thd().read_async().await?.value(),
-                    exposure_time: $paj.ll.control().bank_1().b_expo_r().read_async().await?.value(),
-                    frame_period: $paj
-                        .ll
-                        .control()
-                        .bank_c()
-                        .cmd_frame_period()
-                        .read_async()
-                        .await?
-                        .value(),
-                    frame_subtraction: $paj
-                        .ll
-                        .control()
-                        .bank_0()
-                        .cmd_frame_subtraction_on()
-                        .read_async()
-                        .await?
-                        .value(),
-                    gain_1: $paj
-                        .ll
-                        .control()
-                        .bank_1()
-                        .b_global_r()
-                        .read_async()
-                        .await?
-                        .value(),
-                    gain_2: $paj.ll.control().bank_1().b_ggh_r().read_async().await?.value(),
-                    max_object_cnt: $paj
-                        .ll
-                        .control()
-                        .bank_0()
-                        .cmd_max_object_num()
-                        .read_async()
-                        .await?
-                        .value(),
-                    noise_threshold: $paj.ll.control().bank_0().cmd_nthd().read_async().await?.value(),
-                    operation_mode: $paj
-                        .ll
-                        .control()
-                        .bank_0()
-                        .cmd_dsp_operation_mode()
-                        .read_async()
-                        .await?
-                        .value(),
-                    resolution_x: $paj
-                        .ll
-                        .control()
-                        .bank_c()
-                        .cmd_scale_resolution_x()
-                        .read_async()
-                        .await?
-                        .value(),
-                    resolution_y: $paj
-                        .ll
-                        .control()
-                        .bank_c()
-                        .cmd_scale_resolution_y()
-                        .read_async()
-                        .await?
-                        .value(),
-                })
-            }};
-        }
-        Ok(Self(read_one!(pajr2)?, read_one!(pajr3)?))
+        Ok(Self(paj_read_settings(pajr2).await?, paj_read_settings(pajr3).await?))
     }
 }
 
