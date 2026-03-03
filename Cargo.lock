@@ -4793,7 +4793,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey_desktop"
-version = "0.4.14"
+version = "0.4.15"
 dependencies = [
  "anyhow",
  "ats_usb",
