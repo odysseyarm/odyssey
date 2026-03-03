@@ -231,9 +231,9 @@ async fn usb_device_manager(
     // UUIDs of handlers that were created as direct-USB connections (not BLE-mux primary).
     // These do not need AddControlDevice on each scan pass — their control device is already
     // embedded in the handler. Only UsbMux-primary handlers benefit from AddControlDevice.
-    let direct_usb_handler_uuids = Arc::new(tokio::sync::Mutex::new(
-        std::collections::HashSet::<[u8; 6]>::new(),
-    ));
+    let direct_usb_handler_uuids = Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::<
+        [u8; 6],
+    >::new()));
 
     // Hub managers: Vec of (DeviceInfo, slot-with-joinhandle)
     let hub_managers = Arc::new(tokio::sync::Mutex::new(Vec::<(
@@ -1251,21 +1251,30 @@ async fn start_sensor_streams(
             info!("Combined markers stream started for {:02x?}", uuid);
             sensor_streams.push(stream.map(DeviceStreamEvent::CombinedMarkers).boxed());
         }
-        Err(e) => warn!("Failed to start combined markers stream for {:02x?}: {}", uuid, e),
+        Err(e) => warn!(
+            "Failed to start combined markers stream for {:02x?}: {}",
+            uuid, e
+        ),
     }
     match events_device.clone().stream_poc_markers().await {
         Ok(stream) => {
             info!("PoC markers stream started for {:02x?}", uuid);
             sensor_streams.push(stream.map(DeviceStreamEvent::PocMarkers).boxed());
         }
-        Err(e) => warn!("Failed to start PoC markers stream for {:02x?}: {}", uuid, e),
+        Err(e) => warn!(
+            "Failed to start PoC markers stream for {:02x?}: {}",
+            uuid, e
+        ),
     }
     match events_device.clone().stream_accel().await {
         Ok(stream) => {
             info!("Accelerometer stream started for {:02x?}", uuid);
             sensor_streams.push(stream.map(DeviceStreamEvent::Accel).boxed());
         }
-        Err(e) => warn!("Failed to start accelerometer stream for {:02x?}: {}", uuid, e),
+        Err(e) => warn!(
+            "Failed to start accelerometer stream for {:02x?}: {}",
+            uuid, e
+        ),
     }
     match events_device.clone().stream_impact().await {
         Ok(stream) => {
@@ -1345,7 +1354,11 @@ async fn device_handler_task(
     // device. ATS Lite (0x5210) and Lite1 (0x5211) use the control plane (EP0) instead,
     // since their bulk handler is gated on USB transport mode being active.
     let supports_bulk_config = !matches!(device.product_id, 0x5210 | 0x5211);
-    let general_settings = if let Some(events_device) = connections.events_device.as_ref().filter(|_| supports_bulk_config) {
+    let general_settings = if let Some(events_device) = connections
+        .events_device
+        .as_ref()
+        .filter(|_| supports_bulk_config)
+    {
         info!(
             "Reading camera config for device {:02x?} from events device (bulk)",
             device.uuid
@@ -1379,7 +1392,9 @@ async fn device_handler_task(
                 "Reading camera config for device {:02x?} via control plane",
                 device.uuid
             );
-            match tokio::time::timeout(Duration::from_secs(10), ctrl_device.read_all_config_ctrl()).await {
+            match tokio::time::timeout(Duration::from_secs(10), ctrl_device.read_all_config_ctrl())
+                .await
+            {
                 Ok(Ok(cfg)) => {
                     info!(
                         "Successfully read camera config for device {:02x?} via control plane",
@@ -1462,7 +1477,14 @@ async fn device_handler_task(
         device.uuid, has_sensor_streams
     );
 
-    // Keep sensor_streams mutable so we can add streams later (e.g., when BLE mux is added)
+    // Debounce state for register reads/writes: pause streams once before the first read
+    // in a sequence and restart them 100 ms after the last read
+    // TODO this is kind of overengineered
+    let mut register_streams_paused = false;
+    let register_resume_sleep = tokio::time::sleep(Duration::from_secs(3600));
+    tokio::pin!(register_resume_sleep);
+    let mut register_resume_armed = false;
+
     let mut shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx).fuse();
     let mut control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx).fuse();
 
@@ -1478,6 +1500,7 @@ async fn device_handler_task(
             biased;
             maybe_msg = control_stream.next() => {
                 let msg_name = match &maybe_msg {
+                    // TODO just add Format and Debug or whatever to the enum
                     Some(DeviceTaskMessage::ResetZero) => "ResetZero",
                     Some(DeviceTaskMessage::SaveZero) => "SaveZero",
                     Some(DeviceTaskMessage::WriteVendor(..)) => "WriteVendor",
@@ -1623,8 +1646,12 @@ async fn device_handler_task(
                             // arrives while that lock is held, recv_loop blocks for the full
                             // get_objects() duration. We send DisableAll first (an acknowledged
                             // round-trip) so obj_loop stops before ReadRegister reaches the firmware.
-                            let had_streams = has_sensor_streams;
-                            if had_streams {
+                            //
+                            // We pause once for the whole batch (first read in the sequence) and
+                            // restart via a 100 ms debounce after the last read, rather than
+                            // cycling streams around every individual read.
+                            if has_sensor_streams {
+                                register_streams_paused = true;
                                 sensor_streams = SelectAll::new();
                                 has_sensor_streams = false;
                                 // clear_all_streams() sends DisableAll and waits for Ack, ensuring
@@ -1638,10 +1665,13 @@ async fn device_handler_task(
                                 Err(_) => Err("read_register timed out".into()),
                             };
                             let _ = reply.send(result);
-                            // Restart streams now that the register read is done.
-                            if had_streams {
-                                sensor_streams = start_sensor_streams(&dev, device.uuid).await;
-                                has_sensor_streams = !sensor_streams.is_empty();
+                            // Arm/reset the debounce timer. Streams will restart once no register
+                            // ops arrive for 100 ms (i.e., after the last read in the batch).
+                            if register_streams_paused {
+                                register_resume_sleep.as_mut().reset(
+                                    tokio::time::Instant::now() + Duration::from_millis(100),
+                                );
+                                register_resume_armed = true;
                             }
                         } else {
                             let _ = reply.send(Err("events device not available".into()));
@@ -1653,8 +1683,9 @@ async fn device_handler_task(
                             let _ = reply.send(Err("events transport not connected".into()));
                         } else if let Some(dev) = connections.events_device.as_ref().cloned() {
                             // Pause streams while writing registers for the same reason as ReadRegister.
-                            let had_streams = has_sensor_streams;
-                            if had_streams {
+                            // Uses the same once-per-batch pause + debounce-restart pattern.
+                            if has_sensor_streams {
+                                register_streams_paused = true;
                                 sensor_streams = SelectAll::new();
                                 has_sensor_streams = false;
                                 if let Err(e) = dev.clear_all_streams().await {
@@ -1666,9 +1697,11 @@ async fn device_handler_task(
                                 Err(_) => Err("write_register timed out".into()),
                             };
                             let _ = reply.send(result);
-                            if had_streams {
-                                sensor_streams = start_sensor_streams(&dev, device.uuid).await;
-                                has_sensor_streams = !sensor_streams.is_empty();
+                            if register_streams_paused {
+                                register_resume_sleep.as_mut().reset(
+                                    tokio::time::Instant::now() + Duration::from_millis(100),
+                                );
+                                register_resume_armed = true;
                             }
                         } else {
                             let _ = reply.send(Err("events device not available".into()));
@@ -1856,6 +1889,19 @@ async fn device_handler_task(
                         }
                     }
                     Some(DeviceTaskMessage::AddEventsDevice(events_vm_device)) => {
+                        // The BLE hub sends a new snapshot (and thus AddEventsDevice) every few
+                        // seconds even while the device is already streaming.  Re-running
+                        // start_sensor_streams + read_all_config blocks the select loop for
+                        // 5-10 s on every snapshot, causing periodic BLE lag.  Skip if we are
+                        // already streaming — the first invocation already set everything up.
+                        if has_sensor_streams {
+                            info!(
+                                "AddEventsDevice for {:02x?}: already streaming, ignoring redundant snapshot",
+                                device.uuid
+                            );
+                            continue;
+                        }
+
                         info!(
                             "AddEventsDevice - adding BLE mux events device for {:02x?}",
                             device.uuid
@@ -2116,6 +2162,22 @@ async fn device_handler_task(
                     .write()
                     .await
                     .insert(device.uuid, current_shot_delay as u16);
+            }
+            _ = &mut register_resume_sleep, if register_resume_armed => {
+                // Debounce expired: no register ops arrived for 100 ms.
+                // Restart sensor streams now that the firmware's PAG mutex is free.
+                register_resume_armed = false;
+                register_streams_paused = false;
+                if !has_sensor_streams {
+                    if let Some(dev) = connections.events_device.as_ref().cloned() {
+                        info!(
+                            "Register access batch done, restarting sensor streams for {:02x?}",
+                            device.uuid
+                        );
+                        sensor_streams = start_sensor_streams(&dev, device.uuid).await;
+                        has_sensor_streams = !sensor_streams.is_empty();
+                    }
+                }
             }
             maybe_evt = sensor_streams.next(), if has_sensor_streams => {
                 match maybe_evt {

@@ -1,5 +1,7 @@
 use crate::hub::HubContext;
 use dioxus::{logger::tracing, prelude::*};
+use dioxus::prelude::UnboundedReceiver;
+use futures::StreamExt;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 
 // Product ID constants
@@ -1100,18 +1102,13 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let pid = device.product_id;
     let is_paj = pid == PID_ATS_VM || pid == PID_ATS_LITE;
     let is_pag = pid == PID_ATS_PRO;
-
-    if !is_paj && !is_pag {
-        return rsx! {};
-    }
-
     // Sensor settings require bulk endpoint access (EVENTS capability).
     // Devices in BLE transport mode with only CONTROL capability cannot
     // service bulk requests, so don't attempt to read/write config.
-    if !device.capabilities.contains(DeviceCapabilities::EVENTS) {
-        return rsx! {};
-    }
+    let has_events = device.capabilities.contains(DeviceCapabilities::EVENTS);
+    let should_render = (is_paj || is_pag) && has_events;
 
+    // All hooks must be called unconditionally before any early returns.
     let mut status = use_signal(|| String::new());
     let mut loading = use_signal(|| false);
 
@@ -1127,84 +1124,19 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     // PAG state signal
     let mut pag_state = use_signal(PagState::default);
 
-    // Auto-load current values on mount
-    {
-        let device = device.clone();
-        use_future(move || {
-            let device = device.clone();
-            async move {
-                loading.set(true);
-                status.set("Reading...".into());
-                let hub_ctx = hub.peek().clone();
-                // Load general config
-                if let Ok(v) = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .read_config(device.clone(), 0)
-                    .await
-                {
-                    impact_threshold.set(v.to_string());
-                }
-                if let Ok(v) = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .read_config(device.clone(), 1)
-                    .await
-                {
-                    suppress_ms.set(v.to_string());
-                }
-                // Load shot delay
-                if let Ok(v) = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .get_shot_delay(device.clone())
-                    .await
-                {
-                    shot_delay.set(v.to_string());
-                }
-                // Load sensor settings
-                let result = if is_paj {
-                    let nf = paj_load_from_device(&hub_ctx, &device, 0).await;
-                    let wf = paj_load_from_device(&hub_ctx, &device, 1).await;
-                    match (nf, wf) {
-                        (Ok(nf_s), Ok(wf_s)) => {
-                            paj_nf_state.set(nf_s);
-                            paj_wf_state.set(wf_s);
-                            Ok(())
-                        }
-                        (Err(e), _) | (_, Err(e)) => Err(e),
-                    }
-                } else {
-                    pag_load_from_device(&hub_ctx, &device)
-                        .await
-                        .map(|s| pag_state.set(s))
-                };
-                match result {
-                    Ok(()) => status.set(String::new()),
-                    Err(e) => {
-                        tracing::error!("Failed to load settings: {e}");
-                        status.set(format!("Error: {e}"));
-                    }
-                }
-                loading.set(false);
-            }
-        });
-    }
+    // Tracks the open/closed state of the Device Settings section.
+    let mut is_open = use_signal(|| false);
 
-    let device_for_reload = device.clone();
-    let device_for_apply = device.clone();
-    let device_for_save = device.clone();
-
-    let reload = move |_| {
-        let device = device_for_reload.clone();
-        async move {
+    // Coroutine: receives () each time settings should be loaded from device.
+    // Triggered on section expand and Reload button click.
+    let device_for_load = device.clone();
+    let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| async move {
+        while rx.next().await.is_some() {
             loading.set(true);
             status.set("Reading...".into());
             let hub_ctx = hub.peek().clone();
-            // Reload general config
+            let device = device_for_load.clone();
+            // Load general config
             if let Ok(v) = hub_ctx
                 .client
                 .peek()
@@ -1223,7 +1155,7 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             {
                 suppress_ms.set(v.to_string());
             }
-            // Reload shot delay
+            // Load shot delay
             if let Ok(v) = hub_ctx
                 .client
                 .peek()
@@ -1233,7 +1165,7 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             {
                 shot_delay.set(v.to_string());
             }
-            // Reload sensor settings
+            // Load sensor settings
             let result = if is_paj {
                 let nf = paj_load_from_device(&hub_ctx, &device, 0).await;
                 let wf = paj_load_from_device(&hub_ctx, &device, 1).await;
@@ -1253,13 +1185,23 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             match result {
                 Ok(()) => status.set("Loaded".into()),
                 Err(e) => {
-                    tracing::error!("Failed to load sensor settings: {e}");
+                    tracing::error!("Failed to load settings: {e}");
                     status.set(format!("Error: {e}"));
                 }
             }
             loading.set(false);
         }
-    };
+    });
+
+    // Guards applied after all hooks have been called.
+    if !should_render {
+        return rsx! {};
+    }
+
+    let device_for_apply = device.clone();
+    let device_for_save = device.clone();
+
+    let reload = move |_| { load_co.send(()); };
 
     let apply = move |_| {
         let device = device_for_apply.clone();
@@ -1381,9 +1323,17 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     rsx! {
         details {
             class: "mt-2",
+            open: *is_open.read(),
             summary {
                 class: "text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer \
                         hover:text-blue-600 dark:hover:text-blue-400 select-none",
+                onclick: move |_| {
+                    let opening = !*is_open.peek();
+                    is_open.set(opening);
+                    if opening {
+                        load_co.send(());
+                    }
+                },
                 "Device Settings"
             }
             div {
