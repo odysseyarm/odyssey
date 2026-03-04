@@ -119,6 +119,8 @@ pub enum PacketData {
         #[cfg_attr(feature = "minicbor", n(0))] u8,
         #[cfg_attr(feature = "minicbor", n(1))] VendorData,
     ),
+    #[cfg_attr(feature = "minicbor", n(21))]
+    BatteryReport(#[cfg_attr(feature = "minicbor", n(0))] BatteryReport),
 }
 
 #[repr(C)]
@@ -502,6 +504,19 @@ pub struct ImpactReport {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BatteryReport {
+    #[cfg_attr(feature = "minicbor", n(0))]
+    pub percent: u8,
+    #[cfg_attr(feature = "minicbor", n(1))]
+    pub charging: bool,
+}
+
+#[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug)]
 pub struct StreamUpdate {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -631,6 +646,8 @@ pub enum PacketType {
     Vendor(#[cfg_attr(feature = "minicbor", n(0))] u8),
     #[cfg_attr(feature = "minicbor", n(23))]
     VendorEnd(),
+    #[cfg_attr(feature = "minicbor", n(24))]
+    BatteryReport(),
 }
 
 impl TryFrom<u8> for PacketType {
@@ -658,6 +675,7 @@ impl TryFrom<u8> for PacketType {
             0x12 => Ok(Self::ReadVersion()),
             0x13 => Ok(Self::ReadVersionResponse()),
             0x14 => Ok(Self::End()),
+            0x15 => Ok(Self::BatteryReport()),
             0x80 => Ok(Self::VendorStart()),
             0xff => Ok(Self::VendorEnd()),
             n if (PacketType::VendorStart().into()..PacketType::VendorEnd().into())
@@ -694,6 +712,7 @@ impl From<PacketType> for u8 {
             PacketType::ReadVersion() => 0x12,
             PacketType::ReadVersionResponse() => 0x13,
             PacketType::End() => 0x14,
+            PacketType::BatteryReport() => 0x15,
             PacketType::VendorStart() => 0x80,
             PacketType::VendorEnd() => 0xff,
             PacketType::Vendor(n) => n,
@@ -725,6 +744,7 @@ impl Packet {
             PacketData::ReadVersion() => PacketType::ReadVersion(),
             PacketData::ReadVersionResponse(_) => PacketType::ReadVersionResponse(),
             PacketData::Vendor(n, _) => PacketType::Vendor(n),
+            PacketData::BatteryReport(_) => PacketType::BatteryReport(),
         }
     }
 
@@ -795,6 +815,13 @@ impl PacketData {
     pub fn impact_report(self) -> Option<ImpactReport> {
         match self {
             PacketData::ImpactReport(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    pub fn battery_report(self) -> Option<BatteryReport> {
+        match self {
+            PacketData::BatteryReport(x) => Some(x),
             _ => None,
         }
     }
