@@ -392,6 +392,7 @@ async fn usb_device_manager(
                 let dsd_clone = device_shot_delays.clone();
                 let swatch_clone = shot_delay_watch.clone();
                 let ev_clone = event_sender.clone();
+                let direct_usb_uuids_clone = direct_usb_handler_uuids.clone();
                 let hub_info = dev_info.clone();
 
                 let hub_manager_handle = tokio::spawn(async move {
@@ -726,6 +727,7 @@ async fn usb_device_manager(
                                                                 swatch_clone.clone(),
                                                                 ev_clone.clone(),
                                                                 message_channel_clone.clone(),
+                                                                direct_usb_uuids_clone.clone(),
                                                             ));
 
                                                         let mut dh =
@@ -1202,6 +1204,7 @@ async fn usb_device_manager(
                     shot_delay_watch.clone(),
                     event_sender.clone(),
                     message_channel.clone(),
+                    direct_usb_handler_uuids.clone(),
                 ));
 
                 {
@@ -1326,6 +1329,7 @@ async fn device_handler_task(
     shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
     event_sender: broadcast::Sender<Event>,
     message_channel: mpsc::Sender<Message>,
+    direct_usb_handler_uuids: Arc<tokio::sync::Mutex<std::collections::HashSet<[u8; 6]>>>,
 ) {
     info!(
         "Starting device handler for device UUID {:02x?}",
@@ -2093,6 +2097,9 @@ async fn device_handler_task(
 
                         if has_independent_ble_events {
                             device.transport = odyssey_hub_common::device::Transport::UsbMux;
+                            // No longer a direct-USB handler — USB control is gone. Remove from
+                            // the set so the next USB re-plug sends AddControlDevice correctly.
+                            direct_usb_handler_uuids.lock().await.remove(&device.uuid);
                             let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
                             let ev = Event::DeviceEvent(DeviceEvent(
                                 device.clone(),
