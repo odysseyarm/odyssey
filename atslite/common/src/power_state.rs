@@ -8,7 +8,7 @@ use nrf_fuel_gauge as fg;
 use crate::power;
 
 pub static SOC_PERCENT: AtomicU8 = AtomicU8::new(0);
-static VBUS_PRESENT: AtomicBool = AtomicBool::new(false);
+pub static VBUS_PRESENT: AtomicBool = AtomicBool::new(false);
 
 /// Update LED state based on current battery and BLE connection status.
 /// Call this when BLE connection state changes for immediate LED feedback.

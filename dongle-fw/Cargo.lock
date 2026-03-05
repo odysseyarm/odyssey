@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "dongle-fw"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "atomic-pool",
  "bt-hci",
@@ -1797,8 +1797,8 @@ dependencies = [
 
 [[package]]
 name = "protodongers"
-version = "0.1.0"
-source = "git+https://github.com/odysseyarm/protodonge-rs.git#545e9cf82f7a04353a4cce34de9ca1c726f94646"
+version = "0.1.1"
+source = "git+https://github.com/odysseyarm/protodonge-rs.git#af3317e04bf463ce7c8377504d01d7e24070d4f6"
 dependencies = [
  "ats_common",
  "defmt 1.0.1",

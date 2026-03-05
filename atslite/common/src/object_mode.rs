@@ -5,7 +5,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use embassy_futures::join::join4;
+use embassy_futures::join::join5;
 use embassy_futures::select::{Either3, select3};
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -15,7 +15,7 @@ use embassy_usb::driver::{EndpointError};
 use nalgebra::Vector3;
 use protodongers::control::device::TransportMode;
 use protodongers::wire::GeneralConfig;
-use protodongers::{ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse};
+use protodongers::{BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse};
 
 use crate::ble::l2cap_bridge::{self, L2capChannels};
 use crate::settings::PagSettings;
@@ -63,6 +63,7 @@ struct StreamInfos {
     imu: StreamInfo,
     impact: StreamInfo,
     marker: StreamInfo,
+    battery: StreamInfo,
 }
 
 impl StreamInfos {
@@ -74,6 +75,7 @@ impl StreamInfos {
         self.imu.enable.store(false, Ordering::Relaxed);
         self.impact.enable.store(false, Ordering::Relaxed);
         self.marker.enable.store(false, Ordering::Relaxed);
+        self.battery.enable.store(false, Ordering::Relaxed);
     }
 
     fn enable(&self, req_id: u8, ty: PacketType) {
@@ -82,6 +84,7 @@ impl StreamInfos {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
             PacketType::PocMarkersReport() => &self.marker,
+            PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
         si.set_req_id(req_id);
@@ -93,6 +96,7 @@ impl StreamInfos {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
             PacketType::PocMarkersReport() => &self.marker,
+            PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
         si.set_enable(false);
@@ -305,8 +309,10 @@ where
 
     let stream_task = stream_loop(pkt_channel.receiver(), &l2cap, &mut ctx.usb_snd, ctx.usb_configured);
 
+    let battery_task = battery_loop(pkt_channel.sender(), &stream_infos);
+
     // Join all tasks - they run forever
-    join4(recv_task, imu_task, obj_task, stream_task).await;
+    join5(recv_task, imu_task, obj_task, stream_task, battery_task).await;
 }
 
 /// Receive loop - handles incoming packets from BLE L2CAP or USB bulk endpoint
@@ -565,6 +571,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
+            PacketData::BatteryReport(_) => None,
         };
 
         // Send response back via the same transport the command came from
@@ -586,6 +593,28 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Battery loop - periodically sends battery state when the battery stream is enabled
+async fn battery_loop<const N: usize>(
+    pkt_snd: Sender<'_, Packet, N>,
+    stream_infos: &StreamInfos,
+) -> ! {
+    loop {
+        embassy_time::Timer::after_secs(1).await;
+        if stream_infos.battery.enabled() {
+            let percent = crate::power_state::SOC_PERCENT.load(Ordering::Relaxed);
+            let charging = crate::power_state::VBUS_PRESENT.load(Ordering::Relaxed);
+            let id = stream_infos.battery.req_id();
+            let pkt = Packet {
+                id,
+                data: PacketData::BatteryReport(BatteryReport { percent, charging }),
+            };
+            if pkt_snd.try_send(pkt).is_err() {
+                defmt::warn!("[battery_loop] channel full, dropping packet");
             }
         }
     }

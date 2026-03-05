@@ -2,7 +2,7 @@ use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use defmt::Format;
-use embassy_futures::join::join4;
+use embassy_futures::join::join5;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
@@ -19,7 +19,8 @@ use crate::fodtrigger::FodTrigger;
 use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet};
 use crate::protodongers::control::device::TransportMode;
 use crate::protodongers::{
-    self, ConfigKind, Packet, PacketData, PacketType, PropKind, Props, ReadRegisterResponse, wire,
+    self, BatteryReport, ConfigKind, Packet, PacketData, PacketType, PropKind, Props,
+    ReadRegisterResponse, wire,
 };
 use crate::settings::{PajsSettings, Settings};
 use crate::usb::{self, UsbConfigHandle};
@@ -49,6 +50,10 @@ pub struct ObjectModeContext<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, 
     pub data_mode: fn() -> TransportMode,
     /// Firmware version [major, minor, patch].
     pub version: [u16; 3],
+    /// Battery state-of-charge percentage (0–100), updated by power_state_task.
+    pub battery_soc: &'static AtomicU8,
+    /// Whether VBUS (USB power / charging) is present, updated by power_state_task.
+    pub battery_charging: &'static AtomicBool,
 }
 
 #[allow(unreachable_code)]
@@ -108,8 +113,9 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         pkt_channel.sender(),
         &stream_infos,
     );
+    let e = battery_loop(pkt_channel.sender(), &stream_infos, ctx.battery_soc, ctx.battery_charging);
     // TODO turn these into tasks
-    let r = join4(a, b, c, d).await;
+    let r = join5(a, b, c, d, e).await;
 
     // All tasks return Result<Infallible, Error>, meaning they never succeed
     // If any task returns, it's because of an error
@@ -441,6 +447,29 @@ async fn usb_snd_loop<L: L2capChannels>(
     todo!()
 }
 
+async fn battery_loop(
+    pkt_snd: Sender<'_, Packet, 64>,
+    stream_infos: &StreamInfos,
+    battery_soc: &'static AtomicU8,
+    battery_charging: &'static AtomicBool,
+) -> ! {
+    loop {
+        embassy_time::Timer::after_secs(1).await;
+        if stream_infos.battery.enabled() {
+            let percent = battery_soc.load(Ordering::Relaxed);
+            let charging = battery_charging.load(Ordering::Relaxed);
+            let id = stream_infos.battery.req_id();
+            let pkt = Packet {
+                id,
+                data: PacketData::BatteryReport(BatteryReport { percent, charging }),
+            };
+            if pkt_snd.try_send(pkt).is_err() {
+                defmt::warn!("[object_mode] Battery channel full, dropping packet");
+            }
+        }
+    }
+}
+
 async fn imu_loop<P: Platform>(
     imu: &mut P::Imu,
     imu_int: &mut P::ImuInterrupt,
@@ -656,6 +685,7 @@ struct StreamInfos {
     imu: StreamInfo,
     impact: StreamInfo,
     marker: StreamInfo,
+    battery: StreamInfo,
 }
 
 impl StreamInfos {
@@ -667,6 +697,7 @@ impl StreamInfos {
         self.imu.enable.store(false, Ordering::Relaxed);
         self.impact.enable.store(false, Ordering::Relaxed);
         self.marker.enable.store(false, Ordering::Relaxed);
+        self.battery.enable.store(false, Ordering::Relaxed);
     }
 
     fn enable(&self, req_id: u8, ty: PacketType) {
@@ -675,6 +706,7 @@ impl StreamInfos {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
             PacketType::CombinedMarkersReport() => &self.marker,
+            PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
         si.set_req_id(req_id);
@@ -686,6 +718,7 @@ impl StreamInfos {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
             PacketType::CombinedMarkersReport() => &self.marker,
+            PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
         si.set_enable(false);

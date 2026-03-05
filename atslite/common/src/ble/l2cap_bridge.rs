@@ -108,6 +108,7 @@ pub fn is_control_packet(pkt: &Packet) -> bool {
         | P::CombinedMarkersReport(_)
         | P::PocMarkersReport(_)
         | P::AccelReport(_)
-        | P::ImpactReport(_) => false,
+        | P::ImpactReport(_)
+        | P::BatteryReport(_) => false,
     }
 }

@@ -86,5 +86,3 @@ embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" 
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 
-# [patch."https://github.com/odysseyarm/protodonge-rs"]
-# protodongers = { path = "../../patches/protodonge-rs" }

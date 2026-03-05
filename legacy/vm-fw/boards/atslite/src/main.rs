@@ -439,6 +439,8 @@ async fn main(spawner: Spawner) {
         l2cap_channels,
         data_mode: transport_mode::get,
         version: FIRMWARE_VERSION,
+        battery_soc: &atslite_board::power_state::SOC_PERCENT,
+        battery_charging: &atslite_board::power_state::VBUS_PRESENT,
     };
 
     defmt::info!("Initialization complete; entering object mode");

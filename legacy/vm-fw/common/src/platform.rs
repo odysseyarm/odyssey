@@ -108,7 +108,8 @@ pub fn is_control_packet(pkt: &Packet) -> bool {
         | PacketType::CombinedMarkersReport()
         | PacketType::PocMarkersReport()
         | PacketType::AccelReport()
-        | PacketType::ImpactReport() => false,
+        | PacketType::ImpactReport()
+        | PacketType::BatteryReport() => false,
         _ => true,
     }
 }
