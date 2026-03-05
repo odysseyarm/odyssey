@@ -206,17 +206,6 @@ async fn usb_rcv_loop<L: L2capChannels>(
             continue;
         }
 
-        match src {
-            PacketSource::Usb => defmt::info!("[app] src=USB"),
-            PacketSource::Ble => defmt::info!("[app] src=BLE"),
-        }
-
-        defmt::info!(
-            "[app] Processing packet with id={}, data={:?}",
-            pkt.id,
-            defmt::Debug2Format(&pkt.data)
-        );
-
         let response = match pkt.data {
             PacketData::WriteRegister(register) => {
                 let paj = match register.port {
@@ -268,9 +257,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 })
             }
             PacketData::WriteConfig(config) => {
-                defmt::info!("[app] WriteConfig received: {:?}", defmt::Debug2Format(&config));
                 let mut wire_config: wire::GeneralConfig = config.into();
-                defmt::info!("[app] WriteConfig converted: {:?}", defmt::Debug2Format(&wire_config));
                 // Clamp accel_odr to nearest valid value for this platform
                 if let wire::GeneralConfig::AccelConfig(ref mut ac) = wire_config {
                     ac.accel_odr = round_accel_odr(ac.accel_odr);
@@ -370,6 +357,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
+            PacketData::BatteryReport(_) => None,
         };
 
         if let Some(r) = response
@@ -377,34 +365,21 @@ async fn usb_rcv_loop<L: L2capChannels>(
         {
             match src {
                 PacketSource::Usb => {
-                    defmt::debug!(
-                        "[app] Sending response via USB: id={}, data={:?}",
-                        r.id,
-                        defmt::Debug2Format(&r.data)
-                    );
                     pkt_snd.send(r).await;
-                    defmt::debug!("[app] Response sent via USB");
                 }
                 PacketSource::Ble => {
-                    // Route to correct L2CAP channel - each has dedicated L2CAP connection
-                    // Use try_send to avoid blocking if channel is full (BLE task not draining)
                     if is_control_packet(&r) {
                         if l2cap_channels.control_tx().try_send(r).is_err() {
                             defmt::warn!("[app] Dropped control response - channel full");
-                        } else {
-                            defmt::debug!("[app] Control response queued for BLE");
                         }
                     } else {
                         if l2cap_channels.data_tx().try_send(r).is_err() {
                             defmt::warn!("[app] Dropped data response - channel full");
-                        } else {
-                            defmt::debug!("[app] Data response queued for BLE");
                         }
                     }
                 }
             }
         }
-        defmt::debug!("[app] Packet processing complete, looping...");
     }
 }
 
@@ -420,11 +395,6 @@ async fn usb_snd_loop<L: L2capChannels>(
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
             break;
         };
-        defmt::trace!(
-            "[usb_snd_loop] Broadcasting streaming packet: {}",
-            defmt::Debug2Format(&pkt)
-        );
-
         let mode = data_mode();
         let usb_enabled = usb_configured.is_configured() && matches!(mode, TransportMode::Usb);
         let ble_enabled = matches!(mode, TransportMode::Ble);
@@ -491,7 +461,7 @@ async fn imu_loop<P: Platform>(
         let imu_data = match imu.read_data().await {
             Ok(data) => data,
             Err(e) => {
-                defmt::error!("Failed to read IMU data: {}", defmt::Debug2Format(&e));
+                defmt::error!("Failed to read IMU data");
                 continue;
             }
         };

@@ -39,6 +39,8 @@ pub async fn power_state_task(
         (v0, t0)
     };
 
+    defmt::trace!("[fg] init: v0={} V, t0={} °C", v0, t0);
+
     let init = fg::Initial { v0, i0: 0.0, t0 };
     let cfg = fg::default_config();
     let mut gauge = fg::FuelGauge::init(battery_model, init, Some(&cfg)).unwrap();
@@ -57,7 +59,6 @@ pub async fn power_state_task(
         let now = Instant::now();
         let dt = (now - last).as_micros() as f32 / 1_000_000.0;
         last = now;
-        defmt::trace!("dt = {}s", dt);
 
         let (v, i, t) = {
             let mut pm = pmic.lock().await;
@@ -72,9 +73,8 @@ pub async fn power_state_task(
                     continue;
                 }
             };
-            defmt::trace!("Measured IBAT: {} µA", i);
             let t = pm.measure_die_temperature().await.unwrap();
-            defmt::trace!("Measured die temperature: {} °C", t);
+            defmt::trace!("[fg] v={} V  ibat={} µA  t={} °C  dt={} s", v, i, t, dt);
             (v, i as f32 / 1_000_000.0, t)
         };
 
@@ -91,8 +91,7 @@ pub async fn power_state_task(
         SOC_PERCENT.store(soc as u8, Ordering::Relaxed);
         VBUS_PRESENT.store(vbus_present, Ordering::Relaxed);
 
-        defmt::trace!("Soc percent: {}%", soc);
-        defmt::trace!("VBUS present: {}", vbus_present);
+        defmt::trace!("[fg] soc={} %  vbus={}", soc, vbus_present);
 
         // Use helper to get the correct LED state based on battery and BLE status
         let ble_connected = crate::pmic_leds::is_ble_connected();
