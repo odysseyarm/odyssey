@@ -1026,19 +1026,32 @@ impl Service for Server {
         let trans = nalgebra::Translation3::from(translation_vec);
         let point = nalgebra::Point2::from(target_vec);
 
-        let te = tracking_event.map(|te| {
-            let pose = te.pose.unwrap();
-            common::events::TrackingEvent {
-                timestamp: te.timestamp,
-                aimpoint: te.aimpoint.unwrap().into(),
-                pose: common::events::Pose {
-                    rotation: pose.rotation.unwrap().into(),
-                    translation: pose.translation.unwrap().into(),
-                },
-                distance: te.distance,
-                screen_id: te.screen_id,
-            }
-        });
+        let te = tracking_event
+            .map(|te| -> Result<common::events::TrackingEvent, Status> {
+                let pose = te
+                    .pose
+                    .ok_or_else(|| Status::invalid_argument("tracking_event.pose missing"))?;
+                Ok(common::events::TrackingEvent {
+                    timestamp: te.timestamp,
+                    aimpoint: te
+                        .aimpoint
+                        .ok_or_else(|| Status::invalid_argument("tracking_event.aimpoint missing"))?
+                        .into(),
+                    pose: common::events::Pose {
+                        rotation: pose
+                            .rotation
+                            .ok_or_else(|| Status::invalid_argument("tracking_event.pose.rotation missing"))?
+                            .into(),
+                        translation: pose
+                            .translation
+                            .ok_or_else(|| Status::invalid_argument("tracking_event.pose.translation missing"))?
+                            .into(),
+                    },
+                    distance: te.distance,
+                    screen_id: te.screen_id,
+                })
+            })
+            .transpose()?;
 
         if let Some(tx) = self.sender_for_uuid(dev.uuid) {
             match tx.try_send(DeviceTaskMessage::Zero(trans, point, te)) {

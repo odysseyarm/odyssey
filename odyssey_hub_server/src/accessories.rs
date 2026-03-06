@@ -36,10 +36,24 @@ pub async fn accessory_manager(
         >,
     >,
 ) {
-    let manager = Manager::new().await.unwrap();
+    let manager = match Manager::new().await {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("accessory_manager: failed to init BT manager: {e}");
+            return;
+        }
+    };
     let adapter = loop {
-        if let Some(a) = manager.adapters().await.unwrap().into_iter().next() {
-            break a;
+        match manager.adapters().await {
+            Ok(mut adapters) => {
+                if let Some(a) = adapters.into_iter().next() {
+                    break a;
+                }
+            }
+            Err(e) => {
+                warn!("accessory_manager: failed to list BT adapters: {e}");
+                return;
+            }
         }
         time::sleep(Duration::from_secs(1)).await;
     };
@@ -134,7 +148,13 @@ pub async fn accessory_manager(
                                             warn!("Subscribe failed for {id:?}: {e}");
                                         } else {
                                             info!("Subscribed to {:?} notifications on {id:?}", ty);
-                                            let notif_stream = p.notifications().await.unwrap();
+                                            let notif_stream = match p.notifications().await {
+                                                Ok(s) => s,
+                                                Err(e) => {
+                                                    warn!("Failed to get notifications stream for {id:?}: {e}");
+                                                    continue;
+                                                }
+                                            };
                                             let dl = dl.clone();
                                             let event_tx = event_tx.clone();
                                             tokio::spawn(async move {

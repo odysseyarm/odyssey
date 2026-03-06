@@ -51,6 +51,7 @@ use opencv_ros_camera::RosOpenCvIntrinsics;
 // per-handler foveated state and last-timestamp are local to each device handler now.
 
 /// Control messages sent into per-device task
+#[derive(Debug)]
 pub enum DeviceTaskMessage {
     ResetZero,
     SaveZero,
@@ -1559,30 +1560,7 @@ async fn device_handler_task(
         tokio::select! {
             biased;
             maybe_msg = control_stream.next() => {
-                let msg_name = match &maybe_msg {
-                    // TODO just add Format and Debug or whatever to the enum
-                    Some(DeviceTaskMessage::ResetZero) => "ResetZero",
-                    Some(DeviceTaskMessage::SaveZero) => "SaveZero",
-                    Some(DeviceTaskMessage::WriteVendor(..)) => "WriteVendor",
-                    Some(DeviceTaskMessage::SetShotDelay(..)) => "SetShotDelay",
-                    Some(DeviceTaskMessage::Zero(..)) => "Zero",
-                    Some(DeviceTaskMessage::ClearZero) => "ClearZero",
-                    Some(DeviceTaskMessage::ReadRegister { .. }) => "ReadRegister",
-                    Some(DeviceTaskMessage::WriteRegister { .. }) => "WriteRegister",
-                    Some(DeviceTaskMessage::ReadConfig { .. }) => "ReadConfig",
-                    Some(DeviceTaskMessage::WriteConfig { .. }) => "WriteConfig",
-                    Some(DeviceTaskMessage::FlashSettings { .. }) => "FlashSettings",
-                    Some(DeviceTaskMessage::StartPairing { .. }) => "StartPairing",
-                    Some(DeviceTaskMessage::CancelPairing { .. }) => "CancelPairing",
-                    Some(DeviceTaskMessage::ClearBond { .. }) => "ClearBond",
-                    Some(DeviceTaskMessage::SetTransportMode { .. }) => "SetTransportMode",
-                    Some(DeviceTaskMessage::AddEventsDevice(..)) => "AddEventsDevice",
-                    Some(DeviceTaskMessage::AddControlDevice(..)) => "AddControlDevice",
-                    Some(DeviceTaskMessage::RemoveControlDevice) => "RemoveControlDevice",
-                    Some(DeviceTaskMessage::RemoveEventsDevice) => "RemoveEventsDevice",
-                    None => "None (channel closed)",
-                };
-                info!("control_stream received '{}' for {:02x?}", msg_name, device.uuid);
+                info!("control_stream received '{:?}' for {:02x?}", maybe_msg, device.uuid);
                 match maybe_msg {
                     Some(DeviceTaskMessage::ResetZero) => {
                         debug!("ResetZero requested for {:02x?}", device.uuid);
