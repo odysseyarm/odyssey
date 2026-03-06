@@ -29,6 +29,7 @@ pub enum DeviceEventKind {
         paired_address: [u8; 6],
         error: String,
     },
+    BatteryEvent(BatteryEvent),
 }
 
 #[repr(C)]
@@ -61,4 +62,11 @@ pub struct TrackingEvent {
 #[derive(Clone, Copy, Debug)]
 pub struct ImpactEvent {
     pub timestamp: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BatteryEvent {
+    pub percent: u8,
+    pub charging: bool,
 }

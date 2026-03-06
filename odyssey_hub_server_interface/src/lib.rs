@@ -221,6 +221,14 @@ impl From<common::events::Event> for proto::Event {
                             error,
                         },
                     ),
+                    common::events::DeviceEventKind::BatteryEvent(e) => {
+                        proto::device_event::DeviceEventOneof::Battery(
+                            proto::device_event::BatteryEvent {
+                                percent: e.percent as u32,
+                                charging: e.charging,
+                            },
+                        )
+                    }
                 };
                 proto::Event {
                     event_oneof: Some(proto::event::EventOneof::Device(proto::DeviceEvent {
@@ -331,6 +339,14 @@ impl From<proto::Event> for common::events::Event {
                             paired_address,
                             error: e.error,
                         }
+                    }
+                    proto::device_event::DeviceEventOneof::Battery(e) => {
+                        common::events::DeviceEventKind::BatteryEvent(
+                            common::events::BatteryEvent {
+                                percent: e.percent as u8,
+                                charging: e.charging,
+                            },
+                        )
                     }
                 };
                 common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind))

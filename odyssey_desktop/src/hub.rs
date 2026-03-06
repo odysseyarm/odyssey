@@ -15,6 +15,8 @@ pub struct HubContext {
     pub dongles: SyncSignal<Vec<DongleInfo>>,
     pub latest_event: Signal<Option<oe::Event>>,
     pub tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
+    /// Most recent battery state (percent, charging) per device UUID
+    pub battery_states: SyncSignal<HashMap<[u8; 6], (u8, bool)>>,
     device_keys: SyncSignal<HashMap<odyssey_hub_common::device::Device, usize>>,
 }
 
@@ -27,6 +29,7 @@ impl HubContext {
             dongles: SyncSignal::new_maybe_sync(Vec::new()),
             latest_event: Signal::new(None),
             tracking_events,
+            battery_states: SyncSignal::new_maybe_sync(HashMap::new()),
             device_keys: SyncSignal::new_maybe_sync(HashMap::new()),
         }
     }
@@ -176,6 +179,19 @@ impl HubContext {
                             self.tracking_events.receiver_count()
                         );
                     }
+                }
+                if let oe::Event::DeviceEvent(oe::DeviceEvent(
+                    device,
+                    oe::DeviceEventKind::BatteryEvent(battery),
+                )) = &evt
+                {
+                    tracing::info!(
+                        "BatteryEvent received for {:02x?}: {}% charging={}",
+                        device.uuid, battery.percent, battery.charging
+                    );
+                    self.battery_states
+                        .write()
+                        .insert(device.uuid, (battery.percent, battery.charging));
                 }
                 self.latest_event.set(Some(evt));
             }
