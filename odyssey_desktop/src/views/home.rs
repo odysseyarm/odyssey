@@ -23,6 +23,7 @@ pub fn Home() -> Element {
     let selected_value = use_memo(move || options().get(selected_index()).cloned());
 
     let devices = (hub().devices)();
+    let battery_states = (hub().battery_states)();
 
     // Firmware manifest - fetched once and shared across all device firmware update components
     let manifest: Signal<Option<FirmwareManifest>> = use_signal(|| None);
@@ -145,6 +146,23 @@ pub fn Home() -> Element {
                                                             span {
                                                                 class: "text-gray-400 dark:text-gray-500 italic",
                                                                 "Not available"
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some((percent, charging)) = battery_states.get(&device.uuid).copied() {
+                                                        div {
+                                                            class: "flex items-center gap-2 text-xs",
+                                                            span {
+                                                                class: "text-gray-500 dark:text-gray-400",
+                                                                "Battery:"
+                                                            }
+                                                            span {
+                                                                class: "text-gray-700 dark:text-gray-200 font-mono",
+                                                                "{percent}%"
+                                                            }
+                                                            span {
+                                                                class: if charging { "text-green-500" } else { "text-gray-400 dark:text-gray-500" },
+                                                                if charging { "Charging" } else { "Discharging" }
                                                             }
                                                         }
                                                     }

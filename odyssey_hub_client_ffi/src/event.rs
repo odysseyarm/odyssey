@@ -164,9 +164,14 @@ impl From<common::events::Event> for Event {
                         common::events::DeviceEventKind::CapabilitiesChanged => {
                             DeviceEventKind::CapabilitiesChanged
                         }
+                        _ => return Event::DeviceEvent(DeviceEvent {
+                            device,
+                            kind: DeviceEventKind::CapabilitiesChanged,
+                        }),
                     },
                 })
             }
+            _ => todo!("unhandled event variant"),
         }
     }
 }

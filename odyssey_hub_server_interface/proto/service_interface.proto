@@ -160,6 +160,11 @@ message DeviceEvent {
     string error = 3; // error/status message
   }
 
+  message BatteryEvent {
+    uint32 percent = 1;
+    bool charging = 2;
+  }
+
   oneof device_event_oneof {
     AccelerometerEvent accelerometer = 2;
     TrackingEvent tracking = 3;
@@ -169,6 +174,7 @@ message DeviceEvent {
     SaveZeroResultEvent save_zero_result = 9;
     CapabilitiesChangedEvent capabilities_changed = 10;
     PairingResultEvent pairing_result = 11;
+    BatteryEvent battery = 12;
   }
 }
 

@@ -5,8 +5,8 @@ use arrayvec::ArrayVec;
 use ats_common::{ros_opencv_intrinsics_type_convert, ScreenCalibration};
 use ats_usb::device::VmDevice;
 use ats_usb::packets::vm::{
-    AccelReport, CombinedMarkersReport, ConfigKind, GeneralConfig, ImpactReport, Packet,
-    PacketData, PocMarkersReport, VendorData,
+    AccelReport, BatteryReport, CombinedMarkersReport, ConfigKind, GeneralConfig, ImpactReport,
+    Packet, PacketData, PocMarkersReport, VendorData,
 };
 use nalgebra::{
     Isometry3, Matrix3, Matrix3x1, Point2, Point3, Rotation3, Translation3, UnitQuaternion,
@@ -35,6 +35,7 @@ enum DeviceStreamEvent {
     PocMarkers(PocMarkersReport),
     Accel(AccelReport),
     Impact(ImpactReport),
+    Battery(BatteryReport),
     Vendor(u8, VendorData),
 }
 
@@ -114,7 +115,7 @@ pub enum DeviceTaskMessage {
         reply: tokio::sync::oneshot::Sender<Result<bool, String>>,
     },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
-    AddEventsDevice(VmDevice),
+    AddEventsDevice(VmDevice, [u16; 3]),
     /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
     AddControlDevice(VmDevice),
     /// Remove control device when direct USB disconnects
@@ -618,25 +619,28 @@ async fn usb_device_manager(
                                                         uuid
                                                     );
 
-                                                    // Read firmware version via packet interface (works over BLE)
-                                                    let version = match vm_device.request(protodongers::PacketData::ReadVersion()).await {
+                                                    // Read firmware and events protocol version via packet interface (works over BLE)
+                                                    let (version, proto_version) = match vm_device.request(protodongers::PacketData::ReadVersion()).await {
                                                                     Ok(protodongers::PacketData::ReadVersionResponse(v)) => {
                                                                         tracing::info!(
-                                                                            "BLE device {:02x?} firmware version: {}.{}.{}",
+                                                                            "BLE device {:02x?} firmware version: {}.{}.{}, events protocol: {}.{}.{}",
                                                                             uuid,
                                                                             v.firmware_semver[0],
                                                                             v.firmware_semver[1],
-                                                                            v.firmware_semver[2]
+                                                                            v.firmware_semver[2],
+                                                                            v.protocol_semver[0],
+                                                                            v.protocol_semver[1],
+                                                                            v.protocol_semver[2],
                                                                         );
-                                                                        [v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]]
+                                                                        ([v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]], v.protocol_semver)
                                                                     }
                                                                     Ok(other) => {
                                                                         tracing::warn!("Unexpected response reading version from BLE device {:02x?}: {:?}", uuid, other);
-                                                                        [0, 0, 0]
+                                                                        ([0, 0, 0], [0, 0, 0])
                                                                     }
                                                                     Err(e) => {
                                                                         tracing::warn!("Failed to read version from BLE device {:02x?}: {}", uuid, e);
-                                                                        [0, 0, 0]
+                                                                        ([0, 0, 0], [0, 0, 0])
                                                                     }
                                                                 };
 
@@ -690,6 +694,7 @@ async fn usb_device_manager(
                                                             .send(
                                                                 DeviceTaskMessage::AddEventsDevice(
                                                                     vm_device,
+                                                                    proto_version,
                                                                 ),
                                                             )
                                                             .await;
@@ -728,6 +733,7 @@ async fn usb_device_manager(
                                                                 ev_clone.clone(),
                                                                 message_channel_clone.clone(),
                                                                 direct_usb_uuids_clone.clone(),
+                                                                proto_version, // events protocol version read via PacketData::ReadVersion()
                                                             ));
 
                                                         let mut dh =
@@ -754,7 +760,7 @@ async fn usb_device_manager(
                                                         // via the handler (start_sensor_streams before
                                                         // read_all_config, consistent with USB-first path).
                                                         let _ = ctrl_tx
-                                                            .send(DeviceTaskMessage::AddEventsDevice(vm_device))
+                                                            .send(DeviceTaskMessage::AddEventsDevice(vm_device, proto_version))
                                                             .await;
                                                     }
                                                 }
@@ -947,7 +953,7 @@ async fn usb_device_manager(
 
                 // Connect and read UUID/version/transport mode first
                 // We'll keep this connection if we decide to use it
-                let (uuid, version, transport_mode, vm_device_temp) = {
+                let (uuid, version, events_proto_semver, transport_mode, vm_device_temp) = {
                     match VmDevice::connect_usb_any_mode(dev_info.clone()).await {
                         Ok(vm_device) => {
                             // Read UUID - use control plane for devices that support it (ATS Lite/Lite1), packets for others
@@ -1053,7 +1059,34 @@ async fn usb_device_manager(
                                 }
                             };
 
-                            (uuid, version, transport_mode, vm_device)
+                            // Read events protocol version via packet interface.
+                            // Only available when device is in USB transport mode (direct events).
+                            let events_proto_semver = if transport_mode == protodongers::control::device::TransportMode::Usb {
+                                match vm_device.request(protodongers::PacketData::ReadVersion()).await {
+                                    Ok(protodongers::PacketData::ReadVersionResponse(v)) => {
+                                        info!(
+                                            "Device {:02x?} events protocol version: {}.{}.{}",
+                                            uuid,
+                                            v.protocol_semver[0],
+                                            v.protocol_semver[1],
+                                            v.protocol_semver[2]
+                                        );
+                                        v.protocol_semver
+                                    }
+                                    Ok(other) => {
+                                        warn!("Unexpected response reading events version from {:02x?}: {:?}", uuid, other);
+                                        [0, 0, 0]
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to read events protocol version from {:02x?}: {}", uuid, e);
+                                        [0, 0, 0]
+                                    }
+                                }
+                            } else {
+                                [0, 0, 0]
+                            };
+
+                            (uuid, version, events_proto_semver, transport_mode, vm_device)
                         }
                         Err(e) => {
                             debug!("Failed to connect to USB device: {}", e);
@@ -1194,6 +1227,7 @@ async fn usb_device_manager(
                         }
                     };
 
+                let initial_protocol_version = events_proto_semver;
                 let handle = tokio::spawn(device_handler_task(
                     connections,
                     device_meta.clone(),
@@ -1205,6 +1239,7 @@ async fn usb_device_manager(
                     event_sender.clone(),
                     message_channel.clone(),
                     direct_usb_handler_uuids.clone(),
+                    initial_protocol_version,
                 ));
 
                 {
@@ -1261,7 +1296,12 @@ async fn usb_device_manager(
 async fn start_sensor_streams(
     events_device: &VmDevice,
     uuid: [u8; 6],
+    protocol_version: [u16; 3],
 ) -> SelectAll<BoxStream<'static, DeviceStreamEvent>> {
+    info!(
+        "start_sensor_streams for {:02x?}: protocol_version={}.{}.{}",
+        uuid, protocol_version[0], protocol_version[1], protocol_version[2]
+    );
     let mut sensor_streams: SelectAll<BoxStream<'static, DeviceStreamEvent>> = SelectAll::new();
     match events_device.clone().stream_combined_markers().await {
         Ok(stream) => {
@@ -1300,6 +1340,20 @@ async fn start_sensor_streams(
         }
         Err(e) => warn!("Failed to start impact stream for {:02x?}: {}", uuid, e),
     }
+    if protocol_version >= [0, 1, 1] {
+        match events_device.clone().stream_battery().await {
+            Ok(stream) => {
+                info!("Battery stream started for {:02x?}", uuid);
+                sensor_streams.push(stream.map(DeviceStreamEvent::Battery).boxed());
+            }
+            Err(e) => warn!("Failed to start battery stream for {:02x?}: {}", uuid, e),
+        }
+    } else {
+        debug!(
+            "Skipping battery stream for {:02x?}: protocol version {}.{}.{} < 0.1.1",
+            uuid, protocol_version[0], protocol_version[1], protocol_version[2]
+        );
+    }
     sensor_streams
 }
 
@@ -1330,6 +1384,7 @@ async fn device_handler_task(
     event_sender: broadcast::Sender<Event>,
     message_channel: mpsc::Sender<Message>,
     direct_usb_handler_uuids: Arc<tokio::sync::Mutex<std::collections::HashSet<[u8; 6]>>>,
+    mut protocol_version: [u16; 3],
 ) {
     info!(
         "Starting device handler for device UUID {:02x?}",
@@ -1465,7 +1520,7 @@ async fn device_handler_task(
     let mut sensor_streams: SelectAll<BoxStream<'static, DeviceStreamEvent>> = SelectAll::new();
 
     if let Some(events_device) = connections.events_device.as_ref() {
-        sensor_streams = start_sensor_streams(events_device, device.uuid).await;
+        sensor_streams = start_sensor_streams(events_device, device.uuid, protocol_version).await;
     } else {
         info!(
             "Skipping sensor streams for device {:02x?} (no events device)",
@@ -1485,10 +1540,10 @@ async fn device_handler_task(
     // Debounce state for register reads/writes: pause streams once before the first read
     // in a sequence and restart them 100 ms after the last read
     // TODO this is kind of overengineered
-    let mut register_streams_paused = false;
-    let register_resume_sleep = tokio::time::sleep(Duration::from_secs(3600));
-    tokio::pin!(register_resume_sleep);
-    let mut register_resume_armed = false;
+    let mut streams_paused = false;
+    let streams_resume_sleep = tokio::time::sleep(Duration::from_secs(3600));
+    tokio::pin!(streams_resume_sleep);
+    let mut streams_resume_armed = false;
 
     let mut shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx).fuse();
     let mut control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx).fuse();
@@ -1656,7 +1711,7 @@ async fn device_handler_task(
                             // restart via a 100 ms debounce after the last read, rather than
                             // cycling streams around every individual read.
                             if has_sensor_streams {
-                                register_streams_paused = true;
+                                streams_paused = true;
                                 sensor_streams = SelectAll::new();
                                 has_sensor_streams = false;
                                 // clear_all_streams() sends DisableAll and waits for Ack, ensuring
@@ -1672,11 +1727,11 @@ async fn device_handler_task(
                             let _ = reply.send(result);
                             // Arm/reset the debounce timer. Streams will restart once no register
                             // ops arrive for 100 ms (i.e., after the last read in the batch).
-                            if register_streams_paused {
-                                register_resume_sleep.as_mut().reset(
+                            if streams_paused {
+                                streams_resume_sleep.as_mut().reset(
                                     tokio::time::Instant::now() + Duration::from_millis(100),
                                 );
-                                register_resume_armed = true;
+                                streams_resume_armed = true;
                             }
                         } else {
                             let _ = reply.send(Err("events device not available".into()));
@@ -1690,7 +1745,7 @@ async fn device_handler_task(
                             // Pause streams while writing registers for the same reason as ReadRegister.
                             // Uses the same once-per-batch pause + debounce-restart pattern.
                             if has_sensor_streams {
-                                register_streams_paused = true;
+                                streams_paused = true;
                                 sensor_streams = SelectAll::new();
                                 has_sensor_streams = false;
                                 if let Err(e) = dev.clear_all_streams().await {
@@ -1702,11 +1757,11 @@ async fn device_handler_task(
                                 Err(_) => Err("write_register timed out".into()),
                             };
                             let _ = reply.send(result);
-                            if register_streams_paused {
-                                register_resume_sleep.as_mut().reset(
+                            if streams_paused {
+                                streams_resume_sleep.as_mut().reset(
                                     tokio::time::Instant::now() + Duration::from_millis(100),
                                 );
-                                register_resume_armed = true;
+                                streams_resume_armed = true;
                             }
                         } else {
                             let _ = reply.send(Err("events device not available".into()));
@@ -1721,7 +1776,15 @@ async fn device_handler_task(
                         if let Some(ck) = config_kind {
                             // read_config uses packet protocol — works over BLE and USB alike.
                             // Only read_all_config (bulk camera data) is gated on USB transport mode.
-                            if let Some(dev) = connections.events_device.as_ref() {
+                            if let Some(dev) = connections.events_device.as_ref().cloned() {
+                                if has_sensor_streams {
+                                    streams_paused = true;
+                                    sensor_streams = SelectAll::new();
+                                    has_sensor_streams = false;
+                                    if let Err(e) = dev.clear_all_streams().await {
+                                        warn!("clear_all_streams failed before ReadConfig for {:02x?}: {}", device.uuid, e);
+                                    }
+                                }
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config(ck)).await {
                                     Ok(Ok(gc)) => Ok(match gc {
                                         GeneralConfig::ImpactThreshold(v) => v,
@@ -1732,6 +1795,12 @@ async fn device_handler_task(
                                     Err(_) => Err("read_config timed out".into()),
                                 };
                                 let _ = reply.send(result);
+                                if streams_paused {
+                                    streams_resume_sleep.as_mut().reset(
+                                        tokio::time::Instant::now() + Duration::from_millis(100),
+                                    );
+                                    streams_resume_armed = true;
+                                }
                             } else if let Some(dev) = connections.control_device.as_ref() {
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config_ctrl(ck)).await {
                                     Ok(Ok(gc)) => Ok(match gc {
@@ -1758,12 +1827,26 @@ async fn device_handler_task(
                         };
                         if let Some(gc) = config {
                             // write_config uses packet protocol — works over BLE and USB alike.
-                            if let Some(dev) = connections.events_device.as_ref() {
+                            if let Some(dev) = connections.events_device.as_ref().cloned() {
+                                if has_sensor_streams {
+                                    streams_paused = true;
+                                    sensor_streams = SelectAll::new();
+                                    has_sensor_streams = false;
+                                    if let Err(e) = dev.clear_all_streams().await {
+                                        warn!("clear_all_streams failed before WriteConfig for {:02x?}: {}", device.uuid, e);
+                                    }
+                                }
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config(gc)).await {
                                     Ok(r) => r.map_err(|e| e.to_string()),
                                     Err(_) => Err("write_config timed out".into()),
                                 };
                                 let _ = reply.send(result);
+                                if streams_paused {
+                                    streams_resume_sleep.as_mut().reset(
+                                        tokio::time::Instant::now() + Duration::from_millis(100),
+                                    );
+                                    streams_resume_armed = true;
+                                }
                             } else if let Some(dev) = connections.control_device.as_ref() {
                                 let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config_ctrl(gc)).await {
                                     Ok(r) => r.map_err(|e| e.to_string()),
@@ -1897,7 +1980,20 @@ async fn device_handler_task(
                             let _ = reply.send(Err("no control device available".into()));
                         }
                     }
-                    Some(DeviceTaskMessage::AddEventsDevice(events_vm_device)) => {
+                    Some(DeviceTaskMessage::AddEventsDevice(events_vm_device, ble_proto_version)) => {
+                        // Update protocol_version with the BLE device's version. This is necessary
+                        // when the handler was created for a USB-in-BLE-mode device, which starts
+                        // with protocol_version = [0,0,0] because events weren't readable over USB.
+                        if ble_proto_version > protocol_version {
+                            info!(
+                                "AddEventsDevice: updating protocol_version for {:02x?}: {}.{}.{} -> {}.{}.{}",
+                                device.uuid,
+                                protocol_version[0], protocol_version[1], protocol_version[2],
+                                ble_proto_version[0], ble_proto_version[1], ble_proto_version[2],
+                            );
+                            protocol_version = ble_proto_version;
+                        }
+
                         // The BLE hub sends a new snapshot (and thus AddEventsDevice) every few
                         // seconds even while the device is already streaming.  Re-running
                         // start_sensor_streams + read_all_config blocks the select loop for
@@ -1920,7 +2016,7 @@ async fn device_handler_task(
                         connections.events_device = Some(events_vm_device.clone());
 
                         // Start all sensor streams with the new events device
-                        sensor_streams = start_sensor_streams(&events_vm_device, device.uuid).await;
+                        sensor_streams = start_sensor_streams(&events_vm_device, device.uuid, protocol_version).await;
 
                         // Update has_sensor_streams flag
                         has_sensor_streams = !sensor_streams.is_empty();
@@ -1993,6 +2089,10 @@ async fn device_handler_task(
                                     );
                                 }
                                 device.firmware_version = new_fw;
+                                // Note: protocol_version gates events-protocol features (like battery
+                                // stream) and was set from the events protocol's ReadVersionResponse at
+                                // spawn time. The control channel's protocol_semver is unrelated and
+                                // must not override it here.
                             }
                             Ok(Err(e)) => {
                                 warn!(
@@ -2182,18 +2282,18 @@ async fn device_handler_task(
                     .await
                     .insert(device.uuid, current_shot_delay as u16);
             }
-            _ = &mut register_resume_sleep, if register_resume_armed => {
+            _ = &mut streams_resume_sleep, if streams_resume_armed => {
                 // Debounce expired: no register ops arrived for 100 ms.
                 // Restart sensor streams now that the firmware's PAG mutex is free.
-                register_resume_armed = false;
-                register_streams_paused = false;
+                streams_resume_armed = false;
+                streams_paused = false;
                 if !has_sensor_streams {
                     if let Some(dev) = connections.events_device.as_ref().cloned() {
                         info!(
                             "Register access batch done, restarting sensor streams for {:02x?}",
                             device.uuid
                         );
-                        sensor_streams = start_sensor_streams(&dev, device.uuid).await;
+                        sensor_streams = start_sensor_streams(&dev, device.uuid, protocol_version).await;
                         has_sensor_streams = !sensor_streams.is_empty();
                     }
                 }
@@ -2277,6 +2377,7 @@ async fn handle_stream_event(
     let event_type = match &event {
         DeviceStreamEvent::Accel(_) => "Accel",
         DeviceStreamEvent::Impact(_) => "Impact",
+        DeviceStreamEvent::Battery(_) => "Battery",
         DeviceStreamEvent::CombinedMarkers(_) => "CombinedMarkers",
         DeviceStreamEvent::PocMarkers(_) => "PocMarkers",
         DeviceStreamEvent::Vendor(_, _) => "Vendor",
@@ -2350,6 +2451,19 @@ async fn handle_stream_event(
             let ev_kind = DeviceEventKind::ImpactEvent(ImpactEvent {
                 timestamp: report.timestamp,
             });
+            let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(device.clone(), ev_kind)));
+        }
+        DeviceStreamEvent::Battery(report) => {
+            info!(
+                "Battery event dispatched for {:02x?}: {}% charging={}",
+                device.uuid, report.percent, report.charging
+            );
+            let ev_kind = DeviceEventKind::BatteryEvent(
+                odyssey_hub_common::events::BatteryEvent {
+                    percent: report.percent,
+                    charging: report.charging,
+                },
+            );
             let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(device.clone(), ev_kind)));
         }
         DeviceStreamEvent::CombinedMarkers(report) => {
