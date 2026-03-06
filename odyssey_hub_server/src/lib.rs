@@ -175,7 +175,7 @@ pub async fn run_server(
     };
     let listener = futures::stream::unfold((), |()| async {
         let conn = listener.accept().await;
-        dbg!(&conn);
+
         Some((conn.map(LocalSocketStream), ()))
     });
 
@@ -471,7 +471,7 @@ pub async fn run_server(
                             let _ = dongle_change_sender.send(());
                         }
                         device_tasks::Message::Event(e) => {
-                            event_sender.send(e).unwrap();
+                            let _ = event_sender.send(e);
                         }
                     }
                     Some((
