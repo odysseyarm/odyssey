@@ -173,9 +173,10 @@ async fn settings_worker(
             // Write wake (queued write or explicit flush)
             Either::Second(Either::First(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
-                match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
+                let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
+                match &write_result {
                     Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
-                    Err(e) => defmt::debug!("process_writes err: {:?}", e),
+                    Err(e) => defmt::error!("process_writes err: {:?}", e),
                 }
                 defmt::debug!("Storage: finished process_writes");
 
@@ -186,13 +187,23 @@ async fn settings_worker(
                     Err(e) => defmt::error!("process_garbage err: {:?}", e),
                 }
                 defmt::debug!("Storage: finished process_garbage");
+
+                // If write failed (e.g. NeedsGarbageCollect), retry now that GC has run
+                if write_result.is_err() {
+                    defmt::debug!("Storage: retrying process_writes after GC");
+                    match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
+                        Ok(rpt) => defmt::debug!("process_writes retry ok: {:?}", rpt),
+                        Err(e) => defmt::error!("process_writes retry err: {:?}", e),
+                    }
+                }
             }
-            // Periodic tick: attempt a single write pass, same as vm-fw
+            // Periodic tick: attempt a single write pass
             Either::Second(Either::Second(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
-                match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
+                let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
+                match &write_result {
                     Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
-                    Err(e) => defmt::debug!("process_writes err: {:?}", e),
+                    Err(e) => defmt::error!("process_writes err: {:?}", e),
                 }
                 defmt::debug!("Storage: finished process_writes");
 
@@ -203,6 +214,15 @@ async fn settings_worker(
                     Err(e) => defmt::error!("process_garbage err: {:?}", e),
                 }
                 defmt::debug!("Storage: finished process_garbage");
+
+                // If write failed (e.g. NeedsGarbageCollect), retry now that GC has run
+                if write_result.is_err() {
+                    defmt::debug!("Storage: retrying process_writes after GC");
+                    match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
+                        Ok(rpt) => defmt::debug!("process_writes retry ok: {:?}", rpt),
+                        Err(e) => defmt::error!("process_writes retry err: {:?}", e),
+                    }
+                }
             }
         }
     }

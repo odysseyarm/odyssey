@@ -8,8 +8,10 @@ regions {
     flash origin=0x0000_0000 length="1M" {
         // Reserve Nordic MBR (4KB) at start. Application starts at 0x0000_1000.
         mbr         origin=0x0000_0000 length="4K"
-        app_flash   origin=0x0000_1000 length="500K"
-        settings    origin=0x0007_E000 length="72K" align="page_size"
+        // App region excluding your reserved settings area
+        app_flash   origin=0x0000_1000 length="0xCB000"
+        // Last 72 KB of the application-usable area
+        settings    origin=0x000C_C000 length="72K" align="page_size"
         bootloader  origin=0x000E_0000 end="0x000F_DFFF"
     }
 

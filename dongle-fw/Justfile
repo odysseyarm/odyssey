@@ -6,15 +6,15 @@ bin       := "dongle-fw"
 hw        := "52"
 # SoftDevice requirement for DFU package. Set to 0x00 when no SoftDevice is present.
 sd_req    := "0x00"
-app_ver   := "1"
-key_file  := ""
+app_ver   := "2"
+key_file  := "D:/ody/keys/fanstel-debug.pem"
 
 # Serial
-dfu_port  := "COM65"
+dfu_port  := "COM78"
 # dfu_port  := "COM76"
 baud      := "115200"
 # dev_port  := "COM71"
-dev_port  := "COM64"
+dev_port  := "COM79"
 
 ROOT      := "."
 
