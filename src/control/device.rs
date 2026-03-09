@@ -1,6 +1,6 @@
 use crate::mux::Uuid;
 
-const SEMVER: [u16; 3] = [0, 1, 3];
+const SEMVER: [u16; 3] = [0, 1, 5];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -95,4 +95,7 @@ pub enum DeviceMsg {
 
     Reboot,
     RebootAck,
+
+    AddBond(super::BondEntry),
+    AddBondResponse(Result<(), super::AddBondError>),
 }

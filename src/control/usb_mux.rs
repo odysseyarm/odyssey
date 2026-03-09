@@ -1,6 +1,6 @@
 use crate::mux::Uuid;
 
-pub const SEMVER: [u16; 3] = [0, 1, 1];
+pub const SEMVER: [u16; 3] = [0, 1, 3];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -69,4 +69,7 @@ pub enum UsbMuxCtrlMsg {
     StartPairingResponse,
     CancelPairing,
     PairingResult(Result<Uuid, PairingError>),
+
+    AddBond(super::BondEntry),
+    AddBondResponse(Result<(), super::AddBondError>),
 }

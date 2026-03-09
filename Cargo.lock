@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "protodongers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ats_common",
  "defmt",
