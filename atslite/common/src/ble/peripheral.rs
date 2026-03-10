@@ -42,7 +42,7 @@ where
     // Restore any persisted bond into the host so reconnections encrypt without re-pairing.
     let mut bond_stored = if settings::is_initialized() {
         let settings = unsafe { settings::get_settings() };
-        if let Some(bond_info) = settings.ble_bond.to_bond_info() {
+        if let Some(bond_info) = settings::ble_bond_to_bond_info(&settings.ble_bond) {
             match stack.add_bond_information(bond_info) {
                 Ok(()) => {
                     defmt::info!("[ble] Restored bond from settings into host");
@@ -216,7 +216,7 @@ async fn gatt_events_task(
                     // Store bond in settings if initialized
                     if settings::is_initialized() {
                         let settings = unsafe { settings::get_settings() };
-                        settings.ble_bond = settings::BleBondSettings::from_bond_info(&bond);
+                        settings.ble_bond = settings::ble_bond_from_bond_info(&bond);
                         settings.ble_bond_write();
                         defmt::info!("[peripheral] Bond stored to flash");
                     }

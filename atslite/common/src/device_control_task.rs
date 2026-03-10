@@ -8,6 +8,7 @@ use protodongers::control::device::{DeviceMsg, PairingError, TransportMode, Vers
 
 use crate::ble::peripheral;
 use crate::device_control;
+use crate::settings;
 use crate::transport_mode;
 
 /// Function pointer registered by each board to persist the transport mode to flash.
@@ -218,6 +219,22 @@ async fn handle_cmd(
             device_control::try_send_event(DeviceMsg::FlashSettingsAck);
         }
 
+        DeviceMsg::AddBond(entry) => {
+            use protodongers::control::AddBondError;
+            info!("AddBond received for {:02x}", entry.bd_addr);
+            if settings::is_initialized() {
+                let s = unsafe { settings::get_settings() };
+                s.ble_bond = entry.into();
+                s.ble_bond_write();
+                // Disconnect so the peripheral restores the new bond on reconnect
+                peripheral::request_disconnect();
+                device_control::try_send_event(DeviceMsg::AddBondResponse(Ok(())));
+            } else {
+                device_control::try_send_event(DeviceMsg::AddBondResponse(Err(
+                    AddBondError::Failed,
+                )));
+            }
+        }
         _ => {
             // Ignore response messages received as commands
         }

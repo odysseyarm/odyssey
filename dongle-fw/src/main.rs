@@ -57,10 +57,12 @@ use heapless::Vec as HVec;
 // completion before responding.
 enum HostMgmtCmd {
     PurgeBonds(HVec<BondData, { MAX_DEVICES }>),
+    AddBond(BondData),
 }
 
 static HOST_MGMT_CH: Channel<ThreadModeRawMutex, HostMgmtCmd, 2> = Channel::new();
 static HOST_MGMT_DONE: SyncSignal<ThreadModeRawMutex, ()> = SyncSignal::new();
+static HOST_MGMT_ADD_RESULT: SyncSignal<ThreadModeRawMutex, Result<(), ()>> = SyncSignal::new();
 // Capture scan reports during pairing using a host event handler
 struct HostEventHandler;
 impl trouble_host::prelude::EventHandler for HostEventHandler {
@@ -285,8 +287,12 @@ async fn main(mut spawner: Spawner) {
     static STACK_CELL: StaticCell<trouble_host::Stack<'static, Controller, Pool>> =
         StaticCell::new();
     let mut host_seed_rng = ChaCha20Rng::from_seed(seed);
-    // Set a static random address like the examples; replace with a stable ID if desired.
-    let address = trouble_host::Address::random([0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03]);
+    let ficr = embassy_nrf::pac::FICR;
+    let id_low = ficr.deviceid(0).read().to_le_bytes();
+    let id_high = ficr.deviceid(1).read().to_le_bytes();
+    let address = trouble_host::Address::random([
+        id_low[0], id_low[1], id_low[2], id_low[3], id_high[0], id_high[1],
+    ]);
     let stack = STACK_CELL.init(
         trouble_host::new(sdc, resources)
             .set_random_address(address)
@@ -469,6 +475,11 @@ async fn host_mgmt_task(stack: &'static trouble_host::Stack<'static, Controller,
                     let _ = stack.remove_bond_information(info.identity);
                 }
                 HOST_MGMT_DONE.signal(());
+            }
+            HostMgmtCmd::AddBond(bd) => {
+                let info = ble::security::info_from_bonddata(&bd);
+                let result = stack.add_bond_information(info).map_err(|_| ());
+                HOST_MGMT_ADD_RESULT.signal(result);
             }
         }
     }
@@ -891,6 +902,26 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 ble::central::RESTART_CENTRAL.signal(());
 
                 control::try_send_event(C::ClearBondsResponse(Ok(())));
+            }
+            C::AddBond(entry) => {
+                use protodongers::control::AddBondError;
+                info!("CTL AddBond received for {:02x}", entry.bd_addr);
+                let bond: BondData = entry.into();
+                match settings.add_bond(bond).await {
+                    Ok(()) => {
+                        let _ = settings.add_scan_target(bond.bd_addr).await;
+                        ble::security::update_bond_cache(bond).await;
+                        HOST_MGMT_CH.send(HostMgmtCmd::AddBond(bond)).await;
+                        let host_result = HOST_MGMT_ADD_RESULT.wait().await;
+                        if host_result.is_err() {
+                            warn!("AddBond: failed to register bond in host DB");
+                        }
+                        control::try_send_event(C::AddBondResponse(Ok(())));
+                    }
+                    Err(()) => {
+                        control::try_send_event(C::AddBondResponse(Err(AddBondError::Full)));
+                    }
+                }
             }
             _ => {}
         }

@@ -51,26 +51,7 @@ static STORAGE_BUF: StaticCell<[u8; STORAGE_BUF_SIZE]> = StaticCell::new();
 static STORAGE_FLASH: StaticCell<Flash<nrf_mpsl::Flash<'static>, NoCache>> = StaticCell::new();
 
 /// BLE bond information for a single device
-#[derive(Debug, Clone, Copy, Encode, Decode, CborLen)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cbor(map)]
-pub struct BondData {
-    /// Device BD address
-    #[n(0)]
-    pub bd_addr: [u8; 6],
-    /// Long Term Key
-    #[n(1)]
-    pub ltk: [u8; 16],
-    /// Security level (0=none, 1=encrypted, 2=authenticated)
-    #[n(2)]
-    pub security_level: u8,
-    /// Whether bonded
-    #[n(3)]
-    pub is_bonded: bool,
-    /// Identity Resolving Key (optional)
-    #[n(4)]
-    pub irk: Option<[u8; 16]>,
-}
+pub type BondData = protodongers::control::BondEntry;
 
 /// Storage for all BLE bonds (up to MAX_DEVICES)
 #[derive(Debug, Clone, Encode, Decode, CborLen)]

@@ -181,7 +181,7 @@ pub async fn init_core(
 /// Must be called after `init_core()`.
 pub async fn init_nodes() -> &'static mut Settings {
     let h_ble_bond = NODE_BLE_BOND
-        .attach_with_default(&LIST, BleBondSettings::default)
+        .attach_with_default(&LIST, ble_bond_default)
         .await
         .unwrap();
 
@@ -234,7 +234,7 @@ impl Settings {
 
     #[allow(dead_code)]
     pub fn ble_bond_clear(&mut self) {
-        self.ble_bond = BleBondSettings::default();
+        self.ble_bond = ble_bond_default();
         embassy_futures::block_on(async {
             let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
             hb.write(&self.ble_bond).await.unwrap();
@@ -320,72 +320,54 @@ impl GeneralSettings {
     }
 }
 
-#[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
-pub struct BleBondSettings {
-    #[n(0)]
-    pub bd_addr: [u8; 6],
-    #[n(1)]
-    pub ltk: [u8; 16],
-    #[n(2)]
-    pub security_level: u8,
-    #[n(3)]
-    pub is_bonded: bool,
-    #[n(4)]
-    pub irk: Option<[u8; 16]>,
-}
+pub type BleBondSettings = protodongers::control::BondEntry;
 
-impl Default for BleBondSettings {
-    fn default() -> Self {
-        Self {
-            bd_addr: [0; 6],
-            ltk: [0; 16],
-            security_level: 0,
-            is_bonded: false,
-            irk: None,
-        }
+pub fn ble_bond_default() -> BleBondSettings {
+    BleBondSettings {
+        bd_addr: [0; 6],
+        ltk: [0; 16],
+        security_level: 0,
+        is_bonded: false,
+        irk: None,
     }
 }
 
-impl BleBondSettings {
-    pub fn from_bond_info(info: &trouble_host::prelude::BondInformation) -> Self {
-        let mut bd_addr = [0u8; 6];
-        bd_addr.copy_from_slice(info.identity.bd_addr.raw());
-        Self {
-            bd_addr,
-            ltk: info.ltk.to_le_bytes(),
-            security_level: match info.security_level {
-                trouble_host::prelude::SecurityLevel::NoEncryption => 0,
-                trouble_host::prelude::SecurityLevel::Encrypted => 1,
-                trouble_host::prelude::SecurityLevel::EncryptedAuthenticated => 2,
-            },
-            is_bonded: info.is_bonded,
-            irk: info.identity.irk.map(|irk| irk.to_le_bytes()),
-        }
-    }
-
-    pub fn to_bond_info(&self) -> Option<trouble_host::prelude::BondInformation> {
-        if !self.is_bonded {
-            return None;
-        }
-
-        Some(trouble_host::prelude::BondInformation {
-            identity: trouble_host::prelude::Identity {
-                bd_addr: trouble_host::prelude::BdAddr::new(self.bd_addr),
-                irk: self
-                    .irk
-                    .map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
-            },
-            security_level: match self.security_level {
-                0 => trouble_host::prelude::SecurityLevel::NoEncryption,
-                1 => trouble_host::prelude::SecurityLevel::Encrypted,
-                2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
-                _ => trouble_host::prelude::SecurityLevel::NoEncryption,
-            },
-            is_bonded: self.is_bonded,
-            ltk: trouble_host::prelude::LongTermKey::from_le_bytes(self.ltk),
-        })
+pub fn ble_bond_from_bond_info(info: &trouble_host::prelude::BondInformation) -> BleBondSettings {
+    let mut bd_addr = [0u8; 6];
+    bd_addr.copy_from_slice(info.identity.bd_addr.raw());
+    BleBondSettings {
+        bd_addr,
+        ltk: info.ltk.to_le_bytes(),
+        security_level: match info.security_level {
+            trouble_host::prelude::SecurityLevel::NoEncryption => 0,
+            trouble_host::prelude::SecurityLevel::Encrypted => 1,
+            trouble_host::prelude::SecurityLevel::EncryptedAuthenticated => 2,
+        },
+        is_bonded: info.is_bonded,
+        irk: info.identity.irk.map(|irk| irk.to_le_bytes()),
     }
 }
+
+pub fn ble_bond_to_bond_info(b: &BleBondSettings) -> Option<trouble_host::prelude::BondInformation> {
+    if !b.is_bonded {
+        return None;
+    }
+    Some(trouble_host::prelude::BondInformation {
+        identity: trouble_host::prelude::Identity {
+            bd_addr: trouble_host::prelude::BdAddr::new(b.bd_addr),
+            irk: b.irk.map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
+        },
+        security_level: match b.security_level {
+            0 => trouble_host::prelude::SecurityLevel::NoEncryption,
+            1 => trouble_host::prelude::SecurityLevel::Encrypted,
+            2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
+            _ => trouble_host::prelude::SecurityLevel::NoEncryption,
+        },
+        is_bonded: b.is_bonded,
+        ltk: trouble_host::prelude::LongTermKey::from_le_bytes(b.ltk),
+    })
+}
+
 
 /// PAG7665QN sensor settings that persist across power cycles
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
