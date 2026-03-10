@@ -5,7 +5,7 @@ pub mod device;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(minicbor::Encode, minicbor::Decode, minicbor::CborLen))]
 #[cfg_attr(feature = "minicbor", cbor(map))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BondEntry {
     #[cfg_attr(feature = "minicbor", n(0))]
