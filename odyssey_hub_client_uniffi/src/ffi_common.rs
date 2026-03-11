@@ -31,6 +31,15 @@ pub struct Device {
 pub enum Event {
     AccessoryEvent(AccessoryEvent),
     DeviceEvent(DeviceEvent),
+    DonglePairingResult(DonglePairingResult),
+}
+
+#[derive(uniffi::Record, Clone)]
+pub struct DonglePairingResult {
+    pub dongle_id: String,
+    pub success: bool,
+    pub paired_address: Vec<u8>,
+    pub error: String,
 }
 
 #[derive(uniffi::Record, Clone)]
@@ -48,6 +57,21 @@ pub enum DeviceEventKind {
     SaveZeroResult(bool),
     PacketEvent(PacketEvent),
     CapabilitiesChanged,
+    PairingResult(PairingResult),
+    BatteryEvent(BatteryEvent),
+}
+
+#[derive(uniffi::Record, Clone)]
+pub struct PairingResult {
+    pub success: bool,
+    pub paired_address: Vec<u8>,
+    pub error: String,
+}
+
+#[derive(uniffi::Record, Clone)]
+pub struct BatteryEvent {
+    pub percent: u8,
+    pub charging: bool,
 }
 
 #[derive(uniffi::Record, Clone)]
@@ -314,9 +338,35 @@ impl From<common::events::Event> for Event {
                         common::events::DeviceEventKind::CapabilitiesChanged => {
                             DeviceEventKind::CapabilitiesChanged
                         }
+                        common::events::DeviceEventKind::PairingResult {
+                            success,
+                            paired_address,
+                            error,
+                        } => DeviceEventKind::PairingResult(PairingResult {
+                            success,
+                            paired_address: paired_address.to_vec(),
+                            error,
+                        }),
+                        common::events::DeviceEventKind::BatteryEvent(e) => {
+                            DeviceEventKind::BatteryEvent(BatteryEvent {
+                                percent: e.percent,
+                                charging: e.charging,
+                            })
+                        }
                     },
                 })
             }
+            common::events::Event::DonglePairingResult {
+                dongle_id,
+                success,
+                paired_address,
+                error,
+            } => Event::DonglePairingResult(DonglePairingResult {
+                dongle_id,
+                success,
+                paired_address: paired_address.to_vec(),
+                error,
+            }),
         }
     }
 }

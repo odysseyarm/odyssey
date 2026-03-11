@@ -82,13 +82,14 @@ pub struct AccessoryMapStream {
 impl EventStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Event, ClientError> {
-        if let Some(msg) = self.inner.lock().await.next().await {
-            match msg {
-                Ok(event) => Ok(odyssey_hub_common::events::Event::from(event).into()),
-                Err(_) => Err(ClientError::StreamEnd),
+        loop {
+            match self.inner.lock().await.next().await {
+                Some(Ok(event)) => match odyssey_hub_common::events::Event::try_from(event) {
+                    Ok(ev) => return Ok(ev.into()),
+                    Err(_) => continue,
+                },
+                Some(Err(_)) | None => return Err(ClientError::StreamEnd),
             }
-        } else {
-            Err(ClientError::StreamEnd)
         }
     }
 }

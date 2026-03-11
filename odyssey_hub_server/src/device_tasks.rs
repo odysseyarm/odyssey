@@ -272,7 +272,8 @@ async fn usb_device_manager(
             for (idx, (stored_info, _slot)) in hm_guard.iter().enumerate() {
                 let still_present = devices.iter().any(|d| {
                     d.vendor_id() == 0x1915
-                        && d.product_id() == 0x5212
+                        && protodongers::ProductId::from_u16(d.product_id())
+                            == Some(protodongers::ProductId::Mux)
                         && d.id() == stored_info.id()
                 });
                 if !still_present {
@@ -329,15 +330,15 @@ async fn usb_device_manager(
             let pid = dev_info.product_id();
 
             // Skip non-ATS devices
-            if !matches!(pid, 0x520f | 0x5210 | 0x5211 | 0x5212) {
+            let Some(product_id) = protodongers::ProductId::from_u16(pid) else {
                 continue;
-            }
+            };
 
             // Note: We no longer skip ATS Lites in BLE mode - we enumerate them for DFU/pairing support
             // The device will be connected using connect_usb_any_mode() which works regardless of transport mode
 
-            if pid == 0x5212 {
-                // Hub/dongle (0x5212) - check if we're already managing this hub
+            if product_id == protodongers::ProductId::Mux {
+                // Hub/dongle - check if we're already managing this hub
                 let mut hub_managers_guard = hub_managers.lock().await;
 
                 // Find if this hub is in our list
@@ -400,8 +401,12 @@ async fn usb_device_manager(
                 let hub_manager_handle = tokio::spawn(async move {
                     tracing::info!("Hub manager task started for hub {:?}", hub_info);
 
-                    // Track devices managed by this hub for cleanup on exit
+                    // Track devices managed by this hub for cleanup on exit.
+                    // Stores BLE addresses (not UUIDs) so snapshot diffs work correctly
+                    // even when a device's UUID differs from its BLE address.
                     let mut hub_devices = std::collections::HashSet::<[u8; 6]>::new();
+                    // Maps BLE address -> device UUID for device_handles lookups.
+                    let mut hub_device_uuids = std::collections::HashMap::<[u8; 6], [u8; 6]>::new();
 
                     // Register dongle in dongle list
                     let dongle_id = hub_info.serial_number().unwrap_or("unknown").to_string();
@@ -583,194 +588,172 @@ async fn usb_device_manager(
                                             );
 
                                             // Connect via VmDevice to properly handle streaming
-                                            match ats_usb::device::VmDevice::connect_via_mux(
+                                            let vm_device = match ats_usb::device::VmDevice::connect_via_mux(
                                                 hub_clone.clone(),
                                                 addr_copy,
                                             )
                                             .await
                                             {
-                                                Ok(vm_device) => {
-                                                    // Read actual UUID from device
-                                                    let uuid = match vm_device
-                                                        .read_prop(protodongers::PropKind::Uuid)
-                                                        .await
-                                                    {
-                                                        Ok(protodongers::Props::Uuid(
-                                                            uuid_bytes,
-                                                        )) => uuid_bytes,
-                                                        Ok(other) => {
-                                                            tracing::warn!(
-                                                                "Expected Uuid prop, got {:?}",
-                                                                other
-                                                            );
-                                                            addr_copy
-                                                        }
-                                                        Err(e) => {
-                                                            tracing::warn!(
-                                                                            "Failed to read UUID from device: {}",
-                                                                            e
-                                                                        );
-                                                            addr_copy
-                                                        }
-                                                    };
-
-                                                    tracing::info!(
-                                                        "Device {:02x?} has UUID {:02x?}",
-                                                        addr_copy,
-                                                        uuid
+                                                Ok(v) => v,
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "Failed to connect to hub device {:02x?} during snapshot: {}",
+                                                        addr_copy, e
                                                     );
+                                                    continue;
+                                                }
+                                            };
 
-                                                    // Read firmware and events protocol version via packet interface (works over BLE)
-                                                    let (version, proto_version) = match vm_device.request(protodongers::PacketData::ReadVersion()).await {
-                                                                    Ok(protodongers::PacketData::ReadVersionResponse(v)) => {
-                                                                        tracing::info!(
-                                                                            "BLE device {:02x?} firmware version: {}.{}.{}, events protocol: {}.{}.{}",
-                                                                            uuid,
-                                                                            v.firmware_semver[0],
-                                                                            v.firmware_semver[1],
-                                                                            v.firmware_semver[2],
-                                                                            v.protocol_semver[0],
-                                                                            v.protocol_semver[1],
-                                                                            v.protocol_semver[2],
-                                                                        );
-                                                                        ([v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]], v.protocol_semver)
-                                                                    }
-                                                                    Ok(other) => {
-                                                                        tracing::warn!("Unexpected response reading version from BLE device {:02x?}: {:?}", uuid, other);
-                                                                        ([0, 0, 0], [0, 0, 0])
-                                                                    }
-                                                                    Err(e) => {
-                                                                        tracing::warn!("Failed to read version from BLE device {:02x?}: {}", uuid, e);
-                                                                        ([0, 0, 0], [0, 0, 0])
-                                                                    }
-                                                                };
-
-                                                    let product_id = match vm_device
-                                                        .read_prop(
-                                                            protodongers::PropKind::ProductId,
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(protodongers::Props::ProductId(id)) => {
-                                                            id
-                                                        }
-                                                        _ => 0,
-                                                    };
-
-                                                    let device_meta = Device {
-                                                                    uuid,
-                                                                    transport: odyssey_hub_common::device::Transport::UsbMux,
-                                                                    // EVENTS capability and events_connected will be
-                                                                    // set to true by AddEventsDevice handler once
-                                                                    // streams are actually established.
-                                                                    capabilities: odyssey_hub_common::device::DeviceCapabilities::empty(),
-                                                                    firmware_version: version,
-                                                                    events_transport: odyssey_hub_common::device::EventsTransport::Bluetooth,
-                                                                    events_connected: false,
-                                                                    product_id,
-                                                                };
-
-                                                    // Check if device is already connected via USB direct before creating handler
-                                                    let mut dh = device_handles_clone.lock().await;
-                                                    tracing::info!("BLE mux device {:02x?} discovered (hub path), checking if already connected. device_handles has {} entries", uuid, dh.len());
-
-                                                    // Evict stale entries whose handler task has already finished.
-                                                    // This can happen after SetTransportMode causes the handler to
-                                                    // break immediately, leaving a dead entry in device_handles.
-                                                    if let Some((_, existing_handle)) = dh.get(&uuid) {
-                                                        if existing_handle.is_finished() {
-                                                            tracing::info!("BLE: Device {:02x?} has a finished handler, evicting stale entry", uuid);
-                                                            dh.remove(&uuid);
-                                                        }
-                                                    }
-
-                                                    if let Some((
-                                                        existing_cmd_tx,
-                                                        _existing_handle,
-                                                    )) = dh.get(&uuid)
-                                                    {
-                                                        // Device already exists, send AddEventsDevice to merge BLE events
-                                                        tracing::info!("Device {:02x?} found in device_handles, merging by adding BLE mux for events", uuid);
-                                                        let result = existing_cmd_tx
-                                                            .send(
-                                                                DeviceTaskMessage::AddEventsDevice(
-                                                                    vm_device,
-                                                                    proto_version,
-                                                                ),
-                                                            )
-                                                            .await;
-                                                        tracing::info!("AddEventsDevice message sent for {:02x?}, result: {:?}", uuid, result);
-
-                                                        // Add to hub_devices so it gets cleaned up when hub disconnects
-                                                        hub_devices.insert(uuid);
-                                                    } else {
-                                                        tracing::info!("Device {:02x?} not found in device_handles, creating new BLE mux handler", uuid);
-                                                        // New device, create handler and add it
-                                                        drop(dh); // Release lock before spawning
-
-                                                        let (ctrl_tx, ctrl_rx) =
-                                                            mpsc::channel::<DeviceTaskMessage>(32);
-
-                                                        // Start with no events device; AddEventsDevice is
-                                                        // queued immediately below so it goes through the
-                                                        // same handler path as USB-first+BLE (which works).
-                                                        // This avoids a race where startup reads config
-                                                        // before streaming, staling the vm_device.
-                                                        let connections = DeviceConnections {
-                                                                        control_device: None,
-                                                                        events_device: None,
-                                                                        transport_mode: protodongers::control::device::TransportMode::Ble,
-                                                                    };
-
-                                                        let dh_handle =
-                                                            tokio::spawn(device_handler_task(
-                                                                connections,
-                                                                device_meta.clone(),
-                                                                ctrl_rx,
-                                                                sc_clone.clone(),
-                                                                doff_clone.clone(),
-                                                                dsd_clone.clone(),
-                                                                swatch_clone.clone(),
-                                                                ev_clone.clone(),
-                                                                message_channel_clone.clone(),
-                                                                direct_usb_uuids_clone.clone(),
-                                                                proto_version, // events protocol version read via PacketData::ReadVersion()
-                                                            ));
-
-                                                        let mut dh =
-                                                            device_handles_clone.lock().await;
-                                                        dh.insert(
-                                                            uuid,
-                                                            (ctrl_tx.clone(), dh_handle),
-                                                        );
-                                                        hub_devices.insert(uuid);
-
-                                                        // Send Connect first so the client knows about
-                                                        // the device before UpdateDevice can arrive.
-                                                        let channels = DeviceChannels {
-                                                            commands: Some(ctrl_tx.clone()),
-                                                        };
-                                                        let _ = message_channel_clone
-                                                            .send(Message::Connect(
-                                                                device_meta,
-                                                                channels,
-                                                            ))
-                                                            .await;
-
-                                                        // Queue AddEventsDevice so streams are started
-                                                        // via the handler (start_sensor_streams before
-                                                        // read_all_config, consistent with USB-first path).
-                                                        let _ = ctrl_tx
-                                                            .send(DeviceTaskMessage::AddEventsDevice(vm_device, proto_version))
-                                                            .await;
-                                                    }
+                                            // Read actual UUID from device
+                                            let uuid = match vm_device
+                                                .read_prop(protodongers::PropKind::Uuid)
+                                                .await
+                                            {
+                                                Ok(protodongers::Props::Uuid(uuid_bytes)) => uuid_bytes,
+                                                Ok(other) => {
+                                                    tracing::warn!(
+                                                        "Expected Uuid prop, got {:?}",
+                                                        other
+                                                    );
+                                                    addr_copy
                                                 }
                                                 Err(e) => {
                                                     tracing::warn!(
-                                                                    "Failed to connect to hub device {:02x?} during snapshot: {}",
-                                                                    addr_copy, e
-                                                                );
+                                                        "Failed to read UUID from device: {}",
+                                                        e
+                                                    );
+                                                    addr_copy
                                                 }
+                                            };
+
+                                            tracing::info!(
+                                                "Device {:02x?} has UUID {:02x?}",
+                                                addr_copy,
+                                                uuid
+                                            );
+
+                                            // Read firmware and events protocol version via packet interface (works over BLE)
+                                            let (version, proto_version) = match vm_device.request(protodongers::PacketData::ReadVersion()).await {
+                                                Ok(protodongers::PacketData::ReadVersionResponse(v)) => {
+                                                    tracing::info!(
+                                                        "BLE device {:02x?} firmware version: {}.{}.{}, events protocol: {}.{}.{}",
+                                                        uuid,
+                                                        v.firmware_semver[0],
+                                                        v.firmware_semver[1],
+                                                        v.firmware_semver[2],
+                                                        v.protocol_semver[0],
+                                                        v.protocol_semver[1],
+                                                        v.protocol_semver[2],
+                                                    );
+                                                    ([v.firmware_semver[0], v.firmware_semver[1], v.firmware_semver[2]], v.protocol_semver)
+                                                }
+                                                Ok(other) => {
+                                                    tracing::warn!("Unexpected response reading version from BLE device {:02x?}: {:?}", uuid, other);
+                                                    ([0, 0, 0], [0, 0, 0])
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Failed to read version from BLE device {:02x?}: {}", uuid, e);
+                                                    ([0, 0, 0], [0, 0, 0])
+                                                }
+                                            };
+
+                                            let product_id = match vm_device
+                                                .read_prop(protodongers::PropKind::ProductId)
+                                                .await
+                                            {
+                                                Ok(protodongers::Props::ProductId(id)) => id,
+                                                _ => 0,
+                                            };
+
+                                            let device_meta = Device {
+                                                uuid,
+                                                transport: odyssey_hub_common::device::Transport::UsbMux,
+                                                // EVENTS capability and events_connected will be
+                                                // set to true by AddEventsDevice handler once
+                                                // streams are actually established.
+                                                capabilities: odyssey_hub_common::device::DeviceCapabilities::empty(),
+                                                firmware_version: version,
+                                                events_transport: odyssey_hub_common::device::EventsTransport::Bluetooth,
+                                                events_connected: false,
+                                                product_id,
+                                            };
+
+                                            // Check if device is already connected via USB direct before creating handler
+                                            let mut dh = device_handles_clone.lock().await;
+                                            tracing::info!("BLE mux device {:02x?} discovered (hub path), checking if already connected. device_handles has {} entries", uuid, dh.len());
+
+                                            // Evict stale entries whose handler task has already finished.
+                                            // This can happen after SetTransportMode causes the handler to
+                                            // break immediately, leaving a dead entry in device_handles.
+                                            if let Some((_, existing_handle)) = dh.get(&uuid) {
+                                                if existing_handle.is_finished() {
+                                                    tracing::info!("BLE: Device {:02x?} has a finished handler, evicting stale entry", uuid);
+                                                    dh.remove(&uuid);
+                                                }
+                                            }
+
+                                            if let Some((existing_cmd_tx, _existing_handle)) = dh.get(&uuid) {
+                                                // Device already exists, send AddEventsDevice to merge BLE events
+                                                tracing::info!("Device {:02x?} found in device_handles, merging by adding BLE mux for events", uuid);
+                                                let result = existing_cmd_tx
+                                                    .send(DeviceTaskMessage::AddEventsDevice(vm_device, proto_version))
+                                                    .await;
+                                                tracing::info!("AddEventsDevice message sent for {:02x?}, result: {:?}", uuid, result);
+                                                // Add to hub_devices (by BLE addr) so it gets cleaned up when hub disconnects
+                                                hub_devices.insert(addr_copy);
+                                                hub_device_uuids.insert(addr_copy, uuid);
+                                            } else {
+                                                tracing::info!("Device {:02x?} not found in device_handles, creating new BLE mux handler", uuid);
+                                                // New device, create handler and add it
+                                                drop(dh); // Release lock before spawning
+
+                                                let (ctrl_tx, ctrl_rx) = mpsc::channel::<DeviceTaskMessage>(32);
+
+                                                // Start with no events device; AddEventsDevice is
+                                                // queued immediately below so it goes through the
+                                                // same handler path as USB-first+BLE (which works).
+                                                // This avoids a race where startup reads config
+                                                // before streaming, staling the vm_device.
+                                                let connections = DeviceConnections {
+                                                    control_device: None,
+                                                    events_device: None,
+                                                    transport_mode: protodongers::control::device::TransportMode::Ble,
+                                                };
+
+                                                let dh_handle = tokio::spawn(device_handler_task(
+                                                    connections,
+                                                    device_meta.clone(),
+                                                    ctrl_rx,
+                                                    sc_clone.clone(),
+                                                    doff_clone.clone(),
+                                                    dsd_clone.clone(),
+                                                    swatch_clone.clone(),
+                                                    ev_clone.clone(),
+                                                    message_channel_clone.clone(),
+                                                    direct_usb_uuids_clone.clone(),
+                                                    proto_version, // events protocol version read via PacketData::ReadVersion()
+                                                ));
+
+                                                let mut dh = device_handles_clone.lock().await;
+                                                dh.insert(uuid, (ctrl_tx.clone(), dh_handle));
+                                                hub_devices.insert(addr_copy);
+                                                hub_device_uuids.insert(addr_copy, uuid);
+
+                                                // Send Connect first so the client knows about
+                                                // the device before UpdateDevice can arrive.
+                                                let channels = DeviceChannels {
+                                                    commands: Some(ctrl_tx.clone()),
+                                                };
+                                                let _ = message_channel_clone
+                                                    .send(Message::Connect(device_meta, channels))
+                                                    .await;
+
+                                                // Queue AddEventsDevice so streams are started
+                                                // via the handler (start_sensor_streams before
+                                                // read_all_config, consistent with USB-first path).
+                                                let _ = ctrl_tx
+                                                    .send(DeviceTaskMessage::AddEventsDevice(vm_device, proto_version))
+                                                    .await;
                                             }
                                         }
 
@@ -781,14 +764,14 @@ async fn usb_device_manager(
                                             .filter(|a| !new_set.contains(a))
                                             .collect();
                                         for addr in to_remove {
-                                            let uuid = addr;
+                                            let uuid = hub_device_uuids.remove(&addr).unwrap_or(addr);
                                             tracing::info!(
-                                                        "DevicesSnapshot: BLE device {:02x?} disconnected from hub",
-                                                        uuid
+                                                        "DevicesSnapshot: BLE device {:02x?} (UUID {:02x?}) disconnected from hub",
+                                                        addr, uuid
                                                     );
 
                                             // Remove from hub_devices tracking
-                                            hub_devices.remove(&uuid);
+                                            hub_devices.remove(&addr);
 
                                             // Check if this device has a handler - if so, send RemoveEventsDevice
                                             // instead of destroying it (it might still have USB control)
@@ -916,17 +899,18 @@ async fn usb_device_manager(
                         hub_info,
                         hub_devices.len()
                     );
-                    for uuid in hub_devices {
+                    for addr in hub_devices {
+                        let uuid = hub_device_uuids.get(&addr).copied().unwrap_or(addr);
                         let dh = device_handles_clone.lock().await;
                         if let Some((cmd_tx, _handle)) = dh.get(&uuid) {
                             // Send RemoveEventsDevice to remove BLE mux events
                             // The handler will decide if it should exit (no control) or continue (has USB control)
-                            tracing::info!("Sending RemoveEventsDevice for {:02x?}", uuid);
+                            tracing::info!("Sending RemoveEventsDevice for addr {:02x?} (UUID {:02x?})", addr, uuid);
                             let _ = cmd_tx.send(DeviceTaskMessage::RemoveEventsDevice).await;
                         } else {
                             tracing::warn!(
-                                "Device {:02x?} not found in device_handles during cleanup",
-                                uuid
+                                "Device addr {:02x?} (UUID {:02x?}) not found in device_handles during cleanup",
+                                addr, uuid
                             );
                         }
                     }
@@ -943,13 +927,13 @@ async fn usb_device_manager(
                     hm.push((dev_info.clone(), hub_slot));
                 }
             } else {
-                // Direct USB device (VmDevice) - 0x520F, 0x5210, or 0x5211
+                // Direct USB device (VmDevice) - AtsVm, AtsLite, or AtsPro
                 // First check if we should even connect to this device
                 let direct_usb_id = format!("{:?}", dev_info.id());
                 present_direct_usb_ids.insert(direct_usb_id.clone());
                 debug!(
-                    "Found direct USB device PID: 0x{:04x}, checking if already connected",
-                    pid
+                    "Found direct USB device {:?}, checking if already connected",
+                    product_id
                 );
 
                 // Connect and read UUID/version/transport mode first
@@ -957,70 +941,10 @@ async fn usb_device_manager(
                 let (uuid, version, events_proto_semver, transport_mode, vm_device_temp) = {
                     match VmDevice::connect_usb_any_mode(dev_info.clone()).await {
                         Ok(vm_device) => {
-                            // Read UUID - use control plane for devices that support it (ATS Lite/Lite1), packets for others
-                            let uuid = if pid == 0x5210 || pid == 0x5211 {
-                                // ATS Lite/Lite1 - use control plane (works in any transport mode)
-                                // Retry up to 3 times with delays
-                                let mut uuid_result = None;
-                                for attempt in 1..=3 {
-                                    match vm_device.read_uuid().await {
-                                        Ok(uuid) => {
-                                            uuid_result = Some(uuid);
-                                            break;
-                                        }
-                                        Err(e) => {
-                                            if attempt < 3 {
-                                                debug!(
-                                                    "ATS Lite: Failed to read UUID via control (attempt {}): {}, retrying...",
-                                                    attempt, e
-                                                );
-                                                sleep(Duration::from_millis(500)).await;
-                                            } else {
-                                                warn!(
-                                                    "ATS Lite: Failed to read UUID via control after 3 attempts: {}, skipping",
-                                                    e
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                match uuid_result {
-                                    Some(uuid) => uuid,
-                                    None => continue,
-                                }
-                            } else {
-                                // Other devices - use packet-based reading with retries
-                                let mut uuid_result = None;
-                                for attempt in 1..=3 {
-                                    match vm_device.read_prop(protodongers::PropKind::Uuid).await {
-                                        Ok(protodongers::Props::Uuid(bytes)) => {
-                                            uuid_result = Some(bytes);
-                                            break;
-                                        }
-                                        Ok(other) => {
-                                            warn!(
-                                                "Expected Uuid prop, got {:?}, skipping device",
-                                                other
-                                            );
-                                            break; // Don't retry on wrong response type
-                                        }
-                                        Err(e) => {
-                                            if attempt < 3 {
-                                                debug!(
-                                                    "Failed to read UUID (attempt {}): {}, retrying...",
-                                                    attempt, e
-                                                );
-                                                sleep(Duration::from_millis(500)).await;
-                                            } else {
-                                                warn!("Failed to read UUID after 3 attempts: {}, skipping device", e);
-                                            }
-                                        }
-                                    }
-                                }
-                                match uuid_result {
-                                    Some(uuid) => uuid,
-                                    None => continue,
-                                }
+                            // Read UUID - use control plane for AtsLite/AtsPro (control endpoint),
+                            // packet protocol for AtsVm. Retries up to 3 times.
+                            let Some(uuid) = read_uuid_with_retry(&vm_device, product_id).await else {
+                                continue;
                             };
 
                             // Read firmware version via control plane (works in any transport mode)
@@ -1290,6 +1214,53 @@ async fn usb_device_manager(
 
         sleep(Duration::from_secs(2)).await;
     }
+}
+
+/// Read a device UUID with up to 3 retries.
+/// Uses the control plane (read_uuid) for AtsLite/AtsPro (have a control endpoint),
+/// or the packet protocol (read_prop) for AtsVm.
+async fn read_uuid_with_retry(vm_device: &VmDevice, product_id: protodongers::ProductId) -> Option<[u8; 6]> {
+    if matches!(product_id, protodongers::ProductId::AtsLite | protodongers::ProductId::AtsPro) {
+        for attempt in 1u8..=3 {
+            match vm_device.read_uuid().await {
+                Ok(uuid) => return Some(uuid),
+                Err(e) if attempt < 3 => {
+                    debug!(
+                        "ATS Lite: Failed to read UUID via control (attempt {}): {}, retrying...",
+                        attempt, e
+                    );
+                    sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => {
+                    warn!(
+                        "ATS Lite: Failed to read UUID via control after 3 attempts: {}, skipping",
+                        e
+                    );
+                }
+            }
+        }
+    } else {
+        for attempt in 1u8..=3 {
+            match vm_device.read_prop(protodongers::PropKind::Uuid).await {
+                Ok(protodongers::Props::Uuid(bytes)) => return Some(bytes),
+                Ok(other) => {
+                    warn!("Expected Uuid prop, got {:?}, skipping device", other);
+                    return None;
+                }
+                Err(e) if attempt < 3 => {
+                    debug!(
+                        "Failed to read UUID (attempt {}): {}, retrying...",
+                        attempt, e
+                    );
+                    sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => {
+                    warn!("Failed to read UUID after 3 attempts: {}, skipping device", e);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Start all sensor streams for a given events device.
@@ -1678,61 +1649,105 @@ async fn device_handler_task(
                         let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
                         if !device.events_connected {
                             let _ = reply.send(Err("events transport not connected".into()));
-                        } else if let Some(dev) = connections.events_device.as_ref().cloned() {
-                            // Pause sensor streams to avoid PAG mutex contention on the firmware.
-                            // obj_loop holds the PAG mutex during get_objects(); if a ReadRegister
-                            // arrives while that lock is held, recv_loop blocks for the full
-                            // get_objects() duration. We send DisableAll first (an acknowledged
-                            // round-trip) so obj_loop stops before ReadRegister reaches the firmware.
-                            //
-                            // We pause once for the whole batch (first read in the sequence) and
-                            // restart via a 100 ms debounce after the last read, rather than
-                            // cycling streams around every individual read.
-                            if has_sensor_streams {
-                                streams_paused = true;
-                                sensor_streams = SelectAll::new();
-                                has_sensor_streams = false;
-                                // clear_all_streams() sends DisableAll and waits for Ack, ensuring
-                                // the firmware has processed DisableAll before we send ReadRegister.
-                                if let Err(e) = dev.clear_all_streams().await {
-                                    warn!("clear_all_streams failed before ReadRegister for {:02x?}: {}", device.uuid, e);
-                                }
-                            }
-                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_register(port, bank, address)).await {
-                                Ok(r) => r.map_err(|e| e.to_string()),
-                                Err(_) => Err("read_register timed out".into()),
-                            };
-                            let _ = reply.send(result);
-                            // Arm/reset the debounce timer. Streams will restart once no register
-                            // ops arrive for 100 ms (i.e., after the last read in the batch).
-                            if streams_paused {
-                                streams_resume_sleep.as_mut().reset(
-                                    tokio::time::Instant::now() + Duration::from_millis(100),
-                                );
-                                streams_resume_armed = true;
-                            }
-                        } else {
+                            continue;
+                        }
+                        let Some(dev) = connections.events_device.as_ref().cloned() else {
                             let _ = reply.send(Err("events device not available".into()));
+                            continue;
+                        };
+                        // Pause sensor streams to avoid PAG mutex contention on the firmware.
+                        // obj_loop holds the PAG mutex during get_objects(); if a ReadRegister
+                        // arrives while that lock is held, recv_loop blocks for the full
+                        // get_objects() duration. We send DisableAll first (an acknowledged
+                        // round-trip) so obj_loop stops before ReadRegister reaches the firmware.
+                        //
+                        // We pause once for the whole batch (first read in the sequence) and
+                        // restart via a 100 ms debounce after the last read, rather than
+                        // cycling streams around every individual read.
+                        if has_sensor_streams {
+                            streams_paused = true;
+                            sensor_streams = SelectAll::new();
+                            has_sensor_streams = false;
+                            // clear_all_streams() sends DisableAll and waits for Ack, ensuring
+                            // the firmware has processed DisableAll before we send ReadRegister.
+                            if let Err(e) = dev.clear_all_streams().await {
+                                warn!("clear_all_streams failed before ReadRegister for {:02x?}: {}", device.uuid, e);
+                            }
+                        }
+                        let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_register(port, bank, address)).await {
+                            Ok(r) => r.map_err(|e| e.to_string()),
+                            Err(_) => Err("read_register timed out".into()),
+                        };
+                        let _ = reply.send(result);
+                        // Arm/reset the debounce timer. Streams will restart once no register
+                        // ops arrive for 100 ms (i.e., after the last read in the batch).
+                        if streams_paused {
+                            streams_resume_sleep.as_mut().reset(
+                                tokio::time::Instant::now() + Duration::from_millis(100),
+                            );
+                            streams_resume_armed = true;
                         }
                     }
                     Some(DeviceTaskMessage::WriteRegister { port, bank, address, data, reply }) => {
                         let port = if port == 0 { protodongers::Port::Nf } else { protodongers::Port::Wf };
                         if !device.events_connected {
                             let _ = reply.send(Err("events transport not connected".into()));
-                        } else if let Some(dev) = connections.events_device.as_ref().cloned() {
-                            // Pause streams while writing registers for the same reason as ReadRegister.
-                            // Uses the same once-per-batch pause + debounce-restart pattern.
+                            continue;
+                        }
+                        let Some(dev) = connections.events_device.as_ref().cloned() else {
+                            let _ = reply.send(Err("events device not available".into()));
+                            continue;
+                        };
+                        // Pause streams while writing registers for the same reason as ReadRegister.
+                        // Uses the same once-per-batch pause + debounce-restart pattern.
+                        if has_sensor_streams {
+                            streams_paused = true;
+                            sensor_streams = SelectAll::new();
+                            has_sensor_streams = false;
+                            if let Err(e) = dev.clear_all_streams().await {
+                                warn!("clear_all_streams failed before WriteRegister for {:02x?}: {}", device.uuid, e);
+                            }
+                        }
+                        let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_register(port, bank, address, data)).await {
+                            Ok(r) => r.map_err(|e| e.to_string()),
+                            Err(_) => Err("write_register timed out".into()),
+                        };
+                        let _ = reply.send(result);
+                        if streams_paused {
+                            streams_resume_sleep.as_mut().reset(
+                                tokio::time::Instant::now() + Duration::from_millis(100),
+                            );
+                            streams_resume_armed = true;
+                        }
+                    }
+                    Some(DeviceTaskMessage::ReadConfig { kind, reply }) => {
+                        let ck = match kind {
+                            0 => ConfigKind::ImpactThreshold,
+                            1 => ConfigKind::SuppressMs,
+                            _ => {
+                                let _ = reply.send(Err(format!("unknown config kind: {kind}")));
+                                continue;
+                            }
+                        };
+                        // read_config uses packet protocol — works over BLE and USB alike.
+                        // Only read_all_config (bulk camera data) is gated on USB transport mode.
+                        if let Some(dev) = connections.events_device.as_ref().cloned() {
                             if has_sensor_streams {
                                 streams_paused = true;
                                 sensor_streams = SelectAll::new();
                                 has_sensor_streams = false;
                                 if let Err(e) = dev.clear_all_streams().await {
-                                    warn!("clear_all_streams failed before WriteRegister for {:02x?}: {}", device.uuid, e);
+                                    warn!("clear_all_streams failed before ReadConfig for {:02x?}: {}", device.uuid, e);
                                 }
                             }
-                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_register(port, bank, address, data)).await {
-                                Ok(r) => r.map_err(|e| e.to_string()),
-                                Err(_) => Err("write_register timed out".into()),
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config(ck)).await {
+                                Ok(Ok(gc)) => Ok(match gc {
+                                    GeneralConfig::ImpactThreshold(v) => v,
+                                    GeneralConfig::SuppressMs(v) => v,
+                                    _ => 0,
+                                }),
+                                Ok(Err(e)) => Err(e.to_string()),
+                                Err(_) => Err("read_config timed out".into()),
                             };
                             let _ = reply.send(result);
                             if streams_paused {
@@ -1741,101 +1756,59 @@ async fn device_handler_task(
                                 );
                                 streams_resume_armed = true;
                             }
+                        } else if let Some(dev) = connections.control_device.as_ref() {
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config_ctrl(ck)).await {
+                                Ok(Ok(gc)) => Ok(match gc {
+                                    GeneralConfig::ImpactThreshold(v) => v,
+                                    GeneralConfig::SuppressMs(v) => v,
+                                    _ => 0,
+                                }),
+                                Ok(Err(e)) => Err(e.to_string()),
+                                Err(_) => Err("read_config_ctrl timed out".into()),
+                            };
+                            let _ = reply.send(result);
                         } else {
-                            let _ = reply.send(Err("events device not available".into()));
-                        }
-                    }
-                    Some(DeviceTaskMessage::ReadConfig { kind, reply }) => {
-                        let config_kind = match kind {
-                            0 => Some(ConfigKind::ImpactThreshold),
-                            1 => Some(ConfigKind::SuppressMs),
-                            _ => None,
-                        };
-                        if let Some(ck) = config_kind {
-                            // read_config uses packet protocol — works over BLE and USB alike.
-                            // Only read_all_config (bulk camera data) is gated on USB transport mode.
-                            if let Some(dev) = connections.events_device.as_ref().cloned() {
-                                if has_sensor_streams {
-                                    streams_paused = true;
-                                    sensor_streams = SelectAll::new();
-                                    has_sensor_streams = false;
-                                    if let Err(e) = dev.clear_all_streams().await {
-                                        warn!("clear_all_streams failed before ReadConfig for {:02x?}: {}", device.uuid, e);
-                                    }
-                                }
-                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config(ck)).await {
-                                    Ok(Ok(gc)) => Ok(match gc {
-                                        GeneralConfig::ImpactThreshold(v) => v,
-                                        GeneralConfig::SuppressMs(v) => v,
-                                        _ => 0,
-                                    }),
-                                    Ok(Err(e)) => Err(e.to_string()),
-                                    Err(_) => Err("read_config timed out".into()),
-                                };
-                                let _ = reply.send(result);
-                                if streams_paused {
-                                    streams_resume_sleep.as_mut().reset(
-                                        tokio::time::Instant::now() + Duration::from_millis(100),
-                                    );
-                                    streams_resume_armed = true;
-                                }
-                            } else if let Some(dev) = connections.control_device.as_ref() {
-                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config_ctrl(ck)).await {
-                                    Ok(Ok(gc)) => Ok(match gc {
-                                        GeneralConfig::ImpactThreshold(v) => v,
-                                        GeneralConfig::SuppressMs(v) => v,
-                                        _ => 0,
-                                    }),
-                                    Ok(Err(e)) => Err(e.to_string()),
-                                    Err(_) => Err("read_config_ctrl timed out".into()),
-                                };
-                                let _ = reply.send(result);
-                            } else {
-                                let _ = reply.send(Err("no device available for read_config".into()));
-                            }
-                        } else {
-                            let _ = reply.send(Err(format!("unknown config kind: {kind}")));
+                            let _ = reply.send(Err("no device available for read_config".into()));
                         }
                     }
                     Some(DeviceTaskMessage::WriteConfig { kind, value, reply }) => {
-                        let config = match kind {
-                            0 => Some(GeneralConfig::ImpactThreshold(value)),
-                            1 => Some(GeneralConfig::SuppressMs(value)),
-                            _ => None,
-                        };
-                        if let Some(gc) = config {
-                            // write_config uses packet protocol — works over BLE and USB alike.
-                            if let Some(dev) = connections.events_device.as_ref().cloned() {
-                                if has_sensor_streams {
-                                    streams_paused = true;
-                                    sensor_streams = SelectAll::new();
-                                    has_sensor_streams = false;
-                                    if let Err(e) = dev.clear_all_streams().await {
-                                        warn!("clear_all_streams failed before WriteConfig for {:02x?}: {}", device.uuid, e);
-                                    }
-                                }
-                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config(gc)).await {
-                                    Ok(r) => r.map_err(|e| e.to_string()),
-                                    Err(_) => Err("write_config timed out".into()),
-                                };
-                                let _ = reply.send(result);
-                                if streams_paused {
-                                    streams_resume_sleep.as_mut().reset(
-                                        tokio::time::Instant::now() + Duration::from_millis(100),
-                                    );
-                                    streams_resume_armed = true;
-                                }
-                            } else if let Some(dev) = connections.control_device.as_ref() {
-                                let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config_ctrl(gc)).await {
-                                    Ok(r) => r.map_err(|e| e.to_string()),
-                                    Err(_) => Err("write_config_ctrl timed out".into()),
-                                };
-                                let _ = reply.send(result);
-                            } else {
-                                let _ = reply.send(Err("no device available for write_config".into()));
+                        let gc = match kind {
+                            0 => GeneralConfig::ImpactThreshold(value),
+                            1 => GeneralConfig::SuppressMs(value),
+                            _ => {
+                                let _ = reply.send(Err(format!("unknown config kind: {kind}")));
+                                continue;
                             }
+                        };
+                        // write_config uses packet protocol — works over BLE and USB alike.
+                        if let Some(dev) = connections.events_device.as_ref().cloned() {
+                            if has_sensor_streams {
+                                streams_paused = true;
+                                sensor_streams = SelectAll::new();
+                                has_sensor_streams = false;
+                                if let Err(e) = dev.clear_all_streams().await {
+                                    warn!("clear_all_streams failed before WriteConfig for {:02x?}: {}", device.uuid, e);
+                                }
+                            }
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config(gc)).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("write_config timed out".into()),
+                            };
+                            let _ = reply.send(result);
+                            if streams_paused {
+                                streams_resume_sleep.as_mut().reset(
+                                    tokio::time::Instant::now() + Duration::from_millis(100),
+                                );
+                                streams_resume_armed = true;
+                            }
+                        } else if let Some(dev) = connections.control_device.as_ref() {
+                            let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config_ctrl(gc)).await {
+                                Ok(r) => r.map_err(|e| e.to_string()),
+                                Err(_) => Err("write_config_ctrl timed out".into()),
+                            };
+                            let _ = reply.send(result);
                         } else {
-                            let _ = reply.send(Err(format!("unknown config kind: {kind}")));
+                            let _ = reply.send(Err("no device available for write_config".into()));
                         }
                     }
                     Some(DeviceTaskMessage::FlashSettings { reply }) => {

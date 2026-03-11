@@ -256,32 +256,28 @@ impl From<common::events::Event> for proto::Event {
     }
 }
 
-impl From<proto::Event> for common::events::Event {
-    fn from(event: proto::Event) -> Self {
-        match event
-            .event_oneof
-            .expect("proto::Event missing event variant")
-        {
+impl TryFrom<proto::Event> for common::events::Event {
+    type Error = ();
+
+    fn try_from(event: proto::Event) -> Result<Self, ()> {
+        match event.event_oneof.ok_or(())? {
             proto::event::EventOneof::DonglePairingResult(e) => {
                 let mut paired_address = [0u8; 6];
                 let len = e.paired_address.len().min(6);
                 paired_address[..len].copy_from_slice(&e.paired_address[..len]);
-                return common::events::Event::DonglePairingResult {
+                return Ok(common::events::Event::DonglePairingResult {
                     dongle_id: e.dongle_id,
                     success: e.success,
                     paired_address,
                     error: e.error,
-                };
+                });
             }
             proto::event::EventOneof::Device(d) => {
                 let device: common::device::Device = match d.device {
                     Some(dev) => dev.into(),
-                    None => panic!("proto::DeviceEvent missing device field"),
+                    None => return Err(()),
                 };
-                let kind = match d
-                    .device_event_oneof
-                    .expect("proto::DeviceEvent missing payload")
-                {
+                let kind = match d.device_event_oneof.ok_or(())? {
                     proto::device_event::DeviceEventOneof::Accelerometer(e) => {
                         common::events::DeviceEventKind::AccelerometerEvent(
                             common::events::AccelerometerEvent {
@@ -349,9 +345,11 @@ impl From<proto::Event> for common::events::Event {
                         )
                     }
                 };
-                common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind))
-            } // close Device(d) arm
-        } // close match
+                Ok(common::events::Event::DeviceEvent(
+                    common::events::DeviceEvent(device, kind),
+                ))
+            }
+        }
     }
 }
 
