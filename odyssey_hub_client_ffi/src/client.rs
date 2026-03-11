@@ -109,7 +109,10 @@ pub extern "C" fn client_start_stream(
             Ok(mut stream) => loop {
                 match stream.next().await {
                     Some(Ok(event)) => {
-                        let event: odyssey_hub_common::events::Event = event.into();
+                        let event: odyssey_hub_common::events::Event = match event.try_into() {
+                            Ok(ev) => ev,
+                            Err(_) => continue,
+                        };
                         let event: crate::event::Event = event.into();
                         callback(
                             userdata,

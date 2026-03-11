@@ -124,14 +124,19 @@ impl Client {
 
     pub async fn subscribe_events(
         &mut self,
-    ) -> anyhow::Result<impl futures::Stream<Item = Result<common::events::Event, tonic::Status>>>
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<common::events::Event, tonic::Status>> + Unpin>
     {
         if let Some(service_client) = &mut self.service_client {
             let request =
                 tonic::Request::new(odyssey_hub_server_interface::SubscribeEventsRequest {});
             let stream = service_client.subscribe_events(request).await?.into_inner();
 
-            Ok(stream.map(|item| item.map(Into::into)))
+            Ok(Box::pin(stream.filter_map(|item| async move {
+                match item {
+                    Ok(ev) => common::events::Event::try_from(ev).ok().map(Ok),
+                    Err(e) => Some(Err(e)),
+                }
+            })))
         } else {
             Err(anyhow::anyhow!("No service client"))
         }
