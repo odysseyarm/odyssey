@@ -1,6 +1,6 @@
 use crate::mux::Uuid;
 
-const SEMVER: [u16; 3] = [0, 1, 5];
+const SEMVER: [u16; 3] = [0, 1, 6];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -84,7 +84,7 @@ pub enum DeviceMsg {
     StartPairing(StartPairing),
     StartPairingResponse,
     CancelPairing,
-    PairingResult(Result<Uuid, PairingError>),
+    PairingResult(Result<super::BondedDevice, PairingError>),
 
     ReadConfig(crate::ConfigKind),
     ReadConfigResponse(crate::GeneralConfig),
