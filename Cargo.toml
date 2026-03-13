@@ -14,7 +14,7 @@ thiserror = { version = "2.0.17", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 static_assertions = "1.1.0"
 serde_bytes = { version = "0.11.19", optional = true, default-features = false }
-heapless = "0.9.1"
+heapless = "0.9.2"
 minicbor = { git = "https://github.com/Abrahamh08/minicbor", features = ["derive"], optional = true }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", optional = true }
 
@@ -26,4 +26,4 @@ serde = ["dep:serde", "dep:serde_bytes", "heapless/serde"]
 serde-no-std = ["serde", "nalgebra/serde-serialize-no-std"]
 serde-std = ["serde", "opencv-ros-camera/serde-serialize"]
 minicbor = ["dep:minicbor", "dep:minicbor-serde", "serde"]
-defmt = ["dep:defmt", "nalgebra/defmt"]
+defmt = ["dep:defmt", "nalgebra/defmt", "heapless/defmt"]
