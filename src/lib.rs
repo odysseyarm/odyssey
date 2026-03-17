@@ -379,6 +379,8 @@ pub enum PropKind {
     Uuid = 0,
     #[cfg_attr(feature = "minicbor", n(1))]
     ProductId = 1,
+    #[cfg_attr(feature = "minicbor", n(2))]
+    Name = 2,
 }
 
 #[repr(C)]
@@ -392,6 +394,8 @@ pub enum Props {
     Uuid(#[cfg_attr(feature = "minicbor", n(0))] [u8; 6]),
     #[cfg_attr(feature = "minicbor", n(1))]
     ProductId(#[cfg_attr(feature = "minicbor", n(0))] u16),
+    #[cfg_attr(feature = "minicbor", n(2))]
+    Name(#[cfg_attr(feature = "minicbor", n(0))] heapless::String<32>),
 }
 
 #[repr(C)]
