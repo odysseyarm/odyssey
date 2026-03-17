@@ -1,4 +1,4 @@
-pub const SEMVER: [u16; 3] = [0, 1, 4];
+pub const SEMVER: [u16; 3] = [0, 1, 5];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -70,4 +70,7 @@ pub enum UsbMuxCtrlMsg {
 
     AddBond(super::BondEntry),
     AddBondResponse(Result<(), super::AddBondError>),
+
+    SetDeviceName { addr: [u8; 6], name: heapless::String<32> },
+    SetDeviceNameResponse(Result<(), ()>),
 }
