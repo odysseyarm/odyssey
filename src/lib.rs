@@ -121,6 +121,17 @@ pub enum PacketData {
     ),
     #[cfg_attr(feature = "minicbor", n(21))]
     BatteryReport(#[cfg_attr(feature = "minicbor", n(0))] BatteryReport),
+    #[cfg_attr(feature = "minicbor", n(22))]
+    SetDeviceName(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "minicbor", cbor(with = "heapless_str32_cbor"))]
+        heapless::String<32>,
+    ),
+    #[cfg_attr(feature = "minicbor", n(23))]
+    SetDeviceNameResponse(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        Result<(), ()>,
+    ),
 }
 
 #[repr(C)]
@@ -648,6 +659,10 @@ pub enum PacketType {
     VendorEnd(),
     #[cfg_attr(feature = "minicbor", n(24))]
     BatteryReport(),
+    #[cfg_attr(feature = "minicbor", n(25))]
+    SetDeviceName(),
+    #[cfg_attr(feature = "minicbor", n(26))]
+    SetDeviceNameResponse(),
 }
 
 impl TryFrom<u8> for PacketType {
@@ -676,6 +691,8 @@ impl TryFrom<u8> for PacketType {
             0x13 => Ok(Self::ReadVersionResponse()),
             0x14 => Ok(Self::End()),
             0x15 => Ok(Self::BatteryReport()),
+            0x16 => Ok(Self::SetDeviceName()),
+            0x17 => Ok(Self::SetDeviceNameResponse()),
             0x80 => Ok(Self::VendorStart()),
             0xff => Ok(Self::VendorEnd()),
             n if (PacketType::VendorStart().into()..PacketType::VendorEnd().into())
@@ -713,6 +730,8 @@ impl From<PacketType> for u8 {
             PacketType::ReadVersionResponse() => 0x13,
             PacketType::End() => 0x14,
             PacketType::BatteryReport() => 0x15,
+            PacketType::SetDeviceName() => 0x16,
+            PacketType::SetDeviceNameResponse() => 0x17,
             PacketType::VendorStart() => 0x80,
             PacketType::VendorEnd() => 0xff,
             PacketType::Vendor(n) => n,
@@ -745,6 +764,8 @@ impl Packet {
             PacketData::ReadVersionResponse(_) => PacketType::ReadVersionResponse(),
             PacketData::Vendor(n, _) => PacketType::Vendor(n),
             PacketData::BatteryReport(_) => PacketType::BatteryReport(),
+            PacketData::SetDeviceName(_) => PacketType::SetDeviceName(),
+            PacketData::SetDeviceNameResponse(_) => PacketType::SetDeviceNameResponse(),
         }
     }
 
@@ -1005,6 +1026,40 @@ impl StreamUpdate {
         };
         *bytes = &bytes[2..];
         Ok(stream_update)
+    }
+}
+
+#[cfg(feature = "minicbor")]
+mod heapless_str32_cbor {
+    use minicbor::{decode::Error, encode::Error as EncodeError, encode::Write, Decoder, Encoder};
+
+    pub fn encode<Ctx, W: Write>(
+        s: &heapless::String<32>,
+        e: &mut Encoder<W>,
+        _ctx: &mut Ctx,
+    ) -> Result<(), EncodeError<W::Error>> {
+        e.str(s.as_str())?;
+        Ok(())
+    }
+
+    pub fn decode<'b, Ctx>(
+        d: &mut Decoder<'b>,
+        _ctx: &mut Ctx,
+    ) -> Result<heapless::String<32>, Error> {
+        let s = d.str()?;
+        let mut hs: heapless::String<32> = heapless::String::new();
+        for c in s.chars() {
+            if hs.push(c).is_err() {
+                break;
+            }
+        }
+        Ok(hs)
+    }
+
+    pub fn cbor_len<Ctx>(s: &heapless::String<32>, _ctx: &mut Ctx) -> usize {
+        let n = s.as_bytes().len();
+        let header = if n <= 23 { 1 } else { 2 };
+        header + n
     }
 }
 

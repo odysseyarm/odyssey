@@ -71,6 +71,4 @@ pub enum UsbMuxCtrlMsg {
     AddBond(super::BondEntry),
     AddBondResponse(Result<(), super::AddBondError>),
 
-    SetDeviceName { addr: [u8; 6], name: heapless::String<32> },
-    SetDeviceNameResponse(Result<(), ()>),
 }
