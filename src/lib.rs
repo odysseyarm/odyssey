@@ -381,6 +381,8 @@ pub enum PropKind {
     ProductId = 1,
     #[cfg_attr(feature = "minicbor", n(2))]
     Name = 2,
+    #[cfg_attr(feature = "minicbor", n(3))]
+    Version = 3,
 }
 
 #[repr(C)]
@@ -400,6 +402,8 @@ pub enum Props {
         #[cfg_attr(feature = "minicbor", cbor(with = "heapless_str32_cbor"))]
         heapless::String<32>,
     ),
+    #[cfg_attr(feature = "minicbor", n(3))]
+    Version(#[cfg_attr(feature = "minicbor", n(0))] Version),
 }
 
 #[repr(C)]

@@ -1,7 +1,3 @@
-use crate::mux::Uuid;
-
-const SEMVER: [u16; 3] = [0, 1, 7];
-
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -45,34 +41,13 @@ pub struct StartPairing {
     pub timeout_ms: u32,
 }
 
-#[repr(C)]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Clone, Copy, Debug)]
-pub struct Version {
-    pub protocol_semver: [u16; 3],
-    pub firmware_semver: [u16; 3],
-}
-
-impl Version {
-    pub fn new(firmware_semver: [u16; 3]) -> Self {
-        Self {
-            protocol_semver: SEMVER,
-            firmware_semver,
-        }
-    }
-}
-
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
 pub enum DeviceMsg {
-    ReadVersion(),
-    ReadVersionResponse(Version),
-    ReadUuid(),
-    ReadUuidResponse(Uuid),
+    ReadProp(crate::PropKind),
+    ReadPropResponse(crate::Props),
 
     ClearBond,
     ClearBondResponse(Result<(), ClearBondsError>),
