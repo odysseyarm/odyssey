@@ -98,6 +98,12 @@ pub fn Home() -> Element {
                                     for (_slot, device) in devices.iter() {
                                         {
                                             let is_updating = updating.contains(&device.uuid);
+                                            let addr = format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", device.uuid[0], device.uuid[1], device.uuid[2], device.uuid[3], device.uuid[4], device.uuid[5]);
+                                            let current_name = device.name.clone();
+                                            let label = if current_name.is_empty() { addr.clone() } else { format!("{} ({})", current_name, addr) };
+                                            let mut editing = use_signal(|| false);
+                                            let mut edit_value = use_signal(|| current_name.clone());
+                                            let mut renamed = use_signal(|| false);
                                             rsx! {
                                                 div {
                                                     class: "flex flex-col p-3 bg-gray-50 dark:bg-gray-600 rounded gap-2",
@@ -108,9 +114,56 @@ pub fn Home() -> Element {
                                                             div {
                                                                 class: if is_updating { "w-2 h-2 bg-yellow-500 rounded-full animate-pulse" } else { "w-2 h-2 bg-green-500 rounded-full" }
                                                             }
-                                                            span {
-                                                                class: "text-sm font-mono text-gray-700 dark:text-gray-200",
-                                                                "{device.uuid[0]:02x}:{device.uuid[1]:02x}:{device.uuid[2]:02x}:{device.uuid[3]:02x}:{device.uuid[4]:02x}:{device.uuid[5]:02x}"
+                                                            if editing() {
+                                                                input {
+                                                                    class: "text-sm font-mono text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border border-blue-400 rounded px-1 w-48",
+                                                                    value: "{edit_value}",
+                                                                    autofocus: true,
+                                                                    oninput: move |e| edit_value.set(e.value()),
+                                                                    onkeydown: {
+                                                                        let device = device.clone();
+                                                                        move |e: KeyboardEvent| {
+                                                                            if e.key() == Key::Enter {
+                                                                                let name = edit_value();
+                                                                                let device = device.clone();
+                                                                                let mut client = hub().client;
+                                                                                editing.set(false);
+                                                                                renamed.set(true);
+                                                                                spawn(async move {
+                                                                                    let _ = client.write().set_device_name(device, name).await;
+                                                                                });
+                                                                            } else if e.key() == Key::Escape {
+                                                                                editing.set(false);
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                }
+                                                                button {
+                                                                    class: "text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200",
+                                                                    onclick: move |_| editing.set(false),
+                                                                    "✕"
+                                                                }
+                                                            } else {
+                                                                span {
+                                                                    class: "text-sm font-mono text-gray-700 dark:text-gray-200",
+                                                                    "{label}"
+                                                                }
+                                                                button {
+                                                                    class: "text-xs text-gray-400 hover:text-blue-500 dark:hover:text-blue-400",
+                                                                    title: "Rename",
+                                                                    onclick: move |_| {
+                                                                        edit_value.set(current_name.clone());
+                                                                        renamed.set(false);
+                                                                        editing.set(true);
+                                                                    },
+                                                                    "✎"
+                                                                }
+                                                                if renamed() {
+                                                                    span {
+                                                                        class: "text-xs text-yellow-500 dark:text-yellow-400 italic",
+                                                                        "USB name reflects last boot"
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                         span {

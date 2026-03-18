@@ -115,6 +115,11 @@ pub enum DeviceTaskMessage {
         usb_mode: bool,
         reply: tokio::sync::oneshot::Sender<Result<bool, String>>,
     },
+    /// Set the device name. The device firmware will persist it to flash and update BLE advertising.
+    SetDeviceName {
+        name: String,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
     AddEventsDevice(VmDevice, [u16; 3]),
     /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
@@ -167,6 +172,7 @@ pub enum Message {
     Connect(Device, DeviceChannels),
     Disconnect(Device),
     UpdateDevice(Device), // Update device metadata (e.g., capabilities changed)
+    UpdateName([u8; 6], String), // Update device name only (UUID, new name)
     DongleConnect(DongleInfo, mpsc::Sender<DongleTaskMessage>),
     DongleUpdate(DongleInfo),
     DongleDisconnect(String), // dongle id
@@ -243,6 +249,10 @@ async fn usb_device_manager(
         std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     )>::new()));
     let mut direct_usb_id_to_uuid = std::collections::HashMap::<String, [u8; 6]>::new();
+    // Maps BLE address -> device name, shared between hub managers and direct USB device handlers.
+    // Updated on USB rename so BLE reconnects use the correct name.
+    let bond_names: Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], String>>> =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
     loop {
         let devices = match nusb::list_devices().await {
@@ -397,9 +407,10 @@ async fn usb_device_manager(
                 let ev_clone = event_sender.clone();
                 let direct_usb_uuids_clone = direct_usb_handler_uuids.clone();
                 let hub_info = dev_info.clone();
-
+                let bond_names_clone = bond_names.clone();
                 let hub_manager_handle = tokio::spawn(async move {
                     tracing::info!("Hub manager task started for hub {:?}", hub_info);
+                    let bond_names = bond_names_clone;
 
                     // Track devices managed by this hub for cleanup on exit.
                     // Stores BLE addresses (not UUIDs) so snapshot diffs work correctly
@@ -464,7 +475,23 @@ async fn usb_device_manager(
                         semver_at_least(dongle_control_protocol_version, [0, 1, 1]);
                     let bonded_devices = if supports_list_bonds {
                         match hub_clone.list_bonds().await {
-                            Ok(bonds) => bonds.into_iter().collect(),
+                            Ok(bonds) => {
+                                tracing::info!("list_bonds (startup): {} bonds returned", bonds.len());
+                                for b in &bonds {
+                                    tracing::info!("  bond: uuid={:02x?} name={:?}", b.uuid, b.name.as_str());
+                                }
+                                let addrs: Vec<[u8; 6]> = bonds.iter().map(|b| b.uuid).collect();
+                                {
+                                    let mut bn = bond_names.lock().await;
+                                    for b in &bonds {
+                                        if !b.name.is_empty() {
+                                            bn.insert(b.uuid, b.name.to_string());
+                                        }
+                                    }
+                                    tracing::info!("bond_names after startup list_bonds: {:?}", bn.keys().collect::<Vec<_>>());
+                                }
+                                addrs
+                            }
                             Err(e) => {
                                 tracing::warn!("Failed to list dongle bonds: {}", e);
                                 vec![]
@@ -579,8 +606,23 @@ async fn usb_device_manager(
                                                         new_set.difference(&existing_set).copied().collect::<Vec<_>>(),
                                                         existing_set.difference(&new_set).copied().collect::<Vec<_>>());
 
+                                        // Refresh bond names before processing new devices.
+                                        // Use or_insert so we don't overwrite names that were set
+                                        // in this session (e.g., via USB rename) with stale dongle flash names.
+                                        let added: Vec<[u8; 6]> = new_set.difference(&existing_set).copied().collect();
+                                        if !added.is_empty() && supports_list_bonds {
+                                            if let Ok(bonds) = hub_clone.list_bonds().await {
+                                                let mut bn = bond_names.lock().await;
+                                                for b in &bonds {
+                                                    if !b.name.is_empty() {
+                                                        bn.entry(b.uuid).or_insert_with(|| b.name.to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         // Added devices
-                                        for addr in new_set.difference(&existing_set) {
+                                        for addr in &added {
                                             let addr_copy = *addr;
                                             tracing::info!(
                                                 "DevicesSnapshot: Adding new device {:02x?}",
@@ -665,6 +707,18 @@ async fn usb_device_manager(
                                                 _ => 0,
                                             };
 
+                                            // Read name from device and push to dongle so its bond cache is always fresh.
+                                            let name_for_device = match vm_device.read_prop(protodongers::PropKind::Name).await {
+                                                Ok(protodongers::Props::Name(n)) if !n.is_empty() => {
+                                                    let name_str = n.to_string();
+                                                    bond_names.lock().await.insert(addr_copy, name_str.clone());
+                                                    if let Err(e) = hub_clone.update_bond_name(addr_copy, n).await {
+                                                        tracing::warn!("Failed to push name to dongle: {e}");
+                                                    }
+                                                    name_str
+                                                }
+                                                _ => bond_names.lock().await.get(&addr_copy).cloned().unwrap_or_default(),
+                                            };
                                             let device_meta = Device {
                                                 uuid,
                                                 transport: odyssey_hub_common::device::Transport::UsbMux,
@@ -676,6 +730,7 @@ async fn usb_device_manager(
                                                 events_transport: odyssey_hub_common::device::EventsTransport::Bluetooth,
                                                 events_connected: false,
                                                 product_id,
+                                                name: name_for_device,
                                             };
 
                                             // Check if device is already connected via USB direct before creating handler
@@ -731,15 +786,16 @@ async fn usb_device_manager(
                                                     ev_clone.clone(),
                                                     message_channel_clone.clone(),
                                                     direct_usb_uuids_clone.clone(),
+                                                    bond_names.clone(),
                                                     proto_version, // events protocol version read via PacketData::ReadVersion()
+                                                    Some(hub_clone.clone()),
                                                 ));
 
                                                 let mut dh = device_handles_clone.lock().await;
                                                 dh.insert(uuid, (ctrl_tx.clone(), dh_handle));
                                                 hub_devices.insert(addr_copy);
                                                 hub_device_uuids.insert(addr_copy, uuid);
-
-                                                // Send Connect first so the client knows about
+                                                // Send Connect; name is already set in device_meta
                                                 // the device before UpdateDevice can arrive.
                                                 let channels = DeviceChannels {
                                                     commands: Some(ctrl_tx.clone()),
@@ -794,7 +850,21 @@ async fn usb_device_manager(
                                         // Notify dongle list subscribers of connected device changes
                                         let bonded_devices = if supports_list_bonds {
                                             match hub_clone.list_bonds().await {
-                                                Ok(bonds) => bonds.into_iter().collect(),
+                                                Ok(bonds) => {
+                                                    let addrs: Vec<[u8; 6]> = bonds.iter().map(|b| b.uuid).collect();
+                                                    {
+                                                        let mut bn = bond_names.lock().await;
+                                                        for b in &bonds {
+                                                            if !b.name.is_empty() {
+                                                                // Use or_insert_with so in-session renames
+                                                                // (which already updated bond_names) are not
+                                                                // overwritten by stale dongle flash names.
+                                                                bn.entry(b.uuid).or_insert_with(|| b.name.to_string());
+                                                            }
+                                                        }
+                                                    }
+                                                    addrs
+                                                }
                                                 Err(e) => {
                                                     tracing::warn!(
                                                         "Failed to refresh dongle bonds: {}",
@@ -839,17 +909,23 @@ async fn usb_device_manager(
                                             let hub_wait = hub_clone.clone();
                                             let ev_tx = ev_clone.clone();
                                             let did = dongle_id.clone();
+                                            let bond_names_clone = bond_names.clone();
                                             tokio::spawn(async move {
-                                                let (success, paired_address, error) = match hub_wait.wait_pairing_event().await {
-                                                    Ok(ats_usb::device::PairingEvent::Result(addr)) => (true, addr, String::new()),
-                                                    Ok(ats_usb::device::PairingEvent::Timeout) => (false, [0; 6], "Pairing timed out".into()),
-                                                    Ok(ats_usb::device::PairingEvent::Cancelled) => (false, [0; 6], "Pairing cancelled".into()),
-                                                    Err(e) => (false, [0; 6], e.to_string()),
+                                                let (success, paired_address, paired_name, error) = match hub_wait.wait_pairing_event().await {
+                                                    Ok(ats_usb::device::PairingEvent::Result(device)) => (true, device.uuid, device.name.to_string(), String::new()),
+                                                    Ok(ats_usb::device::PairingEvent::Timeout) => (false, [0; 6], String::new(), "Pairing timed out".into()),
+                                                    Ok(ats_usb::device::PairingEvent::Cancelled) => (false, [0; 6], String::new(), "Pairing cancelled".into()),
+                                                    Err(e) => (false, [0; 6], String::new(), e.to_string()),
                                                 };
+                                                if success && !paired_name.is_empty() {
+                                                    tracing::info!("pairing: storing name {:?} for addr={:02x?}", paired_name, paired_address);
+                                                    bond_names_clone.lock().await.insert(paired_address, paired_name.clone());
+                                                }
                                                 let _ = ev_tx.send(Event::DonglePairingResult {
                                                     dongle_id: did,
                                                     success,
                                                     paired_address,
+                                                    paired_name,
                                                     error,
                                                 });
                                             });
@@ -1130,6 +1206,7 @@ async fn usb_device_manager(
                     events_connected: transport_mode
                         == protodongers::control::device::TransportMode::Usb,
                     product_id: pid,
+                    name: dev_info.product_string().filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_default(),
                 };
 
                 let (tx, rx) = mpsc::channel(32);
@@ -1164,7 +1241,9 @@ async fn usb_device_manager(
                     event_sender.clone(),
                     message_channel.clone(),
                     direct_usb_handler_uuids.clone(),
+                    bond_names.clone(),
                     initial_protocol_version,
+                    None, // USB-direct device: no hub to update
                 ));
 
                 {
@@ -1178,8 +1257,9 @@ async fn usb_device_manager(
                 let channels = DeviceChannels { commands: Some(tx) };
 
                 let _ = message_channel
-                    .send(Message::Connect(device_meta, channels))
+                    .send(Message::Connect(device_meta.clone(), channels))
                     .await;
+
             }
         }
 
@@ -1356,7 +1436,9 @@ async fn device_handler_task(
     event_sender: broadcast::Sender<Event>,
     message_channel: mpsc::Sender<Message>,
     direct_usb_handler_uuids: Arc<tokio::sync::Mutex<std::collections::HashSet<[u8; 6]>>>,
+    bond_names: Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], String>>>,
     mut protocol_version: [u16; 3],
+    hub_device: Option<ats_usb::device::MuxDevice>,
 ) {
     info!(
         "Starting device handler for device UUID {:02x?}",
@@ -1844,9 +1926,9 @@ async fn device_handler_task(
                                 let ev_tx = event_sender.clone();
                                 let dev_meta = device.clone();
                                 tokio::spawn(async move {
-                                    let (success, paired_address, error) = match dev_clone.wait_pairing_event().await {
-                                        Ok(addr) => (true, addr, String::new()),
-                                        Err(e) => (false, [0; 6], e.to_string()),
+                                    let (success, paired_address, paired_name, error) = match dev_clone.wait_pairing_event().await {
+                                        Ok(device) => (true, device.uuid, device.name.to_string(), String::new()),
+                                        Err(e) => (false, [0; 6], String::new(), e.to_string()),
                                     };
                                     pairing_flag.store(false, std::sync::atomic::Ordering::Relaxed);
                                     let event = odyssey_hub_common::events::Event::DeviceEvent(
@@ -1855,6 +1937,7 @@ async fn device_handler_task(
                                             odyssey_hub_common::events::DeviceEventKind::PairingResult {
                                                 success,
                                                 paired_address,
+                                                paired_name,
                                                 error,
                                             },
                                         ),
@@ -1930,6 +2013,46 @@ async fn device_handler_task(
                             warn!("SetTransportMode: no control device for {:02x?}", device.uuid);
                             let _ = reply.send(Err("no control device available".into()));
                         }
+                    }
+                    Some(DeviceTaskMessage::SetDeviceName { name, reply }) => {
+                        info!("SetDeviceName: name={:?} for device {:02x?}", name, device.uuid);
+                        let r = if let Some(dev) = connections.control_device.as_ref() {
+                            // USB EP0 path
+                            match tokio::time::timeout(Duration::from_secs(5), dev.set_device_name_on_device(&name)).await {
+                                Ok(Ok(())) => Ok(()),
+                                Ok(Err(e)) => Err(e.to_string()),
+                                Err(_) => Err("set_device_name timed out".into()),
+                            }
+                        } else if let Some(dev) = connections.events_device.as_ref() {
+                            // BLE mux path
+                            let mut hs_name = heapless::String::<32>::new();
+                            for c in name.chars() {
+                                if hs_name.push(c).is_err() { break; }
+                            }
+                            match tokio::time::timeout(Duration::from_secs(5), dev.request(protodongers::PacketData::SetDeviceName(hs_name))).await {
+                                Ok(Ok(protodongers::PacketData::SetDeviceNameResponse(Ok(())))) => Ok(()),
+                                Ok(Ok(_)) => Err("unexpected response to SetDeviceName".into()),
+                                Ok(Err(e)) => Err(e.to_string()),
+                                Err(_) => Err("set_device_name timed out".into()),
+                            }
+                        } else {
+                            warn!("SetDeviceName: no device for {:02x?}", device.uuid);
+                            Err("no device available".into())
+                        };
+                        info!("SetDeviceName result for {:02x?}: {:?}", device.uuid, r);
+                        if r.is_ok() {
+                            device.name = name.clone();
+                            bond_names.lock().await.insert(device.uuid, name.clone());
+                            if let Some(ref hub) = hub_device {
+                                let mut hs = heapless::String::<32>::new();
+                                for c in name.chars() { if hs.push(c).is_err() { break; } }
+                                if let Err(e) = hub.update_bond_name(device.uuid, hs).await {
+                                    warn!("update_bond_name failed for {:02x?}: {}", device.uuid, e);
+                                }
+                            }
+                            let _ = message_channel.send(Message::UpdateName(device.uuid, name)).await;
+                        }
+                        let _ = reply.send(r);
                     }
                     Some(DeviceTaskMessage::AddEventsDevice(events_vm_device, ble_proto_version)) => {
                         // Update protocol_version with the BLE device's version. This is necessary
@@ -2287,15 +2410,7 @@ async fn device_handler_task(
         "Device handler task ending for {:02x?}, sending disconnect",
         device.uuid
     );
-    let disconnect_device = Device {
-        uuid: device.uuid,
-        transport: device.transport,
-        capabilities: device.capabilities.clone(),
-        firmware_version: device.firmware_version,
-        events_transport: device.events_transport,
-        events_connected: device.events_connected,
-        product_id: device.product_id,
-    };
+    let disconnect_device = device.clone();
     let _ = message_channel
         .send(Message::Disconnect(disconnect_device))
         .await;

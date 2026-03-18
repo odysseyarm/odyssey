@@ -565,6 +565,7 @@ impl Service for Server {
     ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
         let mut rx = self.event_sender.subscribe();
         let (tx, out) = mpsc::channel::<Result<Event, Status>>(128);
+
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -956,6 +957,51 @@ impl Service for Server {
         } else {
             Err(Status::not_found("dongle"))
         }
+    }
+
+    async fn set_device_name(
+        &self,
+        req: tonic::Request<SetDeviceNameRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let dev: common::device::Device = inner
+            .device
+            .ok_or_else(|| Status::invalid_argument("device missing"))?
+            .into();
+        let name = inner.name;
+
+        // Persist name to device firmware, which stores it in flash and updates BLE advertising.
+        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            let _ = tx
+                .send(DeviceTaskMessage::SetDeviceName {
+                    name: name.clone(),
+                    reply: reply_tx,
+                })
+                .await;
+            match reply_rx.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!("set_device_name: device returned error: {e}");
+                    return Err(Status::internal(e));
+                }
+                Err(_) => return Err(Status::internal("device task dropped reply")),
+            }
+        } else {
+            tracing::warn!("set_device_name: device {:02x?} not found", dev.uuid);
+            return Err(Status::not_found("device"));
+        }
+
+        // Update device name in device list and notify subscribers
+        {
+            let mut dl = self.device_list.lock();
+            if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == dev.uuid) {
+                entry.0.name = name.clone();
+            }
+        }
+        let _ = self.device_list_change_sender.send(());
+
+        Ok(Response::new(EmptyReply {}))
     }
 
     async fn clear_zero(

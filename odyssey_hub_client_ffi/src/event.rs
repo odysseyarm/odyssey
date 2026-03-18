@@ -141,7 +141,7 @@ impl From<common::events::Event> for Event {
         match event {
             common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind)) => {
                 Event::DeviceEvent(DeviceEvent {
-                    device,
+                    device: device.clone(),
                     kind: match kind {
                         common::events::DeviceEventKind::AccelerometerEvent(e) => {
                             DeviceEventKind::AccelerometerEvent(e.into())
