@@ -4,7 +4,8 @@
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use defmt::info;
-use protodongers::control::device::{DeviceMsg, PairingError, TransportMode, Version};
+use protodongers::control::device::{DeviceMsg, PairingError, TransportMode};
+use protodongers::{PropKind, Props};
 
 use crate::ble::peripheral;
 use crate::device_control;
@@ -77,10 +78,10 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
                         }
                     }
                 }
-                Either3::Second(addr) => {
+                Either3::Second(device) => {
                     info!("Pairing completed successfully");
                     pairing_deadline = None;
-                    device_control::try_send_event(DeviceMsg::PairingResult(Ok(addr)));
+                    device_control::try_send_event(DeviceMsg::PairingResult(Ok(device)));
                     continue;
                 }
                 Either3::Third(_) => {
@@ -107,14 +108,24 @@ async fn handle_cmd(
     firmware_version: [u16; 3],
 ) {
     match cmd {
-        DeviceMsg::ReadVersion() => {
-            let version = Version::new(firmware_version);
-            device_control::try_send_event(DeviceMsg::ReadVersionResponse(version));
-        }
-
-        DeviceMsg::ReadUuid() => {
-            let uuid: [u8; 6] = crate::utils::device_id()[..6].try_into().unwrap();
-            device_control::try_send_event(DeviceMsg::ReadUuidResponse(uuid));
+        DeviceMsg::ReadProp(kind) => {
+            let prop = match kind {
+                PropKind::Version => Props::Version(protodongers::Version::new(firmware_version)),
+                PropKind::Uuid => {
+                    let uuid: [u8; 6] = crate::utils::device_id()[..6].try_into().unwrap();
+                    Props::Uuid(uuid)
+                }
+                PropKind::Name => {
+                    let name = if settings::is_initialized() {
+                        unsafe { settings::get_settings() }.general.name.clone()
+                    } else {
+                        heapless::String::new()
+                    };
+                    Props::Name(name)
+                }
+                PropKind::ProductId => return,
+            };
+            device_control::try_send_event(DeviceMsg::ReadPropResponse(prop));
         }
 
         DeviceMsg::ClearBond => {
@@ -217,6 +228,19 @@ async fn handle_cmd(
             let settings = unsafe { crate::settings::get_settings() };
             settings.general_write();
             device_control::try_send_event(DeviceMsg::FlashSettingsAck);
+        }
+
+        DeviceMsg::SetDeviceName(name) => {
+            info!("SetDeviceName: {:?}", name.as_str());
+            if settings::is_initialized() {
+                let s = unsafe { settings::get_settings() };
+                s.general.name = name.clone();
+                s.general_write();
+            }
+            // Use set_device_name_initial (no ADV_RESTART_SIGNAL) — the device may have
+            // an active BLE connection to the dongle; a restart signal would disconnect it.
+            peripheral::set_device_name_initial(name.as_str());
+            device_control::try_send_event(DeviceMsg::SetDeviceNameResponse(Ok(())));
         }
 
         DeviceMsg::AddBond(entry) => {

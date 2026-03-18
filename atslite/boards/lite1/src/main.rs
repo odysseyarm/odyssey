@@ -289,11 +289,23 @@ async fn main(spawner: Spawner) {
         ResetImmediate,
     ));
 
+    // Determine USB product name from settings (falls back to "ATS USB" if unset)
+    static USB_PRODUCT_NAME_BUF: StaticCell<[u8; 32]> = StaticCell::new();
+    let usb_product_name: &'static str = if !settings.general.name.is_empty() {
+        let buf = USB_PRODUCT_NAME_BUF.init([0u8; 32]);
+        let bytes = settings.general.name.as_bytes();
+        let len = bytes.len().min(32);
+        buf[..len].copy_from_slice(&bytes[..len]);
+        core::str::from_utf8(&buf[..len]).unwrap_or("ATS USB")
+    } else {
+        "ATS USB"
+    };
+
     defmt::info!("Initializing USB...");
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5211, // Lite1 PID
-        "ATS USB",
+        usb_product_name,
         DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,
@@ -330,6 +342,11 @@ async fn main(spawner: Spawner) {
     // Load transport mode from persisted settings
     let initial_transport_mode = settings.general.transport_mode;
     transport_mode::set(initial_transport_mode);
+
+    // Set device name from settings (if non-empty) for BLE advertisements
+    if !settings.general.name.is_empty() {
+        lite1::ble::peripheral::set_device_name_initial(settings.general.name.as_str());
+    }
     defmt::info!("Transport mode initialized from settings: {:?}", initial_transport_mode);
 
     // Adjust PMIC limit after USB enumerates
@@ -459,7 +476,7 @@ async fn power_button_task(
 
 #[embassy_executor::task]
 async fn ble_task(controller: ble::host::BleController, seed: [u8; 32]) {
-    ble::peripheral::run(controller, seed).await;
+    ble::peripheral::run(controller, seed, "ATS USB", b"ATS").await;
 }
 
 #[embassy_executor::task]

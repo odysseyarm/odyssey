@@ -63,8 +63,10 @@ pub async fn device_connection_task(
         };
 
         info!("Connecting to {:02x}...", target);
+        crate::ble::central::begin_connect().await;
         let connect_result =
             embassy_time::with_timeout(Duration::from_secs(10), central.connect(&config)).await;
+        crate::ble::central::end_connect();
 
         let conn = match connect_result {
             Ok(Ok(conn)) => {
@@ -289,6 +291,7 @@ pub async fn device_connection_task(
             device_packets,
             stack,
             target,
+            settings,
         )
         .await;
 
@@ -312,6 +315,7 @@ async fn run_connection(
     device_packets: &'static DevicePacketChannel,
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
     target: BdAddr,
+    settings: &'static crate::storage::Settings,
 ) {
     let (mut control_writer, mut control_reader) = l2cap_control_channel.split();
     let (mut data_writer, mut data_reader) = l2cap_data_channel.split();
@@ -332,6 +336,12 @@ async fn run_connection(
                 embassy_futures::select::Either::Second(()) => return,
             };
             let is_control = is_control_packet(&device_pkt.pkt);
+
+            // Intercept SetDeviceName to keep dongle bond_names in sync
+            if let protodongers::PacketData::SetDeviceName(ref name) = device_pkt.pkt.data {
+                settings.set_device_name(target.into_inner(), name).await;
+                crate::ble::central::update_device_name(target.into_inner(), name.clone());
+            }
 
             if let Ok(data) = postcard::to_slice(&device_pkt.pkt, &mut tx_buf) {
                 let ch = if is_control { "ctrl" } else { "data" };

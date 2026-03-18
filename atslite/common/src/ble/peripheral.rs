@@ -24,11 +24,20 @@ type Pool = DefaultPacketPool;
 struct Server {}
 
 /// Run the BLE stack.
-pub async fn run<C>(controller: C, seed: [u8; 32])
+pub async fn run<C>(controller: C, seed: [u8; 32], device_name: &'static str, prod_prefix: &'static [u8])
 where
     C: Controller,
 {
     defmt::info!("[adv] advertising task starting");
+    // Initialize name from parameter only if not already set via set_device_name_initial()
+    CURRENT_NAME.lock(|n| {
+        let mut s = n.borrow_mut();
+        if s.is_empty() {
+            for c in device_name.chars().take(32) {
+                let _ = s.push(c);
+            }
+        }
+    });
     let address = Address::random(defmt::unwrap!(crate::utils::device_id()[0..6].try_into()));
 
     let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
@@ -71,7 +80,7 @@ where
         ..
     } = stack.build();
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-        name: "TrouBLE",
+        name: device_name,
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
     }))
     .unwrap();
@@ -83,7 +92,8 @@ where
                 bond_stored
             );
             // Race advertise against restart signal to allow restart even when not connected
-            let adv_fut = advertise("Trouble Example", &mut peripheral, &server);
+            let current_name = get_device_name();
+            let adv_fut = advertise(current_name.as_str(), prod_prefix, &mut peripheral, &server);
             let restart_fut = ADV_RESTART_SIGNAL.wait();
 
             match select(adv_fut, restart_fut).await {
@@ -273,7 +283,8 @@ async fn gatt_events_task(
 }
 
 async fn advertise<'values, 'server, C: Controller>(
-    _name: &'values str,
+    device_name: &str,
+    prod_prefix: &[u8],
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
     server: &'server Server<'values>,
 ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
@@ -282,7 +293,6 @@ async fn advertise<'values, 'server, C: Controller>(
     let mut scan_rsp_data = [0; 31];
 
     const COMPANY_ID: u16 = 0x068A; // Raytac
-    const PROD_PREFIX: &[u8] = &[65, 84, 83, 45, 76, 69, 71];
 
     let pairing_on = is_pairing_active();
     let adv_len = if pairing_on {
@@ -291,24 +301,24 @@ async fn advertise<'values, 'server, C: Controller>(
                 AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
                 AdStructure::ManufacturerSpecificData {
                     company_identifier: COMPANY_ID,
-                    payload: PROD_PREFIX,
+                    payload: prod_prefix,
                 },
+                AdStructure::ShortenedLocalName(device_name.as_bytes()),
             ],
             &mut advertiser_data[..],
         )?
     } else {
         AdStructure::encode_slice(
-            &[AdStructure::Flags(
-                LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED,
-            )],
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::ShortenedLocalName(device_name.as_bytes()),
+            ],
             &mut advertiser_data[..],
         )?
     };
 
     let scan_len = AdStructure::encode_slice(
-        &[AdStructure::ShortenedLocalName(&[
-            65, 84, 83, 32, 76, 101, 103, 97, 99, 121,
-        ])],
+        &[AdStructure::ShortenedLocalName(device_name.as_bytes())],
         &mut scan_rsp_data[..],
     )?;
     let advertiser = peripheral
@@ -685,11 +695,48 @@ async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BmRaw;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use core::cell::RefCell;
 
 static ADV_RESTART_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static PAIRING: AtomicBool = AtomicBool::new(false);
 static PAIRING_COMPLETE_SIGNAL: Signal<CriticalSectionRawMutex, [u8; 6]> = Signal::new();
+
+static CURRENT_NAME: BlockingMutex<BmRaw, RefCell<heapless::String<32>>> =
+    BlockingMutex::new(RefCell::new(heapless::String::new()));
+
+/// Called before `run()` to set the device name from persisted settings.
+/// Has no effect if `run()` has already started.
+pub fn set_device_name_initial(name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    CURRENT_NAME.lock(|n| {
+        let mut s = n.borrow_mut();
+        s.clear();
+        for c in name.chars().take(32) {
+            let _ = s.push(c);
+        }
+    });
+}
+
+/// Update the device name live — persists through the next advertising restart.
+pub fn update_device_name_live(name: &str) {
+    CURRENT_NAME.lock(|n| {
+        let mut s = n.borrow_mut();
+        s.clear();
+        for c in name.chars().take(32) {
+            let _ = s.push(c);
+        }
+    });
+    ADV_RESTART_SIGNAL.signal(());
+}
+
+pub fn get_device_name() -> heapless::String<32> {
+    CURRENT_NAME.lock(|n| n.borrow().clone())
+}
 
 static REQ_DISCONNECT: AtomicBool = AtomicBool::new(false);
 
@@ -715,6 +762,8 @@ pub fn is_pairing_active() -> bool {
     PAIRING.load(Ordering::Relaxed)
 }
 
-pub async fn wait_for_pairing_complete() -> [u8; 6] {
-    PAIRING_COMPLETE_SIGNAL.wait().await
+pub async fn wait_for_pairing_complete() -> protodongers::control::BondedDevice {
+    let addr = PAIRING_COMPLETE_SIGNAL.wait().await;
+    let name = get_device_name();
+    protodongers::control::BondedDevice { uuid: addr, name }
 }

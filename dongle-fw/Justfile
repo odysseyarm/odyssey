@@ -30,7 +30,7 @@ dfu-pkg: hex
     echo "==> Creating DFU package (nrfutil)"; \
     PKG="{{ROOT}}/target/{{target}}/{{profile}}/{{bin}}-dfu.zip"; \
     APP="{{ROOT}}/target/{{target}}/{{profile}}/{{bin}}.hex"; \
-    if [ -n "{{key_file}}" ]; then nrfutil pkg generate --hw-version {{hw}} --application-version {{app_ver}} --sd-req {{sd_req}} --application "$APP" --key-file "{{key_file}}" "$PKG"; else nrfutil pkg generate --hw-version {{hw}} --application-version {{app_ver}} --sd-req {{sd_req}} --application "$APP" "$PKG"; fi; \
+    nrfutil pkg generate --hw-version {{hw}} --application-version {{app_ver}} --sd-req {{sd_req}} --application "$APP" --key-file "{{key_file}}" "$PKG"; \
     echo "PKG: $PKG"
 
 flash: dfu-pkg

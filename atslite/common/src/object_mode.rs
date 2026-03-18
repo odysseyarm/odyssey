@@ -461,6 +461,8 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                 let prop = match kind {
                     PropKind::Uuid => Props::Uuid(device_id),
                     PropKind::ProductId => Props::ProductId(product_id),
+                    PropKind::Name => Props::Name(settings.general.name.clone()),
+                    PropKind::Version => Props::Version(protodongers::Version::new(firmware_version)),
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -558,6 +560,20 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                 })
             }
 
+            PacketData::SetDeviceName(name) => {
+                defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
+                // Use set_device_name_initial (no ADV_RESTART_SIGNAL) — we are inside an
+                // active BLE connection and signalling a restart would disconnect the dongle.
+                // CURRENT_NAME is updated so the new name is used on the next advertising cycle.
+                crate::ble::peripheral::set_device_name_initial(name.as_str());
+                settings.general.name = name;
+                settings.general_write();
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::SetDeviceNameResponse(Ok(())),
+                })
+            }
+
             // Ignore response packets and streaming data
             PacketData::ObjectReportRequest() => None,
             PacketData::Ack() => None,
@@ -572,6 +588,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
             PacketData::BatteryReport(_) => None,
+            PacketData::SetDeviceNameResponse(_) => None,
         };
 
         // Send response back via the same transport the command came from

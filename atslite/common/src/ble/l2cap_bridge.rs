@@ -101,7 +101,9 @@ pub fn is_control_packet(pkt: &Packet) -> bool {
         | P::ObjectReportRequest()
         | P::Ack()
         | P::FlashSettings()
-        | P::Vendor(_, _) => true,
+        | P::Vendor(_, _)
+        | P::SetDeviceName(_)
+        | P::SetDeviceNameResponse(_) => true,
 
         // Streaming data packets
         P::ObjectReport(_)

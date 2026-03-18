@@ -1,5 +1,8 @@
+use core::cell::RefCell;
 use defmt::{error, info};
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
@@ -12,7 +15,7 @@ use trouble_host::Stack;
 use crate::DEVICE_LIST_SUBSCRIBED;
 use crate::storage::Settings;
 use core::sync::atomic::AtomicU32;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 // Lightweight diagnostics
 pub static DROPPED_DATA_TO_HOST: AtomicU32 = AtomicU32::new(0);
@@ -49,7 +52,9 @@ pub fn is_control_packet(pkt: &protodongers::Packet) -> bool {
         | P::ObjectReportRequest()
         | P::Ack()
         | P::FlashSettings()
-        | P::Vendor(_, _) => true,
+        | P::Vendor(_, _)
+        | P::SetDeviceName(_)
+        | P::SetDeviceNameResponse(_) => true,
 
         // Streaming data packets
         P::ObjectReport(_)
@@ -65,18 +70,108 @@ pub fn is_control_packet(pkt: &protodongers::Packet) -> bool {
 pub static PAIRING_FOUND_ADDR: Signal<ThreadModeRawMutex, [u8; 6]> = Signal::new();
 static PAIRING_CAPTURED: AtomicBool = AtomicBool::new(false);
 
+// Captured BLE name for the device found during pairing (used for PairingResult)
+static PAIRING_FOUND_NAME: BlockingMutex<CriticalSectionRawMutex, RefCell<heapless::String<32>>> =
+    BlockingMutex::new(RefCell::new(heapless::String::new()));
+
+// In-memory cache of BLE device names by address; populated whenever a device is seen advertising
+static DEVICE_NAMES: BlockingMutex<
+    CriticalSectionRawMutex,
+    RefCell<heapless::LinearMap<[u8; 6], heapless::String<32>, MAX_DEVICES>>,
+> = BlockingMutex::new(RefCell::new(heapless::LinearMap::new()));
+
+pub fn update_device_name(addr: [u8; 6], name: heapless::String<32>) {
+    DEVICE_NAMES.lock(|m| {
+        let mut map = m.borrow_mut();
+        if let Some(existing) = map.get_mut(&addr) {
+            *existing = name;
+        } else {
+            let _ = map.insert(addr, name);
+        }
+    });
+}
+
+
+pub fn clear_device_names() {
+    DEVICE_NAMES.lock(|m| m.borrow_mut().clear());
+}
+
 // Signal to restart central loop (e.g., when bonds are cleared)
 pub static RESTART_CENTRAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-pub fn reset_pairing_capture() {
-    PAIRING_CAPTURED.store(false, Ordering::Release);
+// Background scanner coordination.
+// CONNECT_PENDING counts device tasks currently calling central.connect().
+// The background scanner pauses when this is > 0.
+pub static CONNECT_PENDING: AtomicU8 = AtomicU8::new(0);
+pub static SCAN_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static SCAN_STOPPED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static SCAN_RESUME: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Called by device tasks before calling central.connect().
+/// Waits for the background scanner to stop its scan session.
+pub async fn begin_connect() {
+    CONNECT_PENDING.fetch_add(1, Ordering::Release);
+    while SCAN_ACTIVE.load(Ordering::Acquire) {
+        SCAN_STOPPED.wait().await;
+    }
 }
 
-pub fn report_scan_address(addr: [u8; 6]) {
+/// Called by device tasks after central.connect() returns (success or failure).
+pub fn end_connect() {
+    let prev = CONNECT_PENDING.fetch_sub(1, Ordering::AcqRel);
+    if prev == 1 {
+        SCAN_RESUME.signal(());
+    }
+}
+
+pub fn reset_pairing_capture() {
+    PAIRING_CAPTURED.store(false, Ordering::Release);
+    PAIRING_FOUND_NAME.lock(|n| n.borrow_mut().clear());
+}
+
+pub fn report_scan_address(addr: [u8; 6], name: heapless::String<32>) {
     if !PAIRING_CAPTURED.swap(true, Ordering::AcqRel) {
         info!("First device found during pairing: {:02x}, signaling", addr);
+        PAIRING_FOUND_NAME.lock(|n| *n.borrow_mut() = name);
         PAIRING_FOUND_ADDR.signal(addr);
     }
+}
+
+/// Get the cached BLE name for a device by address (from DEVICE_NAMES in-memory cache).
+pub fn get_cached_device_name(addr: &[u8; 6]) -> heapless::String<32> {
+    DEVICE_NAMES.lock(|m| m.borrow().get(addr).cloned().unwrap_or_default())
+}
+
+/// Get the BLE name captured during the last pairing scan.
+pub fn get_pairing_name() -> heapless::String<32> {
+    PAIRING_FOUND_NAME.lock(|n| n.borrow().clone())
+}
+
+/// Parse BLE local name (type 0x08 shortened or 0x09 complete) from AD structures.
+pub fn extract_local_name(data: &[u8]) -> heapless::String<32> {
+    let mut i = 0;
+    while i < data.len() {
+        let len = data[i] as usize;
+        if len == 0 {
+            break;
+        }
+        if i + 1 + len > data.len() {
+            break;
+        }
+        let ty = data[i + 1];
+        if ty == 0x08 || ty == 0x09 {
+            let name_bytes = &data[(i + 2)..(i + 1 + len)];
+            let mut s: heapless::String<32> = heapless::String::new();
+            for &b in name_bytes.iter().take(32) {
+                if b >= 0x20 && b < 0x7F {
+                    let _ = s.push(b as char);
+                }
+            }
+            return s;
+        }
+        i += 1 + len;
+    }
+    heapless::String::new()
 }
 
 // Check adv payload for Manufacturer Specific Data matching our target

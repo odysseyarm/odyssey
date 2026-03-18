@@ -67,35 +67,38 @@ static HOST_MGMT_ADD_RESULT: SyncSignal<ThreadModeRawMutex, Result<(), ()>> = Sy
 struct HostEventHandler;
 impl trouble_host::prelude::EventHandler for HostEventHandler {
     fn on_adv_reports(&self, reports: trouble_host::scan::LeAdvReportsIter) {
-        if crate::pairing::is_active() {
-            for r in reports {
-                if let Ok(rep) = r {
-                    // During pairing, accept MSD in either primary ADV or SCAN_RSP.
-                    if crate::ble::central::adv_matches_pairing(rep.data) {
-                        let raw = rep.addr.raw();
-                        let mut addr = [0u8; 6];
-                        addr.copy_from_slice(raw);
-                        defmt::info!("pairing: adv/scan match (LEGACY) {:02x}", addr);
-                        crate::ble::central::report_scan_address(addr);
-                        break;
-                    }
+        for r in reports {
+            if let Ok(rep) = r {
+                let raw = rep.addr.raw();
+                let mut addr = [0u8; 6];
+                addr.copy_from_slice(raw);
+                let name = crate::ble::central::extract_local_name(rep.data);
+                // Always update the name cache so ListBondsResponse can return names
+                if !name.is_empty() {
+                    crate::ble::central::update_device_name(addr, name.clone());
+                }
+                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data) {
+                    defmt::info!("pairing: adv/scan match {:02x}", addr);
+                    crate::ble::central::report_scan_address(addr, name);
+                    break;
                 }
             }
         }
     }
     fn on_ext_adv_reports(&self, reports: trouble_host::scan::LeExtAdvReportsIter) {
-        if crate::pairing::is_active() {
-            for r in reports {
-                if let Ok(rep) = r {
-                    // Accept any extended advert that contains our MSD.
-                    if crate::ble::central::adv_matches_pairing(rep.data) {
-                        let raw = rep.addr.raw();
-                        let mut addr = [0u8; 6];
-                        addr.copy_from_slice(raw);
-                        defmt::info!("pairing: adv match (EXT) {:02x}", addr);
-                        crate::ble::central::report_scan_address(addr);
-                        break;
-                    }
+        for r in reports {
+            if let Ok(rep) = r {
+                let raw = rep.addr.raw();
+                let mut addr = [0u8; 6];
+                addr.copy_from_slice(raw);
+                let name = crate::ble::central::extract_local_name(rep.data);
+                if !name.is_empty() {
+                    crate::ble::central::update_device_name(addr, name.clone());
+                }
+                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data) {
+                    defmt::info!("pairing: adv match (EXT) {:02x}", addr);
+                    crate::ble::central::report_scan_address(addr, name);
+                    break;
                 }
             }
         }
@@ -379,10 +382,9 @@ async fn main(mut spawner: Spawner) {
         spawner,
     )));
 
-    // Start pairing scanner (uses its own Central instance, finds devices and adds to targets)
-    spawner.spawn(unwrap!(ble::pairing_scanner::pairing_scanner_task(
-        stack, settings
-    )));
+    // Start background scanner (always-on active scan for name caching + pairing detection)
+    spawner.spawn(unwrap!(ble::pairing_scanner::background_scanner_task(stack)));
+    spawner.spawn(unwrap!(ble::pairing_scanner::pairing_monitor_task(settings)));
 
     spawner.spawn(unwrap!(bond_storage_task(settings)));
 }
@@ -395,26 +397,40 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
     use defmt::info;
 
     loop {
-        // Wait for a bond to be stored
         let bond = BOND_TO_STORE.wait().await;
 
         info!("Storing bond for device {:02x}...", bond.bd_addr);
 
-        // Store the bond to flash
         match settings.add_bond(bond).await {
             Ok(()) => {
                 info!("Bond stored successfully for device {:02x}", bond.bd_addr);
 
-                // Add to runtime scan targets so reconnection works without reboot
                 let _ = settings.add_scan_target(bond.bd_addr).await;
-
-                // Update the in-memory cache for fast lookup on reconnection
                 ble::security::update_bond_cache(bond).await;
 
-                // Send pairing success to USB host
-                control::try_send_event(UsbMuxCtrlMsg::PairingResult(Ok(bond.bd_addr)));
+                // Persist the device name to flash.
+                // Prefer the in-memory DEVICE_NAMES cache (updated from all adv reports including
+                // scan responses) over PAIRING_FOUND_NAME (which may have been captured from the
+                // primary ADV_IND before the scan response with the actual name arrived).
+                let paired_name = {
+                    let cached = crate::ble::central::get_cached_device_name(&bond.bd_addr);
+                    let pairing = crate::ble::central::get_pairing_name();
+                    info!("bond_storage: cached_name={:?} pairing_name={:?}", cached.as_str(), pairing.as_str());
+                    if cached.is_empty() { pairing } else { cached }
+                };
+                info!("bond_storage: paired_name={:?}", paired_name.as_str());
+                if !paired_name.is_empty() {
+                    settings.set_device_name(bond.bd_addr, &paired_name).await;
+                    info!("bond_storage: saved name to flash");
+                } else {
+                    info!("bond_storage: no name to save");
+                }
 
-                // Exit pairing mode now that we've successfully bonded
+                control::try_send_event(UsbMuxCtrlMsg::PairingResult(Ok(protodongers::control::BondedDevice {
+                    uuid: bond.bd_addr,
+                    name: paired_name,
+                })));
+
                 pairing::cancel();
                 info!("Pairing mode exited after successful bonding");
             }
@@ -846,14 +862,30 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 let mut bonded = HVec::new();
                 for opt in bonds.slots.iter() {
                     if let Some(bd) = opt {
-                        let _ = bonded.push(bd.bd_addr);
+                        // Prefer in-memory adv cache (updated from BLE advertisements,
+                        // so it reflects the current name even after a USB rename).
+                        // Fall back to flash if cache is empty.
+                        let cached = crate::ble::central::get_cached_device_name(&bd.bd_addr);
+                        let name = if !cached.is_empty() {
+                            cached
+                        } else {
+                            settings.get_device_name(&bd.bd_addr).await
+                        };
+                        let _ = bonded.push(protodongers::control::BondedDevice {
+                            uuid: bd.bd_addr,
+                            name,
+                        });
                     }
+                }
+                for b in bonded.iter() {
+                    info!("  bond {:02x} name={}", b.uuid, b.name.as_str());
                 }
                 control::try_send_event(C::ListBondsResponse(bonded));
             }
             C::StartPairing(start) => {
                 info!("CTL StartPairing received, timeout_ms={}", start.timeout_ms);
                 let timeout = embassy_time::Duration::from_millis(start.timeout_ms as u64);
+                ble::pairing_scanner::on_pairing_start();
                 pairing::enter_with_timeout(timeout);
                 control::try_send_event(C::StartPairingResponse);
             }
@@ -881,6 +913,8 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 settings.bonds_clear().await;
                 settings.scan_list_clear().await;
                 ble::security::clear_bond_cache().await;
+                ble::central::clear_device_names();
+                settings.clear_device_names().await;
 
                 // Disconnect all active BLE connections
                 if let (Some(active_connections), Some(device_queues)) = (
@@ -922,6 +956,11 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                         control::try_send_event(C::AddBondResponse(Err(AddBondError::Full)));
                     }
                 }
+            }
+            C::UpdateBondName { uuid, name } => {
+                info!("CTL UpdateBondName {:02x} name={}", uuid, name.as_str());
+                settings.set_device_name(uuid, &name).await;
+                ble::central::update_device_name(uuid, name);
             }
             _ => {}
         }

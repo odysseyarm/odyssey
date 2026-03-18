@@ -34,6 +34,8 @@ use static_cell::StaticCell;
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
 static NODE_BONDS: StorageListNode<BondsSettings> = StorageListNode::new("settings/bonds");
+static NODE_DEVICE_NAMES: StorageListNode<DeviceNamesSettings> =
+    StorageListNode::new("settings/device_names");
 
 // Scan list is no longer persisted - it's derived from bonds on boot
 // and only holds temporary pairing targets during runtime
@@ -85,6 +87,49 @@ impl Default for BondsSettings {
     fn default() -> Self {
         Self {
             slots: [None; MAX_DEVICES],
+        }
+    }
+}
+
+/// A single device name entry: BLE address paired with a UTF-8 name.
+#[derive(Debug, Clone, Copy, Encode, Decode, CborLen)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cbor(map)]
+pub struct DeviceNameEntry {
+    #[n(0)]
+    pub bd_addr: [u8; 6],
+    #[n(1)]
+    pub name_bytes: [u8; 32],
+    #[n(2)]
+    pub name_len: u8,
+}
+
+impl DeviceNameEntry {
+    pub fn name(&self) -> heapless::String<32> {
+        let len = self.name_len.min(32) as usize;
+        let mut s = heapless::String::new();
+        if let Ok(text) = core::str::from_utf8(&self.name_bytes[..len]) {
+            for c in text.chars().take(32) {
+                let _ = s.push(c);
+            }
+        }
+        s
+    }
+}
+
+/// Storage for device names (up to MAX_DEVICES)
+#[derive(Debug, Clone, Encode, Decode, CborLen)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cbor(map)]
+pub struct DeviceNamesSettings {
+    #[n(0)]
+    pub entries: [Option<DeviceNameEntry>; MAX_DEVICES],
+}
+
+impl Default for DeviceNamesSettings {
+    fn default() -> Self {
+        Self {
+            entries: [None; MAX_DEVICES],
         }
     }
 }
@@ -218,6 +263,7 @@ pub struct Settings {
     #[allow(dead_code)]
     bonds: AsyncMutex<ThreadModeRawMutex, BondsSettings>,
     scan_list: AsyncMutex<ThreadModeRawMutex, ScanListSettings>,
+    device_names: AsyncMutex<ThreadModeRawMutex, DeviceNamesSettings>,
 }
 
 impl Settings {
@@ -384,6 +430,68 @@ impl Settings {
         *scan_list = ScanListSettings::default();
         info!("Cleared all scan targets");
     }
+
+    async fn device_names_write(&self) {
+        let names = self.device_names.lock().await;
+        let mut h = NODE_DEVICE_NAMES.attach(&LIST).await.unwrap();
+        h.write(&*names).await.unwrap();
+        drop(names);
+        settings_flush_now();
+    }
+
+    pub async fn set_device_name(&self, bd_addr: [u8; 6], name: &heapless::String<32>) {
+        let mut names = self.device_names.lock().await;
+        // Update existing entry for this address if present
+        for entry in names.entries.iter_mut() {
+            if let Some(e) = entry {
+                if e.bd_addr == bd_addr {
+                    let bytes = name.as_bytes();
+                    let len = bytes.len().min(32) as u8;
+                    e.name_bytes[..len as usize].copy_from_slice(&bytes[..len as usize]);
+                    e.name_len = len;
+                    drop(names);
+                    self.device_names_write().await;
+                    return;
+                }
+            }
+        }
+        // Find empty slot
+        for entry in names.entries.iter_mut() {
+            if entry.is_none() {
+                let bytes = name.as_bytes();
+                let len = bytes.len().min(32) as u8;
+                let mut name_bytes = [0u8; 32];
+                name_bytes[..len as usize].copy_from_slice(&bytes[..len as usize]);
+                *entry = Some(DeviceNameEntry { bd_addr, name_bytes, name_len: len });
+                drop(names);
+                self.device_names_write().await;
+                return;
+            }
+        }
+        defmt::warn!("No empty device name slot for {:02x}", bd_addr);
+    }
+
+    pub async fn get_device_name(&self, bd_addr: &[u8; 6]) -> heapless::String<32> {
+        let names = self.device_names.lock().await;
+        for entry in names.entries.iter() {
+            if let Some(e) = entry {
+                if &e.bd_addr == bd_addr {
+                    let name = e.name();
+                    defmt::info!("get_device_name {:02x} -> {:?}", bd_addr, name.as_str());
+                    return name;
+                }
+            }
+        }
+        defmt::info!("get_device_name {:02x} -> (not found in flash)", bd_addr);
+        heapless::String::new()
+    }
+
+    pub async fn clear_device_names(&self) {
+        let mut names = self.device_names.lock().await;
+        *names = DeviceNamesSettings::default();
+        drop(names);
+        self.device_names_write().await;
+    }
 }
 
 /// Initialize settings subsystem
@@ -416,10 +524,18 @@ pub async fn init_settings(
         .attach_with_default(&LIST, BondsSettings::default)
         .await
         .unwrap();
+    let h_device_names = NODE_DEVICE_NAMES
+        .attach_with_default(&LIST, DeviceNamesSettings::default)
+        .await
+        .unwrap();
 
     let bonds_data = h_bonds.load();
     let bond_count = bonds_data.slots.iter().filter(|b| b.is_some()).count();
     info!("Loaded {} bonds from flash", bond_count);
+
+    let names_data = h_device_names.load();
+    let names_count = names_data.entries.iter().filter(|e| e.is_some()).count();
+    info!("Loaded {} device names from flash", names_count);
 
     // Populate scan list from bonds (not persisted to flash)
     let mut scan_list_data = ScanListSettings::default();
@@ -438,6 +554,7 @@ pub async fn init_settings(
     let settings = Settings {
         bonds: AsyncMutex::new(bonds_data),
         scan_list: AsyncMutex::new(scan_list_data),
+        device_names: AsyncMutex::new(names_data),
     };
 
     SETTINGS_CELL.init(settings)

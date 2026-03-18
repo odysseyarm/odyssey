@@ -260,6 +260,40 @@ impl Settings {
     }
 }
 
+mod heapless_str32_cbor {
+    use cfg_noodle::minicbor::{decode::Error, encode::Write, encode::Error as EncodeError, Decoder, Encoder};
+
+    pub fn encode<Ctx, W: Write>(
+        s: &heapless::String<32>,
+        e: &mut Encoder<W>,
+        _ctx: &mut Ctx,
+    ) -> Result<(), EncodeError<W::Error>> {
+        e.str(s.as_str())?;
+        Ok(())
+    }
+
+    pub fn decode<'b, Ctx>(
+        d: &mut Decoder<'b>,
+        _ctx: &mut Ctx,
+    ) -> Result<heapless::String<32>, Error> {
+        let s = d.str()?;
+        let mut hs: heapless::String<32> = heapless::String::new();
+        for c in s.chars() {
+            if hs.push(c).is_err() {
+                break;
+            }
+        }
+        Ok(hs)
+    }
+
+    pub fn cbor_len<Ctx>(s: &heapless::String<32>, _ctx: &mut Ctx) -> usize {
+        let n = s.as_bytes().len();
+        // CBOR text string: 1-byte header for n ≤ 23, 2-byte header for n ≤ 255
+        let header = if n <= 23 { 1 } else { 2 };
+        header + n
+    }
+}
+
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct GeneralSettings {
     #[n(0)]
@@ -278,6 +312,9 @@ pub struct GeneralSettings {
     pub camera_model_wf: protodongers::wire::CameraCalibrationParams,
     #[n(7)]
     pub stereo_iso: protodongers::wire::StereoCalibrationParams,
+    #[n(8)]
+    #[cbor(with = "heapless_str32_cbor")]
+    pub name: heapless::String<32>,
 }
 
 impl Default for GeneralSettings {
@@ -301,6 +338,7 @@ impl Default for GeneralSettings {
                 r: [0.0; 9],
                 t: [0.0; 3],
             },
+            name: heapless::String::new(),
         }
     }
 }

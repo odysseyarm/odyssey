@@ -1,75 +1,82 @@
-use defmt::info;
-use embassy_time::Duration;
+use defmt::{error, info};
 use trouble_host::Stack;
-use trouble_host::prelude::{ScanConfig, Scanner};
+use trouble_host::prelude::ScanConfig;
+use trouble_host::scan::Scanner;
 
-use super::central::{PAIRING_FOUND_ADDR, reset_pairing_capture};
+use super::central::{
+    CONNECT_PENDING, PAIRING_FOUND_ADDR, SCAN_ACTIVE, SCAN_RESUME, SCAN_STOPPED,
+    reset_pairing_capture,
+};
 
-/// Pairing scanner task - scans for new devices during pairing
+/// Background scanner — runs an active scan whenever no device task is connecting.
+/// The on_adv_reports callback in HostEventHandler handles both name caching and
+/// pairing device detection, so this task just needs to keep the scan running.
 #[embassy_executor::task]
-pub async fn pairing_scanner_task(
+pub async fn background_scanner_task(
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
-    settings: &'static crate::storage::Settings,
 ) -> ! {
-    info!("Pairing scanner task started");
+    info!("Background scanner task started");
+
+    let host = stack.build();
+    let central = host.central;
+    let mut scanner = Scanner::new(central);
+
+    let config = ScanConfig {
+        active: true,
+        ..Default::default()
+    };
 
     loop {
-        // Wait until pairing is active
-        while !crate::pairing::is_active() {
-            embassy_time::Timer::after_millis(100).await;
+        // Wait until no device task is connecting
+        while CONNECT_PENDING.load(core::sync::atomic::Ordering::Acquire) > 0 {
+            SCAN_RESUME.wait().await;
         }
 
-        info!("Pairing active, starting scan for new devices");
-        reset_pairing_capture();
+        SCAN_ACTIVE.store(true, core::sync::atomic::Ordering::Release);
 
-        // Build our own Central for scanning
-        let host = stack.build();
-        let central = host.central;
-        let mut scanner = Scanner::new(central);
-
-        let mut config = ScanConfig::default();
-        config.active = true; // Active scan to get scan responses
-
-        // Scan until device found or timeout
         match scanner.scan(&config).await {
             Ok(session) => {
-                // Wait for device discovery (30 second timeout)
-                let result =
-                    embassy_time::with_timeout(Duration::from_secs(30), PAIRING_FOUND_ADDR.wait())
-                        .await;
-
-                drop(session); // Stop scanning immediately
-
-                match result {
-                    Ok(addr) => {
-                        info!("Pairing found device: {:02x}", addr);
-
-                        // Add to scan targets - BLE manager will spawn the device task
-                        let _ = settings.add_scan_target(addr).await;
-
-                        // Signal BLE manager to check for new targets immediately
-                        crate::ble::central::RESTART_CENTRAL.signal(());
-
-                        // Exit pairing mode
-                        crate::pairing::cancel();
-                        info!("Device added to targets, pairing cancelled");
+                // Keep scanning until a connect is initiated
+                loop {
+                    if CONNECT_PENDING.load(core::sync::atomic::Ordering::Acquire) > 0 {
+                        break;
                     }
-                    Err(_) => {
-                        info!("Pairing scan timeout - no device found in 30s");
-                    }
+                    embassy_time::Timer::after_millis(20).await;
                 }
+                drop(session);
+                // drop(session) calls scan_command_state.cancel(), which wakes host_ctrl_task.
+                // Wait here so host_ctrl_task can run sdc_hci_cmd_le_set_scan_enable(false)
+                // before we signal SCAN_STOPPED. Without this, LIFO scheduling causes the
+                // device task to call central.connect() before the scan is disabled at the
+                // hardware level, resulting in "Command Disallowed".
+                embassy_time::Timer::after_millis(5).await;
             }
-            Err(e) => match &e {
-                trouble_host::BleHostError::BleHost(kind) => {
-                    defmt::error!("Scan start host error: {:?}", kind)
-                }
-                trouble_host::BleHostError::Controller(_) => {
-                    defmt::error!("Scan start controller error")
-                }
-            },
+            Err(e) => {
+                error!("Background scan error: {:?}", defmt::Debug2Format(&e));
+                embassy_time::Timer::after_millis(500).await;
+            }
         }
 
-        // Small delay before potentially restarting
-        embassy_time::Timer::after_millis(500).await;
+        SCAN_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
+        SCAN_STOPPED.signal(());
     }
+}
+
+/// Pairing monitor — waits for a device found during pairing and adds it to scan targets.
+/// The actual scanning is done by background_scanner_task; on_adv_reports fires
+/// report_scan_address which signals PAIRING_FOUND_ADDR.
+#[embassy_executor::task]
+pub async fn pairing_monitor_task(settings: &'static crate::storage::Settings) -> ! {
+    loop {
+        let addr = PAIRING_FOUND_ADDR.wait().await;
+        info!("Pairing: device found {:02x}, adding to scan targets", addr);
+        let _ = settings.add_scan_target(addr).await;
+        crate::ble::central::RESTART_CENTRAL.signal(());
+        crate::pairing::cancel();
+    }
+}
+
+/// Called when pairing mode starts to reset the pairing capture state.
+pub fn on_pairing_start() {
+    reset_pairing_capture();
 }
