@@ -71,4 +71,5 @@ pub enum UsbMuxCtrlMsg {
     AddBond(super::BondEntry),
     AddBondResponse(Result<(), super::AddBondError>),
 
+    UpdateBondName { uuid: crate::mux::Uuid, name: heapless::String<32> },
 }
