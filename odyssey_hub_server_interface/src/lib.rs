@@ -117,6 +117,7 @@ impl From<common::device::Device> for proto::Device {
             },
             events_connected: d.events_connected,
             product_id: d.product_id as u32,
+            name: d.name,
         }
     }
 }
@@ -144,6 +145,7 @@ impl From<proto::Device> for common::device::Device {
             },
             events_connected: d.events_connected,
             product_id: d.product_id as u16,
+            name: d.name,
         }
     }
 }
@@ -214,11 +216,13 @@ impl From<common::events::Event> for proto::Event {
                         success,
                         paired_address,
                         error,
+                        paired_name,
                     } => proto::device_event::DeviceEventOneof::PairingResult(
                         proto::device_event::PairingResultEvent {
                             success,
                             paired_address: paired_address.to_vec(),
                             error,
+                            paired_name,
                         },
                     ),
                     common::events::DeviceEventKind::BatteryEvent(e) => {
@@ -242,6 +246,7 @@ impl From<common::events::Event> for proto::Event {
                 success,
                 paired_address,
                 error,
+                paired_name,
             } => proto::Event {
                 event_oneof: Some(proto::event::EventOneof::DonglePairingResult(
                     proto::DonglePairingResultEvent {
@@ -249,6 +254,7 @@ impl From<common::events::Event> for proto::Event {
                         success,
                         paired_address: paired_address.to_vec(),
                         error,
+                        paired_name,
                     },
                 )),
             },
@@ -270,6 +276,7 @@ impl TryFrom<proto::Event> for common::events::Event {
                     success: e.success,
                     paired_address,
                     error: e.error,
+                    paired_name: e.paired_name,
                 });
             }
             proto::event::EventOneof::Device(d) => {
@@ -334,6 +341,7 @@ impl TryFrom<proto::Event> for common::events::Event {
                             success: e.success,
                             paired_address,
                             error: e.error,
+                            paired_name: e.paired_name,
                         }
                     }
                     proto::device_event::DeviceEventOneof::Battery(e) => {

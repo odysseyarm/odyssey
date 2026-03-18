@@ -1029,7 +1029,7 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
     let pending_usb = user_pending_usb.read().unwrap_or(device_is_usb);
 
     let device_for_set = device.clone();
-    let set_mode = move |usb_mode: bool| {
+    let set_mode = std::sync::Arc::new(move |usb_mode: bool| {
         let device = device_for_set.clone();
         async move {
             status.set("Applying...".into());
@@ -1047,7 +1047,7 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
                 }
             }
         }
-    };
+    });
 
     rsx! {
         details {
@@ -1070,7 +1070,7 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
                             } else {
                                 "btn-secondary text-xs px-2 py-1"
                             },
-                            onclick: move |_| set_mode(false),
+                            onclick: { let set_mode = set_mode.clone(); move |_| set_mode(false) },
                             "BLE"
                         }
                         button {
@@ -1129,13 +1129,15 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
 
     // Coroutine: receives () each time settings should be loaded from device.
     // Triggered on section expand and Reload button click.
-    let device_for_load = device.clone();
-    let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| async move {
+    let device_for_load = std::sync::Arc::new(device.clone());
+    let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| {
+        let device_for_load = device_for_load.clone();
+        async move {
         while rx.next().await.is_some() {
             loading.set(true);
             status.set("Reading...".into());
             let hub_ctx = hub.peek().clone();
-            let device = device_for_load.clone();
+            let device = (*device_for_load).clone();
             // Load general config
             if let Ok(v) = hub_ctx
                 .client
@@ -1191,7 +1193,7 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             }
             loading.set(false);
         }
-    });
+    }});
 
     // Guards applied after all hooks have been called.
     if !should_render {

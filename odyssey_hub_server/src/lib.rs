@@ -407,18 +407,19 @@ pub async fn run_server(
                             let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::UpdateDevice(updated_device) => {
+                            let uuid = updated_device.uuid;
                             tracing::info!(
                                 "Processing device update for {:02x?}",
-                                updated_device.uuid
+                                uuid
                             );
                             let mut dl = dl.lock();
                             // Find the device by UUID only
                             if let Some(entry) =
-                                dl.iter_mut().find(|(d, _)| d.uuid == updated_device.uuid)
+                                dl.iter_mut().find(|(d, _)| d.uuid == uuid)
                             {
                                 tracing::info!(
                                     "Updating device {:02x?} capabilities from {:?} to {:?}",
-                                    updated_device.uuid,
+                                    uuid,
                                     entry.0.capabilities,
                                     updated_device.capabilities
                                 );
@@ -426,14 +427,22 @@ pub async fn run_server(
                             } else {
                                 tracing::warn!(
                                     "Device {:02x?} not found in device list for update",
-                                    updated_device.uuid
+                                    uuid
                                 );
                             }
                             drop(dl);
                             tracing::info!(
                                 "Sending list_change notification for update of {:02x?}",
-                                updated_device.uuid
+                                uuid
                             );
+                            let _ = list_change_sender.send(());
+                        }
+                        device_tasks::Message::UpdateName(uuid, name) => {
+                            let mut dl = dl.lock();
+                            if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == uuid) {
+                                entry.0.name = name;
+                            }
+                            drop(dl);
                             let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::DongleConnect(info, cmd_tx) => {

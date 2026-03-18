@@ -57,8 +57,7 @@ pub enum EventsTransport {
     Bluetooth,
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Device {
     pub uuid: [u8; 6],
     pub transport: Transport,
@@ -70,4 +69,19 @@ pub struct Device {
     pub events_connected: bool,
     /// USB Product ID (e.g. 0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0 if unknown
     pub product_id: u16,
+    /// Human-readable device name (BLE bond name, USB product string, or user-set name)
+    pub name: String,
+}
+
+// Identity is determined by UUID only — name changes don't affect equality/hashing.
+impl PartialEq for Device {
+    fn eq(&self, other: &Self) -> bool {
+        self.uuid == other.uuid
+    }
+}
+impl Eq for Device {}
+impl std::hash::Hash for Device {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.uuid.hash(state);
+    }
 }

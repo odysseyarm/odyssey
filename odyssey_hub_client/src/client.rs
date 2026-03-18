@@ -593,6 +593,24 @@ impl Client {
             Err(anyhow::anyhow!("No service client"))
         }
     }
+
+    pub async fn set_device_name(
+        &mut self,
+        device: common::device::Device,
+        name: String,
+    ) -> anyhow::Result<()> {
+        if let Some(service_client) = &mut self.service_client {
+            let request =
+                tonic::Request::new(odyssey_hub_server_interface::SetDeviceNameRequest {
+                    device: Some(device.into()),
+                    name,
+                });
+            service_client.set_device_name(request).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No service client"))
+        }
+    }
 }
 
 /// Dongle metadata returned by the dongle list subscription.

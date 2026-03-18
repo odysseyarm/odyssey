@@ -100,13 +100,19 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                 dongle_id: event_id,
                 success,
                 paired_address,
+                paired_name,
                 error,
             }) = &*latest_event.read()
             {
                 if *event_id == dongle_id {
                     pairing.set(false);
                     if *success {
-                        status.set(format!("Paired with {}", format_uuid(paired_address)));
+                        let label = if paired_name.is_empty() {
+                            format_uuid(paired_address)
+                        } else {
+                            format!("{} ({})", paired_name, format_uuid(paired_address))
+                        };
+                        status.set(format!("Paired with {}", label));
                     } else {
                         status.set(error.clone());
                     }
@@ -297,6 +303,7 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                     odyssey_hub_common::events::DeviceEventKind::PairingResult {
                         success,
                         paired_address,
+                        paired_name,
                         error,
                     },
                 ),
@@ -305,7 +312,12 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                 if dev.uuid == device_uuid {
                     pairing.set(false);
                     if *success {
-                        status.set(format!("Paired with {}", format_uuid(paired_address)));
+                        let label = if paired_name.is_empty() {
+                            format_uuid(paired_address)
+                        } else {
+                            format!("{} ({})", paired_name, format_uuid(paired_address))
+                        };
+                        status.set(format!("Paired with {}", label));
                     } else {
                         status.set(error.clone());
                     }

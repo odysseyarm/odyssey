@@ -39,6 +39,7 @@ pub struct DonglePairingResult {
     pub dongle_id: String,
     pub success: bool,
     pub paired_address: Vec<u8>,
+    pub paired_name: String,
     pub error: String,
 }
 
@@ -65,6 +66,7 @@ pub enum DeviceEventKind {
 pub struct PairingResult {
     pub success: bool,
     pub paired_address: Vec<u8>,
+    pub paired_name: String,
     pub error: String,
 }
 
@@ -341,10 +343,12 @@ impl From<common::events::Event> for Event {
                         common::events::DeviceEventKind::PairingResult {
                             success,
                             paired_address,
+                            paired_name,
                             error,
                         } => DeviceEventKind::PairingResult(PairingResult {
                             success,
                             paired_address: paired_address.to_vec(),
+                            paired_name,
                             error,
                         }),
                         common::events::DeviceEventKind::BatteryEvent(e) => {
@@ -360,11 +364,13 @@ impl From<common::events::Event> for Event {
                 dongle_id,
                 success,
                 paired_address,
+                paired_name,
                 error,
             } => Event::DonglePairingResult(DonglePairingResult {
                 dongle_id,
                 success,
                 paired_address: paired_address.to_vec(),
+                paired_name,
                 error,
             }),
         }

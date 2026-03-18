@@ -6,6 +6,7 @@ pub enum Event {
         dongle_id: String,
         success: bool,
         paired_address: [u8; 6],
+        paired_name: String,
         error: String,
     },
 }
@@ -27,6 +28,7 @@ pub enum DeviceEventKind {
     PairingResult {
         success: bool,
         paired_address: [u8; 6],
+        paired_name: String,
         error: String,
     },
     BatteryEvent(BatteryEvent),

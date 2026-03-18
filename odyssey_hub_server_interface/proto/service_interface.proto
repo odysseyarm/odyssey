@@ -47,6 +47,7 @@ service Service {
   rpc StartDonglePairing(StartDonglePairingRequest) returns (EmptyReply) {}
   rpc CancelDonglePairing(CancelDonglePairingRequest) returns (EmptyReply) {}
   rpc ClearDongleBonds(ClearDongleBondsRequest) returns (EmptyReply) {}
+  rpc SetDeviceName(SetDeviceNameRequest) returns (EmptyReply) {}
 
   // Window control
   rpc BringToFront(EmptyRequest) returns (EmptyReply) {}
@@ -107,6 +108,7 @@ message Device {
   EventsTransport events_transport = 5;
   bool events_connected = 6; // Whether events are currently being received
   uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
+  string name = 8; // Human-readable device name (BLE bond name, USB product string, or user-set)
 }
 
 message FirmwareVersion {
@@ -158,6 +160,7 @@ message DeviceEvent {
     bool success = 1;
     bytes paired_address = 2; // 6-byte BLE address on success
     string error = 3; // error/status message
+    string paired_name = 4; // BLE device name on success
   }
 
   message BatteryEvent {
@@ -183,6 +186,7 @@ message DonglePairingResultEvent {
   bool success = 2;
   bytes paired_address = 3; // 6-byte BLE address on success
   string error = 4; // error/status message
+  string paired_name = 5; // BLE device name on success
 }
 
 message Event {
@@ -358,6 +362,10 @@ message CancelDonglePairingRequest {
 }
 message ClearDongleBondsRequest {
   string dongle_id = 1;
+}
+message SetDeviceNameRequest {
+  Device device = 1;
+  string name = 2;
 }
 
 message SubscribeEventsRequest {}
