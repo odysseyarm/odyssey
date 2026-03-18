@@ -388,14 +388,18 @@ pub enum PropKind {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Props {
     #[cfg_attr(feature = "minicbor", n(0))]
     Uuid(#[cfg_attr(feature = "minicbor", n(0))] [u8; 6]),
     #[cfg_attr(feature = "minicbor", n(1))]
     ProductId(#[cfg_attr(feature = "minicbor", n(0))] u16),
     #[cfg_attr(feature = "minicbor", n(2))]
-    Name(#[cfg_attr(feature = "minicbor", n(0))] heapless::String<32>),
+    Name(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "minicbor", cbor(with = "heapless_str32_cbor"))]
+        heapless::String<32>,
+    ),
 }
 
 #[repr(C)]
