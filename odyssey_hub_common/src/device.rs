@@ -58,6 +58,7 @@ pub enum EventsTransport {
 }
 
 #[derive(Debug, Clone)]
+#[repr(C)]
 pub struct Device {
     pub uuid: [u8; 6],
     pub transport: Transport,
@@ -69,8 +70,32 @@ pub struct Device {
     pub events_connected: bool,
     /// USB Product ID (e.g. 0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0 if unknown
     pub product_id: u16,
-    /// Human-readable device name (BLE bond name, USB product string, or user-set name)
-    pub name: String,
+    /// Human-readable device name, null-terminated, up to 32 UTF-8 bytes + null.
+    /// C/C++ layout: `uint8_t name[33]`
+    pub name: [u8; 33],
+}
+
+impl Device {
+    /// Build a `[u8; 33]` name buffer from a &str, for use in struct literal initialization.
+    pub fn name_bytes(s: &str) -> [u8; 33] {
+        let mut buf = [0u8; 33];
+        let bytes = s.as_bytes();
+        let len = bytes.len().min(32);
+        buf[..len].copy_from_slice(&bytes[..len]);
+        buf
+    }
+
+    pub fn name(&self) -> &str {
+        let nul = self.name.iter().position(|&b| b == 0).unwrap_or(33);
+        std::str::from_utf8(&self.name[..nul]).unwrap_or("")
+    }
+
+    pub fn set_name(&mut self, s: &str) {
+        self.name = [0u8; 33];
+        let bytes = s.as_bytes();
+        let len = bytes.len().min(32);
+        self.name[..len].copy_from_slice(&bytes[..len]);
+    }
 }
 
 // Identity is determined by UUID only — name changes don't affect equality/hashing.

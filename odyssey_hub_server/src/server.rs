@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+﻿use std::{collections::HashMap, sync::Arc};
 
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
@@ -996,7 +996,7 @@ impl Service for Server {
         {
             let mut dl = self.device_list.lock();
             if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == dev.uuid) {
-                entry.0.name = name.clone();
+                entry.0.name = odyssey_hub_common::device::Device::name_bytes(&name);
             }
         }
         let _ = self.device_list_change_sender.send(());
