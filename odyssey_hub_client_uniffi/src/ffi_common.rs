@@ -1,4 +1,4 @@
-use ats_usb::packets::vm::VendorData;
+﻿use ats_usb::packets::vm::VendorData;
 use odyssey_hub_common as common;
 
 #[macro_export]
@@ -25,6 +25,7 @@ pub struct Device {
     pub events_transport: common::device::EventsTransport,
     pub events_connected: bool,
     pub product_id: Option<u16>,
+    pub name: String,
 }
 
 #[derive(uniffi::Enum, Clone)]
@@ -268,6 +269,7 @@ impl From<common::device::Device> for Device {
             } else {
                 Some(device.product_id)
             },
+            name: device.name().to_string(),
         }
     }
 }
@@ -285,6 +287,7 @@ impl From<Device> for common::device::Device {
             events_transport: device.events_transport,
             events_connected: device.events_connected,
             product_id: device.product_id.unwrap_or(0),
+            name: common::device::Device::name_bytes(&device.name),
         }
     }
 }

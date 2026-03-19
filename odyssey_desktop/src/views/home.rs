@@ -1,4 +1,4 @@
-use dioxus::{
+﻿use dioxus::{
     desktop::{tao::window::Fullscreen, WindowBuilder},
     logger::tracing,
     prelude::*,
@@ -99,7 +99,7 @@ pub fn Home() -> Element {
                                         {
                                             let is_updating = updating.contains(&device.uuid);
                                             let addr = format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", device.uuid[0], device.uuid[1], device.uuid[2], device.uuid[3], device.uuid[4], device.uuid[5]);
-                                            let current_name = device.name.clone();
+                                            let current_name = device.name().to_string();
                                             let label = if current_name.is_empty() { addr.clone() } else { format!("{} ({})", current_name, addr) };
                                             let mut editing = use_signal(|| false);
                                             let mut edit_value = use_signal(|| current_name.clone());

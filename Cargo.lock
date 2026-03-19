@@ -2325,6 +2325,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "fixed_str"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f2b67620e0aed9d7dc0c7946be25cb43841177e2b18c9c804aab181bcf44b9"
+
+[[package]]
 name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4868,7 +4874,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey_desktop"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "anyhow",
  "ats_usb",
@@ -4957,6 +4963,7 @@ dependencies = [
  "arrayvec 0.7.6",
  "ats_common",
  "ats_usb",
+ "fixed_str",
  "json5",
  "nalgebra 0.34.1",
  "serde",

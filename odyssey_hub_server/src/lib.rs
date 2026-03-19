@@ -1,4 +1,4 @@
-mod accessories;
+﻿mod accessories;
 mod device_tasks;
 pub mod firmware;
 mod server;
@@ -440,7 +440,7 @@ pub async fn run_server(
                         device_tasks::Message::UpdateName(uuid, name) => {
                             let mut dl = dl.lock();
                             if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == uuid) {
-                                entry.0.name = name;
+                                entry.0.name = odyssey_hub_common::device::Device::name_bytes(&name);
                             }
                             drop(dl);
                             let _ = list_change_sender.send(());

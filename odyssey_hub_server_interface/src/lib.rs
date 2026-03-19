@@ -1,4 +1,4 @@
-use std::num::NonZero;
+﻿use std::num::NonZero;
 
 mod proto {
     tonic::include_proto!("odyssey.service_interface");
@@ -117,7 +117,7 @@ impl From<common::device::Device> for proto::Device {
             },
             events_connected: d.events_connected,
             product_id: d.product_id as u32,
-            name: d.name,
+            name: d.name().to_string(),
         }
     }
 }
@@ -145,7 +145,7 @@ impl From<proto::Device> for common::device::Device {
             },
             events_connected: d.events_connected,
             product_id: d.product_id as u16,
-            name: d.name,
+            name: common::device::Device::name_bytes(&d.name),
         }
     }
 }

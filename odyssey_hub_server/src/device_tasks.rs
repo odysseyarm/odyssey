@@ -1,4 +1,4 @@
-use ahrs::Ahrs;
+﻿use ahrs::Ahrs;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
@@ -715,9 +715,9 @@ async fn usb_device_manager(
                                                     if let Err(e) = hub_clone.update_bond_name(addr_copy, n).await {
                                                         tracing::warn!("Failed to push name to dongle: {e}");
                                                     }
-                                                    name_str
+                                                    Device::name_bytes(&name_str)
                                                 }
-                                                _ => bond_names.lock().await.get(&addr_copy).cloned().unwrap_or_default(),
+                                                _ => Device::name_bytes(&bond_names.lock().await.get(&addr_copy).cloned().unwrap_or_default()),
                                             };
                                             let device_meta = Device {
                                                 uuid,
@@ -1206,7 +1206,7 @@ async fn usb_device_manager(
                     events_connected: transport_mode
                         == protodongers::control::device::TransportMode::Usb,
                     product_id: pid,
-                    name: dev_info.product_string().filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_default(),
+                    name: Device::name_bytes(&dev_info.product_string().filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_default()),
                 };
 
                 let (tx, rx) = mpsc::channel(32);
@@ -2041,7 +2041,7 @@ async fn device_handler_task(
                         };
                         info!("SetDeviceName result for {:02x?}: {:?}", device.uuid, r);
                         if r.is_ok() {
-                            device.name = name.clone();
+                            device.name = Device::name_bytes(&name);
                             bond_names.lock().await.insert(device.uuid, name.clone());
                             if let Some(ref hub) = hub_device {
                                 let mut hs = heapless::String::<32>::new();

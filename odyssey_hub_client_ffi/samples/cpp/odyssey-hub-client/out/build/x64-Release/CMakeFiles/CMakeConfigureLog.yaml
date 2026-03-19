@@ -81,11 +81,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -152,11 +152,11 @@ events:
       
       The output was:
       0
-      Microsoft (R) C/C++ Optimizing Compiler Version 19.50.35724 for x64
+      Microsoft (R) C/C++ Optimizing Compiler Version 19.50.35725 for x64
       Copyright (C) Microsoft Corporation.  All rights reserved.
       
       CMakeCCompilerId.c
-      Microsoft (R) Incremental Linker Version 14.50.35724.0
+      Microsoft (R) Incremental Linker Version 14.50.35725.0
       Copyright (C) Microsoft Corporation.  All rights reserved.
       
       /out:CMakeCCompilerId.exe 
@@ -168,7 +168,7 @@ events:
       Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CMakeCCompilerId.obj"
       
       The C compiler identification is MSVC, found in:
-        D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/4.1.1-msvc1/CompilerIdC/CMakeCCompilerId.exe
+        D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/4.1.2-msvc8/CompilerIdC/CMakeCCompilerId.exe
       
   -
     kind: "message-v1"
@@ -246,11 +246,11 @@ events:
       - "C:/Program Files/dotnet/"
       - "C:/Program Files/NVIDIA Corporation/NVIDIA app/NvDLISR/"
       - "C:/Program Files/Calibre2/"
-      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Program Files/Intel/CalibrationToolAPI/2.14.2.0/bin/"
       - "C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/"
       - "C:/Program Files/PowerShell/7/"
       - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/shims/"
       - "C:/Users/abrah/scoop/shims/"
@@ -338,11 +338,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -447,11 +447,11 @@ events:
       - "C:/Program Files/dotnet/"
       - "C:/Program Files/NVIDIA Corporation/NVIDIA app/NvDLISR/"
       - "C:/Program Files/Calibre2/"
-      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Program Files/Intel/CalibrationToolAPI/2.14.2.0/bin/"
       - "C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/"
       - "C:/Program Files/PowerShell/7/"
       - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/shims/"
       - "C:/Users/abrah/scoop/shims/"
@@ -626,11 +626,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -733,11 +733,11 @@ events:
       - "C:/Program Files/dotnet/"
       - "C:/Program Files/NVIDIA Corporation/NVIDIA app/NvDLISR/"
       - "C:/Program Files/Calibre2/"
-      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Program Files/Intel/CalibrationToolAPI/2.14.2.0/bin/"
       - "C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/"
       - "C:/Program Files/PowerShell/7/"
       - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/shims/"
       - "C:/Users/abrah/scoop/shims/"
@@ -825,11 +825,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -932,11 +932,11 @@ events:
       - "C:/Program Files/dotnet/"
       - "C:/Program Files/NVIDIA Corporation/NVIDIA app/NvDLISR/"
       - "C:/Program Files/Calibre2/"
-      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Program Files/Intel/CalibrationToolAPI/2.14.2.0/bin/"
       - "C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/"
       - "C:/Program Files/PowerShell/7/"
       - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/shims/"
       - "C:/Users/abrah/scoop/shims/"
@@ -1051,11 +1051,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -1158,11 +1158,11 @@ events:
       - "C:/Program Files/dotnet/"
       - "C:/Program Files/NVIDIA Corporation/NVIDIA app/NvDLISR/"
       - "C:/Program Files/Calibre2/"
-      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Program Files/Intel/CalibrationToolAPI/2.14.2.0/bin/"
       - "C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/"
       - "C:/Program Files/PowerShell/7/"
       - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/shims/"
       - "C:/Users/abrah/scoop/shims/"
@@ -1250,11 +1250,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -1369,11 +1369,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -1440,11 +1440,11 @@ events:
       
       The output was:
       0
-      Microsoft (R) C/C++ Optimizing Compiler Version 19.50.35724 for x64
+      Microsoft (R) C/C++ Optimizing Compiler Version 19.50.35725 for x64
       Copyright (C) Microsoft Corporation.  All rights reserved.
       
       CMakeCXXCompilerId.cpp
-      Microsoft (R) Incremental Linker Version 14.50.35724.0
+      Microsoft (R) Incremental Linker Version 14.50.35725.0
       Copyright (C) Microsoft Corporation.  All rights reserved.
       
       /out:CMakeCXXCompilerId.exe 
@@ -1456,7 +1456,7 @@ events:
       Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CMakeCXXCompilerId.obj"
       
       The CXX compiler identification is MSVC, found in:
-        D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/4.1.1-msvc1/CompilerIdCXX/CMakeCXXCompilerId.exe
+        D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/4.1.2-msvc8/CompilerIdCXX/CMakeCXXCompilerId.exe
       
   -
     kind: "message-v1"
@@ -1535,11 +1535,11 @@ events:
       - "C:/Program Files/dotnet/"
       - "C:/Program Files/NVIDIA Corporation/NVIDIA app/NvDLISR/"
       - "C:/Program Files/Calibre2/"
-      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Program Files/Intel/CalibrationToolAPI/2.14.2.0/bin/"
       - "C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/"
       - "C:/Program Files/PowerShell/7/"
       - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Docker/Docker/resources/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/bin/"
       - "C:/Users/abrah/.pyenv/pyenv-win/shims/"
       - "C:/Users/abrah/scoop/shims/"
@@ -1666,11 +1666,11 @@ events:
         - "C:\\WINDOWS\\System32\\Wbem"
         - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
         - "C:\\WINDOWS\\System32\\OpenSSH\\"
-        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Program Files\\Intel\\CalibrationToolAPI\\2.14.2.0\\bin"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
         - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Docker\\Docker\\resources\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\bin"
         - "C:\\Users\\abrah\\.pyenv\\pyenv-win\\shims"
         - "C:\\Users\\abrah\\scoop\\shims"
@@ -1726,8 +1726,8 @@ events:
     checks:
       - "Detecting C compiler ABI info"
     directories:
-      source: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-21nhec"
-      binary: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-21nhec"
+      source: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-6ze7s5"
+      binary: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-6ze7s5"
     cmakeVariables:
       CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS /W3"
       CMAKE_C_FLAGS_DEBUG: "/MDd /Ob0 /Od /RTC1"
@@ -1737,11 +1737,11 @@ events:
       variable: "CMAKE_C_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: 'D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-21nhec'
+        Change Dir: 'D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-6ze7s5'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -v cmTC_3f678
-        [1/2] C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\cl.exe  /nologo   /DWIN32 /D_WINDOWS /W3  /MDd /Ob0 /Od /RTC1 -Zi /showIncludes /FoCMakeFiles\\cmTC_3f678.dir\\CMakeCCompilerABI.c.obj /FdCMakeFiles\\cmTC_3f678.dir\\ /FS -c "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\share\\cmake-4.1\\Modules\\CMakeCCompilerABI.c"
-        [2/2] C:\\WINDOWS\\system32\\cmd.exe /C "cd . && "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe" -E vs_link_exe --msvc-ver=1950 --intdir=CMakeFiles\\cmTC_3f678.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\cmTC_3f678.dir\\CMakeCCompilerABI.c.obj  /out:cmTC_3f678.exe /implib:cmTC_3f678.lib /pdb:cmTC_3f678.pdb /version:0.0 /machine:x64  /debug /INCREMENTAL /subsystem:console  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd ."
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -v cmTC_d42fe
+        [1/2] C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\cl.exe  /nologo   /DWIN32 /D_WINDOWS /W3  /MDd /Ob0 /Od /RTC1 -Zi /showIncludes /FoCMakeFiles\\cmTC_d42fe.dir\\CMakeCCompilerABI.c.obj /FdCMakeFiles\\cmTC_d42fe.dir\\ /FS -c "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\share\\cmake-4.1\\Modules\\CMakeCCompilerABI.c"
+        [2/2] C:\\WINDOWS\\system32\\cmd.exe /C "cd . && "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe" -E vs_link_exe --msvc-ver=1950 --intdir=CMakeFiles\\cmTC_d42fe.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\cmTC_d42fe.dir\\CMakeCCompilerABI.c.obj  /out:cmTC_d42fe.exe /implib:cmTC_d42fe.lib /pdb:cmTC_d42fe.pdb /version:0.0 /machine:x64  /debug /INCREMENTAL /subsystem:console  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd ."
         
       exitCode: 0
   -
@@ -1770,7 +1770,7 @@ events:
       - "CMakeLists.txt:21 (project)"
     message: |
       Running the C compiler's linker: "C:/PROGRA~1/MICROS~4/18/COMMUN~1/VC/Tools/MSVC/1450~1.357/bin/Hostx64/x64/link.exe" "-v"
-      Microsoft (R) Incremental Linker Version 14.50.35724.0
+      Microsoft (R) Incremental Linker Version 14.50.35725.0
       Copyright (C) Microsoft Corporation.  All rights reserved.
   -
     kind: "try_compile-v1"
@@ -1781,8 +1781,8 @@ events:
     checks:
       - "Detecting CXX compiler ABI info"
     directories:
-      source: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-5wp6v4"
-      binary: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-5wp6v4"
+      source: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-ryr8et"
+      binary: "D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-ryr8et"
     cmakeVariables:
       CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /W3 /GR /EHsc"
       CMAKE_CXX_FLAGS_DEBUG: "/MDd /Ob0 /Od /RTC1"
@@ -1793,11 +1793,11 @@ events:
       variable: "CMAKE_CXX_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: 'D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-5wp6v4'
+        Change Dir: 'D:/ody/odyssey_desktop/odyssey_hub_client_ffi/samples/cpp/odyssey-hub-client/out/build/x64-Release/CMakeFiles/CMakeScratch/TryCompile-ryr8et'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -v cmTC_533e6
-        [1/2] C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP   /DWIN32 /D_WINDOWS /W3 /GR /EHsc  /MDd /Ob0 /Od /RTC1 -Zi /showIncludes /FoCMakeFiles\\cmTC_533e6.dir\\CMakeCXXCompilerABI.cpp.obj /FdCMakeFiles\\cmTC_533e6.dir\\ /FS -c "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
-        [2/2] C:\\WINDOWS\\system32\\cmd.exe /C "cd . && "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe" -E vs_link_exe --msvc-ver=1950 --intdir=CMakeFiles\\cmTC_533e6.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\cmTC_533e6.dir\\CMakeCXXCompilerABI.cpp.obj  /out:cmTC_533e6.exe /implib:cmTC_533e6.lib /pdb:cmTC_533e6.pdb /version:0.0 /machine:x64  /debug /INCREMENTAL /subsystem:console  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd ."
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -v cmTC_f381a
+        [1/2] C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP   /DWIN32 /D_WINDOWS /W3 /GR /EHsc  /MDd /Ob0 /Od /RTC1 -Zi /showIncludes /FoCMakeFiles\\cmTC_f381a.dir\\CMakeCXXCompilerABI.cpp.obj /FdCMakeFiles\\cmTC_f381a.dir\\ /FS -c "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
+        [2/2] C:\\WINDOWS\\system32\\cmd.exe /C "cd . && "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe" -E vs_link_exe --msvc-ver=1950 --intdir=CMakeFiles\\cmTC_f381a.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MICROS~4\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1450~1.357\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\cmTC_f381a.dir\\CMakeCXXCompilerABI.cpp.obj  /out:cmTC_f381a.exe /implib:cmTC_f381a.lib /pdb:cmTC_f381a.pdb /version:0.0 /machine:x64  /debug /INCREMENTAL /subsystem:console  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd ."
         
       exitCode: 0
   -
@@ -1826,6 +1826,6 @@ events:
       - "CMakeLists.txt:21 (project)"
     message: |
       Running the CXX compiler's linker: "C:/PROGRA~1/MICROS~4/18/COMMUN~1/VC/Tools/MSVC/1450~1.357/bin/Hostx64/x64/link.exe" "-v"
-      Microsoft (R) Incremental Linker Version 14.50.35724.0
+      Microsoft (R) Incremental Linker Version 14.50.35725.0
       Copyright (C) Microsoft Corporation.  All rights reserved.
 ...
