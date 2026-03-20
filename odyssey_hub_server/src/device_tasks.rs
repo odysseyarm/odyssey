@@ -2018,7 +2018,7 @@ async fn device_handler_task(
                         info!("SetDeviceName: name={:?} for device {:02x?}", name, device.uuid);
                         let r = if let Some(dev) = connections.control_device.as_ref() {
                             // USB EP0 path
-                            match tokio::time::timeout(Duration::from_secs(5), dev.set_device_name_on_device(&name)).await {
+                            match tokio::time::timeout(Duration::from_secs(5), dev.set_name(&name)).await {
                                 Ok(Ok(())) => Ok(()),
                                 Ok(Err(e)) => Err(e.to_string()),
                                 Err(_) => Err("set_device_name timed out".into()),

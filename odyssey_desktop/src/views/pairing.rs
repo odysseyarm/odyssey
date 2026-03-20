@@ -112,7 +112,7 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                         } else {
                             format!("{} ({})", paired_name, format_uuid(paired_address))
                         };
-                        status.set(format!("Paired with {}", label));
+                        status.set(format!("Paired with {}. Please unplug and replug the dongle.", label));
                     } else {
                         status.set(error.clone());
                     }
@@ -317,7 +317,7 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                         } else {
                             format!("{} ({})", paired_name, format_uuid(paired_address))
                         };
-                        status.set(format!("Paired with {}", label));
+                        status.set(format!("Paired with {}. Please unplug and replug the dongle.", label));
                     } else {
                         status.set(error.clone());
                     }
