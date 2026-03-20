@@ -4,6 +4,28 @@
     "legacy-atslite1": {
       "firmwares": [
         {
+          "version": "0.1.12",
+          "files": {
+            "app-a": {
+              "sha256": "c00c832784b92d7db4fee32ddf5dc6c687c5c7bef19eb9c36d15d1365bacb9df",
+              "size": 369144
+            },
+            "app-b": {
+              "sha256": "838a0339cf15a8f8fcc3dbc74dbbb736d3434760a72a9336753514eeccdc8a01",
+              "size": 369144
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20"
+        },
+        {
           "version": "0.1.11",
           "files": {
             "app-a": {
@@ -139,6 +161,28 @@
     },
     "atslite1": {
       "firmwares": [
+        {
+          "version": "0.1.10",
+          "files": {
+            "app-a": {
+              "sha256": "06825f31428f5f59a7817f2632b98c5f8d23ce9faea3d10785f98f57293ace6b",
+              "size": 306532
+            },
+            "app-b": {
+              "sha256": "6c63e5dfcbb4dd0d26857dd769ca543fd9d8119c9925aa4a700e56a86ba50f60",
+              "size": 306532
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "3d0b9b1702685a09518ab39463234829e3e93f5d54372f51219fc9011c7145f0",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20"
+        },
         {
           "version": "0.1.9",
           "files": {
