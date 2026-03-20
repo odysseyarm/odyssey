@@ -45,6 +45,15 @@ static ACTIVE_LIST: AtomicPtr<StorageList<NoodleRawMutex>> = AtomicPtr::new(core
 /// or an external flush function (e.g. from atslite-common).
 static FLUSH_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
+/// Optional function pointer that persists general settings to flash.
+/// Must be registered by boards that delegate general settings to an external
+/// crate (e.g. legacy atslite delegates to atslite-common).
+static GENERAL_WRITE_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+pub fn register_general_write_fn(f: fn()) {
+    GENERAL_WRITE_FN.store(f as *mut (), Ordering::Release);
+}
+
 fn active_list() -> &'static StorageList<NoodleRawMutex> {
     let ptr = ACTIVE_LIST.load(Ordering::Acquire);
     assert!(!ptr.is_null(), "settings not initialized");
@@ -91,6 +100,10 @@ static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
 pub fn accel_odr() -> u16 {
     ACCEL_ODR.load(Ordering::Relaxed)
+}
+
+pub fn set_accel_odr(odr: u16) {
+    ACCEL_ODR.store(odr, Ordering::Relaxed);
 }
 
 #[embassy_executor::task]
@@ -262,21 +275,15 @@ pub async fn init_legacy_settings(
         .attach_with_default(list, PajsSettings::default)
         .await
         .unwrap();
-    let h_general = NODE_GENERAL
-        .attach_with_default(list, GeneralSettings::default)
-        .await
-        .unwrap();
+    // NODE_GENERAL is managed by atslite-common via "settings/general";
+    // general settings are populated from atslite-common by the caller after init_board_nodes.
     let h_transient = NODE_TRANSIENT
         .attach_with_default(list, TransientSettings::default)
         .await
         .unwrap();
 
     let pajs = h_pajs.load();
-    let general = {
-        let g = h_general.load();
-        ACCEL_ODR.store(g.accel_config.accel_odr, Ordering::Relaxed);
-        g
-    };
+    let general = GeneralSettings::default(); // caller fills this from atslite-common
     let transient = h_transient.load();
 
     let s = Settings {
@@ -313,10 +320,14 @@ impl Settings {
         let list = active_list();
         embassy_futures::block_on(async {
             let mut hp = NODE_PAJS.attach(list).await.unwrap();
-            let mut hg = NODE_GENERAL.attach(list).await.unwrap();
             hp.write(&self.pajs).await.unwrap();
-            hg.write(&self.general).await.unwrap();
         });
+        // General settings may be owned by an external crate (e.g. atslite-common on legacy).
+        let gw_ptr = GENERAL_WRITE_FN.load(Ordering::Acquire);
+        if !gw_ptr.is_null() {
+            let f: fn() = unsafe { core::mem::transmute(gw_ptr) };
+            f();
+        }
         flush();
     }
 

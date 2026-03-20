@@ -125,6 +125,25 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
     }
 }
 
+/// Sync general settings from common::Settings into atslite-common and persist to flash.
+/// Registered as the GENERAL_WRITE_FN so that bulk FlashSettings (BLE path) persists
+/// general settings via atslite-common's owned flash node.
+fn sync_and_write_general() {
+    let common_s = unsafe { common::settings::get_settings() };
+    let atslite_s = unsafe { atslite_common::settings::get_settings() };
+    atslite_s.general.impact_threshold = common_s.general.impact_threshold;
+    atslite_s.general.suppress_ms = common_s.general.suppress_ms;
+    atslite_s.general.accel_config = common_s.general.accel_config.clone();
+    atslite_s.general.gyro_config = common_s.general.gyro_config.clone();
+    atslite_s.general.camera_model_nf = common_s.general.camera_model_nf.clone();
+    atslite_s.general.camera_model_wf = common_s.general.camera_model_wf.clone();
+    atslite_s.general.stereo_iso = common_s.general.stereo_iso.clone();
+    atslite_s.general.name = common_s.general.name.clone();
+    // transport_mode is NOT synced here — it has its own persist path via
+    // persist_transport_mode / register_transport_mode_persist_fn.
+    atslite_s.general_write();
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     defmt::info!("ATSlite board initialization starting...");
@@ -371,7 +390,28 @@ async fn main(spawner: Spawner) {
     };
 
     // Phase 3: Attach BLE bond node and set atslite-common SETTINGS_PTR
-    shared_settings::init_nodes().await;
+    let atslite_settings = shared_settings::init_nodes().await;
+
+    // Phase 4: Attach general settings node (atslite-common schema) and load from flash.
+    // This makes atslite_common own "settings/general" — the same key/schema used by
+    // device_control_task for FlashSettings, SetDeviceName, WriteConfig, etc.
+    shared_settings::init_board_nodes(atslite_settings).await;
+
+    // Phase 5: Sync general settings from atslite-common into legacy common settings
+    // so that object_mode (which holds &mut common::Settings) sees the correct values.
+    {
+        let ag = &atslite_settings.general;
+        settings_ref.general.transport_mode = ag.transport_mode;
+        settings_ref.general.impact_threshold = ag.impact_threshold;
+        settings_ref.general.suppress_ms = ag.suppress_ms;
+        settings_ref.general.accel_config = ag.accel_config.clone();
+        settings_ref.general.gyro_config = ag.gyro_config.clone();
+        settings_ref.general.camera_model_nf = ag.camera_model_nf.clone();
+        settings_ref.general.camera_model_wf = ag.camera_model_wf.clone();
+        settings_ref.general.stereo_iso = ag.stereo_iso.clone();
+        settings_ref.general.name = ag.name.clone();
+    }
+    settings::set_accel_odr(settings_ref.general.accel_config.accel_odr);
 
     // Clamp accel_odr to nearest valid value for this platform's sensor
     settings_ref.general.accel_config.accel_odr =
@@ -386,9 +426,14 @@ async fn main(spawner: Spawner) {
     transport_mode::set(initial_transport_mode);
     defmt::info!("Transport mode initialized from settings: {:?}", initial_transport_mode);
 
+    // Register general-settings write callback so that BLE-path FlashSettings
+    // (bulk PacketData::FlashSettings -> common::Settings::write()) persists
+    // general settings via atslite-common's flash node.
+    settings::register_general_write_fn(sync_and_write_general);
+
     // Register the board-specific persist function for transport mode
     atslite_board::device_control_task::register_transport_mode_persist_fn(
-        common::settings::persist_transport_mode,
+        atslite_common::settings::persist_transport_mode,
     );
 
     // Spawn the device control task (channels already registered before USB init)
