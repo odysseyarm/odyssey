@@ -1,4 +1,4 @@
-#![no_main]
+﻿#![no_main]
 #![no_std]
 #![feature(never_type)]
 
@@ -410,6 +410,9 @@ async fn main(spawner: Spawner) {
     };
 
     // BLE controller and tasks
+    if !settings_ref.general.name.is_empty() {
+        ble::peripheral::set_device_name_initial(settings_ref.general.name.as_str());
+    }
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller, ble_seed).unwrap());
 
@@ -535,7 +538,7 @@ async fn power_button_task(
 
 #[embassy_executor::task]
 async fn ble_task(controller: ble::host::BleController, seed: [u8; 32]) {
-    ble::peripheral::run(controller, seed).await;
+    ble::peripheral::run(controller, seed, "ATS USB", b"ATS").await;
 }
 
 #[embassy_executor::task]

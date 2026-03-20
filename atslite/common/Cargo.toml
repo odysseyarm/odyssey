@@ -52,7 +52,7 @@ protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-fe
 postcard = { version = "1.1.3", features = ["use-defmt"] }
 
 # Settings persistence
-cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
+cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", rev = "87e468b", default-features = false, features = ["defmt"] }
 
 heapless = "0.9"
 

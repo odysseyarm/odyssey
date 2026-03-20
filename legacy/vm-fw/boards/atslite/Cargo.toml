@@ -1,6 +1,6 @@
 [package]
 name = "atslite-board"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2024"
 
 [[bin]]
@@ -85,4 +85,3 @@ embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db6
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-

@@ -1,4 +1,4 @@
-use core::convert::Infallible;
+﻿use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use defmt::Format;
@@ -88,6 +88,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         ctx.version,
         &impact_settings,
         P::round_accel_odr,
+        P::set_ble_name,
     );
     let b = usb_snd_loop(
         pkt_writer,
@@ -146,6 +147,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     version: [u16; 3],
     impact_settings: &ImpactSettings,
     round_accel_odr: fn(u16) -> u16,
+    set_ble_name: fn(&str),
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Always listen for USB control regardless of data transport; gate USB data by mode.
@@ -315,6 +317,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 let prop = match kind {
                     PropKind::Uuid => Props::Uuid(device_id[..6].try_into().unwrap()),
                     PropKind::ProductId => Props::ProductId(pid),
+                    PropKind::Name => Props::Name(settings.general.name.clone()),
+                    PropKind::Version => Props::Version(protodongers::Version::new(version)),
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -358,6 +362,17 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
             PacketData::BatteryReport(_) => None,
+            PacketData::SetDeviceName(name) => {
+                defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
+                set_ble_name(name.as_str());
+                settings.general.name = name;
+                settings.write();
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::SetDeviceNameResponse(Ok(())),
+                })
+            }
+            PacketData::SetDeviceNameResponse(_) => None,
         };
 
         if let Some(r) = response

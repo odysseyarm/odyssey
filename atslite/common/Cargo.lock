@@ -381,7 +381,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "cfg-noodle"
 version = "0.6.0"
-source = "git+https://github.com/tweedegolf/cfg-noodle#87e468b5594b5c57d11aa326c950273713707419"
+source = "git+https://github.com/tweedegolf/cfg-noodle?rev=87e468b#87e468b5594b5c57d11aa326c950273713707419"
 dependencies = [
  "cordyceps",
  "crc",
@@ -1413,9 +1413,9 @@ dependencies = [
 
 [[package]]
 name = "itoa"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "js-sys"
@@ -1921,8 +1921,8 @@ dependencies = [
 
 [[package]]
 name = "protodongers"
-version = "0.1.1"
-source = "git+https://github.com/odysseyarm/protodonge-rs#acdbe01ee1e602655ce504c1ec5b8f98a0dc7469"
+version = "0.1.2"
+source = "git+https://github.com/odysseyarm/protodonge-rs#6729c17435a147670b639e79f839d5f93dedf288"
 dependencies = [
  "ats_common",
  "defmt 1.0.1",
@@ -2358,7 +2358,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.6.0"
-source = "git+https://github.com/embassy-rs/trouble#8c37344299222f976b617117e8463c9a693bbadc"
+source = "git+https://github.com/embassy-rs/trouble#bb5da0aa7e74732ced3432418d9a9d171933d57b"
 dependencies = [
  "aes",
  "bt-hci",
@@ -2382,7 +2382,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.4.0"
-source = "git+https://github.com/embassy-rs/trouble#8c37344299222f976b617117e8463c9a693bbadc"
+source = "git+https://github.com/embassy-rs/trouble#bb5da0aa7e74732ced3432418d9a9d171933d57b"
 dependencies = [
  "convert_case 0.8.0",
  "darling",
@@ -2600,18 +2600,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2578b716f8a7a858b7f02d5bd870c14bf4ddbbcf3a4c05414ba6503640505e3"
+checksum = "efbb2a062be311f2ba113ce66f697a4dc589f85e78a4aea276200804cea0ed87"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e6cc098ea4d3bd6246687de65af3f920c430e236bee1e3bf2e441463f08a02f"
+checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
 dependencies = [
  "proc-macro2",
  "quote",

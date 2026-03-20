@@ -183,10 +183,11 @@ check:
     cd net-core && cargo check
 
 # Generate a release entry in manifests/releases.alpha.json from current build
-gen-release version:
+gen-release:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
     MANIFEST="../../../manifests/releases.alpha.json"
     BUILD_DIR="{{output_dir}}"
 
@@ -216,7 +217,7 @@ gen-release version:
     # Create the new firmware entry JSON
     NEW_ENTRY=$(cat <<EOF
     {
-      "version": "{{version}}",
+      "version": "$VERSION",
       "files": {
         "app-a": {
           "sha256": "$APP_A_SHA",
@@ -244,7 +245,7 @@ gen-release version:
     jq --argjson entry "$NEW_ENTRY" '.devices.atslite1.firmwares = [$entry] + .devices.atslite1.firmwares' "$MANIFEST" > "$MANIFEST.tmp"
     mv "$MANIFEST.tmp" "$MANIFEST"
 
-    echo "Added release {{version}} to $MANIFEST"
+    echo "Added release $VERSION to $MANIFEST"
     echo "  app-a: $APP_A_SHA ($APP_A_SIZE bytes)"
     echo "  app-b: $APP_B_SHA ($APP_B_SIZE bytes)"
     echo "  net-core: $NET_CORE_SHA ($NET_CORE_SIZE bytes)"

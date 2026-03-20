@@ -1,4 +1,4 @@
-#![no_main]
+﻿#![no_main]
 #![no_std]
 
 mod ble;
@@ -853,7 +853,7 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
         match cmd {
             C::ReadVersion() => {
                 control::try_send_event(C::ReadVersionResponse(
-                    protodongers::control::usb_mux::UsbMuxVersion::new(FIRMWARE_SEMVER),
+                    protodongers::Version::new(FIRMWARE_SEMVER),
                 ));
             }
             C::ListBonds => {

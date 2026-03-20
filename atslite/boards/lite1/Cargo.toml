@@ -1,6 +1,6 @@
 [package]
 name = "lite1"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 
 [[bin]]
@@ -48,7 +48,7 @@ nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
 cobs = { version = "0.4.0", default-features = false }
 
 # Settings persistence
-cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
+cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", rev = "87e468b", default-features = false, features = ["defmt"] }
 
 # Protocol
 protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }

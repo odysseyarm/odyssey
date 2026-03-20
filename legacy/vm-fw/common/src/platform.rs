@@ -84,6 +84,9 @@ pub trait Platform {
 
     /// Device ID for this platform
     fn device_id() -> [u8; 8];
+
+    /// Update the BLE advertising name. No-op on platforms without BLE.
+    fn set_ble_name(_name: &str) {}
 }
 
 /// Context passed to object_mode containing platform-specific state

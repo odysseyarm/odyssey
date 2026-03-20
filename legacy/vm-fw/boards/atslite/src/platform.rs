@@ -1,4 +1,4 @@
-// ATSlite Platform trait implementation
+﻿// ATSlite Platform trait implementation
 
 use crate::imu::{AtsliteImu, AtsliteImuInterrupt};
 use crate::l2cap::AtsliteL2capChannels;
