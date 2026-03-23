@@ -142,6 +142,16 @@ async fn main(spawner: Spawner) {
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
+    // Initialize watchdog (started by stage2 bootloader, we just need to pet it)
+    defmt::info!("Initializing watchdog...");
+    use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
+    let mut wdt_config = WdtConfig::default();
+    wdt_config.timeout_ticks = 32768 * 60; // 60 second timeout (must match bootloader)
+    wdt_config.action_during_sleep = SleepConfig::RUN;
+    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
+    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
+    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
+
     // Power button handling
     defmt::info!("Power button handling...");
     let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
@@ -358,7 +368,10 @@ async fn main(spawner: Spawner) {
     if !settings.general.name.is_empty() {
         lite1::ble::peripheral::set_device_name_initial(settings.general.name.as_str());
     }
-    defmt::info!("Transport mode initialized from settings: {:?}", initial_transport_mode);
+    defmt::info!(
+        "Transport mode initialized from settings: {:?}",
+        initial_transport_mode
+    );
 
     // Adjust PMIC limit after USB enumerates
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
@@ -380,16 +393,6 @@ async fn main(spawner: Spawner) {
     // BLE controller and tasks (settings must be initialized first for bond restoration)
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller, ble_seed).unwrap());
-
-    // Initialize watchdog (started by stage2 bootloader, we just need to pet it)
-    defmt::info!("Initializing watchdog...");
-    use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
-    let mut wdt_config = WdtConfig::default();
-    wdt_config.timeout_ticks = 32768 * 60; // 60 second timeout (must match bootloader)
-    wdt_config.action_during_sleep = SleepConfig::RUN;
-    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
-    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
-    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
 
     pmic_leds.set_state(LedState::BattHigh).await;
     defmt::info!("Initialization complete, starting object mode");

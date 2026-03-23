@@ -211,6 +211,16 @@ async fn main(spawner: Spawner) {
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
+    // Initialize watchdog (started by stage2 bootloader)
+    use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
+    let mut wdt_config = WdtConfig::default();
+    wdt_config.timeout_ticks = 32768 * 60;
+    wdt_config.action_during_sleep = SleepConfig::RUN;
+    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
+    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
+    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
+    let l2cap_channels = AtsliteL2capChannels::new();
+
     // Power button handling
     defmt::info!("Power button handling...");
     let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
@@ -424,7 +434,10 @@ async fn main(spawner: Spawner) {
     // Load transport mode from persisted settings
     let initial_transport_mode = settings_ref.general.transport_mode;
     transport_mode::set(initial_transport_mode);
-    defmt::info!("Transport mode initialized from settings: {:?}", initial_transport_mode);
+    defmt::info!(
+        "Transport mode initialized from settings: {:?}",
+        initial_transport_mode
+    );
 
     // Register general-settings write callback so that BLE-path FlashSettings
     // (bulk PacketData::FlashSettings -> common::Settings::write()) persists
@@ -471,16 +484,6 @@ async fn main(spawner: Spawner) {
     }
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller, ble_seed).unwrap());
-
-    // Initialize watchdog (started by stage2 bootloader)
-    use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
-    let mut wdt_config = WdtConfig::default();
-    wdt_config.timeout_ticks = 32768 * 60;
-    wdt_config.action_during_sleep = SleepConfig::RUN;
-    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
-    let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
-    spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
-    let l2cap_channels = AtsliteL2capChannels::new();
 
     // Build object mode context
     let ctx = ObjectModeContext::<AtslitePlatform, _, _> {
