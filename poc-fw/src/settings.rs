@@ -209,7 +209,7 @@ impl Default for GeneralSettings {
             general_config: AlignedGeneralConfig {
                 inner: GeneralConfig {
                     // 5g legacy equivalent in SI units.
-                    impact_threshold: 49,
+                    impact_threshold: 25,
                     accel_config: Default::default(),
                     gyro_config: Default::default(),
                     camera_model_nf: CameraCalibrationParams {

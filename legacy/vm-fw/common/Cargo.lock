@@ -237,7 +237,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "cfg-noodle"
 version = "0.6.0"
-source = "git+https://github.com/tweedegolf/cfg-noodle#87e468b5594b5c57d11aa326c950273713707419"
+source = "git+https://github.com/tweedegolf/cfg-noodle?rev=87e468b#87e468b5594b5c57d11aa326c950273713707419"
 dependencies = [
  "cordyceps",
  "crc",

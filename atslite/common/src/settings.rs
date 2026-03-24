@@ -250,7 +250,6 @@ impl Settings {
         settings_flush_now();
     }
 
-
     pub fn pag_write(&self) {
         embassy_futures::block_on(async {
             let mut hp = NODE_PAG.attach(&LIST).await.unwrap();
@@ -261,7 +260,9 @@ impl Settings {
 }
 
 mod heapless_str32_cbor {
-    use cfg_noodle::minicbor::{decode::Error, encode::Write, encode::Error as EncodeError, Decoder, Encoder};
+    use cfg_noodle::minicbor::{
+        decode::Error, encode::Error as EncodeError, encode::Write, Decoder, Encoder,
+    };
 
     pub fn encode<Ctx, W: Write>(
         s: &heapless::String<32>,
@@ -322,7 +323,7 @@ impl Default for GeneralSettings {
         Self {
             transport_mode: protodongers::control::device::TransportMode::Ble,
             // 5g legacy equivalent in SI units.
-            impact_threshold: 49,
+            impact_threshold: 25,
             suppress_ms: 100,
             accel_config: Default::default(),
             gyro_config: Default::default(),
@@ -386,14 +387,18 @@ pub fn ble_bond_from_bond_info(info: &trouble_host::prelude::BondInformation) ->
     }
 }
 
-pub fn ble_bond_to_bond_info(b: &BleBondSettings) -> Option<trouble_host::prelude::BondInformation> {
+pub fn ble_bond_to_bond_info(
+    b: &BleBondSettings,
+) -> Option<trouble_host::prelude::BondInformation> {
     if !b.is_bonded {
         return None;
     }
     Some(trouble_host::prelude::BondInformation {
         identity: trouble_host::prelude::Identity {
             bd_addr: trouble_host::prelude::BdAddr::new(b.bd_addr),
-            irk: b.irk.map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
+            irk: b
+                .irk
+                .map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
         },
         security_level: match b.security_level {
             0 => trouble_host::prelude::SecurityLevel::NoEncryption,
@@ -405,7 +410,6 @@ pub fn ble_bond_to_bond_info(b: &BleBondSettings) -> Option<trouble_host::prelud
         ltk: trouble_host::prelude::LongTermKey::from_le_bytes(b.ltk),
     })
 }
-
 
 /// PAG7665QN sensor settings that persist across power cycles
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
