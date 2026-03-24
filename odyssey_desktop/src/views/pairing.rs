@@ -16,12 +16,23 @@ fn semver_at_least(version: [u16; 3], required: [u16; 3]) -> bool {
         || (version[0] == required[0] && version[1] == required[1] && version[2] >= required[2])
 }
 
-fn device_name(device: &Device) -> String {
+fn device_type(device: &Device) -> &'static str {
     match device.product_id {
-        0x520F => "ATS VM".into(),
-        0x5210 => "ATS Lite".into(),
-        0x5211 => "ATS Lite1".into(),
-        _ => "Unknown".into(),
+        0x520F => "ATS VM",
+        0x5210 => "ATS Lite",
+        0x5211 => "ATS Lite1",
+        _ => "Unknown",
+    }
+}
+
+fn device_label(device: &Device) -> String {
+    let addr = format_uuid(&device.uuid);
+    let ty = device_type(device);
+    let name = device.name();
+    if name.is_empty() {
+        format!("{} ({})", ty, addr)
+    } else {
+        format!("{}: {} ({})", ty, name, addr)
     }
 }
 
@@ -196,10 +207,10 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                             } else {
                                 "inline-block w-2 h-2 rounded-full bg-red-500"
                             };
-                            let name = devices.iter()
+                            let label = devices.iter()
                                 .find(|(_, d)| d.uuid == *addr)
-                                .map(|(_, d)| device_name(d));
-                            let addr_str = format_uuid(addr);
+                                .map(|(_, d)| device_label(d))
+                                .unwrap_or_else(|| format_uuid(addr));
                             rsx! {
                                 div {
                                     class: "flex items-center gap-2",
@@ -208,13 +219,7 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                                     }
                                     span {
                                         class: "text-xs font-mono text-gray-600 dark:text-gray-300",
-                                        "{addr_str}"
-                                    }
-                                    if let Some(name) = name {
-                                        span {
-                                            class: "text-xs text-gray-500 dark:text-gray-400",
-                                            "({name})"
-                                        }
+                                        "{label}"
                                     }
                                 }
                             }
@@ -332,12 +337,8 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
             div {
                 class: "flex items-center gap-2",
                 span {
-                    class: "text-sm font-medium text-gray-700 dark:text-gray-200",
-                    "{device_name(&device)}"
-                }
-                span {
-                    class: "text-xs font-mono text-gray-500 dark:text-gray-400",
-                    "{format_uuid(&device.uuid)}"
+                    class: "text-sm font-mono text-gray-700 dark:text-gray-200",
+                    "{device_label(&device)}"
                 }
                 if !status.read().is_empty() {
                     span {

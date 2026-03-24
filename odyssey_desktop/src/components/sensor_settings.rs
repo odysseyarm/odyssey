@@ -1311,8 +1311,8 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     };
 
     let load_defaults = move |_| {
-        impact_threshold.set("100".into());
-        suppress_ms.set("100".into());
+        impact_threshold.set("25".into());
+        suppress_ms.set("25".into());
         if is_paj {
             paj_nf_state.set(paj_load_defaults(0));
             paj_wf_state.set(paj_load_defaults(1));

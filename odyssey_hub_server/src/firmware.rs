@@ -136,6 +136,16 @@ pub fn find_compatible_firmware<'a>(
     None
 }
 
+/// Find the latest firmware for a device type regardless of version compatibility.
+/// Used for devices in DFU mode or with broken protocol where the current version is unknown.
+pub fn find_latest_firmware<'a>(
+    manifest: &'a FirmwareManifest,
+    device_type: &str,
+) -> Option<&'a FirmwareEntry> {
+    // Firmwares are sorted newest-first in manifest
+    manifest.devices.get(device_type)?.firmwares.first()
+}
+
 /// Build the download URL for a firmware file
 pub fn build_download_url(device_type: &str, version: &str, filename: &str) -> String {
     format!(
@@ -222,10 +232,10 @@ pub fn find_any_known_device() -> Option<(u16, u16, &'static str)> {
     None
 }
 
-/// Check if a device is present and in application mode (not DFU mode).
+/// Check if a specific device (by UUID) is present and in application mode (not DFU mode).
 /// Returns true if device is found and is in app mode, false otherwise.
-pub fn is_device_in_app_mode(vid: u16, pid: u16) -> bool {
-    let info = match find_device(vid, pid) {
+pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
+    let info = match find_device_by_uuid(uuid, vid, pid) {
         Ok(info) => info,
         Err(_) => return false,
     };
@@ -287,6 +297,33 @@ pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
         .map_err(|e| DfuError::Usb(e))?
         .find(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
         .ok_or(DfuError::DeviceNotFound)
+}
+
+/// Find a USB device by VID/PID and UUID (matched against USB serial number).
+/// Falls back to first-match if no device with that serial is found.
+pub fn find_device_by_uuid(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
+    let uuid_hex = format!(
+        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5]
+    );
+    let devices: Vec<_> = nusb::list_devices()
+        .wait()
+        .map_err(|e| DfuError::Usb(e))?
+        .filter(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
+        .collect();
+    // Try to match by serial number first
+    if let Some(dev) = devices.iter().find(|dev| {
+        dev.serial_number()
+            .map(|s| {
+                let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+                clean.eq_ignore_ascii_case(&uuid_hex)
+            })
+            .unwrap_or(false)
+    }) {
+        return Ok(dev.clone());
+    }
+    // Fall back to first match
+    devices.into_iter().next().ok_or(DfuError::DeviceNotFound)
 }
 
 /// Find the DFU interface number on a device
@@ -413,8 +450,8 @@ pub fn open_dfu_device(
 /// resets immediately upon receiving the DETACH request, before the USB control
 /// transfer completes. This causes an endpoint stall from the host's perspective,
 /// which is expected behavior per the DFU 1.1 spec.
-pub async fn send_dfu_detach(vid: u16, pid: u16) -> Result<(), DfuError> {
-    let info = find_device(vid, pid)?;
+pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), DfuError> {
+    let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
 
     // Find the DFU runtime interface
@@ -692,12 +729,12 @@ pub async fn wait_for_dfu_device(vid: u16, pid: u16, timeout: Duration) -> Resul
 ///
 /// Note: This function automatically determines which slot to flash by reading
 /// the DFU interface alt settings after the device enters DFU mode.
-pub async fn update_firmware(vid: u16, pid: u16, firmware: &[u8]) -> Result<(), DfuError> {
+pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]) -> Result<(), DfuError> {
     tracing::info!("Starting firmware update for {:04x}:{:04x}", vid, pid);
 
     // Step 1: Send DFU detach
     tracing::info!("Sending DFU detach...");
-    send_dfu_detach(vid, pid).await?;
+    send_dfu_detach(uuid, vid, pid).await?;
 
     // Step 2: Wait for device to re-enumerate in DFU mode
     tracing::info!("Waiting for device to enter DFU mode...");

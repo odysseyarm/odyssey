@@ -249,6 +249,10 @@ async fn usb_device_manager(
         std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     )>::new()));
     let mut direct_usb_id_to_uuid = std::collections::HashMap::<String, [u8; 6]>::new();
+    // Maps opaque USB device id -> (uuid, pid) for devices detected in DFU mode or with broken
+    // protocol.  These are surfaced in the device list so the user can flash firmware even when
+    // normal communication is unavailable.
+    let mut dfu_device_id_to_info = std::collections::HashMap::<String, ([u8; 6], u16)>::new();
     // Maps BLE address -> device name, shared between hub managers and direct USB device handlers.
     // Updated on USB rename so BLE reconnects use the correct name.
     let bond_names: Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], String>>> =
@@ -332,6 +336,7 @@ async fn usb_device_manager(
         }
 
         let mut present_direct_usb_ids = std::collections::HashSet::<String>::new();
+        let mut present_dfu_ids = std::collections::HashSet::<String>::new();
         for dev_info in &devices {
             if dev_info.vendor_id() != 0x1915 {
                 continue;
@@ -1091,6 +1096,50 @@ async fn usb_device_manager(
                         }
                         Err(e) => {
                             debug!("Failed to connect to USB device: {}", e);
+                            // If we already have a running handler for this USB device (interface
+                            // is claimed), the connect failure is expected — skip DFU surfacing.
+                            if let Some(&existing_uuid) = direct_usb_id_to_uuid.get(&direct_usb_id) {
+                                if device_handles.lock().await.contains_key(&existing_uuid) {
+                                    continue;
+                                }
+                            }
+                            // Connection failed — check for DFU interface so we can still offer
+                            // firmware update. This covers DFU-bootloader devices (no vendor
+                            // interface) where the serial number encodes the UUID.
+                            let has_dfu_iface = dev_info.interfaces().any(|i| i.class() == 0xFE);
+                            if has_dfu_iface {
+                                let Some(uuid) = uuid_from_usb_serial(dev_info.serial_number()) else {
+                                    warn!("Device PID 0x{:04x} has DFU interface but no readable serial — cannot surface for update", pid);
+                                    continue;
+                                };
+                                present_dfu_ids.insert(direct_usb_id.clone());
+                                let already_tracked = device_handles.lock().await.contains_key(&uuid)
+                                    || dfu_device_id_to_info.values().any(|(u, _)| u == &uuid);
+                                if !already_tracked {
+                                    info!("Device {:02x?} has DFU interface (PID 0x{:04x}), surfacing for firmware update (connect error: {})", uuid, pid, e);
+                                    dfu_device_id_to_info.insert(direct_usb_id.clone(), (uuid, pid));
+                                    let dfu_meta = Device {
+                                        uuid,
+                                        transport: odyssey_hub_common::device::Transport::Usb,
+                                        capabilities: odyssey_hub_common::device::DeviceCapabilities::new(
+                                            odyssey_hub_common::device::DeviceCapabilities::DFU,
+                                        ),
+                                        firmware_version: [0, 0, 0],
+                                        events_transport: odyssey_hub_common::device::EventsTransport::Wired,
+                                        events_connected: false,
+                                        product_id: pid,
+                                        name: Device::name_bytes(""),
+                                    };
+                                    let _ = message_channel
+                                        .send(Message::Connect(dfu_meta, DeviceChannels { commands: None }))
+                                        .await;
+                                } else {
+                                    // Already tracked — just keep it alive in present set
+                                    if dfu_device_id_to_info.contains_key(&direct_usb_id) {
+                                        present_dfu_ids.insert(direct_usb_id.clone());
+                                    }
+                                }
+                            }
                             continue;
                         }
                     }
@@ -1175,11 +1224,16 @@ async fn usb_device_manager(
                 // Determine capabilities based on transport mode
                 // USB direct always has CONTROL capability
                 // EVENTS capability depends on transport mode (USB mode has events, BLE mode doesn't)
+                // DFU capability is present whenever the device exposes a DFU interface (class 0xFE)
+                let has_dfu_iface = dev_info.interfaces().any(|i| i.class() == 0xFE);
                 let mut capabilities = odyssey_hub_common::device::DeviceCapabilities::new(
                     odyssey_hub_common::device::DeviceCapabilities::CONTROL,
                 );
                 if transport_mode == protodongers::control::device::TransportMode::Usb {
                     capabilities.insert(odyssey_hub_common::device::DeviceCapabilities::EVENTS);
+                }
+                if has_dfu_iface {
+                    capabilities.insert(odyssey_hub_common::device::DeviceCapabilities::DFU);
                 }
 
                 let device_meta = Device {
@@ -1292,8 +1346,52 @@ async fn usb_device_manager(
             }
         }
 
+        // Reconcile DFU device disconnects.
+        let missing_dfu_ids: Vec<String> = dfu_device_id_to_info
+            .keys()
+            .filter(|id| !present_dfu_ids.contains(*id))
+            .cloned()
+            .collect();
+        for id in missing_dfu_ids {
+            if let Some((uuid, pid)) = dfu_device_id_to_info.remove(&id) {
+                tracing::info!(
+                    "DFU device missing from scan, disconnecting: id={} uuid={:02x?}",
+                    id,
+                    uuid
+                );
+                let disconnect_device = Device {
+                    uuid,
+                    transport: odyssey_hub_common::device::Transport::Usb,
+                    capabilities: odyssey_hub_common::device::DeviceCapabilities::new(
+                        odyssey_hub_common::device::DeviceCapabilities::DFU,
+                    ),
+                    firmware_version: [0, 0, 0],
+                    events_transport: odyssey_hub_common::device::EventsTransport::Wired,
+                    events_connected: false,
+                    product_id: pid,
+                    name: Device::name_bytes(""),
+                };
+                let _ = message_channel.send(Message::Disconnect(disconnect_device)).await;
+            }
+        }
+
         sleep(Duration::from_secs(2)).await;
     }
+}
+
+/// Parse a [u8; 6] UUID from a USB serial number string (e.g. "AABBCCDDEEFF" or "AA:BB:CC:DD:EE:FF").
+/// Returns None if the serial is absent or not a valid 12-hex-digit MAC address.
+fn uuid_from_usb_serial(serial: Option<&str>) -> Option<[u8; 6]> {
+    let serial = serial?;
+    let clean: String = serial.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if clean.len() != 12 {
+        return None;
+    }
+    let mut uuid = [0u8; 6];
+    for i in 0..6 {
+        uuid[i] = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(uuid)
 }
 
 /// Read a device UUID with up to 3 retries.
@@ -1598,6 +1696,10 @@ async fn device_handler_task(
     let streams_resume_sleep = tokio::time::sleep(Duration::from_secs(3600));
     tokio::pin!(streams_resume_sleep);
     let mut streams_resume_armed = false;
+
+    // Retry sensor streams every 5 seconds when they are not running (e.g. broken protocol).
+    let streams_retry_sleep = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(streams_retry_sleep);
 
     let mut shot_delay_stream = tokio_stream::wrappers::WatchStream::new(shot_delay_rx).fuse();
     let mut control_stream = tokio_stream::wrappers::ReceiverStream::new(control_rx).fuse();
@@ -1989,16 +2091,11 @@ async fn device_handler_task(
                                 Err(_) => Err("set_transport_mode timed out".into()),
                             };
                             info!("SetTransportMode result for {:02x?}: {:?}", device.uuid, r);
-                            if r.is_ok() {
-                                // Persist the new transport mode to flash before rebooting,
-                                // otherwise the device comes back on the old mode after reboot.
-                                info!("Flashing settings for {:02x?} to persist transport mode", device.uuid);
-                                match tokio::time::timeout(Duration::from_secs(5), dev.flash_settings_ctrl()).await {
-                                    Ok(Ok(())) => info!("Flash settings ok for {:02x?}", device.uuid),
-                                    Ok(Err(e)) => warn!("Flash settings failed for {:02x?}: {}", device.uuid, e),
-                                    Err(_) => warn!("Flash settings timed out for {:02x?}", device.uuid),
-                                }
-                            }
+                            // The firmware's SetTransportMode handler persists the mode itself
+                            // via persist_transport_mode, so no separate FlashSettings is needed.
+                            // Sending FlashSettings would corrupt legacy board settings because
+                            // atslite-common's GeneralSettings uses a different CBOR field layout
+                            // than common's GeneralSettings (transport_mode at field #0 vs #7).
                             // Reply to the RPC caller before rebooting.
                             let _ = reply.send(r);
                             // Reboot the device so it comes back clean in the new mode.
@@ -2372,6 +2469,16 @@ async fn device_handler_task(
                     }
                 }
             }
+            _ = &mut streams_retry_sleep, if !has_sensor_streams && !streams_paused && connections.events_device.is_some() => {
+                info!("Retrying sensor streams for {:02x?}", device.uuid);
+                sensor_streams = start_sensor_streams(
+                    connections.events_device.as_ref().unwrap(),
+                    device.uuid,
+                    protocol_version,
+                ).await;
+                has_sensor_streams = !sensor_streams.is_empty();
+                streams_retry_sleep.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(5));
+            }
             maybe_evt = sensor_streams.next(), if has_sensor_streams => {
                 match maybe_evt {
                     Some(evt) => {
@@ -2393,8 +2500,14 @@ async fn device_handler_task(
                         }
                     }
                     None => {
-                        info!("Sensor streams ended for device {:02x?}", device.uuid);
-                        break;
+                        info!("Sensor streams ended for device {:02x?}, will retry in 5s", device.uuid);
+                        // Don't break — keep the handler alive so the device stays
+                        // in the list and the user can still trigger a DFU update.
+                        // The USB scan loop will send RemoveControlDevice when the
+                        // device is physically unplugged.
+                        has_sensor_streams = false;
+                        sensor_streams = SelectAll::new();
+                        streams_retry_sleep.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(5));
                     }
                 }
             }
