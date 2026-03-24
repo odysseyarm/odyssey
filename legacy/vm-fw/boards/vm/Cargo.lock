@@ -310,7 +310,28 @@ dependencies = [
  "mutex",
  "mutex-traits",
  "pin-project",
- "sequential-storage",
+ "sequential-storage 5.0.1",
+]
+
+[[package]]
+name = "cfg-noodle"
+version = "0.6.0"
+source = "git+https://github.com/tweedegolf/cfg-noodle?rev=87e468b#87e468b5594b5c57d11aa326c950273713707419"
+dependencies = [
+ "cordyceps",
+ "crc",
+ "critical-section",
+ "defmt 1.0.1",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-storage-async",
+ "maitake-sync",
+ "minicbor 2.1.3",
+ "mutex",
+ "mutex-traits",
+ "pin-project",
+ "sequential-storage 7.2.0",
 ]
 
 [[package]]
@@ -348,7 +369,7 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "cfg-noodle",
+ "cfg-noodle 0.6.0",
  "cortex-m",
  "cortex-m-rt",
  "defmt 1.0.1",
@@ -1912,6 +1933,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sequential-storage"
+version = "7.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "574e5a379bf43653079b34cb4cf32958404b5f42e0ed5b5adcdff02c2de04d4d"
+dependencies = [
+ "defmt 1.0.1",
+ "embedded-storage-async",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2242,7 +2273,7 @@ dependencies = [
  "bmi2",
  "bt-hci 0.6.0 (git+https://github.com/embassy-rs/bt-hci)",
  "bytemuck",
- "cfg-noodle",
+ "cfg-noodle 0.5.0",
  "common",
  "cortex-m",
  "cortex-m-rt",

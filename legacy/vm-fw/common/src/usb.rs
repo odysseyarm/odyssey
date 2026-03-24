@@ -86,10 +86,24 @@ where
 {
     let driver = UsbDriver::new(usbd, irqs, vbus);
 
+    static SERIAL_BUF: ConstStaticCell<[u8; 12]> = ConstStaticCell::new([0; 12]);
+    let serial_buf = SERIAL_BUF.take();
+    let ficr = embassy_nrf::pac::FICR;
+    let low = ficr.info().deviceid(0).read().to_le_bytes();
+    let high = ficr.info().deviceid(1).read().to_le_bytes();
+    let id_bytes = [low[0], low[1], low[2], low[3], high[0], high[1]];
+    for (i, &b) in id_bytes.iter().enumerate() {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        serial_buf[i * 2] = HEX[(b >> 4) as usize];
+        serial_buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
+    }
+    // SAFETY: serial_buf contains only ASCII hex digits
+    let serial = unsafe { core::str::from_utf8_unchecked(serial_buf) };
+
     let mut config = UsbConfig::new(VID, pid);
     config.manufacturer = Some("Odyssey Arm");
     config.product = Some("ATS USB Legacy");
-    // config.serial_number = Some("...");
+    config.serial_number = Some(serial);
     config.max_power = 310;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;
