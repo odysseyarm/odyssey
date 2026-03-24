@@ -21,6 +21,9 @@ impl DeviceCapabilities {
     pub const CONTROL: u8 = 0b01;
     /// Device has packet/event streams
     pub const EVENTS: u8 = 0b10;
+    /// Device is in DFU mode or has a broken protocol — only firmware flashing is available.
+    /// When set, firmware_version is [0,0,0] (unknown) and normal communication is unavailable.
+    pub const DFU: u8 = 0b100;
 
     pub const fn empty() -> Self {
         Self { bits: 0 }

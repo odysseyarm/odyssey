@@ -7,7 +7,7 @@
 //! - Dioxus components poll the shared state periodically to update the UI
 
 use dioxus::{logger::tracing, prelude::*};
-use odyssey_hub_common::device::{Device, DeviceCapabilities};
+use odyssey_hub_common::device::{Device, DeviceCapabilities, DeviceCapabilities as DC};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -169,20 +169,33 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             if let Some(manifest) = manifest() {
                 let device_version = device.firmware_version;
                 let pid = device.product_id;
+                let is_dfu_device = device.capabilities.contains(DC::DFU);
 
-                if device_version == [0, 0, 0] || pid == 0 {
-                    // No firmware version or product ID available, skip update check
+                // Skip if no product ID or no version (version is always readable via control protocol,
+                // so [0,0,0] only occurs for devices that are already in DFU bootloader mode).
+                if pid == 0 || device_version == [0, 0, 0] && !is_dfu_device {
+                    // No product ID, or version unreadable and no DFU interface — skip
                 } else
                 // Look up device type from its product ID
                 if let Some((vid, pid, device_type)) = firmware::device_info_from_pid(pid) {
-                    if let Some(available_fw) =
-                        firmware::find_compatible_firmware(&manifest, device_type, device_version)
-                    {
+                    // DFU-bootloader devices (no CONTROL, version [0,0,0]) — show latest firmware.
+                    // Connected devices — show latest firmware only if it is actually newer,
+                    // allowing cross-major/minor updates (e.g. protocol upgrades).
+                    let maybe_fw = if is_dfu_device {
+                        firmware::find_latest_firmware(&manifest, device_type)
+                    } else {
+                        firmware::find_latest_firmware(&manifest, device_type).filter(|fw| {
+                            fw.version_parts().map_or(false, |v| firmware::version_newer(device_version, v))
+                        })
+                    };
+
+                    if let Some(available_fw) = maybe_fw {
                         let available_version = available_fw.version.clone();
                         let device_type = device_type.to_string();
 
-                        // Check if device has USB control capability
-                        if device.capabilities.contains(DeviceCapabilities::CONTROL) {
+                        // DFU devices always show the update button (they need to be flashed to
+                        // recover).  Normal devices need CONTROL capability for USB flashing.
+                        if is_dfu_device || device.capabilities.contains(DeviceCapabilities::CONTROL) {
                             let new_state = FirmwareUpdateState::Available {
                                 current: device_version,
                                 available: available_version.clone(),
@@ -191,14 +204,23 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                 pid,
                             };
                             if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
-                                tracing::info!(
-                                    "Update available for {:02x?}: {}.{}.{} -> {}",
-                                    device_uuid,
-                                    device_version[0],
-                                    device_version[1],
-                                    device_version[2],
-                                    available_version
-                                );
+                                if is_dfu_device {
+                                    tracing::info!(
+                                        "DFU device {:02x?} (PID 0x{:04x}) ready to flash -> {}",
+                                        device_uuid,
+                                        pid,
+                                        available_version
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        "Update available for {:02x?}: {}.{}.{} -> {}",
+                                        device_uuid,
+                                        device_version[0],
+                                        device_version[1],
+                                        device_version[2],
+                                        available_version
+                                    );
+                                }
                             }
                             next_state = new_state;
                         } else {
@@ -259,13 +281,15 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             let manager = props.manager.clone();
             let manifest = manifest.clone();
             let device = device.clone();
+            let is_dfu_bootloader = device.capabilities.contains(DC::DFU) && !device.capabilities.contains(DC::CONTROL);
 
             rsx! {
                 div {
                     class: "flex items-center gap-2",
                     span {
                         class: "text-xs text-yellow-600 dark:text-yellow-400",
-                        "Update available: v{available}"
+                        if is_dfu_bootloader { "Device in DFU mode — flash v{available}" }
+                        else { "Update available: v{available}" }
                     }
                     button {
                         class: "btn-primary-sm",
@@ -381,27 +405,45 @@ async fn run_firmware_update(
 
     let manifest = manifest.ok_or("No manifest available")?;
     let device_version = device.firmware_version;
-    if device_version == [0, 0, 0] {
-        return Err("No firmware version".to_string());
-    }
+    let is_dfu_device = device.capabilities.contains(DC::DFU);
 
-    let firmware_entry =
+    // DFU devices have unknown firmware version — just flash the latest available.
+    // Normal devices require a known version to find a compatible update.
+    let firmware_entry = if is_dfu_device {
+        firmware::find_latest_firmware(&manifest, &device_type)
+            .ok_or("No firmware available for this device type")?
+    } else {
+        if device_version == [0, 0, 0] {
+            return Err("No firmware version".to_string());
+        }
         firmware::find_compatible_firmware(&manifest, &device_type, device_version)
-            .ok_or("No compatible firmware found")?;
+            .ok_or("No compatible firmware found")?
+    };
 
-    // Send DFU detach
-    tracing::info!("Sending DFU detach to {:04x}:{:04x}", vid, pid);
-    manager.set_state(device_uuid, FirmwareUpdateState::Detaching);
-    firmware::send_dfu_detach(vid, pid)
-        .await
-        .map_err(|e| format!("DFU detach failed: {}", e))?;
+    // Determine whether the device is already in DFU mode.
+    // If it has no vendor interface (class 0xFF) it cannot accept a DFU detach request —
+    // it is already waiting for a download.
+    let already_in_dfu = firmware::find_device_by_uuid(&device_uuid, vid, pid)
+        .map(|info| !info.interfaces().any(|i| i.class() == 0xFF))
+        .unwrap_or(false);
 
-    // Wait for device to enter DFU mode
-    tracing::info!("Waiting for device to enter DFU mode");
-    manager.set_state(device_uuid, FirmwareUpdateState::WaitingForDfu);
-    firmware::wait_for_dfu_device(vid, pid, std::time::Duration::from_secs(10))
-        .await
-        .map_err(|e| format!("Device did not enter DFU mode: {}", e))?;
+    if !already_in_dfu {
+        // Send DFU detach
+        tracing::info!("Sending DFU detach to {:04x}:{:04x} (uuid {:02x?})", vid, pid, device_uuid);
+        manager.set_state(device_uuid, FirmwareUpdateState::Detaching);
+        firmware::send_dfu_detach(&device_uuid, vid, pid)
+            .await
+            .map_err(|e| format!("DFU detach failed: {}", e))?;
+
+        // Wait for device to enter DFU mode
+        tracing::info!("Waiting for device to enter DFU mode");
+        manager.set_state(device_uuid, FirmwareUpdateState::WaitingForDfu);
+        firmware::wait_for_dfu_device(vid, pid, std::time::Duration::from_secs(10))
+            .await
+            .map_err(|e| format!("Device did not enter DFU mode: {}", e))?;
+    } else {
+        tracing::info!("Device {:02x?} is already in DFU mode, skipping detach", device_uuid);
+    }
 
     // Determine target slot
     let (slot_name, slot_file, alt) = firmware::determine_target_slot_for_device(vid, pid)
@@ -514,7 +556,7 @@ async fn run_firmware_update(
 
     while start.elapsed() < timeout {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        if firmware::is_device_in_app_mode(vid, pid) {
+        if firmware::is_device_in_app_mode(&device_uuid, vid, pid) {
             tracing::info!("Device reconnected in application mode");
             reconnected = true;
             break;
