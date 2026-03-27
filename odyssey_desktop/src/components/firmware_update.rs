@@ -169,7 +169,10 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             if let Some(manifest) = manifest() {
                 let device_version = device.firmware_version;
                 let pid = device.product_id;
-                let is_dfu_device = device.capabilities.contains(DC::DFU);
+                // True only when the device is stuck in DFU bootloader (no CONTROL).
+                // App-mode devices expose a DFU interface too but are NOT in bootloader mode.
+                let is_dfu_device = device.capabilities.contains(DC::DFU)
+                    && !device.capabilities.contains(DC::CONTROL);
 
                 // Skip if no product ID or no version (version is always readable via control protocol,
                 // so [0,0,0] only occurs for devices that are already in DFU bootloader mode).
@@ -256,13 +259,13 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
 
     match state {
         FirmwareUpdateState::Idle => rsx! {},
-        FirmwareUpdateState::NeedsUsbConnection { available, .. } => {
+        FirmwareUpdateState::NeedsUsbConnection { current, available } => {
             rsx! {
                 div {
                     class: "flex items-center gap-2",
                     span {
                         class: "text-xs text-yellow-600 dark:text-yellow-400",
-                        "Update available: v{available}"
+                        "Update available: v{current[0]}.{current[1]}.{current[2]} → v{available}"
                     }
                     span {
                         class: "text-xs text-gray-500 dark:text-gray-400 italic",
@@ -272,11 +275,11 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             }
         }
         FirmwareUpdateState::Available {
+            current,
             available,
             device_type,
             vid,
             pid,
-            ..
         } => {
             let manager = props.manager.clone();
             let manifest = manifest.clone();
@@ -289,7 +292,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     span {
                         class: "text-xs text-yellow-600 dark:text-yellow-400",
                         if is_dfu_bootloader { "Device in DFU mode — flash v{available}" }
-                        else { "Update available: v{available}" }
+                        else { "Update available: v{current[0]}.{current[1]}.{current[2]} → v{available}" }
                     }
                     button {
                         class: "btn-primary-sm",
