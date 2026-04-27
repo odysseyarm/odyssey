@@ -2357,6 +2357,8 @@ async fn device_handler_task(
 
                         connections.control_device = None;
                         device.capabilities.remove(DeviceCapabilities::CONTROL);
+                        // DFU interface is only accessible via USB; clear it on USB disconnect.
+                        device.capabilities.remove(DeviceCapabilities::DFU);
 
                         // A device with an active BLE events connection has genuinely independent
                         // events that survive USB disconnect. A purely wired device's events are

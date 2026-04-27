@@ -1102,11 +1102,12 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let pid = device.product_id;
     let is_paj = pid == PID_ATS_VM || pid == PID_ATS_LITE;
     let is_pag = pid == PID_ATS_PRO;
-    // Sensor settings require an events device (EVENTS capability) to send
-    // packet-based config requests. All config reads/writes work over both
-    // USB and BLE.
+    let has_control = device.capabilities.contains(DeviceCapabilities::CONTROL);
     let has_events = device.capabilities.contains(DeviceCapabilities::EVENTS);
-    let should_render = (is_paj || is_pag) && has_events;
+    // Show settings whenever control channel is available (USB control endpoint or BLE L2CAP CoC).
+    // ReadConfig/WriteConfig/FlashSettings fall back to control_device when events_device is absent.
+    // ReadRegister/WriteRegister still require events_device and will return an error if unavailable.
+    let should_render = (is_paj || is_pag) && (has_control || has_events);
 
     // All hooks must be called unconditionally before any early returns.
     let mut status = use_signal(|| String::new());

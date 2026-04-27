@@ -47,6 +47,8 @@ impl HubContext {
     }
 
     pub async fn run(&mut self) {
+        let mut device_list_task: Option<tokio::task::JoinHandle<()>> = None;
+        let mut dongle_list_task: Option<tokio::task::JoinHandle<()>> = None;
         loop {
             tracing::info!("Hub connecting to server...");
             let (device_list_stream, dongle_list_stream, event_stream) = {
@@ -109,9 +111,16 @@ impl HubContext {
                 (device_list_stream, dongle_list_stream, event_stream)
             };
 
+            if let Some(handle) = device_list_task.take() {
+                handle.abort();
+            }
+            if let Some(handle) = dongle_list_task.take() {
+                handle.abort();
+            }
+
             let mut devices_signal = self.devices.clone();
             let mut device_keys = self.device_keys.clone();
-            tokio::spawn(async move {
+            device_list_task = Some(tokio::spawn(async move {
                 let mut device_list_stream = device_list_stream;
                 while let Some(update) = device_list_stream.next().await {
                     match update {
@@ -132,10 +141,10 @@ impl HubContext {
                         }
                     }
                 }
-            });
+            }));
 
             let mut dongles_signal = self.dongles.clone();
-            tokio::spawn(async move {
+            dongle_list_task = Some(tokio::spawn(async move {
                 let mut dongle_list_stream = dongle_list_stream;
                 while let Some(update) = dongle_list_stream.next().await {
                     match update {
@@ -149,11 +158,17 @@ impl HubContext {
                         }
                     }
                 }
-            });
+            }));
 
             let mut event_stream = event_stream;
             while let Some(evt) = event_stream.next().await {
-                let evt = evt.unwrap().into();
+                let evt = match evt {
+                    Ok(raw) => raw.into(),
+                    Err(e) => {
+                        tracing::error!("Event stream error: {}", e);
+                        break;
+                    }
+                };
                 tracing::trace!("Hub event: {:?}", evt);
                 if let oe::Event::DeviceEvent(oe::DeviceEvent(
                     device,
