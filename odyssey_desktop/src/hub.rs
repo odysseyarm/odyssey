@@ -13,6 +13,8 @@ pub struct HubContext {
     pub client: SyncSignal<Client>,
     pub devices: SyncSignal<Slab<Device>>,
     pub dongles: SyncSignal<Vec<DongleInfo>>,
+    /// Non-Sync signal — only reactive within the same VirtualDom (main window).
+    /// Do NOT subscribe from a separate window (e.g. Zero); use a broadcast channel instead.
     pub latest_event: Signal<Option<oe::Event>>,
     pub tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     pub impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
