@@ -83,55 +83,56 @@ pub fn Zero(
         });
     }
 
-    // fire off zero() when we see an ImpactEvent and the flag is set
-    use_effect(move || {
-        let ctx = hub();
-        if let Some(event) = (ctx.latest_event)() {
-            match event {
-                oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) => match kind {
-                    oe::DeviceEventKind::ImpactEvent { .. } => {
-                        println!("ImpactEvent for device: {:?}", device);
-                        if let Some(key) = ctx.device_key(&device) {
-                            let shooting = *device_signals.peek()[key].shooting.peek();
-                            tracing::info!(
-                                "device_key found for {:02x?}: slot={}, shooting={}",
-                                device.uuid,
-                                key,
-                                shooting
-                            );
-                            if shooting {
-                                let zr = *zero_screen_ratio.peek();
-                                let shot_delay_ms = *device_signals.peek()[key].shot_delay.peek();
-                                // Look up historical tracking event accounting for shot delay
-                                let historical_te = {
-                                    let map = tracking_history.peek();
-                                    if let Some(buf) = map.get(&device.uuid) {
-                                        if shot_delay_ms > 0 && !buf.is_empty() {
-                                            let target_time = Instant::now()
-                                                - std::time::Duration::from_millis(
-                                                    shot_delay_ms as u64,
-                                                );
-                                            // Find the entry closest to target_time
-                                            buf.iter()
-                                                .min_by_key(|(inst, _)| {
-                                                    if *inst > target_time {
-                                                        (*inst - target_time).as_micros()
-                                                    } else {
-                                                        (target_time - *inst).as_micros()
-                                                    }
-                                                })
-                                                .map(|(_, te)| *te)
+    // fire off zero() when we see an ImpactEvent and the flag is set.
+    // Uses a broadcast channel (like tracking events) so it works across VirtualDom windows.
+    {
+        use_future(move || {
+            let mut receiver = hub.peek().subscribe_impact();
+            async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok((device, _)) => {
+                            let hub_ctx = hub.peek().clone();
+                            if let Some(key) = hub_ctx.device_key(&device) {
+                                let shooting = *device_signals.peek()[key].shooting.peek();
+                                tracing::info!(
+                                    "ImpactEvent for {:02x?}: slot={}, shooting={}",
+                                    device.uuid, key, shooting
+                                );
+                                if shooting {
+                                    let zr = *zero_screen_ratio.peek();
+                                    let shot_delay_ms =
+                                        *device_signals.peek()[key].shot_delay.peek();
+                                    let historical_te = {
+                                        let map = tracking_history.peek();
+                                        if let Some(buf) = map.get(&device.uuid) {
+                                            if shot_delay_ms > 0 && !buf.is_empty() {
+                                                let target_time = Instant::now()
+                                                    - std::time::Duration::from_millis(
+                                                        shot_delay_ms as u64,
+                                                    );
+                                                buf.iter()
+                                                    .min_by_key(|(inst, _)| {
+                                                        if *inst > target_time {
+                                                            (*inst - target_time).as_micros()
+                                                        } else {
+                                                            (target_time - *inst).as_micros()
+                                                        }
+                                                    })
+                                                    .map(|(_, te)| *te)
+                                            } else {
+                                                buf.back().map(|(_, te)| *te)
+                                            }
                                         } else {
-                                            // No delay or empty buffer — use most recent
-                                            buf.back().map(|(_, te)| *te)
+                                            None
                                         }
-                                    } else {
-                                        None
-                                    }
-                                };
-                                let dev = device.clone();
-                                spawn(async move {
-                                    if let Err(e) = (ctx.client)()
+                                    };
+                                    device_signals.write()[key].shooting.set(false);
+                                    let dev = device.clone();
+                                    if let Err(e) = hub_ctx
+                                        .client
+                                        .peek()
+                                        .clone()
                                         .zero(
                                             dev.clone(),
                                             nalgebra::Vector3::new(0., -0.0635, 0.).into(),
@@ -146,22 +147,21 @@ pub fn Zero(
                                             e
                                         );
                                     }
-                                });
-                                device_signals.write()[key].shooting.set(false);
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "ImpactEvent: device_key not found for {:02x?}",
+                                    device.uuid
+                                );
                             }
-                        } else {
-                            tracing::warn!(
-                                "device_key NOT found for {:02x?} (device_keys mismatch). Event device: {:?}",
-                                device.uuid, device
-                            );
                         }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
-                    _ => {}
-                },
-                _ => {}
+                }
             }
-        }
-    });
+        });
+    }
 
     {
         let hub = hub.clone();

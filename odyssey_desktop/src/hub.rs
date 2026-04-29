@@ -15,6 +15,7 @@ pub struct HubContext {
     pub dongles: SyncSignal<Vec<DongleInfo>>,
     pub latest_event: Signal<Option<oe::Event>>,
     pub tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
+    pub impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
     /// Most recent battery state (percent, charging) per device UUID
     pub battery_states: SyncSignal<HashMap<[u8; 6], (u8, bool)>>,
     device_keys: SyncSignal<HashMap<odyssey_hub_common::device::Device, usize>>,
@@ -23,12 +24,14 @@ pub struct HubContext {
 impl HubContext {
     pub fn new() -> Self {
         let (tracking_events, _) = broadcast::channel(128);
+        let (impact_events, _) = broadcast::channel(64);
         Self {
             client: SyncSignal::new_maybe_sync(Client::default()),
             devices: SyncSignal::new_maybe_sync(Slab::new()),
             dongles: SyncSignal::new_maybe_sync(Vec::new()),
             latest_event: Signal::new(None),
             tracking_events,
+            impact_events,
             battery_states: SyncSignal::new_maybe_sync(HashMap::new()),
             device_keys: SyncSignal::new_maybe_sync(HashMap::new()),
         }
@@ -197,6 +200,13 @@ impl HubContext {
                 }
                 if let oe::Event::DeviceEvent(oe::DeviceEvent(
                     device,
+                    oe::DeviceEventKind::ImpactEvent(impact),
+                )) = &evt
+                {
+                    let _ = self.impact_events.send((device.clone(), *impact));
+                }
+                if let oe::Event::DeviceEvent(oe::DeviceEvent(
+                    device,
                     oe::DeviceEventKind::BatteryEvent(battery),
                 )) = &evt
                 {
@@ -223,5 +233,9 @@ impl HubContext {
 
     pub fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {
         self.tracking_events.subscribe()
+    }
+
+    pub fn subscribe_impact(&self) -> broadcast::Receiver<(Device, oe::ImpactEvent)> {
+        self.impact_events.subscribe()
     }
 }
