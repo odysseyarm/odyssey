@@ -8,7 +8,6 @@ use dioxus::{
     logger::tracing,
     prelude::*,
 };
-use futures::StreamExt;
 use odyssey_hub_common::{device::Device, events::TrackingEvent};
 use tokio::sync::broadcast;
 
