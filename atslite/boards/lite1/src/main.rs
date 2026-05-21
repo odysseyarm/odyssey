@@ -166,11 +166,6 @@ async fn main(spawner: Spawner) {
     let pwr_btn_task = pwr_btn;
     defmt::info!("Spawning power_button_task...");
     spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
-    defmt::info!("Spawning power_state_task...");
-    spawner.spawn(
-        power_state::power_state_task(pmic, pmic_leds, &lite1::battery_model::BATTERY_MODEL)
-            .unwrap(),
-    );
     defmt::info!("Power tasks spawned");
 
     // Initialize NVMC in a shared mutex so it can be used by both DFU and settings
@@ -393,6 +388,12 @@ async fn main(spawner: Spawner) {
     // BLE controller and tasks (settings must be initialized first for bond restoration)
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller, ble_seed).unwrap());
+
+    defmt::info!("Spawning power_state_task...");
+    spawner.spawn(
+        power_state::power_state_task(pmic, pmic_leds, &lite1::battery_model::BATTERY_MODEL)
+            .unwrap(),
+    );
 
     pmic_leds.set_state(LedState::BattHigh).await;
     defmt::info!("Initialization complete, starting object mode");

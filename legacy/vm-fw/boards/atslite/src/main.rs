@@ -235,15 +235,6 @@ async fn main(spawner: Spawner) {
     let pwr_btn_task = pwr_btn;
     defmt::info!("Spawning power_button_task...");
     spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
-    defmt::info!("Spawning power_state_task...");
-    spawner.spawn(
-        power_state::power_state_task(
-            pmic,
-            pmic_leds,
-            &atslite_board::battery_model::BATTERY_MODEL,
-        )
-        .unwrap(),
-    );
     defmt::info!("Power tasks spawned");
 
     // Initialize PAJ sensors
@@ -484,6 +475,16 @@ async fn main(spawner: Spawner) {
     }
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller, ble_seed).unwrap());
+
+    defmt::info!("Spawning power_state_task...");
+    spawner.spawn(
+        power_state::power_state_task(
+            pmic,
+            pmic_leds,
+            &atslite_board::battery_model::BATTERY_MODEL,
+        )
+        .unwrap(),
+    );
 
     // Build object mode context
     let ctx = ObjectModeContext::<AtslitePlatform, _, _> {

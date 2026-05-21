@@ -32,11 +32,16 @@ pub async fn power_state_task(
 ) -> ! {
     use embassy_time::Instant;
 
-    let (v0, t0) = {
+    let (v0, t0) = loop {
         let mut guard = pmic.lock().await;
-        let v0 = guard.measure_vbat().await.unwrap();
-        let t0 = guard.measure_die_temperature().await.unwrap();
-        (v0, t0)
+        let v = guard.measure_vbat().await.unwrap();
+        if v > 2.5 {
+            let t = guard.measure_die_temperature().await.unwrap();
+            break (v, t);
+        }
+        drop(guard);
+        defmt::trace!("[fg] vbat={} V invalid, waiting for ADC...", v);
+        embassy_time::Timer::after_millis(50).await;
     };
 
     defmt::trace!("[fg] init: v0={} V, t0={} °C", v0, t0);

@@ -1418,7 +1418,8 @@ async fn main(spawner: Spawner) -> ! {
         defmt::info!("Creating USB driver with VBUS detect");
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
         defmt::info!("USB driver created");
-        static SERIAL_BUF: static_cell::ConstStaticCell<[u8; 12]> = static_cell::ConstStaticCell::new([0; 12]);
+        static SERIAL_BUF: static_cell::ConstStaticCell<[u8; 12]> =
+            static_cell::ConstStaticCell::new([0; 12]);
         let serial_buf = SERIAL_BUF.take();
         let ficr = embassy_nrf::pac::FICR;
         let low = ficr.info().deviceid(0).read().to_le_bytes();
