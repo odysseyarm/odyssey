@@ -16,6 +16,7 @@ type SaveStatus = Option<Result<(), String>>;
 #[derive(Default)]
 struct DeviceSignals {
     shooting: Signal<bool>,
+    zeroing_on_key: Signal<bool>,
     shot_delay: Signal<u16>,
     save_zero_status: Signal<SaveStatus>,
 }
@@ -222,6 +223,63 @@ pub fn Zero(
 
         div {
             class: "flex h-screen bg-gray-50 dark:bg-gray-800",
+            tabindex: "0",
+            autofocus: true,
+            onkeydown: move |e: KeyboardEvent| async move {
+                let key_str = e.key().to_string();
+                if key_str != "z" && key_str != "Escape" { return; }
+
+                let hub_ctx = hub.peek().clone();
+                let devs: Vec<_> = (hub_ctx.devices)().into_iter().collect();
+                let slots_len = device_signals.peek().len();
+
+                for slot in 0..slots_len {
+                    if key_str == "z" && *device_signals.peek()[slot].zeroing_on_key.peek() {
+                        device_signals.write()[slot].zeroing_on_key.set(false);
+                        if let Some((_, dev)) = devs.iter().find(|(s, _)| *s == slot) {
+                            let dev = dev.clone();
+                            let zr = *zero_screen_ratio.peek();
+                            let shot_delay_ms = *device_signals.peek()[slot].shot_delay.peek();
+                            let historical_te = {
+                                let map = tracking_history.peek();
+                                if let Some(buf) = map.get(&dev.uuid) {
+                                    if shot_delay_ms > 0 && !buf.is_empty() {
+                                        let target_time = Instant::now()
+                                            - std::time::Duration::from_millis(shot_delay_ms as u64);
+                                        buf.iter()
+                                            .min_by_key(|(inst, _)| {
+                                                if *inst > target_time {
+                                                    (*inst - target_time).as_micros()
+                                                } else {
+                                                    (target_time - *inst).as_micros()
+                                                }
+                                            })
+                                            .map(|(_, te)| *te)
+                                    } else {
+                                        buf.back().map(|(_, te)| *te)
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Err(e) = hub_ctx.client.peek().clone()
+                                .zero(
+                                    dev.clone(),
+                                    nalgebra::Vector3::new(0., -0.0635, 0.).into(),
+                                    nalgebra::Vector2::new(zr.0, zr.1).into(),
+                                    historical_te,
+                                )
+                                .await
+                            {
+                                tracing::error!("Failed to zero device {:x?}: {}", dev.uuid, e);
+                            }
+                        }
+                    }
+                    if key_str == "Escape" && *device_signals.peek()[slot].zeroing_on_key.peek() {
+                        device_signals.write()[slot].zeroing_on_key.set(false);
+                    }
+                }
+            },
 
             aside {
                 class: "fixed top-0 left-0 z-40 h-screen transition-transform -translate-x-full sm:translate-x-0",
@@ -231,15 +289,17 @@ pub fn Zero(
                         for (slot, device) in devices {
                             {
                                 let firing = (device_signals.read()[slot].shooting)();
+                                let zeroing_on_key = (device_signals.read()[slot].zeroing_on_key)();
+                                let label = crate::views::device_label(&device);
                                 rsx! {
                                     li {
                                         class: "flex flex-col gap-2",
                                         span {
                                             class: "text-gray-900 dark:text-white",
-                                            {format!("0x{:x?}", device.uuid)},
+                                            {label},
                                         }
                                         ul { class: "flex flex-col gap-2",
-                                            li { class: "flex items-center gap-3",
+                                            li { class: "flex items-center gap-3 flex-wrap",
                                                 if firing {
                                                     button {
                                                         class: "btn-secondary-danger",
@@ -256,6 +316,14 @@ pub fn Zero(
                                                         },
                                                         "Zero on shot"
                                                     }
+                                                }
+                                                button {
+                                                    class: if zeroing_on_key { "btn-secondary-danger" } else { "btn-secondary" },
+                                                    onclick: move |_| {
+                                                        let current = *device_signals.peek()[slot].zeroing_on_key.peek();
+                                                        device_signals.write()[slot].zeroing_on_key.set(!current);
+                                                    },
+                                                    if zeroing_on_key { "Cancel [Z]" } else { "Zero on [Z]" }
                                                 }
                                                 button { class: "btn-secondary", onclick: {
                                                     let dev = device.clone();
@@ -507,9 +575,9 @@ pub fn Zero(
             }
 
             button {
-                class: "fixed z-50 top-4 right-4 …",
+                class: "fixed z-50 top-4 right-4 w-10 h-10 rounded-full bg-white/15 hover:bg-white/30 text-white text-xl flex items-center justify-center transition-colors",
                 onclick: move |_| dioxus::desktop::window().close(),
-                "Close"
+                "✕"
             }
         }
     }
