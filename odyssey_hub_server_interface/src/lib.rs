@@ -410,7 +410,7 @@ impl From<common::accessory::AccessoryType> for proto::AccessoryType {
     fn from(v: common::accessory::AccessoryType) -> Self {
         match v {
             common::accessory::AccessoryType::DryFireMag => Self::DryFireMag,
-            common::accessory::AccessoryType::BlackbeardX => Self::BlackbeardX,
+            common::accessory::AccessoryType::MantisX => Self::MantisX,
         }
     }
 }
@@ -418,7 +418,7 @@ impl From<proto::AccessoryType> for common::accessory::AccessoryType {
     fn from(v: proto::AccessoryType) -> Self {
         match v {
             proto::AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
-            proto::AccessoryType::BlackbeardX => common::accessory::AccessoryType::BlackbeardX,
+            proto::AccessoryType::MantisX => common::accessory::AccessoryType::MantisX,
         }
     }
 }

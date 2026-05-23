@@ -208,7 +208,7 @@ message DeviceListReply {
 
 enum AccessoryType {
   DRY_FIRE_MAG = 0;
-  BLACKBEARD_X = 1;
+  MANTIS_X = 1;
 }
 enum AccessoryFeature {
   IMPACT = 0;

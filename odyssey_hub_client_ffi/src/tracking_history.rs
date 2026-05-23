@@ -25,6 +25,24 @@ pub extern "C" fn tracking_history_push(history: *mut TrackingHistory, event: Tr
 }
 
 #[no_mangle]
+pub extern "C" fn tracking_history_latest(
+    history: *mut TrackingHistory,
+    out_event: *mut TrackingEvent,
+) -> bool {
+    if let Some(history) = unsafe { history.as_ref() } {
+        let lock = history.inner.lock().unwrap();
+        if let Some(e) = lock.latest() {
+            let common_event: odyssey_hub_common::events::TrackingEvent = e.into();
+            unsafe {
+                *out_event = common_event.into();
+            }
+            return true;
+        }
+    }
+    false
+}
+
+#[no_mangle]
 pub extern "C" fn tracking_history_get_closest(
     history: *mut TrackingHistory,
     timestamp: u32,

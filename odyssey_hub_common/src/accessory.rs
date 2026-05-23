@@ -4,7 +4,7 @@ use std::{collections::HashSet, num::NonZeroU64};
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AccessoryType {
     DryFireMag,
-    BlackbeardX,
+    MantisX,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -29,7 +29,7 @@ impl AccessoryInfo {
             AccessoryType::DryFireMag => {
                 features.insert(AccessoryFeature::Impact);
             }
-            AccessoryType::BlackbeardX => {
+            AccessoryType::MantisX => {
                 features.insert(AccessoryFeature::Impact);
             }
         }

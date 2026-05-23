@@ -1,13 +1,13 @@
 use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub;
 use dioxus::{html::geometry::euclid::Rect, logger::tracing, prelude::*};
+use odyssey_hub_client::tracking_history::TrackingHistory;
 use odyssey_hub_common::events as oe;
-use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
+use std::collections::HashMap;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
-/// Max number of tracking events to keep per device (~2 seconds at 100Hz)
+/// Tracking history ring buffer capacity per device (~2 seconds at 100Hz)
 const TRACKING_HISTORY_CAP: usize = 200;
 
 /// Save zero result: None = idle, Some(Ok(())) = saved, Some(Err(msg)) = error
@@ -55,7 +55,7 @@ pub fn Zero(
     }
 
     // Per-device ring buffer of recent tracking events for shot-delay-compensated zeroing
-    let tracking_history: Signal<HashMap<[u8; 6], VecDeque<(Instant, oe::TrackingEvent)>>> =
+    let tracking_history: Signal<HashMap<[u8; 6], TrackingHistory>> =
         use_signal(|| HashMap::new());
 
     // Subscribe to tracking events and buffer them per-device
@@ -67,14 +67,11 @@ pub fn Zero(
                 loop {
                     match receiver.recv().await {
                         Ok((device, te)) => {
-                            let mut map = tracking_history.write();
-                            let buf = map
+                            tracking_history
+                                .write()
                                 .entry(device.uuid)
-                                .or_insert_with(|| VecDeque::with_capacity(TRACKING_HISTORY_CAP));
-                            buf.push_back((Instant::now(), te));
-                            while buf.len() > TRACKING_HISTORY_CAP {
-                                buf.pop_front();
-                            }
+                                .or_insert_with(|| TrackingHistory::new(TRACKING_HISTORY_CAP))
+                                .push(te);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -92,7 +89,7 @@ pub fn Zero(
             async move {
                 loop {
                     match receiver.recv().await {
-                        Ok((device, _)) => {
+                        Ok((device, impact)) => {
                             let hub_ctx = hub.peek().clone();
                             if let Some(key) = hub_ctx.device_key(&device) {
                                 let shooting = *device_signals.peek()[key].shooting.peek();
@@ -104,30 +101,25 @@ pub fn Zero(
                                     let zr = *zero_screen_ratio.peek();
                                     let shot_delay_ms =
                                         *device_signals.peek()[key].shot_delay.peek();
-                                    let historical_te = {
-                                        let map = tracking_history.peek();
-                                        if let Some(buf) = map.get(&device.uuid) {
-                                            if shot_delay_ms > 0 && !buf.is_empty() {
-                                                let target_time = Instant::now()
-                                                    - std::time::Duration::from_millis(
-                                                        shot_delay_ms as u64,
-                                                    );
-                                                buf.iter()
-                                                    .min_by_key(|(inst, _)| {
-                                                        if *inst > target_time {
-                                                            (*inst - target_time).as_micros()
-                                                        } else {
-                                                            (target_time - *inst).as_micros()
-                                                        }
-                                                    })
-                                                    .map(|(_, te)| *te)
-                                            } else {
-                                                buf.back().map(|(_, te)| *te)
-                                            }
-                                        } else {
-                                            None
-                                        }
+                                    // Convert ms → µs (device timestamp unit). For accessories
+                                    // (u32::MAX sentinel), get the latest entry's timestamp and
+                                    // subtract from that, giving ~0–10ms staleness at 100Hz.
+                                    let shot_delay_us = shot_delay_ms as u32 * 1000;
+                                    let history = tracking_history.peek();
+                                    let lookup_ts = if impact.timestamp == u32::MAX {
+                                        history
+                                            .get(&device.uuid)
+                                            .and_then(|h| h.latest())
+                                            .map(|te| te.timestamp.wrapping_sub(shot_delay_us))
+                                            .unwrap_or(u32::MAX)
+                                    } else {
+                                        impact.timestamp.wrapping_sub(shot_delay_us)
                                     };
+                                    drop(history);
+                                    let historical_te = tracking_history
+                                        .peek()
+                                        .get(&device.uuid)
+                                        .and_then(|h| h.get_closest(lookup_ts));
                                     device_signals.write()[key].shooting.set(false);
                                     let dev = device.clone();
                                     if let Err(e) = hub_ctx
@@ -240,28 +232,17 @@ pub fn Zero(
                             let dev = dev.clone();
                             let zr = *zero_screen_ratio.peek();
                             let shot_delay_ms = *device_signals.peek()[slot].shot_delay.peek();
-                            let historical_te = {
-                                let map = tracking_history.peek();
-                                if let Some(buf) = map.get(&dev.uuid) {
-                                    if shot_delay_ms > 0 && !buf.is_empty() {
-                                        let target_time = Instant::now()
-                                            - std::time::Duration::from_millis(shot_delay_ms as u64);
-                                        buf.iter()
-                                            .min_by_key(|(inst, _)| {
-                                                if *inst > target_time {
-                                                    (*inst - target_time).as_micros()
-                                                } else {
-                                                    (target_time - *inst).as_micros()
-                                                }
-                                            })
-                                            .map(|(_, te)| *te)
-                                    } else {
-                                        buf.back().map(|(_, te)| *te)
-                                    }
-                                } else {
-                                    None
-                                }
-                            };
+                            let shot_delay_us = shot_delay_ms as u32 * 1000;
+                            let historical_te = tracking_history
+                                .peek()
+                                .get(&dev.uuid)
+                                .and_then(|h| {
+                                    let lookup_ts = h
+                                        .latest()
+                                        .map(|te| te.timestamp.wrapping_sub(shot_delay_us))
+                                        .unwrap_or(u32::MAX);
+                                    h.get_closest(lookup_ts)
+                                });
                             if let Err(e) = hub_ctx.client.peek().clone()
                                 .zero(
                                     dev.clone(),
@@ -575,7 +556,7 @@ pub fn Zero(
             }
 
             button {
-                class: "fixed z-50 top-4 right-4 w-10 h-10 rounded-full bg-white/15 hover:bg-white/30 text-white text-xl flex items-center justify-center transition-colors",
+                class: "fixed z-50 top-4 right-4 w-10 h-10 rounded-full bg-gray-900/60 hover:bg-gray-900/80 dark:bg-white/15 dark:hover:bg-white/30 text-white text-xl flex items-center justify-center transition-colors",
                 onclick: move |_| dioxus::desktop::window().close(),
                 "✕"
             }

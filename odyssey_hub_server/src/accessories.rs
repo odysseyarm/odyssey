@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 const NUS_TX_UUID: Uuid = Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e);
 
-const BBX_SHOT_CHAR_UUID: Uuid = Uuid::from_u128(0x6e40000e_204d_616e_7469_732054656368);
+const MANTIS_SHOT_CHAR_UUID: Uuid = Uuid::from_u128(0x6e40000e_204d_616e_7469_732054656368);
 
 /// Events from the accessory_manager merged stream
 enum AccessoryEvent {
@@ -115,13 +115,13 @@ pub async fn accessory_manager(
                 }
 
                 // Snapshot: (mac, assignment, type)
-                let snapshot: Vec<([u8; 6], Option<std::num::NonZeroU64>, AccessoryType)> =
+                let snapshot: Vec<([u8; 6], AccessoryType)> =
                     info_map
                         .iter()
-                        .map(|(id, info)| (*id, info.assignment, info.ty))
+                        .map(|(id, info)| (*id, info.ty))
                         .collect();
 
-                for (id, assignment_opt, ty) in snapshot {
+                for (id, ty) in snapshot {
                     if let Some(p) = by_mac.get(&id).cloned() {
                         periph_cache.entry(id).or_insert_with(|| p.clone());
 
@@ -136,7 +136,7 @@ pub async fn accessory_manager(
                                     // pick characteristic by accessory type
                                     let target_char_uuid = match ty {
                                         AccessoryType::DryFireMag => NUS_TX_UUID,
-                                        AccessoryType::BlackbeardX => BBX_SHOT_CHAR_UUID,
+                                        AccessoryType::MantisX => MANTIS_SHOT_CHAR_UUID,
                                     };
 
                                     if let Some(ch) = p
@@ -157,6 +157,7 @@ pub async fn accessory_manager(
                                             };
                                             let dl = dl.clone();
                                             let event_tx = event_tx.clone();
+                                            let info_watch = info_watch.clone();
                                             tokio::spawn(async move {
                                                 let mut notif_stream = notif_stream;
                                                 while let Some(ValueNotification { uuid, value }) =
@@ -166,11 +167,9 @@ pub async fn accessory_manager(
                                                         let mut shot = false;
                                                         match ty {
                                                             AccessoryType::DryFireMag => {
-                                                                // treat any packet as shot for now
                                                                 shot = true;
                                                             }
-                                                            AccessoryType::BlackbeardX => {
-                                                                // shot when single byte 0x01
+                                                            AccessoryType::MantisX => {
                                                                 if value.len() == 1
                                                                     && value[0] == 0x01
                                                                 {
@@ -181,8 +180,11 @@ pub async fn accessory_manager(
 
                                                         if shot {
                                                             debug!("shotted");
-                                                            if let Some(assignment) = assignment_opt
-                                                            {
+                                                            let assignment_opt = info_watch
+                                                                .borrow()
+                                                                .get(&id)
+                                                                .and_then(|i| i.assignment);
+                                                            if let Some(assignment) = assignment_opt {
                                                                 let maybe_device = {
                                                                     let dl_guard = dl.lock();
                                                                     let assignment_uuid: [u8; 6] =

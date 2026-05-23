@@ -110,7 +110,7 @@ pub fn Accessories() -> Element {
                 0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc,
                 0xca, 0x9e,
             ]);
-            let blackbeardx_uuid = Uuid::from_bytes([
+            let mantis_service_uuid = Uuid::from_bytes([
                 0x6e, 0x40, 0x00, 0x01, 0x20, 0x4d, 0x61, 0x6e, 0x74, 0x69, 0x73, 0x20, 0x54, 0x65,
                 0x63, 0x68,
             ]);
@@ -142,10 +142,10 @@ pub fn Accessories() -> Element {
                                     id,
                                     ("DryFireMag".to_string(), AccessoryType::DryFireMag),
                                 );
-                            } else if props.services.contains(&blackbeardx_uuid) {
+                            } else if props.services.contains(&mantis_service_uuid) {
                                 found.insert(
                                     id,
-                                    ("BlackbeardX".to_string(), AccessoryType::BlackbeardX),
+                                    ("MantisX".to_string(), AccessoryType::MantisX),
                                 );
                             }
                         }

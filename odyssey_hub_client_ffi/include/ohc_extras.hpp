@@ -24,6 +24,10 @@ public:
         tracking_history_push(ptr, event);
     }
 
+    bool latest(TrackingEvent& out) {
+        return tracking_history_latest(ptr, &out);
+    }
+
     bool get_closest(uint32_t timestamp, TrackingEvent& out) {
         return tracking_history_get_closest(ptr, timestamp, &out);
     }

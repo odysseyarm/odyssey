@@ -25,6 +25,14 @@ impl TrackingHistory {
         }
     }
 
+    pub fn latest(&self) -> Option<TrackingEvent> {
+        if self.head == 0 && !self.full {
+            return None;
+        }
+        let idx = (self.head + self.capacity - 1) % self.capacity;
+        self.buffer[idx]
+    }
+
     pub fn get_closest(&self, timestamp: u32) -> Option<TrackingEvent> {
         let len = if self.full { self.capacity } else { self.head };
         let mut best: Option<TrackingEvent> = None;

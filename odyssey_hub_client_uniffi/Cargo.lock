@@ -175,7 +175,7 @@ dependencies = [
 [[package]]
 name = "ats_common"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_common.git#e7a0ebcefabd1bc2771d24de8cc36c7ee45441f4"
+source = "git+https://github.com/odysseyarm/ats_common#e7a0ebcefabd1bc2771d24de8cc36c7ee45441f4"
 dependencies = [
  "nalgebra",
  "num",
