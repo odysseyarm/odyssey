@@ -5,7 +5,7 @@ velopack:
     $ErrorActionPreference = 'Stop'
 
     # --- paths / ids ---
-    $nsisDir  = Join-Path $PWD.Path '..\target\dx\odyssey_desktop\bundle\windows\bundle\nsis'
+    $nsisDir  = Join-Path $PWD.Path '..\target\dx\odyssey_desktop\bundle\windows\nsis'
     $tempRoot = Join-Path $env:LOCALAPPDATA 'Temp\OdysseyDesktop'
     $packId   = 'Odyssium.Desktop'
     $exeName  = 'odyssey_desktop.exe'   # your real exe

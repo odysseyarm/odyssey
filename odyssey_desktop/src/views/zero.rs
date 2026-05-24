@@ -55,8 +55,7 @@ pub fn Zero(
     }
 
     // Per-device ring buffer of recent tracking events for shot-delay-compensated zeroing
-    let tracking_history: Signal<HashMap<[u8; 6], TrackingHistory>> =
-        use_signal(|| HashMap::new());
+    let tracking_history: Signal<HashMap<[u8; 6], TrackingHistory>> = use_signal(|| HashMap::new());
 
     // Subscribe to tracking events and buffer them per-device
     {
@@ -95,7 +94,9 @@ pub fn Zero(
                                 let shooting = *device_signals.peek()[key].shooting.peek();
                                 tracing::info!(
                                     "ImpactEvent for {:02x?}: slot={}, shooting={}",
-                                    device.uuid, key, shooting
+                                    device.uuid,
+                                    key,
+                                    shooting
                                 );
                                 if shooting {
                                     let zr = *zero_screen_ratio.peek();

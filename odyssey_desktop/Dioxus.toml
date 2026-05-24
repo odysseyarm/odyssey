@@ -5,6 +5,9 @@ asset_dir = "assets"
 [bundle]
 identifier = "com.odysseyarm.odyssey"
 publisher = "OdysseyArm"
+icon = [
+   "icons/icon.ico"
+]
 
 [web.resource]
 style = ["/assets/tailwind.css"]
