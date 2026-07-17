@@ -30,5 +30,5 @@ inherits = "dev"
 [profile.android-dev]
 inherits = "dev"
 
-[patch."https://github.com/odysseyarm/vmgui"]
-ats_usb = { path = "../ats-vision-tool/ats_usb" }
+# [patch."https://github.com/odysseyarm/vmgui"]
+# ats_usb = { path = "../ats-vision-tool/ats_usb" }
