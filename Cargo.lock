@@ -455,7 +455,7 @@ dependencies = [
 [[package]]
 name = "ats_cv"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git#dd03454bf521966a991530046870886554ba6bb9"
+source = "git+ssh://git@github.com/odysseyarm/ats_cv.git#dd03454bf521966a991530046870886554ba6bb9"
 dependencies = [
  "arrayvec 0.7.6",
  "ats_common",
@@ -475,6 +475,7 @@ dependencies = [
 [[package]]
 name = "ats_usb"
 version = "0.1.0"
+source = "git+https://github.com/odysseyarm/vmgui#5b4a1c78dde845f07710b9d7ef404fd7ea796018"
 dependencies = [
  "anyhow",
  "argmin",
@@ -2210,7 +2211,7 @@ dependencies = [
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+https://github.com/odysseyarm/ats_cv.git#dd03454bf521966a991530046870886554ba6bb9"
+source = "git+ssh://git@github.com/odysseyarm/ats_cv.git#dd03454bf521966a991530046870886554ba6bb9"
 dependencies = [
  "nalgebra 0.34.2",
 ]

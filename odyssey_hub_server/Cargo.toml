@@ -30,7 +30,7 @@ protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-fe
 nalgebra = "0.34"
 cam-geom = "0.16"
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera" }
-ats_cv = { git = "https://github.com/odysseyarm/ats_cv.git" }
+ats_cv = { git = "ssh://git@github.com/odysseyarm/ats_cv.git" }
 ats_common = { git = "https://github.com/odysseyarm/ats_common.git" }
 sqpnp = { git = "https://github.com/0e4ef622/sqpnp.git" }
 socket2 = "0.5.7"
