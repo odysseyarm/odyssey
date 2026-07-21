@@ -304,7 +304,7 @@ pub fn Home() -> Element {
                                     }
                                 }
                             },
-                            "Go"
+                            "Zero"
                         }
                     }
                 }
