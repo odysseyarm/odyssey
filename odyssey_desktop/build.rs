@@ -1,9 +1,11 @@
 fn main() {
+    println!("cargo:rerun-if-changed=input.css");
+
     // Install required packages
     let toolchain = install_packages();
 
     // Compile TailwindCSS .css file
-    std::process::Command::new(toolchain)
+    let output = std::process::Command::new(toolchain)
         .args([
             "@tailwindcss/cli",
             "-i",
@@ -13,8 +15,17 @@ fn main() {
             "--minify",
         ])
         .env("NODE_ENV", "production")
-        .spawn()
-        .unwrap();
+        .output()
+        .expect("failed to run @tailwindcss/cli");
+
+    if !output.status.success() {
+        panic!(
+            "@tailwindcss/cli failed with status {}\nstdout: {}\nstderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
 }
 
 /// Installs required packages and selects toolchain to use.
@@ -28,16 +39,16 @@ fn install_packages() -> &'static str {
     let npm = if_windows("npm.cmd", "npm");
     let npx = if_windows("npx.cmd", "npx");
 
-    if std::process::Command::new(yarn)
-        .arg("install")
-        .spawn()
-        .is_ok()
-    {
+    if let Ok(status) = std::process::Command::new(yarn).arg("install").status() {
+        if !status.success() {
+            panic!("ERROR: `yarn install` failed with status {status}");
+        }
         return yarn;
     }
 
-    match std::process::Command::new(npm).arg("install").spawn() {
-        Ok(_) => npx,
+    match std::process::Command::new(npm).arg("install").status() {
+        Ok(status) if status.success() => npx,
+        Ok(status) => panic!("ERROR: `npm install` failed with status {status}"),
         Err(e) => panic!("ERROR: Npm or Yarn installation is needed.\n{e}"),
     }
 }
