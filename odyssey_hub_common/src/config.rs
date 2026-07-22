@@ -3,25 +3,12 @@ use std::{collections::HashMap, path::PathBuf};
 use crate::{accessory::AccessoryInfo, hexkeymap::HexKeyMapN};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
 use ats_common::ScreenCalibration;
-use serde::{Deserialize, Serialize};
 use tokio::fs;
 
 pub const APP_INFO: AppInfo = AppInfo {
     name: "odyssey",
     author: "odysseyarm",
 };
-
-/* ------------------------------- Versioning -------------------------------- */
-
-// Current version for all config files
-pub const CONFIG_VERSION: u32 = 1;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct VersionedConfig<T> {
-    version: u32,
-    #[serde(flatten)]
-    data: T,
-}
 
 /* ------------------------- Corruption Event Types -------------------------- */
 
