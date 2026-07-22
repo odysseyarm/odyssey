@@ -407,3 +407,5 @@ output
 .vscode
 .bin
 .bin/
+
+tailwind.css
