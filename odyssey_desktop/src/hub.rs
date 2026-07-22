@@ -20,7 +20,7 @@ pub struct HubContext {
     pub impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
     /// Most recent battery state (percent, charging) per device UUID
     pub battery_states: SyncSignal<HashMap<[u8; 6], (u8, bool)>>,
-    device_keys: SyncSignal<HashMap<odyssey_hub_common::device::Device, usize>>,
+    device_keys: SyncSignal<HashMap<[u8; 6], usize>>,
 }
 
 impl HubContext {
@@ -46,8 +46,9 @@ impl HubContext {
         keys.clear();
 
         for device in list {
-            let idx = devices.insert(device.clone());
-            keys.insert(device, idx);
+            let uuid = device.uuid;
+            let idx = devices.insert(device);
+            keys.insert(uuid, idx);
         }
     }
 
@@ -136,8 +137,9 @@ impl HubContext {
                             devices.clear();
                             keys.clear();
                             for device in list {
-                                let idx = devices.insert(device.clone());
-                                keys.insert(device, idx);
+                                let uuid = device.uuid;
+                                let idx = devices.insert(device);
+                                keys.insert(uuid, idx);
                             }
                         }
                         Err(e) => {
@@ -230,7 +232,7 @@ impl HubContext {
     }
 
     pub fn device_key(&self, device: &Device) -> Option<usize> {
-        self.device_keys.peek().get(device).cloned()
+        self.device_keys.peek().get(&device.uuid).cloned()
     }
 
     pub fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {

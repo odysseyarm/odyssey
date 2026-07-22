@@ -10,6 +10,7 @@ use crate::components::{
     UpdatingDeviceRow,
 };
 use crate::hub;
+use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 
 #[component]
@@ -98,141 +99,16 @@ pub fn Home() -> Element {
                                     for (_slot, device) in devices.iter() {
                                         {
                                             let is_updating = updating.contains(&device.uuid);
-                                            let current_name = device.name().to_string();
-                                            let label = crate::views::device_label(device);
-                                            let is_dfu = device.capabilities.contains(odyssey_hub_common::device::DeviceCapabilities::DFU)
-                                                && !device.capabilities.contains(odyssey_hub_common::device::DeviceCapabilities::CONTROL);
-                                            let mut editing = use_signal(|| false);
-                                            let mut edit_value = use_signal(|| current_name.clone());
-                                            let mut renamed = use_signal(|| false);
+                                            let battery = battery_states.get(&device.uuid).copied();
                                             rsx! {
-                                                div {
-                                                    class: "flex flex-col p-3 bg-gray-50 dark:bg-gray-600 rounded gap-2",
-                                                    div {
-                                                        class: "flex items-center justify-between",
-                                                        div {
-                                                            class: "flex items-center gap-3",
-                                                            div {
-                                                                class: if is_updating { "w-2 h-2 bg-yellow-500 rounded-full animate-pulse" } else if is_dfu { "w-2 h-2 bg-orange-500 rounded-full animate-pulse" } else { "w-2 h-2 bg-green-500 rounded-full" }
-                                                            }
-                                                            if editing() {
-                                                                input {
-                                                                    class: "text-sm font-mono text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border border-blue-400 rounded px-1 w-48",
-                                                                    value: "{edit_value}",
-                                                                    autofocus: true,
-                                                                    oninput: move |e| edit_value.set(e.value()),
-                                                                    onkeydown: {
-                                                                        let device = device.clone();
-                                                                        move |e: KeyboardEvent| {
-                                                                            if e.key() == Key::Enter {
-                                                                                let name = edit_value();
-                                                                                let device = device.clone();
-                                                                                let mut client = hub().client;
-                                                                                editing.set(false);
-                                                                                renamed.set(true);
-                                                                                spawn(async move {
-                                                                                    let _ = client.write().set_device_name(device, name).await;
-                                                                                });
-                                                                            } else if e.key() == Key::Escape {
-                                                                                editing.set(false);
-                                                                            }
-                                                                        }
-                                                                    },
-                                                                }
-                                                                button {
-                                                                    class: "text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200",
-                                                                    onclick: move |_| editing.set(false),
-                                                                    "✕"
-                                                                }
-                                                            } else {
-                                                                span {
-                                                                    class: "text-sm font-mono text-gray-700 dark:text-gray-200",
-                                                                    "{label}"
-                                                                }
-                                                                button {
-                                                                    class: "text-xs text-gray-400 hover:text-blue-500 dark:hover:text-blue-400",
-                                                                    title: "Rename",
-                                                                    onclick: move |_| {
-                                                                        edit_value.set(current_name.clone());
-                                                                        renamed.set(false);
-                                                                        editing.set(true);
-                                                                    },
-                                                                    "✎"
-                                                                }
-                                                                if renamed() {
-                                                                    span {
-                                                                        class: "text-xs text-yellow-500 dark:text-yellow-400 italic",
-                                                                        "USB name reflects last boot"
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        span {
-                                                            class: "text-xs text-gray-500 dark:text-gray-400",
-                                                            match device.transport {
-                                                                odyssey_hub_common::device::Transport::Usb => "USB",
-                                                                odyssey_hub_common::device::Transport::UsbMux => "BLE",
-                                                                odyssey_hub_common::device::Transport::UdpMux => "UDP",
-                                                            }
-                                                            {
-                                                                use odyssey_hub_common::device::DeviceCapabilities;
-                                                                match (device.transport, device.events_transport, device.events_connected, device.capabilities.contains(DeviceCapabilities::CONTROL)) {
-                                                                    (odyssey_hub_common::device::Transport::Usb, odyssey_hub_common::device::EventsTransport::Bluetooth, true, _) => " (BLE events)",
-                                                                    (odyssey_hub_common::device::Transport::Usb, odyssey_hub_common::device::EventsTransport::Bluetooth, false, _) => " (BLE events)",
-                                                                    (odyssey_hub_common::device::Transport::UsbMux, _, _, true) => " (USB control)",
-                                                                    _ => "",
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    div {
-                                                        class: "flex items-center gap-2 text-xs",
-                                                        span {
-                                                            class: "text-gray-500 dark:text-gray-400",
-                                                            "Firmware:"
-                                                        }
-                                                        if device.firmware_version != [0, 0, 0] {
-                                                            span {
-                                                                class: "text-gray-700 dark:text-gray-200 font-mono",
-                                                                "{device.firmware_version[0]}.{device.firmware_version[1]}.{device.firmware_version[2]}"
-                                                            }
-                                                        } else {
-                                                            span {
-                                                                class: "text-gray-400 dark:text-gray-500 italic",
-                                                                "Not available"
-                                                            }
-                                                        }
-                                                    }
-                                                    if let Some((percent, charging)) = battery_states.get(&device.uuid).copied() {
-                                                        div {
-                                                            class: "flex items-center gap-2 text-xs",
-                                                            span {
-                                                                class: "text-gray-500 dark:text-gray-400",
-                                                                "Battery:"
-                                                            }
-                                                            span {
-                                                                class: "text-gray-700 dark:text-gray-200 font-mono",
-                                                                "{percent}%"
-                                                            }
-                                                            span {
-                                                                class: if charging { "text-green-500" } else { "text-gray-400 dark:text-gray-500" },
-                                                                if charging { "Charging" } else { "Discharging" }
-                                                            }
-                                                        }
-                                                    }
-                                                    DeviceFirmwareUpdate {
-                                                        device: device.clone(),
-                                                        manifest: manifest,
-                                                        manager: manager.clone(),
-                                                    }
-                                                    SensorSettings {
-                                                        hub: hub,
-                                                        device: device.clone(),
-                                                    }
-                                                    TransportModePanel {
-                                                        hub: hub,
-                                                        device: device.clone(),
-                                                    }
+                                                ConnectedDeviceRow {
+                                                    key: "{device.uuid:02x?}",
+                                                    hub: hub,
+                                                    device: device.clone(),
+                                                    is_updating: is_updating,
+                                                    battery: battery,
+                                                    manifest: manifest,
+                                                    manager: manager.clone(),
                                                 }
                                             }
                                         }
@@ -308,6 +184,175 @@ pub fn Home() -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// A single row in the connected devices list.
+///
+/// Split out of `Home`'s render body (rather than looping inline with `use_signal` calls per
+/// iteration) because Dioxus hooks must be called the same number of times, in the same order,
+/// on every render of a component instance. Calling `use_signal` inside a `for` loop whose
+/// length tracks the number of connected devices breaks that invariant as soon as the device
+/// count changes — which is exactly when a device (and its settings panel) would first appear.
+#[derive(Props, Clone, PartialEq)]
+struct ConnectedDeviceRowProps {
+    hub: Signal<hub::HubContext>,
+    device: Device,
+    is_updating: bool,
+    battery: Option<(u8, bool)>,
+    manifest: Signal<Option<FirmwareManifest>>,
+    manager: FirmwareUpdateManager,
+}
+
+#[component]
+fn ConnectedDeviceRow(props: ConnectedDeviceRowProps) -> Element {
+    let hub = props.hub;
+    let device = props.device.clone();
+    let is_updating = props.is_updating;
+    let label = crate::views::device_label(&device);
+    let is_dfu = device.capabilities.contains(DeviceCapabilities::DFU)
+        && !device.capabilities.contains(DeviceCapabilities::CONTROL);
+    let transport = device.transport;
+    let events_transport = device.events_transport;
+    let events_connected = device.events_connected;
+    let firmware_version = device.firmware_version;
+    let battery = props.battery;
+    let manifest = props.manifest;
+    let manager = props.manager.clone();
+
+    let current_name = device.name().to_string();
+    let mut editing = use_signal(|| false);
+    let mut edit_value = use_signal(|| current_name.clone());
+    let mut renamed = use_signal(|| false);
+
+    rsx! {
+        div {
+            class: "flex flex-col p-3 bg-gray-50 dark:bg-gray-600 rounded gap-2",
+            div {
+                class: "flex items-center justify-between",
+                div {
+                    class: "flex items-center gap-3",
+                    div {
+                        class: if is_updating { "w-2 h-2 bg-yellow-500 rounded-full animate-pulse" } else if is_dfu { "w-2 h-2 bg-orange-500 rounded-full animate-pulse" } else { "w-2 h-2 bg-green-500 rounded-full" }
+                    }
+                    if editing() {
+                        input {
+                            class: "text-sm font-mono text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border border-blue-400 rounded px-1 w-48",
+                            value: "{edit_value}",
+                            autofocus: true,
+                            oninput: move |e| edit_value.set(e.value()),
+                            onkeydown: {
+                                let device = device.clone();
+                                move |e: KeyboardEvent| {
+                                    if e.key() == Key::Enter {
+                                        let name = edit_value();
+                                        let device = device.clone();
+                                        let mut client = hub().client;
+                                        editing.set(false);
+                                        renamed.set(true);
+                                        spawn(async move {
+                                            let _ = client.write().set_device_name(device, name).await;
+                                        });
+                                    } else if e.key() == Key::Escape {
+                                        editing.set(false);
+                                    }
+                                }
+                            },
+                        }
+                        button {
+                            class: "text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200",
+                            onclick: move |_| editing.set(false),
+                            "✕"
+                        }
+                    } else {
+                        span {
+                            class: "text-sm font-mono text-gray-700 dark:text-gray-200",
+                            "{label}"
+                        }
+                        button {
+                            class: "text-xs text-gray-400 hover:text-blue-500 dark:hover:text-blue-400",
+                            title: "Rename",
+                            onclick: move |_| {
+                                edit_value.set(current_name.clone());
+                                renamed.set(false);
+                                editing.set(true);
+                            },
+                            "✎"
+                        }
+                        if renamed() {
+                            span {
+                                class: "text-xs text-yellow-500 dark:text-yellow-400 italic",
+                                "USB name reflects last boot"
+                            }
+                        }
+                    }
+                }
+                span {
+                    class: "text-xs text-gray-500 dark:text-gray-400",
+                    match transport {
+                        Transport::Usb => "USB",
+                        Transport::UsbMux => "BLE",
+                        Transport::UdpMux => "UDP",
+                    }
+                    {
+                        match (transport, events_transport, events_connected, device.capabilities.contains(DeviceCapabilities::CONTROL)) {
+                            (Transport::Usb, EventsTransport::Bluetooth, true, _) => " (BLE events)",
+                            (Transport::Usb, EventsTransport::Bluetooth, false, _) => " (BLE events)",
+                            (Transport::UsbMux, _, _, true) => " (USB control)",
+                            _ => "",
+                        }
+                    }
+                }
+            }
+            div {
+                class: "flex items-center gap-2 text-xs",
+                span {
+                    class: "text-gray-500 dark:text-gray-400",
+                    "Firmware:"
+                }
+                if firmware_version != [0, 0, 0] {
+                    span {
+                        class: "text-gray-700 dark:text-gray-200 font-mono",
+                        "{firmware_version[0]}.{firmware_version[1]}.{firmware_version[2]}"
+                    }
+                } else {
+                    span {
+                        class: "text-gray-400 dark:text-gray-500 italic",
+                        "Not available"
+                    }
+                }
+            }
+            if let Some((percent, charging)) = battery {
+                div {
+                    class: "flex items-center gap-2 text-xs",
+                    span {
+                        class: "text-gray-500 dark:text-gray-400",
+                        "Battery:"
+                    }
+                    span {
+                        class: "text-gray-700 dark:text-gray-200 font-mono",
+                        "{percent}%"
+                    }
+                    span {
+                        class: if charging { "text-green-500" } else { "text-gray-400 dark:text-gray-500" },
+                        if charging { "Charging" } else { "Discharging" }
+                    }
+                }
+            }
+            DeviceFirmwareUpdate {
+                device: device.clone(),
+                manifest: manifest,
+                manager: manager.clone(),
+            }
+            SensorSettings {
+                hub: hub,
+                device: device.clone(),
+            }
+            TransportModePanel {
+                hub: hub,
+                device: device.clone(),
             }
         }
     }

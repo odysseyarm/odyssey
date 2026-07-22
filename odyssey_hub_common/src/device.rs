@@ -60,7 +60,7 @@ pub enum EventsTransport {
     Bluetooth,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct Device {
     pub uuid: [u8; 6],
@@ -99,17 +99,14 @@ impl Device {
         let len = bytes.len().min(32);
         self.name[..len].copy_from_slice(&bytes[..len]);
     }
-}
 
-// Identity is determined by UUID only — name changes don't affect equality/hashing.
-impl PartialEq for Device {
-    fn eq(&self, other: &Self) -> bool {
+    /// True if `self` and `other` are snapshots of the same physical device — i.e. same
+    /// `uuid` — regardless of whether transient fields (name, capabilities, firmware
+    /// version, connection state, ...) differ between the two snapshots.
+    ///
+    /// Use this instead of `==` for identity lookups (e.g. correlating a `Device` embedded
+    /// in an event against a currently-known device list).
+    pub fn uuid_eq(&self, other: &Self) -> bool {
         self.uuid == other.uuid
-    }
-}
-impl Eq for Device {}
-impl std::hash::Hash for Device {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.uuid.hash(state);
     }
 }
