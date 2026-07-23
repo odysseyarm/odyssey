@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey_hub_client_uniffi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ats_usb",
  "futures",
