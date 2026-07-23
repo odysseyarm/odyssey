@@ -102,7 +102,7 @@ pub fn Accessories() -> Element {
         }
     });
 
-    // BLE scan loop: detect DryFireMag and BlackbeardX
+    // BLE scan loop: detect DryFireMag and MantisX
     use_future({
         let mut nearby = nearby.clone();
         move || async move {
@@ -143,10 +143,7 @@ pub fn Accessories() -> Element {
                                     ("DryFireMag".to_string(), AccessoryType::DryFireMag),
                                 );
                             } else if props.services.contains(&mantis_service_uuid) {
-                                found.insert(
-                                    id,
-                                    ("MantisX".to_string(), AccessoryType::MantisX),
-                                );
+                                found.insert(id, ("MantisX".to_string(), AccessoryType::MantisX));
                             }
                         }
                     }

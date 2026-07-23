@@ -148,6 +148,7 @@ pub struct ScreenInfo {
 #[derive(uniffi::Enum, Clone)]
 pub enum AccessoryType {
     DryFireMag,
+    MantisX,
 }
 
 #[derive(uniffi::Record, Clone)]
@@ -184,7 +185,7 @@ impl From<common::accessory::AccessoryType> for AccessoryType {
     fn from(accessory_type: common::accessory::AccessoryType) -> Self {
         match accessory_type {
             common::accessory::AccessoryType::DryFireMag => Self::DryFireMag,
-            common::accessory::AccessoryType::BlackbeardX => Self::DryFireMag,
+            common::accessory::AccessoryType::MantisX => Self::MantisX,
         }
     }
 }
@@ -203,6 +204,7 @@ impl From<AccessoryType> for common::accessory::AccessoryType {
     fn from(accessory_type: AccessoryType) -> Self {
         match accessory_type {
             AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
+            AccessoryType::MantisX => common::accessory::AccessoryType::MantisX,
         }
     }
 }

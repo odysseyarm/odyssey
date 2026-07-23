@@ -1,48 +1,9 @@
-use serde::de::{self, Deserializer, MapAccess, Unexpected, Visitor};
+use serde::de::{self, Deserializer, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct HexValue(pub u64);
-
-impl Serialize for HexValue {
-    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        ser.serialize_str(&format!("0x{:x}", self.0))
-    }
-}
-
-impl<'de> Deserialize<'de> for HexValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct HVVisitor;
-        impl<'de> Visitor<'de> for HVVisitor {
-            type Value = HexValue;
-            fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-                fmt.write_str("a hex string like 0xc0decafe")
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                let s = v
-                    .strip_prefix("0x")
-                    .ok_or_else(|| de::Error::invalid_value(Unexpected::Str(v), &self))?;
-                u64::from_str_radix(s, 16)
-                    .map(HexValue)
-                    .map_err(|_| de::Error::invalid_value(Unexpected::Str(v), &self))
-            }
-        }
-        deserializer.deserialize_str(HVVisitor)
-    }
-}
 
 pub struct HexKeyMapN<T, const N: usize>(pub HashMap<[u8; N], T>);
 
