@@ -536,8 +536,7 @@ pub async fn run_server(
                 break;
             }
             ServerEvent::AccessoryManager => {
-                tracing::error!("Accessory manager exited unexpectedly");
-                break;
+                tracing::warn!("Accessory manager exited (Bluetooth unavailable?)");
             }
             ServerEvent::EventForward => {
                 // Event forwarding continues, don't break
