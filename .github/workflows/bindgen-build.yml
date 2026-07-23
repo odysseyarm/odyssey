@@ -14,10 +14,11 @@ permissions:
   contents: read
 
 jobs:
-  # CI builds use the project-local uniffi-bindgen (cargo install --locked
-  # below), which always matches the uniffi version in Cargo.lock. The pip pin
-  # in pyproject.toml only covers source builds (pip/sdist) outside CI — guard
-  # that it hasn't drifted from the lockfile.
+  # Wheel builds use the project-local uniffi-bindgen: maturin detects the
+  # workspace bin and runs `cargo run --bin uniffi-bindgen`, so bindings always
+  # match the uniffi version in Cargo.lock. The pip pin in pyproject.toml only
+  # covers builds where that bin isn't available — guard that it hasn't
+  # drifted from the lockfile.
   check-pyproject-pin:
     name: Check pyproject uniffi-bindgen pin
     runs-on: ubuntu-latest
@@ -81,7 +82,6 @@ jobs:
           sccache: 'true'
           manylinux: ${{ matrix.platform.manylinux }}
           docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
-          before-script-linux: cargo install --locked --path odyssey_hub_client_uniffi/uniffi-bindgen
       - name: Test wheel
         if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
         run: |
@@ -104,8 +104,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
-      - name: Install uniffi-bindgen
-        run: cargo install --locked --path odyssey_hub_client_uniffi/uniffi-bindgen
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -134,8 +132,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
-      - name: Install uniffi-bindgen
-        run: cargo install --locked --path odyssey_hub_client_uniffi/uniffi-bindgen
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
