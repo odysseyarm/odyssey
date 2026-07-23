@@ -16,11 +16,13 @@ use components::Navbar;
 use views::Accessories;
 use views::Home;
 use views::Pairing;
+use views::Settings;
 
-use components::update::UpdateBanner;
+use components::update::{self, UpdateBanner};
 
 mod components;
 mod hub;
+mod paths;
 mod tray;
 mod views;
 
@@ -29,10 +31,8 @@ fn main() {
 
     // Set up tracing to write to both stdout and a log file before Dioxus launches
     if cfg!(target_os = "windows") {
-        let local_app_data = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
-        let log_dir = std::path::PathBuf::from(&local_app_data)
-            .join("Odyssium.Desktop")
-            .join("logs");
+        // %LOCALAPPDATA%\Odyssey.Desktop\logs
+        let log_dir = paths::log_dir().expect("Failed to resolve app data directory");
         std::fs::create_dir_all(&log_dir).expect("Failed to create log directory");
 
         let log_file = std::fs::OpenOptions::new()
@@ -82,6 +82,8 @@ enum Route {
     Pairing {},
     #[route("/accessories")]
     Accessories {},
+    #[route("/settings")]
+    Settings {},
 }
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
@@ -152,55 +154,51 @@ fn app() -> Element {
         }
     });
 
-    // --- Update banner signals + one-shot check ---
-    let update_available = use_signal(|| false);
-    let update_busy = use_signal(|| false);
-    let update_error = use_signal(|| Option::<String>::None);
+    // --- Update state + channel-aware check ---
+    let update_state = use_context_provider(update::UpdateState::new_in_scope);
 
-    // One-shot update check
-    use_effect({
-        let mut available = update_available.clone();
-        let mut error = update_error.clone();
-        move || {
-            dioxus::prelude::spawn(async move {
-                use velopack::{self as vp, sources};
+    // Re-runs when the selected channel changes or a check is requested
+    use_effect(move || {
+        let mut state = update_state;
+        let channel = (state.channel)();
+        let _tick = (state.check_tick)();
+        state.available.set(false);
+        state.error.set(None);
+        state.checking.set(true);
+        dioxus::prelude::spawn(async move {
+            use velopack as vp;
 
-                let source = sources::HttpSource::new(
-                    "https://github.com/odysseyarm/odyssey-desktop/releases/latest/download",
-                );
-                match vp::UpdateManager::new(source, None, None) {
-                    Ok(um) => {
-                        match um.check_for_updates_async().await {
-                            Ok(vp::UpdateCheck::UpdateAvailable(_)) => {
-                                tracing::info!("Update available");
-                                available.set(true);
-                            }
-                            Ok(_) => {
-                                tracing::info!("No update available");
-                                // no update available
-                            }
-                            Err(e) => {
-                                tracing::error!("Error checking for updates: {e}");
-                                error.set(Some(format!("{e}")));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error creating UpdateManager: {e}");
-                        error.set(Some(format!("{e}")));
-                    }
+            // velopack 1.x is sync; keep the network check off the UI executor
+            let result = tokio::task::spawn_blocking(move || {
+                update::update_manager(channel).and_then(|um| um.check_for_updates())
+            })
+            .await;
+
+            match result {
+                Ok(Ok(vp::UpdateCheck::UpdateAvailable(_))) => {
+                    tracing::info!("Update available on channel {}", channel.as_str());
+                    state.available.set(true);
                 }
-            });
-        }
+                Ok(Ok(_)) => {
+                    tracing::info!("No update available on channel {}", channel.as_str());
+                }
+                Ok(Err(e)) => {
+                    tracing::error!("Error checking for updates: {e}");
+                    state.error.set(Some(format!("{e}")));
+                }
+                Err(e) => {
+                    tracing::error!("Update check task failed: {e}");
+                    state.error.set(Some(format!("{e}")));
+                }
+            }
+            state.checking.set(false);
+        });
     });
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
 
         UpdateBanner {
-            available: update_available,
-            busy: update_busy,
-            error: update_error,
             cancel_token: Signal::new(cancel_token.clone()),
         }
 

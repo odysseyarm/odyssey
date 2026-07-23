@@ -41,6 +41,7 @@ pub struct Server {
             ArrayVec<(u8, ScreenCalibration<f32>), { (ats_common::MAX_SCREEN_ID + 1) as usize }>,
         >,
     >,
+    #[allow(unused)]
     pub device_offsets: Arc<tokio::sync::Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 
     /// Shot delay store (uuid→delay), plus per-uuid watchers for SubscribeShotDelay.
@@ -1086,11 +1087,15 @@ impl Service for Server {
                     pose: common::events::Pose {
                         rotation: pose
                             .rotation
-                            .ok_or_else(|| Status::invalid_argument("tracking_event.pose.rotation missing"))?
+                            .ok_or_else(|| {
+                                Status::invalid_argument("tracking_event.pose.rotation missing")
+                            })?
                             .into(),
                         translation: pose
                             .translation
-                            .ok_or_else(|| Status::invalid_argument("tracking_event.pose.translation missing"))?
+                            .ok_or_else(|| {
+                                Status::invalid_argument("tracking_event.pose.translation missing")
+                            })?
                             .into(),
                     },
                     distance: te.distance,

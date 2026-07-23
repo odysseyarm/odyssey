@@ -1,55 +1,78 @@
-# Note: Run the uninstaller manually after
-velopack:
+# Build first with: dx build --release
+# vpk packs the dx app dir directly (exe + assets); velopack generates its own
+# Setup.exe / portable zip, so no MSI/NSIS bundling is involved.
+# channel: stable | beta | nightly  (velopack channel = win-x64-<channel>).
+# version: overrides the version read from Cargo.toml.
+# token:   GitHub token for the delta download; falls back to $env:GITHUB_TOKEN.
+velopack channel='stable' version='' token='':
     #!pwsh
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
+    $channel = '{{channel}}'
+    if ($channel -notin @('stable','beta','nightly')) {
+        Write-Error "Invalid channel '$channel' (expected stable, beta or nightly)"; exit 1
+    }
+    $token = '{{token}}'
+    if (-not $token) { $token = $env:GITHUB_TOKEN }
+    $vpkChannel = "win-x64-$channel"
+
     # --- paths / ids ---
-    $nsisDir  = Join-Path $PWD.Path '..\target\dx\odyssey_desktop\bundle\windows\nsis'
-    $tempRoot = Join-Path $env:LOCALAPPDATA 'Temp\OdysseyDesktop'
-    $packId   = 'Odyssium.Desktop'
-    $exeName  = 'odyssey_desktop.exe'   # your real exe
+    $packDir  = Join-Path $PWD.Path '..\target\dx\odyssey_desktop\release\windows\app'
+    $packId   = 'Odyssey.Desktop'
+    $mainExe  = 'odyssey_desktop.exe'
 
-    # pick latest NSIS installer and parse version
-    $installerItem = Get-ChildItem -Path $nsisDir -Filter 'OdysseyDesktop_*_x64-setup.exe' -ErrorAction Stop |
-                     Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $installerItem) { Write-Error "No installer found under: $nsisDir"; exit 1 }
-    $installer = $installerItem.FullName
-    if ($installerItem.Name -match 'OdysseyDesktop_(?<ver>[\d\.]+)_x64-setup\.exe') {
-        $packVersion = $Matches['ver']
-    } else {
-        Write-Error "Could not parse version from: $($installerItem.Name)"; exit 1
+    if (-not (Test-Path (Join-Path $packDir $mainExe))) {
+        Write-Error "No app at $packDir (run: dx build --release)"; exit 1
     }
 
-    # clean + reinstall to fixed temp
-    if (Test-Path $tempRoot) { Remove-Item -Recurse -Force $tempRoot }
-    New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+    # version from Cargo.toml (keeps prerelease suffixes like 0.5.0-beta.1)
+    $packVersion = (Select-String -Path 'Cargo.toml' -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+    if ('{{version}}') { $packVersion = '{{version}}' }
 
-    $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$tempRoot" -PassThru -Wait
-    if ($p.ExitCode -ne 0) { Write-Error "Installer failed with exit code $($p.ExitCode)"; exit $p.ExitCode }
-
-    # remove uninstaller if present
-    $u = Join-Path $tempRoot 'uninstall.exe'
-    if (Test-Path $u) { Remove-Item $u -Force -ErrorAction SilentlyContinue }
-
-    # find the real exe (may be in a subfolder)
-    $exeItem = Get-ChildItem -Path $tempRoot -Filter $exeName -Recurse | Select-Object -First 1
-    if (-not $exeItem) {
-        $all = Get-ChildItem -Path $tempRoot -Filter '*.exe' -Recurse | Select-Object -ExpandProperty FullName
-        $list = if ($all) { ($all -join "`n") } else { "<none found>" }
-        Write-Error "Expected to find '$exeName' under '$tempRoot' but didn't.`nExecutables found:`n$list"
-        exit 1
-    }
-
-    $packDir  = $exeItem.DirectoryName
-    $mainExe  = $exeItem.Name
+    # fetch previous packages for this channel so vpk pack can build deltas
+    $dl = @('--repoUrl', 'https://github.com/odysseyarm/odyssey-desktop', '--channel', $vpkChannel)
+    if ($channel -ne 'stable') { $dl += '--pre' }
+    if ($token) { $dl += @('--token', $token) }
+    vpk download github @dl
 
     Write-Host "Packing Velopack:"
     Write-Host "  packId     = $packId"
     Write-Host "  version    = $packVersion"
     Write-Host "  packDir    = $packDir"
     Write-Host "  mainExe    = $mainExe"
+    Write-Host "  channel    = $vpkChannel"
 
-    vpk pack --packId $packId --packVersion $packVersion --packDir $packDir --mainExe $mainExe --channel win-x64-pre-alpha
+    vpk pack --packId $packId --packVersion $packVersion --packDir $packDir --mainExe $mainExe --channel $vpkChannel
 
-    Write-Output "Velopack built for $packId $packVersion (dir=$packDir, exe=$mainExe)"
+    Write-Output "Velopack built for $packId $packVersion (dir=$packDir, exe=$mainExe, channel=$vpkChannel)"
+
+# Publish the packed channel to the GitHub release tagged odyssey-desktop-v<version>.
+# token falls back to $env:GITHUB_TOKEN. beta/nightly releases get the GitHub
+# prerelease flag. --merge lets a second channel attach to an existing tag.
+release channel version token='':
+    #!pwsh
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    $channel = '{{channel}}'
+    $version = '{{version}}'
+    if ($channel -notin @('stable','beta','nightly')) {
+        Write-Error "Invalid channel '$channel' (expected stable, beta or nightly)"; exit 1
+    }
+    $token = '{{token}}'
+    if (-not $token) { $token = $env:GITHUB_TOKEN }
+    if (-not $token) { Write-Error 'No token: pass one (just release <channel> <version> <token>) or set GITHUB_TOKEN'; exit 1 }
+
+    $uploadArgs = @(
+        '--repoUrl', 'https://github.com/odysseyarm/odyssey-desktop',
+        '--token', $token,
+        '--channel', "win-x64-$channel",
+        '--releaseName', "Odyssey Desktop v$version",
+        '--tag', "odyssey-desktop-v$version",
+        '--publish',
+        '--merge'
+    )
+    if ($channel -ne 'stable') { $uploadArgs += '--pre' }
+
+    vpk upload github @uploadArgs

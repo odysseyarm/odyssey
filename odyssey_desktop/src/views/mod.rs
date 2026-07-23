@@ -1,10 +1,12 @@
 mod accessories;
 mod home;
 pub mod pairing;
+mod settings;
 mod zero;
 pub use accessories::Accessories;
 pub use home::Home;
 pub use pairing::Pairing;
+pub use settings::Settings;
 pub use zero::Zero;
 
 pub fn device_label(device: &odyssey_hub_common::device::Device) -> String {

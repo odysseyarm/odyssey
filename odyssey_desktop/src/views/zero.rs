@@ -2,7 +2,6 @@ use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub;
 use dioxus::{html::geometry::euclid::Rect, logger::tracing, prelude::*};
 use odyssey_hub_client::tracking_history::TrackingHistory;
-use odyssey_hub_common::events as oe;
 use std::collections::HashMap;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
