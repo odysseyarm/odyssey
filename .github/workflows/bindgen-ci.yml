@@ -1,0 +1,19 @@
+name: Bindgen CI
+
+# Build + smoke-test bindgen packages on every PR and push to master.
+# Publishing happens separately in bindgen-release.yml on bindgen-v* tags.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/bindgen-build.yml

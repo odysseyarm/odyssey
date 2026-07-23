@@ -1,0 +1,137 @@
+name: Bindgen Build
+
+# Reusable workflow that builds (and smoke-tests) all bindgen language
+# packages. Called by bindgen-ci.yml (PRs / pushes) and bindgen-release.yml
+# (tags). To add a new language, add its build job(s) here and a matching
+# publish job in bindgen-release.yml.
+#
+# All artifacts follow the naming scheme: <language>-<platform>-<target>
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  python-linux:
+    name: Python linux ${{ matrix.platform.manylinux }} ${{ matrix.platform.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - target: x86_64
+            manylinux: auto
+          - target: x86
+            manylinux: auto
+          - target: aarch64
+            manylinux: auto
+          - target: armv7
+            manylinux: auto
+          - target: s390x
+            manylinux: auto
+          - target: ppc64le
+            manylinux: auto
+          - target: x86_64
+            manylinux: musllinux_1_2
+          - target: x86
+            manylinux: musllinux_1_2
+          - target: aarch64
+            manylinux: musllinux_1_2
+          - target: armv7
+            manylinux: musllinux_1_2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - name: Install Protoc
+        id: protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
+          sccache: 'true'
+          manylinux: ${{ matrix.platform.manylinux }}
+          docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
+          before-script-linux: pip install uniffi-bindgen
+      - name: Test wheel
+        if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
+        run: |
+          pip install dist/*.whl
+          python -c "import ohc_uniffi"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-${{ matrix.platform.manylinux }}-${{ matrix.platform.target }}
+          path: dist
+
+  python-windows:
+    name: Python windows ${{ matrix.target }} (cross via xwin)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-pc-windows-msvc]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - name: Install uniffi-bindgen
+        run: pip install uniffi-bindgen
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path odyssey_hub_client_uniffi/Cargo.toml
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-windows-${{ matrix.target }}
+          path: dist
+
+  python-macos:
+    name: Python macos ${{ matrix.target }}
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - name: Install uniffi-bindgen
+        run: pip install uniffi-bindgen
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
+          sccache: 'true'
+      - name: Test wheel
+        if: matrix.target == 'aarch64'
+        run: |
+          pip install dist/*.whl
+          python -c "import ohc_uniffi"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-macos-${{ matrix.target }}
+          path: dist
