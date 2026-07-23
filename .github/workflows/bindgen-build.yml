@@ -14,6 +14,28 @@ permissions:
   contents: read
 
 jobs:
+  # CI builds use the project-local uniffi-bindgen (cargo install --locked
+  # below), which always matches the uniffi version in Cargo.lock. The pip pin
+  # in pyproject.toml only covers source builds (pip/sdist) outside CI — guard
+  # that it hasn't drifted from the lockfile.
+  check-pyproject-pin:
+    name: Check pyproject uniffi-bindgen pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pin matches Cargo.lock
+        run: |
+          version=$(grep -A1 '^name = "uniffi"$' odyssey_hub_client_uniffi/Cargo.lock | grep '^version' | cut -d'"' -f2)
+          if [ -z "$version" ]; then
+            echo "Could not find uniffi version in Cargo.lock" >&2
+            exit 1
+          fi
+          pin="${version%.*}.*"
+          if ! grep -qF "uniffi-bindgen==$pin" odyssey_hub_client_uniffi/pyproject.toml; then
+            echo "pyproject.toml build-system pin does not match Cargo.lock uniffi $version — update it to uniffi-bindgen==$pin" >&2
+            exit 1
+          fi
+
   python-linux:
     name: Python linux ${{ matrix.platform.manylinux }} ${{ matrix.platform.target }}
     runs-on: ubuntu-latest
@@ -59,7 +81,7 @@ jobs:
           sccache: 'true'
           manylinux: ${{ matrix.platform.manylinux }}
           docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
-          before-script-linux: pip install uniffi-bindgen
+          before-script-linux: cargo install --locked --path odyssey_hub_client_uniffi/uniffi-bindgen
       - name: Test wheel
         if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
         run: |
@@ -83,7 +105,7 @@ jobs:
         with:
           python-version: 3.x
       - name: Install uniffi-bindgen
-        run: pip install uniffi-bindgen
+        run: cargo install --locked --path odyssey_hub_client_uniffi/uniffi-bindgen
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -113,7 +135,7 @@ jobs:
         with:
           python-version: 3.x
       - name: Install uniffi-bindgen
-        run: pip install uniffi-bindgen
+        run: cargo install --locked --path odyssey_hub_client_uniffi/uniffi-bindgen
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:

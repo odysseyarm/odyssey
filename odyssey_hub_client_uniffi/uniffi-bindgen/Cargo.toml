@@ -1,0 +1,15 @@
+[package]
+name = "odyssey_uniffi_bindgen"
+version = "0.1.0"
+edition = "2021"
+
+# Project-local uniffi-bindgen. Shares this workspace's Cargo.lock, so the
+# generated bindings always match the uniffi version ohc_uniffi is compiled
+# with — no pip version pin to keep in sync.
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+uniffi = { version = "0.31.0", features = ["cli"] }

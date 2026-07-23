@@ -3,6 +3,11 @@ set shell := ["powershell.exe", "-c"]
 build: build_lib build_projects
 run: build run_only
 
+# One-time setup. The uniffi-bindgen-cs tag must match the uniffi crate
+# version in ../../Cargo.toml (tag format: v<tool>+v<uniffi>).
+install_tools:
+  cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0
+
 build_lib:
   Write-Host 'OdysseyHubClient' -ForegroundColor Blue;
   Write-Host 'Building native library (Rust)' -ForegroundColor Cyan;

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.9,<2.0", "uniffi-bindgen"]
+requires = ["maturin>=1.9,<2.0", "uniffi-bindgen==0.31.*"]
 build-backend = "maturin"
 
 [project]
