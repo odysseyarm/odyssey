@@ -2,7 +2,8 @@
 # vpk packs the dx app dir directly (exe + assets); velopack generates its own
 # Setup.exe / portable zip, so no MSI/NSIS bundling is involved.
 # channel: stable | beta | nightly  (velopack channel = win-x64-<channel>).
-# version: overrides the version read from Cargo.toml.
+# version: overrides the version read from Cargo.toml. For nightly, the default
+#          is the Cargo.toml base version plus -nightly.<yyyyMMdd>.
 # token:   GitHub token for the delta download; falls back to $env:GITHUB_TOKEN.
 velopack channel='stable' version='' token='':
     #!pwsh
@@ -28,7 +29,11 @@ velopack channel='stable' version='' token='':
 
     # version from Cargo.toml (keeps prerelease suffixes like 0.5.0-beta.1)
     $packVersion = (Select-String -Path 'Cargo.toml' -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-    if ('{{version}}') { $packVersion = '{{version}}' }
+    if ('{{version}}') {
+        $packVersion = '{{version}}'
+    } elseif ($channel -eq 'nightly') {
+        $packVersion = "$($packVersion.Split('-')[0])-nightly.$(Get-Date -Format yyyyMMdd)"
+    }
 
     # fetch previous packages for this channel so vpk pack can build deltas
     $dl = @('--repoUrl', 'https://github.com/odysseyarm/odyssey-desktop', '--channel', $vpkChannel)
@@ -48,17 +53,25 @@ velopack channel='stable' version='' token='':
     Write-Output "Velopack built for $packId $packVersion (dir=$packDir, exe=$mainExe, channel=$vpkChannel)"
 
 # Publish the packed channel to the GitHub release tagged odyssey-desktop-v<version>.
-# token falls back to $env:GITHUB_TOKEN. beta/nightly releases get the GitHub
-# prerelease flag. --merge lets a second channel attach to an existing tag.
-release channel version token='':
+# version defaults to Cargo.toml (with -nightly.<yyyyMMdd> appended for nightly,
+# matching the velopack recipe). token falls back to $env:GITHUB_TOKEN.
+# beta/nightly releases get the GitHub prerelease flag. --merge lets a second
+# channel attach to an existing tag.
+release channel version='' token='':
     #!pwsh
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
     $channel = '{{channel}}'
-    $version = '{{version}}'
     if ($channel -notin @('stable','beta','nightly')) {
         Write-Error "Invalid channel '$channel' (expected stable, beta or nightly)"; exit 1
+    }
+    $version = '{{version}}'
+    if (-not $version) {
+        $version = (Select-String -Path 'Cargo.toml' -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+        if ($channel -eq 'nightly') {
+            $version = "$($version.Split('-')[0])-nightly.$(Get-Date -Format yyyyMMdd)"
+        }
     }
     $token = '{{token}}'
     if (-not $token) { $token = $env:GITHUB_TOKEN }
