@@ -137,7 +137,7 @@ pub async fn run_server(
     let name = if GenericNamespaced::is_supported() {
         "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
     } else {
-        "/tmp/odyhub.sock".to_fs_name::<GenericFilePath>()?
+        "/tmp/@odyhub.sock".to_fs_name::<GenericFilePath>()?
     };
 
     // Check if another instance is already running by trying to connect
@@ -152,10 +152,16 @@ pub async fn run_server(
         return Err(ServerError::SocketAlreadyInUse);
     }
 
-    // Create our listener. In a more robust program, we'd check for an
-    // existing socket file that has not been deleted for whatever reason,
-    // ensure it's a socket file and not a normal file, and delete it.
-    let listener_opts = ListenerOptions::new().name(name.clone());
+    // Nobody answered, so the name is free as far as we're concerned. On Unix, though,
+    // bind() still fails with AddrInUse if a socket file is left over at that path from a
+    // previous run that didn't exit cleanly (crash, force-quit, kill) — nothing here ever
+    // unlinks it otherwise. try_overwrite makes the listener reclaim (delete + rebind) a
+    // stale name on AddrInUse instead of failing outright; max_spin_time bounds how long
+    // that retry loop can run under genuine contention.
+    let listener_opts = ListenerOptions::new()
+        .name(name.clone())
+        .try_overwrite(true)
+        .max_spin_time(std::time::Duration::from_millis(500));
     #[cfg(target_os = "windows")]
     let listener_opts = {
         let mut sd = SecurityDescriptor::new()?;
