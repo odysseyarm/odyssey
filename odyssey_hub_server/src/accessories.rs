@@ -45,7 +45,7 @@ pub async fn accessory_manager(
     };
     let adapter = loop {
         match manager.adapters().await {
-            Ok(mut adapters) => {
+            Ok(adapters) => {
                 if let Some(a) = adapters.into_iter().next() {
                     break a;
                 }
@@ -116,10 +116,7 @@ pub async fn accessory_manager(
 
                 // Snapshot: (mac, assignment, type)
                 let snapshot: Vec<([u8; 6], AccessoryType)> =
-                    info_map
-                        .iter()
-                        .map(|(id, info)| (*id, info.ty))
-                        .collect();
+                    info_map.iter().map(|(id, info)| (*id, info.ty)).collect();
 
                 for (id, ty) in snapshot {
                     if let Some(p) = by_mac.get(&id).cloned() {
@@ -184,7 +181,8 @@ pub async fn accessory_manager(
                                                                 .borrow()
                                                                 .get(&id)
                                                                 .and_then(|i| i.assignment);
-                                                            if let Some(assignment) = assignment_opt {
+                                                            if let Some(assignment) = assignment_opt
+                                                            {
                                                                 let maybe_device = {
                                                                     let dl_guard = dl.lock();
                                                                     let assignment_uuid: [u8; 6] =
