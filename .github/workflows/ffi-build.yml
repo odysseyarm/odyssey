@@ -9,9 +9,11 @@ name: FFI Build
 #
 # Called by ffi-ci.yml (PRs / pushes) and ffi-release.yml (tags).
 #
-# odyssey_hub_client_ffi lives in the main workspace (root Cargo.toml/lockfile
-# and root Cross.toml) — unlike odyssey_hub_client_uniffi, which is its own
-# excluded workspace.
+# odyssey_hub_client_ffi is its own workspace (excluded from the root one,
+# see root Cargo.toml) with its own Cargo.lock and Cross.toml — building it
+# as part of the root workspace would force cargo to also resolve
+# odyssey_hub_server's ats_cv SSH git dependency, which CI can't
+# authenticate to, even though odyssey_hub_client_ffi doesn't depend on it.
 
 on:
   workflow_call: {}
@@ -36,6 +38,7 @@ jobs:
         with:
           tool: cross
       - name: Build (cross)
+        working-directory: odyssey_hub_client_ffi
         run: cross build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
       - name: Package
         run: |
@@ -44,7 +47,7 @@ jobs:
           mkdir -p "$out/include" "$out/lib"
           cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
           cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
-          cp "target/${{ matrix.target }}/release/libohc.so" "$out/lib/"
+          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.so" "$out/lib/"
           cp LICENSE "$out/"
           (cd "$out" && zip -r "../$out.zip" .)
       - uses: actions/upload-artifact@v6
@@ -67,6 +70,7 @@ jobs:
       - name: Add windows target
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build (xwin)
+        working-directory: odyssey_hub_client_ffi
         run: cargo xwin build --release -p odyssey_hub_client_ffi --target x86_64-pc-windows-msvc
       - name: Package
         run: |
@@ -75,8 +79,8 @@ jobs:
           mkdir -p "$out/include" "$out/lib" "$out/bin"
           cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
           cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
-          cp target/x86_64-pc-windows-msvc/release/ohc.dll "$out/bin/"
-          cp target/x86_64-pc-windows-msvc/release/ohc.dll.lib "$out/lib/"
+          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll "$out/bin/"
+          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll.lib "$out/lib/"
           cp LICENSE "$out/"
           (cd "$out" && zip -r "../$out.zip" .)
       - uses: actions/upload-artifact@v6
@@ -104,6 +108,7 @@ jobs:
       - name: Add target
         run: rustup target add ${{ matrix.target }}
       - name: Build
+        working-directory: odyssey_hub_client_ffi
         run: cargo build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
       - name: Package
         run: |
@@ -112,7 +117,7 @@ jobs:
           mkdir -p "$out/include" "$out/lib"
           cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
           cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
-          cp "target/${{ matrix.target }}/release/libohc.dylib" "$out/lib/"
+          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.dylib" "$out/lib/"
           cp LICENSE "$out/"
           (cd "$out" && zip -r "../$out.zip" .)
       - uses: actions/upload-artifact@v6

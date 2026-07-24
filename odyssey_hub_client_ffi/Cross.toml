@@ -3,8 +3,10 @@
 # target-arch while protoc must run on the build host. Keep the version in
 # sync with the setup-protoc pin in .github/workflows/ffi-build.yml.
 #
-# Mirrors odyssey_hub_client_uniffi/Cross.toml — this file covers the main
-# workspace (odyssey_hub_client_ffi lives here, not in the uniffi workspace).
+# Mirrors odyssey_hub_client_uniffi/Cross.toml. odyssey_hub_client_ffi is its
+# own workspace (excluded from the root one, see root Cargo.toml) so its
+# Cargo.lock never has to resolve odyssey_hub_server's ats_cv SSH git
+# dependency — cross needs this file alongside that crate's own Cargo.toml.
 
 [target.x86_64-unknown-linux-gnu]
 pre-build = [

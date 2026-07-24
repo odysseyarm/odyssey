@@ -4,7 +4,6 @@ resolver = "2"
 members = [
     "odyssey_desktop",
     "odyssey_hub_client",
-    "odyssey_hub_client_ffi",
     "odyssey_hub_server",
     "odyssey_hub_server_interface",
     "odyssey_hub",
@@ -12,8 +11,15 @@ members = [
     "tools/cargo-bin",
 ]
 
+# odyssey_hub_client_ffi and odyssey_hub_client_uniffi are excluded (not just
+# left out of members) so they get their own Cargo.lock: odyssey_hub_server
+# depends on ats_cv over an SSH git URL that CI can't authenticate to, and a
+# shared workspace lock forces cargo to resolve every member's dependencies
+# even when building with -p for a single package. Neither FFI nor uniffi
+# depend on odyssey_hub_server, so their own lockfiles never touch ats_cv.
 exclude = [
-    "odyssey_hub_client_uniffi"
+    "odyssey_hub_client_ffi",
+    "odyssey_hub_client_uniffi",
 ]
 
 # Enable optimizations for dependencies in dev profile

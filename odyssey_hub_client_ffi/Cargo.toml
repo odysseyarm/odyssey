@@ -3,6 +3,9 @@ name = "odyssey_hub_client_ffi"
 version = "0.1.0"
 edition = "2021"
 
+# CI likes to use workspace root
+[workspace]
+
 [lib]
 crate-type = ["staticlib", "cdylib"]
 name = "ohc"
