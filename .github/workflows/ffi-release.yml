@@ -104,5 +104,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ports/odyssey-hub-client/vcpkg.json versions/
-          git commit -m "odyssey-hub-client: bump to $VERSION"
-          git push
+          if git diff --cached --quiet; then
+            echo "Registry already up to date for $VERSION, nothing to push"
+          else
+            git commit -m "odyssey-hub-client: bump to $VERSION"
+            git push
+          fi
