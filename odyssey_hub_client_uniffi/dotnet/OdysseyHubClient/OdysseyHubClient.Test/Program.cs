@@ -1,9 +1,9 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using uniffi.odyssey_hub_common;
-using Ohc = Radiosity.OdysseyHubClient;
+using Ohc = OdysseyArm.HubClient;
 
 Ohc.Client client = new Ohc.Client();
 
@@ -28,7 +28,7 @@ try {
 
 void PrintDevice(Ohc.uniffi.Device device) {
     Console.WriteLine("\tDevice:");
-    switch (device.transport) {
+    switch (device.Transport) {
         case Transport.UdpMux:
             Console.WriteLine("\t\tType: UDP Mux");
             break;
@@ -42,7 +42,7 @@ void PrintDevice(Ohc.uniffi.Device device) {
             break;
 
     }
-    Console.WriteLine("\t\tUUID: 0x{0:X}", device.uuid);
+    Console.WriteLine("\t\tUUID: 0x{0:X}", device.Uuid);
 }
 
 foreach (var device in devices) {
@@ -59,12 +59,12 @@ Console.WriteLine("Devices printed!");
     Console.WriteLine("Attempting to print screen_0 info");
     var screen_info = await client.GetScreenInfoById(0);
     Console.WriteLine("Screen info:");
-    Console.WriteLine("\tID: {0}", screen_info.id);
+    Console.WriteLine("\tID: {0}", screen_info.Id);
     Console.WriteLine("\tBounds:");
-    Console.WriteLine("\t\tTop Left: \t{0}", screen_info.tl);
-    Console.WriteLine("\t\tTop Right: \t{0}", screen_info.tr);
-    Console.WriteLine("\t\tBottom Left: \t{0}", screen_info.bl);
-    Console.WriteLine("\t\tBottom Right: \t{0}", screen_info.br);
+    Console.WriteLine("\t\tTop Left: \t{0}", screen_info.Tl);
+    Console.WriteLine("\t\tTop Right: \t{0}", screen_info.Tr);
+    Console.WriteLine("\t\tBottom Left: \t{0}", screen_info.Bl);
+    Console.WriteLine("\t\tBottom Right: \t{0}", screen_info.Br);
 }
 
 // Track connected devices to detect connect/disconnect
@@ -80,11 +80,11 @@ await Task.WhenAny(
         Console.WriteLine("Starting device list loop");
         await foreach ((var deviceList, var err) in deviceListChannel.Reader.ReadAllAsync()) {
             if (err == null && deviceList != null) {
-                var currentUuids = new HashSet<byte[]>(deviceList.Select(d => d.uuid), new ByteArrayComparer());
+                var currentUuids = new HashSet<byte[]>(deviceList.Select(d => d.Uuid), new ByteArrayComparer());
 
                 // Find newly connected devices
                 foreach (var device in deviceList) {
-                    if (!connectedDeviceUuids.Contains(device.uuid)) {
+                    if (!connectedDeviceUuids.Contains(device.Uuid)) {
                         Console.WriteLine("Device connected");
                         PrintDevice(device);
                         // Resetting on connect is currently redundant because the device zero isometry is the identity on connect
@@ -127,50 +127,50 @@ await Task.WhenAny(
             if (err == null) {
                 switch (@event) {
                     case Ohc.uniffi.Event.DeviceEvent deviceEvent:
-                        Console.WriteLine($"Kind: {deviceEvent.v1.kind.GetType().Name}");
-                        switch (deviceEvent.v1.kind) {
+                        Console.WriteLine($"Kind: {deviceEvent.V1.Kind.GetType().Name}");
+                        switch (deviceEvent.V1.Kind) {
                             // uncomment desired behavior
                             case Ohc.uniffi.DeviceEventKind.AccelerometerEvent accelerometer:
                                 // Console.WriteLine("Printing accelerometer event:");
-                                // Console.WriteLine("\ttimestamp: {0}", accelerometer.v1.timestamp);
-                                // Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.v1.accel.x, accelerometer.v1.accel.y, accelerometer.v1.accel.z);
-                                // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.v1.gyro.x, accelerometer.v1.gyro.y, accelerometer.v1.gyro.z);
-                                // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.v1.eulerAngles.x, accelerometer.v1.eulerAngles.y, accelerometer.v1.eulerAngles.z);
+                                // Console.WriteLine("\ttimestamp: {0}", accelerometer.V1.Timestamp);
+                                // Console.WriteLine("\tacceleration: {0} {1} {2}", accelerometer.V1.Accel.X, accelerometer.V1.Accel.Y, accelerometer.V1.Accel.Z);
+                                // Console.WriteLine("\tangular_velocity: {0} {1} {2}", accelerometer.V1.Gyro.X, accelerometer.V1.Gyro.Y, accelerometer.V1.Gyro.Z);
+                                // Console.WriteLine("\teuler_angles: {0} {1} {2}", accelerometer.V1.EulerAngles.X, accelerometer.V1.EulerAngles.Y, accelerometer.V1.EulerAngles.Z);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.TrackingEvent tracking:
                                 Console.WriteLine("Printing tracking event:");
-                                Console.WriteLine("\ttimestamp: {0}", tracking.v1.timestamp);
-                                Console.WriteLine("\taimpoint: {0} {1}", tracking.v1.aimpoint.x, tracking.v1.aimpoint.y);
+                                Console.WriteLine("\ttimestamp: {0}", tracking.V1.Timestamp);
+                                Console.WriteLine("\taimpoint: {0} {1}", tracking.V1.Aimpoint.X, tracking.V1.Aimpoint.Y);
                                 Console.WriteLine("\tpose: ");
                                 Console.WriteLine("\t\trotation: ");
-                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.rotation.m11, tracking.v1.pose.rotation.m12, tracking.v1.pose.rotation.m13);
-                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.rotation.m21, tracking.v1.pose.rotation.m22, tracking.v1.pose.rotation.m23);
-                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.rotation.m31, tracking.v1.pose.rotation.m32, tracking.v1.pose.rotation.m33);
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.V1.Pose.Rotation.M11, tracking.V1.Pose.Rotation.M12, tracking.V1.Pose.Rotation.M13);
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.V1.Pose.Rotation.M21, tracking.V1.Pose.Rotation.M22, tracking.V1.Pose.Rotation.M23);
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.V1.Pose.Rotation.M31, tracking.V1.Pose.Rotation.M32, tracking.V1.Pose.Rotation.M33);
                                 Console.WriteLine("\t\ttranslation: ");
-                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.v1.pose.translation.x, tracking.v1.pose.translation.y, tracking.v1.pose.translation.z);
-                                Console.WriteLine("\t\tscreen_id: {0}", tracking.v1.screenId);
-                                Console.WriteLine("\tdistance: {0}", tracking.v1.distance);
+                                Console.WriteLine("\t\t\t{0} {1} {2}", tracking.V1.Pose.Translation.X, tracking.V1.Pose.Translation.Y, tracking.V1.Pose.Translation.Z);
+                                Console.WriteLine("\t\tscreen_id: {0}", tracking.V1.ScreenId);
+                                Console.WriteLine("\tdistance: {0}", tracking.V1.Distance);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.ImpactEvent impact:
                                 Console.WriteLine("Printing impact event:");
-                                Console.WriteLine("\ttimestamp: {0}", impact.v1.timestamp);
+                                Console.WriteLine("\ttimestamp: {0}", impact.V1.Timestamp);
                                 break;
                             case Ohc.uniffi.DeviceEventKind.ZeroResult zeroResult:
-                                if (zeroResult.v1) {
+                                if (zeroResult.V1) {
                                     Console.WriteLine("Zero result: success");
                                 } else {
                                     Console.WriteLine("Zero result: failure");
                                 }
                                 break;
                             case Ohc.uniffi.DeviceEventKind.PacketEvent packet:
-                                switch (packet.v1.data) {
+                                switch (packet.V1.Data) {
                                     case Ohc.uniffi.PacketData.Unsupported _:
                                         Console.WriteLine("Unsupported packet");
                                         break;
                                     case Ohc.uniffi.PacketData.VendorEvent vendorPacketData:
                                         Console.WriteLine("Printing vendor packet:");
-                                        Console.WriteLine("\ttype: {0}", packet.v1.ty);
-                                        Console.WriteLine("\tdata: {0}", BitConverter.ToString(vendorPacketData.v1.data));
+                                        Console.WriteLine("\ttype: {0}", packet.V1.Ty);
+                                        Console.WriteLine("\tdata: {0}", BitConverter.ToString(vendorPacketData.V1.Data));
                                         break;
                                 }
                                 break;

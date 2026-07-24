@@ -11,8 +11,8 @@ install_tools:
 build_lib:
   Write-Host 'OdysseyHubClient' -ForegroundColor Blue;
   Write-Host 'Building native library (Rust)' -ForegroundColor Cyan;
-  cargo build --manifest-path=../../Cargo.toml -r;
-  cargo run --manifest-path=../../Cargo.toml -r --bin cs_bindgen -- ../../target/release/ohc_uniffi.dll
+  cargo build --manifest-path=../../Cargo.toml -r --target=x86_64-pc-windows-msvc;
+  cargo run --manifest-path=../../Cargo.toml -r --bin cs_bindgen -- ../../target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll OdysseyHubClient/generated
   & (Get-Process -Id $PID).Path { \
     $env:CROSS_CONFIG="../../Cross.toml"; \
     cross build --manifest-path=../../Cargo.toml -r --target=x86_64-unknown-linux-gnu; \
@@ -20,16 +20,16 @@ build_lib:
   }
 
 build_projects:
-  Write-Host 'Building Radiosity.OdysseyHubClient' -ForegroundColor Cyan;
-  dotnet build .\OdysseyHubClient\;
+  Write-Host 'Building OdysseyArm.HubClient' -ForegroundColor Cyan;
+  dotnet build .\OdysseyHubClient\ -c Release;
   dotnet pack .\OdysseyHubClient\ -o nugets;
 
-  Write-Host 'Publishing Radiosity.OdysseyHubClient.Test' -ForegroundColor Cyan;
+  Write-Host 'Publishing OdysseyArm.HubClient.Test' -ForegroundColor Cyan;
   dotnet build .\OdysseyHubClient.Test\;
   dotnet publish .\OdysseyHubClient.Test\ -o .\output;
 
-  Write-Host 'Running published Radiosity.OdysseyHubClient.Test' -ForegroundColor Cyan;
+  Write-Host 'Running published OdysseyArm.HubClient.Test' -ForegroundColor Cyan;
   Write-Host;
 
 run_only:
-  ./output/Radiosity.OdysseyHubClient.Test.exe
+  ./output/OdysseyArm.HubClient.Test.exe

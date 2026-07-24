@@ -10,7 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Radiosity.OdysseyHubClient" Version="8.0.0-alpha" />
+    <!-- Keep in sync with the VersionPrefix/VersionSuffix in OdysseyArm.HubClient.csproj -->
+    <PackageReference Include="OdysseyArm.HubClient" Version="0.2.1-dev" />
   </ItemGroup>
 
 </Project>

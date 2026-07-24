@@ -1,0 +1,51 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <LangVersion>latest</LangVersion>
+        <TargetFrameworks>netstandard2.0;netstandard2.1;net8.0</TargetFrameworks>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <RepositoryUrl>https://github.com/odysseyarm/odyssey-desktop</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+        <Platforms>AnyCPU;x64</Platforms>
+    </PropertyGroup>
+
+    <!-- Local-build default; releases stamp the real version from the
+         odyssey-hub-client-uniffi-v* tag via -p:Version. Keep the prefix in
+         sync with odyssey_hub_client_uniffi/Cargo.toml. -->
+    <PropertyGroup>
+        <VersionPrefix>0.2.1</VersionPrefix>
+        <VersionSuffix>dev</VersionSuffix>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Folder Include="generated\" />
+    </ItemGroup>
+
+    <!-- Native libs are packed per target triple; Exists conditions let a local
+         pack succeed with only the triples built on this machine. -->
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)/../../../target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll" Condition="Exists('$(MSBuildThisFileDirectory)/../../../target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll')" Pack="true" PackagePath="runtimes/win-x64/native/" />
+        <None Include="$(MSBuildThisFileDirectory)/../../../target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so" Condition="Exists('$(MSBuildThisFileDirectory)/../../../target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so')" Pack="true" PackagePath="runtimes/linux-x64/native/" />
+        <None Include="$(MSBuildThisFileDirectory)/../../../target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so" Condition="Exists('$(MSBuildThisFileDirectory)/../../../target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so')" Pack="true" PackagePath="runtimes/linux-arm64/native/" />
+        <None Include="$(MSBuildThisFileDirectory)/../../../target/x86_64-apple-darwin/release/libohc_uniffi.dylib" Condition="Exists('$(MSBuildThisFileDirectory)/../../../target/x86_64-apple-darwin/release/libohc_uniffi.dylib')" Pack="true" PackagePath="runtimes/osx-x64/native/" />
+        <None Include="$(MSBuildThisFileDirectory)/../../../target/aarch64-apple-darwin/release/libohc_uniffi.dylib" Condition="Exists('$(MSBuildThisFileDirectory)/../../../target/aarch64-apple-darwin/release/libohc_uniffi.dylib')" Pack="true" PackagePath="runtimes/osx-arm64/native/" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+        <PackageReference Include="PolySharp" Version="1.16.0">
+          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+          <PrivateAssets>all</PrivateAssets>
+        </PackageReference>
+        <PackageReference Include="System.Threading.Channels" Version="10.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+</Project>
+

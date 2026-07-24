@@ -20,9 +20,12 @@ jobs:
   check-version:
     name: Check tag matches crate version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v5
       - name: Verify tag version
+        id: check
         run: |
           tag_version="${GITHUB_REF_NAME#odyssey-hub-client-uniffi-v}"
           crate_version=$(grep -m1 '^version' odyssey_hub_client_uniffi/Cargo.toml | cut -d'"' -f2)
@@ -30,10 +33,13 @@ jobs:
             echo "Tag version ($tag_version) does not match odyssey_hub_client_uniffi/Cargo.toml version ($crate_version)" >&2
             exit 1
           fi
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
 
   build:
     needs: check-version
     uses: ./.github/workflows/bindgen-build.yml
+    with:
+      version: ${{ needs.check-version.outputs.version }}
 
   publish-python:
     name: Publish Python to PyPI
@@ -50,3 +56,23 @@ jobs:
         # --check-url replaces maturin's --skip-existing: files already on the
         # index are skipped instead of failing the upload
         run: uv publish --check-url https://pypi.org/simple/ python-*/*
+
+  publish-dotnet:
+    name: Publish C# to NuGet
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      # OIDC token for nuget.org trusted publishing (policy
+      # "odysseyhubclient-publish" is bound to this repo + workflow file)
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dotnet-nuget
+      - name: NuGet login (OIDC → temp API key)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: kybrdgmr
+      - name: Push to NuGet
+        run: dotnet nuget push "*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

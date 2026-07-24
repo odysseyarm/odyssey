@@ -9,6 +9,12 @@ name: Bindgen Build
 
 on:
   workflow_call:
+    inputs:
+      version:
+        description: Package version override (e.g. from the release tag); empty = project defaults
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -153,3 +159,113 @@ jobs:
         with:
           name: python-macos-${{ matrix.target }}
           path: dist
+
+  # C# NuGet ships one package with all native libs (runtimes/<rid>/native).
+  # Natives: linux via cross (Cross.toml drives the containers, same as the
+  # local Justfile), windows via cargo-xwin, macos on the macos runner.
+  dotnet-natives-linux:
+    name: DotNet natives linux + windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Install cargo-xwin
+        run: pip install cargo-xwin
+      - name: Add windows target
+        run: rustup target add x86_64-pc-windows-msvc
+      - name: Build linux natives (cross)
+        working-directory: odyssey_hub_client_uniffi
+        run: |
+          cross build --release -p odyssey_hub_client_uniffi --target x86_64-unknown-linux-gnu
+          cross build --release -p odyssey_hub_client_uniffi --target aarch64-unknown-linux-gnu
+      - name: Build windows native (xwin)
+        working-directory: odyssey_hub_client_uniffi
+        run: cargo xwin build --release -p odyssey_hub_client_uniffi --target x86_64-pc-windows-msvc
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dotnet-native-x86_64-unknown-linux-gnu
+          path: odyssey_hub_client_uniffi/target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dotnet-native-aarch64-unknown-linux-gnu
+          path: odyssey_hub_client_uniffi/target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dotnet-native-x86_64-pc-windows-msvc
+          path: odyssey_hub_client_uniffi/target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll
+
+  dotnet-natives-macos:
+    name: DotNet natives macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add x86_64 target
+        run: rustup target add x86_64-apple-darwin
+      - name: Build macos natives
+        working-directory: odyssey_hub_client_uniffi
+        run: |
+          cargo build --release -p odyssey_hub_client_uniffi --target aarch64-apple-darwin
+          cargo build --release -p odyssey_hub_client_uniffi --target x86_64-apple-darwin
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dotnet-native-aarch64-apple-darwin
+          path: odyssey_hub_client_uniffi/target/aarch64-apple-darwin/release/libohc_uniffi.dylib
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dotnet-native-x86_64-apple-darwin
+          path: odyssey_hub_client_uniffi/target/x86_64-apple-darwin/release/libohc_uniffi.dylib
+
+  dotnet-package:
+    name: DotNet pack NuGet
+    runs-on: ubuntu-latest
+    needs: [dotnet-natives-linux, dotnet-natives-macos]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download natives
+        uses: actions/download-artifact@v6
+        with:
+          pattern: dotnet-native-*
+      - name: Place natives in target dirs
+        run: |
+          for triple in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin; do
+            mkdir -p "odyssey_hub_client_uniffi/target/$triple/release"
+            mv dotnet-native-"$triple"/* "odyssey_hub_client_uniffi/target/$triple/release/"
+          done
+      # Keep the tag in sync with install_tools in the dotnet Justfile
+      - name: Install uniffi-bindgen-cs
+        run: cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0
+      - name: Generate C# bindings
+        working-directory: odyssey_hub_client_uniffi/dotnet/OdysseyHubClient
+        run: cargo run --manifest-path ../../Cargo.toml --release --bin cs_bindgen -- ../../target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so OdysseyHubClient/generated
+      # Explicit Release build first: GeneratePackageOnBuild makes `dotnet pack`
+      # skip its implicit build, and pack looks in bin/Release.
+      - name: Pack
+        working-directory: odyssey_hub_client_uniffi/dotnet/OdysseyHubClient
+        run: |
+          version_props=()
+          if [ -n "${{ inputs.version }}" ]; then
+            version_props=(-p:Version="${{ inputs.version }}")
+          fi
+          dotnet build OdysseyHubClient -c Release "${version_props[@]}"
+          dotnet pack OdysseyHubClient -o nugets "${version_props[@]}"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dotnet-nuget
+          path: odyssey_hub_client_uniffi/dotnet/OdysseyHubClient/nugets/*.nupkg

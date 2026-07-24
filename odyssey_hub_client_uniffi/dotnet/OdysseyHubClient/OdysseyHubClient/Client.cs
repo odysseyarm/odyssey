@@ -1,21 +1,11 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Threading.Channels;
 
-using Ohc = Radiosity.OdysseyHubClient;
+using Ohc = OdysseyArm.HubClient;
 
-// lol
-using System.ComponentModel;
-
-namespace System.Runtime.CompilerServices
-{
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    internal class IsExternalInit { }
-}
-// end lol
-
-namespace Radiosity.OdysseyHubClient
+namespace OdysseyArm.HubClient
 {
     public class Client
     {
