@@ -1,0 +1,32 @@
+name: Proto Breaking Change Check
+
+# odyssey_hub_server and every client (in-process odyssey_hub_client, the
+# uniffi bindings, and the FFI/vcpkg library) talk over the gRPC/protobuf
+# service defined in service_interface.proto. Protobuf tolerates clients and
+# servers drifting to different versions independently — but only if field
+# numbers/types are never reused or changed, and messages are only extended
+# additively. This fails PRs that break that contract.
+#
+# Client and server release independently (uniffi/FFI packages have their
+# own tags and version numbers, separate from odyssey-desktop), so unlike
+# the uniffi-bindgen-cs<->uniffi build-time ABI (which needs a strict
+# version pin because a mismatch is a hard failure), this is a wire-protocol
+# compatibility check instead of a version-pin scheme.
+
+on:
+  pull_request:
+    paths:
+      - 'odyssey_hub_server_interface/proto/**'
+
+permissions:
+  contents: read
+
+jobs:
+  breaking:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: bufbuild/buf-breaking-action@v1
+        with:
+          input: odyssey_hub_server_interface/proto
+          against: 'https://github.com/${{ github.repository }}.git#branch=${{ github.event.pull_request.base.ref }},subdir=odyssey_hub_server_interface/proto'
