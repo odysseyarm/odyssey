@@ -35,6 +35,8 @@ x86-Release
 [Aa][Rr][Mm]64/
 bld/
 [Bb]in/
+# [Bb]in/ is for .NET build output, but it also swallows Rust src/bin dirs
+!**/src/bin/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
