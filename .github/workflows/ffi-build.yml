@@ -1,0 +1,121 @@
+name: FFI Build
+
+# Reusable workflow that cross-builds the C/C++ FFI library
+# (odyssey_hub_client_ffi) for every vcpkg triplet we publish, and packages
+# each one as a self-contained zip (include/ + lib/ + bin/ on windows + a
+# copy of LICENSE, which the vcpkg portfile points vcpkg_install_copyright
+# at) ready to be attached to a GitHub Release and consumed by the vcpkg
+# portfile in odysseyarm/vcpkg-registry.
+#
+# Called by ffi-ci.yml (PRs / pushes) and ffi-release.yml (tags).
+#
+# odyssey_hub_client_ffi lives in the main workspace (root Cargo.toml/lockfile
+# and root Cross.toml) — unlike odyssey_hub_client_uniffi, which is its own
+# excluded workspace.
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  ffi-linux:
+    name: FFI ${{ matrix.triplet }} (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            triplet: x64-linux
+          - target: aarch64-unknown-linux-gnu
+            triplet: arm64-linux
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build (cross)
+        run: cross build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          set -eu
+          out="ffi-${{ matrix.triplet }}"
+          mkdir -p "$out/include" "$out/lib"
+          cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
+          cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
+          cp "target/${{ matrix.target }}/release/libohc.so" "$out/lib/"
+          cp LICENSE "$out/"
+          (cd "$out" && zip -r "../$out.zip" .)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ffi-${{ matrix.triplet }}
+          path: ffi-${{ matrix.triplet }}.zip
+
+  ffi-windows:
+    name: FFI x64-windows (cross via xwin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cargo-xwin
+        run: pip install cargo-xwin
+      - name: Add windows target
+        run: rustup target add x86_64-pc-windows-msvc
+      - name: Build (xwin)
+        run: cargo xwin build --release -p odyssey_hub_client_ffi --target x86_64-pc-windows-msvc
+      - name: Package
+        run: |
+          set -eu
+          out="ffi-x64-windows"
+          mkdir -p "$out/include" "$out/lib" "$out/bin"
+          cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
+          cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
+          cp target/x86_64-pc-windows-msvc/release/ohc.dll "$out/bin/"
+          cp target/x86_64-pc-windows-msvc/release/ohc.dll.lib "$out/lib/"
+          cp LICENSE "$out/"
+          (cd "$out" && zip -r "../$out.zip" .)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ffi-x64-windows
+          path: ffi-x64-windows.zip
+
+  ffi-macos:
+    name: FFI ${{ matrix.triplet }} (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            triplet: x64-osx
+          - target: aarch64-apple-darwin
+            triplet: arm64-osx
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          set -eu
+          out="ffi-${{ matrix.triplet }}"
+          mkdir -p "$out/include" "$out/lib"
+          cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
+          cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
+          cp "target/${{ matrix.target }}/release/libohc.dylib" "$out/lib/"
+          cp LICENSE "$out/"
+          (cd "$out" && zip -r "../$out.zip" .)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ffi-${{ matrix.triplet }}
+          path: ffi-${{ matrix.triplet }}.zip

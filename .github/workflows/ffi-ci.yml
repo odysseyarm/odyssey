@@ -1,0 +1,20 @@
+name: FFI CI
+
+# Build + package the C/C++ FFI library on every PR and push to master.
+# Publishing (GitHub Release + vcpkg registry update) happens separately in
+# ffi-release.yml on odyssey-hub-client-ffi-v* tags.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/ffi-build.yml

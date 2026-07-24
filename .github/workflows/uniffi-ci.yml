@@ -1,0 +1,20 @@
+name: UniFFI CI
+
+# Build + smoke-test uniffi bindgen packages (Python, C#) on every PR and
+# push to master. Publishing happens separately in uniffi-release.yml on
+# odyssey-hub-client-uniffi-v* tags.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/uniffi-build.yml

@@ -1,9 +1,12 @@
-name: Bindgen Build
+name: UniFFI Build
 
-# Reusable workflow that builds (and smoke-tests) all bindgen language
-# packages. Called by bindgen-ci.yml (PRs / pushes) and bindgen-release.yml
-# (tags). To add a new language, add its build job(s) here and a matching
-# publish job in bindgen-release.yml.
+# Reusable workflow that builds (and smoke-tests) all uniffi bindgen
+# language packages. Called by uniffi-ci.yml (PRs / pushes) and
+# uniffi-release.yml (tags). To add a new language, add its build job(s)
+# here and a matching publish job in uniffi-release.yml.
+#
+# Not to be confused with ffi-build.yml, which builds the separate cbindgen
+# based C/C++ FFI library (odyssey_hub_client_ffi).
 #
 # All artifacts follow the naming scheme: <language>-<platform>-<target>
 

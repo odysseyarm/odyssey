@@ -1,12 +1,13 @@
-name: Bindgen Release
+name: UniFFI Release
 
-# Publish bindgen packages for all languages when an
+# Publish uniffi bindgen packages for all languages when an
 # odyssey-hub-client-uniffi-vX.Y.Z tag is pushed. The tag version must match
-# odyssey_hub_client_uniffi/Cargo.toml. App release tags (v*) do not trigger
-# this workflow.
+# odyssey_hub_client_uniffi/Cargo.toml. App release tags (odyssey-desktop-v*)
+# and FFI release tags (odyssey-hub-client-ffi-v*) do not trigger this
+# workflow.
 #
 # To add a new language, add a publish-<language> job below (and its build
-# job in bindgen-build.yml).
+# job in uniffi-build.yml).
 
 on:
   push:
@@ -37,7 +38,7 @@ jobs:
 
   build:
     needs: check-version
-    uses: ./.github/workflows/bindgen-build.yml
+    uses: ./.github/workflows/uniffi-build.yml
     with:
       version: ${{ needs.check-version.outputs.version }}
 
@@ -63,7 +64,9 @@ jobs:
     needs: build
     permissions:
       # OIDC token for nuget.org trusted publishing (policy
-      # "odysseyhubclient-publish" is bound to this repo + workflow file)
+      # "odysseyhubclient-publish" is bound to this repo + this exact
+      # workflow filename — update the policy on nuget.org if this file is
+      # ever renamed again)
       id-token: write
     steps:
       - uses: actions/download-artifact@v6

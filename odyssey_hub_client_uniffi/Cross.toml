@@ -1,7 +1,7 @@
 # protoc comes from the pinned release binary, not the distro package: cross
 # base images can carry a proto2-only protoc, and the distro package would be
 # target-arch while protoc must run on the build host. Keep the version in
-# sync with the setup-protoc pin in .github/workflows/bindgen-build.yml.
+# sync with the setup-protoc pin in .github/workflows/uniffi-build.yml.
 
 [target.x86_64-unknown-linux-gnu]
 pre-build = [

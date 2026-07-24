@@ -1,0 +1,104 @@
+name: FFI Release
+
+# Publish the C/C++ FFI library when an odyssey-hub-client-ffi-vX.Y.Z tag is
+# pushed. The tag version must match odyssey_hub_client_ffi/Cargo.toml.
+#
+# Two destinations:
+#   1. A GitHub Release on this repo holding the per-triplet zips (not marked
+#      "latest" — that stays reserved for odyssey-desktop-v* app releases so
+#      this doesn't hijack the repo's Latest-release badge).
+#   2. odysseyarm/vcpkg-registry: the port's versions/ files are bumped so
+#      `vcpkg install odyssey-hub-client` resolves the new release. (Port
+#      name omits "-ffi" — vcpkg is C++-only, so there's no C# package in
+#      this registry to disambiguate against — but keeps the hyphens vcpkg's
+#      own naming convention uses, e.g. abseil-cpp, nlohmann-json.)
+
+on:
+  push:
+    tags:
+      - 'odyssey-hub-client-ffi-v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    name: Check tag matches crate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify tag version
+        id: check
+        run: |
+          tag_version="${GITHUB_REF_NAME#odyssey-hub-client-ffi-v}"
+          crate_version=$(grep -m1 '^version' odyssey_hub_client_ffi/Cargo.toml | cut -d'"' -f2)
+          if [ "$tag_version" != "$crate_version" ]; then
+            echo "Tag version ($tag_version) does not match odyssey_hub_client_ffi/Cargo.toml version ($crate_version)" >&2
+            exit 1
+          fi
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check-version
+    uses: ./.github/workflows/ffi-build.yml
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [check-version, build]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: ffi-*
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "odyssey-hub-client-ffi v$VERSION" \
+            --notes "C/C++ FFI library $VERSION. Prebuilt per vcpkg triplet; consumed by the odyssey-hub-client vcpkg port." \
+            --latest=false \
+            ffi-*/*.zip
+
+  update-vcpkg-registry:
+    name: Update vcpkg registry
+    runs-on: ubuntu-latest
+    needs: [check-version, github-release]
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+    steps:
+      - name: Checkout vcpkg-registry
+        uses: actions/checkout@v5
+        with:
+          repository: odysseyarm/vcpkg-registry
+          # Fine-grained PAT scoped to only this repo, Contents: read & write.
+          # Registry updates are JSON-only and fully automated, so a direct
+          # push (no PR) is fine for our own private registry.
+          token: ${{ secrets.VCPKG_REGISTRY_TOKEN }}
+          path: vcpkg-registry
+      - name: Bootstrap vcpkg tool
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg /tmp/vcpkg-tool
+          /tmp/vcpkg-tool/bootstrap-vcpkg.sh -disableMetrics
+      - name: Bump port version
+        working-directory: vcpkg-registry
+        run: |
+          jq --arg v "$VERSION" '.version = $v' ports/odyssey-hub-client/vcpkg.json > /tmp/vcpkg.json.tmp
+          mv /tmp/vcpkg.json.tmp ports/odyssey-hub-client/vcpkg.json
+      - name: Add version entry
+        working-directory: vcpkg-registry
+        run: /tmp/vcpkg-tool/vcpkg x-add-version odyssey-hub-client --overwrite-version
+      - name: Commit and push
+        working-directory: vcpkg-registry
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ports/odyssey-hub-client/vcpkg.json versions/
+          git commit -m "odyssey-hub-client: bump to $VERSION"
+          git push
