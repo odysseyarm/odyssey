@@ -93,7 +93,11 @@ jobs:
           mv /tmp/vcpkg.json.tmp ports/odyssey-hub-client/vcpkg.json
       - name: Add version entry
         working-directory: vcpkg-registry
-        run: /tmp/vcpkg-tool/vcpkg x-add-version odyssey-hub-client --overwrite-version
+        run: |
+          /tmp/vcpkg-tool/vcpkg \
+            --x-builtin-ports-root="$PWD/ports" \
+            --x-builtin-registry-versions-dir="$PWD/versions" \
+            x-add-version odyssey-hub-client --overwrite-version --verbose
       - name: Commit and push
         working-directory: vcpkg-registry
         run: |
