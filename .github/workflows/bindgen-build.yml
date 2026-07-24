@@ -23,7 +23,7 @@ jobs:
     name: Check pyproject uniffi-bindgen pin
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Verify pin matches Cargo.lock
         run: |
           version=$(grep -A1 '^name = "uniffi"$' odyssey_hub_client_uniffi/Cargo.lock | grep '^version' | cut -d'"' -f2)
@@ -64,8 +64,8 @@ jobs:
           - target: armv7
             manylinux: musllinux_1_2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: 3.x
       - name: Install Protoc
@@ -88,7 +88,7 @@ jobs:
           pip install dist/*.whl
           python -c "import ohc_uniffi"
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: python-linux-${{ matrix.platform.manylinux }}-${{ matrix.platform.target }}
           path: dist
@@ -100,8 +100,8 @@ jobs:
       matrix:
         target: [x86_64-pc-windows-msvc]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: 3.x
       - name: Install Protoc
@@ -116,7 +116,7 @@ jobs:
           args: --release --out dist --manifest-path odyssey_hub_client_uniffi/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: python-windows-${{ matrix.target }}
           path: dist
@@ -128,8 +128,8 @@ jobs:
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: 3.x
       - name: Install Protoc
@@ -149,7 +149,7 @@ jobs:
           pip install dist/*.whl
           python -c "import ohc_uniffi"
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: python-macos-${{ matrix.target }}
           path: dist
