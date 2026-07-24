@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          pattern: ffi-*
+          pattern: odyssey-hub-client-*
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,7 +64,7 @@ jobs:
             --title "odyssey-hub-client-ffi v$VERSION" \
             --notes "C/C++ FFI library $VERSION. Prebuilt per vcpkg triplet; consumed by the odyssey-hub-client vcpkg port." \
             --latest=false \
-            ffi-*/*.zip
+            odyssey-hub-client-*/*.zip
 
   update-vcpkg-registry:
     name: Update vcpkg registry

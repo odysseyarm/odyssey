@@ -43,7 +43,7 @@ jobs:
       - name: Package
         run: |
           set -eu
-          out="ffi-${{ matrix.triplet }}"
+          out="odyssey-hub-client-${{ matrix.triplet }}"
           mkdir -p "$out/include" "$out/lib"
           cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
           cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
@@ -52,8 +52,8 @@ jobs:
           (cd "$out" && zip -r "../$out.zip" .)
       - uses: actions/upload-artifact@v6
         with:
-          name: ffi-${{ matrix.triplet }}
-          path: ffi-${{ matrix.triplet }}.zip
+          name: odyssey-hub-client-${{ matrix.triplet }}
+          path: odyssey-hub-client-${{ matrix.triplet }}.zip
 
   ffi-windows:
     name: FFI x64-windows (cross via xwin)
@@ -75,7 +75,7 @@ jobs:
       - name: Package
         run: |
           set -eu
-          out="ffi-x64-windows"
+          out="odyssey-hub-client-x64-windows"
           mkdir -p "$out/include" "$out/lib" "$out/bin"
           cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
           cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
@@ -85,8 +85,8 @@ jobs:
           (cd "$out" && zip -r "../$out.zip" .)
       - uses: actions/upload-artifact@v6
         with:
-          name: ffi-x64-windows
-          path: ffi-x64-windows.zip
+          name: odyssey-hub-client-x64-windows
+          path: odyssey-hub-client-x64-windows.zip
 
   ffi-macos:
     name: FFI ${{ matrix.triplet }} (${{ matrix.target }})
@@ -113,7 +113,7 @@ jobs:
       - name: Package
         run: |
           set -eu
-          out="ffi-${{ matrix.triplet }}"
+          out="odyssey-hub-client-${{ matrix.triplet }}"
           mkdir -p "$out/include" "$out/lib"
           cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
           cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
@@ -122,5 +122,5 @@ jobs:
           (cd "$out" && zip -r "../$out.zip" .)
       - uses: actions/upload-artifact@v6
         with:
-          name: ffi-${{ matrix.triplet }}
-          path: ffi-${{ matrix.triplet }}.zip
+          name: odyssey-hub-client-${{ matrix.triplet }}
+          path: odyssey-hub-client-${{ matrix.triplet }}.zip
