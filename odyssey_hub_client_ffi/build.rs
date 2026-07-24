@@ -1,6 +1,17 @@
 use std::{env, fs, path::Path};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // cbindgen probes rustc for target cfg info via a raw `rustc` invocation
+    // that doesn't pass `--target`, so it always resolves to the host. Under
+    // cargo-xwin, CARGO_ENCODED_RUSTFLAGS/RUSTFLAGS carry the cross target's
+    // linker flags (e.g. -C linker-flavor=lld-link), which that host-mode
+    // probe then applies against the host toolchain and fails. Header
+    // generation never needs to link anything, so just drop them.
+    unsafe {
+        env::remove_var("CARGO_ENCODED_RUSTFLAGS");
+        env::remove_var("RUSTFLAGS");
+    }
+
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     build_c(&crate_dir)?;
 
