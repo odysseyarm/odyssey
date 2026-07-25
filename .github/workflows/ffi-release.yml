@@ -92,7 +92,7 @@ jobs:
       - name: Compute SHA512 and patch portfile
         run: |
           sha=$(sha512sum odyssey-hub-client.zip | cut -d' ' -f1)
-          sed -i "s/SHA512 [0-9a-fA-F]\{128\}/SHA512 $sha/" vcpkg-registry/ports/odyssey-hub-client/portfile.cmake
+          sed -i "s/SHA512 .*/SHA512 $sha/" vcpkg-registry/ports/odyssey-hub-client/portfile.cmake
       - name: Bootstrap vcpkg tool
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg /tmp/vcpkg-tool
