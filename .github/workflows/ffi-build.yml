@@ -1,11 +1,13 @@
 name: FFI Build
 
 # Reusable workflow that cross-builds the C/C++ FFI library
-# (odyssey_hub_client_ffi) for every vcpkg triplet we publish, and packages
-# each one as a self-contained zip (include/ + lib/ + bin/ on windows + a
-# copy of LICENSE, which the vcpkg portfile points vcpkg_install_copyright
-# at) ready to be attached to a GitHub Release and consumed by the vcpkg
-# portfile in odysseyarm/vcpkg-registry.
+# (odyssey_hub_client_ffi) for every platform, then bundles everything —
+# CMakeLists.txt, headers, and every platform/linkage's prebuilt libs — into
+# one self-contained "odyssey-hub-client" zip. That single zip is what gets
+# attached to a GitHub Release and is consumed either directly via CMake
+# FetchContent, or through the vcpkg port in odysseyarm/vcpkg-registry
+# (whose portfile just downloads it and runs vcpkg_cmake_configure/install
+# against the embedded CMakeLists.txt).
 #
 # Called by ffi-ci.yml (PRs / pushes) and ffi-release.yml (tags).
 #
@@ -16,22 +18,31 @@ name: FFI Build
 # authenticate to, even though odyssey_hub_client_ffi doesn't depend on it.
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      version:
+        description: SDK version to stamp into the bundled zip's VERSION file; empty = the crate's own VERSION file
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
+  # crate-type = ["staticlib", "cdylib"] means one cargo/cross/xwin build
+  # already produces both linkages — nothing extra needed to build both,
+  # just to package both instead of only the dynamic one like before.
   ffi-linux:
-    name: FFI ${{ matrix.triplet }} (${{ matrix.target }})
+    name: FFI linux ${{ matrix.triplet }} (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            triplet: x64-linux
+            triplet: linux_x64
           - target: aarch64-unknown-linux-gnu
-            triplet: arm64-linux
+            triplet: linux_arm64
     steps:
       - uses: actions/checkout@v5
       - uses: taiki-e/install-action@v2
@@ -40,23 +51,26 @@ jobs:
       - name: Build (cross)
         working-directory: odyssey_hub_client_ffi
         run: cross build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
-      - name: Package
+      - name: Rename libs
         run: |
           set -eu
-          out="odyssey-hub-client-${{ matrix.triplet }}"
-          mkdir -p "$out/include" "$out/lib"
-          cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
-          cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
-          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.so" "$out/lib/"
-          cp LICENSE "$out/"
-          (cd "$out" && zip -r "../$out.zip" .)
+          mkdir -p libs
+          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
+          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.so" "libs/libohc__${{ matrix.triplet }}.so"
       - uses: actions/upload-artifact@v6
         with:
-          name: odyssey-hub-client-${{ matrix.triplet }}
-          path: odyssey-hub-client-${{ matrix.triplet }}.zip
+          name: ohc-libs-${{ matrix.triplet }}
+          path: libs
+      # Headers are identical across every target/platform — only need one copy.
+      - name: Upload headers
+        if: matrix.triplet == 'linux_x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ohc-headers
+          path: odyssey_hub_client_ffi/generated/include
 
   ffi-windows:
-    name: FFI x64-windows (cross via xwin)
+    name: FFI windows x64 (cross via xwin)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -72,32 +86,28 @@ jobs:
       - name: Build (xwin)
         working-directory: odyssey_hub_client_ffi
         run: cargo xwin build --release -p odyssey_hub_client_ffi --target x86_64-pc-windows-msvc
-      - name: Package
+      - name: Rename libs
         run: |
           set -eu
-          out="odyssey-hub-client-x64-windows"
-          mkdir -p "$out/include" "$out/lib" "$out/bin"
-          cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
-          cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
-          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll "$out/bin/"
-          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll.lib "$out/lib/"
-          cp LICENSE "$out/"
-          (cd "$out" && zip -r "../$out.zip" .)
+          mkdir -p libs
+          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.lib libs/ohc__win_x64.lib
+          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll libs/ohc__win_x64.dll
+          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll.lib libs/ohc__win_x64.dll.lib
       - uses: actions/upload-artifact@v6
         with:
-          name: odyssey-hub-client-x64-windows
-          path: odyssey-hub-client-x64-windows.zip
+          name: ohc-libs-win_x64
+          path: libs
 
   ffi-macos:
-    name: FFI ${{ matrix.triplet }} (${{ matrix.target }})
+    name: FFI macos ${{ matrix.triplet }} (${{ matrix.target }})
     runs-on: macos-latest
     strategy:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            triplet: x64-osx
+            triplet: macos_x64
           - target: aarch64-apple-darwin
-            triplet: arm64-osx
+            triplet: macos_arm64
     steps:
       - uses: actions/checkout@v5
       - name: Install Protoc
@@ -110,17 +120,49 @@ jobs:
       - name: Build
         working-directory: odyssey_hub_client_ffi
         run: cargo build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
-      - name: Package
+      - name: Rename libs
         run: |
           set -eu
-          out="odyssey-hub-client-${{ matrix.triplet }}"
-          mkdir -p "$out/include" "$out/lib"
-          cp odyssey_hub_client_ffi/generated/include/*.h "$out/include/"
-          cp odyssey_hub_client_ffi/generated/include/*.hpp "$out/include/"
-          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.dylib" "$out/lib/"
-          cp LICENSE "$out/"
-          (cd "$out" && zip -r "../$out.zip" .)
+          mkdir -p libs
+          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
+          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.dylib" "libs/libohc__${{ matrix.triplet }}.dylib"
       - uses: actions/upload-artifact@v6
         with:
-          name: odyssey-hub-client-${{ matrix.triplet }}
-          path: odyssey-hub-client-${{ matrix.triplet }}.zip
+          name: ohc-libs-${{ matrix.triplet }}
+          path: libs
+
+  bundle:
+    name: Bundle SDK zip
+    runs-on: ubuntu-latest
+    needs: [ffi-linux, ffi-windows, ffi-macos]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Assemble SDK skeleton
+        run: |
+          set -eu
+          out="odyssey-hub-client"
+          mkdir -p "$out/include" "$out/lib" "$out/cmake"
+          cp odyssey_hub_client_ffi/CMakeLists.txt "$out/"
+          cp odyssey_hub_client_ffi/Config.cmake.in "$out/"
+          cp odyssey_hub_client_ffi/cmake/DeclareOhcTarget.cmake "$out/cmake/"
+          cp LICENSE "$out/"
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version=$(cat odyssey_hub_client_ffi/VERSION)
+          fi
+          echo "$version" > "$out/VERSION"
+      - uses: actions/download-artifact@v6
+        with:
+          name: ohc-headers
+          path: odyssey-hub-client/include
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: ohc-libs-*
+          path: odyssey-hub-client/lib
+          merge-multiple: true
+      - name: Zip
+        run: zip -r odyssey-hub-client.zip odyssey-hub-client
+      - uses: actions/upload-artifact@v6
+        with:
+          name: odyssey-hub-client
+          path: odyssey-hub-client.zip

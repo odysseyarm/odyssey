@@ -4,9 +4,10 @@ name: FFI Release
 # pushed. The tag version must match odyssey_hub_client_ffi/Cargo.toml.
 #
 # Two destinations:
-#   1. A GitHub Release on this repo holding the per-triplet zips (not marked
-#      "latest" — that stays reserved for odyssey-desktop-v* app releases so
-#      this doesn't hijack the repo's Latest-release badge).
+#   1. A GitHub Release on this repo holding the one bundled SDK zip (all
+#      platforms + both linkages + CMakeLists.txt) — not marked "latest",
+#      that stays reserved for odyssey-desktop-v* app releases so this
+#      doesn't hijack the repo's Latest-release badge.
 #   2. odysseyarm/vcpkg-registry: the port's versions/ files are bumped so
 #      `vcpkg install odyssey-hub-client` resolves the new release. (Port
 #      name omits "-ffi" — vcpkg is C++-only, so there's no C# package in
@@ -43,6 +44,8 @@ jobs:
   build:
     needs: check-version
     uses: ./.github/workflows/ffi-build.yml
+    with:
+      version: ${{ needs.check-version.outputs.version }}
 
   github-release:
     name: Create GitHub Release
@@ -53,7 +56,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          pattern: odyssey-hub-client-*
+          name: odyssey-hub-client
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,9 +65,9 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "odyssey-hub-client-ffi v$VERSION" \
-            --notes "C/C++ FFI library $VERSION. Prebuilt per vcpkg triplet; consumed by the odyssey-hub-client vcpkg port." \
+            --notes "C/C++ SDK $VERSION. All platforms + both linkages bundled in one zip; consumed by the odyssey-hub-client vcpkg port or directly via CMake FetchContent." \
             --latest=false \
-            odyssey-hub-client-*/*.zip
+            odyssey-hub-client.zip
 
   update-vcpkg-registry:
     name: Update vcpkg registry
@@ -82,6 +85,14 @@ jobs:
           # push (no PR) is fine for our own private registry.
           token: ${{ secrets.VCPKG_REGISTRY_TOKEN }}
           path: vcpkg-registry
+      - name: Download SDK zip
+        uses: actions/download-artifact@v6
+        with:
+          name: odyssey-hub-client
+      - name: Compute SHA512 and patch portfile
+        run: |
+          sha=$(sha512sum odyssey-hub-client.zip | cut -d' ' -f1)
+          sed -i "s/SHA512 [0-9a-fA-F]\{128\}/SHA512 $sha/" vcpkg-registry/ports/odyssey-hub-client/portfile.cmake
       - name: Bootstrap vcpkg tool
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg /tmp/vcpkg-tool
@@ -103,7 +114,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ports/odyssey-hub-client/vcpkg.json versions/
+          git add ports/odyssey-hub-client/vcpkg.json ports/odyssey-hub-client/portfile.cmake versions/
           if git diff --cached --quiet; then
             echo "Registry already up to date for $VERSION, nothing to push"
           else
