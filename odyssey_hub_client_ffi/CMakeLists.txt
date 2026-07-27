@@ -42,10 +42,14 @@ if(OHC_INSTALL_CXX_HEADER)
 endif()
 
 # CMake can't install() an IMPORTED target's binary directly, so it's added
-# as a plain file instead.
+# as a plain file instead — keeping the __<os>_<arch> suffix (matching
+# rerun-io/rerun's rerun_c, which doesn't rename on install either). Non-CMake
+# consumers reference this exact filename by hand.
 if(OHC_LINK_SHARED AND WIN32)
-    install(FILES "${OHC_LIB_DIR}/ohc__${OHC_OS_ARCH}.dll" DESTINATION bin)
-    install(FILES "${OHC_LIB_DIR}/ohc__${OHC_OS_ARCH}.dll.lib" DESTINATION lib)
+    get_target_property(OHC_DLL_LOCATION ohc IMPORTED_LOCATION)
+    get_target_property(OHC_IMPLIB_LOCATION ohc IMPORTED_IMPLIB)
+    install(FILES "${OHC_DLL_LOCATION}" DESTINATION bin)
+    install(FILES "${OHC_IMPLIB_LOCATION}" DESTINATION lib)
 else()
     get_target_property(OHC_LIB_LOCATION ohc IMPORTED_LOCATION)
     install(FILES "${OHC_LIB_LOCATION}" DESTINATION lib)

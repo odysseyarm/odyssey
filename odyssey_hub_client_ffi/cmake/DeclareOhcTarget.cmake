@@ -15,6 +15,15 @@ if(NOT DEFINED OHC_LIB_DIR OR NOT DEFINED OHC_INCLUDE_DIR)
     message(FATAL_ERROR "OHC_LIB_DIR and OHC_INCLUDE_DIR must be set before including DeclareOhcTarget.cmake")
 endif()
 
+# Where the .dll itself lives (as opposed to its .dll.lib import library, in
+# OHC_LIB_DIR). These only differ post-install: install() puts runtime DLLs
+# in bin/ and import libs in lib/, but pre-install everything sits flat
+# together in the bundle's one lib/ dir — so default to OHC_LIB_DIR and let
+# Config.cmake.in (the only context where they diverge) override it.
+if(NOT DEFINED OHC_BIN_DIR)
+    set(OHC_BIN_DIR "${OHC_LIB_DIR}")
+endif()
+
 # Under vcpkg, VCPKG_LIBRARY_LINKAGE ("static"/"dynamic") picks the linkage.
 # Standalone (FetchContent / add_subdirectory), BUILD_SHARED_LIBS does.
 if(DEFINED VCPKG_LIBRARY_LINKAGE)
@@ -48,24 +57,34 @@ else()
     message(FATAL_ERROR "Unsupported platform ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}, can't find a prebuilt ohc library.")
 endif()
 
+# The __<os>_<arch> suffix stays on the installed file too (matching
+# rerun-io/rerun's rerun_c: they don't rename on install either — the
+# Config.cmake.in just bakes in the resolved filename from the original
+# build, same idea as OHC_OS_ARCH being recomputed here). Non-CMake
+# consumers (e.g. a plain vcxproj under vcpkg's classic MSBuild integration)
+# have to reference this exact filename by hand either way — CMake's
+# find_package()/imported-target resolution is the only thing that can pick
+# the right file automatically, and only CMake consumers get that for free.
+set(OHC_LIB_SUFFIX "__${OHC_OS_ARCH}")
+
 if(OHC_LINK_SHARED)
     add_library(ohc SHARED IMPORTED GLOBAL)
     if(WIN32)
         set_target_properties(ohc PROPERTIES
-            IMPORTED_LOCATION "${OHC_LIB_DIR}/ohc__${OHC_OS_ARCH}.dll"
-            IMPORTED_IMPLIB "${OHC_LIB_DIR}/ohc__${OHC_OS_ARCH}.dll.lib"
+            IMPORTED_LOCATION "${OHC_BIN_DIR}/ohc${OHC_LIB_SUFFIX}.dll"
+            IMPORTED_IMPLIB "${OHC_LIB_DIR}/ohc${OHC_LIB_SUFFIX}.dll.lib"
         )
     elseif(APPLE)
-        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc__${OHC_OS_ARCH}.dylib")
+        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc${OHC_LIB_SUFFIX}.dylib")
     else()
-        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc__${OHC_OS_ARCH}.so")
+        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc${OHC_LIB_SUFFIX}.so")
     endif()
 else()
     add_library(ohc STATIC IMPORTED GLOBAL)
     if(WIN32)
-        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/ohc__${OHC_OS_ARCH}.lib")
+        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/ohc${OHC_LIB_SUFFIX}.lib")
     else()
-        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc__${OHC_OS_ARCH}.a")
+        set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc${OHC_LIB_SUFFIX}.a")
     endif()
 
     # A raw Rust staticlib needs its runtime's OS dependencies linked in by
