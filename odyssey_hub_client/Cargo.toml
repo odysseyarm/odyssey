@@ -10,8 +10,8 @@ repository = "https://github.com/odysseyarm/odyssey-desktop"
 
 [dependencies]
 anyhow = "1.0.81"
-odyssey_hub_server_interface = { path = "../odyssey_hub_server_interface" }
-odyssey_hub_common = { path = "../odyssey_hub_common" }
+odyssey_hub_server_interface = { path = "../odyssey_hub_server_interface", version = "0.1.0" }
+odyssey_hub_common = { path = "../odyssey_hub_common", version = "0.1.0" }
 tokio = { version = "1.37.0", features = ["macros", "net", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7.10" }
 tonic = "0.11.0"
