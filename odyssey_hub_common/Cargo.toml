@@ -2,13 +2,15 @@
 name = "odyssey_hub_common"
 version = "0.1.0"
 edition = "2021"
+license-file = "../LICENSE"
+repository = "https://github.com/odysseyarm/odyssey-desktop/"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 arrayvec = "0.7.4"
-ats_common = { git = "https://github.com/odysseyarm/ats_common" }
-ats_usb = { git = "https://github.com/odysseyarm/vmgui" }
+ats_common = { git = "https://github.com/odysseyarm/ats_common", version = "0.1.0" }
+ats_usb = { git = "https://github.com/odysseyarm/vmgui", version = "0.1.0" }
 nalgebra = "0.34"
 app_dirs2 = "2.5.5"
 serde = "1.0.197"
