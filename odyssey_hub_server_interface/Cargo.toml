@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license-file = "../LICENSE"
 repository = "https://github.com/odysseyarm/odyssey-desktop/"
+description = "Protobuf interface and From impl's for Odyssey Hub server"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

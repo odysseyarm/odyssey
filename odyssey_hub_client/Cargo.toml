@@ -3,8 +3,8 @@ name = "odyssey_hub_client"
 version = "0.1.0"
 edition = "2021"
 license-file = "../LICENSE"
-description = "Client library for Odyssey Desktop"
 repository = "https://github.com/odysseyarm/odyssey-desktop"
+description = "Client library for Odyssey Desktop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
