@@ -49,31 +49,31 @@ pub enum DeviceMsg {
     ReadProp(crate::PropKind),
     ReadPropResponse(crate::Props),
 
-    ClearBond,
-    ClearBondResponse(Result<(), ClearBondsError>),
+    ClearBond(),
+    ClearBondResponse(crate::Outcome<crate::Nothing, ClearBondsError>),
 
-    GetTransportMode,
+    GetTransportMode(),
     SetTransportMode(TransportMode),
     TransportModeStatus(TransportMode),
 
     StartPairing(StartPairing),
-    StartPairingResponse,
-    CancelPairing,
-    PairingResult(Result<super::BondedDevice, PairingError>),
+    StartPairingResponse(),
+    CancelPairing(),
+    PairingResult(crate::Outcome<super::BondedDevice, PairingError>),
 
     ReadConfig(crate::ConfigKind),
     ReadConfigResponse(crate::GeneralConfig),
     WriteConfig(crate::GeneralConfig),
-    WriteConfigAck,
-    FlashSettings,
-    FlashSettingsAck,
+    WriteConfigAck(),
+    FlashSettings(),
+    FlashSettingsAck(),
 
-    Reboot,
-    RebootAck,
+    Reboot(),
+    RebootAck(),
 
     AddBond(super::BondEntry),
-    AddBondResponse(Result<(), super::AddBondError>),
+    AddBondResponse(crate::Outcome<crate::Nothing, super::AddBondError>),
 
-    SetDeviceName(heapless::String<32>),
-    SetDeviceNameResponse(Result<(), ()>),
+    SetDeviceName(crate::DeviceName),
+    SetDeviceNameResponse(crate::Outcome<crate::Nothing, crate::Nothing>),
 }

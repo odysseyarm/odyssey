@@ -17,7 +17,186 @@ use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 
 pub mod control;
 pub mod mux;
+#[cfg(feature = "pyo3")]
+mod py;
 pub mod wire;
+
+/// A device name, at most 32 bytes.
+///
+/// A newtype rather than a bare `heapless::String<32>` because pyo3 cannot
+/// convert a foreign type: the orphan rule puts `IntoPyObject`/`FromPyObject`
+/// for `heapless::String` out of reach, and a `#[pyclass]` complex enum needs
+/// every payload convertible. Serialization is transparent, so the wire form is
+/// unchanged.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DeviceName(pub heapless::String<32>);
+
+impl DeviceName {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// Truncates on overflow, matching how names arrive off the wire.
+    pub fn from_str_lossy(s: &str) -> Self {
+        let mut out = heapless::String::new();
+        for c in s.chars() {
+            if out.push(c).is_err() {
+                break;
+            }
+        }
+        Self(out)
+    }
+}
+
+impl core::ops::Deref for DeviceName {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<heapless::String<32>> for DeviceName {
+    fn from(value: heapless::String<32>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<DeviceName> for heapless::String<32> {
+    fn from(value: DeviceName) -> Self {
+        value.0
+    }
+}
+
+/// A bounded list, convertible to a Python `list`.
+///
+/// Same orphan-rule reason as [`DeviceName`].
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[cfg_attr(feature = "serde", serde(bound(
+    serialize = "T: serde::Serialize",
+    deserialize = "T: serde::Deserialize<'de>"
+)))]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct List<T, const N: usize>(pub heapless::Vec<T, N>);
+
+impl<T, const N: usize> core::ops::Deref for List<T, N> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T, const N: usize> From<heapless::Vec<T, N>> for List<T, N> {
+    fn from(value: heapless::Vec<T, N>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T, const N: usize> From<List<T, N>> for heapless::Vec<T, N> {
+    fn from(value: List<T, N>) -> Self {
+        value.0
+    }
+}
+
+/// A `Result` payload that can cross into Python.
+///
+/// pyo3 reserves `Result` for raising exceptions, which is wrong for a message
+/// field — a failed operation reported by the peer is data, not a Python error.
+/// Converts as `{"Ok": value}` / `{"Err": value}`, mirroring serde's externally
+/// tagged form, and serializes transparently so the wire form is unchanged.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[cfg_attr(feature = "serde", serde(bound(
+    serialize = "T: serde::Serialize, E: serde::Serialize",
+    deserialize = "T: serde::Deserialize<'de>, E: serde::Deserialize<'de>"
+)))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Outcome<T, E>(pub Result<T, E>);
+
+impl<T, E> From<Result<T, E>> for Outcome<T, E> {
+    fn from(value: Result<T, E>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T, E> From<Outcome<T, E>> for Result<T, E> {
+    fn from(value: Outcome<T, E>) -> Self {
+        value.0
+    }
+}
+
+#[cfg(feature = "minicbor")]
+impl<C, T: Encode<C>, E: Encode<C>> Encode<C> for Outcome<T, E> {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        self.0.encode(e, ctx)
+    }
+}
+
+#[cfg(feature = "minicbor")]
+impl<'b, C, T: Decode<'b, C>, E: Decode<'b, C>> Decode<'b, C> for Outcome<T, E> {
+    fn decode(
+        d: &mut minicbor::Decoder<'b>,
+        ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
+        Result::<T, E>::decode(d, ctx).map(Self)
+    }
+}
+
+#[cfg(feature = "minicbor")]
+impl<C, T: CborLen<C>, E: CborLen<C>> CborLen<C> for Outcome<T, E> {
+    fn cbor_len(&self, ctx: &mut C) -> usize {
+        self.0.cbor_len(ctx)
+    }
+}
+
+/// The payload of an outcome that carries no data.
+///
+/// `()` has no `FromPyObject` impl — pyo3 only converts it outbound, as `None`
+/// — so an `Outcome<(), E>` could not be constructed from Python. Encodes
+/// exactly like `()` in both serde and CBOR.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Nothing;
+
+#[cfg(feature = "minicbor")]
+impl<C> Encode<C> for Nothing {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        ().encode(e, ctx)
+    }
+}
+
+#[cfg(feature = "minicbor")]
+impl<'b, C> Decode<'b, C> for Nothing {
+    fn decode(
+        d: &mut minicbor::Decoder<'b>,
+        ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
+        <()>::decode(d, ctx).map(|()| Self)
+    }
+}
+
+#[cfg(feature = "minicbor")]
+impl<C> CborLen<C> for Nothing {
+    fn cbor_len(&self, ctx: &mut C) -> usize {
+        ().cbor_len(ctx)
+    }
+}
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
 }
@@ -125,12 +304,12 @@ pub enum PacketData {
     SetDeviceName(
         #[cfg_attr(feature = "minicbor", n(0))]
         #[cfg_attr(feature = "minicbor", cbor(with = "heapless_str32_cbor"))]
-        heapless::String<32>,
+        DeviceName,
     ),
     #[cfg_attr(feature = "minicbor", n(23))]
     SetDeviceNameResponse(
         #[cfg_attr(feature = "minicbor", n(0))]
-        Result<(), ()>,
+        Outcome<Nothing, Nothing>,
     ),
 }
 
@@ -350,7 +529,8 @@ pub enum ConfigKind {
 }
 
 #[repr(C)]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+// Not a `#[pyclass]`: the payloads are foreign types. `src/py.rs` converts it
+// through `wire::GeneralConfig`, which Python sees instead.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -400,7 +580,7 @@ pub enum Props {
     Name(
         #[cfg_attr(feature = "minicbor", n(0))]
         #[cfg_attr(feature = "minicbor", cbor(with = "heapless_str32_cbor"))]
-        heapless::String<32>,
+        DeviceName,
     ),
     #[cfg_attr(feature = "minicbor", n(3))]
     Version(#[cfg_attr(feature = "minicbor", n(0))] Version),
@@ -1045,8 +1225,10 @@ impl StreamUpdate {
 mod heapless_str32_cbor {
     use minicbor::{decode::Error, encode::Error as EncodeError, encode::Write, Decoder, Encoder};
 
+    use crate::DeviceName;
+
     pub fn encode<Ctx, W: Write>(
-        s: &heapless::String<32>,
+        s: &DeviceName,
         e: &mut Encoder<W>,
         _ctx: &mut Ctx,
     ) -> Result<(), EncodeError<W::Error>> {
@@ -1054,22 +1236,12 @@ mod heapless_str32_cbor {
         Ok(())
     }
 
-    pub fn decode<'b, Ctx>(
-        d: &mut Decoder<'b>,
-        _ctx: &mut Ctx,
-    ) -> Result<heapless::String<32>, Error> {
-        let s = d.str()?;
-        let mut hs: heapless::String<32> = heapless::String::new();
-        for c in s.chars() {
-            if hs.push(c).is_err() {
-                break;
-            }
-        }
-        Ok(hs)
+    pub fn decode<'b, Ctx>(d: &mut Decoder<'b>, _ctx: &mut Ctx) -> Result<DeviceName, Error> {
+        Ok(DeviceName::from_str_lossy(d.str()?))
     }
 
-    pub fn cbor_len<Ctx>(s: &heapless::String<32>, _ctx: &mut Ctx) -> usize {
-        let n = s.as_bytes().len();
+    pub fn cbor_len<Ctx>(s: &DeviceName, _ctx: &mut Ctx) -> usize {
+        let n = s.as_str().len();
         let header = if n <= 23 { 1 } else { 2 };
         header + n
     }

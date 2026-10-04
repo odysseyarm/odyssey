@@ -7,6 +7,7 @@ use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 use minicbor::{CborLen, Decode, Encode};
 
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -81,6 +82,7 @@ impl From<AccelConfig> for super::AccelConfig {
 }
 
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -121,6 +123,7 @@ impl From<RosOpenCvIntrinsicsPod<f32>> for CameraCalibrationParams {
 }
 
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -163,6 +166,7 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 
 // This is also the format the POC uses on flash
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
