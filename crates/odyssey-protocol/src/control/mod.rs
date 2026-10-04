@@ -26,7 +26,7 @@ pub struct BondEntry {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BondedDevice {
     pub uuid: [u8; 6],
-    pub name: heapless::String<32>,
+    pub name: crate::DeviceName,
 }
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
