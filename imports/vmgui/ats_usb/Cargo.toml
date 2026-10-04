@@ -1,0 +1,33 @@
+[package]
+name = "ats_usb"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.75"
+argmin = "0.11.0"
+ats_common = { git = "https://github.com/odysseyarm/ats_common.git", features = ["std"] }
+enumn = "0.1.13"
+nalgebra = "0.34"
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera" }
+serde = "1.0.204"
+serde_json = "1.0.121"
+socket2 = "0.6.0"
+tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread", "rt", "sync", "time", "net", "io-util"] }
+tokio-stream = "0.1.14"
+tokio-util = "0.7"
+tracing = "0.1.40"
+protodongers = { git = "https://github.com/odysseyarm/protodonge-rs.git", features = ["std", "serde-std", "minicbor"] }
+num-traits = "0.2.19"
+num-derive = "0.4.2"
+nusb = { version = "0.2.1", features = ["tokio"] }
+postcard = { version = "1.1.3", features = ["use-std"] }
+minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
+heapless = "0.9"
+futures = "0.3.31"
+rand = "0.8"
+
+[features]
+pyo3 = ["protodongers/pyo3"]
