@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "ats_common",
+]
+
+# Enable optimizations for dependencies in dev profile
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
