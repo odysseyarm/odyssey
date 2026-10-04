@@ -13,7 +13,7 @@ use minicbor::{CborLen, Decode, Encode};
 use core::mem::MaybeUninit;
 
 use nalgebra::{Isometry3, Point2, Vector3};
-use opencv_ros_camera::RosOpenCvIntrinsics;
+use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 
 pub mod control;
 pub mod mux;
@@ -363,8 +363,8 @@ pub enum GeneralConfig {
     SuppressMs(u8),
     AccelConfig(AccelConfig),
     GyroConfig(GyroConfig),
-    CameraModelNf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsics<f32>),
-    CameraModelWf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsics<f32>),
+    CameraModelNf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsicsPod<f32>),
+    CameraModelWf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsicsPod<f32>),
     StereoIso(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Isometry3<f32>),
 }
 
