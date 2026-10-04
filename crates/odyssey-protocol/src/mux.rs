@@ -1,5 +1,3 @@
-use heapless::Vec;
-
 use crate::Packet;
 
 pub const MAX_DEVICES: usize = 3;
@@ -11,17 +9,17 @@ const SEMVER: [u16; 3] = [0, 1, 0];
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
 pub enum MuxMsg {
-    DevicesSnapshot(Vec<Uuid, MAX_DEVICES>),
+    DevicesSnapshot(crate::List<Uuid, MAX_DEVICES>),
     DevicePacket(DevicePacket),
-    RequestDevices,
+    RequestDevices(),
     SendTo(SendTo),
     ReadVersion(),
     ReadVersionResponse(Version),
     /// Subscribe to device list changes. After subscribing, the dongle will send
     /// DevicesSnapshot messages whenever devices connect or disconnect.
-    SubscribeDeviceList,
+    SubscribeDeviceList(),
     /// Unsubscribe from device list changes.
-    UnsubscribeDeviceList,
+    UnsubscribeDeviceList(),
 }
 
 #[repr(C)]
@@ -76,9 +74,9 @@ impl MuxMsg {
         }
     }
 
-    /// If this message includes a snapshot of devices, return a reference to the vector.
+    /// If this message includes a snapshot of devices, return the device UUIDs.
     /// Useful for callers that want to examine the snapshot without matching the enum.
-    pub fn devices_snapshot(&self) -> Option<&Vec<[u8; 6], MAX_DEVICES>> {
+    pub fn devices_snapshot(&self) -> Option<&[Uuid]> {
         match self {
             MuxMsg::DevicesSnapshot(devs) => Some(devs),
             _ => None,

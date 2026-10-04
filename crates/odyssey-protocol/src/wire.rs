@@ -1,15 +1,13 @@
-use ats_common::ocv_types::{
-    MinimalCameraCalibrationParams, MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1,
-    OpenCVMatrix5x1,
-};
+use ats_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1};
 #[allow(unused_imports)]
 use nalgebra::ComplexField;
-use opencv_ros_camera::RosOpenCvIntrinsics;
+use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 
 #[cfg(feature = "minicbor")]
 use minicbor::{CborLen, Decode, Encode};
 
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -84,6 +82,7 @@ impl From<AccelConfig> for super::AccelConfig {
 }
 
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -95,31 +94,36 @@ pub struct CameraCalibrationParams {
     pub dist_coeffs: [f32; 5],
 }
 
-impl From<CameraCalibrationParams> for RosOpenCvIntrinsics<f32> {
+/// The wire form carries the 3x3 projection block row-major, as OpenCV writes
+/// it; the pod stores `p`/`k` column-major, as nalgebra does. Only `fx`, `skew`,
+/// `cx`, `fy`, `cy` and the distortion vector are on the wire — `rect` is the
+/// identity and the rest of `p` is derived, which is exactly what
+/// `RosOpenCvIntrinsics::from_params_with_distortion` reconstructs.
+impl From<CameraCalibrationParams> for RosOpenCvIntrinsicsPod<f32> {
     fn from(value: CameraCalibrationParams) -> Self {
-        MinimalCameraCalibrationParams {
-            camera_matrix: OpenCVMatrix3 {
-                data: value.camera_matrix,
-            },
-            dist_coeffs: OpenCVMatrix5x1 {
-                data: value.dist_coeffs,
-            },
+        let m = value.camera_matrix;
+        let (fx, skew, cx, fy, cy) = (m[0], m[1], m[2], m[4], m[5]);
+        Self {
+            p: [fx, 0.0, 0.0, skew, fy, 0.0, cx, cy, 1.0, 0.0, 0.0, 0.0],
+            k: [fx, 0.0, 0.0, skew, fy, 0.0, cx, cy, 1.0],
+            distortion: value.dist_coeffs,
+            rect: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
         }
-        .into()
     }
 }
 
-impl From<RosOpenCvIntrinsics<f32>> for CameraCalibrationParams {
-    fn from(value: RosOpenCvIntrinsics<f32>) -> Self {
-        let value = MinimalCameraCalibrationParams::from(value);
+impl From<RosOpenCvIntrinsicsPod<f32>> for CameraCalibrationParams {
+    fn from(value: RosOpenCvIntrinsicsPod<f32>) -> Self {
+        let p = value.p;
         Self {
-            camera_matrix: value.camera_matrix.data,
-            dist_coeffs: value.dist_coeffs.data,
+            camera_matrix: [p[0], p[3], p[6], p[1], p[4], p[7], p[2], p[5], p[8]],
+            dist_coeffs: value.distortion,
         }
     }
 }
 
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -162,6 +166,7 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 
 // This is also the format the POC uses on flash
 #[repr(C)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
