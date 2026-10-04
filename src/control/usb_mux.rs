@@ -36,20 +36,23 @@ pub enum UsbMuxCtrlMsg {
     ReadVersion(),
     ReadVersionResponse(crate::Version),
 
-    ListBonds,
-    ListBondsResponse(heapless::Vec<super::BondedDevice, { crate::mux::MAX_DEVICES }>),
+    ListBonds(),
+    ListBondsResponse(crate::List<super::BondedDevice, { crate::mux::MAX_DEVICES }>),
 
-    ClearBonds,
-    ClearBondsResponse(Result<(), ClearBondsError>),
+    ClearBonds(),
+    ClearBondsResponse(crate::Outcome<crate::Nothing, ClearBondsError>),
     BondStoreError(BondStoreError),
 
     StartPairing(StartPairing),
-    StartPairingResponse,
-    CancelPairing,
-    PairingResult(Result<super::BondedDevice, PairingError>),
+    StartPairingResponse(),
+    CancelPairing(),
+    PairingResult(crate::Outcome<super::BondedDevice, PairingError>),
 
     AddBond(super::BondEntry),
-    AddBondResponse(Result<(), super::AddBondError>),
+    AddBondResponse(crate::Outcome<crate::Nothing, super::AddBondError>),
 
-    UpdateBondName { uuid: crate::mux::Uuid, name: heapless::String<32> },
+    UpdateBondName {
+        uuid: crate::mux::Uuid,
+        name: crate::DeviceName,
+    },
 }
