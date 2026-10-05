@@ -10,7 +10,7 @@ default-run = "odyssey-vision-tool"
 bevy = ["dep:bevy", "dep:bevy_infinite_grid", "dep:bevy_atmosphere"]
 
 [dependencies]
-ahrs = { version = "0.8.0", features = ["field_access"] }
+ahrs = { git = "https://github.com/jmagnuson/ahrs-rs", rev = "0b04dfe5e23fd0af9dbea1d24116e4c5b69d3ed9", features = ["field_access"]  }
 anyhow = "1.0.75"
 arrayvec = "0.7.4"
 crossbeam = "0.8.4"
@@ -18,16 +18,10 @@ csv = "1.3.0"
 iui = { path = "../../third_party/libui-rs/iui", features = ["plotters"] }
 ui-sys = { path = "../../third_party/libui-rs/ui-sys" }
 leptos_reactive = {  version = "0.6.4", features = ["serde"] }
-nalgebra = { version = "0.34", features = ["serde-serialize"] }
+nalgebra = { version = "0.35", features = ["serde-serialize"] }
 serde = "1.0.193"
 tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread", "rt", "sync", "time"] }
-ats_cv = { git = "ssh://git@github.com/odysseyarm/ats_cv.git", features = ["telemetry"] }
-# ats_cv predates the monorepo and still takes `ats_common` types in its public
-# API, and cargo's [patch] cannot rename a package, so that crate is built
-# alongside our `odyssey-common` copy. This dependency exists only to convert at
-# the ats_cv boundary; delete it (and the converters) once ats_cv depends on
-# odyssey-common.
-ats_common = { git = "https://github.com/odysseyarm/ats_common.git", features = ["std"] }
+odyssey-cv = { git = "ssh://git@github.com/odysseyarm/odyssey-cv.git", features = ["telemetry"] }
 odyssey-common = { path = "../../crates/odyssey-common", features = ["std"] }
 odyssey-playback = { path = "../../crates/odyssey-playback" }
 odyssey-usb = { path = "../../crates/odyssey-usb" }
@@ -38,8 +32,8 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 enumn = "0.1.13"
 parking_lot = "0.12.1"
-opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera" }
-cam-geom = { version = "0.16" }
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }
+cam-geom = { version = "0.17" }
 socket2 = "0.6.0"
 plotters = { version = "0.3.6", default-features = false, features = ["line_series", "point_series", "surface_series", "colormaps", "full_palette"] }
 app_dirs2 = "2.5.5"

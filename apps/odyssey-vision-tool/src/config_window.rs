@@ -898,27 +898,11 @@ impl GeneralSettingsForm {
         device
             .write_config(GeneralConfig::GyroConfig(config.gyro_config.clone()))
             .await?;
-        let (nf_k, nf_d) =
-            odyssey_common::opencv_arrays_from_intrinsics(&config.camera_model_nf);
         device
-            .write_config(GeneralConfig::CameraModelNf(
-                odyssey_protocol::wire::CameraCalibrationParams {
-                    camera_matrix: nf_k,
-                    dist_coeffs: nf_d,
-                }
-                .into(),
-            ))
+            .write_config(GeneralConfig::CameraModelNf((&config.camera_model_nf).into()))
             .await?;
-        let (wf_k, wf_d) =
-            odyssey_common::opencv_arrays_from_intrinsics(&config.camera_model_wf);
         device
-            .write_config(GeneralConfig::CameraModelWf(
-                odyssey_protocol::wire::CameraCalibrationParams {
-                    camera_matrix: wf_k,
-                    dist_coeffs: wf_d,
-                }
-                .into(),
-            ))
+            .write_config(GeneralConfig::CameraModelWf((&config.camera_model_wf).into()))
             .await?;
         device
             .write_config(GeneralConfig::StereoIso(config.stereo_iso.clone()))

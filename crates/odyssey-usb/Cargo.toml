@@ -10,8 +10,8 @@ anyhow = "1.0.75"
 argmin = "0.11.0"
 odyssey-common = { path = "../odyssey-common", features = ["std"] }
 enumn = "0.1.13"
-nalgebra = "0.34"
-opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", features = ["serde-serialize"] }
+nalgebra = "0.35"
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro", features = ["serde-serialize"] }
 serde = "1.0.204"
 serde_json = "1.0.121"
 socket2 = "0.6.0"

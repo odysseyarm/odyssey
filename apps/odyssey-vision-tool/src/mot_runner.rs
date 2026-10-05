@@ -2,7 +2,7 @@ use crate::{CloneButShorter, Marker, TestFrame};
 use ahrs::Ahrs;
 use arrayvec::ArrayVec;
 use odyssey_common::MARKER_PATTERN_LEN;
-use ats_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
+use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
 use odyssey_usb::device::{GeneralSettings, VmDevice};
 use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData};
 use iui::concurrent::Context;
@@ -22,7 +22,7 @@ pub fn transform_aimpoint_to_identity(
     p3: Point2<f64>,
     p4: Point2<f64>,
 ) -> Option<Point2<f64>> {
-    ats_cv::transform_aim_point(
+    odyssey_cv::transform_aim_point(
         center_aim,
         p1,
         p2,
@@ -125,32 +125,6 @@ pub struct MotRunner {
     >,
 }
 
-/// ats_cv still takes `ats_common` types; convert at the boundary until it moves
-/// to odyssey-common.
-pub fn to_ats_screen_calibrations(
-    calibrations: &ArrayVec<
-        (u8, odyssey_common::ScreenCalibration<f32>),
-        { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
-    >,
-) -> ArrayVec<
-    (u8, ats_common::ScreenCalibration<f32>),
-    { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
-> {
-    calibrations
-        .iter()
-        .map(|(id, c)| {
-            (
-                *id,
-                ats_common::ScreenCalibration {
-                    rotation: c.rotation,
-                    homography: c.homography,
-                    object_points: c.object_points,
-                },
-            )
-        })
-        .collect()
-}
-
 pub async fn run(runner: Arc<Mutex<MotRunner>>) {
     tokio::join!(
         markers_loop(runner.clone()),
@@ -191,7 +165,7 @@ pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
     }
 }
 
-// fn get_raycast_aimpoint(fv_state: &ats_cv::foveated::FoveatedAimpointState, screen_calibration: &ScreenCalibration<f64>) -> (Rotation3<f64>, Translation3<f64>, Option<Point2<f64>>) {
+// fn get_raycast_aimpoint(fv_state: &odyssey_cv::foveated::FoveatedAimpointState, screen_calibration: &ScreenCalibration<f64>) -> (Rotation3<f64>, Translation3<f64>, Option<Point2<f64>>) {
 //     let orientation = fv_state.filter.orientation.cast();
 //     let position = fv_state.filter.position.cast();
 //
@@ -206,7 +180,7 @@ pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
 //
 //     let isometry = nalgebra::Isometry::<f64, Rotation3<f64>, 3>::from_parts(trans, rot);
 //
-//     let fv_aimpoint = ats_cv::calculate_aimpoint(
+//     let fv_aimpoint = odyssey_cv::calculate_aimpoint(
 //         &isometry,
 //         screen_calibration,
 //     );
@@ -215,11 +189,11 @@ pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
 // }
 
 fn my_raycast_update(runner: &mut MotRunner) {
-    let screen_calibrations = to_ats_screen_calibrations(&runner.screen_calibrations);
+    let screen_calibrations = runner.screen_calibrations.clone();
     let fv_state = &mut runner.state.fv_state;
     let offset = runner.state.fv_zero_offset;
     let (pose, aimpoint_and_d) =
-        ats_cv::helpers::raycast_update(&screen_calibrations, fv_state, Some(offset));
+        odyssey_cv::helpers::raycast_update(&screen_calibrations, fv_state, Some(offset));
     if let Some(pose) = pose {
         let flip_yz = Matrix3::new(1., 0., 0., 0., -1., 0., 0., 0., -1.);
 
@@ -319,13 +293,13 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
 
         // Re-alignment logic
         if runner.wfnf_realign {
-            if let Some((wf_match_ix, _, _)) = ats_cv::foveated::identify_markers(
+            if let Some((wf_match_ix, _, _)) = odyssey_cv::foveated::identify_markers(
                 &wf_normalized,
                 gravity_vec.cast(),
-                &to_ats_screen_calibrations(&runner.screen_calibrations),
+                &runner.screen_calibrations.clone(),
             ) {
                 let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
-                let (nf_match_ix, _) = ats_cv::foveated::match3(&nf_normalized, &wf_match);
+                let (nf_match_ix, _) = odyssey_cv::foveated::match3(&nf_normalized, &wf_match);
                 if nf_match_ix.iter().all(Option::is_some) {
                     let nf_ordered =
                         nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
@@ -350,7 +324,7 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
             .iter()
             .map(|m| m.ats_cv_marker())
             .collect::<ArrayVec<_, 16>>();
-        let screen_calibrations = to_ats_screen_calibrations(&runner.screen_calibrations);
+        let screen_calibrations = runner.screen_calibrations.clone();
         runner.state.fv_state.observe_markers(
             &nf_markers_cv,
             &wf_markers_cv,
@@ -381,7 +355,7 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
                 .into_inner()
                 .unwrap();
 
-            let (nf_match_ix, _) = ats_cv::foveated::match3(&nf_normalized, &chosen_wf_markers);
+            let (nf_match_ix, _) = odyssey_cv::foveated::match3(&nf_normalized, &chosen_wf_markers);
 
             for (i, &wf_idx) in wf_marker_ix.iter().enumerate() {
                 runner.state.wf_markers2[wf_idx].pattern_id = Some(i as u8);
@@ -467,7 +441,7 @@ fn transform_points(
     points: &[Point2<f32>],
     camera_intrinsics: &RosOpenCvIntrinsics<f32>,
 ) -> Vec<Point2<f32>> {
-    ats_cv::undistort_points(
+    odyssey_cv::undistort_points(
         &odyssey_common::ros_opencv_intrinsics_type_convert(camera_intrinsics),
         points,
     )
@@ -541,7 +515,7 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
             .update_imu(&Vector3::from(accel.gyro), &Vector3::from(accel.accel));
         runner.state.orientation = runner.state.madgwick.quat.to_rotation_matrix();
 
-        ats_cv::series_add!(
+        odyssey_cv::series_add!(
             imu_data,
             (-accel.accel.xzy().cast(), -accel.gyro.xzy().cast())
         );

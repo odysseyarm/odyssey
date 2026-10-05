@@ -90,39 +90,6 @@ where
     RosOpenCvIntrinsics::from_params_with_distortion(fx, _0, fy, cx, cy, distortion)
 }
 
-/// Build intrinsics from OpenCV's row-major `K` and distortion vector.
-///
-/// The bridge for crossing an `opencv-ros-camera` version boundary: the
-/// protocol crate carries the camera model as plain arrays
-/// (`odyssey_protocol::wire::CameraCalibrationParams`), so a consumer can
-/// rebuild intrinsics here without the two crates agreeing on a `nalgebra`
-/// version.
-#[cfg(feature = "std")]
-pub fn intrinsics_from_opencv_arrays(
-    camera_matrix: [f32; 9],
-    dist_coeffs: [f32; 5],
-) -> RosOpenCvIntrinsics<f32> {
-    use ocv_types::{MinimalCameraCalibrationParams, OpenCVMatrix3, OpenCVMatrix5x1};
-
-    MinimalCameraCalibrationParams {
-        camera_matrix: OpenCVMatrix3 {
-            data: camera_matrix,
-        },
-        dist_coeffs: OpenCVMatrix5x1 { data: dist_coeffs },
-    }
-    .into()
-}
-
-/// The inverse of [`intrinsics_from_opencv_arrays`].
-#[cfg(feature = "std")]
-pub fn opencv_arrays_from_intrinsics(
-    intrinsics: &RosOpenCvIntrinsics<f32>,
-) -> ([f32; 9], [f32; 5]) {
-    use ocv_types::MinimalCameraCalibrationParams;
-
-    let minimal = MinimalCameraCalibrationParams::from(intrinsics.clone());
-    (minimal.camera_matrix.data, minimal.dist_coeffs.data)
-}
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy)]

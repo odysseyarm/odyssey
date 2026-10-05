@@ -56,16 +56,6 @@ fn default_camera_intrinsics() -> RosOpenCvIntrinsics<f32> {
     .into()
 }
 
-/// Convert the protocol's plain-array camera model into this crate's
-/// `RosOpenCvIntrinsics` (the two crates resolve different
-/// `opencv-ros-camera` versions, so bridge through arrays).
-fn pod_to_intrinsics(
-    pod: impl Into<odyssey_protocol::wire::CameraCalibrationParams>,
-) -> RosOpenCvIntrinsics<f32> {
-    let wire = pod.into();
-    odyssey_common::intrinsics_from_opencv_arrays(wire.camera_matrix, wire.dist_coeffs)
-}
-
 
 pub const COBS_DELIMITER: u8 = 0x00;
 
@@ -725,11 +715,11 @@ impl VmDevice {
                 _ => anyhow::bail!("Unexpected config variant for GyroConfig"),
             },
             camera_model_nf: match camera_model_nf {
-                GeneralConfig::CameraModelNf(val) => pod_to_intrinsics(val),
+                GeneralConfig::CameraModelNf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelNf"),
             },
             camera_model_wf: match camera_model_wf {
-                GeneralConfig::CameraModelWf(val) => pod_to_intrinsics(val),
+                GeneralConfig::CameraModelWf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelWf"),
             },
             stereo_iso: match stereo_iso {
@@ -1473,7 +1463,7 @@ impl MuxDevice {
             .await?
         {
             UsbMuxCtrlMsg::StartPairingResponse() => Ok(()),
-            UsbMuxCtrlMsg::PairingResult(odyssey_protocol::Outcome(Ok(_addr))) => {
+            UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Ok(_addr)) => {
                 // Pairing finished immediately; treat as success so the caller can proceed
                 Ok(())
             }
@@ -1495,15 +1485,15 @@ impl MuxDevice {
                 })
                 .await?
             {
-                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::Outcome(Ok(device))) => {
+                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Ok(device)) => {
                     return Ok(PairingEvent::Result(device))
                 }
-                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::Outcome(Err(
+                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Err(
                     PairingError::Timeout,
-                ))) => return Ok(PairingEvent::Timeout),
-                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::Outcome(Err(
+                )) => return Ok(PairingEvent::Timeout),
+                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Err(
                     PairingError::Cancelled,
-                ))) => {
+                )) => {
                     return Ok(PairingEvent::Cancelled)
                 }
                 _ => { /* filtered */ }
@@ -1525,12 +1515,12 @@ impl MuxDevice {
                 .await
             {
                 Ok(msg) => match msg {
-                    UsbMuxCtrlMsg::ClearBondsResponse(odyssey_protocol::Outcome(Ok(_))) => {
+                    UsbMuxCtrlMsg::ClearBondsResponse(odyssey_protocol::control::usb_mux::ClearBondsResult::Ok()) => {
                         return Ok(())
                     }
-                    UsbMuxCtrlMsg::ClearBondsResponse(odyssey_protocol::Outcome(Err(
+                    UsbMuxCtrlMsg::ClearBondsResponse(odyssey_protocol::control::usb_mux::ClearBondsResult::Err(
                         ClearBondsError::Failed,
-                    ))) => {
+                    )) => {
                         return Err(anyhow!("Failed to clear bonds"))
                     }
                     // Ignore unrelated ctrl messages (e.g., pairing result racing with clear)
@@ -1587,8 +1577,8 @@ impl MuxDevice {
             })
             .await?
         {
-            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::Outcome(Ok(_))) => Ok(()),
-            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::Outcome(Err(e))) => {
+            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Ok()) => Ok(()),
+            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Err(e)) => {
                 Err(anyhow!("AddBond failed: {e:?}"))
             }
             other => Err(anyhow!("unexpected ctrl response: {other:?}")),
@@ -1910,7 +1900,7 @@ impl VmDevice {
             .await?
         {
             DeviceMsg::StartPairingResponse() => Ok(()),
-            DeviceMsg::PairingResult(odyssey_protocol::Outcome(Ok(_addr))) => {
+            DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Ok(_addr)) => {
                 // Pairing finished immediately; treat as success so the caller can proceed
                 Ok(())
             }
@@ -1922,15 +1912,15 @@ impl VmDevice {
         use odyssey_protocol::control::device::{DeviceMsg, PairingError};
         loop {
             match self.recv_ctrl_msg(Duration::from_secs(120)).await? {
-                DeviceMsg::PairingResult(odyssey_protocol::Outcome(Ok(device))) => {
+                DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Ok(device)) => {
                     return Ok(device)
                 }
-                DeviceMsg::PairingResult(odyssey_protocol::Outcome(Err(
+                DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Err(
                     PairingError::Timeout,
-                ))) => return Err(anyhow!("Pairing timeout")),
-                DeviceMsg::PairingResult(odyssey_protocol::Outcome(Err(
+                )) => return Err(anyhow!("Pairing timeout")),
+                DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Err(
                     PairingError::Cancelled,
-                ))) => {
+                )) => {
                     return Err(anyhow!("Pairing cancelled"))
                 }
                 _ => { /* ignore unrelated ctrl msgs */ }
@@ -1953,8 +1943,8 @@ impl VmDevice {
             })
             .await?
         {
-            DeviceMsg::ClearBondResponse(odyssey_protocol::Outcome(Ok(_))) => Ok(()),
-            DeviceMsg::ClearBondResponse(odyssey_protocol::Outcome(Err(_))) => {
+            DeviceMsg::ClearBondResponse(odyssey_protocol::control::device::ClearBondResult::Ok()) => Ok(()),
+            DeviceMsg::ClearBondResponse(odyssey_protocol::control::device::ClearBondResult::Err(_)) => {
                 Err(anyhow!("Failed to clear bond"))
             }
             other => Err(anyhow!("unexpected response: {other:?}")),
@@ -1970,8 +1960,8 @@ impl VmDevice {
             })
             .await?
         {
-            DeviceMsg::AddBondResponse(odyssey_protocol::Outcome(Ok(_))) => Ok(()),
-            DeviceMsg::AddBondResponse(odyssey_protocol::Outcome(Err(e))) => {
+            DeviceMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Ok()) => Ok(()),
+            DeviceMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Err(e)) => {
                 Err(anyhow!("AddBond failed: {e:?}"))
             }
             other => Err(anyhow!("unexpected response: {other:?}")),
@@ -2067,11 +2057,11 @@ impl VmDevice {
                 _ => anyhow::bail!("Unexpected config variant for GyroConfig"),
             },
             camera_model_nf: match camera_model_nf {
-                GeneralConfig::CameraModelNf(val) => pod_to_intrinsics(val),
+                GeneralConfig::CameraModelNf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelNf"),
             },
             camera_model_wf: match camera_model_wf {
-                GeneralConfig::CameraModelWf(val) => pod_to_intrinsics(val),
+                GeneralConfig::CameraModelWf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelWf"),
             },
             stereo_iso: match stereo_iso {
@@ -2082,11 +2072,12 @@ impl VmDevice {
     }
 
     pub async fn set_name(&self, name: &str) -> Result<()> {
-        use odyssey_protocol::control::device::DeviceMsg;
-        let mut hname: heapless::String<32> = heapless::String::new();
-        for c in name.chars().take(32) {
-            let _ = hname.push(c);
-        }
+        use odyssey_protocol::{SetDeviceNameError, control::device::DeviceMsg};
+        // Rejected here rather than truncated: silently renaming a device to a
+        // prefix of what was asked for is worse than failing.
+        let hname: heapless::String<32> = name
+            .try_into()
+            .map_err(|_| anyhow!("device name is longer than 32 bytes"))?;
         self.send_ctrl_msg(DeviceMsg::SetDeviceName(hname.into()))
             .await?;
         match self
@@ -2095,10 +2086,13 @@ impl VmDevice {
             })
             .await?
         {
-            DeviceMsg::SetDeviceNameResponse(odyssey_protocol::Outcome(Ok(_))) => Ok(()),
-            DeviceMsg::SetDeviceNameResponse(odyssey_protocol::Outcome(Err(_))) => {
-                Err(anyhow!("set_device_name failed on device"))
-            }
+            DeviceMsg::SetDeviceNameResponse(odyssey_protocol::SetDeviceNameResult::Ok()) => Ok(()),
+            DeviceMsg::SetDeviceNameResponse(odyssey_protocol::SetDeviceNameResult::Err(
+                SetDeviceNameError::TooLong,
+            )) => Err(anyhow!("device rejected the name as too long")),
+            DeviceMsg::SetDeviceNameResponse(odyssey_protocol::SetDeviceNameResult::Err(
+                SetDeviceNameError::Failed,
+            )) => Err(anyhow!("device failed to store the name")),
             other => Err(anyhow!("unexpected ctrl response: {other:?}")),
         }
     }

@@ -7,7 +7,7 @@ edition = "2024"
 pyo3 = { version = "0.27.1", optional = true }
 odyssey-common = { path = "../odyssey-common", default-features = false }
 enumn = "0.1.14"
-nalgebra = { version = "0.34", default-features = false }
+nalgebra = { version = "0.35", default-features = false }
 serde = { version = "1.0.219", default-features = false, optional = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro", default-features = false }
 thiserror = { version = "2.0.17", default-features = false }
@@ -22,8 +22,6 @@ minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", optional = tr
 default = ["std"]
 std = ["nalgebra/std", "odyssey-common/std"]
 pyo3 = ["dep:pyo3", "std"]
-# nalgebra's serde impls are what the `Point2`/`Vector3` fields need; the no-std
-# flavor is the floor, so `serde` alone is enough to build without `std`.
 serde = [
     "dep:serde",
     "dep:serde_bytes",
