@@ -1,7 +1,7 @@
 name: FFI Build
 
 # Reusable workflow that cross-builds the C/C++ FFI library
-# (odyssey_hub_client_ffi) for every platform, then bundles everything —
+# (odyssey-hub-client-ffi) for every platform, then bundles everything —
 # CMakeLists.txt, headers, and every platform/linkage's prebuilt libs — into
 # one self-contained "odyssey-hub-client" zip. That single zip is what gets
 # attached to a GitHub Release and is consumed either directly via CMake
@@ -11,11 +11,11 @@ name: FFI Build
 #
 # Called by ffi-ci.yml (PRs / pushes) and ffi-release.yml (tags).
 #
-# odyssey_hub_client_ffi is its own workspace (excluded from the root one,
+# odyssey-hub-client-ffi is its own workspace (excluded from the root one,
 # see root Cargo.toml) with its own Cargo.lock and Cross.toml — building it
 # as part of the root workspace would force cargo to also resolve
-# odyssey_hub_server's ats_cv SSH git dependency, which CI can't
-# authenticate to, even though odyssey_hub_client_ffi doesn't depend on it.
+# odyssey-hub-server's ats_cv SSH git dependency, which CI can't
+# authenticate to, even though odyssey-hub-client-ffi doesn't depend on it.
 
 on:
   workflow_call:
@@ -49,14 +49,14 @@ jobs:
         with:
           tool: cross
       - name: Build (cross)
-        working-directory: odyssey_hub_client_ffi
-        run: cross build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
+        working-directory: sdk/odyssey-hub-client-ffi
+        run: cross build --release -p odyssey-hub-client-ffi --target ${{ matrix.target }}
       - name: Rename libs
         run: |
           set -eu
           mkdir -p libs
-          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
-          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.so" "libs/libohc__${{ matrix.triplet }}.so"
+          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
+          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.so" "libs/libohc__${{ matrix.triplet }}.so"
       - uses: actions/upload-artifact@v6
         with:
           name: ohc-libs-${{ matrix.triplet }}
@@ -67,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ohc-headers
-          path: odyssey_hub_client_ffi/generated/include
+          path: sdk/odyssey-hub-client-ffi/generated/include
 
   ffi-windows:
     name: FFI windows x64 (cross via xwin)
@@ -84,15 +84,15 @@ jobs:
       - name: Add windows target
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build (xwin)
-        working-directory: odyssey_hub_client_ffi
-        run: cargo xwin build --release -p odyssey_hub_client_ffi --target x86_64-pc-windows-msvc
+        working-directory: sdk/odyssey-hub-client-ffi
+        run: cargo xwin build --release -p odyssey-hub-client-ffi --target x86_64-pc-windows-msvc
       - name: Rename libs
         run: |
           set -eu
           mkdir -p libs
-          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.lib libs/ohc__win_x64.lib
-          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll libs/ohc__win_x64.dll
-          cp odyssey_hub_client_ffi/target/x86_64-pc-windows-msvc/release/ohc.dll.lib libs/ohc__win_x64.dll.lib
+          cp sdk/odyssey-hub-client-ffi/target/x86_64-pc-windows-msvc/release/ohc.lib libs/ohc__win_x64.lib
+          cp sdk/odyssey-hub-client-ffi/target/x86_64-pc-windows-msvc/release/ohc.dll libs/ohc__win_x64.dll
+          cp sdk/odyssey-hub-client-ffi/target/x86_64-pc-windows-msvc/release/ohc.dll.lib libs/ohc__win_x64.dll.lib
       - uses: actions/upload-artifact@v6
         with:
           name: ohc-libs-win_x64
@@ -118,14 +118,14 @@ jobs:
       - name: Add target
         run: rustup target add ${{ matrix.target }}
       - name: Build
-        working-directory: odyssey_hub_client_ffi
-        run: cargo build --release -p odyssey_hub_client_ffi --target ${{ matrix.target }}
+        working-directory: sdk/odyssey-hub-client-ffi
+        run: cargo build --release -p odyssey-hub-client-ffi --target ${{ matrix.target }}
       - name: Rename libs
         run: |
           set -eu
           mkdir -p libs
-          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
-          cp "odyssey_hub_client_ffi/target/${{ matrix.target }}/release/libohc.dylib" "libs/libohc__${{ matrix.triplet }}.dylib"
+          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
+          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.dylib" "libs/libohc__${{ matrix.triplet }}.dylib"
       - uses: actions/upload-artifact@v6
         with:
           name: ohc-libs-${{ matrix.triplet }}
@@ -142,13 +142,13 @@ jobs:
           set -eu
           out="odyssey-hub-client"
           mkdir -p "$out/include" "$out/lib" "$out/cmake"
-          cp odyssey_hub_client_ffi/CMakeLists.txt "$out/"
-          cp odyssey_hub_client_ffi/Config.cmake.in "$out/"
-          cp odyssey_hub_client_ffi/cmake/DeclareOhcTarget.cmake "$out/cmake/"
+          cp sdk/odyssey-hub-client-ffi/CMakeLists.txt "$out/"
+          cp sdk/odyssey-hub-client-ffi/Config.cmake.in "$out/"
+          cp sdk/odyssey-hub-client-ffi/cmake/DeclareOhcTarget.cmake "$out/cmake/"
           cp LICENSE "$out/"
           version="${{ inputs.version }}"
           if [ -z "$version" ]; then
-            version=$(cat odyssey_hub_client_ffi/VERSION)
+            version=$(cat sdk/odyssey-hub-client-ffi/VERSION)
           fi
           echo "$version" > "$out/VERSION"
       - uses: actions/download-artifact@v6

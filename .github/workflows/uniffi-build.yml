@@ -6,7 +6,7 @@ name: UniFFI Build
 # here and a matching publish job in uniffi-release.yml.
 #
 # Not to be confused with ffi-build.yml, which builds the separate cbindgen
-# based C/C++ FFI library (odyssey_hub_client_ffi).
+# based C/C++ FFI library (odyssey-hub-client-ffi).
 #
 # All artifacts follow the naming scheme: <language>-<platform>-<target>
 
@@ -35,13 +35,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: Verify pin matches Cargo.lock
         run: |
-          version=$(grep -A1 '^name = "uniffi"$' odyssey_hub_client_uniffi/Cargo.lock | grep '^version' | cut -d'"' -f2)
+          version=$(grep -A1 '^name = "uniffi"$' sdk/odyssey-hub-client-uniffi/Cargo.lock | grep '^version' | cut -d'"' -f2)
           if [ -z "$version" ]; then
             echo "Could not find uniffi version in Cargo.lock" >&2
             exit 1
           fi
           pin="${version%.*}.*"
-          if ! grep -qF "uniffi-bindgen==$pin" odyssey_hub_client_uniffi/pyproject.toml; then
+          if ! grep -qF "uniffi-bindgen==$pin" sdk/odyssey-hub-client-uniffi/pyproject.toml; then
             echo "pyproject.toml build-system pin does not match Cargo.lock uniffi $version — update it to uniffi-bindgen==$pin" >&2
             exit 1
           fi
@@ -87,7 +87,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path sdk/odyssey-hub-client-uniffi/Cargo.toml
           sccache: 'true'
           manylinux: ${{ matrix.platform.manylinux }}
           docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
@@ -122,7 +122,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --manifest-path odyssey_hub_client_uniffi/Cargo.toml
+          args: --release --out dist --manifest-path sdk/odyssey-hub-client-uniffi/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v6
@@ -150,7 +150,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path odyssey_hub_client_uniffi/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path sdk/odyssey-hub-client-uniffi/Cargo.toml
           sccache: 'true'
       - name: Test wheel
         if: matrix.target == 'aarch64'
@@ -184,25 +184,25 @@ jobs:
       - name: Add windows target
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build linux natives (cross)
-        working-directory: odyssey_hub_client_uniffi
+        working-directory: sdk/odyssey-hub-client-uniffi
         run: |
-          cross build --release -p odyssey_hub_client_uniffi --target x86_64-unknown-linux-gnu
-          cross build --release -p odyssey_hub_client_uniffi --target aarch64-unknown-linux-gnu
+          cross build --release -p odyssey-hub-client-uniffi --target x86_64-unknown-linux-gnu
+          cross build --release -p odyssey-hub-client-uniffi --target aarch64-unknown-linux-gnu
       - name: Build windows native (xwin)
-        working-directory: odyssey_hub_client_uniffi
-        run: cargo xwin build --release -p odyssey_hub_client_uniffi --target x86_64-pc-windows-msvc
+        working-directory: sdk/odyssey-hub-client-uniffi
+        run: cargo xwin build --release -p odyssey-hub-client-uniffi --target x86_64-pc-windows-msvc
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-unknown-linux-gnu
-          path: odyssey_hub_client_uniffi/target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so
+          path: sdk/odyssey-hub-client-uniffi/target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-aarch64-unknown-linux-gnu
-          path: odyssey_hub_client_uniffi/target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so
+          path: sdk/odyssey-hub-client-uniffi/target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-pc-windows-msvc
-          path: odyssey_hub_client_uniffi/target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll
+          path: sdk/odyssey-hub-client-uniffi/target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll
 
   dotnet-natives-macos:
     name: DotNet natives macos
@@ -217,18 +217,18 @@ jobs:
       - name: Add x86_64 target
         run: rustup target add x86_64-apple-darwin
       - name: Build macos natives
-        working-directory: odyssey_hub_client_uniffi
+        working-directory: sdk/odyssey-hub-client-uniffi
         run: |
-          cargo build --release -p odyssey_hub_client_uniffi --target aarch64-apple-darwin
-          cargo build --release -p odyssey_hub_client_uniffi --target x86_64-apple-darwin
+          cargo build --release -p odyssey-hub-client-uniffi --target aarch64-apple-darwin
+          cargo build --release -p odyssey-hub-client-uniffi --target x86_64-apple-darwin
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-aarch64-apple-darwin
-          path: odyssey_hub_client_uniffi/target/aarch64-apple-darwin/release/libohc_uniffi.dylib
+          path: sdk/odyssey-hub-client-uniffi/target/aarch64-apple-darwin/release/libohc_uniffi.dylib
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-apple-darwin
-          path: odyssey_hub_client_uniffi/target/x86_64-apple-darwin/release/libohc_uniffi.dylib
+          path: sdk/odyssey-hub-client-uniffi/target/x86_64-apple-darwin/release/libohc_uniffi.dylib
 
   dotnet-package:
     name: DotNet pack NuGet
@@ -248,19 +248,19 @@ jobs:
       - name: Place natives in target dirs
         run: |
           for triple in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin; do
-            mkdir -p "odyssey_hub_client_uniffi/target/$triple/release"
-            mv dotnet-native-"$triple"/* "odyssey_hub_client_uniffi/target/$triple/release/"
+            mkdir -p "sdk/odyssey-hub-client-uniffi/target/$triple/release"
+            mv dotnet-native-"$triple"/* "sdk/odyssey-hub-client-uniffi/target/$triple/release/"
           done
       # Keep the tag in sync with install_tools in the dotnet Justfile
       - name: Install uniffi-bindgen-cs
         run: cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0
       - name: Generate C# bindings
-        working-directory: odyssey_hub_client_uniffi/dotnet/OdysseyHubClient
+        working-directory: sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient
         run: cargo run --manifest-path ../../Cargo.toml --release --bin cs_bindgen -- ../../target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so OdysseyHubClient/generated
       # Explicit Release build first: GeneratePackageOnBuild makes `dotnet pack`
       # skip its implicit build, and pack looks in bin/Release.
       - name: Pack
-        working-directory: odyssey_hub_client_uniffi/dotnet/OdysseyHubClient
+        working-directory: sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient
         run: |
           version_props=()
           if [ -n "${{ inputs.version }}" ]; then
@@ -271,4 +271,4 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-nuget
-          path: odyssey_hub_client_uniffi/dotnet/OdysseyHubClient/nugets/*.nupkg
+          path: sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient/nugets/*.nupkg

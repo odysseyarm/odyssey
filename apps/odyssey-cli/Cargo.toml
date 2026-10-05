@@ -1,0 +1,24 @@
+[package]
+name = "odyssey-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "odyssey-cli"
+path = "src/main.rs"
+
+[dependencies]
+argmin = "0.11"
+argmin-math = { version = "0.5", features = ["vec"] }
+odyssey-usb = { path = "../../crates/odyssey-usb" }
+odyssey-protocol = { path = "../../crates/odyssey-protocol" }
+clap = { version = "4.5.11", features = ["derive"] }
+futures = "0.3.30"
+nalgebra = "0.34"
+nusb = "0.2.1"
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = "1.0.121"
+serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
+tokio = { version = "1.38.0", features = ["signal", "io-std", "io-util", "macros", "rt-multi-thread"] }
+anyhow = "1.0.75"
+rand = "0.8"

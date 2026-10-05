@@ -1,11 +1,11 @@
 [package]
-name = "protodongers"
+name = "odyssey-protocol"
 version = "0.1.3"
 edition = "2024"
 
 [dependencies]
 pyo3 = { version = "0.27.1", optional = true }
-ats_common = { git = "https://github.com/odysseyarm/ats_common.git", default-features = false }
+odyssey-common = { path = "../odyssey-common", default-features = false }
 enumn = "0.1.14"
 nalgebra = { version = "0.34", default-features = false }
 serde = { version = "1.0.219", default-features = false, optional = true }
@@ -20,7 +20,7 @@ minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", optional = tr
 
 [features]
 default = ["std"]
-std = ["nalgebra/std", "ats_common/std"]
+std = ["nalgebra/std", "odyssey-common/std"]
 pyo3 = ["dep:pyo3", "std"]
 # nalgebra's serde impls are what the `Point2`/`Vector3` fields need; the no-std
 # flavor is the floor, so `serde` alone is enough to build without `std`.

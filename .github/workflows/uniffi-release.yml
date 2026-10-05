@@ -2,7 +2,7 @@ name: UniFFI Release
 
 # Publish uniffi bindgen packages for all languages when an
 # odyssey-hub-client-uniffi-vX.Y.Z tag is pushed. The tag version must match
-# odyssey_hub_client_uniffi/Cargo.toml. App release tags (odyssey-desktop-v*)
+# sdk/odyssey-hub-client-uniffi/Cargo.toml. App release tags (odyssey-desktop-v*)
 # and FFI release tags (odyssey-hub-client-ffi-v*) do not trigger this
 # workflow.
 #
@@ -29,9 +29,9 @@ jobs:
         id: check
         run: |
           tag_version="${GITHUB_REF_NAME#odyssey-hub-client-uniffi-v}"
-          crate_version=$(grep -m1 '^version' odyssey_hub_client_uniffi/Cargo.toml | cut -d'"' -f2)
+          crate_version=$(grep -m1 '^version' sdk/odyssey-hub-client-uniffi/Cargo.toml | cut -d'"' -f2)
           if [ "$tag_version" != "$crate_version" ]; then
-            echo "Tag version ($tag_version) does not match odyssey_hub_client_uniffi/Cargo.toml version ($crate_version)" >&2
+            echo "Tag version ($tag_version) does not match sdk/odyssey-hub-client-uniffi/Cargo.toml version ($crate_version)" >&2
             exit 1
           fi
           echo "version=$tag_version" >> "$GITHUB_OUTPUT"
