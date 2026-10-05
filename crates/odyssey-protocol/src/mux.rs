@@ -3,7 +3,7 @@ use crate::Packet;
 pub const MAX_DEVICES: usize = 3;
 pub type Uuid = [u8; 6];
 
-const SEMVER: [u16; 3] = [0, 1, 0];
+const SEMVER: [u16; 3] = [0, 2, 0];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
