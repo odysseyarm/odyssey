@@ -1,6 +1,6 @@
 name: Proto Breaking Change Check
 
-# odyssey_hub_server and every client (in-process odyssey_hub_client, the
+# odyssey-hub-server and every client (in-process odyssey-hub-client, the
 # uniffi bindings, and the FFI/vcpkg library) talk over the gRPC/protobuf
 # service defined in service_interface.proto. Protobuf tolerates clients and
 # servers drifting to different versions independently — but only if field
@@ -16,7 +16,7 @@ name: Proto Breaking Change Check
 on:
   pull_request:
     paths:
-      - 'odyssey_hub_server_interface/proto/**'
+      - 'crates/odyssey-hub-server-interface/proto/**'
 
 permissions:
   contents: read
@@ -28,5 +28,5 @@ jobs:
       - uses: actions/checkout@v5
       - uses: bufbuild/buf-breaking-action@v1
         with:
-          input: odyssey_hub_server_interface/proto
-          against: 'https://github.com/${{ github.repository }}.git#branch=${{ github.event.pull_request.base.ref }},subdir=odyssey_hub_server_interface/proto'
+          input: crates/odyssey-hub-server-interface/proto
+          against: 'https://github.com/${{ github.repository }}.git#branch=${{ github.event.pull_request.base.ref }},subdir=crates/odyssey-hub-server-interface/proto'

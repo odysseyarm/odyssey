@@ -1,0 +1,29 @@
+[package]
+name = "odyssey-hub-client-ffi"
+version = "0.1.0"
+edition = "2021"
+
+# CI likes to use workspace root
+[workspace]
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+name = "ohc"
+
+[dependencies]
+anyhow = "1.0.81"
+odyssey-hub-common = { path = "../../crates/odyssey-hub-common" }
+odyssey-hub-client = { path = "../../crates/odyssey-hub-client" }
+odyssey-hub-server-interface = { path = "../../crates/odyssey-hub-server-interface" }
+tokio = "1.37.0"
+tokio-util = "0.7.10"
+tonic = "0.11.0"
+nalgebra = "0.34"
+odyssey-usb = { path = "../../crates/odyssey-usb" }
+interoptopus = "0.15.0-alpha.6"
+paste = "1.0.15"
+futures-util = "0.3.31"
+
+[build-dependencies]
+cbindgen = "0.29.0"
+indoc = "2.0.6"

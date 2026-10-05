@@ -1,4 +1,4 @@
-use ats_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1};
+use odyssey_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1};
 #[allow(unused_imports)]
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsicsPod;

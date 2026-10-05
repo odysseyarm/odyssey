@@ -5,7 +5,7 @@
 //! device.
 
 use opencv_ros_camera::{RosOpenCvIntrinsics, RosOpenCvIntrinsicsPod};
-use protodongers::wire::CameraCalibrationParams;
+use odyssey_protocol::wire::CameraCalibrationParams;
 
 const FX: f32 = 1234.5;
 const SKEW: f32 = 0.25;

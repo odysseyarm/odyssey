@@ -2,24 +2,33 @@
 resolver = "2"
 
 members = [
-    "odyssey_desktop",
-    "odyssey_hub_client",
-    "odyssey_hub_server",
-    "odyssey_hub_server_interface",
-    "odyssey_hub",
-    "odyssey_hub_common",
+    "apps/odyssey-cli",
+    "apps/odyssey-desktop",
+    "apps/odyssey-hub",
+    "apps/odyssey-usb-cli",
+    "apps/odyssey-vision-tool",
+    "crates/odyssey-common",
+    "crates/odyssey-hub-client",
+    "crates/odyssey-hub-common",
+    "crates/odyssey-hub-server",
+    "crates/odyssey-hub-server-interface",
+    "crates/odyssey-playback",
+    "crates/odyssey-protocol",
+    "crates/odyssey-usb",
+    "third_party/libui-rs/iui",
+    "third_party/libui-rs/ui-sys",
     "tools/cargo-bin",
 ]
 
-# odyssey_hub_client_ffi and odyssey_hub_client_uniffi are excluded (not just
-# left out of members) so they get their own Cargo.lock: odyssey_hub_server
-# depends on ats_cv over an SSH git URL that CI can't authenticate to, and a
-# shared workspace lock forces cargo to resolve every member's dependencies
-# even when building with -p for a single package. Neither FFI nor uniffi
-# depend on odyssey_hub_server, so their own lockfiles never touch ats_cv.
+# sdk/* are excluded (not just left out of members) so they get their own
+# Cargo.lock: odyssey-hub-server depends on ats_cv over an SSH git URL that CI
+# can't authenticate to, and a shared workspace lock forces cargo to resolve
+# every member's dependencies even when building with -p for a single package.
+# Neither FFI nor uniffi depend on odyssey-hub-server, so their own lockfiles
+# never touch ats_cv.
 exclude = [
-    "odyssey_hub_client_ffi",
-    "odyssey_hub_client_uniffi",
+    "sdk/odyssey-hub-client-ffi",
+    "sdk/odyssey-hub-client-uniffi",
 ]
 
 # Enable optimizations for dependencies in dev profile
@@ -36,5 +45,6 @@ inherits = "dev"
 [profile.android-dev]
 inherits = "dev"
 
-# [patch."https://github.com/odysseyarm/vmgui"]
-# ats_usb = { path = "../ats-vision-tool/ats_usb" }
+# opencv-ros-camera is deliberately unpinned here: ats_cv depends on the same
+# fork without a rev, and a rev on our side would make them two distinct
+# sources with incompatible types. Cargo.lock is the pin.
