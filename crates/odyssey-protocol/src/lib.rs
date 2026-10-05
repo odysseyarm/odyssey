@@ -23,11 +23,8 @@ pub mod wire;
 
 /// A device name, at most 32 bytes.
 ///
-/// A newtype rather than a bare `heapless::String<32>` because pyo3 cannot
-/// convert a foreign type: the orphan rule puts `IntoPyObject`/`FromPyObject`
-/// for `heapless::String` out of reach, and a `#[pyclass]` complex enum needs
-/// every payload convertible. Serialization is transparent, so the wire form is
-/// unchanged.
+/// A newtype because pyo3 cannot convert `heapless::String`. Serializes
+/// transparently.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -71,9 +68,7 @@ impl From<DeviceName> for heapless::String<32> {
     }
 }
 
-/// A bounded list, convertible to a Python `list`.
-///
-/// Same orphan-rule reason as [`DeviceName`].
+/// A bounded list. A newtype because pyo3 cannot convert `heapless::Vec`.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -104,99 +99,92 @@ impl<T, const N: usize> From<List<T, N>> for heapless::Vec<T, N> {
     }
 }
 
-/// A `Result` payload that can cross into Python.
+/// Why a rename was refused.
 ///
-/// pyo3 reserves `Result` for raising exceptions, which is wrong for a message
-/// field — a failed operation reported by the peer is data, not a Python error.
-/// Converts as `{"Ok": value}` / `{"Err": value}`, mirroring serde's externally
-/// tagged form, and serializes transparently so the wire form is unchanged.
+/// `TooLong` is reachable only if the caller stops truncating: `DeviceName`
+/// holds 32 bytes, so a longer name has to be rejected before it reaches the
+/// device. `Failed` covers the device-side causes — a flash write that did not
+/// stick, or a state that forbids renaming.
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "T: serde::Serialize, E: serde::Serialize",
-    deserialize = "T: serde::Deserialize<'de>, E: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Outcome<T, E>(pub Result<T, E>);
-
-impl<T, E> From<Result<T, E>> for Outcome<T, E> {
-    fn from(value: Result<T, E>) -> Self {
-        Self(value)
-    }
+#[repr(u8)]
+pub enum SetDeviceNameError {
+    #[cfg_attr(feature = "minicbor", n(0))]
+    TooLong,
+    #[cfg_attr(feature = "minicbor", n(1))]
+    Failed,
 }
 
-impl<T, E> From<Outcome<T, E>> for Result<T, E> {
-    fn from(value: Outcome<T, E>) -> Self {
-        value.0
-    }
-}
-
-#[cfg(feature = "minicbor")]
-impl<C, T: Encode<C>, E: Encode<C>> Encode<C> for Outcome<T, E> {
-    fn encode<W: minicbor::encode::Write>(
-        &self,
-        e: &mut minicbor::Encoder<W>,
-        ctx: &mut C,
-    ) -> Result<(), minicbor::encode::Error<W::Error>> {
-        self.0.encode(e, ctx)
-    }
-}
-
-#[cfg(feature = "minicbor")]
-impl<'b, C, T: Decode<'b, C>, E: Decode<'b, C>> Decode<'b, C> for Outcome<T, E> {
-    fn decode(
-        d: &mut minicbor::Decoder<'b>,
-        ctx: &mut C,
-    ) -> Result<Self, minicbor::decode::Error> {
-        Result::<T, E>::decode(d, ctx).map(Self)
-    }
-}
-
-#[cfg(feature = "minicbor")]
-impl<C, T: CborLen<C>, E: CborLen<C>> CborLen<C> for Outcome<T, E> {
-    fn cbor_len(&self, ctx: &mut C) -> usize {
-        self.0.cbor_len(ctx)
-    }
-}
-
-/// The payload of an outcome that carries no data.
+/// The result of a rename request.
 ///
-/// `()` has no `FromPyObject` impl — pyo3 only converts it outbound, as `None`
-/// — so an `Outcome<(), E>` could not be constructed from Python. Encodes
-/// exactly like `()` in both serde and CBOR.
+/// A dedicated enum rather than `Result` because pyo3 converts `Result` only
+/// as a function return, where it raises; a status reported by the device is
+/// data.
+#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Nothing;
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        from = "Result<(), SetDeviceNameError>",
+        into = "Result<(), SetDeviceNameError>"
+    )
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetDeviceNameResult {
+    Ok(),
+    Err(SetDeviceNameError),
+}
+
+impl From<Result<(), SetDeviceNameError>> for SetDeviceNameResult {
+    fn from(value: Result<(), SetDeviceNameError>) -> Self {
+        match value {
+            Ok(()) => Self::Ok(),
+            Err(e) => Self::Err(e),
+        }
+    }
+}
+
+impl From<SetDeviceNameResult> for Result<(), SetDeviceNameError> {
+    fn from(value: SetDeviceNameResult) -> Self {
+        match value {
+            SetDeviceNameResult::Ok() => Ok(()),
+            SetDeviceNameResult::Err(e) => Err(e),
+        }
+    }
+}
 
 #[cfg(feature = "minicbor")]
-impl<C> Encode<C> for Nothing {
+impl<C> Encode<C> for SetDeviceNameResult {
     fn encode<W: minicbor::encode::Write>(
         &self,
         e: &mut minicbor::Encoder<W>,
         ctx: &mut C,
     ) -> Result<(), minicbor::encode::Error<W::Error>> {
-        ().encode(e, ctx)
+        Result::<(), SetDeviceNameError>::from(*self).encode(e, ctx)
     }
 }
 
 #[cfg(feature = "minicbor")]
-impl<'b, C> Decode<'b, C> for Nothing {
+impl<'b, C> Decode<'b, C> for SetDeviceNameResult {
     fn decode(
         d: &mut minicbor::Decoder<'b>,
         ctx: &mut C,
     ) -> Result<Self, minicbor::decode::Error> {
-        <()>::decode(d, ctx).map(|()| Self)
+        Result::<(), SetDeviceNameError>::decode(d, ctx).map(Self::from)
     }
 }
 
 #[cfg(feature = "minicbor")]
-impl<C> CborLen<C> for Nothing {
+impl<C> CborLen<C> for SetDeviceNameResult {
     fn cbor_len(&self, ctx: &mut C) -> usize {
-        ().cbor_len(ctx)
+        Result::<(), SetDeviceNameError>::from(*self).cbor_len(ctx)
     }
 }
+
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
 }
@@ -309,7 +297,7 @@ pub enum PacketData {
     #[cfg_attr(feature = "minicbor", n(23))]
     SetDeviceNameResponse(
         #[cfg_attr(feature = "minicbor", n(0))]
-        Outcome<Nothing, Nothing>,
+        SetDeviceNameResult,
     ),
 }
 
@@ -529,8 +517,7 @@ pub enum ConfigKind {
 }
 
 #[repr(C)]
-// Not a `#[pyclass]`: the payloads are foreign types. `src/py.rs` converts it
-// through `wire::GeneralConfig`, which Python sees instead.
+// Not a `#[pyclass]`: foreign payloads, converted through `wire::GeneralConfig`.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",

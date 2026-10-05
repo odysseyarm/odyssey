@@ -94,11 +94,9 @@ pub struct CameraCalibrationParams {
     pub dist_coeffs: [f32; 5],
 }
 
-/// The wire form carries the 3x3 projection block row-major, as OpenCV writes
-/// it; the pod stores `p`/`k` column-major, as nalgebra does. Only `fx`, `skew`,
-/// `cx`, `fy`, `cy` and the distortion vector are on the wire — `rect` is the
-/// identity and the rest of `p` is derived, which is exactly what
-/// `RosOpenCvIntrinsics::from_params_with_distortion` reconstructs.
+/// Wire `camera_matrix` is OpenCV's `K`, row-major; the pod stores `p`/`k`
+/// column-major. `rect` is the identity and the rest of `p` is derived, which
+/// is what `RosOpenCvIntrinsics::from_params_with_distortion` reconstructs.
 impl From<CameraCalibrationParams> for RosOpenCvIntrinsicsPod<f32> {
     fn from(value: CameraCalibrationParams) -> Self {
         let m = value.camera_matrix;

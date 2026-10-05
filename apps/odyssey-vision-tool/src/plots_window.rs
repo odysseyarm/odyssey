@@ -1,6 +1,6 @@
 use std::{cell::Cell, f64::consts::PI, ops::Range, rc::Rc};
 
-use ats_cv::telemetry::Series;
+use odyssey_cv::telemetry::Series;
 use iui::{
     controls::{Area, AreaDrawParams, AreaHandler, AreaKeyEvent, Window, WindowType},
     draw::plotters::PlottersBackend,
@@ -104,7 +104,7 @@ impl AreaHandler for MainCanvas {
 }
 
 fn gyro_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
-    let series = ats_cv::telemetry::imu_data();
+    let series = odyssey_cv::telemetry::imu_data();
     vec3_f64_chart(
         area,
         "IMU Angular Velocity",
@@ -115,7 +115,7 @@ fn gyro_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
 }
 
 fn accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
-    let series = ats_cv::telemetry::imu_data();
+    let series = odyssey_cv::telemetry::imu_data();
     vec3_f64_chart(
         area,
         "IMU Acceleration",
@@ -127,7 +127,7 @@ fn accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
 
 #[allow(dead_code)]
 fn pnp_position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
-    let series = ats_cv::telemetry::pnp_solutions();
+    let series = odyssey_cv::telemetry::pnp_solutions();
     vec3_f64_chart(
         area,
         "PnP Position",
@@ -143,7 +143,7 @@ fn pnp_position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
 
 #[allow(dead_code)]
 fn pnp_orientation_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
-    let series = ats_cv::telemetry::pnp_solutions();
+    let series = odyssey_cv::telemetry::pnp_solutions();
     vec3_f64_chart(
         area,
         "PnP Orientation",
@@ -161,7 +161,7 @@ fn rot_bias_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Rot. Bias",
-        ats_cv::telemetry::eskf_rot_bias(),
+        odyssey_cv::telemetry::eskf_rot_bias(),
         -1.0..1.0,
     );
 }
@@ -170,7 +170,7 @@ fn accel_bias_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Accel. Bias",
-        ats_cv::telemetry::eskf_accel_bias(),
+        odyssey_cv::telemetry::eskf_accel_bias(),
         -5.0..5.0,
     );
 }
@@ -180,7 +180,7 @@ fn gravity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Gravity",
-        ats_cv::telemetry::eskf_gravity(),
+        odyssey_cv::telemetry::eskf_gravity(),
         -10.0..10.0,
     );
 }
@@ -189,7 +189,7 @@ fn local_gravity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Local Gravity",
-        ats_cv::telemetry::eskf_local_gravity(),
+        odyssey_cv::telemetry::eskf_local_gravity(),
         -10.0..10.0,
     );
 }
@@ -198,7 +198,7 @@ fn apparent_accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Apparent Accel.",
-        ats_cv::telemetry::eskf_apparent_accel(),
+        odyssey_cv::telemetry::eskf_apparent_accel(),
         -10.0..10.0,
     );
 }
@@ -207,7 +207,7 @@ fn velocity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Velocity",
-        ats_cv::telemetry::eskf_velocity(),
+        odyssey_cv::telemetry::eskf_velocity(),
         -1.0..1.0,
     );
 }
@@ -216,7 +216,7 @@ fn accel_bias_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift
     vec3_f32_chart(
         area,
         "ESKF Accel. Bias Uncertainty",
-        ats_cv::telemetry::eskf_accel_bias_uncertainty(),
+        odyssey_cv::telemetry::eskf_accel_bias_uncertainty(),
         0.0..1.0,
     );
 }
@@ -226,7 +226,7 @@ fn rot_bias_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>)
     vec3_f32_chart(
         area,
         "ESKF Rot. Bias Uncertainty",
-        ats_cv::telemetry::eskf_rot_bias_uncertainty(),
+        odyssey_cv::telemetry::eskf_rot_bias_uncertainty(),
         0.0..1.0,
     );
 }
@@ -235,13 +235,13 @@ fn velocity_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>)
     vec3_f32_chart(
         area,
         "ESKF Velocity Uncertainty",
-        ats_cv::telemetry::eskf_velocity_uncertainty(),
+        odyssey_cv::telemetry::eskf_velocity_uncertainty(),
         0.0..1.0,
     );
 }
 
 fn orientation_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
-    let series = ats_cv::telemetry::eskf_orientation_uncertainty();
+    let series = odyssey_cv::telemetry::eskf_orientation_uncertainty();
     vec3_f64_chart(
         area,
         "ESKF Orientation Uncertainty",
@@ -257,7 +257,7 @@ fn orientation_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shif
 }
 
 fn eskf_mismatch_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
-    let series = ats_cv::telemetry::eskf_mismatch_count();
+    let series = odyssey_cv::telemetry::eskf_mismatch_count();
     scalar_f64_chart(
         area,
         "ESKF/P3P Mismatch Count",
@@ -271,7 +271,7 @@ fn position_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>)
     vec3_f32_chart(
         area,
         "ESKF Position Uncertainty",
-        ats_cv::telemetry::eskf_position_uncertainty(),
+        odyssey_cv::telemetry::eskf_position_uncertainty(),
         0.0..1.0,
     );
 }
@@ -280,7 +280,7 @@ fn position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
         "ESKF Position",
-        ats_cv::telemetry::eskf_position(),
+        odyssey_cv::telemetry::eskf_position(),
         0.0..5.0,
     );
 }

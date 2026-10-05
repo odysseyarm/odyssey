@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 directories = "4.0"
-ahrs = { version = "0.8", features = ["field_access"] }
+ahrs = { git = "https://github.com/jmagnuson/ahrs-rs", rev = "0b04dfe5e23fd0af9dbea1d24116e4c5b69d3ed9", features = ["field_access"]  }
 anyhow = "1.0.81"
 futures = { version = "0.3.30", default-features = false, features = ["alloc", "async-await", "std"] }
 futures-concurrency = "7.6.1"
@@ -27,18 +27,11 @@ pin-project = "1.1.5"
 odyssey-usb = { path = "../odyssey-usb" }
 nusb = "0.2"
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
-nalgebra = "0.34"
-cam-geom = "0.16"
-opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera" }
-ats_cv = { git = "ssh://git@github.com/odysseyarm/ats_cv.git" }
-# ats_cv predates the monorepo and still takes `ats_common` types in its public
-# API, and cargo's [patch] cannot rename a package, so that crate is built
-# alongside our `odyssey-common` copy. This dependency exists only to convert at
-# the ats_cv boundary; delete it (and the converters) once ats_cv depends on
-# odyssey-common.
-ats_common = { git = "https://github.com/odysseyarm/ats_common.git", features = ["std"] }
+nalgebra = "0.35"
+cam-geom = "0.17"
+opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }
+odyssey-cv = { git = "ssh://git@github.com/odysseyarm/odyssey-cv.git" }
 odyssey-common = { path = "../odyssey-common" }
-sqpnp = { git = "https://github.com/0e4ef622/sqpnp.git" }
 socket2 = "0.5.7"
 arrayvec = "0.7.4"
 serde_json = "1.0.128"

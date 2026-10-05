@@ -4,7 +4,7 @@ use argmin::core::{CostFunction, Executor, Gradient};
 use argmin_observer_slog::SlogLogger;
 use clap::Parser;
 use futures::StreamExt;
-use nalgebra::{SVector, Vector3};
+use nalgebra::Vector3;
 use nusb::MaybeFuture as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,7 +35,7 @@ struct CostFn {
 }
 
 impl CostFunction for CostFn {
-    type Param = SVector<f64, 6>;
+    type Param = Vec<f64>;
     type Output = f64;
 
     fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
@@ -61,8 +61,8 @@ impl CostFunction for CostFn {
 }
 
 impl Gradient for CostFn {
-    type Param = SVector<f64, 6>;
-    type Gradient = SVector<f64, 6>;
+    type Param = Vec<f64>;
+    type Gradient = Vec<f64>;
 
     // Calculate the gradient of the cost function
     fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
@@ -73,7 +73,7 @@ impl Gradient for CostFn {
         let s_y = p[4];
         let s_z = p[5];
 
-        let mut grad = SVector::<f64, 6>::zeros();
+        let mut grad = vec![0.0; 6];
 
         for m in &self.measurements {
             let ax = s_x * m.x + b_x;
@@ -229,7 +229,7 @@ async fn calculate_and_save_bias_scale(
     let cost_function = CostFn { measurements, g };
 
     // Initial parameter guess: [b_x, b_y, b_z, s_x, s_y, s_z]
-    let init_param = nalgebra::Vector6::new(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+    let init_param = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 
     // Perform optimization with constraints and detailed logging
     let solver = argmin::solver::gradientdescent::SteepestDescent::new(

@@ -37,3 +37,35 @@ pub enum AddBondError {
     Full,
     Failed,
 }
+
+/// The result of an add-bond request. Serializes as the `Result` it replaces.
+#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(from = "Result<(), AddBondError>", into = "Result<(), AddBondError>")
+)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AddBondResult {
+    Ok(),
+    Err(AddBondError),
+}
+
+impl From<Result<(), AddBondError>> for AddBondResult {
+    fn from(value: Result<(), AddBondError>) -> Self {
+        match value {
+            Ok(()) => Self::Ok(),
+            Err(e) => Self::Err(e),
+        }
+    }
+}
+
+impl From<AddBondResult> for Result<(), AddBondError> {
+    fn from(value: AddBondResult) -> Self {
+        match value {
+            AddBondResult::Ok() => Ok(()),
+            AddBondResult::Err(e) => Err(e),
+        }
+    }
+}

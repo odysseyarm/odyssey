@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use odyssey_common::MARKER_PATTERN_LEN;
-use ats_cv::foveated::FoveatedAimpointState;
+use odyssey_cv::foveated::FoveatedAimpointState;
 use odyssey_usb::packets::vm::MotData;
 use nalgebra::Isometry3;
 use nalgebra::{Matrix3, Matrix3x1, Point2, Rotation3};
@@ -93,7 +93,7 @@ pub struct MotState {
     pub rotation_mat: Matrix3<f32>,
     pub translation_mat: Matrix3x1<f32>,
 
-    pub fv_state: ats_cv::foveated::FoveatedAimpointState,
+    pub fv_state: odyssey_cv::foveated::FoveatedAimpointState,
     pub fv_zero_offset: Isometry3<f32>,
 
     pub fv_aimpoint_history: [(Point2<f32>, f32, Matrix3x1<f32>); 80],
@@ -135,8 +135,8 @@ pub struct Marker {
 }
 
 impl Marker {
-    pub fn ats_cv_marker(&self) -> ats_cv::foveated::Marker {
-        ats_cv::foveated::Marker {
+    pub fn ats_cv_marker(&self) -> odyssey_cv::foveated::Marker {
+        odyssey_cv::foveated::Marker {
             position: self.normalized.cast(),
         }
     }

@@ -40,8 +40,8 @@ enum DeviceStreamEvent {
 }
 
 /// Events from the device handler's merged stream
-// ats_cv foveated helpers
-use ats_cv::{
+// odyssey_cv foveated helpers
+use odyssey_cv::{
     foveated::FoveatedAimpointState, helpers as ats_helpers, to_normalized_image_coordinates,
     undistort_points,
 };
@@ -1791,7 +1791,7 @@ async fn device_handler_task(
                             calculate_zero_offset_from_tracking_event(trans, point, &sc, &te)
                         } else {
                             let sc = screen_calibrations.load();
-                            ats_helpers::calculate_zero_offset_quat(trans, point, &to_ats_screen_calibrations(&sc), &fv_state)
+                            ats_helpers::calculate_zero_offset_quat(trans, point, &sc, &fv_state)
                         };
                         if let Some(quat) = quat {
                             let iso = Isometry3::from_parts(trans, quat);
@@ -2124,7 +2124,7 @@ async fn device_handler_task(
                             // BLE mux path
                             let hs_name = odyssey_protocol::DeviceName::from_str_lossy(&name);
                             match tokio::time::timeout(Duration::from_secs(5), dev.request(odyssey_protocol::PacketData::SetDeviceName(hs_name))).await {
-                                Ok(Ok(odyssey_protocol::PacketData::SetDeviceNameResponse(odyssey_protocol::Outcome(Ok(_))))) => Ok(()),
+                                Ok(Ok(odyssey_protocol::PacketData::SetDeviceNameResponse(odyssey_protocol::SetDeviceNameResult::Ok()))) => Ok(()),
                                 Ok(Ok(_)) => Err("unexpected response to SetDeviceName".into()),
                                 Ok(Err(e)) => Err(e.to_string()),
                                 Err(_) => Err("set_device_name timed out".into()),
@@ -2608,7 +2608,7 @@ async fn handle_stream_event(
                 let guard = device_offsets.lock().await;
                 guard.get(&device.uuid).cloned()
             };
-            let (pose_opt, aim_and_d_opt) = ats_helpers::raycast_update(&to_ats_screen_calibrations(&sc), fv_state, offset_opt);
+            let (pose_opt, aim_and_d_opt) = ats_helpers::raycast_update(&sc, fv_state, offset_opt);
             if let (Some((rotmat, transvec)), Some((pt, d))) = (pose_opt, aim_and_d_opt) {
                 let tracking_pose = transform_pose_for_client(rotmat, transvec);
                 let tracking = TrackingEvent {
@@ -2686,7 +2686,7 @@ async fn handle_stream_event(
                     &nf_markers,
                     &wf_markers,
                     gravity_vec,
-                    &to_ats_screen_calibrations(&screen_calibrations.load()),
+                    &screen_calibrations.load(),
                 );
 
                 // Attempt to compute pose and aimpoint using raycast_update.
@@ -2697,7 +2697,7 @@ async fn handle_stream_event(
                     guard.get(&device.uuid).cloned()
                 };
                 let (pose_opt, aim_and_d_opt) =
-                    ats_helpers::raycast_update(&to_ats_screen_calibrations(&sc), fv_state, offset_opt);
+                    ats_helpers::raycast_update(&sc, fv_state, offset_opt);
 
                 if pose_opt.is_none() {
                     trace!(
@@ -2771,12 +2771,12 @@ async fn handle_stream_event(
                     let local = Vector3::new(local.x, local.z, local.y);
                     UnitVector3::new_normalize(local)
                 };
-                let wf_empty: Vec<ats_cv::foveated::Marker> = Vec::new();
+                let wf_empty: Vec<odyssey_cv::foveated::Marker> = Vec::new();
                 let _observed = fv_state.observe_markers(
                     &nf_markers,
                     &wf_empty,
                     gravity_vec,
-                    &to_ats_screen_calibrations(&screen_calibrations.load()),
+                    &screen_calibrations.load(),
                 );
 
                 let sc = screen_calibrations.load();
@@ -2785,7 +2785,7 @@ async fn handle_stream_event(
                     guard.get(&device.uuid).cloned()
                 };
                 let (pose_opt, aim_and_d_opt) =
-                    ats_helpers::raycast_update(&to_ats_screen_calibrations(&sc), fv_state, offset_opt);
+                    ats_helpers::raycast_update(&sc, fv_state, offset_opt);
 
                 if let Some((rotmat, transvec)) = pose_opt {
                     tracking_pose = Some(transform_pose_for_client(rotmat, transvec));
@@ -2839,31 +2839,6 @@ fn transform_pose_for_client(rotmat: Matrix3<f32>, transvec: Vector3<f32>) -> Po
     }
 }
 
-/// ats_cv predates the monorepo and still takes `ats_common` types in its public API.
-/// Convert at the boundary; drop this once ats_cv depends on odyssey-common directly.
-fn to_ats_screen_calibrations(
-    src: &arrayvec::ArrayVec<
-        (u8, ScreenCalibration<f32>),
-        { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
-    >,
-) -> arrayvec::ArrayVec<
-    (u8, ats_common::ScreenCalibration<f32>),
-    { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
-> {
-    src.iter()
-        .map(|(id, c)| {
-            (
-                *id,
-                ats_common::ScreenCalibration {
-                    rotation: c.rotation,
-                    homography: c.homography,
-                    object_points: c.object_points,
-                },
-            )
-        })
-        .collect()
-}
-
 /// Compute zero offset quaternion from a client-side TrackingEvent.
 /// The TrackingEvent pose has been through `transform_pose_for_client` (flip applied),
 /// so we undo the flip to recover the raw orientation/position before computing the offset.
@@ -2891,7 +2866,7 @@ fn calculate_zero_offset_from_tracking_event(
     let position: Vector3<f32> =
         Vector3::new(raw_translation.x, raw_translation.y, raw_translation.z);
 
-    let ats_calibrations = to_ats_screen_calibrations(screen_calibrations);
+    let ats_calibrations = screen_calibrations.clone();
     let screen_calibration = ats_helpers::get_screen_calibration(&ats_calibrations, screen_id)?;
     let inv_homography = screen_calibration.homography.try_inverse()?;
 
@@ -2917,7 +2892,7 @@ fn build_markers_from_points(
     raw_points: Vec<Point2<f32>>,
     camera_model: &RosOpenCvIntrinsics<f32>,
     stereo_iso: Option<&Isometry3<f32>>,
-) -> Vec<ats_cv::foveated::Marker> {
+) -> Vec<odyssey_cv::foveated::Marker> {
     if raw_points.is_empty() {
         return Vec::new();
     }
@@ -2927,7 +2902,7 @@ fn build_markers_from_points(
         .into_iter()
         .map(|pt| {
             let normalized = to_normalized_image_coordinates(pt, &intrinsics, stereo_iso);
-            ats_cv::foveated::Marker {
+            odyssey_cv::foveated::Marker {
                 position: NaPoint2::new(normalized.x, normalized.y),
             }
         })

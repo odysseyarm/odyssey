@@ -1,8 +1,5 @@
-//! The wire form of the camera model is hand-mapped onto
-//! [`RosOpenCvIntrinsicsPod`] instead of going through
-//! `RosOpenCvIntrinsics::from_params_with_distortion`, so pin the two against
-//! each other: a wrong row/column-major shuffle here silently mis-calibrates a
-//! device.
+//! The wire <-> pod mapping is hand-written, so pin it against upstream's own
+//! constructor: a wrong row/column-major shuffle mis-calibrates a device.
 
 use opencv_ros_camera::{RosOpenCvIntrinsics, RosOpenCvIntrinsicsPod};
 use odyssey_protocol::wire::CameraCalibrationParams;

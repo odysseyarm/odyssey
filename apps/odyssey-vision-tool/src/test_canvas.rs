@@ -67,7 +67,7 @@ impl AreaHandler for TestCanvas {
         let grid_path = Path::new(ctx, FillMode::Winding);
 
         // todo lol... i know
-        let transform = ats_cv::get_perspective_transform(
+        let transform = odyssey_cv::get_perspective_transform(
             Point2::new(draw_params.area_width / 2.0, draw_params.area_height as f64), // bottom
             Point2::new(0.0, draw_params.area_height / 2.0),                           // left
             Point2::new(draw_params.area_width / 2.0, 0.0),                            // top
@@ -172,11 +172,9 @@ impl AreaHandler for TestCanvas {
                         let t = Translation3::new(0., -0.0381, 0.);
                         let quat = {
                             let screen_calibrations =
-                                crate::mot_runner::to_ats_screen_calibrations(
-                                    &self.runner.lock().screen_calibrations,
-                                );
+                                &self.runner.lock().screen_calibrations;
                             let fv_state = &self.runner.lock().state.fv_state;
-                            ats_cv::helpers::calculate_zero_offset_quat(
+                            odyssey_cv::helpers::calculate_zero_offset_quat(
                                 t,
                                 Point2::new(0.5, 0.5),
                                 &screen_calibrations,
