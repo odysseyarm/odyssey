@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "atslite-board"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "atslite-boot-api",
  "atslite-common",
