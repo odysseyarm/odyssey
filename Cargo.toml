@@ -50,8 +50,5 @@ inherits = "dev"
 # fork without a rev, and a rev on our side would make them two distinct
 # sources with incompatible types. Cargo.lock is the pin.
 
-# odyssey-cv pulls odyssey-common from this repo over git. Without the patch
-# cargo builds that checkout alongside the local crate, and the two copies of
-# ScreenCalibration do not unify, so point the git source at the workspace crate.
 [patch."https://github.com/odysseyarm/odyssey"]
 odyssey-common = { path = "crates/odyssey-common" }

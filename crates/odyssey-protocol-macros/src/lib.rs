@@ -1,18 +1,15 @@
 //! Attribute macros for `odyssey-protocol`.
 //!
-//! Every wire type in that crate repeats the same feature-gated derive stack.
-//! These macros prepend it, so a type declares only what makes it different:
-//! its `repr`, its pyo3 class form, and its own derives.
+//! Every wire type repeats the same feature-gated derives. `protocol_type`
+//! prepends them so a type only spells out what differs.
 
 use proc_macro::TokenStream;
 use quote::quote;
 
-/// Derives `defmt::Format`, serde, and minicbor on a wire type, each behind its
-/// feature.
+/// Derives `defmt::Format`, serde and minicbor, each behind its feature.
 ///
-/// Pass `no_cbor` for the types that are not encoded with minicbor directly —
-/// usually because a `serde(from = ..., into = ...)` conversion carries them
-/// through another type.
+/// `no_cbor` skips minicbor, for types another type carries through a
+/// `serde(from = ..., into = ...)`.
 ///
 /// ```ignore
 /// #[protocol_type]

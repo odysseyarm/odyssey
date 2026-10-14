@@ -1,6 +1,6 @@
 use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub;
-use dioxus::{html::geometry::euclid::Rect, logger::tracing, prelude::*};
+use dioxus::{logger::tracing, prelude::*};
 use odyssey_hub_client::tracking_history::TrackingHistory;
 use std::collections::HashMap;
 
@@ -8,6 +8,11 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 /// Tracking history ring buffer capacity per device (~2 seconds at 100Hz)
 const TRACKING_HISTORY_CAP: usize = 200;
+
+/// Zero point in screen space. The target layer covers the window, the window
+/// is fullscreen on the screen the hub resolves against, and the target image
+/// is centered in that layer, so the target sits at the screen center.
+const ZERO_TARGET: nalgebra::Vector2<f32> = nalgebra::Vector2::new(0.5, 0.5);
 
 /// Save zero result: None = idle, Some(Ok(())) = saved, Some(Err(msg)) = error
 type SaveStatus = Option<Result<(), String>>;
@@ -32,18 +37,6 @@ pub fn Zero(
     let mut device_signals = use_signal(|| Vec::<DeviceSignals>::new());
     let last_device_snapshot = use_signal(|| Vec::<[u8; 6]>::new());
 
-    // for positioning the crosshair overlay
-    let mut crosshair_manager_div = use_signal(|| None);
-    let mut rect_signal = use_signal(Rect::<f32, _>::zero);
-    let window = dioxus::desktop::use_window();
-
-    // memoized ratio of center to window for zero()
-    let zero_screen_ratio = use_memo(move || {
-        let ws = window.inner_size().to_logical::<f32>(window.scale_factor());
-        let center = rect_signal.read().center();
-        (center.x / ws.width, center.y / ws.height)
-    });
-    // tracing::info!("Zero screen ratio: {:?}", zero_screen_ratio());
 
     // ensure we can safely index [0 .. devices.len())
     {
@@ -98,7 +91,6 @@ pub fn Zero(
                                     shooting
                                 );
                                 if shooting {
-                                    let zr = *zero_screen_ratio.peek();
                                     let shot_delay_ms =
                                         *device_signals.peek()[key].shot_delay.peek();
                                     // Convert ms → µs (device timestamp unit). For accessories
@@ -129,7 +121,7 @@ pub fn Zero(
                                         .zero(
                                             dev.clone(),
                                             nalgebra::Vector3::new(0., -0.0635, 0.).into(),
-                                            nalgebra::Vector2::new(zr.0, zr.1).into(),
+                                            ZERO_TARGET.into(),
                                             historical_te,
                                         )
                                         .await
@@ -230,7 +222,6 @@ pub fn Zero(
                         device_signals.write()[slot].zeroing_on_key.set(false);
                         if let Some((_, dev)) = devs.iter().find(|(s, _)| *s == slot) {
                             let dev = dev.clone();
-                            let zr = *zero_screen_ratio.peek();
                             let shot_delay_ms = *device_signals.peek()[slot].shot_delay.peek();
                             let shot_delay_us = shot_delay_ms as u32 * 1000;
                             let historical_te = tracking_history
@@ -247,7 +238,7 @@ pub fn Zero(
                                 .zero(
                                     dev.clone(),
                                     nalgebra::Vector3::new(0., -0.0635, 0.).into(),
-                                    nalgebra::Vector2::new(zr.0, zr.1).into(),
+                                    ZERO_TARGET.into(),
                                     historical_te,
                                 )
                                 .await
@@ -533,25 +524,15 @@ pub fn Zero(
                 }
             }
 
+            // Pinned to the viewport, not laid out next to the sidebar: the
+            // target center has to be the screen center, and CrosshairManager
+            // maps aimpoints onto this same box.
             div {
-                class: "flex-1 flex items-center justify-center h-full w-full bg-center bg-no-repeat",
+                class: "fixed inset-0 flex items-center justify-center bg-center bg-no-repeat",
                 style: format!(
                     "background-image: {}; background-size: clamp(0in, 11in, 40%) auto;",
                     format!("url({})", asset!("/assets/images/target.avif"))
                 ),
-                onmounted: move |cx| async move {
-                    if let Ok(r) = cx.data().as_ref().get_client_rect().await {
-                        rect_signal.set(r.cast());
-                    }
-                    crosshair_manager_div.set(Some(cx.data()));
-                },
-                onresize: move |_| async move {
-                    if let Some(root) = crosshair_manager_div() {
-                        if let Ok(r) = root.as_ref().get_client_rect().await {
-                            rect_signal.set(r.cast());
-                        }
-                    }
-                },
                 CrosshairManager { hub, tracking_sender: Some(tracking_sender) },
             }
 
