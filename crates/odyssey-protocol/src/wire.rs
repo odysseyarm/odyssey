@@ -3,15 +3,12 @@ use odyssey_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, O
 use nalgebra::ComplexField;
 use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 
-#[cfg(feature = "minicbor")]
-use minicbor::{CborLen, Decode, Encode};
+use odyssey_protocol_macros::protocol_type;
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 pub struct AccelConfig {
     #[cfg(feature = "serde")]
     #[serde(default = "default_accel_odr")]
@@ -81,12 +78,10 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 pub struct CameraCalibrationParams {
     #[cfg_attr(feature = "minicbor", n(0))]
     pub camera_matrix: [f32; 9],
@@ -120,12 +115,10 @@ impl From<RosOpenCvIntrinsicsPod<f32>> for CameraCalibrationParams {
     }
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 pub struct StereoCalibrationParams {
     #[cfg_attr(feature = "minicbor", n(0))]
     pub r: [f32; 9],
@@ -163,12 +156,10 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 }
 
 // This is also the format the POC uses on flash
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 pub enum GeneralConfig {
     #[cfg_attr(feature = "minicbor", n(0))]
     ImpactThreshold(#[cfg_attr(feature = "minicbor", n(0))] u8),

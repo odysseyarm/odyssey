@@ -1,3 +1,5 @@
+use odyssey_protocol_macros::protocol_type;
+
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy)]
@@ -6,10 +8,9 @@ pub enum PairingError {
     Cancelled,
 }
 
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClearBondsError {
     Failed,
 }
@@ -58,8 +59,8 @@ pub enum UsbMuxCtrlMsg {
 }
 
 /// The result of a clear-bonds request. Serializes as the `Result` it replaces.
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(
@@ -67,7 +68,6 @@ pub enum UsbMuxCtrlMsg {
         into = "Result<(), ClearBondsError>"
     )
 )]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub enum ClearBondsResult {
     Ok(),

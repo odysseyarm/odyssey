@@ -14,6 +14,7 @@ members = [
     "crates/odyssey-hub-server-interface",
     "crates/odyssey-playback",
     "crates/odyssey-protocol",
+    "crates/odyssey-protocol-macros",
     "crates/odyssey-usb",
     "third_party/libui-rs/iui",
     "third_party/libui-rs/ui-sys",
