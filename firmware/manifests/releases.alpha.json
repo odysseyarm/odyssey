@@ -7,20 +7,20 @@
           "version": "0.1.17",
           "files": {
             "app-a": {
-              "sha256": "442f71f487231e8842820fac4c0f2e83c02d5e12967442275e4ebff4d565e7b0",
-              "size": 364500
+              "sha256": "9d023e2a84ea4b0bd46fc1a95ebe808316efdbdb63d9cf4d474cbb9cfc132845",
+              "size": 364692
             },
             "app-b": {
-              "sha256": "fb22178a5b2f1ef1e09cb2c81d3577fb951b602a909edf0f054c8f444be487b8",
-              "size": 364500
+              "sha256": "825f234d5d6f6de4f0c8a8ce426fa63644ef3a9ad242d17032c5ec77603b30b8",
+              "size": 364692
             },
             "net-core": {
               "sha256": "440840748dc4c0360fae04c10a466f9e560e6db5e56acbb7bac9a4af7a29d6c0",
               "size": 164536
             },
             "stage2-bootloader": {
-              "sha256": "ad131319470d69137a601466e92deb676a00e22e0fe6288eccd0fe28e55bdf19",
-              "size": 43112
+              "sha256": "2213dace64cadcf6a2d24648ccc55fd107950489d6686d2a6e6c22b7496267d2",
+              "size": 43120
             }
           },
           "released": "2026-10-13"
@@ -275,11 +275,11 @@
           "version": "0.1.14",
           "files": {
             "app-a": {
-              "sha256": "1243893dd697093c47a0fba21c7a746de24fb4dc41af7cd1a154aa5a39b9832e",
+              "sha256": "fae49d39cea459570d2bbb5b72ece4393debaba96c61e4643dc83c9ff9f97961",
               "size": 306468
             },
             "app-b": {
-              "sha256": "b17dc756936b8f0fd67023a99ab15130ea30ec63c68d6beb3366f694ebd03e1c",
+              "sha256": "77de41d72fca4e3a7c5bbfdce40ffe226b03e8e34adf3e4723c423adcab3e37e",
               "size": 306468
             },
             "net-core": {
@@ -287,8 +287,8 @@
               "size": 164536
             },
             "stage2-bootloader": {
-              "sha256": "a4d90134200cab4e1fdd7f9df31ecf64eec80638fd0151ca2ed61dec99a81fee",
-              "size": 43456
+              "sha256": "23d28fa1c228e37feb484cff3e1811dabce22eb76de33fd47b15733ec4a71f66",
+              "size": 43472
             }
           },
           "released": "2026-10-13"
