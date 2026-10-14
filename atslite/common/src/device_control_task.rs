@@ -4,8 +4,11 @@
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use defmt::info;
-use protodongers::control::device::{DeviceMsg, PairingError, TransportMode};
-use protodongers::{PropKind, Props};
+use odyssey_protocol::control::AddBondResult;
+use odyssey_protocol::control::device::{
+    ClearBondResult, DeviceMsg, PairingError, PairingOutcome, TransportMode,
+};
+use odyssey_protocol::{PropKind, Props, SetDeviceNameResult};
 
 use crate::ble::peripheral;
 use crate::device_control;
@@ -50,13 +53,13 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
                     info!("Received control command: {:?}", cmd);
                     // Handle commands below (falls through)
                     match cmd {
-                        DeviceMsg::CancelPairing => {
+                        DeviceMsg::CancelPairing() => {
                             info!("Cancelling pairing mode");
                             peripheral::cancel_pairing_mode();
                             pairing_deadline = None;
-                            device_control::try_send_event(DeviceMsg::PairingResult(Err(
-                                PairingError::Cancelled,
-                            )));
+                            device_control::try_send_event(DeviceMsg::PairingResult(
+                                PairingOutcome::Err(PairingError::Cancelled),
+                            ));
                             continue;
                         }
                         // Allow repeated StartPairing to reset the timer
@@ -81,16 +84,18 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
                 Either3::Second(device) => {
                     info!("Pairing completed successfully");
                     pairing_deadline = None;
-                    device_control::try_send_event(DeviceMsg::PairingResult(Ok(device)));
+                    device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Ok(
+                        device,
+                    )));
                     continue;
                 }
                 Either3::Third(_) => {
                     info!("Pairing timed out");
                     pairing_deadline = None;
                     peripheral::cancel_pairing_mode();
-                    device_control::try_send_event(DeviceMsg::PairingResult(Err(
-                        PairingError::Timeout,
-                    )));
+                    device_control::try_send_event(DeviceMsg::PairingResult(
+                        PairingOutcome::Err(PairingError::Timeout),
+                    ));
                     continue;
                 }
             }
@@ -110,7 +115,7 @@ async fn handle_cmd(
     match cmd {
         DeviceMsg::ReadProp(kind) => {
             let prop = match kind {
-                PropKind::Version => Props::Version(protodongers::Version::new(firmware_version)),
+                PropKind::Version => Props::Version(odyssey_protocol::Version::new(firmware_version)),
                 PropKind::Uuid => {
                     let uuid: [u8; 6] = crate::utils::device_id()[..6].try_into().unwrap();
                     Props::Uuid(uuid)
@@ -121,14 +126,14 @@ async fn handle_cmd(
                     } else {
                         heapless::String::new()
                     };
-                    Props::Name(name)
+                    Props::Name(name.into())
                 }
                 PropKind::ProductId => return,
             };
             device_control::try_send_event(DeviceMsg::ReadPropResponse(prop));
         }
 
-        DeviceMsg::ClearBond => {
+        DeviceMsg::ClearBond() => {
             info!("Clearing bond...");
             // Clear the bond - caller must provide settings access
             // unsafe { crate::settings::get_settings() }.ble_bond_clear();
@@ -137,13 +142,13 @@ async fn handle_cmd(
             peripheral::request_disconnect();
 
             info!("Bond cleared successfully");
-            device_control::try_send_event(DeviceMsg::ClearBondResponse(Ok(())));
+            device_control::try_send_event(DeviceMsg::ClearBondResponse(ClearBondResult::Ok()));
         }
 
         DeviceMsg::StartPairing(params) => {
             if transport_mode::get() != TransportMode::Ble {
                 info!("StartPairing rejected: transport mode is not BLE");
-                device_control::try_send_event(DeviceMsg::PairingResult(Err(
+                device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Err(
                     PairingError::NotBleMode,
                 )));
                 return;
@@ -157,7 +162,7 @@ async fn handle_cmd(
             // unsafe { crate::settings::get_settings() }.ble_bond_clear();
             peripheral::request_disconnect();
 
-            device_control::try_send_event(DeviceMsg::StartPairingResponse);
+            device_control::try_send_event(DeviceMsg::StartPairingResponse());
 
             // Track deadline so the main loop can keep serving commands while pairing runs
             *pairing_deadline = Some(
@@ -166,14 +171,16 @@ async fn handle_cmd(
             );
         }
 
-        DeviceMsg::CancelPairing => {
+        DeviceMsg::CancelPairing() => {
             info!("Cancelling pairing mode");
             peripheral::cancel_pairing_mode();
             *pairing_deadline = None;
-            device_control::try_send_event(DeviceMsg::PairingResult(Err(PairingError::Cancelled)));
+            device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Err(
+                PairingError::Cancelled,
+            )));
         }
 
-        DeviceMsg::GetTransportMode => {
+        DeviceMsg::GetTransportMode() => {
             let mode = transport_mode::get();
             info!("Reporting transport mode: {:?}", mode);
             device_control::try_send_event(DeviceMsg::TransportModeStatus(mode));
@@ -193,9 +200,9 @@ async fn handle_cmd(
             persist_transport_mode(mode);
         }
 
-        DeviceMsg::Reboot => {
+        DeviceMsg::Reboot() => {
             info!("Reboot requested, sending ack then resetting");
-            device_control::try_send_event(DeviceMsg::RebootAck);
+            device_control::try_send_event(DeviceMsg::RebootAck());
             // Small delay to allow the RebootAck to be polled by the host before reset
             embassy_time::Timer::after_millis(50).await;
             cortex_m::peripheral::SCB::sys_reset();
@@ -204,7 +211,7 @@ async fn handle_cmd(
         DeviceMsg::ReadConfig(kind) => {
             let settings = unsafe { crate::settings::get_settings() };
             let g = &settings.general;
-            use protodongers::{ConfigKind, GeneralConfig};
+            use odyssey_protocol::{ConfigKind, GeneralConfig};
             let config = match kind {
                 ConfigKind::ImpactThreshold => GeneralConfig::ImpactThreshold(g.impact_threshold),
                 ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
@@ -219,32 +226,34 @@ async fn handle_cmd(
 
         DeviceMsg::WriteConfig(config) => {
             let settings = unsafe { crate::settings::get_settings() };
-            let wire_config = protodongers::wire::GeneralConfig::from(config);
+            let wire_config = odyssey_protocol::wire::GeneralConfig::from(config);
             settings.general.set_general_config(&wire_config);
-            device_control::try_send_event(DeviceMsg::WriteConfigAck);
+            device_control::try_send_event(DeviceMsg::WriteConfigAck());
         }
 
-        DeviceMsg::FlashSettings => {
+        DeviceMsg::FlashSettings() => {
             let settings = unsafe { crate::settings::get_settings() };
             settings.general_write();
-            device_control::try_send_event(DeviceMsg::FlashSettingsAck);
+            device_control::try_send_event(DeviceMsg::FlashSettingsAck());
         }
 
         DeviceMsg::SetDeviceName(name) => {
             info!("SetDeviceName: {:?}", name.as_str());
             if settings::is_initialized() {
                 let s = unsafe { settings::get_settings() };
-                s.general.name = name.clone();
+                s.general.name = name.clone().into();
                 s.general_write();
             }
             // Use set_device_name_initial (no ADV_RESTART_SIGNAL) — the device may have
             // an active BLE connection to the dongle; a restart signal would disconnect it.
             peripheral::set_device_name_initial(name.as_str());
-            device_control::try_send_event(DeviceMsg::SetDeviceNameResponse(Ok(())));
+            device_control::try_send_event(DeviceMsg::SetDeviceNameResponse(
+                SetDeviceNameResult::Ok(),
+            ));
         }
 
         DeviceMsg::AddBond(entry) => {
-            use protodongers::control::AddBondError;
+            use odyssey_protocol::control::AddBondError;
             info!("AddBond received for {:02x}", entry.bd_addr);
             if settings::is_initialized() {
                 let s = unsafe { settings::get_settings() };
@@ -252,9 +261,9 @@ async fn handle_cmd(
                 s.ble_bond_write();
                 // Disconnect so the peripheral restores the new bond on reconnect
                 peripheral::request_disconnect();
-                device_control::try_send_event(DeviceMsg::AddBondResponse(Ok(())));
+                device_control::try_send_event(DeviceMsg::AddBondResponse(AddBondResult::Ok()));
             } else {
-                device_control::try_send_event(DeviceMsg::AddBondResponse(Err(
+                device_control::try_send_event(DeviceMsg::AddBondResponse(AddBondResult::Err(
                     AddBondError::Failed,
                 )));
             }

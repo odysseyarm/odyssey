@@ -29,7 +29,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, WithTimeout as _};
 use embedded_hal_bus::spi::DeviceError;
 use paj7025::Paj7025Error;
-use protodongers::wire::{CameraCalibrationParams, StereoCalibrationParams};
+use odyssey_protocol::wire::{CameraCalibrationParams, StereoCalibrationParams};
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
 
@@ -90,7 +90,7 @@ pub unsafe fn get_settings() -> &'static mut Settings {
 
 /// Persist the transport mode to flash via the vm-fw general settings node.
 /// Intended to be registered as the `transport_mode_persist_fn` on legacy atslite.
-pub fn persist_transport_mode(mode: protodongers::control::device::TransportMode) {
+pub fn persist_transport_mode(mode: odyssey_protocol::control::device::TransportMode) {
     let settings = unsafe { get_settings() };
     settings.general.transport_mode = mode;
     settings.write();
@@ -640,9 +640,9 @@ pub struct GeneralSettings {
     #[n(1)]
     pub suppress_ms: u8,
     #[n(2)]
-    pub accel_config: protodongers::AccelConfig,
+    pub accel_config: odyssey_protocol::AccelConfig,
     #[n(3)]
-    pub gyro_config: protodongers::GyroConfig,
+    pub gyro_config: odyssey_protocol::GyroConfig,
     #[n(4)]
     pub camera_model_nf: CameraCalibrationParams,
     #[n(5)]
@@ -650,7 +650,7 @@ pub struct GeneralSettings {
     #[n(6)]
     pub stereo_iso: StereoCalibrationParams,
     #[n(7)]
-    pub transport_mode: protodongers::control::device::TransportMode,
+    pub transport_mode: odyssey_protocol::control::device::TransportMode,
     #[n(8)]
     #[cbor(with = "heapless_str32_cbor")]
     pub name: heapless::String<32>,
@@ -673,15 +673,15 @@ impl Default for GeneralSettings {
                 dist_coeffs: [0.039820533, -0.03993317, 0.00043006078, -0.0012057066, 0.005302235],
             },
             stereo_iso: Default::default(),
-            transport_mode: protodongers::control::device::TransportMode::Ble,
+            transport_mode: odyssey_protocol::control::device::TransportMode::Ble,
             name: heapless::String::new(),
         }
     }
 }
 
 impl GeneralSettings {
-    pub fn set_general_config(&mut self, config: &protodongers::wire::GeneralConfig) {
-        use protodongers::wire::GeneralConfig as GC;
+    pub fn set_general_config(&mut self, config: &odyssey_protocol::wire::GeneralConfig) {
+        use odyssey_protocol::wire::GeneralConfig as GC;
         match config {
             GC::ImpactThreshold(v) => self.impact_threshold = *v,
             GC::SuppressMs(v) => self.suppress_ms = *v,
@@ -700,13 +700,13 @@ impl GeneralSettings {
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct TransientSettings {
     #[n(0)]
-    pub mode: protodongers::Mode,
+    pub mode: odyssey_protocol::Mode,
 }
 
 impl Default for TransientSettings {
     fn default() -> Self {
         Self {
-            mode: protodongers::Mode::Object,
+            mode: odyssey_protocol::Mode::Object,
         }
     }
 }

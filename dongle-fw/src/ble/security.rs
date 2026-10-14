@@ -3,7 +3,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use heapless::Vec;
-use protodongers::mux::MAX_DEVICES;
+use odyssey_protocol::mux::MAX_DEVICES;
 
 use crate::storage::{BondData, Settings};
 

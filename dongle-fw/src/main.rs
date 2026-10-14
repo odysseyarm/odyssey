@@ -31,8 +31,10 @@ pub static DEVICE_LIST_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
 // use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
 // Using trouble-host + nrf-sdc
-use protodongers::control::usb_mux::{BondStoreError, PairingError, UsbMuxCtrlMsg};
-use protodongers::mux::{DevicePacket, MAX_DEVICES, MuxMsg, Version};
+use odyssey_protocol::control::usb_mux::{
+    BondStoreError, ClearBondsResult, PairingError, PairingOutcome, UsbMuxCtrlMsg,
+};
+use odyssey_protocol::mux::{DevicePacket, MAX_DEVICES, MuxMsg, Version};
 
 use static_cell::StaticCell;
 
@@ -426,10 +428,14 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
                     info!("bond_storage: no name to save");
                 }
 
-                control::try_send_event(UsbMuxCtrlMsg::PairingResult(Ok(protodongers::control::BondedDevice {
-                    uuid: bond.bd_addr,
-                    name: paired_name,
-                })));
+                control::try_send_event(UsbMuxCtrlMsg::PairingResult(
+                    odyssey_protocol::control::usb_mux::PairingOutcome::Ok(
+                        odyssey_protocol::control::BondedDevice {
+                            uuid: bond.bd_addr,
+                            name: paired_name.into(),
+                        },
+                    ),
+                ));
 
                 pairing::cancel();
                 info!("Pairing mode exited after successful bonding");
@@ -583,7 +589,9 @@ async fn usb_rx_task(
 
             if pairing::take_timeout() {
                 // Emit control-plane timeout event
-                control::try_send_event(UsbMuxCtrlMsg::PairingResult(Err(PairingError::Timeout)));
+                control::try_send_event(UsbMuxCtrlMsg::PairingResult(PairingOutcome::Err(
+                    PairingError::Timeout,
+                )));
             }
         }
     }
@@ -765,16 +773,17 @@ async fn handle_usb_msg(
     if let MuxMsg::SendTo(s) = &msg {
         if matches!(
             s.pkt.data,
-            protodongers::PacketData::WriteConfig(_) | protodongers::PacketData::FlashSettings()
+            odyssey_protocol::PacketData::WriteConfig(_)
+                | odyssey_protocol::PacketData::FlashSettings()
         ) {
             defmt::info!("RX: {:?}", defmt::Debug2Format(&s.pkt.data));
         }
     }
 
     match msg {
-        MuxMsg::RequestDevices => {
+        MuxMsg::RequestDevices() => {
             let devices = active_connections.get_all().await;
-            let response = MuxMsg::DevicesSnapshot(devices);
+            let response = MuxMsg::DevicesSnapshot(devices.into());
             if HOST_RESPONSES.try_send(response).is_err() {
                 warn!("HOST_RESPONSES full, dropped DevicesSnapshot");
             }
@@ -802,11 +811,11 @@ async fn handle_usb_msg(
                 warn!("HOST_RESPONSES full, dropped ReadVersionResponse");
             }
         }
-        MuxMsg::SubscribeDeviceList => {
+        MuxMsg::SubscribeDeviceList() => {
             info!("Subscribing to device list changes");
             DEVICE_LIST_SUBSCRIBED.store(true, Ordering::Relaxed);
         }
-        MuxMsg::UnsubscribeDeviceList => {
+        MuxMsg::UnsubscribeDeviceList() => {
             info!("Unsubscribing from device list changes");
             DEVICE_LIST_SUBSCRIBED.store(false, Ordering::Relaxed);
         }
@@ -853,10 +862,10 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
         match cmd {
             C::ReadVersion() => {
                 control::try_send_event(C::ReadVersionResponse(
-                    protodongers::Version::new(FIRMWARE_SEMVER),
+                    odyssey_protocol::Version::new(FIRMWARE_SEMVER),
                 ));
             }
-            C::ListBonds => {
+            C::ListBonds() => {
                 info!("CTL ListBonds received");
                 let bonds = settings.get_all_bonds().await;
                 let mut bonded = HVec::new();
@@ -871,30 +880,32 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                         } else {
                             settings.get_device_name(&bd.bd_addr).await
                         };
-                        let _ = bonded.push(protodongers::control::BondedDevice {
+                        let _ = bonded.push(odyssey_protocol::control::BondedDevice {
                             uuid: bd.bd_addr,
-                            name,
+                            name: name.into(),
                         });
                     }
                 }
                 for b in bonded.iter() {
                     info!("  bond {:02x} name={}", b.uuid, b.name.as_str());
                 }
-                control::try_send_event(C::ListBondsResponse(bonded));
+                control::try_send_event(C::ListBondsResponse(bonded.into()));
             }
             C::StartPairing(start) => {
                 info!("CTL StartPairing received, timeout_ms={}", start.timeout_ms);
                 let timeout = embassy_time::Duration::from_millis(start.timeout_ms as u64);
                 ble::pairing_scanner::on_pairing_start();
                 pairing::enter_with_timeout(timeout);
-                control::try_send_event(C::StartPairingResponse);
+                control::try_send_event(C::StartPairingResponse());
             }
-            C::CancelPairing => {
+            C::CancelPairing() => {
                 info!("CTL CancelPairing received");
                 pairing::cancel();
-                control::try_send_event(C::PairingResult(Err(PairingError::Cancelled)));
+                control::try_send_event(C::PairingResult(PairingOutcome::Err(
+                    PairingError::Cancelled,
+                )));
             }
-            C::ClearBonds => {
+            C::ClearBonds() => {
                 info!("CTL ClearBonds received");
                 // Cancel any in-progress pairing to avoid overlapping control events
                 pairing::cancel();
@@ -935,10 +946,10 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 // Signal central loop to restart immediately (cancel any in-flight operations)
                 ble::central::RESTART_CENTRAL.signal(());
 
-                control::try_send_event(C::ClearBondsResponse(Ok(())));
+                control::try_send_event(C::ClearBondsResponse(ClearBondsResult::Ok()));
             }
             C::AddBond(entry) => {
-                use protodongers::control::AddBondError;
+                use odyssey_protocol::control::{AddBondError, AddBondResult};
                 info!("CTL AddBond received for {:02x}", entry.bd_addr);
                 let bond: BondData = entry.into();
                 match settings.add_bond(bond).await {
@@ -950,17 +961,19 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                         if host_result.is_err() {
                             warn!("AddBond: failed to register bond in host DB");
                         }
-                        control::try_send_event(C::AddBondResponse(Ok(())));
+                        control::try_send_event(C::AddBondResponse(AddBondResult::Ok()));
                     }
                     Err(()) => {
-                        control::try_send_event(C::AddBondResponse(Err(AddBondError::Full)));
+                        control::try_send_event(C::AddBondResponse(AddBondResult::Err(
+                            AddBondError::Full,
+                        )));
                     }
                 }
             }
             C::UpdateBondName { uuid, name } => {
                 info!("CTL UpdateBondName {:02x} name={}", uuid, name.as_str());
-                settings.set_device_name(uuid, &name).await;
-                ble::central::update_device_name(uuid, name);
+                settings.set_device_name(uuid, &name.0).await;
+                ble::central::update_device_name(uuid, name.0);
             }
             _ => {}
         }

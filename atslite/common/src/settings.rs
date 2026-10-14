@@ -58,7 +58,7 @@ pub unsafe fn get_settings() -> &'static mut Settings {
 
 /// Persist the transport mode to flash via the atslite-common general settings node.
 /// Intended to be registered as the `transport_mode_persist_fn` on lite1.
-pub fn persist_transport_mode(mode: protodongers::control::device::TransportMode) {
+pub fn persist_transport_mode(mode: odyssey_protocol::control::device::TransportMode) {
     let settings = unsafe { get_settings() };
     settings.general.transport_mode = mode;
     settings.general_write();
@@ -298,21 +298,21 @@ mod heapless_str32_cbor {
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct GeneralSettings {
     #[n(0)]
-    pub transport_mode: protodongers::control::device::TransportMode,
+    pub transport_mode: odyssey_protocol::control::device::TransportMode,
     #[n(1)]
     pub impact_threshold: u8,
     #[n(2)]
     pub suppress_ms: u8,
     #[n(3)]
-    pub accel_config: protodongers::AccelConfig,
+    pub accel_config: odyssey_protocol::AccelConfig,
     #[n(4)]
-    pub gyro_config: protodongers::GyroConfig,
+    pub gyro_config: odyssey_protocol::GyroConfig,
     #[n(5)]
-    pub camera_model_nf: protodongers::wire::CameraCalibrationParams,
+    pub camera_model_nf: odyssey_protocol::wire::CameraCalibrationParams,
     #[n(6)]
-    pub camera_model_wf: protodongers::wire::CameraCalibrationParams,
+    pub camera_model_wf: odyssey_protocol::wire::CameraCalibrationParams,
     #[n(7)]
-    pub stereo_iso: protodongers::wire::StereoCalibrationParams,
+    pub stereo_iso: odyssey_protocol::wire::StereoCalibrationParams,
     #[n(8)]
     #[cbor(with = "heapless_str32_cbor")]
     pub name: heapless::String<32>,
@@ -321,21 +321,21 @@ pub struct GeneralSettings {
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
-            transport_mode: protodongers::control::device::TransportMode::Ble,
+            transport_mode: odyssey_protocol::control::device::TransportMode::Ble,
             // 5g legacy equivalent in SI units.
             impact_threshold: 25,
             suppress_ms: 100,
             accel_config: Default::default(),
             gyro_config: Default::default(),
-            camera_model_nf: protodongers::wire::CameraCalibrationParams {
+            camera_model_nf: odyssey_protocol::wire::CameraCalibrationParams {
                 camera_matrix: [12645.0, 0.0, 10240.0, 0.0, 12601.0, 7680.0, 0.0, 0.0, 1.0],
                 dist_coeffs: [0.0; 5],
             },
-            camera_model_wf: protodongers::wire::CameraCalibrationParams {
+            camera_model_wf: odyssey_protocol::wire::CameraCalibrationParams {
                 camera_matrix: [0.0; 9],
                 dist_coeffs: [0.0; 5],
             },
-            stereo_iso: protodongers::wire::StereoCalibrationParams {
+            stereo_iso: odyssey_protocol::wire::StereoCalibrationParams {
                 r: [0.0; 9],
                 t: [0.0; 3],
             },
@@ -345,8 +345,8 @@ impl Default for GeneralSettings {
 }
 
 impl GeneralSettings {
-    pub fn set_general_config(&mut self, config: &protodongers::wire::GeneralConfig) {
-        use protodongers::wire::GeneralConfig as GC;
+    pub fn set_general_config(&mut self, config: &odyssey_protocol::wire::GeneralConfig) {
+        use odyssey_protocol::wire::GeneralConfig as GC;
         match config {
             GC::ImpactThreshold(v) => self.impact_threshold = *v,
             GC::SuppressMs(v) => self.suppress_ms = *v,
@@ -359,7 +359,7 @@ impl GeneralSettings {
     }
 }
 
-pub type BleBondSettings = protodongers::control::BondEntry;
+pub type BleBondSettings = odyssey_protocol::control::BondEntry;
 
 pub fn ble_bond_default() -> BleBondSettings {
     BleBondSettings {

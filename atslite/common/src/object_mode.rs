@@ -1,4 +1,4 @@
-//! Object mode - handles protodongers protocol packets for vision sensor streaming
+//! Object mode - handles odyssey-protocol packets for vision sensor streaming
 //!
 //! This module processes incoming control packets (via BLE L2CAP or USB) and
 //! manages streaming of object/marker data, IMU data, and impact events.
@@ -13,9 +13,9 @@ use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError};
 use nalgebra::Vector3;
-use protodongers::control::device::TransportMode;
-use protodongers::wire::GeneralConfig;
-use protodongers::{BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse};
+use odyssey_protocol::control::device::TransportMode;
+use odyssey_protocol::wire::GeneralConfig;
+use odyssey_protocol::{BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse};
 
 use crate::ble::l2cap_bridge::{self, L2capChannels};
 use crate::settings::PagSettings;
@@ -436,7 +436,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
             }
 
             PacketData::StreamUpdate(s) => {
-                use protodongers::StreamUpdateAction as S;
+                use odyssey_protocol::StreamUpdateAction as S;
                 defmt::info!(
                     "[object_mode] StreamUpdate: action={:?}, packet_id={:?}",
                     defmt::Debug2Format(&s.action),
@@ -457,12 +457,12 @@ async fn recv_loop<P: PagSensor, const N: usize>(
             }
 
             PacketData::ReadProp(kind) => {
-                use protodongers::PropKind;
+                use odyssey_protocol::PropKind;
                 let prop = match kind {
                     PropKind::Uuid => Props::Uuid(device_id),
                     PropKind::ProductId => Props::ProductId(product_id),
-                    PropKind::Name => Props::Name(settings.general.name.clone()),
-                    PropKind::Version => Props::Version(protodongers::Version::new(firmware_version)),
+                    PropKind::Name => Props::Name(settings.general.name.clone().into()),
+                    PropKind::Version => Props::Version(odyssey_protocol::Version::new(firmware_version)),
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -472,7 +472,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
 
             PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,
-                data: PacketData::ReadVersionResponse(protodongers::Version::new(firmware_version)),
+                data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(firmware_version)),
             }),
 
             PacketData::WriteConfig(config) => {
@@ -566,11 +566,13 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                 // active BLE connection and signalling a restart would disconnect the dongle.
                 // CURRENT_NAME is updated so the new name is used on the next advertising cycle.
                 crate::ble::peripheral::set_device_name_initial(name.as_str());
-                settings.general.name = name;
+                settings.general.name = name.into();
                 settings.general_write();
                 Some(Packet {
                     id: pkt.id,
-                    data: PacketData::SetDeviceNameResponse(Ok(())),
+                    data: PacketData::SetDeviceNameResponse(
+                        odyssey_protocol::SetDeviceNameResult::Ok(),
+                    ),
                 })
             }
 
@@ -758,7 +760,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
             let id = stream_infos.imu.req_id();
             let pkt = Packet {
                 id,
-                data: PacketData::AccelReport(protodongers::AccelReport {
+                data: PacketData::AccelReport(odyssey_protocol::AccelReport {
                     timestamp: ts_micros,
                     accel,
                     gyro,
@@ -786,7 +788,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
                     let id = stream_infos.impact.req_id();
                     let pkt = Packet {
                         id,
-                        data: PacketData::ImpactReport(protodongers::ImpactReport {
+                        data: PacketData::ImpactReport(odyssey_protocol::ImpactReport {
                             timestamp: ts_micros,
                         }),
                     };
@@ -854,7 +856,7 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
-                data: PacketData::PocMarkersReport(protodongers::PocMarkersReport {
+                data: PacketData::PocMarkersReport(odyssey_protocol::PocMarkersReport {
                     points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
                 }),
             };

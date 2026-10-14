@@ -10,7 +10,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 
 use crate::Paj;
-use crate::protodongers::{Packet, PacketType};
+use crate::odyssey_protocol::{Packet, PacketType};
 use crate::settings::Settings;
 
 /// IMU data with timestamp

@@ -27,6 +27,11 @@ use vm_board::{VmPlatform, imu, l2cap::VmL2capChannels, pins::Board, split_board
 
 const DEVICE_INTERFACE_GUID: &str = "{4d36e96c-e325-11ce-bfc1-08002be10318}";
 
+// The VM board has no fuel gauge: it is always bus-powered, so report a full,
+// charging battery to the object-mode protocol layer.
+static BATTERY_SOC: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(100);
+static BATTERY_CHARGING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
 // Interrupt bindings for nRF52840 peripherals
 bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
@@ -76,7 +81,7 @@ async fn main(spawner: Spawner) {
         vbus,
         |_| {},
     );
-    spawner.spawn(usb::run_usb(usb_dev)).unwrap();
+    spawner.spawn(usb::run_usb(usb_dev).unwrap());
     defmt::info!("USB device spawned");
 
     // 4. Initialize PAJ7025 sensors (R2 and R3)
@@ -191,17 +196,9 @@ async fn main(spawner: Spawner) {
 
     // 8. Create VM object-mode context
     defmt::info!("Creating ObjectModeContext...");
-    let ctx = ObjectModeContext::<VmPlatform> {
-        paj7025r2_group: (
-            paj_r2_mutex,
-            board.paj7025r2.fod.into(),
-            p.GPIOTE_CH1.into(),
-        ),
-        paj7025r3_group: (
-            paj_r3_mutex,
-            board.paj7025r3.fod.into(),
-            p.GPIOTE_CH2.into(),
-        ),
+    let ctx = ObjectModeContext::<VmPlatform, _, _> {
+        paj7025r2_group: (paj_r2_mutex, board.paj7025r2.fod.into(), p.GPIOTE_CH1),
+        paj7025r3_group: (paj_r3_mutex, board.paj7025r3.fod.into(), p.GPIOTE_CH2),
         fod_set_ch: p.PPI_CH1.into(),
         fod_clr_ch: p.PPI_CH2.into(),
         timer: p.TIMER1,
@@ -212,8 +209,10 @@ async fn main(spawner: Spawner) {
         usb_configured: usb_signal,
         settings: settings_ref,
         l2cap_channels: VmL2capChannels::new(),
-        data_mode: || common::protodongers::control::device::TransportMode::Usb,
+        data_mode: || common::odyssey_protocol::control::device::TransportMode::Usb,
         version: utils::FIRMWARE_VERSION,
+        battery_soc: &BATTERY_SOC,
+        battery_charging: &BATTERY_CHARGING,
     };
 
     defmt::info!("VM initialization complete! Entering object mode...");

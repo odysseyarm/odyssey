@@ -3,7 +3,7 @@ use defmt::{error, info, warn};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
-use protodongers::mux::DevicePacket;
+use odyssey_protocol::mux::DevicePacket;
 use trouble_host::Stack;
 use trouble_host::prelude::{
     AddrKind, BdAddr, ConnectConfig, ConnectParams, CreditFlowPolicy, L2capChannel,
@@ -18,7 +18,7 @@ use super::central::{
 
 /// Per-device connection task - handles complete lifecycle for one device
 /// Each task builds its own Central instance from the shared stack
-#[embassy_executor::task(pool_size = protodongers::mux::MAX_DEVICES)]
+#[embassy_executor::task(pool_size = odyssey_protocol::mux::MAX_DEVICES)]
 pub async fn device_connection_task(
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
     device_packets: &'static DevicePacketChannel,
@@ -338,17 +338,17 @@ async fn run_connection(
             let is_control = is_control_packet(&device_pkt.pkt);
 
             // Intercept SetDeviceName to keep dongle bond_names in sync
-            if let protodongers::PacketData::SetDeviceName(ref name) = device_pkt.pkt.data {
-                settings.set_device_name(target.into_inner(), name).await;
-                crate::ble::central::update_device_name(target.into_inner(), name.clone());
+            if let odyssey_protocol::PacketData::SetDeviceName(name) = &device_pkt.pkt.data {
+                settings.set_device_name(target.into_inner(), &name.0).await;
+                crate::ble::central::update_device_name(target.into_inner(), name.0.clone());
             }
 
             if let Ok(data) = postcard::to_slice(&device_pkt.pkt, &mut tx_buf) {
                 let ch = if is_control { "ctrl" } else { "data" };
                 if matches!(
                     device_pkt.pkt.data,
-                    protodongers::PacketData::WriteConfig(_)
-                        | protodongers::PacketData::FlashSettings()
+                    odyssey_protocol::PacketData::WriteConfig(_)
+                        | odyssey_protocol::PacketData::FlashSettings()
                 ) {
                     info!(
                         "BLE TX [{}]: id={} {:?}",
@@ -394,7 +394,7 @@ async fn run_connection(
         let mut rx_buf = [0u8; 1024];
         loop {
             match control_reader.receive(stack, &mut rx_buf).await {
-                Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
+                Ok(len) => match postcard::from_bytes::<odyssey_protocol::Packet>(&rx_buf[..len]) {
                     Ok(pkt) => {
                         let device_packet = DevicePacket {
                             dev: target.into_inner(),
@@ -418,7 +418,7 @@ async fn run_connection(
         let mut rx_buf = [0u8; 1024];
         loop {
             match data_reader.receive(stack, &mut rx_buf).await {
-                Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
+                Ok(len) => match postcard::from_bytes::<odyssey_protocol::Packet>(&rx_buf[..len]) {
                     Ok(pkt) => {
                         let device_packet = DevicePacket {
                             dev: target.into_inner(),

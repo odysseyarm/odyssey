@@ -17,8 +17,8 @@ use paj7025::Paj7025Error;
 
 use crate::fodtrigger::FodTrigger;
 use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet};
-use crate::protodongers::control::device::TransportMode;
-use crate::protodongers::{
+use crate::odyssey_protocol::control::device::TransportMode;
+use crate::odyssey_protocol::{
     self, BatteryReport, ConfigKind, Packet, PacketData, PacketType, PropKind, Props,
     ReadRegisterResponse, wire,
 };
@@ -211,8 +211,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
         let response = match pkt.data {
             PacketData::WriteRegister(register) => {
                 let paj = match register.port {
-                    protodongers::Port::Nf => paj7025r2,
-                    protodongers::Port::Wf => paj7025r3,
+                    odyssey_protocol::Port::Nf => paj7025r2,
+                    odyssey_protocol::Port::Wf => paj7025r3,
                 };
                 let mut paj = paj.lock().await;
                 paj.write_register(register.bank, register.address, &[register.data])
@@ -237,8 +237,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::ReadRegister(register) => {
                 defmt::debug!("[app] ReadRegister: acquiring paj lock");
                 let paj = match register.port {
-                    protodongers::Port::Nf => paj7025r2,
-                    protodongers::Port::Wf => paj7025r3,
+                    odyssey_protocol::Port::Nf => paj7025r2,
+                    odyssey_protocol::Port::Wf => paj7025r3,
                 };
                 let mut paj = paj.lock().await;
                 defmt::debug!(
@@ -317,8 +317,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 let prop = match kind {
                     PropKind::Uuid => Props::Uuid(device_id[..6].try_into().unwrap()),
                     PropKind::ProductId => Props::ProductId(pid),
-                    PropKind::Name => Props::Name(settings.general.name.clone()),
-                    PropKind::Version => Props::Version(protodongers::Version::new(version)),
+                    PropKind::Name => Props::Name(settings.general.name.clone().into()),
+                    PropKind::Version => Props::Version(odyssey_protocol::Version::new(version)),
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -326,7 +326,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 })
             }
             PacketData::StreamUpdate(s) => {
-                use protodongers::StreamUpdateAction as S;
+                use odyssey_protocol::StreamUpdateAction as S;
                 match s.action {
                     S::Enable => stream_infos.enable(pkt.id, s.packet_id),
                     S::Disable => stream_infos.disable(s.packet_id),
@@ -347,7 +347,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
             }
             PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,
-                data: PacketData::ReadVersionResponse(protodongers::Version::new(version)),
+                data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(version)),
             }),
             PacketData::ObjectReportRequest() => None,
             PacketData::Ack() => None,
@@ -365,11 +365,13 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::SetDeviceName(name) => {
                 defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
                 set_ble_name(name.as_str());
-                settings.general.name = name;
+                settings.general.name = name.into();
                 settings.write();
                 Some(Packet {
                     id: pkt.id,
-                    data: PacketData::SetDeviceNameResponse(Ok(())),
+                    data: PacketData::SetDeviceNameResponse(
+                        odyssey_protocol::SetDeviceNameResult::Ok(),
+                    ),
                 })
             }
             PacketData::SetDeviceNameResponse(_) => None,
@@ -502,7 +504,7 @@ async fn imu_loop<P: Platform>(
             let id = stream_infos.imu.req_id();
             let pkt = Packet {
                 id,
-                data: PacketData::AccelReport(protodongers::AccelReport {
+                data: PacketData::AccelReport(odyssey_protocol::AccelReport {
                     timestamp: ts_micros,
                     accel,
                     gyro: Vector3::new(gx, gy, gz),
@@ -537,7 +539,7 @@ async fn imu_loop<P: Platform>(
                     let id = stream_infos.impact.req_id();
                     let pkt = Packet {
                         id,
-                        data: PacketData::ImpactReport(protodongers::ImpactReport { timestamp: ts_micros }),
+                        data: PacketData::ImpactReport(odyssey_protocol::ImpactReport { timestamp: ts_micros }),
                     };
                     if pkt_snd.try_send(pkt).is_err() {
                         defmt::warn!("Failed to send impact report due to full channel");
@@ -596,7 +598,7 @@ async fn obj_loop<
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
-                data: PacketData::CombinedMarkersReport(protodongers::CombinedMarkersReport {
+                data: PacketData::CombinedMarkersReport(odyssey_protocol::CombinedMarkersReport {
                     nf_points: objs[0].map(|o| {
                         if o.cx().value() == 4095 && o.cy().value() == 4095 {
                             nalgebra::Point2::origin()
@@ -657,12 +659,12 @@ impl PacketWriter<'_> {
 #[derive(Format)]
 pub enum WaitForPacketError {
     Postcard(postcard::Error),
-    Packet(protodongers::Error),
+    Packet(odyssey_protocol::Error),
     Usb(EndpointError),
 }
 
 impl_from!(WaitForPacketError::Postcard(postcard::Error));
-impl_from!(WaitForPacketError::Packet(protodongers::Error));
+impl_from!(WaitForPacketError::Packet(odyssey_protocol::Error));
 impl_from!(WaitForPacketError::Usb(EndpointError));
 
 #[derive(Default)]

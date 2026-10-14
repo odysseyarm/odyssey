@@ -22,7 +22,7 @@ embedded-storage = "0.3.1"
 once_cell = { version = "1.21.3", default-features = false }
 static_cell = "2.1.1"
 bytemuck = "1.24.0"
-nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+nalgebra = { version = "0.35", default-features = false, features = ["libm"] }
 futures-util = { version = "0.3", default-features = false, features = ["async-await"] }
 postcard = { version = "1.1.3", features = ["use-defmt"] }
 heapless = "0.9.1"
@@ -35,7 +35,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 # Device-specific
 paj7025 = { path = "../../paj7025", features = ["nrf"] }
-protodongers = { git = "https://github.com/odysseyarm/protodonge-rs", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+odyssey-protocol = { git = "https://github.com/odysseyarm/odyssey", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
 trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false }
 
 # Debug
@@ -59,6 +59,9 @@ defmt = [
     "embassy-time/defmt",
     "postcard/defmt"
 ]
+
+# Select the nRF52840 FICR layout (nRF5340 app core is the default).
+nrf52840 = []
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]

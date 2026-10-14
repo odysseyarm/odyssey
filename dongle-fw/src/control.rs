@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicPtr, Ordering};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Channel};
-use protodongers::control::usb_mux::UsbMuxCtrlMsg;
+use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 use static_cell::StaticCell;
 
 // Event channel: device -> host control messages (responses, async events)

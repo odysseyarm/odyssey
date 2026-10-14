@@ -12,8 +12,8 @@ static_cell = { version = "2.1", optional = true }
 postcard = { version = "1.1", default-features = false, optional = true }
 cobs = { version = "0.4.0", default-features = false }
 
-[dependencies.protodongers]
-git = "https://github.com/odysseyarm/protodonge-rs"
+[dependencies.odyssey-protocol]
+git = "https://github.com/odysseyarm/odyssey"
 default-features = false
 features = ["defmt"]
 

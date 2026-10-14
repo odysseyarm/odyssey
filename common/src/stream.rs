@@ -1,7 +1,7 @@
 //! Stream info management for data streams (IMU, markers, etc.)
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use protodongers::PacketType;
+use odyssey_protocol::PacketType;
 
 /// Manages enabled/disabled state and request ID for a single data stream.
 #[derive(Default)]

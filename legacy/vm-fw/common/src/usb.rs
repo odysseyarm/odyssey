@@ -89,8 +89,13 @@ where
     static SERIAL_BUF: ConstStaticCell<[u8; 12]> = ConstStaticCell::new([0; 12]);
     let serial_buf = SERIAL_BUF.take();
     let ficr = embassy_nrf::pac::FICR;
-    let low = ficr.info().deviceid(0).read().to_le_bytes();
-    let high = ficr.info().deviceid(1).read().to_le_bytes();
+    #[cfg(feature = "nrf52840")]
+    let (low, high) = (ficr.deviceid(0).read().to_le_bytes(), ficr.deviceid(1).read().to_le_bytes());
+    #[cfg(not(feature = "nrf52840"))]
+    let (low, high) = (
+        ficr.info().deviceid(0).read().to_le_bytes(),
+        ficr.info().deviceid(1).read().to_le_bytes(),
+    );
     let id_bytes = [low[0], low[1], low[2], low[3], high[0], high[1]];
     for (i, &b) in id_bytes.iter().enumerate() {
         const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -192,7 +197,7 @@ impl embassy_usb::Handler for MyHandler {
         data: &[u8],
     ) -> Option<embassy_usb::control::OutResponse> {
         use embassy_usb::control::{OutResponse, Recipient, RequestType};
-        use protodongers::control::device::DeviceMsg;
+        use odyssey_protocol::control::device::DeviceMsg;
 
         // Vendor|Interface, request SEND=0x30
         // Note: We don't check wIndex - the combination of Vendor request type

@@ -2,7 +2,7 @@
 //!
 //! This crate provides shared utilities for:
 //! - USB CDC-ACM packet reading/writing with COBS framing
-//! - Protocol handling for protodongers messages
+//! - Protocol handling for odyssey-protocol messages
 //! - Stream info management for object/IMU data
 //! - USB device setup with WinUSB support (nrf5340 feature)
 //!
@@ -18,7 +18,7 @@ pub mod usb;
 pub mod usb_device;
 
 // Re-exports
-pub use protodongers;
+pub use odyssey_protocol;
 
 /// Helper macro to create a static byte buffer
 #[macro_export]

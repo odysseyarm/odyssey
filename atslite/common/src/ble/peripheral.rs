@@ -3,7 +3,7 @@ use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
-use protodongers::control::device::TransportMode;
+use odyssey_protocol::control::device::TransportMode;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use trouble_host::prelude::*;
@@ -640,7 +640,7 @@ async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
         match channel.receive(stack, &mut rx_buf).await {
             Ok(len) => {
                 defmt::info!("[control_rx_task] RX control: {} bytes", len);
-                match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
+                match postcard::from_bytes::<odyssey_protocol::Packet>(&rx_buf[..len]) {
                     Ok(pkt) => {
                         defmt::info!("[control_rx_task] RX control packet id={}", pkt.id);
                         rx_queue.send(pkt).await;
@@ -672,7 +672,7 @@ async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 
     loop {
         match channel.receive(stack, &mut rx_buf).await {
-            Ok(len) => match postcard::from_bytes::<protodongers::Packet>(&rx_buf[..len]) {
+            Ok(len) => match postcard::from_bytes::<odyssey_protocol::Packet>(&rx_buf[..len]) {
                 Ok(pkt) => {
                     if rx_queue.try_send(pkt).is_err() {
                         defmt::warn!("[data_rx_task] data_rx queue full, dropping data packet");
@@ -762,8 +762,11 @@ pub fn is_pairing_active() -> bool {
     PAIRING.load(Ordering::Relaxed)
 }
 
-pub async fn wait_for_pairing_complete() -> protodongers::control::BondedDevice {
+pub async fn wait_for_pairing_complete() -> odyssey_protocol::control::BondedDevice {
     let addr = PAIRING_COMPLETE_SIGNAL.wait().await;
     let name = get_device_name();
-    protodongers::control::BondedDevice { uuid: addr, name }
+    odyssey_protocol::control::BondedDevice {
+        uuid: addr,
+        name: name.into(),
+    }
 }

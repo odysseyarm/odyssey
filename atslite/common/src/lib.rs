@@ -8,7 +8,7 @@
 //! - Transport mode switching (USB vs BLE)
 //! - Device control interface
 //! - nRF5340 initialization
-//! - Object mode (protodongers protocol handling)
+//! - Object mode (odyssey-protocol packet handling)
 
 #![no_std]
 
@@ -27,4 +27,4 @@ pub mod utils;
 
 // Re-exports
 pub use npm1300_rs;
-pub use protodongers;
+pub use odyssey_protocol;
