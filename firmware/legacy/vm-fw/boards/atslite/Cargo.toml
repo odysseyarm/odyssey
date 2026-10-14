@@ -32,7 +32,7 @@ static_cell = "2.1.1"
 bytemuck = "1.24.0"
 nalgebra = { version = "0.35", default-features = false, features = ["libm"] }
 cfg-noodle = { git = "https://github.com/tweedegolf/cfg-noodle", default-features = false, features = ["defmt"] }
-odyssey-protocol = { git = "https://github.com/odysseyarm/odyssey", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+odyssey-protocol = { path = "../../../../../crates/odyssey-protocol", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
 
 # ATSlite-specific: ICM42688 IMU
 icm426xx = { git = "https://github.com/Abrahamh08/icm426xx", default-features = false, features = ["async"] }

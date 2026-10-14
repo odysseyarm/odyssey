@@ -1785,7 +1785,6 @@ dependencies = [
 [[package]]
 name = "odyssey-common"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/odyssey#f1504a1718fb71ef9f8fd7fbb39c2de2d20854ea"
 dependencies = [
  "nalgebra",
  "num",
@@ -1796,7 +1795,6 @@ dependencies = [
 [[package]]
 name = "odyssey-protocol"
 version = "0.1.4"
-source = "git+https://github.com/odysseyarm/odyssey#f1504a1718fb71ef9f8fd7fbb39c2de2d20854ea"
 dependencies = [
  "defmt 1.0.1",
  "enumn",
@@ -1816,7 +1814,6 @@ dependencies = [
 [[package]]
 name = "odyssey-protocol-macros"
 version = "0.1.0"
-source = "git+https://github.com/odysseyarm/odyssey#f1504a1718fb71ef9f8fd7fbb39c2de2d20854ea"
 dependencies = [
  "proc-macro2",
  "quote",

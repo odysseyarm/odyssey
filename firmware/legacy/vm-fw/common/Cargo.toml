@@ -35,7 +35,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 # Device-specific
 paj7025 = { path = "../../paj7025", features = ["nrf"] }
-odyssey-protocol = { git = "https://github.com/odysseyarm/odyssey", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+odyssey-protocol = { path = "../../../../crates/odyssey-protocol", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
 trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false }
 
 # Debug

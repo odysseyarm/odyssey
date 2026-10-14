@@ -13,10 +13,10 @@ use thiserror::Error;
 
 /// Manifest URL for alpha channel firmware releases
 const MANIFEST_URL: &str =
-    "https://raw.githubusercontent.com/odysseyarm/donger/main/manifests/releases.alpha.json";
+    "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests/releases.alpha.json";
 
 /// GitHub releases download base URL
-const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/donger/releases/download";
+const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/odyssey/releases/download";
 
 /// Known device types mapped by VID:PID
 pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
@@ -780,7 +780,7 @@ mod tests {
     fn test_build_download_url() {
         assert_eq!(
             build_download_url("atslite", "0.1.1", "app-a"),
-            "https://github.com/odysseyarm/donger/releases/download/atslite-v0.1.1/app-a.bin"
+            "https://github.com/odysseyarm/odyssey/releases/download/atslite-v0.1.1/app-a.bin"
         );
     }
 }

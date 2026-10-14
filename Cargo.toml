@@ -27,9 +27,14 @@ members = [
 # every member's dependencies even when building with -p for a single package.
 # Neither FFI nor uniffi depend on odyssey-hub-server, so their own lockfiles
 # never touch odyssey-cv.
+#
+# firmware/* is excluded for a different reason: those crates are no_std, build
+# for thumb targets on a nightly toolchain and carry their own lockfiles per
+# board, so they cannot share a resolution with the host workspace.
 exclude = [
     "sdk/odyssey-hub-client-ffi",
     "sdk/odyssey-hub-client-uniffi",
+    "firmware",
 ]
 
 # cargo-run-bin only reads this from the workspace root.
