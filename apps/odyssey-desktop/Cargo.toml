@@ -27,7 +27,6 @@ hex = "0.4.3"
 nalgebra = "0.35"
 btleplug = "0.11.8"
 uuid = "1.18.0"
-velopack = "1.2.110-ge826545"
 dfu-nusb = { git = "https://github.com/florg-32/dfu-nusb", branch = "bump-nusb-0.2" }
 
 # https://github.com/dustinblackman/cargo-run-bin
