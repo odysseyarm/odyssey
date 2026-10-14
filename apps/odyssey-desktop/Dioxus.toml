@@ -1,5 +1,5 @@
 [application]
-name = "odyssey-desktop"
+name = "Odyssey"
 asset_dir = "assets"
 
 [bundle]
@@ -8,6 +8,13 @@ publisher = "OdysseyArm"
 icon = [
    "icons/icon.ico"
 ]
+short_description = "Odyssey PC application"
+
+# Windows identifies an installed product by this code. Change it and an
+# upgrade installs a second copy of the app beside the first instead of
+# replacing it, so it has to outlive every rename and every version.
+[bundle.windows.wix]
+upgrade_code = "b881af96-4f5e-4bc7-99e7-f1c46f96c235"
 
 [web.resource]
 style = ["/assets/tailwind.css"]

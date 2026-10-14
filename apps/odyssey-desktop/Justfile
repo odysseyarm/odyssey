@@ -1,0 +1,70 @@
+# Windows release recipes. dx bundles for the host platform only, so both of
+# these run on the Windows box.
+#
+#   just bundle          -> target/dx/Odyssey/bundle/windows/msi/*.msi
+#   just release         -> GitHub release odyssey-desktop-v<version> with the msi
+#
+# version defaults to the one in Cargo.toml. token falls back to $env:GITHUB_TOKEN.
+
+repo := "odysseyarm/odyssey"
+
+# Build the app and wrap it in an MSI.
+bundle:
+    #!pwsh
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    cargo bin dx bundle --desktop --package-types msi
+
+    $msi = Get-ChildItem -Recurse -Filter '*.msi' `
+        -Path (Join-Path $PWD.Path '..\..\target\dx') |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $msi) { Write-Error 'dx bundle produced no msi'; exit 1 }
+    Write-Output $msi.FullName
+
+# Publish the MSI to a GitHub release tagged odyssey-desktop-v<version>.
+release version='' token='':
+    #!pwsh
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    $version = '{{version}}'
+    if (-not $version) {
+        $version = (Select-String -Path 'Cargo.toml' -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+    }
+    $token = '{{token}}'
+    if (-not $token) { $token = $env:GITHUB_TOKEN }
+    if (-not $token) { Write-Error 'No token: pass one (just release <version> <token>) or set GITHUB_TOKEN'; exit 1 }
+
+    $msi = Get-ChildItem -Recurse -Filter '*.msi' `
+        -Path (Join-Path $PWD.Path '..\..\target\dx') |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $msi) { Write-Error 'No msi found (run: just bundle)'; exit 1 }
+
+    $tag = "odyssey-desktop-v$version"
+    $headers = @{
+        Authorization = "Bearer $token"
+        Accept        = 'application/vnd.github+json'
+        'User-Agent'  = 'odyssey-desktop-release'
+    }
+    $api = 'https://api.github.com/repos/{{repo}}'
+
+    # Reuse the release if the tag was already pushed, so a re-run only replaces the asset.
+    try {
+        $release = Invoke-RestMethod -Headers $headers -Uri "$api/releases/tags/$tag"
+    } catch {
+        $body = @{ tag_name = $tag; name = "Odyssey Desktop v$version" } | ConvertTo-Json
+        $release = Invoke-RestMethod -Headers $headers -Method Post -Uri "$api/releases" -Body $body -ContentType 'application/json'
+    }
+
+    $name = "Odyssey-$version-win-x64.msi"
+    $existing = $release.assets | Where-Object { $_.name -eq $name }
+    if ($existing) {
+        Invoke-RestMethod -Headers $headers -Method Delete -Uri "$api/releases/assets/$($existing.id)" | Out-Null
+    }
+
+    $upload = "https://uploads.github.com/repos/{{repo}}/releases/$($release.id)/assets?name=$name"
+    Invoke-RestMethod -Headers $headers -Method Post -Uri $upload `
+        -ContentType 'application/octet-stream' -InFile $msi.FullName | Out-Null
+
+    Write-Output "Published $name to $tag"
