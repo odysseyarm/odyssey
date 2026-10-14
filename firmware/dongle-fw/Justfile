@@ -6,8 +6,14 @@ bin       := "dongle-fw"
 hw        := "52"
 # SoftDevice requirement for DFU package. Set to 0x00 when no SoftDevice is present.
 sd_req    := "0x00"
-app_ver   := "2"
-key_file  := "D:/ody/keys/fanstel-debug.pem"
+# The bootloader refuses a package whose application-version is below the one
+# already flashed, so this has to rise with every release. major*10000 +
+# minor*100 + patch keeps it monotonic and readable: 0.1.10 -> 110.
+app_ver   := "110"
+# Fanstel's bootloader key, published at fanstel.com/s/private.pem. The stock
+# bootloader validates against it, so a package signed with anything else is
+# rejected without a chip erase.
+key_file  := "fanstel-debug.pem"
 
 # Serial
 dfu_port  := "COM78"
