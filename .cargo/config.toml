@@ -1,8 +1,8 @@
 [alias]
 bin = ["run", "--package", "cargo-bin", "--"]
 
-# ats_cv is a private repo fetched over SSH. Cargo's built-in git transport only
-# tries ssh-agent, which fails on machines that key off ~/.ssh/config or an
+# odyssey-cv is a private repo fetched over SSH. Cargo's built-in git transport
+# only tries ssh-agent, which fails on machines that key off ~/.ssh/config or an
 # IdentityFile instead; shelling out to git picks up the normal ssh setup.
 [net]
 git-fetch-with-cli = true

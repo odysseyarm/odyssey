@@ -316,13 +316,13 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
             .state
             .nf_markers2
             .iter()
-            .map(|m| m.ats_cv_marker())
+            .map(|m| m.odyssey_cv_marker())
             .collect::<ArrayVec<_, 16>>();
         let wf_markers_cv = runner
             .state
             .wf_markers2
             .iter()
-            .map(|m| m.ats_cv_marker())
+            .map(|m| m.odyssey_cv_marker())
             .collect::<ArrayVec<_, 16>>();
         let screen_calibrations = runner.screen_calibrations.clone();
         runner.state.fv_state.observe_markers(
