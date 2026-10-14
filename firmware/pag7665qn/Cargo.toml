@@ -1,0 +1,12 @@
+[package]
+name = "pag7665qn"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arbitrary-int = { version = "1.3.0", features = ["defmt"] }
+bitbybit = "1.3.3"
+bytemuck = { version = "1.22.0", features = ["derive"] }
+defmt = "0.3.6"
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"

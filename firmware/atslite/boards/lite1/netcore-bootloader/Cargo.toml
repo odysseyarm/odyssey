@@ -1,0 +1,61 @@
+[package]
+edition = "2021"
+name = "lite1-netcore-bootloader"
+version = "0.1.0"
+description = "Network core bootloader for lite1 with IPC firmware update support"
+license = "MIT OR Apache-2.0"
+
+[build-dependencies]
+memory-spec = "0.3.0"
+
+[dependencies]
+cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+embassy-nrf = { version = "0.9.0", features = ["nrf5340-net"] }
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embedded-storage = "0.3"
+embassy-boot = "0.6.1"
+embassy-sync = "0.7.2"
+nrf-pac = { version = "0.2.0", features = ["nrf5340-net"] }
+
+pcd = { path = "../pcd" }
+defmt = { version = "1.0.1", default-features = false, optional = true }
+defmt-rtt = { version = "0.4.0", default-features = false, optional = true }
+panic-probe = { version = "0.3.1", features = ["print-defmt"], optional = true }
+panic-halt = "0.2"
+
+[features]
+defmt = ["dep:defmt"]
+rtt = ["defmt", "dep:defmt-rtt", "dep:panic-probe"]
+
+[profile.dev]
+debug = 2
+debug-assertions = true
+incremental = false
+opt-level = 'z'
+overflow-checks = true
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 'z'
+panic = "abort"
+strip = false
+overflow-checks = false
+
+[profile.dev.build-override]
+codegen-units = 8
+debug = false
+debug-assertions = false
+opt-level = 0
+overflow-checks = false
+
+[profile.release.build-override]
+codegen-units = 8
+debug = false
+debug-assertions = false
+opt-level = 0
+overflow-checks = false
