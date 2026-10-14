@@ -340,6 +340,13 @@ pub enum Mode {
     Image,
 }
 
+/// Version of the device wire format, reported by a device in
+/// [`Props::Version`] and over the control endpoint. Bump it when the packets
+/// in this module change shape. It is deliberately not the crate version: a
+/// release that only refactors must not tell every device in the field that
+/// the protocol moved, and `semver_at_least` gates on the host read this.
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 1, 4];
+
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
@@ -353,26 +360,11 @@ pub struct Version {
 
 impl Version {
     pub fn new(firmware_semver: [u16; 3]) -> Self {
-        const PROTO_MAJOR: u16 =
-            match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
-                Ok(v) => v,
-                Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
-            };
-        const PROTO_MINOR: u16 =
-            match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
-                Ok(v) => v,
-                Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
-            };
-        const PROTO_PATCH: u16 =
-            match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
-                Ok(v) => v,
-                Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
-            };
         Self {
-            protocol_semver: [PROTO_MAJOR, PROTO_MINOR, PROTO_PATCH],
+            protocol_semver: DEVICE_PROTOCOL,
             firmware_semver,
         }
-}
+    }
 }
 
 #[protocol_type]
