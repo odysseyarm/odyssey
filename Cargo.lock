@@ -9541,12 +9541,21 @@ dependencies = [
  "minicbor-serde",
  "nalgebra 0.35.0",
  "odyssey-common",
+ "odyssey-protocol-macros",
  "opencv-ros-camera",
  "pyo3",
  "serde",
  "serde_bytes",
  "static_assertions",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "odyssey-protocol-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]

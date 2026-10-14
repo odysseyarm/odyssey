@@ -1,12 +1,12 @@
 pub mod usb_mux;
 pub mod device;
 
+use odyssey_protocol_macros::protocol_type;
+
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(minicbor::Encode, minicbor::Decode, minicbor::CborLen))]
 #[cfg_attr(feature = "minicbor", cbor(map))]
 #[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BondEntry {
     #[cfg_attr(feature = "minicbor", n(0))]
     pub bd_addr: [u8; 6],
@@ -20,33 +20,30 @@ pub struct BondEntry {
     pub irk: Option<[u8; 16]>,
 }
 
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BondedDevice {
     pub uuid: [u8; 6],
     pub name: crate::DeviceName,
 }
 
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AddBondError {
     Full,
     Failed,
 }
 
 /// The result of an add-bond request. Serializes as the `Result` it replaces.
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(from = "Result<(), AddBondError>", into = "Result<(), AddBondError>")
 )]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AddBondResult {
     Ok(),
     Err(AddBondError),

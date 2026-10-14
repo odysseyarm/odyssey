@@ -13,6 +13,7 @@ use minicbor::{CborLen, Decode, Encode};
 use core::mem::MaybeUninit;
 
 use nalgebra::{Isometry3, Point2, Vector3};
+use odyssey_protocol_macros::protocol_type;
 use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 
 pub mod control;
@@ -25,8 +26,7 @@ pub mod wire;
 ///
 /// A newtype because pyo3 cannot convert `heapless::String`. Serializes
 /// transparently.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeviceName(pub heapless::String<32>);
@@ -105,10 +105,8 @@ impl<T, const N: usize> From<List<T, N>> for heapless::Vec<T, N> {
 /// holds 32 bytes, so a longer name has to be rejected before it reaches the
 /// device. `Failed` covers the device-side causes — a flash write that did not
 /// stick, or a state that forbids renaming.
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SetDeviceNameError {
@@ -123,9 +121,8 @@ pub enum SetDeviceNameError {
 /// A dedicated enum rather than `Result` because pyo3 converts `Result` only
 /// as a function return, where it raises; a status reported by the device is
 /// data.
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(
@@ -213,11 +210,9 @@ fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
     *buf = &mut core::mem::take(buf)[data.len()..];
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Debug)]
 pub struct Packet {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -226,11 +221,9 @@ pub struct Packet {
     pub id: u8,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Debug)]
 pub enum PacketData {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -301,11 +294,9 @@ pub enum PacketData {
     ),
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug)]
 pub struct VendorData {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -318,10 +309,8 @@ pub struct VendorData {
     pub data: [u8; 98],
 }
 
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, enumn::N, PartialEq)]
 pub enum StreamUpdateAction {
@@ -340,11 +329,9 @@ impl TryFrom<u8> for StreamUpdateAction {
     }
 }
 
+#[protocol_type]
 #[repr(u8)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -353,11 +340,9 @@ pub enum Mode {
     Image,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Version {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -390,11 +375,9 @@ impl Version {
 }
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Register {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -405,11 +388,9 @@ pub struct Register {
     pub address: u8,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WriteRegister {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -422,11 +403,9 @@ pub struct WriteRegister {
     pub data: u8,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReadRegisterResponse {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -437,15 +416,13 @@ pub struct ReadRegisterResponse {
     pub data: u8,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(from = "wire::AccelConfig", into = "wire::AccelConfig")
 )]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AccelConfig {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -478,11 +455,9 @@ impl Default for AccelConfig {
     }
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct GyroConfig {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -493,10 +468,8 @@ pub struct GyroConfig {
     pub b_z: f32,
 }
 
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConfigKind {
@@ -516,14 +489,13 @@ pub enum ConfigKind {
     StereoIso = 6,
 }
 
+#[protocol_type(no_cbor)]
 #[repr(C)]
 // Not a `#[pyclass]`: foreign payloads, converted through `wire::GeneralConfig`.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(from = "wire::GeneralConfig", into = "wire::GeneralConfig")
 )]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum GeneralConfig {
     ImpactThreshold(u8),
@@ -535,10 +507,8 @@ pub enum GeneralConfig {
     StereoIso(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Isometry3<f32>),
 }
 
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PropKind {
@@ -552,11 +522,9 @@ pub enum PropKind {
     Version = 3,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Props {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -573,11 +541,9 @@ pub enum Props {
     Version(#[cfg_attr(feature = "minicbor", n(0))] Version),
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MotData {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -610,11 +576,9 @@ pub struct MotData {
     pub vy: u8,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ObjectReport {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -625,11 +589,9 @@ pub struct ObjectReport {
     pub mot_data_wf: [MotData; 16],
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CombinedMarkersReport {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -640,11 +602,9 @@ pub struct CombinedMarkersReport {
     pub wf_points: [Point2<u16>; 16],
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PocMarkersReport {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -661,11 +621,9 @@ impl From<PocMarkersReport> for CombinedMarkersReport {
     }
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AccelReport {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -678,22 +636,18 @@ pub struct AccelReport {
     pub gyro: Vector3<f32>,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ImpactReport {
     #[cfg_attr(feature = "minicbor", n(0))]
     pub timestamp: u32,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BatteryReport {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -702,11 +656,9 @@ pub struct BatteryReport {
     pub charging: bool,
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug)]
 pub struct StreamUpdate {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -715,10 +667,8 @@ pub struct StreamUpdate {
     pub action: StreamUpdateAction,
 }
 
+#[protocol_type]
 #[repr(C)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -758,10 +708,8 @@ impl Display for Error {
 #[cfg(feature = "std")]
 impl StdError for Error {}
 
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Port {
@@ -781,11 +729,9 @@ impl TryFrom<u8> for Port {
     }
 }
 
+#[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "minicbor", derive(Encode, Decode, CborLen))]
 #[derive(Copy, Clone, Debug)]
 pub enum PacketType {
     #[cfg_attr(feature = "minicbor", n(0))]
@@ -1295,9 +1241,8 @@ mod serde_cbor_with {
     }
 }
 
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum ProductId {

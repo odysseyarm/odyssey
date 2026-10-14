@@ -1,6 +1,7 @@
+use odyssey_protocol_macros::protocol_type;
+
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy)]
 pub enum PairingError {
     Timeout,
@@ -8,13 +9,8 @@ pub enum PairingError {
     NotBleMode,
 }
 
+#[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(
-    feature = "minicbor",
-    derive(minicbor::Encode, minicbor::Decode, minicbor::CborLen)
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TransportMode {
@@ -24,26 +20,23 @@ pub enum TransportMode {
     Ble = 1,
 }
 
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClearBondsError {
     Failed,
 }
 
+#[protocol_type(no_cbor)]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub struct StartPairing {
     pub timeout_ms: u32,
 }
 
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
 pub enum DeviceMsg {
     ReadProp(crate::PropKind),
@@ -79,8 +72,8 @@ pub enum DeviceMsg {
 }
 
 /// The result of a clear-bond request. Serializes as the `Result` it replaces.
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(
@@ -88,7 +81,6 @@ pub enum DeviceMsg {
         into = "Result<(), ClearBondsError>"
     )
 )]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug)]
 pub enum ClearBondResult {
     Ok(),
@@ -114,8 +106,8 @@ impl From<ClearBondResult> for Result<(), ClearBondsError> {
 }
 
 /// The result of a pairing attempt. Serializes as the `Result` it replaces.
+#[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
     serde(
@@ -123,7 +115,6 @@ impl From<ClearBondResult> for Result<(), ClearBondsError> {
         into = "Result<super::BondedDevice, PairingError>"
     )
 )]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Debug)]
 pub enum PairingOutcome {
     Ok(super::BondedDevice),
