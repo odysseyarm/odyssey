@@ -1,0 +1,73 @@
+﻿[package]
+name = "dongle-fw"
+version = "0.1.9"
+edition = "2024"
+
+[dependencies]
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread", "defmt"] }
+embassy-nrf = { version = "0.9.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "time", "nfc-pins-as-gpio", "defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-usb = { version = "0.5.1", features = ["defmt"] }
+embassy-usb-driver = "0.2.0"
+embassy-time-driver = "0.2.0"
+embassy-sync = { version = "0.7.2", features = ["defmt"] }
+embassy-futures = "0.1.2"
+embassy-embedded-hal = "0.5.0"
+
+defmt-rtt = { version = "0.4", optional = true }
+panic-probe = { version = "0.3", features = ["print-defmt"], optional = true }
+
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "1212da1", default-features = false, features = ["central", "gatt", "derive", "default-packet-pool", "default-packet-pool-size-64", "defmt", "security", "scan"] }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["defmt", "nrf52840", "central", "peripheral"] }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["nrf52840", "defmt", "critical-section-impl"] }
+bt-hci = "0.7.0"
+
+cortex-m-rt = "0.7.5"
+cortex-m = { version = "0.7.7", features = ["inline-asm"] }
+defmt = "1"
+static_cell = "2.1.1"
+heapless = "0.9.1"
+atomic-pool = "1.0"
+embedded-storage = "0.3.1"
+embedded-storage-async = "0.4.1"
+sequential-storage = { version = "5.0.1", features = ["defmt-03"] }
+futures = { version = "0.3", default-features = false }
+postcard = { version = "1.0", default-features = false, features = ["heapless"] }
+critical-section = "1.2.0"
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+
+# Match cfg-noodle's minicbor line for local derives/storage types.
+minicbor = { version = "2.0.0", default-features = false, features = ["derive"] }
+
+odyssey-protocol = { git = "https://github.com/odysseyarm/odyssey", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+
+# Use cfg-noodle with our minicbor version
+cfg-noodle = { version = "0.5", default-features = false, features = ["defmt"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+
+[build-dependencies]
+memory-spec = "0.1.0"
+
+[features]
+default = ["defmt"]
+defmt = ["embassy-usb/defmt", "embassy-nrf/defmt", "odyssey-protocol/defmt", "embassy-futures/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
+rtt = ["defmt-rtt", "panic-probe"]
+
+[profile.release]
+debug = 2
+lto = "fat"
+opt-level = "z"
+codegen-units = 1
+
+[patch.crates-io]
+kdl = { git = "https://github.com/Abrahamh08/kdl-rs", rev = "bb49e5a671f4186046a2acb2df0342e4c0a498ab" }
+embassy-usb = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-usb-driver = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-nrf = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-time = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-time-driver = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-futures = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-sync = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-embedded-hal = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }
+embassy-executor = { git = "https://github.com/Abrahamh08/embassy", branch = "usbfs-fix" }

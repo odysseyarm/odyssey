@@ -1,0 +1,22 @@
+// nRF52840 DK configuration
+
+vars {
+    page_size "4K"
+}
+
+regions {
+    flash origin=0x0000_0000 length="1M" {
+        app_flash   origin=0x0000_0000 length="500K"
+        settings    origin=0x0007_D000 length="72K" align="page_size"
+    }
+
+    ram origin=0x2000_0000 length="256K" {
+        // DK doesn't need bootloader RAM reservation
+        app_ram origin=0x2000_0000 end="ram.end"
+    }
+}
+
+symbols {
+    __settings_start "flash.settings.origin"
+    __settings_end   "flash.settings.end"
+}

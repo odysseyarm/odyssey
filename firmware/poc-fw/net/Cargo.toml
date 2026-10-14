@@ -1,0 +1,10 @@
+[package]
+name = "poc-fw-net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nrf-pac = { version = "0.1.0", features = ["nrf5340-net", "rt"] }
+cortex-m-rt = "0.7.5"
+cortex-m = { version = "0.7.7", features = ["inline-asm"] }
+panic-probe = "0.3.1"

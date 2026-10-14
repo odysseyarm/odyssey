@@ -1,0 +1,12 @@
+[package]
+name = "better-boot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-storage = "0.3"
+defmt = { version = "0.3", optional = true }
+
+[features]
+default = []
+defmt = ["dep:defmt"]

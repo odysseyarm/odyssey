@@ -1,0 +1,557 @@
+use core::{
+    cell::RefCell,
+    mem::{MaybeUninit, transmute},
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+};
+
+use bytemuck::{cast_slice, from_bytes};
+use defmt::Format;
+use embassy_futures::{
+    join::join4,
+    select::{Either, select},
+};
+use embassy_nrf::nvmc::Nvmc;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex, watch::Watch};
+use embassy_usb::{class::cdc_acm, driver::EndpointError};
+use icm426xx::fifo::FifoPacket4;
+use nalgebra::Vector3;
+use pag7661qn::{
+    Interface,
+    mode::{self, ModeT},
+};
+use protodongers::{
+    Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
+};
+use static_cell::ConstStaticCell;
+
+use crate::{
+    CommonContext, Pag, UsbDriver, device_id,
+    imu::{Imu, ImuInterrupt},
+    settings::{PagSettings, Settings},
+    usb::write_serial,
+};
+
+type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
+type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
+type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
+type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
+
+#[allow(unreachable_code)]
+pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
+    defmt::info!("Entering Object Mode");
+    let pag = AsyncMutex::<NoopRawMutex, _>::new(ctx.pag);
+    let pkt_writer = PacketWriter {
+        snd: &mut ctx.usb_snd,
+        packet_serialize_buffer: ctx.obj.packet_serialize_buffer,
+        packet_cobs_encode_buffer: ctx.obj.packet_cobs_encode_buffer,
+    };
+    let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv, ctx.obj.packet_receive_buffer);
+    let pkt_channel = Channel::new();
+    let stream_infos = StreamInfos::new();
+    let exit = Watch::<_, _, 4>::new();
+    let exit0 = exit.receiver().unwrap();
+    let _exit1 = exit.receiver().unwrap();
+    let _exit2 = exit.receiver().unwrap();
+    let _exit3 = exit.receiver().unwrap();
+
+    let a = usb_rcv_loop(
+        &pag,
+        &stream_infos,
+        pkt_channel.sender(),
+        &mut pkt_rcv,
+        ctx.settings,
+        &ctx.nvmc,
+    );
+    let b = usb_snd_loop(pkt_writer, pkt_channel.receiver(), exit0);
+    let c = imu_loop(
+        &mut ctx.imu,
+        &mut ctx.imu_int,
+        pkt_channel.sender(),
+        &stream_infos,
+    );
+    let d = obj_loop(&pag, &mut ctx.pag_int, pkt_channel.sender(), &stream_infos);
+    // TODO turn these into tasks
+    let r = join4(a, b, c, d).await;
+
+    r.0
+    // ctx.pag = pag.into_inner().as_dynamic_mode();
+    // ctx
+}
+
+const MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
+    Ok(v) => v,
+    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MAJOR"),
+};
+const MINOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MINOR"), 10) {
+    Ok(v) => v,
+    Err(_) => panic!("Invalid CARGO_PKG_VERSION_MINOR"),
+};
+const PATCH: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_PATCH"), 10) {
+    Ok(v) => v,
+    Err(_) => panic!("Invalid CARGO_PKG_VERSION_PATCH"),
+};
+
+async fn usb_rcv_loop(
+    pag: &AsyncMutex<NoopRawMutex, Pag<mode::Mode>>,
+    stream_infos: &StreamInfos,
+    pkt_snd: Sender<'_, Packet, 4>,
+    pkt_rcv: &mut PacketReader<'_>,
+    settings: &mut Settings,
+    nvmc: &RefCell<Nvmc<'static>>,
+) -> ! {
+    loop {
+        let pkt = match pkt_rcv.wait_for_packet().await {
+            Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
+                pkt_rcv.rcv.wait_connection().await;
+                continue;
+            }
+            Err(e) => {
+                defmt::error!("Failed to read packet: {}", e);
+                continue;
+            }
+            Ok(p) => p,
+        };
+        
+        defmt::debug!("Received packet: {}", defmt::Debug2Format(&pkt));
+
+        let response = match pkt.data {
+            P::WriteRegister(register) => {
+                let mut pag = pag.lock().await;
+                pag.switch_mode_mut(mode::Mode::Idle).await.unwrap();
+                pag.set_bank(register.bank).await.unwrap();
+                pag.bus_unchecked()
+                    .write(register.address, &[register.data])
+                    .await
+                    .unwrap();
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
+            }
+            P::ReadRegister(register) => {
+                let mut pag = pag.lock().await;
+                pag.set_bank(register.bank).await.unwrap();
+                let data = pag
+                    .bus_unchecked()
+                    .read_byte(register.address)
+                    .await
+                    .unwrap();
+                Some(Packet {
+                    id: pkt.id,
+                    data: P::ReadRegisterResponse(ReadRegisterResponse {
+                        bank: register.bank,
+                        address: register.address,
+                        data,
+                    }),
+                })
+            }
+            P::WriteConfig(config) => {
+                settings.general.set_general_config(&config.into());
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
+            }
+            P::ReadConfig() => Some(Packet {
+                id: pkt.id,
+                data: P::ReadConfigResponse((*settings.general.general_config()).into()),
+            }),
+            P::FlashSettings() => {
+                settings.pag = PagSettings::read_from_pag(&mut *pag.lock().await).await;
+                settings.write(nvmc);
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
+            }
+            P::ReadProps() => Some(Packet {
+                id: pkt.id,
+                data: P::ReadPropsResponse(Props {
+                    uuid: device_id()[..6].try_into().unwrap(),
+                    product_id: crate::usb::PID,
+                }),
+            }),
+            P::StreamUpdate(s) => {
+                use protodongers::StreamUpdateAction as S;
+                match s.action {
+                    S::Enable => stream_infos.enable(pkt.id, s.packet_id),
+                    S::Disable => stream_infos.disable(s.packet_id),
+                    S::DisableAll => stream_infos.disable_all(),
+                }
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
+            }
+            P::WriteMode(mode) => {
+                settings.transient.mode = mode;
+                settings.transient_write(nvmc);
+                // Some(Packet {
+                //     id: pkt.id,
+                //     data: P::Ack(),
+                // })
+                None
+            }
+            P::ReadVersion() => Some(Packet {
+                id: pkt.id,
+                data: P::ReadVersionResponse(protodongers::Version::new([MAJOR, MINOR, PATCH])),
+            }),
+            P::ObjectReportRequest() => None,
+            P::Ack() => None,
+            P::ReadConfigResponse(_) => None,
+            P::ReadPropsResponse(_) => None,
+            P::ObjectReport(_) => None,
+            P::CombinedMarkersReport(_) => None,
+            P::PocMarkersReport(_) => None,
+            P::AccelReport(_) => None,
+            P::ImpactReport(_) => None,
+            P::Vendor(_, _) => None,
+            P::ReadRegisterResponse(_) => None,
+            P::ReadVersionResponse(_) => None,
+        };
+
+        if let Some(r) = response {
+            if r.id != 255 {
+                pkt_snd.send(r).await;
+            }
+        }
+    }
+}
+
+async fn usb_snd_loop(
+    mut pkt_writer: PacketWriter<'_>,
+    pkt_rcv: Receiver<'_, Packet, 4>,
+    mut exit: ExitReceiver<'_>,
+) -> ! {
+    loop {
+        let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
+            break;
+        };
+        defmt::debug!("Sending packet: {}", defmt::Debug2Format(&pkt));
+        let _ = pkt_writer.write_packet(&pkt).await;
+    }
+    todo!()
+}
+
+async fn imu_loop(
+    imu: &mut Imu,
+    imu_int: &mut ImuInterrupt,
+    pkt_snd: Sender<'_, Packet, 4>,
+    stream_infos: &StreamInfos,
+) {
+    static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
+    let buffer = BUFFER.take();
+    let mut ts_micros = 0;
+    // TODO handle ODR change and impact stream
+    loop {
+        imu_int.wait().await;
+        let _items = imu.read_fifo(buffer).await.unwrap();
+        let pkt = from_bytes::<FifoPacket4>(&cast_slice(buffer)[4..24]);
+        // CLKIN ticks (32 kHz)
+        ts_micros += 1000 * (pkt.timestamp() as u32) / 32;
+        // TODO make the driver handle scale
+        // 32768 LSB/g
+        let ax = pkt.accel_data_x();
+        let ay = pkt.accel_data_y();
+        let az = pkt.accel_data_z();
+        // 262.144 LSB/(º/s)
+        let gx = pkt.gyro_data_x();
+        let gy = pkt.gyro_data_y();
+        let gz = pkt.gyro_data_z();
+
+        let (ax, ay, az) = (-ay, ax, az);
+        let (gx, gy, gz) = (-gy, gx, gz);
+
+        if stream_infos.imu.enabled() {
+            // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
+            // defmt::info!("ax={} ay={} az={} gx={} gy={} gz={}", ax, ay, az, gx, gy, gz);
+            let id = stream_infos.imu.req_id();
+            let pkt = Packet {
+                id,
+                data: P::AccelReport(protodongers::AccelReport {
+                    timestamp: ts_micros,
+                    accel: Vector3::new(ax, ay, az).cast() / 32768.0 * 9.806650,
+                    gyro: Vector3::new(
+                        (gx as f32 / 262.144).to_radians(),
+                        (gy as f32 / 262.144).to_radians(),
+                        (gz as f32 / 262.144).to_radians(),
+                    ),
+                }),
+            };
+            let r = pkt_snd.try_send(pkt);
+            if r.is_err() {
+                defmt::warn!("Failed to send IMU data due to full channel");
+            }
+        }
+    }
+}
+
+async fn obj_loop(
+    pag: &AsyncMutex<NoopRawMutex, Pag<mode::Mode>>,
+    pag_int: &mut crate::PagInt,
+    pkt_snd: Sender<'_, Packet, 4>,
+    stream_infos: &StreamInfos,
+) {
+    loop {
+        if stream_infos.marker.enabled() {
+            let mut objs = [pag7661qn::types::Object::DEFAULT; 16];
+
+            {
+                let mut pag = pag.lock().await;
+                pag.switch_mode_mut(mode::Object.mode()).await.unwrap();
+            }
+
+            match embassy_time::with_timeout(embassy_time::Duration::from_millis(100), pag_int.wait()).await {
+                Ok(_) => {},
+                Err(embassy_time::TimeoutError) => {
+                    defmt::debug!("obj timeout");
+                    // set the mode back to object mode in case it was set to Idle by usb_rcv_loop
+                    continue;
+                }
+            }
+
+            let mut pag = pag.lock().await;
+            let Some(n) = pag
+                .try_get_objects::<core::convert::Infallible>(&mut objs)
+                .await
+                .unwrap()
+            else {
+                continue;
+            };
+
+            // x and image are both mirrored to be similar to paj
+            for obj in objs[..n as usize].iter_mut() {
+                const RANGE: u16 = 319 * u16::pow(2, 6);
+                obj.set_x(RANGE - obj.x());
+            }
+
+            let id = stream_infos.marker.req_id();
+            let pkt = Packet {
+                id,
+                data: P::PocMarkersReport(protodongers::PocMarkersReport {
+                    points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
+                }),
+            };
+            let r = pkt_snd.try_send(pkt);
+            if r.is_err() {
+                defmt::warn!("Failed to send marker data due to full channel");
+            }
+        } else {
+            embassy_time::Timer::after_millis(50).await;
+        }
+    }
+}
+
+/// Singleton to hold static resources.
+pub struct Context {
+    pub packet_receive_buffer: &'static mut [u8; 1024],
+    pub packet_serialize_buffer: &'static mut [u8; 1024],
+    pub packet_cobs_encode_buffer: &'static mut [u8; 2049],
+}
+
+impl Context {
+    /// Can only be called once
+    pub fn take() -> Self {
+        Self {
+            packet_receive_buffer: static_byte_buffer!(1024),
+            packet_serialize_buffer: static_byte_buffer!(1024),
+            packet_cobs_encode_buffer: static_byte_buffer!(2049),
+        }
+    }
+}
+
+pub struct PacketReader<'a> {
+    rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
+    buf: &'a mut [u8; 1024],
+    n: usize,
+    start: usize,
+}
+
+impl<'a> PacketReader<'a> {
+    /// Keep the same constructor signature
+    pub fn new(
+        rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
+        buf: &'a mut [u8; 1024],
+    ) -> Self {
+        Self { rcv, buf, n: 0, start: 0 }
+    }
+
+    /// Ensure at least `need` bytes are buffered contiguously at buf[start .. start+n]
+    async fn fill_min(&mut self, need: usize) -> Result<(), WaitForPacketError> {
+        while self.n < need {
+            if self.start + self.n == self.buf.len() {
+                if self.n == 0 {
+                    self.start = 0;
+                } else {
+                    // compact once when we run out of tail space
+                    self.buf.copy_within(self.start .. self.start + self.n, 0);
+                    self.start = 0;
+                }
+            }
+            let wrote = self
+                .rcv
+                .read_packet(&mut self.buf[self.start + self.n ..])
+                .await?;
+            self.n += wrote;
+        }
+        Ok(())
+    }
+
+    /// Read a single COBS-framed packet: COBS(payload) followed by a single 0x00 delimiter.
+    pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
+        loop {
+            // ensure at least one byte so we can search for the delimiter
+            self.fill_min(1).await?;
+
+            // find the 0x00 delimiter in the current window
+            let mut zero_pos = None;
+            for i in 0..self.n {
+                if self.buf[self.start + i] == 0x00 {
+                    zero_pos = Some(i);
+                    break;
+                }
+            }
+
+            if let Some(frame_len) = zero_pos {
+                // drop empty frames (possible if a stray delimiter arrives)
+                if frame_len == 0 {
+                    self.start += 1;
+                    self.n -= 1;
+                    if self.n == 0 { self.start = 0; }
+                    continue;
+                }
+
+                // decode COBS in-place within the window
+                let window = &mut self.buf[self.start .. self.start + frame_len];
+                let decoded_len = cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
+
+                // parse the decoded payload
+                let mut slice = &window[..decoded_len];
+                let pkt = Packet::parse(&mut slice)?;
+
+                // consume this frame + its trailing 0x00 delimiter
+                self.start += frame_len + 1;
+                self.n -= frame_len + 1;
+                if self.n == 0 { self.start = 0; }
+
+                return Ok(pkt);
+            }
+
+            // no delimiter found yet; pull at least one more byte
+            self.fill_min(self.n + 1).await?;
+        }
+    }
+}
+
+pub struct PacketWriter<'a> {
+    snd: &'a mut cdc_acm::Sender<'static, UsbDriver>,
+    packet_serialize_buffer: &'a mut [u8; 1024],
+    packet_cobs_encode_buffer: &'a mut [u8; 2049],
+}
+
+impl PacketWriter<'_> {
+    pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
+        // Serialize the payload into the serialize buffer (no copies/allocs)
+        let ser_len = {
+            // serialize_raw writes into [MaybeUninit<u8>]
+            let ser = unsafe {
+                transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(self.packet_serialize_buffer)
+            };
+            pkt.serialize_raw(ser)
+        };
+        let payload = &self.packet_serialize_buffer[..ser_len];
+
+        // COBS-encode into the encode buffer
+        // Worst-case encoded_len <= input_len + input_len/254 + 1
+        let enc_len = cobs::encode(payload, self.packet_cobs_encode_buffer);
+
+        // Append the single 0x00 delimiter after encoded data
+        self.packet_cobs_encode_buffer[enc_len] = 0x00;
+        let frame = &self.packet_cobs_encode_buffer[..enc_len + 1];
+
+        // Send the frame
+        write_serial(self.snd, frame).await;
+
+        Ok(())
+    }
+}
+
+#[derive(Format)]
+pub enum WaitForPacketError {
+    Cobs(cobs::DecodeError),
+    Packet(protodongers::Error),
+    Usb(EndpointError),
+}
+
+impl_from!(WaitForPacketError::Cobs(cobs::DecodeError));
+impl_from!(WaitForPacketError::Packet(protodongers::Error));
+impl_from!(WaitForPacketError::Usb(EndpointError));
+
+#[derive(Default)]
+struct StreamInfos {
+    imu: StreamInfo,
+    impact: StreamInfo,
+    marker: StreamInfo,
+}
+
+impl StreamInfos {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn disable_all(&self) {
+        self.imu.enable.store(false, Ordering::Relaxed);
+        self.impact.enable.store(false, Ordering::Relaxed);
+        self.marker.enable.store(false, Ordering::Relaxed);
+    }
+
+    fn enable(&self, req_id: u8, ty: PacketType) {
+        defmt::info!("Enable {}, id = {=u8}", ty, req_id);
+        let si = match ty {
+            PacketType::AccelReport() => &self.imu,
+            PacketType::ImpactReport() => &self.impact,
+            PacketType::PocMarkersReport() => &self.marker,
+            _ => return,
+        };
+        si.set_req_id(req_id);
+        si.set_enable(true);
+    }
+
+    fn disable(&self, ty: PacketType) {
+        let si = match ty {
+            PacketType::AccelReport() => &self.imu,
+            PacketType::ImpactReport() => &self.impact,
+            PacketType::PocMarkersReport() => &self.marker,
+            _ => return,
+        };
+        si.set_enable(false);
+    }
+}
+
+#[derive(Default)]
+struct StreamInfo {
+    req_id: AtomicU8,
+    enable: AtomicBool,
+}
+
+impl StreamInfo {
+    fn enabled(&self) -> bool {
+        self.enable.load(Ordering::Relaxed)
+    }
+
+    fn req_id(&self) -> u8 {
+        self.req_id.load(Ordering::Relaxed)
+    }
+
+    fn set_req_id(&self, req_id: u8) {
+        self.req_id.store(req_id, Ordering::Relaxed);
+    }
+
+    fn set_enable(&self, enable: bool) {
+        self.enable.store(enable, Ordering::Relaxed);
+    }
+}

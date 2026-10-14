@@ -1,0 +1,55 @@
+output_dir := "build"
+
+# Default recipe - show available commands
+default:
+    @just --list
+
+# Clean build artifacts
+clean:
+    rm -rf {{output_dir}} target bootloader/target
+    cargo clean
+    cd bootloader && cargo clean
+
+# Build VM application
+build-app:
+    cargo build --release --target thumbv7em-none-eabihf
+
+# Build VM bootloader
+build-bootloader:
+    cd bootloader && cargo build --release --target thumbv7em-none-eabihf
+
+# Build complete VM firmware
+build: build-app build-bootloader
+    mkdir -p {{output_dir}}
+    cp target/thumbv7em-none-eabihf/release/app {{output_dir}}/app.elf
+    cp bootloader/target/thumbv7em-none-eabihf/release/vm-bootloader {{output_dir}}/bootloader.elf
+    llvm-objcopy -O ihex {{output_dir}}/app.elf {{output_dir}}/app.hex
+    llvm-objcopy -O ihex {{output_dir}}/bootloader.elf {{output_dir}}/bootloader.hex
+    mergehex -o {{output_dir}}/merged.hex -m {{output_dir}}/bootloader.hex {{output_dir}}/app.hex
+
+# Flash VM firmware
+flash: build
+    nrfjprog --program {{output_dir}}/merged.hex --sectorerase --verify --reset
+
+# Flash with chip erase
+flash-chiperase: build
+    nrfjprog --program {{output_dir}}/merged.hex --chiperase --verify --reset
+
+# Flash with recover
+flash-recover: build
+    nrfjprog --program {{output_dir}}/merged.hex --recover --verify --reset
+
+# Flash application only
+flash-app: build-app
+    mkdir -p {{output_dir}}
+    cp target/thumbv7em-none-eabihf/release/app {{output_dir}}/app.elf
+    llvm-objcopy -O ihex {{output_dir}}/app.elf {{output_dir}}/app.hex
+    nrfjprog --program {{output_dir}}/app.hex --sectorerase --verify --reset
+
+# Attach probe-rs debugger
+attach:
+    probe-rs attach --chip nRF52840_xxAA --log-format oneline --rtt-scan-memory {{output_dir}}/app.elf
+
+# Reset device
+reset:
+    nrfjprog --reset

@@ -1,0 +1,50 @@
+[package]
+edition = "2021"
+name = "lite1-bootloader"
+version = "0.1.0"
+description = "Second-stage bootloader for lite1"
+license = "MIT OR Apache-2.0"
+
+[build-dependencies]
+memory-spec = "0.1.0"
+
+[dependencies]
+defmt = { version = "1", optional = true }
+defmt-rtt = { version = "1", optional = true }
+panic-probe = { version = "1.0.0", features = ["defmt", "print-defmt"] }
+
+embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "unstable-pac", "time-driver-rtc1", "defmt"] }
+embassy-boot = "0.6.1"
+cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
+embassy-sync = "0.7.2"
+cortex-m-rt = "0.7.5"
+cfg-if = "1.0.0"
+better-dfu = { path = "../../../../better-dfu", features = ["dfu", "cortex-m"] }
+better-boot = { path = "../../../../better-boot" }
+embassy-usb = { version = "0.5.1", default-features = false }
+embassy-futures = "0.1.2"
+icmsg = { git = "https://github.com/0e4ef622/icmsg-rs", default-features = false }
+embedded-hal-async = "1.0.0"
+embedded-storage = "0.3"
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
+static_cell = "2.1.1"
+futures = { version = "0.3", default-features = false, features = ["async-await"] }
+
+pcd = { path = "../pcd" }
+
+[features]
+default = ["defmt"]
+defmt = [
+    "dep:defmt",
+    "dep:defmt-rtt",
+    "embassy-boot/defmt",
+    "embassy-nrf/defmt",
+    "better-dfu/defmt",
+    "better-boot/defmt",
+    "embassy-sync/defmt",
+    "embassy-time/defmt",
+]
+
+[profile.release]
+debug = 2  # Full debug info for better debugging
