@@ -32,6 +32,11 @@ exclude = [
     "sdk/odyssey-hub-client-uniffi",
 ]
 
+# cargo-run-bin only reads this from the workspace root.
+# https://github.com/dustinblackman/cargo-run-bin
+[workspace.metadata.bin]
+dioxus-cli = { version = "0.7.10", locked = true, bins = ["dx"] }
+
 # Enable optimizations for dependencies in dev profile
 [profile.dev.package."*"]
 opt-level = 3

@@ -28,7 +28,3 @@ nalgebra = "0.35"
 btleplug = "0.11.8"
 uuid = "1.18.0"
 dfu-nusb = { git = "https://github.com/florg-32/dfu-nusb", branch = "bump-nusb-0.2" }
-
-# https://github.com/dustinblackman/cargo-run-bin
-[package.metadata.bin]
-dioxus-cli = { version = "0.7.10", locked = true, bins = ["dx"] }
