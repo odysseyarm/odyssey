@@ -44,7 +44,11 @@ jobs:
   bundle:
     name: Bundle MSI
     needs: check-version
-    runs-on: windows-latest
+    # Set the DESKTOP_RUNNER repository variable to a self-hosted Windows
+    # runner's label to build there instead. A hosted runner starts empty and
+    # compiles all ~670 crates every time, around 20 minutes; a self-hosted one
+    # keeps target/ and ~/.cargo between runs and only rebuilds what changed.
+    runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
@@ -57,7 +61,13 @@ jobs:
         with:
           version: "26.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # A self-hosted runner keeps its own target/, so the cache round-trip is
+      # pure overhead there.
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !vars.DESKTOP_RUNNER }}
+        with:
+          workspaces: ". -> target"
+          cache-all-crates: true
       - name: Install cargo-binstall
         uses: taiki-e/install-action@v2
         with:
