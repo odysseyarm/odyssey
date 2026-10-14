@@ -21,11 +21,11 @@ members = [
 ]
 
 # sdk/* are excluded (not just left out of members) so they get their own
-# Cargo.lock: odyssey-hub-server depends on ats_cv over an SSH git URL that CI
-# can't authenticate to, and a shared workspace lock forces cargo to resolve
+# Cargo.lock: odyssey-hub-server depends on odyssey-cv over an SSH git URL that
+# CI can't authenticate to, and a shared workspace lock forces cargo to resolve
 # every member's dependencies even when building with -p for a single package.
 # Neither FFI nor uniffi depend on odyssey-hub-server, so their own lockfiles
-# never touch ats_cv.
+# never touch odyssey-cv.
 exclude = [
     "sdk/odyssey-hub-client-ffi",
     "sdk/odyssey-hub-client-uniffi",
@@ -45,6 +45,12 @@ inherits = "dev"
 [profile.android-dev]
 inherits = "dev"
 
-# opencv-ros-camera is deliberately unpinned here: ats_cv depends on the same
+# opencv-ros-camera is deliberately unpinned here: odyssey-cv depends on the same
 # fork without a rev, and a rev on our side would make them two distinct
 # sources with incompatible types. Cargo.lock is the pin.
+
+# odyssey-cv pulls odyssey-common from this repo over git. Without the patch
+# cargo builds that checkout alongside the local crate, and the two copies of
+# ScreenCalibration do not unify, so point the git source at the workspace crate.
+[patch."https://github.com/odysseyarm/odyssey"]
+odyssey-common = { path = "crates/odyssey-common" }

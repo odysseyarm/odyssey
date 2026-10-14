@@ -14,7 +14,7 @@ name: FFI Build
 # odyssey-hub-client-ffi is its own workspace (excluded from the root one,
 # see root Cargo.toml) with its own Cargo.lock and Cross.toml — building it
 # as part of the root workspace would force cargo to also resolve
-# odyssey-hub-server's ats_cv SSH git dependency, which CI can't
+# odyssey-hub-server's odyssey-cv SSH git dependency, which CI can't
 # authenticate to, even though odyssey-hub-client-ffi doesn't depend on it.
 
 on:

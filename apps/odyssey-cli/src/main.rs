@@ -10,7 +10,7 @@ mod calibration;
 mod bond;
 
 #[derive(Parser)]
-#[command(name = "ats-cli")]
+#[command(name = "odyssey-cli")]
 #[command(about = "CLI tool for managing ATS mux and devices", long_about = None)]
 struct Cli {
     #[command(subcommand)]

@@ -135,7 +135,7 @@ pub struct Marker {
 }
 
 impl Marker {
-    pub fn ats_cv_marker(&self) -> odyssey_cv::foveated::Marker {
+    pub fn odyssey_cv_marker(&self) -> odyssey_cv::foveated::Marker {
         odyssey_cv::foveated::Marker {
             position: self.normalized.cast(),
         }

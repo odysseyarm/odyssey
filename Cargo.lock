@@ -5672,6 +5672,7 @@ dependencies = [
 [[package]]
 name = "eskf"
 version = "0.3.0"
+source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#2700dae58d5c722351e82e04b54b59968f2a9179"
 dependencies = [
  "nalgebra 0.35.0",
 ]
@@ -9362,6 +9363,7 @@ dependencies = [
 [[package]]
 name = "odyssey-cv"
 version = "0.1.0"
+source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#2700dae58d5c722351e82e04b54b59968f2a9179"
 dependencies = [
  "arrayvec 0.7.8",
  "cam-geom",

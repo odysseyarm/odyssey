@@ -5,7 +5,7 @@
 #
 # Mirrors odyssey-hub-client-uniffi/Cross.toml. odyssey-hub-client-ffi is its
 # own workspace (excluded from the root one, see root Cargo.toml) so its
-# Cargo.lock never has to resolve odyssey-hub-server's ats_cv SSH git
+# Cargo.lock never has to resolve odyssey-hub-server's odyssey-cv SSH git
 # dependency — cross needs this file alongside that crate's own Cargo.toml.
 
 [target.x86_64-unknown-linux-gnu]

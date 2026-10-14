@@ -1,5 +1,5 @@
 [package]
-name = "odyssey_uniffi_bindgen"
+name = "odyssey-uniffi-bindgen"
 version = "0.1.0"
 edition = "2021"
 
