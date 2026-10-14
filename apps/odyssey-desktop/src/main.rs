@@ -10,15 +10,12 @@ use odyssey_hub_server::Message;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use tokio_util::sync::CancellationToken;
-use velopack::VelopackApp;
 
 use components::Navbar;
 use views::Accessories;
 use views::Home;
 use views::Pairing;
 use views::Settings;
-
-use components::update::{self, UpdateBanner};
 
 mod components;
 mod hub;
@@ -27,8 +24,6 @@ mod tray;
 mod views;
 
 fn main() {
-    VelopackApp::build().run();
-
     // Set up tracing to write to both stdout and a log file before Dioxus launches
     if cfg!(target_os = "windows") {
         // %LOCALAPPDATA%\Odyssey.Desktop\logs
@@ -154,53 +149,8 @@ fn app() -> Element {
         }
     });
 
-    // --- Update state + channel-aware check ---
-    let update_state = use_context_provider(update::UpdateState::new_in_scope);
-
-    // Re-runs when the selected channel changes or a check is requested
-    use_effect(move || {
-        let mut state = update_state;
-        let channel = (state.channel)();
-        let _tick = (state.check_tick)();
-        state.available.set(false);
-        state.error.set(None);
-        state.checking.set(true);
-        dioxus::prelude::spawn(async move {
-            use velopack as vp;
-
-            // velopack 1.x is sync; keep the network check off the UI executor
-            let result = tokio::task::spawn_blocking(move || {
-                update::update_manager(channel).and_then(|um| um.check_for_updates())
-            })
-            .await;
-
-            match result {
-                Ok(Ok(vp::UpdateCheck::UpdateAvailable(_))) => {
-                    tracing::info!("Update available on channel {}", channel.as_str());
-                    state.available.set(true);
-                }
-                Ok(Ok(_)) => {
-                    tracing::info!("No update available on channel {}", channel.as_str());
-                }
-                Ok(Err(e)) => {
-                    tracing::error!("Error checking for updates: {e}");
-                    state.error.set(Some(format!("{e}")));
-                }
-                Err(e) => {
-                    tracing::error!("Update check task failed: {e}");
-                    state.error.set(Some(format!("{e}")));
-                }
-            }
-            state.checking.set(false);
-        });
-    });
-
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-
-        UpdateBanner {
-            cancel_token: Signal::new(cancel_token.clone()),
-        }
 
         ConfigCorruptionModal {
             corruptions: config_corruptions,
