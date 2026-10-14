@@ -3,7 +3,11 @@ use crate::Packet;
 pub const MAX_DEVICES: usize = 3;
 pub type Uuid = [u8; 6];
 
-const SEMVER: [u16; 3] = [0, 2, 0];
+/// Version of the mux wire format, reported by a dongle in
+/// [`MuxMsg::ReadVersionResponse`]. Bump it when the mux messages change
+/// shape; it moves independently of the crate version and of
+/// [`crate::DEVICE_PROTOCOL`].
+pub const MUX_PROTOCOL: [u16; 3] = [0, 2, 0];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -52,7 +56,7 @@ pub struct Version {
 impl Version {
     pub fn new(firmware_semver: [u16; 3]) -> Self {
         Self {
-            protocol_semver: SEMVER,
+            protocol_semver: MUX_PROTOCOL,
             firmware_semver,
         }
     }
