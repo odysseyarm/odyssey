@@ -15,8 +15,8 @@ serial2 = "0.2.20"
 tokio = { version = "1.37.0", features = ["macros", "net"] }
 odyssey-usb = { path = "../../crates/odyssey-usb" }
 tracing-subscriber = "0.3.19"
-dioxus = { version = "0.7.9", features = ["desktop", "signals"] }
-dioxus-router = "0.7.9"
+dioxus = { version = "0.7.10", features = ["desktop", "signals"] }
+dioxus-router = "0.7.10"
 odyssey-hub-client = { path = "../../crates/odyssey-hub-client" }
 odyssey-hub-common = { path = "../../crates/odyssey-hub-common" }
 odyssey-hub-server = { version = "0.1.0", path = "../../crates/odyssey-hub-server" }
@@ -32,4 +32,4 @@ dfu-nusb = { git = "https://github.com/florg-32/dfu-nusb", branch = "bump-nusb-0
 
 # https://github.com/dustinblackman/cargo-run-bin
 [package.metadata.bin]
-dioxus-cli = { version = "0.7.9", locked = true, bins = ["dx"] }
+dioxus-cli = { version = "0.7.10", locked = true, bins = ["dx"] }
