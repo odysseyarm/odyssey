@@ -22,7 +22,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Delay;
 use embedded_hal_bus::spi::{DeviceError, ExclusiveDevice};
-pub use {embassy_nrf, embassy_sync, embassy_time, embassy_usb, paj7025, protodongers};
+pub use {embassy_nrf, embassy_sync, embassy_time, embassy_usb, paj7025, odyssey_protocol};
 
 pub type Paj =
     paj7025::Paj7025<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, DeviceError<spim::Error, Infallible>>;

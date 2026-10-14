@@ -76,9 +76,9 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
 static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
 
 /// Device control command sender function type
-pub type DeviceControlSender = fn(protodongers::control::device::DeviceMsg);
+pub type DeviceControlSender = fn(odyssey_protocol::control::device::DeviceMsg);
 /// Device control event receiver function type
-pub type DeviceControlReceiver = fn() -> Option<protodongers::control::device::DeviceMsg>;
+pub type DeviceControlReceiver = fn() -> Option<odyssey_protocol::control::device::DeviceMsg>;
 
 /// Create a USB device with vendor-specific bulk endpoints and WinUSB support.
 ///
@@ -236,7 +236,7 @@ impl embassy_usb::Handler for MyHandler {
         data: &[u8],
     ) -> Option<embassy_usb::control::OutResponse> {
         use embassy_usb::control::{OutResponse, Recipient, RequestType};
-        use protodongers::control::device::DeviceMsg;
+        use odyssey_protocol::control::device::DeviceMsg;
 
         // Vendor|Interface, request SEND=0x30
         if req.request_type == RequestType::Vendor

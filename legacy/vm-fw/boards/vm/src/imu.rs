@@ -75,9 +75,11 @@ impl common::platform::ImuInterrupt for VmImuInterrupt {
     }
 }
 
-const VALID_ODRS_BMI270: &[(u16, bmi2::types::Odr)] = {
+// Kept as a by-value const array (not a `&'static` slice) because `bmi2::types::Odr`
+// is neither `Copy` nor `Clone`, so entries can only be read out of a fresh const value.
+const VALID_ODRS_BMI270: [(u16, bmi2::types::Odr); 15] = {
     use bmi2::types::Odr;
-    &[
+    [
         (1, Odr::Odr0p78),
         (2, Odr::Odr1p5),
         (3, Odr::Odr3p1),
@@ -109,7 +111,8 @@ fn nearest_odr_index(hz: u16) -> usize {
 }
 
 fn round_odr_bmi270(hz: u16) -> bmi2::types::Odr {
-    VALID_ODRS_BMI270[nearest_odr_index(hz)].1
+    let idx = nearest_odr_index(hz);
+    VALID_ODRS_BMI270.into_iter().nth(idx).unwrap().1
 }
 
 pub fn round_accel_odr_hz(hz: u16) -> u16 {

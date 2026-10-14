@@ -1,7 +1,7 @@
 // Mock L2CAP implementation for VM (no BLE support)
 // All operations are no-ops or pend forever
 
-use common::protodongers::Packet;
+use common::odyssey_protocol::Packet;
 use core::future::Future;
 
 #[derive(Clone, Copy)]

@@ -1,7 +1,7 @@
 #![allow(static_mut_refs)]
 // Real L2CAP implementation for ATSlite (wraps BLE stack)
 
-use common::protodongers::Packet;
+use common::odyssey_protocol::Packet;
 use core::future::Future;
 use core::sync::atomic::{AtomicBool, Ordering};
 

@@ -27,7 +27,7 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMu
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer, WithTimeout};
-use protodongers::mux::MAX_DEVICES;
+use odyssey_protocol::mux::MAX_DEVICES;
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
 
@@ -53,7 +53,7 @@ static STORAGE_BUF: StaticCell<[u8; STORAGE_BUF_SIZE]> = StaticCell::new();
 static STORAGE_FLASH: StaticCell<Flash<nrf_mpsl::Flash<'static>, NoCache>> = StaticCell::new();
 
 /// BLE bond information for a single device
-pub type BondData = protodongers::control::BondEntry;
+pub type BondData = odyssey_protocol::control::BondEntry;
 
 /// Storage for all BLE bonds (up to MAX_DEVICES)
 #[derive(Debug, Clone, Encode, Decode, CborLen)]

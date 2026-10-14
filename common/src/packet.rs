@@ -1,7 +1,7 @@
 //! COBS framing utilities for packet handling
 //!
 //! This module provides low-level COBS encoding/decoding utilities.
-//! The actual packet parsing is done by the board-specific code using protodongers.
+//! The actual packet parsing is done by the board-specific code using odyssey-protocol.
 
 /// COBS decode error
 #[derive(Debug, Clone, Copy)]

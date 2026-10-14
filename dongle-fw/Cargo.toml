@@ -40,7 +40,7 @@ rand_chacha = { version = "0.3", default-features = false }
 # Match cfg-noodle's minicbor line for local derives/storage types.
 minicbor = { version = "2.0.0", default-features = false, features = ["derive"] }
 
-protodongers = { git = "https://github.com/odysseyarm/protodonge-rs.git", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+odyssey-protocol = { git = "https://github.com/odysseyarm/odyssey", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
 
 # Use cfg-noodle with our minicbor version
 cfg-noodle = { version = "0.5", default-features = false, features = ["defmt"] }
@@ -51,7 +51,7 @@ memory-spec = "0.1.0"
 
 [features]
 default = ["defmt"]
-defmt = ["embassy-usb/defmt", "embassy-nrf/defmt", "protodongers/defmt", "embassy-futures/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
+defmt = ["embassy-usb/defmt", "embassy-nrf/defmt", "odyssey-protocol/defmt", "embassy-futures/defmt", "embassy-executor/defmt", "embassy-time/defmt"]
 rtt = ["defmt-rtt", "panic-probe"]
 
 [profile.release]

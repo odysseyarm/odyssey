@@ -3,7 +3,7 @@
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Channel};
-use protodongers::control::device::DeviceMsg;
+use odyssey_protocol::control::device::DeviceMsg;
 use static_cell::StaticCell;
 
 // Event channel: device -> host control messages (responses, async events)

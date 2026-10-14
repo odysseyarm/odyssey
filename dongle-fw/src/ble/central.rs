@@ -7,7 +7,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
-use protodongers::mux::{DevicePacket, MAX_DEVICES};
+use odyssey_protocol::mux::{DevicePacket, MAX_DEVICES};
 use static_cell::StaticCell;
 
 use trouble_host::Stack;
@@ -32,8 +32,8 @@ pub const PRODUCT_ID_PREFIXES: &[&[u8]] = &[b"ATS", b"ATS-LEG"];
 pub type Uuid = [u8; 6];
 
 /// Helper to determine if a packet is a control packet (vs streaming data)
-pub fn is_control_packet(pkt: &protodongers::Packet) -> bool {
-    use protodongers::PacketData as P;
+pub fn is_control_packet(pkt: &odyssey_protocol::Packet) -> bool {
+    use odyssey_protocol::PacketData as P;
 
     match &pkt.data {
         // Control packets
@@ -294,7 +294,7 @@ impl ActiveConnections {
 
         if result && DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
             let devices = self.get_all().await;
-            let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
+            let response = odyssey_protocol::mux::MuxMsg::DevicesSnapshot(devices.into());
             if crate::HOST_RESPONSES.try_send(response).is_err() {
                 defmt::warn!("HOST_RESPONSES full, dropped DevicesSnapshot (add)");
             }
@@ -310,7 +310,7 @@ impl ActiveConnections {
 
         if DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
             let devices = self.get_all().await;
-            let response = protodongers::mux::MuxMsg::DevicesSnapshot(devices);
+            let response = odyssey_protocol::mux::MuxMsg::DevicesSnapshot(devices.into());
             if crate::HOST_RESPONSES.try_send(response).is_err() {
                 defmt::warn!("HOST_RESPONSES full, dropped DevicesSnapshot (remove)");
             }

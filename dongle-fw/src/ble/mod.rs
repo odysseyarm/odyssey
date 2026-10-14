@@ -14,5 +14,5 @@ pub use central::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager};
 
 /// Channel for sending packets from BLE devices to USB
 /// Reduced to 32 to save RAM (was 64)
-pub type DevicePacketChannel = Channel<ThreadModeRawMutex, protodongers::mux::DevicePacket, 32>;
+pub type DevicePacketChannel = Channel<ThreadModeRawMutex, odyssey_protocol::mux::DevicePacket, 32>;
 // Device queues and connection tracking are defined in `ble::central`.

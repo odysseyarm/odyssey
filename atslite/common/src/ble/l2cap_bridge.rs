@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use protodongers::Packet;
+use odyssey_protocol::Packet;
 use static_cell::StaticCell;
 
 /// Channel for incoming CONTROL packets from L2CAP (BLE -> Main)
@@ -82,7 +82,7 @@ pub fn get_or_init() -> L2capChannels {
 
 /// Helper to determine if a packet is a control packet (vs streaming data)
 pub fn is_control_packet(pkt: &Packet) -> bool {
-    use protodongers::PacketData as P;
+    use odyssey_protocol::PacketData as P;
 
     match &pkt.data {
         // Control packets - commands and responses

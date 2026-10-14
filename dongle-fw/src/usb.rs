@@ -145,7 +145,7 @@ impl embassy_usb::Handler for MyHandler {
         data: &[u8],
     ) -> Option<embassy_usb::control::OutResponse> {
         use embassy_usb::control::{OutResponse, Recipient, RequestType};
-        use protodongers::control::usb_mux::UsbMuxCtrlMsg;
+        use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 
         // Vendor|Interface, request SEND=0x30, wIndex=1
         if req.request_type == RequestType::Vendor
