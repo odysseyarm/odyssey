@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* WebKit draws <select> popups with the platform widget, not with our CSS, so
+   the list takes the GTK theme's colours while the closed control takes ours.
+   On a light GTK theme that paints white text on a white popup. Declaring the
+   scheme makes the engine render native controls to match the page. */
+:root {
+    color-scheme: light dark;
+}
+
 @layer components {
     /* Secondary/outline button - light background with border */
     .btn-secondary {
