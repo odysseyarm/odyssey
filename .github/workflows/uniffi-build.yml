@@ -183,6 +183,11 @@ jobs:
           tool: cross
       - name: Install cargo-xwin
         run: pip install cargo-xwin
+      # cc-rs archives the MSVC target with llvm-lib. The runner image keeps
+      # LLVM under /usr/lib/llvm-<major>/bin and symlinks only a few versioned
+      # tools into /usr/bin, so that directory has to go on PATH whole.
+      - name: Put LLVM on PATH
+        run: ls -d /usr/lib/llvm-*/bin | sort -V | tail -1 >> "$GITHUB_PATH"
       - name: Add windows target
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build linux natives (cross)
