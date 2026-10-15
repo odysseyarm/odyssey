@@ -1,8 +1,11 @@
 use dioxus::{
     desktop::{
         muda::MenuItem,
-        trayicon::{menu::Menu, Icon, TrayIcon, TrayIconBuilder},
-        use_muda_event_handler, window,
+        trayicon::{
+            menu::Menu, Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder,
+            TrayIconEvent,
+        },
+        use_muda_event_handler, use_tray_icon_event_handler, window,
     },
     prelude::*,
 };
@@ -27,21 +30,20 @@ macro_rules! icon_from_bytes {
 pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) -> TrayIcon {
     let icon = icon_from_bytes!("/assets/images/tray-icon.png");
 
-    // Actions live on the menu rather than on icon clicks, which several trays
-    // never deliver.
     let menu = Menu::new();
 
     // muda's PredefinedMenuItem variants have no dbusmenu representation, so a
     // tray built from them exports an empty menu on Linux. Plain items with ids
     // survive the trip and are dispatched below.
-    let show_item = MenuItem::with_id("show", "Show", true, None);
+    let open_item = MenuItem::with_id("open", "Open", true, None);
     let quit_item = MenuItem::with_id("quit", "Quit", true, None);
-    if let Err(e) = menu.append_items(&[&show_item, &quit_item]) {
+    if let Err(e) = menu.append_items(&[&open_item, &quit_item]) {
         dioxus::logger::tracing::error!("failed to build the tray menu: {e}");
     }
 
     // Built by hand rather than through init_tray_icon so the menu above is the
-    // one that ships with the icon.
+    // one that ships with the icon. Left click opens the window and right click
+    // drops the menu, matching what tray icons do elsewhere.
     let builder = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -52,11 +54,8 @@ pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) ->
     // Tray clicks surface on the muda channel rather than the tray one, so
     // use_tray_menu_event_handler never sees them.
     use_muda_event_handler(move |event| match event.id.0.as_str() {
-        "show" => {
-            // Closing the window only hides it, so the tray is the sole way back.
-            let window = window();
-            window.set_visible(true);
-            window.set_focus();
+        "open" => {
+            show_window();
         }
         "quit" => {
             cancellation_token.cancel();
@@ -65,5 +64,25 @@ pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) ->
         _ => {}
     });
 
+    use_tray_icon_event_handler(|event| {
+        // Ayatana's StatusNotifier hosts deliver a menu request instead of a
+        // click, so this fires on Windows and macOS only.
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            show_window();
+        }
+    });
+
     tray
+}
+
+/// Closing the window only hides it, so the tray is the sole way back.
+fn show_window() {
+    let window = window();
+    window.set_visible(true);
+    window.set_focus();
 }
