@@ -120,6 +120,10 @@ jobs:
         with:
           version: "26.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # maturin cross-compiles this target through cargo-xwin on the host, so
+      # it needs llvm-lib for the same reason the native builds do.
+      - name: Put LLVM on PATH
+        run: ls -d /usr/lib/llvm-*/bin | sort -V | tail -1 >> "$GITHUB_PATH"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
