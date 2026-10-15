@@ -1349,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-protocol"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "enumn",
  "heapless 0.9.3",
@@ -1357,11 +1357,20 @@ dependencies = [
  "minicbor-serde",
  "nalgebra",
  "odyssey-common",
+ "odyssey-protocol-macros",
  "opencv-ros-camera",
  "serde",
  "serde_bytes",
  "static_assertions",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "odyssey-protocol-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
