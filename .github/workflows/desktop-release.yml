@@ -90,10 +90,59 @@ jobs:
           name: odyssey-desktop-msi
           path: dist
 
+  appimage:
+    name: Bundle AppImage
+    needs: check-version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+    steps:
+      - name: Authenticate the odyssey-cv git dependency
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git".insteadOf "ssh://git@github.com/odysseyarm/odyssey-cv.git"
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libudev-dev \
+            libdbus-1-dev libssl-dev pkg-config fuse3 \
+            libayatana-appindicator3-dev
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-all-crates: true
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-binstall
+      - name: Install dioxus-cli
+        run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
+      - name: Bundle
+        working-directory: apps/odyssey-desktop
+        run: dx bundle --desktop --package-types appimage
+      - name: Collect the AppImage
+        run: |
+          set -eu
+          img=$(find target/dx -name '*.AppImage' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -z "$img" ]; then echo "dx bundle produced no AppImage" >&2; exit 1; fi
+          mkdir -p dist
+          cp "$img" "dist/Odyssey-$VERSION-x86_64.AppImage"
+          chmod +x "dist/Odyssey-$VERSION-x86_64.AppImage"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: odyssey-desktop-appimage
+          path: dist
+
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [check-version, bundle]
+    needs: [check-version, bundle, appimage]
     permissions:
       contents: write
     env:
@@ -102,6 +151,9 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: odyssey-desktop-msi
+      - uses: actions/download-artifact@v6
+        with:
+          name: odyssey-desktop-appimage
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -109,5 +161,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Odyssey Desktop v$VERSION" \
-            --notes "Windows installer for Odyssey $VERSION." \
-            "Odyssey-$VERSION-win-x64.msi"
+            --notes "Odyssey $VERSION — Windows installer and Linux AppImage." \
+            "Odyssey-$VERSION-win-x64.msi" \
+            "Odyssey-$VERSION-x86_64.AppImage"
