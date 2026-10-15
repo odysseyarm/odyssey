@@ -126,14 +126,38 @@ jobs:
       - name: Bundle
         working-directory: apps/odyssey-desktop
         run: dx bundle --desktop --package-types appimage
+      # dx bundles libwebkit2gtk but not the helper binaries that library
+      # spawns, and it looks for them at a path compiled into the library, so
+      # the AppImage only runs on a host that already has webkit2gtk-4.1
+      # installed at the same version. Unpack, add the helpers, repack.
       - name: Collect the AppImage
         run: |
           set -eu
           img=$(find target/dx -name '*.AppImage' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
           if [ -z "$img" ]; then echo "dx bundle produced no AppImage" >&2; exit 1; fi
+
+          chmod +x "$img"
+          "$img" --appimage-extract >/dev/null
+          helpers=/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1
+          if [ ! -x "$helpers/WebKitNetworkProcess" ]; then
+            echo "no webkit helpers at $helpers" >&2; exit 1
+          fi
+          mkdir -p "squashfs-root$helpers"
+          cp -a "$helpers/." "squashfs-root$helpers/"
+
+          curl -fsSLo /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
           mkdir -p dist
-          cp "$img" "dist/Odyssey-$VERSION-x86_64.AppImage"
+          ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run \
+            squashfs-root "dist/Odyssey-$VERSION-x86_64.AppImage"
           chmod +x "dist/Odyssey-$VERSION-x86_64.AppImage"
+
+          # Prove the helpers made it in, so a silent repack failure cannot
+          # ship an image that dies on a clean machine.
+          "dist/Odyssey-$VERSION-x86_64.AppImage" --appimage-extract \
+            "usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess" >/dev/null
+          test -x "squashfs-root$helpers/WebKitNetworkProcess"
       - uses: actions/upload-artifact@v6
         with:
           name: odyssey-desktop-appimage
