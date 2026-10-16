@@ -470,7 +470,7 @@ async fn run_firmware_update(
         // Wait for device to enter DFU mode
         tracing::info!("Waiting for device to enter DFU mode");
         manager.set_state(device_uuid, FirmwareUpdateState::WaitingForDfu);
-        firmware::wait_for_dfu_device(vid, pid, std::time::Duration::from_secs(10))
+        firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(10))
             .await
             .map_err(|e| format!("Device did not enter DFU mode: {}", e))?;
     } else {
@@ -478,7 +478,7 @@ async fn run_firmware_update(
     }
 
     // Determine target slot
-    let (slot_name, slot_file, alt) = firmware::determine_target_slot_for_device(vid, pid)
+    let (slot_name, slot_file, alt) = firmware::determine_target_slot_for_device(&device_uuid, vid, pid)
         .map_err(|e| format!("Failed to determine target slot: {}", e))?;
 
     tracing::info!(
@@ -535,6 +535,7 @@ async fn run_firmware_update(
     };
 
     let flash_result = firmware::flash_firmware_with_progress(
+        &device_uuid,
         vid,
         pid,
         slot_name,
