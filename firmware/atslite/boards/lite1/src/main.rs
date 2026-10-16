@@ -317,6 +317,12 @@ async fn main(spawner: Spawner) {
         "ATS USB"
     };
 
+    // The channels have to exist before USB comes up: the host sends control
+    // requests as soon as enumeration finishes, and try_send_cmd drops anything
+    // that arrives while the pointers are still null.
+    let (ctrl_evt_ch, ctrl_cmd_ch) = lite1::device_control::init();
+    lite1::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+
     defmt::info!("Initializing USB...");
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
@@ -344,10 +350,6 @@ async fn main(spawner: Spawner) {
         },
     );
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
-
-    // Initialize device control channels and spawn the task
-    let (ctrl_evt_ch, ctrl_cmd_ch) = lite1::device_control::init();
-    lite1::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
 
     // Register the board-specific persist function for transport mode before spawning the task
     lite1::device_control_task::register_transport_mode_persist_fn(
