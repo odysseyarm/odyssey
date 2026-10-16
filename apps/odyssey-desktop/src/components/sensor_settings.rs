@@ -488,6 +488,48 @@ async fn paj_load_from_device(
     })
 }
 
+/// Write the fields that live in the device's general config.
+///
+/// Every value is validated before anything is sent, so a typo in one field
+/// cannot leave the device holding a half-applied set.
+async fn write_general_config(
+    hub: &HubContext,
+    device: &Device,
+    impact_threshold: &str,
+    suppress_ms: &str,
+    shot_delay: Option<&str>,
+) -> Result<(), String> {
+    let impact: u8 = impact_threshold
+        .parse()
+        .map_err(|_| format!("impact threshold {impact_threshold:?} is not 0-255"))?;
+    let suppress: u8 = suppress_ms
+        .parse()
+        .map_err(|_| format!("suppress time {suppress_ms:?} is not 0-255"))?;
+    let delay = shot_delay
+        .map(|d| {
+            d.parse::<u16>()
+                .map_err(|_| format!("shot delay {d:?} is not 0-65535"))
+        })
+        .transpose()?;
+
+    let mut client = hub.client.peek().clone();
+    client
+        .write_config(device.clone(), 0, impact)
+        .await
+        .map_err(|e| format!("writing impact threshold: {e}"))?;
+    client
+        .write_config(device.clone(), 1, suppress)
+        .await
+        .map_err(|e| format!("writing suppress time: {e}"))?;
+    if let Some(delay) = delay {
+        client
+            .set_shot_delay(device.clone(), delay)
+            .await
+            .map_err(|e| format!("writing shot delay: {e}"))?;
+    }
+    Ok(())
+}
+
 async fn paj_apply_to_device(
     hub: &HubContext,
     device: &Device,
@@ -1212,31 +1254,19 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             loading.set(true);
             status.set("Applying...".into());
             let hub_ctx = hub.peek().clone();
-            // Apply general config
-            if let Ok(v) = impact_threshold.peek().parse::<u8>() {
-                let _ = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .write_config(device.clone(), 0, v)
-                    .await;
-            }
-            if let Ok(v) = suppress_ms.peek().parse::<u8>() {
-                let _ = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .write_config(device.clone(), 1, v)
-                    .await;
-            }
-            // Apply shot delay
-            if let Ok(v) = shot_delay.peek().parse::<u16>() {
-                let _ = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .set_shot_delay(device.clone(), v)
-                    .await;
+            let general = write_general_config(
+                &hub_ctx,
+                &device,
+                &impact_threshold.peek(),
+                &suppress_ms.peek(),
+                Some(&shot_delay.peek()),
+            )
+            .await;
+            if let Err(e) = general {
+                tracing::error!("Failed to apply general config: {e}");
+                status.set(format!("Error: {e}"));
+                loading.set(false);
+                return;
             }
             // Apply sensor settings
             let result = if is_paj {
@@ -1263,22 +1293,22 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             loading.set(true);
             status.set("Applying & saving...".into());
             let hub_ctx = hub.peek().clone();
-            // Apply general config before saving
-            if let Ok(v) = impact_threshold.peek().parse::<u8>() {
-                let _ = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .write_config(device.clone(), 0, v)
-                    .await;
-            }
-            if let Ok(v) = suppress_ms.peek().parse::<u8>() {
-                let _ = hub_ctx
-                    .client
-                    .peek()
-                    .clone()
-                    .write_config(device.clone(), 1, v)
-                    .await;
+            // The flash below persists whatever the device currently holds, so
+            // a write that failed here would be saved as the old value under a
+            // "Saved" message.
+            let general = write_general_config(
+                &hub_ctx,
+                &device,
+                &impact_threshold.peek(),
+                &suppress_ms.peek(),
+                None,
+            )
+            .await;
+            if let Err(e) = general {
+                tracing::error!("Failed to apply general config: {e}");
+                status.set(format!("Error: {e}"));
+                loading.set(false);
+                return;
             }
             // Apply sensor settings before saving
             let apply_result = if is_paj {
