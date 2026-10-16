@@ -3,6 +3,7 @@ use embassy_boot::BlockingFirmwareState;
 use embassy_time::{Duration, Instant};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, RequestType};
 use embassy_usb::driver::Driver;
+use embassy_usb::types::InterfaceNumber;
 use embassy_usb::{Builder, FunctionBuilder, Handler};
 use embedded_storage::nor_flash::NorFlash;
 
@@ -36,6 +37,10 @@ pub struct Control<MARK: DfuMarker, RST: Reset> {
     timeout: Option<Duration>,
     detach_start: Option<Instant>,
     reset: RST,
+    /// Set when the descriptor is built. Control requests name an interface and
+    /// a composite device has several, so without this the handler answers a
+    /// detach meant for someone else and resets into the bootloader.
+    interface: Option<InterfaceNumber>,
 }
 
 impl<MARK: DfuMarker, RST: Reset> Control<MARK, RST> {
@@ -48,6 +53,20 @@ impl<MARK: DfuMarker, RST: Reset> Control<MARK, RST> {
             detach_start: None,
             timeout: None,
             reset,
+            interface: None,
+        }
+    }
+
+    /// Whether a class request names the DFU interface.
+    fn addressed_to_us(&self, req: &embassy_usb::control::Request) -> bool {
+        if (req.request_type, req.recipient) != (RequestType::Class, Recipient::Interface) {
+            return false;
+        }
+        match self.interface {
+            Some(iface) => req.index == u8::from(iface) as u16,
+            // The descriptor has not been built yet, so nothing can legitimately
+            // be addressed here.
+            None => false,
         }
     }
 }
@@ -74,7 +93,7 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
         req: embassy_usb::control::Request,
         _: &[u8],
     ) -> Option<embassy_usb::control::OutResponse> {
-        if (req.request_type, req.recipient) != (RequestType::Class, Recipient::Interface) {
+        if !self.addressed_to_us(&req) {
             return None;
         }
 
@@ -102,7 +121,7 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
         req: embassy_usb::control::Request,
         buf: &'a mut [u8],
     ) -> Option<embassy_usb::control::InResponse<'a>> {
-        if (req.request_type, req.recipient) != (RequestType::Class, Recipient::Interface) {
+        if !self.addressed_to_us(&req) {
             return None;
         }
 
@@ -140,6 +159,7 @@ pub fn usb_dfu<'d, D: Driver<'d>, MARK: DfuMarker, RST: Reset>(
     func_modifier(&mut func);
 
     let mut iface = func.interface();
+    handler.interface = Some(iface.interface_number());
     let mut alt = iface.alt_setting(USB_CLASS_APPN_SPEC, APPN_SPEC_SUBCLASS_DFU, DFU_PROTOCOL_RT, None);
     let timeout = timeout.as_millis() as u16;
     alt.descriptor(
