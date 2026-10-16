@@ -9374,6 +9374,7 @@ dependencies = [
  "odyssey-hub-common",
  "odyssey-hub-server",
  "odyssey-usb",
+ "parking_lot",
  "serial2",
  "serialport",
  "slab",
