@@ -13,3 +13,4 @@ out/
 **/.idea
 
 memory.kdl
+dist/

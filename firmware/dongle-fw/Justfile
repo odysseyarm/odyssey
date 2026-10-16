@@ -1,6 +1,12 @@
+# Recipes chain several tools per line; without this a failing converter is
+# invisible and the next step happily packages a stale file.
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
 target    := "thumbv7em-none-eabihf"
 profile   := "release"
 bin       := "dongle-fw"
+
+version   := `awk -F'"' '/^version/ { print $2; exit }' Cargo.toml`
 
 # nrfutil
 hw        := "52"
@@ -9,7 +15,7 @@ sd_req    := "0x00"
 # The bootloader refuses a package whose application-version is below the one
 # already flashed, so this has to rise with every release. major*10000 +
 # minor*100 + patch keeps it monotonic and readable: 0.1.10 -> 110.
-app_ver   := "110"
+app_ver   := `awk -F'"' '/^version/ { split($2, v, "."); print v[1] * 10000 + v[2] * 100 + v[3]; exit }' Cargo.toml`
 # Fanstel's bootloader key, published at fanstel.com/s/private.pem. The stock
 # bootloader validates against it, so a package signed with anything else is
 # rejected without a chip erase.
@@ -38,6 +44,31 @@ dfu-pkg: hex
     APP="{{ROOT}}/target/{{target}}/{{profile}}/{{bin}}.hex"; \
     nrfutil pkg generate --hw-version {{hw}} --application-version {{app_ver}} --sd-req {{sd_req}} --application "$APP" --key-file "{{key_file}}" "$PKG"; \
     echo "PKG: $PKG"
+
+# Mass-storage bootloaders (the Adafruit nRF52 one and its relatives) take a
+# UF2 dropped onto the drive they expose. Family nrf52840 writes the 0xADA52840
+# id those bootloaders check before accepting a block.
+uf2: hex
+    echo "==> Converting to UF2 (cargo hex-to-uf2)"; \
+    cargo hex-to-uf2 \
+      -i "{{ROOT}}/target/{{target}}/{{profile}}/{{bin}}.hex" \
+      -o "{{ROOT}}/target/{{target}}/{{profile}}/{{bin}}.uf2" \
+      -f nrf52840; \
+    echo "UF2: {{ROOT}}/target/{{target}}/{{profile}}/{{bin}}.uf2"
+
+# Everything a release ships, named for the version in Cargo.toml:
+#   .hex  programmers and bootloaders that take Intel HEX (Laird's, probes)
+#   .uf2  mass-storage bootloaders
+#   .zip  signed package for serial DFU, which is what the app updates over
+dist: hex uf2 dfu-pkg
+    set -eu; \
+    OUT="{{ROOT}}/dist"; \
+    BUILT="{{ROOT}}/target/{{target}}/{{profile}}"; \
+    rm -rf "$OUT"; mkdir -p "$OUT"; \
+    cp "$BUILT/{{bin}}.hex" "$OUT/{{bin}}-{{version}}.hex"; \
+    cp "$BUILT/{{bin}}.uf2" "$OUT/{{bin}}-{{version}}.uf2"; \
+    cp "$BUILT/{{bin}}-dfu.zip" "$OUT/{{bin}}-{{version}}-dfu.zip"; \
+    ls -l "$OUT"
 
 flash: dfu-pkg
     echo "==> DFU over serial port {{dfu_port}} (baud {{baud}})"; \
