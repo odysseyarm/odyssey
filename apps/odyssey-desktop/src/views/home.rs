@@ -352,11 +352,13 @@ fn ConnectedDeviceRow(props: ConnectedDeviceRowProps) -> Element {
                 manifest: manifest,
                 manager: manager.clone(),
             }
-            SensorSettings {
+            // Transport mode first: it decides whether sensor tuning is
+            // reachable at all, so it belongs above the settings it gates.
+            TransportModePanel {
                 hub: hub,
                 device: device.clone(),
             }
-            TransportModePanel {
+            SensorSettings {
                 hub: hub,
                 device: device.clone(),
             }

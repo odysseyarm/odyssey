@@ -9,6 +9,118 @@ const PID_ATS_VM: u16 = 0x520F;
 const PID_ATS_LITE: u16 = 0x5210;
 const PID_ATS_PRO: u16 = 0x5211;
 
+// --- Status reporting ---
+
+/// Outcome of the most recent user-triggered operation in a panel.
+///
+/// `Failed` keeps the customer-facing sentence separate from the raw error so
+/// the latter can stay collapsed; support still gets the exact text.
+#[derive(Clone, PartialEq, Default)]
+enum OpStatus {
+    #[default]
+    Idle,
+    Busy(String),
+    Done(String),
+    Failed {
+        summary: String,
+        detail: Option<String>,
+    },
+}
+
+/// Turn a transport/RPC failure into something a customer can act on.
+///
+/// The hub reports an unusable events transport as a plain `Internal` error;
+/// surfaced verbatim it reads like a crash, when in fact the device is simply
+/// in BLE mode and the register plane lives on the USB bulk endpoint.
+fn rpc_failure(context: &str, err: &dyn std::fmt::Display) -> OpStatus {
+    let raw = format!("{err:#}");
+    let summary = if raw.contains("events transport not connected") {
+        "Sensor tuning needs the USB data connection. Switch Transport mode to \
+         USB in the Connection section, then try again."
+            .to_string()
+    } else if raw.contains("not connected to the hub") || raw.contains("transport error") {
+        "Lost the connection to the Odyssey service.".to_string()
+    } else if raw.contains("device not found") {
+        "The device disconnected before the request finished.".to_string()
+    } else {
+        format!("Could not {context}.")
+    };
+    OpStatus::Failed {
+        summary,
+        detail: Some(raw),
+    }
+}
+
+#[component]
+fn StatusLine(status: OpStatus) -> Element {
+    match status {
+        OpStatus::Idle => rsx! {},
+        OpStatus::Busy(msg) => rsx! {
+            span { class: "text-xs text-gray-500 dark:text-gray-400 italic", "{msg}" }
+        },
+        OpStatus::Done(msg) => rsx! {
+            span { class: "text-xs text-green-600 dark:text-green-400", "{msg}" }
+        },
+        OpStatus::Failed { summary, detail } => rsx! {
+            div {
+                class: "text-xs text-red-600 dark:text-red-400 space-y-1 basis-full",
+                p { "{summary}" }
+                if let Some(detail) = detail {
+                    details {
+                        summary {
+                            class: "cursor-pointer text-gray-500 dark:text-gray-400 select-none",
+                            "Technical details"
+                        }
+                        p {
+                            class: "mt-1 font-mono text-[11px] text-gray-500 dark:text-gray-400 break-all",
+                            "{detail}"
+                        }
+                    }
+                }
+            }
+        },
+    }
+}
+
+// --- Field validation ---
+
+/// A value the user typed that cannot be sent to the device.
+#[derive(Clone, PartialEq)]
+struct FieldIssue {
+    field: &'static str,
+    message: String,
+}
+
+/// Parse an unsigned field and bound it, so a typo is reported instead of
+/// silently turning into a default that gets written to the sensor.
+fn parse_bounded(field: &'static str, raw: &str, max: u32) -> Result<u32, FieldIssue> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(FieldIssue {
+            field,
+            message: "Required".into(),
+        });
+    }
+    match raw.parse::<u32>() {
+        Ok(v) if v <= max => Ok(v),
+        Ok(_) => Err(FieldIssue {
+            field,
+            message: format!("Must be 0-{max}"),
+        }),
+        Err(_) => Err(FieldIssue {
+            field,
+            message: format!("Whole number 0-{max}"),
+        }),
+    }
+}
+
+fn issue_for<'a>(issues: &'a [FieldIssue], field: &str) -> Option<&'a str> {
+    issues
+        .iter()
+        .find(|i| i.field == field)
+        .map(|i| i.message.as_str())
+}
+
 // --- Multi-byte register helpers ---
 
 async fn read_u16_reg(
@@ -488,89 +600,148 @@ async fn paj_load_from_device(
     })
 }
 
-/// Write the fields that live in the device's general config.
-///
-/// Every value is validated before anything is sent, so a typo in one field
+/// The fields that live in the device's general config, already validated.
+#[derive(Clone, Copy, PartialEq)]
+struct GeneralValues {
+    impact_threshold: u8,
+    suppress_ms: u8,
+    shot_delay: Option<u16>,
+}
+
+fn general_validate(
+    impact_threshold: &str,
+    suppress_ms: &str,
+    shot_delay: Option<&str>,
+) -> Result<GeneralValues, Vec<FieldIssue>> {
+    let mut issues = Vec::new();
+    let mut take = |field, raw: &str, max| match parse_bounded(field, raw, max) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            issues.push(e);
+            None
+        }
+    };
+
+    let impact = take("Impact threshold", impact_threshold, u8::MAX as u32);
+    let suppress = take("Suppress", suppress_ms, u8::MAX as u32);
+    let delay = shot_delay.map(|d| take("Shot delay", d, u16::MAX as u32));
+
+    if !issues.is_empty() {
+        return Err(issues);
+    }
+    Ok(GeneralValues {
+        impact_threshold: impact.unwrap() as u8,
+        suppress_ms: suppress.unwrap() as u8,
+        shot_delay: delay.map(|d| d.unwrap() as u16),
+    })
+}
+
+/// Write the general config. Callers validate first, so a typo in one field
 /// cannot leave the device holding a half-applied set.
 async fn write_general_config(
     hub: &HubContext,
     device: &Device,
-    impact_threshold: &str,
-    suppress_ms: &str,
-    shot_delay: Option<&str>,
-) -> Result<(), String> {
-    let impact: u8 = impact_threshold
-        .parse()
-        .map_err(|_| format!("impact threshold {impact_threshold:?} is not 0-255"))?;
-    let suppress: u8 = suppress_ms
-        .parse()
-        .map_err(|_| format!("suppress time {suppress_ms:?} is not 0-255"))?;
-    let delay = shot_delay
-        .map(|d| {
-            d.parse::<u16>()
-                .map_err(|_| format!("shot delay {d:?} is not 0-65535"))
-        })
-        .transpose()?;
-
+    values: GeneralValues,
+) -> anyhow::Result<()> {
     let mut client = hub.client.peek().clone();
     client
-        .write_config(device.clone(), 0, impact)
-        .await
-        .map_err(|e| format!("writing impact threshold: {e}"))?;
+        .write_config(device.clone(), 0, values.impact_threshold)
+        .await?;
     client
-        .write_config(device.clone(), 1, suppress)
-        .await
-        .map_err(|e| format!("writing suppress time: {e}"))?;
-    if let Some(delay) = delay {
-        client
-            .set_shot_delay(device.clone(), delay)
-            .await
-            .map_err(|e| format!("writing shot delay: {e}"))?;
+        .write_config(device.clone(), 1, values.suppress_ms)
+        .await?;
+    if let Some(delay) = values.shot_delay {
+        client.set_shot_delay(device.clone(), delay).await?;
     }
     Ok(())
+}
+
+/// PAJ sensor settings after validation, in the units the registers expect.
+#[derive(Clone, Copy, PartialEq)]
+struct PajValues {
+    brightness_threshold: u8,
+    noise_threshold: u8,
+    area_threshold_min: u8,
+    area_threshold_max: u16,
+    max_object_cnt: u8,
+    operation_mode: u8,
+    exposure_time: u16,
+    frame_period: u32,
+    frame_subtraction: u8,
+    gain_index: usize,
+    resolution_x: u16,
+    resolution_y: u16,
+}
+
+fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue>> {
+    let mut issues = Vec::new();
+    let mut take = |field, raw: &str, max| match parse_bounded(field, raw, max) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            issues.push(e);
+            None
+        }
+    };
+
+    const U8: u32 = u8::MAX as u32;
+    const U16: u32 = u16::MAX as u32;
+    let brightness = take(PAJ_BRIGHTNESS, &state.brightness_threshold, U8);
+    let noise = take(PAJ_NOISE, &state.noise_threshold, U8);
+    let area_min = take(PAJ_AREA_MIN, &state.area_threshold_min, U8);
+    let area_max = take(PAJ_AREA_MAX, &state.area_threshold_max, U16);
+    let max_objects = take(PAJ_MAX_OBJECTS, &state.max_object_cnt, 16);
+    let exposure = take(PAJ_EXPOSURE, &state.exposure_time, U16);
+    // 24-bit register, written as three bytes.
+    let frame_period = take(PAJ_FRAME_PERIOD, &state.frame_period, 0xFF_FFFF);
+    let resolution_x = take(PAJ_RESOLUTION_X, &state.resolution_x, 4095);
+    let resolution_y = take(PAJ_RESOLUTION_Y, &state.resolution_y, 4095);
+
+    if !issues.is_empty() {
+        return Err(issues);
+    }
+    Ok(PajValues {
+        brightness_threshold: brightness.unwrap() as u8,
+        noise_threshold: noise.unwrap() as u8,
+        area_threshold_min: area_min.unwrap() as u8,
+        area_threshold_max: area_max.unwrap() as u16,
+        max_object_cnt: max_objects.unwrap() as u8,
+        // Dropdowns, so these cannot carry user typos.
+        operation_mode: state.operation_mode.parse().unwrap_or(0),
+        exposure_time: exposure.unwrap() as u16,
+        frame_period: frame_period.unwrap(),
+        frame_subtraction: state.frame_subtraction.parse().unwrap_or(0),
+        gain_index: state
+            .gain_index
+            .parse::<usize>()
+            .unwrap_or(0)
+            .min(GAIN_TABLE.len() - 1),
+        resolution_x: resolution_x.unwrap() as u16,
+        resolution_y: resolution_y.unwrap() as u16,
+    })
 }
 
 async fn paj_apply_to_device(
     hub: &HubContext,
     device: &Device,
     port: u8,
-    state: &PajState,
+    values: &PajValues,
 ) -> anyhow::Result<()> {
-    let gain_idx: usize = state.gain_index.parse().unwrap_or(0);
-    let gain = &GAIN_TABLE[gain_idx.min(GAIN_TABLE.len() - 1)];
+    let gain = &GAIN_TABLE[values.gain_index];
 
     hub.client
         .peek()
         .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x0C,
-            0x47,
-            state.brightness_threshold.parse().unwrap_or(0),
-        )
+        .write_register(device.clone(), port, 0x0C, 0x47, values.brightness_threshold)
         .await?;
     hub.client
         .peek()
         .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x00,
-            0x0F,
-            state.noise_threshold.parse().unwrap_or(0),
-        )
+        .write_register(device.clone(), port, 0x00, 0x0F, values.noise_threshold)
         .await?;
     hub.client
         .peek()
         .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x0C,
-            0x46,
-            state.area_threshold_min.parse().unwrap_or(0),
-        )
+        .write_register(device.clone(), port, 0x0C, 0x46, values.area_threshold_min)
         .await?;
     write_u16_reg(
         hub,
@@ -578,59 +749,33 @@ async fn paj_apply_to_device(
         port,
         0x00,
         [0x0B, 0x0C],
-        state.area_threshold_max.parse().unwrap_or(0),
+        values.area_threshold_max,
     )
     .await?;
     hub.client
         .peek()
         .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x00,
-            0x19,
-            state.max_object_cnt.parse().unwrap_or(16),
-        )
+        .write_register(device.clone(), port, 0x00, 0x19, values.max_object_cnt)
         .await?;
     hub.client
         .peek()
         .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x00,
-            0x12,
-            state.operation_mode.parse().unwrap_or(0),
-        )
+        .write_register(device.clone(), port, 0x00, 0x12, values.operation_mode)
         .await?;
-    write_u16_reg(
-        hub,
-        device,
-        port,
-        0x0C,
-        [0x0F, 0x10],
-        state.exposure_time.parse().unwrap_or(0),
-    )
-    .await?;
+    write_u16_reg(hub, device, port, 0x0C, [0x0F, 0x10], values.exposure_time).await?;
     write_u32_3byte(
         hub,
         device,
         port,
         0x0C,
         [0x07, 0x08, 0x09],
-        state.frame_period.parse().unwrap_or(49780),
+        values.frame_period,
     )
     .await?;
     hub.client
         .peek()
         .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x00,
-            0x28,
-            state.frame_subtraction.parse().unwrap_or(0),
-        )
+        .write_register(device.clone(), port, 0x00, 0x28, values.frame_subtraction)
         .await?;
     hub.client
         .peek()
@@ -642,24 +787,8 @@ async fn paj_apply_to_device(
         .clone()
         .write_register(device.clone(), port, 0x0C, 0x0C, gain.b_ggh)
         .await?;
-    write_u16_reg(
-        hub,
-        device,
-        port,
-        0x0C,
-        [0x60, 0x61],
-        state.resolution_x.parse().unwrap_or(4095),
-    )
-    .await?;
-    write_u16_reg(
-        hub,
-        device,
-        port,
-        0x0C,
-        [0x62, 0x63],
-        state.resolution_y.parse().unwrap_or(4095),
-    )
-    .await?;
+    write_u16_reg(hub, device, port, 0x0C, [0x60, 0x61], values.resolution_x).await?;
+    write_u16_reg(hub, device, port, 0x0C, [0x62, 0x63], values.resolution_y).await?;
     // Sync
     hub.client
         .peek()
@@ -708,19 +837,85 @@ const SELECT_CLASS: &str = "bg-gray-50 border border-gray-300 text-gray-900 text
 
 const LABEL_CLASS: &str = "text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap";
 
+const INVALID_INPUT_CLASS: &str = "bg-gray-50 border border-red-500 text-gray-900 text-sm rounded-lg \
+    focus:ring-red-500 focus:border-red-500 block w-full p-1.5 \
+    dark:bg-gray-700 dark:border-red-500 dark:text-white \
+    dark:focus:ring-red-500 dark:focus:border-red-500";
+
+// Disabled styling matters here: the write buttons go dead whenever a field is
+// invalid, and a button that looks live but ignores clicks reads as a bug.
+const ACTION_PRIMARY_CLASS: &str =
+    "btn-primary text-xs px-2 py-1 disabled:opacity-50 disabled:cursor-not-allowed";
+
+const ACTION_SECONDARY_CLASS: &str =
+    "btn-secondary text-xs px-2 py-1 disabled:opacity-50 disabled:cursor-not-allowed";
+
+/// A labelled numeric field with an optional unit hint and validation message.
+///
+/// `hint` carries the converted engineering value (ms, fps) so the raw register
+/// numbers stop being the only thing on screen.
 #[component]
-fn PajSensorPanel(
-    hub: Signal<HubContext>,
-    device: Device,
-    port: u8,
+fn NumberField(
     label: String,
-    state: Signal<PajState>,
+    value: String,
+    hint: Option<String>,
+    issue: Option<String>,
+    oninput: EventHandler<String>,
 ) -> Element {
-    let exposure_ms = {
+    let invalid = issue.is_some();
+    rsx! {
+        label { class: LABEL_CLASS, "{label}" }
+        div {
+            class: "space-y-0.5",
+            div {
+                class: "flex items-center gap-2",
+                input {
+                    class: if invalid { INVALID_INPUT_CLASS } else { INPUT_CLASS },
+                    r#type: "text",
+                    inputmode: "numeric",
+                    value: "{value}",
+                    oninput: move |e| oninput.call(e.value()),
+                }
+                if let Some(hint) = hint {
+                    span {
+                        class: "text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap",
+                        "{hint}"
+                    }
+                }
+            }
+            if let Some(issue) = issue {
+                p { class: "text-xs text-red-600 dark:text-red-400", "{issue}" }
+            }
+        }
+    }
+}
+
+// Field names are shared between the validator and the panel so an issue can be
+// routed back to the input that produced it.
+const PAJ_BRIGHTNESS: &str = "Brightness threshold";
+const PAJ_NOISE: &str = "Noise threshold";
+const PAJ_AREA_MIN: &str = "Area threshold min";
+const PAJ_AREA_MAX: &str = "Area threshold max";
+const PAJ_MAX_OBJECTS: &str = "Max object count";
+const PAJ_EXPOSURE: &str = "Exposure time";
+const PAJ_FRAME_PERIOD: &str = "Frame period";
+const PAJ_RESOLUTION_X: &str = "Resolution X";
+const PAJ_RESOLUTION_Y: &str = "Resolution Y";
+
+#[component]
+fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues: bool) -> Element {
+    let issues = paj_validate(&state.read()).err().unwrap_or_default();
+    let issue = |field: &str| {
+        show_issues
+            .then(|| issue_for(&issues, field).map(str::to_string))
+            .flatten()
+    };
+
+    let exposure_hint = {
         let val: f64 = state.read().exposure_time.parse().unwrap_or(0.0);
         format!("{:.2} ms", val * 200.0 / 1e6)
     };
-    let frame_info = {
+    let frame_hint = {
         let val: f64 = state.read().frame_period.parse().unwrap_or(0.0);
         if val > 0.0 {
             format!("{:.2} ms ({:.1} fps)", val / 1e4, 1e7 / val)
@@ -739,44 +934,37 @@ fn PajSensorPanel(
             div {
                 class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
 
-                label { class: LABEL_CLASS, "Brightness threshold" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().brightness_threshold}",
-                    oninput: move |e| state.write().brightness_threshold = e.value(),
+                NumberField {
+                    label: PAJ_BRIGHTNESS,
+                    value: state.read().brightness_threshold.clone(),
+                    issue: issue(PAJ_BRIGHTNESS),
+                    oninput: move |v| state.write().brightness_threshold = v,
                 }
-
-                label { class: LABEL_CLASS, "Noise threshold" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().noise_threshold}",
-                    oninput: move |e| state.write().noise_threshold = e.value(),
+                NumberField {
+                    label: PAJ_NOISE,
+                    value: state.read().noise_threshold.clone(),
+                    issue: issue(PAJ_NOISE),
+                    oninput: move |v| state.write().noise_threshold = v,
                 }
-
-                label { class: LABEL_CLASS, "Area threshold min" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().area_threshold_min}",
-                    oninput: move |e| state.write().area_threshold_min = e.value(),
+                NumberField {
+                    label: PAJ_AREA_MIN,
+                    value: state.read().area_threshold_min.clone(),
+                    hint: "px",
+                    issue: issue(PAJ_AREA_MIN),
+                    oninput: move |v| state.write().area_threshold_min = v,
                 }
-
-                label { class: LABEL_CLASS, "Area threshold max" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().area_threshold_max}",
-                    oninput: move |e| state.write().area_threshold_max = e.value(),
+                NumberField {
+                    label: PAJ_AREA_MAX,
+                    value: state.read().area_threshold_max.clone(),
+                    hint: "px",
+                    issue: issue(PAJ_AREA_MAX),
+                    oninput: move |v| state.write().area_threshold_max = v,
                 }
-
-                label { class: LABEL_CLASS, "Max object count" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().max_object_cnt}",
-                    oninput: move |e| state.write().max_object_cnt = e.value(),
+                NumberField {
+                    label: PAJ_MAX_OBJECTS,
+                    value: state.read().max_object_cnt.clone(),
+                    issue: issue(PAJ_MAX_OBJECTS),
+                    oninput: move |v| state.write().max_object_cnt = v,
                 }
 
                 label { class: LABEL_CLASS, "Operation mode" }
@@ -788,28 +976,19 @@ fn PajSensorPanel(
                     option { value: "1", "Tracking" }
                 }
 
-                label { class: LABEL_CLASS, "Exposure time" }
-                div {
-                    class: "flex items-center gap-2",
-                    input {
-                        class: INPUT_CLASS,
-                        r#type: "text",
-                        value: "{state.read().exposure_time}",
-                        oninput: move |e| state.write().exposure_time = e.value(),
-                    }
-                    span { class: "text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap", "{exposure_ms}" }
+                NumberField {
+                    label: PAJ_EXPOSURE,
+                    value: state.read().exposure_time.clone(),
+                    hint: exposure_hint,
+                    issue: issue(PAJ_EXPOSURE),
+                    oninput: move |v| state.write().exposure_time = v,
                 }
-
-                label { class: LABEL_CLASS, "Frame period" }
-                div {
-                    class: "flex items-center gap-2",
-                    input {
-                        class: INPUT_CLASS,
-                        r#type: "text",
-                        value: "{state.read().frame_period}",
-                        oninput: move |e| state.write().frame_period = e.value(),
-                    }
-                    span { class: "text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap", "{frame_info}" }
+                NumberField {
+                    label: PAJ_FRAME_PERIOD,
+                    value: state.read().frame_period.clone(),
+                    hint: frame_hint,
+                    issue: issue(PAJ_FRAME_PERIOD),
+                    oninput: move |v| state.write().frame_period = v,
                 }
 
                 label { class: LABEL_CLASS, "Frame subtraction" }
@@ -831,20 +1010,17 @@ fn PajSensorPanel(
                     }
                 }
 
-                label { class: LABEL_CLASS, "Resolution X" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().resolution_x}",
-                    oninput: move |e| state.write().resolution_x = e.value(),
+                NumberField {
+                    label: PAJ_RESOLUTION_X,
+                    value: state.read().resolution_x.clone(),
+                    issue: issue(PAJ_RESOLUTION_X),
+                    oninput: move |v| state.write().resolution_x = v,
                 }
-
-                label { class: LABEL_CLASS, "Resolution Y" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().resolution_y}",
-                    oninput: move |e| state.write().resolution_y = e.value(),
+                NumberField {
+                    label: PAJ_RESOLUTION_Y,
+                    value: state.read().resolution_y.clone(),
+                    issue: issue(PAJ_RESOLUTION_Y),
+                    oninput: move |v| state.write().resolution_y = v,
                 }
             }
         }
@@ -919,25 +1095,66 @@ async fn pag_load_from_device(hub: &HubContext, device: &Device) -> anyhow::Resu
     })
 }
 
+/// PAG sensor settings after validation.
+#[derive(Clone, Copy, PartialEq)]
+struct PagValues {
+    fps: u8,
+    exposure_us: u16,
+    gain: u8,
+    light_threshold: u8,
+    area_lower: u16,
+    area_upper: u16,
+}
+
+// The exposure register holds 100us units in its low 7 bits, so 12700us is the
+// ceiling and anything finer than 100us is truncated by the device.
+const PAG_MAX_EXPOSURE_US: u32 = 12_700;
+
+fn pag_validate(state: &PagState) -> Result<PagValues, Vec<FieldIssue>> {
+    let mut issues = Vec::new();
+    let mut take = |field, raw: &str, max| match parse_bounded(field, raw, max) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            issues.push(e);
+            None
+        }
+    };
+
+    const U8: u32 = u8::MAX as u32;
+    const U16: u32 = u16::MAX as u32;
+    let fps = take(PAG_FPS, &state.fps, U8);
+    let exposure = take(PAG_EXPOSURE, &state.exposure_us, PAG_MAX_EXPOSURE_US);
+    let gain = take(PAG_GAIN, &state.gain, U8);
+    let light = take(PAG_LIGHT, &state.light_threshold, U8);
+    let area_lower = take(PAG_AREA_MIN, &state.area_lower, U16);
+    let area_upper = take(PAG_AREA_MAX, &state.area_upper, U16);
+
+    if !issues.is_empty() {
+        return Err(issues);
+    }
+    Ok(PagValues {
+        fps: fps.unwrap() as u8,
+        exposure_us: exposure.unwrap() as u16,
+        gain: gain.unwrap() as u8,
+        light_threshold: light.unwrap() as u8,
+        area_lower: area_lower.unwrap() as u16,
+        area_upper: area_upper.unwrap() as u16,
+    })
+}
+
 async fn pag_apply_to_device(
     hub: &HubContext,
     device: &Device,
-    state: &PagState,
+    values: &PagValues,
 ) -> anyhow::Result<()> {
     let port: u8 = 0;
-    let fps: u8 = state.fps.parse().unwrap_or(180);
-    let exposure_us: u16 = state.exposure_us.parse().unwrap_or(2000);
     let led_always_on = true;
-    let expo_reg = (exposure_us / 100) as u8 | ((led_always_on as u8) << 7);
-    let gain: u8 = state.gain.parse().unwrap_or(2);
-    let light_threshold: u8 = state.light_threshold.parse().unwrap_or(120);
-    let area_lower: u16 = state.area_lower.parse().unwrap_or(10);
-    let area_upper: u16 = state.area_upper.parse().unwrap_or(65535);
+    let expo_reg = (values.exposure_us / 100) as u8 | ((led_always_on as u8) << 7);
 
     hub.client
         .peek()
         .clone()
-        .write_register(device.clone(), port, 0x00, 0x13, fps)
+        .write_register(device.clone(), port, 0x00, 0x13, values.fps)
         .await?;
     hub.client
         .peek()
@@ -947,15 +1164,15 @@ async fn pag_apply_to_device(
     hub.client
         .peek()
         .clone()
-        .write_register(device.clone(), port, 0x00, 0x68, gain)
+        .write_register(device.clone(), port, 0x00, 0x68, values.gain)
         .await?;
     hub.client
         .peek()
         .clone()
-        .write_register(device.clone(), port, 0x00, 0x6D, light_threshold)
+        .write_register(device.clone(), port, 0x00, 0x6D, values.light_threshold)
         .await?;
-    write_u16_reg(hub, device, port, 0x00, [0x6E, 0x6F], area_lower).await?;
-    write_u16_reg(hub, device, port, 0x00, [0x70, 0x71], area_upper).await?;
+    write_u16_reg(hub, device, port, 0x00, [0x6E, 0x6F], values.area_lower).await?;
+    write_u16_reg(hub, device, port, 0x00, [0x70, 0x71], values.area_upper).await?;
     Ok(())
 }
 
@@ -970,64 +1187,76 @@ fn pag_load_defaults() -> PagState {
     }
 }
 
+const PAG_FPS: &str = "Frame rate";
+const PAG_EXPOSURE: &str = "Exposure";
+const PAG_GAIN: &str = "Gain";
+const PAG_LIGHT: &str = "Light threshold";
+const PAG_AREA_MIN: &str = "Area threshold min";
+const PAG_AREA_MAX: &str = "Area threshold max";
+
 #[component]
-fn PagSensorPanel(hub: Signal<HubContext>, device: Device, state: Signal<PagState>) -> Element {
+fn PagSensorPanel(state: Signal<PagState>, show_issues: bool) -> Element {
+    let issues = pag_validate(&state.read()).err().unwrap_or_default();
+    let issue = |field: &str| {
+        show_issues
+            .then(|| issue_for(&issues, field).map(str::to_string))
+            .flatten()
+    };
+
+    let exposure_hint = {
+        let val: f64 = state.read().exposure_us.parse().unwrap_or(0.0);
+        format!("{:.1} ms", val / 1000.0)
+    };
+
     rsx! {
         div {
             class: "space-y-2",
             h4 {
                 class: "text-sm font-semibold text-gray-800 dark:text-gray-200",
-                "PAG Sensor"
+                "Sensor"
             }
             div {
                 class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
 
-                label { class: LABEL_CLASS, "FPS" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().fps}",
-                    oninput: move |e| state.write().fps = e.value(),
+                NumberField {
+                    label: PAG_FPS,
+                    value: state.read().fps.clone(),
+                    hint: "fps",
+                    issue: issue(PAG_FPS),
+                    oninput: move |v| state.write().fps = v,
                 }
-
-                label { class: LABEL_CLASS, "Exposure (us)" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().exposure_us}",
-                    oninput: move |e| state.write().exposure_us = e.value(),
+                NumberField {
+                    label: PAG_EXPOSURE,
+                    value: state.read().exposure_us.clone(),
+                    hint: "µs · {exposure_hint}",
+                    issue: issue(PAG_EXPOSURE),
+                    oninput: move |v| state.write().exposure_us = v,
                 }
-
-                label { class: LABEL_CLASS, "Gain" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().gain}",
-                    oninput: move |e| state.write().gain = e.value(),
+                NumberField {
+                    label: PAG_GAIN,
+                    value: state.read().gain.clone(),
+                    issue: issue(PAG_GAIN),
+                    oninput: move |v| state.write().gain = v,
                 }
-
-                label { class: LABEL_CLASS, "Light threshold" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().light_threshold}",
-                    oninput: move |e| state.write().light_threshold = e.value(),
+                NumberField {
+                    label: PAG_LIGHT,
+                    value: state.read().light_threshold.clone(),
+                    issue: issue(PAG_LIGHT),
+                    oninput: move |v| state.write().light_threshold = v,
                 }
-
-                label { class: LABEL_CLASS, "Area threshold min" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().area_lower}",
-                    oninput: move |e| state.write().area_lower = e.value(),
+                NumberField {
+                    label: PAG_AREA_MIN,
+                    value: state.read().area_lower.clone(),
+                    hint: "px",
+                    issue: issue(PAG_AREA_MIN),
+                    oninput: move |v| state.write().area_lower = v,
                 }
-
-                label { class: LABEL_CLASS, "Area threshold max" }
-                input {
-                    class: INPUT_CLASS,
-                    r#type: "text",
-                    value: "{state.read().area_upper}",
-                    oninput: move |e| state.write().area_upper = e.value(),
+                NumberField {
+                    label: PAG_AREA_MAX,
+                    value: state.read().area_upper.clone(),
+                    hint: "px",
+                    issue: issue(PAG_AREA_MAX),
+                    oninput: move |v| state.write().area_upper = v,
                 }
             }
         }
@@ -1050,7 +1279,7 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
         return rsx! {};
     }
 
-    let mut status = use_signal(|| String::new());
+    let mut status = use_signal(OpStatus::default);
     // user_pending_usb tracks the mode the user explicitly requested (None = no override).
     // It is cleared when the device prop reflects the new mode (i.e. after reboot).
     let mut user_pending_usb = use_signal(|| Option::<bool>::None);
@@ -1064,7 +1293,7 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
         if u == device_is_usb {
             spawn(async move {
                 user_pending_usb.set(None);
-                status.set(String::new());
+                status.set(OpStatus::Idle);
             });
         }
     }
@@ -1074,18 +1303,20 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
     let set_mode = std::sync::Arc::new(move |usb_mode: bool| {
         let device = device_for_set.clone();
         async move {
-            status.set("Applying...".into());
+            status.set(OpStatus::Busy("Switching...".into()));
             let hub_ctx = hub.peek().clone();
             let mut client = hub_ctx.client.peek().clone();
             match client.set_transport_mode(device, usb_mode).await {
                 Ok(confirmed_usb) => {
                     user_pending_usb.set(Some(confirmed_usb));
-                    let mode_str = if confirmed_usb { "USB" } else { "BLE" };
-                    status.set(format!("Saved ({mode_str})."));
+                    let mode_str = if confirmed_usb { "USB" } else { "Bluetooth" };
+                    status.set(OpStatus::Busy(format!(
+                        "Switching to {mode_str}. The device restarts and reconnects on its own."
+                    )));
                 }
                 Err(e) => {
-                    tracing::error!("set_transport_mode failed: {e}");
-                    status.set(format!("Error: {e}"));
+                    tracing::error!("set_transport_mode failed: {e:#}");
+                    status.set(rpc_failure("switch the transport mode", &e));
                 }
             }
         }
@@ -1113,7 +1344,7 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
                                 "btn-secondary text-xs px-2 py-1"
                             },
                             onclick: { let set_mode = set_mode.clone(); move |_| set_mode(false) },
-                            "BLE"
+                            "Bluetooth"
                         }
                         button {
                             class: if pending_usb {
@@ -1126,18 +1357,32 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
                         }
                     }
                 }
-                if !status.read().is_empty() {
-                    p {
-                        class: "text-xs text-gray-500 dark:text-gray-400 italic",
-                        "{status}"
+                p {
+                    class: "text-xs text-gray-500 dark:text-gray-400",
+                    if pending_usb {
+                        "USB carries sensor data and tuning. Bluetooth leaves the device wireless but limits it to basic settings."
+                    } else {
+                        "Bluetooth keeps the device wireless. Switch to USB to read or change sensor tuning."
                     }
                 }
+                StatusLine { status: status() }
             }
         }
     }
 }
 
 // --- Main SensorSettings Component ---
+
+/// Summarise invalid input without repeating every message; the offending
+/// fields are already marked in place.
+fn invalid_status(issues: &[FieldIssue]) -> OpStatus {
+    let fields: Vec<&str> = issues.iter().map(|i| i.field).collect();
+    let noun = if fields.len() == 1 { "field" } else { "fields" };
+    OpStatus::Failed {
+        summary: format!("Check the highlighted {noun}: {}", fields.join(", ")),
+        detail: None,
+    }
+}
 
 #[component]
 pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
@@ -1146,20 +1391,25 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let is_pag = pid == PID_ATS_PRO;
     let has_control = device.capabilities.contains(DeviceCapabilities::CONTROL);
     let has_events = device.capabilities.contains(DeviceCapabilities::EVENTS);
-    // Show settings whenever control channel is available (USB control endpoint or BLE L2CAP CoC).
-    // ReadConfig/WriteConfig/FlashSettings fall back to control_device when events_device is absent.
-    // ReadRegister/WriteRegister still require events_device and will return an error if unavailable.
+    // ReadConfig/WriteConfig/FlashSettings fall back to the control plane, so the
+    // general settings work in BLE mode too. Register access needs the events
+    // transport and the hub rejects it outright when that is missing, so the
+    // sensor panels stay hidden instead of failing on every read.
     let should_render = (is_paj || is_pag) && (has_control || has_events);
+    let can_tune_sensors = has_events;
 
     // All hooks must be called unconditionally before any early returns.
-    let mut status = use_signal(|| String::new());
+    let mut status = use_signal(OpStatus::default);
     let mut loading = use_signal(|| false);
+    // Empty fields before the first read are "not loaded yet", not "invalid";
+    // marking them red on first paint is noise the user cannot act on.
+    let mut hydrated = use_signal(|| false);
 
     // General config state
-    let mut impact_threshold = use_signal(|| String::new());
-    let mut suppress_ms = use_signal(|| String::new());
+    let mut impact_threshold = use_signal(String::new);
+    let mut suppress_ms = use_signal(String::new);
     // Shot delay (stored on PC, not device)
-    let mut shot_delay = use_signal(|| String::new());
+    let mut shot_delay = use_signal(String::new);
 
     // PAJ state signals (NF and WF)
     let mut paj_nf_state = use_signal(PajState::default);
@@ -1178,62 +1428,62 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
         async move {
         while rx.next().await.is_some() {
             loading.set(true);
-            status.set("Reading...".into());
+            status.set(OpStatus::Busy("Reading from device...".into()));
             let hub_ctx = hub.peek().clone();
             let device = (*device_for_load).clone();
-            // Load general config
-            if let Ok(v) = hub_ctx
-                .client
-                .peek()
-                .clone()
-                .read_config(device.clone(), 0)
-                .await
-            {
-                impact_threshold.set(v.to_string());
-            }
-            if let Ok(v) = hub_ctx
-                .client
-                .peek()
-                .clone()
-                .read_config(device.clone(), 1)
-                .await
-            {
-                suppress_ms.set(v.to_string());
-            }
-            // Load shot delay
-            if let Ok(v) = hub_ctx
-                .client
-                .peek()
-                .clone()
-                .get_shot_delay(device.clone())
-                .await
-            {
-                shot_delay.set(v.to_string());
-            }
-            // Load sensor settings
-            let result = if is_paj {
-                let nf = paj_load_from_device(&hub_ctx, &device, 0).await;
-                let wf = paj_load_from_device(&hub_ctx, &device, 1).await;
-                match (nf, wf) {
-                    (Ok(nf_s), Ok(wf_s)) => {
-                        paj_nf_state.set(nf_s);
-                        paj_wf_state.set(wf_s);
-                        Ok(())
-                    }
-                    (Err(e), _) | (_, Err(e)) => Err(e),
-                }
-            } else {
-                pag_load_from_device(&hub_ctx, &device)
-                    .await
-                    .map(|s| pag_state.set(s))
-            };
-            match result {
-                Ok(()) => status.set("Loaded".into()),
+            // Keep the first failure. A later read succeeding does not make the
+            // form trustworthy, and reporting "Loaded" over a failed read is how
+            // stale values end up being flashed back onto the device.
+            let mut failure: Option<OpStatus> = None;
+
+            match hub_ctx.client.peek().clone().read_config(device.clone(), 0).await {
+                Ok(v) => impact_threshold.set(v.to_string()),
                 Err(e) => {
-                    tracing::error!("Failed to load settings: {e}");
-                    status.set(format!("Error: {e}"));
+                    tracing::error!("reading impact threshold: {e:#}");
+                    failure.get_or_insert(rpc_failure("read the impact threshold", &e));
                 }
             }
+            match hub_ctx.client.peek().clone().read_config(device.clone(), 1).await {
+                Ok(v) => suppress_ms.set(v.to_string()),
+                Err(e) => {
+                    tracing::error!("reading suppress time: {e:#}");
+                    failure.get_or_insert(rpc_failure("read the suppress time", &e));
+                }
+            }
+            match hub_ctx.client.peek().clone().get_shot_delay(device.clone()).await {
+                Ok(v) => shot_delay.set(v.to_string()),
+                Err(e) => {
+                    tracing::error!("reading shot delay: {e:#}");
+                    failure.get_or_insert(rpc_failure("read the shot delay", &e));
+                }
+            }
+
+            if can_tune_sensors {
+                let result = if is_paj {
+                    match (
+                        paj_load_from_device(&hub_ctx, &device, 0).await,
+                        paj_load_from_device(&hub_ctx, &device, 1).await,
+                    ) {
+                        (Ok(nf), Ok(wf)) => {
+                            paj_nf_state.set(nf);
+                            paj_wf_state.set(wf);
+                            Ok(())
+                        }
+                        (Err(e), _) | (_, Err(e)) => Err(e),
+                    }
+                } else {
+                    pag_load_from_device(&hub_ctx, &device)
+                        .await
+                        .map(|s| pag_state.set(s))
+                };
+                if let Err(e) = result {
+                    tracing::error!("reading sensor settings: {e:#}");
+                    failure.get_or_insert(rpc_failure("read the sensor settings", &e));
+                }
+            }
+
+            hydrated.set(true);
+            status.set(failure.unwrap_or(OpStatus::Done("Loaded from device".into())));
             loading.set(false);
         }
     }});
@@ -1243,114 +1493,138 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
         return rsx! {};
     }
 
-    let device_for_apply = device.clone();
-    let device_for_save = device.clone();
+    let general_issues = general_validate(
+        &impact_threshold.read(),
+        &suppress_ms.read(),
+        Some(&shot_delay.read()),
+    )
+    .err()
+    .unwrap_or_default();
+    let sensor_issue_count = if !can_tune_sensors {
+        0
+    } else if is_paj {
+        paj_validate(&paj_nf_state.read()).err().map_or(0, |v| v.len())
+            + paj_validate(&paj_wf_state.read()).err().map_or(0, |v| v.len())
+    } else {
+        pag_validate(&pag_state.read()).err().map_or(0, |v| v.len())
+    };
+    let has_invalid = !general_issues.is_empty() || sensor_issue_count > 0;
+    let busy = *loading.read();
+    // Writes stay blocked on invalid input either way; only the inline markers
+    // wait for the first load.
+    let show_issues = hydrated();
+    let general_issue = |field: &str| {
+        show_issues
+            .then(|| issue_for(&general_issues, field).map(str::to_string))
+            .flatten()
+    };
 
-    let reload = move |_| { load_co.send(()); };
+    let reload = move |_| {
+        load_co.send(());
+    };
 
-    let apply = move |_| {
-        let device = device_for_apply.clone();
+    // One code path for both write buttons: `persist` adds the flash step, so
+    // the two cannot drift apart in what they send to the device.
+    let device_for_write = device.clone();
+    let write_all = std::sync::Arc::new(move |persist: bool| {
+        let device = device_for_write.clone();
         async move {
             loading.set(true);
-            status.set("Applying...".into());
+            status.set(OpStatus::Busy(
+                if persist { "Saving to device..." } else { "Applying..." }.into(),
+            ));
             let hub_ctx = hub.peek().clone();
-            let general = write_general_config(
-                &hub_ctx,
-                &device,
+
+            let general = match general_validate(
                 &impact_threshold.peek(),
                 &suppress_ms.peek(),
                 Some(&shot_delay.peek()),
-            )
-            .await;
-            if let Err(e) = general {
-                tracing::error!("Failed to apply general config: {e}");
-                status.set(format!("Error: {e}"));
+            ) {
+                Ok(values) => values,
+                Err(issues) => {
+                    status.set(invalid_status(&issues));
+                    loading.set(false);
+                    return;
+                }
+            };
+            if let Err(e) = write_general_config(&hub_ctx, &device, general).await {
+                tracing::error!("writing general config: {e:#}");
+                status.set(rpc_failure("write the general settings", &e));
                 loading.set(false);
                 return;
             }
-            // Apply sensor settings
-            let result = if is_paj {
-                let nf = paj_apply_to_device(&hub_ctx, &device, 0, &paj_nf_state.peek()).await;
-                let wf = paj_apply_to_device(&hub_ctx, &device, 1, &paj_wf_state.peek()).await;
-                nf.and(wf)
-            } else {
-                pag_apply_to_device(&hub_ctx, &device, &pag_state.peek()).await
-            };
-            match result {
-                Ok(()) => status.set("Applied".into()),
-                Err(e) => {
-                    tracing::error!("Failed to apply settings: {e}");
-                    status.set(format!("Error: {e}"));
+
+            let sensors: Result<(), OpStatus> = async {
+                if !can_tune_sensors {
+                    return Ok(());
                 }
+                if is_paj {
+                    for (port, state) in [(0u8, paj_nf_state), (1u8, paj_wf_state)] {
+                        let values = paj_validate(&state.peek()).map_err(|i| invalid_status(&i))?;
+                        paj_apply_to_device(&hub_ctx, &device, port, &values)
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("writing sensor settings: {e:#}");
+                                rpc_failure("write the sensor settings", &e)
+                            })?;
+                    }
+                } else {
+                    let values = pag_validate(&pag_state.peek()).map_err(|i| invalid_status(&i))?;
+                    pag_apply_to_device(&hub_ctx, &device, &values)
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("writing sensor settings: {e:#}");
+                            rpc_failure("write the sensor settings", &e)
+                        })?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(failed) = sensors {
+                status.set(failed);
+                loading.set(false);
+                return;
+            }
+
+            // Flash last: it persists whatever the device currently holds, so it
+            // must only run once every write above has succeeded.
+            if persist {
+                if let Err(e) = hub_ctx
+                    .client
+                    .peek()
+                    .clone()
+                    .flash_settings(device.clone())
+                    .await
+                {
+                    tracing::error!("flashing settings: {e:#}");
+                    status.set(rpc_failure("save the settings to the device", &e));
+                    loading.set(false);
+                    return;
+                }
+                status.set(OpStatus::Done("Saved to the device".into()));
+            } else {
+                status.set(OpStatus::Done(
+                    "Applied for this session. Power cycling restores the saved values.".into(),
+                ));
             }
             loading.set(false);
         }
-    };
+    });
 
-    let save = move |_| {
-        let device = device_for_save.clone();
-        async move {
-            loading.set(true);
-            status.set("Applying & saving...".into());
-            let hub_ctx = hub.peek().clone();
-            // The flash below persists whatever the device currently holds, so
-            // a write that failed here would be saved as the old value under a
-            // "Saved" message.
-            let general = write_general_config(
-                &hub_ctx,
-                &device,
-                &impact_threshold.peek(),
-                &suppress_ms.peek(),
-                None,
-            )
-            .await;
-            if let Err(e) = general {
-                tracing::error!("Failed to apply general config: {e}");
-                status.set(format!("Error: {e}"));
-                loading.set(false);
-                return;
-            }
-            // Apply sensor settings before saving
-            let apply_result = if is_paj {
-                let nf = paj_apply_to_device(&hub_ctx, &device, 0, &paj_nf_state.peek()).await;
-                let wf = paj_apply_to_device(&hub_ctx, &device, 1, &paj_wf_state.peek()).await;
-                nf.and(wf)
-            } else {
-                pag_apply_to_device(&hub_ctx, &device, &pag_state.peek()).await
-            };
-            if let Err(e) = apply_result {
-                tracing::error!("Failed to apply before save: {e}");
-                status.set(format!("Error: {e}"));
-                loading.set(false);
-                return;
-            }
-            match hub_ctx
-                .client
-                .peek()
-                .clone()
-                .flash_settings(device.clone())
-                .await
-            {
-                Ok(()) => status.set("Saved".into()),
-                Err(e) => {
-                    tracing::error!("Failed to flash settings: {e}");
-                    status.set(format!("Save error: {e}"));
-                }
-            }
-            loading.set(false);
-        }
-    };
-
-    let load_defaults = move |_| {
+    let restore_defaults = move |_| {
         impact_threshold.set("25".into());
         suppress_ms.set("25".into());
-        if is_paj {
-            paj_nf_state.set(paj_load_defaults(0));
-            paj_wf_state.set(paj_load_defaults(1));
-        } else {
-            pag_state.set(pag_load_defaults());
+        if can_tune_sensors {
+            if is_paj {
+                paj_nf_state.set(paj_load_defaults(0));
+                paj_wf_state.set(paj_load_defaults(1));
+            } else {
+                pag_state.set(pag_load_defaults());
+            }
         }
-        status.set("Defaults loaded".into());
+        status.set(OpStatus::Done(
+            "Defaults filled in. Nothing reaches the device until you save.".into(),
+        ));
     };
 
     rsx! {
@@ -1376,35 +1650,34 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
                 div {
                     class: "flex items-center gap-2 flex-wrap",
                     button {
-                        class: "btn-secondary",
-                        disabled: *loading.read(),
+                        class: ACTION_PRIMARY_CLASS,
+                        disabled: busy || has_invalid,
+                        title: "Write these values and keep them across power cycles",
+                        onclick: { let write_all = write_all.clone(); move |_| write_all(true) },
+                        "Save to device"
+                    }
+                    button {
+                        class: ACTION_SECONDARY_CLASS,
+                        disabled: busy || has_invalid,
+                        title: "Write these values for this session only",
+                        onclick: { let write_all = write_all.clone(); move |_| write_all(false) },
+                        "Try without saving"
+                    }
+                    button {
+                        class: ACTION_SECONDARY_CLASS,
+                        disabled: busy,
+                        title: "Discard edits and re-read the device",
                         onclick: reload,
                         "Reload"
                     }
                     button {
-                        class: "btn-secondary",
-                        disabled: *loading.read(),
-                        onclick: apply,
-                        "Apply"
+                        class: ACTION_SECONDARY_CLASS,
+                        disabled: busy,
+                        title: "Fill the form with factory values; nothing is written yet",
+                        onclick: restore_defaults,
+                        "Restore defaults"
                     }
-                    button {
-                        class: "btn-secondary",
-                        disabled: *loading.read(),
-                        onclick: save,
-                        "Save"
-                    }
-                    button {
-                        class: "btn-secondary",
-                        disabled: *loading.read(),
-                        onclick: load_defaults,
-                        "Load Defaults"
-                    }
-                    if !status.read().is_empty() {
-                        span {
-                            class: "text-xs text-gray-500 dark:text-gray-400 italic",
-                            "{status}"
-                        }
-                    }
+                    StatusLine { status: status() }
                 }
 
                 // General settings
@@ -1412,74 +1685,160 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
                     class: "space-y-2",
                     h4 {
                         class: "text-sm font-semibold text-gray-800 dark:text-gray-200",
-                        "General"
+                        "Impact detection"
                     }
                     div {
                         class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
 
-                        label { class: LABEL_CLASS, "Impact threshold" }
-                        input {
-                            class: INPUT_CLASS,
-                            r#type: "text",
-                            value: "{impact_threshold}",
-                            oninput: move |e| impact_threshold.set(e.value()),
+                        NumberField {
+                            label: "Impact threshold",
+                            value: impact_threshold(),
+                            issue: general_issue("Impact threshold"),
+                            oninput: move |v| impact_threshold.set(v),
                         }
-
-                        label { class: LABEL_CLASS, "Suppress (ms)" }
-                        input {
-                            class: INPUT_CLASS,
-                            r#type: "text",
-                            value: "{suppress_ms}",
-                            oninput: move |e| suppress_ms.set(e.value()),
+                        NumberField {
+                            label: "Suppress",
+                            value: suppress_ms(),
+                            hint: "ms",
+                            issue: general_issue("Suppress"),
+                            oninput: move |v| suppress_ms.set(v),
                         }
                     }
                 }
 
-                // System config (stored on PC)
+                // Shot delay lives on this computer, not on the device.
                 div {
                     class: "space-y-2",
                     h4 {
                         class: "text-sm font-semibold text-gray-800 dark:text-gray-200",
-                        "System"
+                        "This computer"
                     }
                     div {
                         class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
 
-                        label { class: LABEL_CLASS, "Shot delay" }
-                        input {
-                            class: INPUT_CLASS,
-                            r#type: "text",
-                            value: "{shot_delay}",
-                            oninput: move |e| shot_delay.set(e.value()),
+                        NumberField {
+                            label: "Shot delay",
+                            value: shot_delay(),
+                            hint: "ms",
+                            issue: general_issue("Shot delay"),
+                            oninput: move |v| shot_delay.set(v),
                         }
+                    }
+                    p {
+                        class: "text-xs text-gray-500 dark:text-gray-400",
+                        "Stored on this computer, not on the device."
                     }
                 }
 
                 // Sensor panels
-                if is_paj {
-                    PajSensorPanel {
-                        hub: hub,
-                        device: device.clone(),
-                        port: 0,
-                        label: "Near Field".to_string(),
-                        state: paj_nf_state,
+                if can_tune_sensors {
+                    if is_paj {
+                        PajSensorPanel {
+                            label: "Near Field",
+                            state: paj_nf_state,
+                            show_issues: show_issues,
+                        }
+                        PajSensorPanel {
+                            label: "Wide Field",
+                            state: paj_wf_state,
+                            show_issues: show_issues,
+                        }
                     }
-                    PajSensorPanel {
-                        hub: hub,
-                        device: device.clone(),
-                        port: 1,
-                        label: "Wide Field".to_string(),
-                        state: paj_wf_state,
+                    if is_pag {
+                        PagSensorPanel { state: pag_state, show_issues: show_issues }
                     }
-                }
-                if is_pag {
-                    PagSensorPanel {
-                        hub: hub,
-                        device: device.clone(),
-                        state: pag_state,
+                } else {
+                    div {
+                        class: "space-y-1 border-t border-gray-300 dark:border-gray-600 pt-2",
+                        h4 {
+                            class: "text-sm font-semibold text-gray-800 dark:text-gray-200",
+                            "Sensor tuning"
+                        }
+                        p {
+                            class: "text-xs text-gray-500 dark:text-gray-400",
+                            "Available over USB only. Set Transport mode to USB in the \
+                             Connection section, then reopen this panel."
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok<T>(r: Result<T, Vec<FieldIssue>>) -> T {
+        match r { Ok(v) => v, Err(e) => panic!("unexpected issues: {:?}", e.iter().map(|i| i.field).collect::<Vec<_>>()) }
+    }
+    fn issues<T>(r: Result<T, Vec<FieldIssue>>) -> Vec<FieldIssue> {
+        match r { Ok(_) => panic!("expected issues"), Err(e) => e }
+    }
+    fn msg(r: Result<u32, FieldIssue>) -> String {
+        match r { Ok(v) => panic!("expected issue, got {v}"), Err(e) => e.message }
+    }
+
+    #[test]
+    fn bounds_and_messages() {
+        assert_eq!(msg(parse_bounded("f", "", 255)), "Required");
+        assert_eq!(msg(parse_bounded("f", "abc", 255)), "Whole number 0-255");
+        assert_eq!(msg(parse_bounded("f", "256", 255)), "Must be 0-255");
+        assert!(matches!(parse_bounded("f", " 40 ", 255), Ok(40)));
+    }
+
+    #[test]
+    fn paj_defaults_round_trip() {
+        let v = ok(paj_validate(&paj_load_defaults(0)));
+        assert_eq!(v.brightness_threshold, 110);
+        assert_eq!(v.frame_period, 49780);
+        assert_eq!(v.resolution_x, 4095);
+        assert_eq!(v.gain_index, 16);
+        let entry = &GAIN_TABLE[v.gain_index];
+        assert_eq!(gain_index_from_reg(entry.b_global, entry.b_ggh), v.gain_index);
+
+        let mut bad = paj_load_defaults(0);
+        bad.brightness_threshold = "300".into();
+        bad.resolution_y = "9000".into();
+        let fields: Vec<_> = issues(paj_validate(&bad)).iter().map(|i| i.field).collect();
+        assert_eq!(fields, vec![PAJ_BRIGHTNESS, PAJ_RESOLUTION_Y]);
+    }
+
+    #[test]
+    fn pag_exposure_encoding() {
+        let v = ok(pag_validate(&pag_load_defaults()));
+        assert_eq!(v.exposure_us, 2000);
+        assert_eq!((v.exposure_us / 100) as u8 | 0x80, 0x94);
+
+        let mut bad = pag_load_defaults();
+        bad.exposure_us = "13000".into();
+        assert_eq!(issues(pag_validate(&bad))[0].field, PAG_EXPOSURE);
+    }
+
+    #[test]
+    fn general_collects_every_issue() {
+        let found = issues(general_validate("300", "", Some("x")));
+        assert_eq!(found.len(), 3);
+        match invalid_status(&found) {
+            OpStatus::Failed { summary, detail } => {
+                assert!(summary.contains("Impact threshold"), "{summary}");
+                assert!(detail.is_none());
+            }
+            _ => panic!("expected failure"),
+        }
+    }
+
+    #[test]
+    fn transport_error_becomes_actionable() {
+        let err = anyhow::anyhow!("events transport not connected");
+        match rpc_failure("read the sensor settings", &err) {
+            OpStatus::Failed { summary, detail } => {
+                assert!(summary.contains("USB"), "{summary}");
+                assert!(!summary.contains("status:"), "{summary}");
+                assert_eq!(detail.unwrap_or_default(), "events transport not connected");
+            }
+            _ => panic!("expected failure"),
         }
     }
 }

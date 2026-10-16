@@ -4,6 +4,7 @@ use futures::StreamExt;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::ffi_common::*;
+use odyssey_hub_client::client::RpcError;
 
 #[derive(uniffi::Object, Debug, thiserror::Error)]
 #[error("{e:?}")] // default message is from anyhow.
@@ -43,7 +44,7 @@ pub struct EventStream {
         Mutex<
             futures::stream::BoxStream<
                 'static,
-                Result<odyssey_hub_common::events::Event, tonic::Status>,
+                Result<odyssey_hub_common::events::Event, RpcError>,
             >,
         >,
     >,
@@ -55,7 +56,7 @@ pub struct DeviceListStream {
         Mutex<
             futures::stream::BoxStream<
                 'static,
-                Result<Vec<odyssey_hub_common::device::Device>, tonic::Status>,
+                Result<Vec<odyssey_hub_common::device::Device>, RpcError>,
             >,
         >,
     >,
@@ -63,7 +64,7 @@ pub struct DeviceListStream {
 
 #[derive(uniffi::Object)]
 pub struct ShotDelayStream {
-    pub inner: Arc<Mutex<futures::stream::BoxStream<'static, Result<u16, tonic::Status>>>>,
+    pub inner: Arc<Mutex<futures::stream::BoxStream<'static, Result<u16, RpcError>>>>,
 }
 
 #[derive(uniffi::Object)]
@@ -72,7 +73,7 @@ pub struct AccessoryMapStream {
         Mutex<
             futures::stream::BoxStream<
                 'static,
-                Result<odyssey_hub_common::accessory::AccessoryMap, tonic::Status>,
+                Result<odyssey_hub_common::accessory::AccessoryMap, RpcError>,
             >,
         >,
     >,
@@ -175,7 +176,7 @@ impl Client {
             .await
             .connect()
             .await
-            .map_err(|e| Arc::new(e.into()))
+            .map_err(|e| Arc::new(uniffi::deps::anyhow::Error::new(e).into()))
     }
 
     #[uniffi::method]
@@ -185,7 +186,7 @@ impl Client {
             .await
             .get_device_list()
             .await
-            .map_err(|e| Arc::new(e.into()))
+            .map_err(|e| Arc::new(uniffi::deps::anyhow::Error::new(e).into()))
             .map(|dl| dl.into_iter().map(|d| d.into()).collect())
     }
 
@@ -226,7 +227,7 @@ impl Client {
                     })
                     .collect()
             })
-            .map_err(|e| Arc::new(e.into()))
+            .map_err(|e| Arc::new(uniffi::deps::anyhow::Error::new(e).into()))
     }
 
     #[uniffi::method]
