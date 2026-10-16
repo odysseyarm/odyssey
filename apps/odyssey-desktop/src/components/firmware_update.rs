@@ -10,7 +10,8 @@ use dioxus::{logger::tracing, prelude::*};
 use odyssey_hub_common::device::{Device, DeviceCapabilities, DeviceCapabilities as DC};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 /// State for a single device's firmware update
 #[derive(Clone, Debug, PartialEq)]
@@ -80,37 +81,32 @@ impl FirmwareUpdateManager {
     pub fn get_state(&self, uuid: &[u8; 6]) -> FirmwareUpdateState {
         self.states
             .lock()
-            .unwrap()
             .get(uuid)
             .cloned()
             .unwrap_or(FirmwareUpdateState::Idle)
     }
 
     pub fn set_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
-        self.states.lock().unwrap().insert(uuid, state);
+        self.states.lock().insert(uuid, state);
     }
 
-    #[allow(dead_code)]
+    /// Claim a device for an update. Returns false when one is already running,
+    /// so the check and the insert cannot race two clicks against each other.
+    pub fn try_claim(&self, uuid: [u8; 6]) -> bool {
+        self.updating.lock().insert(uuid)
+    }
+
     pub fn is_updating(&self, uuid: &[u8; 6]) -> bool {
-        self.updating.lock().unwrap().contains(uuid)
-    }
-
-    pub fn add_updating(&self, uuid: [u8; 6]) {
-        self.updating.lock().unwrap().insert(uuid);
-    }
-
-    #[allow(dead_code)]
-    pub fn remove_updating(&self, uuid: &[u8; 6]) {
-        self.updating.lock().unwrap().remove(uuid);
+        self.updating.lock().contains(uuid)
     }
 
     pub fn get_all_updating(&self) -> Vec<[u8; 6]> {
-        self.updating.lock().unwrap().iter().copied().collect()
+        self.updating.lock().iter().copied().collect()
     }
 
     pub fn clear_state(&self, uuid: &[u8; 6]) {
-        self.states.lock().unwrap().remove(uuid);
-        self.updating.lock().unwrap().remove(uuid);
+        self.states.lock().remove(uuid);
+        self.updating.lock().remove(uuid);
     }
 }
 
@@ -295,6 +291,9 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         else { "Update available: v{current[0]}.{current[1]}.{current[2]} → v{available}" }
                     }
                     button {
+                        // The state below is polled, so a second click can land
+                        // before this branch stops being rendered.
+                        disabled: manager.is_updating(&device.uuid),
                         class: "btn-primary-sm",
                         onclick: move |_| {
                             let manager = manager.clone();
@@ -377,8 +376,12 @@ fn start_firmware_update(
 ) {
     let device_uuid = device.uuid;
 
-    // Mark as updating
-    manager.add_updating(device_uuid);
+    // Two tasks driving DFU on one device would interleave their control
+    // transfers and corrupt the download.
+    if !manager.try_claim(device_uuid) {
+        tracing::warn!("Firmware update already running for {:02x?}", device_uuid);
+        return;
+    }
 
     // Spawn the entire update on tokio - completely independent of Dioxus
     tokio::spawn(async move {
