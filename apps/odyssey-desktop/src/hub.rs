@@ -18,6 +18,11 @@ pub struct HubContext {
     pub latest_event: Signal<Option<oe::Event>>,
     pub tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     pub impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
+    /// One-shot results a row has to observe exactly once. They cannot ride
+    /// `latest_event`: it holds only the newest event, and tracking overwrites
+    /// it within milliseconds, so the row would wait for a result that already
+    /// came and went.
+    pub pairing_events: broadcast::Sender<oe::Event>,
     /// Most recent battery state (percent, charging) per device UUID
     pub battery_states: SyncSignal<HashMap<[u8; 6], (u8, bool)>>,
     device_keys: SyncSignal<HashMap<[u8; 6], usize>>,
@@ -27,6 +32,7 @@ impl HubContext {
     pub fn new() -> Self {
         let (tracking_events, _) = broadcast::channel(128);
         let (impact_events, _) = broadcast::channel(64);
+        let (pairing_events, _) = broadcast::channel(16);
         Self {
             client: SyncSignal::new_maybe_sync(Client::default()),
             devices: SyncSignal::new_maybe_sync(Slab::new()),
@@ -34,6 +40,7 @@ impl HubContext {
             latest_event: Signal::new(None),
             tracking_events,
             impact_events,
+            pairing_events,
             battery_states: SyncSignal::new_maybe_sync(HashMap::new()),
             device_keys: SyncSignal::new_maybe_sync(HashMap::new()),
         }
@@ -222,6 +229,16 @@ impl HubContext {
                         .write()
                         .insert(device.uuid, (battery.percent, battery.charging));
                 }
+                if matches!(
+                    &evt,
+                    oe::Event::DonglePairingResult { .. }
+                        | oe::Event::DeviceEvent(oe::DeviceEvent(
+                            _,
+                            oe::DeviceEventKind::PairingResult { .. }
+                        ))
+                ) {
+                    let _ = self.pairing_events.send(evt.clone());
+                }
                 self.latest_event.set(Some(evt));
             }
 
@@ -241,5 +258,9 @@ impl HubContext {
 
     pub fn subscribe_impact(&self) -> broadcast::Receiver<(Device, oe::ImpactEvent)> {
         self.impact_events.subscribe()
+    }
+
+    pub fn subscribe_pairing(&self) -> broadcast::Receiver<oe::Event> {
+        self.pairing_events.subscribe()
     }
 }
