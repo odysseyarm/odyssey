@@ -205,6 +205,11 @@ async fn handle_cmd(
             device_control::try_send_event(DeviceMsg::RebootAck());
             // Small delay to allow the RebootAck to be polled by the host before reset
             embassy_time::Timer::after_millis(50).await;
+            // The host reboots straight after changing a setting, and the
+            // settings worker writes asynchronously. Resetting through a page
+            // erase loses the change and can leave the node undecodable, which
+            // costs the device its next boot.
+            settings::settings_wait_settled(embassy_time::Duration::from_millis(500)).await;
             cortex_m::peripheral::SCB::sys_reset();
         }
 
