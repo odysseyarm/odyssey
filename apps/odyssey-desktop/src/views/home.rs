@@ -50,21 +50,27 @@ pub fn Home() -> Element {
         }
     });
 
-    // Fetch firmware manifest on mount
-    use_effect({
+    // Without the manifest no update is ever offered, and one failed fetch used
+    // to disable updates for the rest of the session. Keep trying, backing off
+    // so an offline machine is not hammering the network.
+    use_future({
         let mut manifest = manifest.clone();
-        move || {
-            spawn(async move {
+        move || async move {
+            let mut delay = std::time::Duration::from_secs(5);
+            loop {
                 match firmware::fetch_manifest().await {
                     Ok(m) => {
                         tracing::info!("Fetched firmware manifest version {}", m.version);
                         manifest.set(Some(m));
+                        return;
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to fetch firmware manifest: {}", e);
+                        tracing::warn!("Failed to fetch firmware manifest, retrying: {}", e);
+                        tokio::time::sleep(delay).await;
+                        delay = (delay * 2).min(std::time::Duration::from_secs(300));
                     }
                 }
-            });
+            }
         }
     });
 
