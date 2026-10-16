@@ -102,20 +102,27 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
         }
     };
 
-    // Listen for dongle pairing result events
+    // Pairing results arrive once, so they come over their own channel.
     {
         let dongle_id = dongle.id.clone();
-        let latest_event = hub.peek().latest_event.clone();
-        use_effect(move || {
-            if let Some(odyssey_hub_common::events::Event::DonglePairingResult {
-                dongle_id: event_id,
-                success,
-                paired_address,
-                paired_name,
-                error,
-            }) = &*latest_event.read()
-            {
-                if *event_id == dongle_id {
+        use_future(move || {
+            let mut results = hub.peek().subscribe_pairing();
+            let dongle_id = dongle_id.clone();
+            async move {
+                while let Ok(event) = results.recv().await {
+                    let odyssey_hub_common::events::Event::DonglePairingResult {
+                        dongle_id: event_id,
+                        success,
+                        paired_address,
+                        paired_name,
+                        error,
+                    } = &event
+                    else {
+                        continue;
+                    };
+                    if *event_id != dongle_id {
+                        continue;
+                    }
                     pairing.set(false);
                     if *success {
                         let label = if paired_name.is_empty() {
@@ -123,7 +130,10 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                         } else {
                             format!("{} ({})", paired_name, format_uuid(paired_address))
                         };
-                        status.set(format!("Paired with {}. Please unplug and replug the dongle.", label));
+                        status.set(format!(
+                            "Paired with {}. Please unplug and replug the dongle.",
+                            label
+                        ));
                     } else {
                         status.set(error.clone());
                     }
@@ -300,21 +310,27 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
     // Listen for pairing result events for this device
     {
         let device_uuid = device.uuid;
-        let latest_event = hub.peek().latest_event.clone();
-        use_effect(move || {
-            if let Some(odyssey_hub_common::events::Event::DeviceEvent(
-                odyssey_hub_common::events::DeviceEvent(
-                    dev,
-                    odyssey_hub_common::events::DeviceEventKind::PairingResult {
-                        success,
-                        paired_address,
-                        paired_name,
-                        error,
-                    },
-                ),
-            )) = &*latest_event.read()
-            {
-                if dev.uuid == device_uuid {
+        use_future(move || {
+            let mut results = hub.peek().subscribe_pairing();
+            async move {
+                while let Ok(event) = results.recv().await {
+                    let odyssey_hub_common::events::Event::DeviceEvent(
+                        odyssey_hub_common::events::DeviceEvent(
+                            dev,
+                            odyssey_hub_common::events::DeviceEventKind::PairingResult {
+                                success,
+                                paired_address,
+                                paired_name,
+                                error,
+                            },
+                        ),
+                    ) = &event
+                    else {
+                        continue;
+                    };
+                    if dev.uuid != device_uuid {
+                        continue;
+                    }
                     pairing.set(false);
                     if *success {
                         let label = if paired_name.is_empty() {
@@ -322,7 +338,10 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                         } else {
                             format!("{} ({})", paired_name, format_uuid(paired_address))
                         };
-                        status.set(format!("Paired with {}. Please unplug and replug the dongle.", label));
+                        status.set(format!(
+                            "Paired with {}. Please unplug and replug the dongle.",
+                            label
+                        ));
                     } else {
                         status.set(error.clone());
                     }
