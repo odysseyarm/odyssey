@@ -1,3 +1,4 @@
+use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures::StreamExt;
 use std::{collections::HashMap, num::NonZeroU64, time::Duration};
@@ -88,16 +89,32 @@ pub fn Accessories() -> Element {
                 info_map.set(infos);
             }
 
-            if let Ok(mut stream) = client.subscribe_accessory_map().await {
-                while let Some(Ok(next)) = stream.next().await {
-                    let m: AccessoryMap = next;
-                    accessory_map.set(m.clone());
-                    let infos = m
-                        .iter()
-                        .map(|(id, (info, _))| (*id, info.clone()))
-                        .collect();
-                    info_map.set(infos);
+            // A single stream error used to end this loop for the rest of the
+            // session, freezing the list. Resubscribe instead.
+            loop {
+                match client.subscribe_accessory_map().await {
+                    Ok(mut stream) => {
+                        while let Some(next) = stream.next().await {
+                            match next {
+                                Ok(m) => {
+                                    let m: AccessoryMap = m;
+                                    accessory_map.set(m.clone());
+                                    let infos = m
+                                        .iter()
+                                        .map(|(id, (info, _))| (*id, info.clone()))
+                                        .collect();
+                                    info_map.set(infos);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("accessory map stream error: {e}");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("accessory map subscribe failed: {e}"),
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         }
     });
@@ -171,8 +188,12 @@ pub fn Accessories() -> Element {
             let mut client = hub_sig.read().client.read().clone();
             let mut info_map = info0.clone();
             spawn(async move {
-                let _ = client.update_accessory_info_map(next.clone()).await;
-                info_map.set(next);
+                // The hub replaces the whole map, so showing the edit before it
+                // is accepted leaves the UI claiming a change the hub rejected.
+                match client.update_accessory_info_map(next.clone()).await {
+                    Ok(()) => info_map.set(next),
+                    Err(e) => tracing::error!("Failed to add accessory: {e}"),
+                }
             });
         })
     };
@@ -193,8 +214,10 @@ pub fn Accessories() -> Element {
             let mut client = hub_sig.read().client.read().clone();
             let mut info_map = info0.clone();
             spawn(async move {
-                let _ = client.update_accessory_info_map(next.clone()).await;
-                info_map.set(next);
+                match client.update_accessory_info_map(next.clone()).await {
+                    Ok(()) => info_map.set(next),
+                    Err(e) => tracing::error!("Failed to remove accessory: {e}"),
+                }
             });
         })
     };
@@ -217,8 +240,10 @@ pub fn Accessories() -> Element {
             let mut client = hub_sig.read().client.read().clone();
             let mut info_map = info0.clone();
             spawn(async move {
-                let _ = client.update_accessory_info_map(next.clone()).await;
-                info_map.set(next);
+                match client.update_accessory_info_map(next.clone()).await {
+                    Ok(()) => info_map.set(next),
+                    Err(e) => tracing::error!("Failed to assign accessory: {e}"),
+                }
             });
         })
     };
