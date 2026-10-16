@@ -300,31 +300,32 @@ pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
         .ok_or(DfuError::DeviceNotFound)
 }
 
-/// Find a USB device by VID/PID and UUID (matched against USB serial number).
-/// Falls back to first-match if no device with that serial is found.
+/// Find a USB device by VID/PID and UUID, matched against the USB serial number.
+///
+/// Both the application and the bootloader publish the UUID as the serial, so
+/// this is the only safe way to pick one of several identical devices: flashing
+/// resolves the device several times over, and the wrong match writes an image
+/// into a device the user did not choose.
 pub fn find_device_by_uuid(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
     let uuid_hex = format!(
         "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
         uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5]
     );
-    let devices: Vec<_> = nusb::list_devices()
+    nusb::list_devices()
         .wait()
         .map_err(|e| DfuError::Usb(e))?
-        .filter(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
-        .collect();
-    // Try to match by serial number first
-    if let Some(dev) = devices.iter().find(|dev| {
-        dev.serial_number()
-            .map(|s| {
-                let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-                clean.eq_ignore_ascii_case(&uuid_hex)
-            })
-            .unwrap_or(false)
-    }) {
-        return Ok(dev.clone());
-    }
-    // Fall back to first match
-    devices.into_iter().next().ok_or(DfuError::DeviceNotFound)
+        .find(|dev| {
+            dev.vendor_id() == vid
+                && dev.product_id() == pid
+                && dev
+                    .serial_number()
+                    .map(|s| {
+                        let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+                        clean.eq_ignore_ascii_case(&uuid_hex)
+                    })
+                    .unwrap_or(false)
+        })
+        .ok_or(DfuError::DeviceNotFound)
 }
 
 /// Find the DFU interface number on a device
@@ -417,14 +418,15 @@ pub fn determine_target_slot(
     }
 }
 
-/// Determine which slot to flash for a device by VID/PID.
+/// Determine which slot to flash for a specific device.
 /// Opens the device, reads the DFU interface, and determines the target slot.
 /// Returns (slot_name "APP_A"/"APP_B", firmware_file "app-a"/"app-b", alt_setting)
 pub fn determine_target_slot_for_device(
+    uuid: &[u8; 6],
     vid: u16,
     pid: u16,
 ) -> Result<(&'static str, &'static str, u8), DfuError> {
-    let info = find_device(vid, pid)?;
+    let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let interface_num = find_dfu_interface(&device)?;
     determine_target_slot(&device, interface_num)
@@ -432,12 +434,13 @@ pub fn determine_target_slot_for_device(
 
 /// Open a DFU device and prepare it for flashing
 pub fn open_dfu_device(
+    uuid: &[u8; 6],
     vid: u16,
     pid: u16,
     interface_num: u8,
     alt: u8,
 ) -> Result<DfuNusb, DfuError> {
-    let info = find_device(vid, pid)?;
+    let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let interface = device.claim_interface(interface_num).wait()?;
     let dfu = DfuNusb::open(device, interface, alt)?;
@@ -501,6 +504,7 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
 /// # Returns
 /// Ok(()) on success
 pub async fn flash_firmware(
+    uuid: &[u8; 6],
     vid: u16,
     pid: u16,
     slot: &str,
@@ -508,7 +512,7 @@ pub async fn flash_firmware(
     firmware: &[u8],
 ) -> Result<(), DfuError> {
     // Use the progress version with a no-op callback
-    flash_firmware_with_progress(vid, pid, slot, alt, firmware, |_, _| {}).await
+    flash_firmware_with_progress(uuid, vid, pid, slot, alt, firmware, |_, _| {}).await
 }
 
 /// A wrapper reader that logs progress and optionally calls a callback
@@ -590,6 +594,7 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
 /// # Returns
 /// Ok(()) on success
 pub async fn flash_firmware_with_progress<F>(
+    uuid: &[u8; 6],
     vid: u16,
     pid: u16,
     slot: &str,
@@ -600,7 +605,7 @@ pub async fn flash_firmware_with_progress<F>(
 where
     F: FnMut(usize, usize) + Unpin,
 {
-    let info = find_device(vid, pid)?;
+    let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
 
     let interface_num = find_dfu_interface(&device)?;
@@ -664,7 +669,12 @@ where
 ///
 /// # Returns
 /// Ok(()) when device is found, Err on timeout
-pub async fn wait_for_dfu_device(vid: u16, pid: u16, timeout: Duration) -> Result<(), DfuError> {
+pub async fn wait_for_dfu_device(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+    timeout: Duration,
+) -> Result<(), DfuError> {
     let start = std::time::Instant::now();
     tracing::debug!(
         "wait_for_dfu_device: starting poll for {:04x}:{:04x}",
@@ -678,7 +688,7 @@ pub async fn wait_for_dfu_device(vid: u16, pid: u16, timeout: Duration) -> Resul
             return Err(DfuError::DeviceNotFound);
         }
 
-        if let Ok(info) = find_device(vid, pid) {
+        if let Ok(info) = find_device_by_uuid(uuid, vid, pid) {
             tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
             // Check if device is in DFU mode
             if let Ok(device) = info.open().wait() {
@@ -739,15 +749,15 @@ pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]
 
     // Step 2: Wait for device to re-enumerate in DFU mode
     tracing::info!("Waiting for device to enter DFU mode...");
-    wait_for_dfu_device(vid, pid, Duration::from_secs(10)).await?;
+    wait_for_dfu_device(uuid, vid, pid, Duration::from_secs(10)).await?;
 
     // Step 3: Determine target slot by reading alt interface strings
-    let (slot_name, _slot_file, alt) = determine_target_slot_for_device(vid, pid)?;
+    let (slot_name, _slot_file, alt) = determine_target_slot_for_device(uuid, vid, pid)?;
     tracing::info!("Target slot: {} (alt {})", slot_name, alt);
 
     // Step 4: Flash firmware
     tracing::info!("Flashing firmware...");
-    flash_firmware(vid, pid, slot_name, alt, firmware).await?;
+    flash_firmware(uuid, vid, pid, slot_name, alt, firmware).await?;
 
     tracing::info!("Firmware update complete!");
     Ok(())
