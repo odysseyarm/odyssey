@@ -423,6 +423,32 @@ async fn run_firmware_update(
             .ok_or("No compatible firmware found")?
     };
 
+    // Which bank to write is only readable once the bootloader is running, so
+    // fetch both candidates up front. Detaching is the point of no return: the
+    // app marks the boot state for DFU before resetting, and only a completed
+    // download clears that mark, so a download that fails after the detach
+    // leaves the device in the bootloader across every later reboot.
+    manager.set_state(device_uuid, FirmwareUpdateState::Downloading);
+    let mut images = std::collections::HashMap::new();
+    for slot_file in ["app-a", "app-b"] {
+        let Some(file_entry) = firmware_entry.files.get(slot_file) else {
+            continue;
+        };
+        tracing::info!("Downloading {} for {}", slot_file, firmware_entry.version);
+        let data = firmware::download_firmware(
+            &device_type,
+            &firmware_entry.version,
+            slot_file,
+            &file_entry.sha256,
+        )
+        .await
+        .map_err(|e| format!("Download of {slot_file} failed: {e}"))?;
+        images.insert(slot_file, data);
+    }
+    if images.is_empty() {
+        return Err("Firmware release has no app-a or app-b image".to_string());
+    }
+
     // Determine whether the device is already in DFU mode.
     // If it has no vendor interface (class 0xFF) it cannot accept a DFU detach request —
     // it is already waiting for a download.
@@ -459,24 +485,9 @@ async fn run_firmware_update(
         slot_file
     );
 
-    let file_entry = firmware_entry
-        .files
-        .get(slot_file)
+    let firmware_data = images
+        .remove(slot_file)
         .ok_or_else(|| format!("Firmware file {} not found in manifest", slot_file))?;
-
-    // Download firmware
-    tracing::info!("Starting firmware download for {}", slot_file);
-    manager.set_state(device_uuid, FirmwareUpdateState::Downloading);
-    let firmware_data = firmware::download_firmware(
-        &device_type,
-        &firmware_entry.version,
-        slot_file,
-        &file_entry.sha256,
-    )
-    .await
-    .map_err(|e| format!("Download failed: {}", e))?;
-
-    tracing::info!("Firmware download completed: {} bytes", firmware_data.len());
 
     // Flash firmware with progress updates
     tracing::info!("Flashing firmware to {}", slot_name);
