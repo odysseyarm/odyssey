@@ -10,6 +10,7 @@ use tokio::{
     sync::{broadcast, mpsc, watch, RwLock},
     task::JoinHandle,
 };
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tokio_stream::StreamExt;
 use tonic::{Response, Status};
@@ -93,24 +94,34 @@ impl Server {
         let device_list = self.device_list.clone();
         let handle = tokio::spawn(async move {
             loop {
-                match change_rx.recv().await {
-                    Ok(()) => {
-                        // Build a fresh snapshot and push
-                        let snap = {
-                            let guard = device_list.lock();
-                            guard.iter().map(|(d, _tx)| d.clone()).collect::<Vec<_>>()
-                        };
-                        if tx
-                            .send(Ok(DeviceListReply {
-                                device_list: snap.into_iter().map(|d| d.into()).collect(),
-                            }))
-                            .await
-                            .is_err()
-                        {
-                            break; // client gone
-                        }
+                let changed = match change_rx.recv().await {
+                    Ok(()) => true,
+                    // Lagging only means notifications were dropped while this
+                    // task was busy; the next snapshot is still authoritative,
+                    // so coalesce them rather than ending the subscription and
+                    // leaving the client frozen on a stale device list.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("device list subscriber lagged {n} notifications");
+                        true
                     }
-                    Err(_) => break, // broadcast closed
+                    Err(broadcast::error::RecvError::Closed) => false,
+                };
+                if !changed {
+                    break;
+                }
+                // Build a fresh snapshot and push
+                let snap = {
+                    let guard = device_list.lock();
+                    guard.iter().map(|(d, _tx)| d.clone()).collect::<Vec<_>>()
+                };
+                if tx
+                    .send(Ok(DeviceListReply {
+                        device_list: snap.into_iter().map(|d| d.into()).collect(),
+                    }))
+                    .await
+                    .is_err()
+                {
+                    break; // client gone
                 }
             }
         });
@@ -141,17 +152,25 @@ impl Server {
         let dongle_list = self.dongle_list.clone();
         let handle = tokio::spawn(async move {
             loop {
-                match change_rx.recv().await {
-                    Ok(()) => {
-                        let snap = {
-                            let guard = dongle_list.lock();
-                            guard.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>()
-                        };
-                        if tx.send(Ok(dongle_list_reply_from(&snap))).await.is_err() {
-                            break;
-                        }
+                let changed = match change_rx.recv().await {
+                    Ok(()) => true,
+                    // A dropped notification costs nothing: the snapshot below
+                    // is rebuilt from the live list either way.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("dongle list subscriber lagged {n} notifications");
+                        true
                     }
-                    Err(_) => break,
+                    Err(broadcast::error::RecvError::Closed) => false,
+                };
+                if !changed {
+                    break;
+                }
+                let snap = {
+                    let guard = dongle_list.lock();
+                    guard.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>()
+                };
+                if tx.send(Ok(dongle_list_reply_from(&snap))).await.is_err() {
+                    break;
                 }
             }
         });
@@ -330,7 +349,12 @@ impl Service for Server {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    // The map is sent whole, so the next update supersedes
+                    // anything missed; dropping the subscription would freeze
+                    // the accessory list for the rest of the session.
+                    Err(BroadcastStreamRecvError::Lagged(n)) => {
+                        tracing::debug!("accessory map subscriber lagged {n} updates");
+                    }
                 }
             }
         });
@@ -576,7 +600,14 @@ impl Service for Server {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    // Tracking events can outrun a busy client. Skipping the
+                    // ones that were dropped is correct; tearing the
+                    // subscription down would also lose every later impact and
+                    // pairing result.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("event subscriber lagged {n} events");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         });
