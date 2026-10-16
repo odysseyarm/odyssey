@@ -13,6 +13,7 @@ use nalgebra::{
     UnitVector3, Vector2, Vector3,
 };
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
+use crate::firmware::{DFU_CLASS, DFU_PROTOCOL_DFU_MODE, DFU_SUBCLASS};
 use odyssey_hub_common::events::{
     AccelerometerEvent, DeviceEvent, DeviceEventKind, Event, ImpactEvent, Pose, TrackingEvent,
 };
@@ -1103,11 +1104,18 @@ async fn usb_device_manager(
                                     continue;
                                 }
                             }
-                            // Connection failed — check for DFU interface so we can still offer
-                            // firmware update. This covers DFU-bootloader devices (no vendor
-                            // interface) where the serial number encodes the UUID.
-                            let has_dfu_iface = dev_info.interfaces().any(|i| i.class() == 0xFE);
-                            if has_dfu_iface {
+                            // Connection failed — surface the device for firmware update if it
+                            // really is sitting in the bootloader. An application-mode ATS Lite
+                            // also exposes a class 0xFE interface, for the DFU *runtime*
+                            // descriptor it uses to accept a detach, so the class alone says
+                            // nothing: only protocol 0x02 means the bootloader is running. The
+                            // serial number encodes the UUID in both modes.
+                            let in_dfu_mode = dev_info.interfaces().any(|i| {
+                                i.class() == DFU_CLASS
+                                    && i.subclass() == DFU_SUBCLASS
+                                    && i.protocol() == DFU_PROTOCOL_DFU_MODE
+                            });
+                            if in_dfu_mode {
                                 let Some(uuid) = uuid_from_usb_serial(dev_info.serial_number()) else {
                                     warn!("Device PID 0x{:04x} has DFU interface but no readable serial — cannot surface for update", pid);
                                     continue;

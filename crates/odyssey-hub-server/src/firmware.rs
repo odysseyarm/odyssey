@@ -285,10 +285,11 @@ pub enum DfuError {
     Io(#[from] std::io::Error),
 }
 
-/// DFU interface class/subclass/protocol
-const DFU_CLASS: u8 = 0xFE;
-const DFU_SUBCLASS: u8 = 0x01;
-const DFU_PROTOCOL_DFU_MODE: u8 = 0x02;
+/// DFU interface class/subclass, and the protocol byte that distinguishes the
+/// bootloader from the runtime interface an application also exposes.
+pub const DFU_CLASS: u8 = 0xFE;
+pub const DFU_SUBCLASS: u8 = 0x01;
+pub const DFU_PROTOCOL_DFU_MODE: u8 = 0x02;
 
 /// Find a USB device by VID/PID
 pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
