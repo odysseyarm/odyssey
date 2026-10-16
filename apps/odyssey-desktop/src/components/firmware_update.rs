@@ -411,20 +411,16 @@ async fn run_firmware_update(
 
     let manifest = manifest.ok_or("No manifest available")?;
     let device_version = device.firmware_version;
-    let is_dfu_device = device.capabilities.contains(DC::DFU);
-
-    // DFU devices have unknown firmware version — just flash the latest available.
-    // Normal devices require a known version to find a compatible update.
-    let firmware_entry = if is_dfu_device {
-        firmware::find_latest_firmware(&manifest, &device_type)
-            .ok_or("No firmware available for this device type")?
-    } else {
-        if device_version == [0, 0, 0] {
-            return Err("No firmware version".to_string());
-        }
-        firmware::find_compatible_firmware(&manifest, &device_type, device_version)
-            .ok_or("No compatible firmware found")?
-    };
+    // A device sitting in the bootloader has no CONTROL capability and reports
+    // no version, so it takes whatever the manifest offers. Everything else
+    // must have reported a version for the button to have been shown.
+    let in_bootloader =
+        device.capabilities.contains(DC::DFU) && !device.capabilities.contains(DC::CONTROL);
+    if !in_bootloader && device_version == [0, 0, 0] {
+        return Err("No firmware version".to_string());
+    }
+    let firmware_entry = firmware::find_latest_firmware(&manifest, &device_type)
+        .ok_or("No firmware available for this device type")?;
 
     // Which bank to write is only readable once the bootloader is running, so
     // fetch both candidates up front. Detaching is the point of no return: the

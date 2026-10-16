@@ -68,19 +68,6 @@ impl FirmwareEntry {
     }
 }
 
-/// Check if two versions are compatible.
-/// For 0.x.y versions: same minor (x) required
-/// For 1+.x.y versions: same major required
-pub fn versions_compatible(device: [u16; 3], manifest: [u16; 3]) -> bool {
-    if device[0] == 0 && manifest[0] == 0 {
-        // Pre-1.0: minor version must match
-        device[1] == manifest[1]
-    } else {
-        // Post-1.0: major version must match
-        device[0] == manifest[0]
-    }
-}
-
 /// Check if manifest version is newer than device version
 pub fn version_newer(device: [u16; 3], manifest: [u16; 3]) -> bool {
     if manifest[0] != device[0] {
@@ -115,29 +102,11 @@ pub async fn fetch_manifest() -> anyhow::Result<FirmwareManifest> {
     Ok(manifest)
 }
 
-/// Find the latest compatible firmware for a device
-pub fn find_compatible_firmware<'a>(
-    manifest: &'a FirmwareManifest,
-    device_type: &str,
-    device_version: [u16; 3],
-) -> Option<&'a FirmwareEntry> {
-    let device_manifest = manifest.devices.get(device_type)?;
-
-    // Firmwares should be sorted newest-first in manifest
-    for firmware in &device_manifest.firmwares {
-        if let Some(fw_version) = firmware.version_parts() {
-            if versions_compatible(device_version, fw_version)
-                && version_newer(device_version, fw_version)
-            {
-                return Some(firmware);
-            }
-        }
-    }
-    None
-}
-
-/// Find the latest firmware for a device type regardless of version compatibility.
-/// Used for devices in DFU mode or with broken protocol where the current version is unknown.
+/// Find the latest firmware for a device type.
+/// Cross-major and cross-minor updates are allowed: the manifest publishes what
+/// a device should be running, and refusing to cross a minor would strand
+/// devices on a line that is no longer built.
+/// Entries are published newest-first.
 pub fn find_latest_firmware<'a>(
     manifest: &'a FirmwareManifest,
     device_type: &str,
@@ -766,17 +735,6 @@ pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_version_compatibility() {
-        // 0.x.y: minor must match
-        assert!(versions_compatible([0, 1, 0], [0, 1, 5]));
-        assert!(!versions_compatible([0, 1, 0], [0, 2, 0]));
-
-        // 1+.x.y: major must match
-        assert!(versions_compatible([1, 0, 0], [1, 5, 0]));
-        assert!(!versions_compatible([1, 0, 0], [2, 0, 0]));
-    }
 
     #[test]
     fn test_version_newer() {
