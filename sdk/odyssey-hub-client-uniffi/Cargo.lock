@@ -1289,6 +1289,7 @@ dependencies = [
  "interprocess",
  "odyssey-hub-common",
  "odyssey-hub-server-interface",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tonic",
