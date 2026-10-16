@@ -39,6 +39,10 @@ static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("se
 static NODE_PAG: StorageListNode<PagSettings> = StorageListNode::new("settings/pag");
 
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Raised after the worker has finished a write pass. A reset between the
+/// request and this point interrupts an NVMC erase, which loses the change and
+/// can leave the node undecodable.
+static SETTINGS_SETTLED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
@@ -147,6 +151,7 @@ async fn settings_worker(
                     Err(e) => defmt::error!("process_garbage err: {:?}", e),
                 }
                 defmt::trace!("gc in {:?}", start.elapsed());
+                SETTINGS_SETTLED.signal(());
             }
         }
     }
@@ -155,6 +160,19 @@ async fn settings_worker(
 #[inline]
 pub fn settings_flush_now() {
     SETTINGS_FLUSH.signal(());
+}
+
+/// Wait until the worker has completed a write pass, up to `timeout`.
+///
+/// Callers that reset the chip must go through this, otherwise the reset can
+/// land in the middle of a page erase.
+pub async fn settings_wait_settled(timeout: Duration) {
+    if embassy_time::with_timeout(timeout, SETTINGS_SETTLED.wait())
+        .await
+        .is_err()
+    {
+        defmt::warn!("settings did not settle within {:?}, continuing", timeout);
+    }
 }
 
 /// Start the settings I/O worker task. Must be called before `init_nodes()` or
