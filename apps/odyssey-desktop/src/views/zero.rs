@@ -17,7 +17,9 @@ const ZERO_TARGET: nalgebra::Vector2<f32> = nalgebra::Vector2::new(0.5, 0.5);
 /// Save zero result: None = idle, Some(Ok(())) = saved, Some(Err(msg)) = error
 type SaveStatus = Option<Result<(), String>>;
 
-#[derive(Default)]
+/// Signals are handles into the runtime's arena, so copying this bundle hands
+/// out another reference to the same state rather than duplicating it.
+#[derive(Clone, Copy, Default)]
 struct DeviceSignals {
     shooting: Signal<bool>,
     zeroing_on_key: Signal<bool>,
@@ -33,16 +35,16 @@ pub fn Zero(
 ) -> Element {
     let devices = (hub().devices)();
 
-    // one Signal<bool> per slot: true means “zero on next shot”
-    let mut device_signals = use_signal(|| Vec::<DeviceSignals>::new());
+    // Per-device zeroing state, keyed by uuid. Slab slots are reused as devices
+    // come and go, so keying by slot hands one device the previous occupant's
+    // "zero on shot" flag and shot delay.
+    let mut device_signals = use_signal(|| HashMap::<[u8; 6], DeviceSignals>::new());
     let last_device_snapshot = use_signal(|| Vec::<[u8; 6]>::new());
 
-
-    // ensure we can safely index [0 .. devices.len())
     {
         let mut w = device_signals.write();
-        if w.len() < devices.len() {
-            w.resize_with(devices.len(), || Default::default());
+        for (_, device) in devices.iter() {
+            w.entry(device.uuid).or_default();
         }
     }
 
@@ -82,17 +84,17 @@ pub fn Zero(
                     match receiver.recv().await {
                         Ok((device, impact)) => {
                             let hub_ctx = hub.peek().clone();
-                            if let Some(key) = hub_ctx.device_key(&device) {
-                                let shooting = *device_signals.peek()[key].shooting.peek();
+                            if let Some(signals) =
+                                device_signals.peek().get(&device.uuid).cloned()
+                            {
+                                let shooting = *signals.shooting.peek();
                                 tracing::info!(
-                                    "ImpactEvent for {:02x?}: slot={}, shooting={}",
+                                    "ImpactEvent for {:02x?}: shooting={}",
                                     device.uuid,
-                                    key,
                                     shooting
                                 );
                                 if shooting {
-                                    let shot_delay_ms =
-                                        *device_signals.peek()[key].shot_delay.peek();
+                                    let shot_delay_ms = *signals.shot_delay.peek();
                                     // Convert ms → µs (device timestamp unit). For accessories
                                     // (u32::MAX sentinel), get the latest entry's timestamp and
                                     // subtract from that, giving ~0–10ms staleness at 100Hz.
@@ -112,7 +114,7 @@ pub fn Zero(
                                         .peek()
                                         .get(&device.uuid)
                                         .and_then(|h| h.get_closest(lookup_ts));
-                                    device_signals.write()[key].shooting.set(false);
+                                    signals.shooting.clone().set(false);
                                     let dev = device.clone();
                                     if let Err(e) = hub_ctx
                                         .client
@@ -135,7 +137,7 @@ pub fn Zero(
                                 }
                             } else {
                                 tracing::warn!(
-                                    "ImpactEvent: device_key not found for {:02x?}",
+                                    "ImpactEvent: no zeroing state for {:02x?}",
                                     device.uuid
                                 );
                             }
@@ -152,11 +154,9 @@ pub fn Zero(
         let hub = hub.clone();
         let mut device_signals = device_signals.clone();
         let mut last_device_snapshot = last_device_snapshot.clone();
-        let device_entries: Vec<(usize, odyssey_hub_common::device::Device)> = devices
-            .iter()
-            .map(|(slot, dev)| (slot, dev.clone()))
-            .collect();
-        let snapshot: Vec<[u8; 6]> = device_entries.iter().map(|(_, dev)| dev.uuid).collect();
+        let device_entries: Vec<odyssey_hub_common::device::Device> =
+            devices.iter().map(|(_, dev)| dev.clone()).collect();
+        let snapshot: Vec<[u8; 6]> = device_entries.iter().map(|dev| dev.uuid).collect();
 
         use_effect(move || {
             if last_device_snapshot.peek().as_slice() == snapshot.as_slice() {
@@ -166,17 +166,13 @@ pub fn Zero(
 
             spawn({
                 let device_entries = device_entries.clone();
+                let present = snapshot.clone();
                 async move {
-                    {
-                        let mut w = device_signals.write();
-                        if w.len() > device_entries.len() {
-                            w.truncate(device_entries.len());
-                        } else if w.len() < device_entries.len() {
-                            w.resize_with(device_entries.len(), || Default::default());
-                        }
-                    }
+                    device_signals
+                        .write()
+                        .retain(|uuid, _| present.contains(uuid));
 
-                    for (slot, device) in device_entries {
+                    for device in device_entries {
                         let hub = hub.clone();
                         let mut device_signals = device_signals.clone();
                         spawn(async move {
@@ -189,7 +185,12 @@ pub fn Zero(
                                 .await
                             {
                                 Ok(delay) => {
-                                    device_signals.write()[slot].shot_delay.set(delay);
+                                    device_signals
+                                        .write()
+                                        .entry(device.uuid)
+                                        .or_default()
+                                        .shot_delay
+                                        .set(delay);
                                 }
                                 Err(e) => tracing::error!("Failed to get shot delay: {e}"),
                             }
@@ -214,41 +215,40 @@ pub fn Zero(
                 if key_str != "z" && key_str != "Escape" { return; }
 
                 let hub_ctx = hub.peek().clone();
-                let devs: Vec<_> = (hub_ctx.devices)().into_iter().collect();
-                let slots_len = device_signals.peek().len();
+                let devs: Vec<_> = (hub_ctx.devices)().into_iter().map(|(_, d)| d).collect();
 
-                for slot in 0..slots_len {
-                    if key_str == "z" && *device_signals.peek()[slot].zeroing_on_key.peek() {
-                        device_signals.write()[slot].zeroing_on_key.set(false);
-                        if let Some((_, dev)) = devs.iter().find(|(s, _)| *s == slot) {
-                            let dev = dev.clone();
-                            let shot_delay_ms = *device_signals.peek()[slot].shot_delay.peek();
-                            let shot_delay_us = shot_delay_ms as u32 * 1000;
-                            let historical_te = tracking_history
-                                .peek()
-                                .get(&dev.uuid)
-                                .and_then(|h| {
-                                    let lookup_ts = h
-                                        .latest()
-                                        .map(|te| te.timestamp.wrapping_sub(shot_delay_us))
-                                        .unwrap_or(u32::MAX);
-                                    h.get_closest(lookup_ts)
-                                });
-                            if let Err(e) = hub_ctx.client.peek().clone()
-                                .zero(
-                                    dev.clone(),
-                                    nalgebra::Vector3::new(0., -0.0635, 0.).into(),
-                                    ZERO_TARGET.into(),
-                                    historical_te,
-                                )
-                                .await
-                            {
-                                tracing::error!("Failed to zero device {:x?}: {}", dev.uuid, e);
-                            }
-                        }
+                for dev in devs {
+                    let Some(signals) = device_signals.peek().get(&dev.uuid).cloned() else {
+                        continue;
+                    };
+                    if !*signals.zeroing_on_key.peek() {
+                        continue;
                     }
-                    if key_str == "Escape" && *device_signals.peek()[slot].zeroing_on_key.peek() {
-                        device_signals.write()[slot].zeroing_on_key.set(false);
+                    signals.zeroing_on_key.clone().set(false);
+                    if key_str == "Escape" {
+                        continue;
+                    }
+                    let shot_delay_us = *signals.shot_delay.peek() as u32 * 1000;
+                    let historical_te = tracking_history
+                        .peek()
+                        .get(&dev.uuid)
+                        .and_then(|h| {
+                            let lookup_ts = h
+                                .latest()
+                                .map(|te| te.timestamp.wrapping_sub(shot_delay_us))
+                                .unwrap_or(u32::MAX);
+                            h.get_closest(lookup_ts)
+                        });
+                    if let Err(e) = hub_ctx.client.peek().clone()
+                        .zero(
+                            dev.clone(),
+                            nalgebra::Vector3::new(0., -0.0635, 0.).into(),
+                            ZERO_TARGET.into(),
+                            historical_te,
+                        )
+                        .await
+                    {
+                        tracing::error!("Failed to zero device {:x?}: {}", dev.uuid, e);
                     }
                 }
             },
@@ -260,8 +260,10 @@ pub fn Zero(
                     ul { class: "space-y-2 font-medium",
                         for (slot, device) in devices {
                             {
-                                let firing = (device_signals.read()[slot].shooting)();
-                                let zeroing_on_key = (device_signals.read()[slot].zeroing_on_key)();
+                                let uuid = device.uuid;
+                                let signals = device_signals.write().entry(uuid).or_default().clone();
+                                let firing = (signals.shooting)();
+                                let zeroing_on_key = (signals.zeroing_on_key)();
                                 let label = crate::views::device_label(&device);
                                 rsx! {
                                     li {
@@ -276,7 +278,7 @@ pub fn Zero(
                                                     button {
                                                         class: "btn-secondary-danger",
                                                         onclick: move |_| {
-                                                            device_signals.write()[slot].shooting.set(false);
+                                                            signals.shooting.clone().set(false);
                                                         },
                                                         "Cancel"
                                                     }
@@ -284,7 +286,7 @@ pub fn Zero(
                                                     button {
                                                         class: "btn-secondary",
                                                         onclick: move |_| {
-                                                            device_signals.write()[slot].shooting.set(true);
+                                                            signals.shooting.clone().set(true);
                                                         },
                                                         "Zero on shot"
                                                     }
@@ -292,8 +294,8 @@ pub fn Zero(
                                                 button {
                                                     class: if zeroing_on_key { "btn-secondary-danger" } else { "btn-secondary" },
                                                     onclick: move |_| {
-                                                        let current = *device_signals.peek()[slot].zeroing_on_key.peek();
-                                                        device_signals.write()[slot].zeroing_on_key.set(!current);
+                                                        let current = *signals.zeroing_on_key.peek();
+                                                        signals.zeroing_on_key.clone().set(!current);
                                                     },
                                                     if zeroing_on_key { "Cancel [Z]" } else { "Zero on [Z]" }
                                                 }
@@ -322,7 +324,7 @@ pub fn Zero(
                                                     }
                                                 }, "Clear Zero" }
                                                 {
-                                                    let save_status = (device_signals.read()[slot].save_zero_status)();
+                                                    let save_status = (signals.save_zero_status)();
                                                     let (btn_class, label) = match &save_status {
                                                         None => ("btn-secondary", "Save Zero".to_string()),
                                                         Some(Ok(())) => ("btn-secondary-success", "Saved".to_string()),
@@ -337,20 +339,20 @@ pub fn Zero(
                                                                     match (hub().client)().save_zero(dev.clone()).await {
                                                                         Ok(_) => {
                                                                             tracing::info!("Saved zero for {:x?}", dev.uuid);
-                                                                            device_signals.write()[slot].save_zero_status.set(Some(Ok(())));
+                                                                            signals.save_zero_status.clone().set(Some(Ok(())));
                                                                             // Reset back to idle after 2 seconds
                                                                             spawn(async move {
                                                                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                                                                device_signals.write()[slot].save_zero_status.set(None);
+                                                                                signals.save_zero_status.clone().set(None);
                                                                             });
                                                                         }
                                                                         Err(e) => {
                                                                             let msg = e.to_string();
                                                                             tracing::error!("Failed to save zero {:x?}: {}", dev.uuid, msg);
-                                                                            device_signals.write()[slot].save_zero_status.set(Some(Err(msg)));
+                                                                            signals.save_zero_status.clone().set(Some(Err(msg)));
                                                                             spawn(async move {
                                                                                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-                                                                                device_signals.write()[slot].save_zero_status.set(None);
+                                                                                signals.save_zero_status.clone().set(None);
                                                                             });
                                                                         }
                                                                     }
@@ -378,10 +380,10 @@ pub fn Zero(
                                                                 hover:bg-gray-200 border border-gray-300 rounded-s-lg p-2 h-10 focus:ring-gray-100 \
                                                                 dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
                                                         onclick: move |_| {
-                                                            let mut val = device_signals.peek()[slot].shot_delay.peek().clone();
+                                                            let mut val = signals.shot_delay.peek().clone();
                                                             if val > 0 {
                                                                 val -= 1;
-                                                                device_signals.write()[slot].shot_delay.set(val as u16);
+                                                                signals.shot_delay.clone().set(val as u16);
                                                             }
                                                         },
                                                         svg {
@@ -404,7 +406,7 @@ pub fn Zero(
                                                         inputmode: "numeric",
                                                         pattern: "[0-9]*",
                                                         id: "shot-delay-input-{slot}",
-                                                        value: "{device_signals.read()[slot].shot_delay}",
+                                                        value: "{signals.shot_delay}",
                                                         class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
                                                                 focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
                                                                 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 \
@@ -412,11 +414,11 @@ pub fn Zero(
                                                         oninput: move |e| {
                                                             if let Ok(new_val) = e.value().parse::<i32>() {
                                                                 if new_val < 0 {
-                                                                    device_signals.write()[slot].shot_delay.set(0);
+                                                                    signals.shot_delay.clone().set(0);
                                                                 } else if new_val <= 1023 {
-                                                                    device_signals.write()[slot].shot_delay.set(new_val as u16);
+                                                                    signals.shot_delay.clone().set(new_val as u16);
                                                                 } else {
-                                                                    device_signals.write()[slot].shot_delay.set(1023);
+                                                                    signals.shot_delay.clone().set(1023);
                                                                 }
                                                             }
                                                         }
@@ -428,10 +430,10 @@ pub fn Zero(
                                                                 hover:bg-gray-200 border border-gray-300 rounded-e-lg p-2 h-10 focus:ring-gray-100 \
                                                                 dark:focus:ring-gray-700 focus:ring-2 focus:outline-none",
                                                         onclick: move |_| {
-                                                            let mut val = device_signals.peek()[slot].shot_delay.peek().clone();
+                                                            let mut val = signals.shot_delay.peek().clone();
                                                             if val < 1023 {
                                                                 val += 1;
-                                                                device_signals.write()[slot].shot_delay.set(val as u16);
+                                                                signals.shot_delay.clone().set(val as u16);
                                                             }
                                                         },
                                                         svg {
@@ -457,7 +459,7 @@ pub fn Zero(
                                                         let dev = device.clone();
                                                         move |_| {
                                                             let dev = dev.clone();
-                                                            let delay = *device_signals.peek()[slot].shot_delay.peek();
+                                                            let delay = *signals.shot_delay.peek();
                                                             async move {
                                                                 match (hub().client)().set_shot_delay(dev.clone(), delay).await {
                                                                     Ok(_) => tracing::info!("Set shot delay {}ms for {:x?}", delay, dev.uuid),
@@ -480,7 +482,7 @@ pub fn Zero(
                                                                 match (hub().client)().reset_shot_delay(dev.clone()).await {
                                                                     Ok(delay_ms) => {
                                                                         tracing::info!("Reset shot delay for {:x?}", dev.uuid);
-                                                                        device_signals.write()[slot].shot_delay.set(delay_ms);
+                                                                        signals.shot_delay.clone().set(delay_ms);
                                                                     }
                                                                     Err(e) => tracing::error!("Failed to reset shot delay {:x?}: {}", dev.uuid, e),
                                                                 }
@@ -497,7 +499,7 @@ pub fn Zero(
                                                         let dev = device.clone();
                                                         move |_| {
                                                             let dev = dev.clone();
-                                                            let delay = *device_signals.peek()[slot].shot_delay.peek();
+                                                            let delay = *signals.shot_delay.peek();
                                                             async move {
                                                                 match (hub().client)().set_shot_delay(dev.clone(), delay).await {
                                                                     Ok(_) => {
