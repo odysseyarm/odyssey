@@ -580,12 +580,18 @@ async fn run_firmware_update(
         }
     }
 
-    if reconnected {
-        tracing::info!("Firmware update complete!");
-    } else {
-        tracing::warn!("Device did not reconnect in time, but flash appeared successful");
+    if !reconnected {
+        // The byte count above only proves the host finished feeding the
+        // writer, so a device that never comes back is the one signal left
+        // that the new image is not running.
+        return Err(format!(
+            "Device did not reappear within {}s after flashing. It may still be \
+             in the bootloader — leave it connected and try again.",
+            timeout.as_secs()
+        ));
     }
 
+    tracing::info!("Firmware update complete!");
     manager.set_state(device_uuid, FirmwareUpdateState::Complete);
     Ok(())
 }
