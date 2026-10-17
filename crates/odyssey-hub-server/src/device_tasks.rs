@@ -1158,7 +1158,7 @@ async fn usb_device_manager(
                                     || dfu_device_id_to_info.values().any(|(u, _)| u == &uuid);
                                 if !already_tracked {
                                     let bootloader =
-                                        crate::firmware::bootloader_version(dev_info.device_version());
+                                        crate::firmware::bootloader_release(dev_info.device_version());
                                     info!(
                                         "Device {:02x?} is in DFU mode (PID 0x{:04x}, bootloader {:?}), surfacing for firmware update (connect error: {})",
                                         uuid, pid, bootloader, e

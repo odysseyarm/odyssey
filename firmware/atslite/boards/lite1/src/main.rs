@@ -327,6 +327,7 @@ async fn main(spawner: Spawner) {
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5211, // Lite1 PID
+        FIRMWARE_VERSION,
         usb_product_name,
         DEVICE_INTERFACE_GUID,
         p.USBD,

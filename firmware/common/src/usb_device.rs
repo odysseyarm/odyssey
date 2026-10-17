@@ -91,6 +91,7 @@ pub type DeviceControlReceiver = fn() -> Option<odyssey_protocol::control::devic
 /// The `builder_callback` allows adding additional interfaces (e.g., DFU).
 pub fn usb_device<Irqs>(
     pid: u16,
+    firmware_version: [u16; 3],
     product_name: &'static str,
     guid: &'static str,
     usbd: Peri<'static, USBD>,
@@ -130,6 +131,11 @@ where
     config.manufacturer = Some("Odyssey Arm");
     config.product = Some(product_name);
     config.serial_number = Some(serial);
+    // Redundant with the control protocol's version property, but readable from
+    // enumeration alone, so a device whose control channel is unreachable can
+    // still be offered the right firmware.
+    config.device_release =
+        odyssey_protocol::UsbDeviceRelease::from_version(firmware_version).raw_value();
     config.max_power = 310;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;
