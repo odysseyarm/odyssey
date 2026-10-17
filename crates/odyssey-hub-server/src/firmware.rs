@@ -12,9 +12,38 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-/// Manifest URL for alpha channel firmware releases
-const MANIFEST_URL: &str =
-    "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests/releases.alpha.json";
+/// Where firmware manifests are published. Promotion from alpha to stable is a
+/// deliberate copy of an entry between the two files.
+const MANIFEST_BASE_URL: &str =
+    "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests";
+
+/// Which manifest a host follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FirmwareChannel {
+    /// Entries someone promoted by hand. What customers follow.
+    #[default]
+    Stable,
+    /// Every release as it is published.
+    Alpha,
+}
+
+impl FirmwareChannel {
+    /// `ODYSSEY_FIRMWARE_CHANNEL=alpha` opts in to the alpha channel.
+    pub fn from_env() -> Self {
+        match std::env::var("ODYSSEY_FIRMWARE_CHANNEL").as_deref() {
+            Ok("alpha") => Self::Alpha,
+            _ => Self::Stable,
+        }
+    }
+
+    fn manifest_url(self) -> String {
+        let name = match self {
+            Self::Stable => "stable",
+            Self::Alpha => "alpha",
+        };
+        format!("{MANIFEST_BASE_URL}/releases.{name}.json")
+    }
+}
 
 /// GitHub releases download base URL
 const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/odyssey/releases/download";
@@ -63,14 +92,20 @@ pub struct DeviceManifest {
 /// A single firmware version entry.
 ///
 /// `requires_bootloader` is the lowest bootloader release this application can
-/// run on, `0` when it has no requirement. It is required, not optional: an
-/// entry that omitted it would read as unrestricted, so `gen-release` always
-/// writes it and a manifest missing it is rejected whole. Older hosts ignore
-/// fields they do not know, so adding one never stops them parsing.
+/// run on, `0` when it has no requirement. `min_desktop` is the oldest Odyssey
+/// Desktop that is actually required and tested with this firmware, which is
+/// not necessarily the desktop that shipped alongside it: coupling a hotfix to
+/// a desktop upgrade it does not need would strand users for no reason.
+///
+/// Both are required, not optional: an entry that omitted one would read as
+/// unrestricted, so `gen-release` always writes them and a manifest missing one
+/// is rejected whole. Older hosts ignore fields they do not know, so adding one
+/// never stops them parsing.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FirmwareEntry {
     pub version: String,
     pub requires_bootloader: u16,
+    pub min_desktop: String,
     pub files: HashMap<String, FileEntry>,
     #[serde(default)]
     pub released: Option<String>,
@@ -131,10 +166,16 @@ pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
 /// act on a manifest they would misread.
 pub const SUPPORTED_MANIFEST_VERSION: u32 = 1;
 
-/// Fetch the firmware manifest from GitHub
-pub async fn fetch_manifest() -> anyhow::Result<FirmwareManifest> {
+/// Fetch the firmware manifest for a channel from GitHub
+pub async fn fetch_manifest(channel: FirmwareChannel) -> anyhow::Result<FirmwareManifest> {
     let client = reqwest::Client::new();
-    let manifest: FirmwareManifest = client.get(MANIFEST_URL).send().await?.json().await?;
+    let manifest: FirmwareManifest = client
+        .get(channel.manifest_url())
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     if manifest.version > SUPPORTED_MANIFEST_VERSION {
         anyhow::bail!(
             "firmware manifest is version {}, newer than the {} this build understands; update the application",
@@ -145,17 +186,54 @@ pub async fn fetch_manifest() -> anyhow::Result<FirmwareManifest> {
     Ok(manifest)
 }
 
-/// Find the latest firmware for a device type.
-/// Cross-major and cross-minor updates are allowed: the manifest publishes what
-/// a device should be running, and refusing to cross a minor would strand
-/// devices on a line that is no longer built.
-/// Entries are published newest-first.
-pub fn find_latest_firmware<'a>(
+/// What a manifest offers one device, given the desktop doing the offering.
+#[derive(Debug, Clone, Copy)]
+pub struct FirmwareOffer<'a> {
+    /// The newest entry this desktop can install.
+    pub offered: Option<&'a FirmwareEntry>,
+    /// A newer entry that exists but needs a newer desktop. The user is told so
+    /// and chooses whether to update; nothing updates the desktop for them.
+    pub held_back: Option<&'a FirmwareEntry>,
+}
+
+/// Choose firmware for a device type.
+///
+/// Entries are published newest-first. Cross-major and cross-minor updates are
+/// allowed: the manifest says what a device should run, and refusing to cross
+/// a minor would strand devices on a line that is no longer built. An entry
+/// whose `min_desktop` is above `desktop`, or cannot be read, is not
+/// installable here.
+pub fn select_firmware<'a>(
     manifest: &'a FirmwareManifest,
     device_type: &str,
-) -> Option<&'a FirmwareEntry> {
-    // Firmwares are sorted newest-first in manifest
-    manifest.devices.get(device_type)?.firmwares.first()
+    desktop: [u16; 3],
+) -> FirmwareOffer<'a> {
+    let mut offer = FirmwareOffer {
+        offered: None,
+        held_back: None,
+    };
+    let Some(device) = manifest.devices.get(device_type) else {
+        return offer;
+    };
+    for entry in &device.firmwares {
+        let installable = match parse_version(&entry.min_desktop) {
+            Some(min) => !version_newer(desktop, min),
+            None => {
+                tracing::warn!(
+                    "Firmware {} has an unreadable min_desktop {:?}; not offering it",
+                    entry.version,
+                    entry.min_desktop
+                );
+                false
+            }
+        };
+        if installable {
+            offer.offered = Some(entry);
+            return offer;
+        }
+        offer.held_back.get_or_insert(entry);
+    }
+    offer
 }
 
 /// Build the download URL for a firmware file
@@ -953,21 +1031,111 @@ mod tests {
         );
     }
 
+    const ALPHA: &str = include_str!("../../../firmware/manifests/releases.alpha.json");
+    const STABLE: &str = include_str!("../../../firmware/manifests/releases.stable.json");
+
     /// Every host parses the manifest whole or not at all, so one entry missing
     /// a required field would hide every update from every device.
     #[test]
-    fn committed_manifest_parses() {
-        let manifest: FirmwareManifest = serde_json::from_str(include_str!(
-            "../../../firmware/manifests/releases.alpha.json"
-        ))
-        .expect("committed manifest parses");
-        assert!(manifest.version <= SUPPORTED_MANIFEST_VERSION);
-        for (device, entries) in &manifest.devices {
-            assert!(!entries.firmwares.is_empty(), "{device} has no firmware");
-            for entry in &entries.firmwares {
-                assert!(entry.version_parts().is_some(), "{device} {}", entry.version);
+    fn committed_manifests_parse() {
+        for (name, text) in [("alpha", ALPHA), ("stable", STABLE)] {
+            let manifest: FirmwareManifest =
+                serde_json::from_str(text).unwrap_or_else(|e| panic!("{name} parses: {e}"));
+            assert!(manifest.version <= SUPPORTED_MANIFEST_VERSION);
+            for (device, entries) in &manifest.devices {
+                assert!(!entries.firmwares.is_empty(), "{name} {device} has no firmware");
+                let mut previous: Option<[u16; 3]> = None;
+                for entry in &entries.firmwares {
+                    let version = entry.version_parts().unwrap_or_else(|| {
+                        panic!("{name} {device} {} is not a version", entry.version)
+                    });
+                    assert!(
+                        parse_version(&entry.min_desktop).is_some(),
+                        "{name} {device} {} has min_desktop {:?}",
+                        entry.version,
+                        entry.min_desktop
+                    );
+                    // Hosts take the first installable entry, so order is semantics.
+                    if let Some(newer) = previous {
+                        assert!(version_newer(version, newer), "{name} {device} is not newest-first");
+                    }
+                    previous = Some(version);
+                }
             }
         }
+    }
+
+    /// Stable is promoted from alpha by copying, so it can never hold an entry
+    /// alpha does not, or one that differs from it.
+    #[test]
+    fn stable_only_holds_promoted_alpha_entries() {
+        let alpha: serde_json::Value = serde_json::from_str(ALPHA).unwrap();
+        let stable: serde_json::Value = serde_json::from_str(STABLE).unwrap();
+        for (device, entries) in stable["devices"].as_object().unwrap() {
+            for entry in entries["firmwares"].as_array().unwrap() {
+                let in_alpha = alpha["devices"][device]["firmwares"]
+                    .as_array()
+                    .is_some_and(|all| all.contains(entry));
+                assert!(in_alpha, "stable {device} {} is not an alpha entry", entry["version"]);
+            }
+        }
+    }
+
+    fn manifest_with(entries: &[(&str, &str)]) -> FirmwareManifest {
+        let firmwares: Vec<_> = entries
+            .iter()
+            .map(|(version, min_desktop)| {
+                serde_json::json!({
+                    "version": version,
+                    "requires_bootloader": 0,
+                    "min_desktop": min_desktop,
+                    "files": {},
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "devices": { "atslite1": { "firmwares": firmwares } },
+        }))
+        .unwrap()
+    }
+
+    fn selected(offer: FirmwareOffer<'_>) -> (Option<&str>, Option<&str>) {
+        (
+            offer.offered.map(|e| e.version.as_str()),
+            offer.held_back.map(|e| e.version.as_str()),
+        )
+    }
+
+    #[test]
+    fn firmware_needing_a_newer_desktop_is_held_back() {
+        let manifest = manifest_with(&[("0.3.0", "0.8.0"), ("0.2.0", "0.6.0"), ("0.1.0", "0.6.0")]);
+        // Below the newest entry's floor: offer the next one, mention the newest.
+        assert_eq!(
+            selected(select_firmware(&manifest, "atslite1", [0, 7, 1])),
+            (Some("0.2.0"), Some("0.3.0"))
+        );
+        // Exactly at the floor counts as meeting it.
+        assert_eq!(
+            selected(select_firmware(&manifest, "atslite1", [0, 8, 0])),
+            (Some("0.3.0"), None)
+        );
+        // Older than every floor: nothing installable, but say what exists.
+        assert_eq!(
+            selected(select_firmware(&manifest, "atslite1", [0, 5, 0])),
+            (None, Some("0.3.0"))
+        );
+        // Unknown device.
+        assert_eq!(selected(select_firmware(&manifest, "nope", [9, 9, 9])), (None, None));
+    }
+
+    #[test]
+    fn unreadable_min_desktop_is_never_offered() {
+        let manifest = manifest_with(&[("0.2.0", "soon"), ("0.1.0", "0.6.0")]);
+        assert_eq!(
+            selected(select_firmware(&manifest, "atslite1", [1, 0, 0])),
+            (Some("0.1.0"), Some("0.2.0"))
+        );
     }
 
     #[test]

@@ -58,7 +58,7 @@ pub fn Home() -> Element {
         move || async move {
             let mut delay = std::time::Duration::from_secs(5);
             loop {
-                match firmware::fetch_manifest().await {
+                match firmware::fetch_manifest(firmware::FirmwareChannel::from_env()).await {
                     Ok(m) => {
                         tracing::info!("Fetched firmware manifest version {}", m.version);
                         manifest.set(Some(m));
