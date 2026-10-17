@@ -474,6 +474,29 @@ pub fn read_bootloader_version_for_device(
     Ok(read_bootloader_version(&device, interface_num))
 }
 
+/// Find the alt setting that writes the stage2 bootloader itself.
+pub fn find_bootloader_alt_for_device(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+) -> Result<u8, DfuError> {
+    let info = find_device_by_uuid(uuid, vid, pid)?;
+    let device = info.open().wait()?;
+    let interface_num = find_dfu_interface(&device)?;
+    find_alt_for_slot(&device, interface_num, "BOOTLOADER")
+}
+
+/// Whether the published bootloader is newer than the one running.
+///
+/// A bootloader that reports no version predates version reporting, so any
+/// published version supersedes it.
+pub fn bootloader_update_needed(running: Option<[u16; 3]>, published: [u16; 3]) -> bool {
+    match running {
+        Some(running) => version_newer(running, published),
+        None => true,
+    }
+}
+
 /// Open a DFU device and prepare it for flashing
 pub fn open_dfu_device(
     uuid: &[u8; 6],

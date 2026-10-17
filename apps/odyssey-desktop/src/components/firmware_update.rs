@@ -447,6 +447,28 @@ async fn run_firmware_update(
     if images.is_empty() {
         return Err("Firmware release has no app-a or app-b image".to_string());
     }
+    // The stage2 bootloader is versioned separately and republished unchanged
+    // across application releases, so it is only worth downloading when the
+    // release says which version it carries.
+    let published_bootloader = firmware_entry
+        .files
+        .get("stage2-bootloader")
+        .and_then(|entry| entry.version_parts().map(|version| (entry, version)));
+    let bootloader_image = match published_bootloader {
+        Some((entry, version)) => {
+            tracing::info!("Release carries stage2 bootloader {:?}", version);
+            let data = firmware::download_firmware(
+                &device_type,
+                &firmware_entry.version,
+                "stage2-bootloader",
+                &entry.sha256,
+            )
+            .await
+            .map_err(|e| format!("Download of stage2-bootloader failed: {e}"))?;
+            Some((data, version))
+        }
+        None => None,
+    };
 
     // Determine whether the device is already in DFU mode.
     // If it has no vendor interface (class 0xFF) it cannot accept a DFU detach request —
@@ -471,6 +493,51 @@ async fn run_firmware_update(
             .map_err(|e| format!("Device did not enter DFU mode: {}", e))?;
     } else {
         tracing::info!("Device {:02x?} is already in DFU mode, skipping detach", device_uuid);
+    }
+
+    // The bootloader owns the flash writes for the application banks, so an
+    // application that needs a newer bootloader has to wait for it. This is the
+    // only window where the bootloader is the thing enumerating, which is both
+    // why its version is readable and why it can be written at all.
+    if let Some((bootloader_data, published)) = bootloader_image {
+        let running = firmware::read_bootloader_version_for_device(&device_uuid, vid, pid)
+            .map_err(|e| format!("Could not read the bootloader version: {e}"))?;
+        if firmware::bootloader_update_needed(running, published) {
+            let alt = firmware::find_bootloader_alt_for_device(&device_uuid, vid, pid)
+                .map_err(|e| format!("Bootloader cannot be updated over DFU: {e}"))?;
+            tracing::info!(
+                "Updating bootloader {:?} -> {:?} on alt {}",
+                running,
+                published,
+                alt
+            );
+            manager.set_state(
+                device_uuid,
+                FirmwareUpdateState::Flashing {
+                    progress: 0,
+                    total: bootloader_data.len(),
+                },
+            );
+            firmware::flash_firmware_with_progress(
+                &device_uuid,
+                vid,
+                pid,
+                "BOOTLOADER",
+                alt,
+                &bootloader_data,
+                |_, _| {},
+            )
+            .await
+            .map_err(|e| format!("Bootloader flash failed: {e}"))?;
+
+            // Writing the bootloader resets the device, so wait for it to come
+            // back before the application image goes out.
+            firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(15))
+                .await
+                .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
+        } else {
+            tracing::info!("Bootloader {:?} is current, skipping", running);
+        }
     }
 
     // Determine target slot
