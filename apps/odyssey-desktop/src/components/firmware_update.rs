@@ -541,6 +541,18 @@ async fn run_firmware_update(
             firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(15))
                 .await
                 .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
+
+            // A completed write and a returning device do not show the new
+            // image is the one running. The application must not go onto a
+            // bootloader that never took the update, so read it back.
+            let now = firmware::read_bootloader_release_for_device(&device_uuid, vid, pid)
+                .map_err(|e| format!("Could not read the bootloader after updating it: {e}"))?;
+            if now.superseded_by(published) {
+                return Err(format!(
+                    "Bootloader still reports {now:?} after updating to release {published}"
+                ));
+            }
+            tracing::info!("Bootloader now reports {:?}", now);
         }
         _ => tracing::info!("Bootloader {:?} stays as it is", running),
     }
