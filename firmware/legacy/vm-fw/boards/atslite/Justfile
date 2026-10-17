@@ -168,6 +168,10 @@ gen-release:
 
     BOOTLOADER_SHA=$(sha256sum "$BUILD_DIR/stage2-bootloader.bin" | cut -d' ' -f1)
     BOOTLOADER_SIZE=$(stat -c%s "$BUILD_DIR/stage2-bootloader.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/stage2-bootloader.bin")
+    # The bootloader is versioned on its own and republished unchanged across
+    # application releases, so the host compares this against what the device
+    # reports rather than the release version.
+    BOOTLOADER_VERSION=$(grep '^version' bootloader/Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
 
     TODAY=$(date +%Y-%m-%d)
 
@@ -190,7 +194,8 @@ gen-release:
         },
         "stage2-bootloader": {
           "sha256": "$BOOTLOADER_SHA",
-          "size": $BOOTLOADER_SIZE
+          "size": $BOOTLOADER_SIZE,
+          "version": "$BOOTLOADER_VERSION"
         }
       },
       "released": "$TODAY"
