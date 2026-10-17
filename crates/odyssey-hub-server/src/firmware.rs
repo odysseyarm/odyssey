@@ -7,6 +7,7 @@ use dfu_core::DfuIo;
 use dfu_nusb::DfuNusb;
 use futures::io::Cursor;
 use nusb::MaybeFuture;
+use odyssey_protocol::UsbVersionReport;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -41,21 +42,9 @@ pub const fn app_pid(pid: u16) -> u16 {
     pid - 0x10
 }
 
-/// Decode the version a bootloader publishes in bcdDevice.
-///
-/// Four bits of major, six of minor, six of patch, matching what the bootloader
-/// encodes. Bootloaders that predate this leave the field at zero, which reads
-/// back as `None` — the host must treat that as older than anything published,
-/// since it is the one thing those builds cannot report.
-pub fn bootloader_version(bcd_device: u16) -> Option<[u16; 3]> {
-    if bcd_device == 0 {
-        return None;
-    }
-    Some([
-        (bcd_device >> 12) & 0xf,
-        (bcd_device >> 6) & 0x3f,
-        bcd_device & 0x3f,
-    ])
+/// What a device's bcdDevice says about the bootloader it is running.
+pub fn bootloader_version(bcd_device: u16) -> UsbVersionReport {
+    odyssey_protocol::UsbDeviceRelease::new_with_raw_value(bcd_device).report()
 }
 
 /// Top-level firmware manifest
@@ -71,12 +60,18 @@ pub struct DeviceManifest {
     pub firmwares: Vec<FirmwareEntry>,
 }
 
-/// A single firmware version entry
+/// A single firmware version entry.
+///
+/// Fields added here must be optional: a host in the field parses the whole
+/// manifest or none of it, so one unknown required field stops every device
+/// from seeing any update. A change that older hosts must *not* act on goes
+/// with a bump of the manifest's top-level version instead.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FirmwareEntry {
     pub version: String,
     pub files: HashMap<String, FileEntry>,
-    pub released: String,
+    #[serde(default)]
+    pub released: Option<String>,
 }
 
 /// A single file within a firmware entry.
@@ -133,10 +128,25 @@ pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
         .map(|&(v, p, name)| (v, p, name))
 }
 
+/// The highest manifest version this build understands.
+///
+/// Additive changes keep this number: unknown fields are ignored, so an older
+/// host simply does not act on them. Bump it only for a change an older host
+/// must not act on, which makes those hosts stop offering updates rather than
+/// act on a manifest they would misread.
+pub const SUPPORTED_MANIFEST_VERSION: u32 = 1;
+
 /// Fetch the firmware manifest from GitHub
 pub async fn fetch_manifest() -> anyhow::Result<FirmwareManifest> {
     let client = reqwest::Client::new();
     let manifest: FirmwareManifest = client.get(MANIFEST_URL).send().await?.json().await?;
+    if manifest.version > SUPPORTED_MANIFEST_VERSION {
+        anyhow::bail!(
+            "firmware manifest is version {}, newer than the {} this build understands; update the application",
+            manifest.version,
+            SUPPORTED_MANIFEST_VERSION
+        );
+    }
     Ok(manifest)
 }
 
@@ -464,7 +474,7 @@ pub fn read_bootloader_version_for_device(
     uuid: &[u8; 6],
     vid: u16,
     pid: u16,
-) -> Result<Option<[u16; 3]>, DfuError> {
+) -> Result<UsbVersionReport, DfuError> {
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     Ok(bootloader_version(info.device_version()))
 }
@@ -503,10 +513,19 @@ pub fn find_bootloader_alt_for_device(
 ///
 /// A bootloader that reports no version predates version reporting, so any
 /// published version supersedes it.
-pub fn bootloader_update_needed(running: Option<[u16; 3]>, published: [u16; 3]) -> bool {
+pub fn bootloader_update_needed(running: UsbVersionReport, published: [u16; 3]) -> bool {
     match running {
-        Some(running) => version_newer(running, published),
-        None => true,
+        UsbVersionReport::Known(running) => version_newer(running, published),
+        // Predates version reporting, so anything published supersedes it.
+        UsbVersionReport::Unset => true,
+        // Written by something newer than this build. Installing the published
+        // image would be a downgrade, so leave it alone.
+        UsbVersionReport::Unreadable => {
+            tracing::warn!(
+                "Bootloader reports a version this build cannot read; leaving it as it is"
+            );
+            false
+        }
     }
 }
 
@@ -832,10 +851,7 @@ pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]
     // The bootloader only identifies itself while it is the thing enumerating,
     // so this is the one point in the update where its version is readable.
     match read_bootloader_version_for_device(uuid, vid, pid) {
-        Ok(Some([major, minor, patch])) => {
-            tracing::info!("Bootloader version {}.{}.{}", major, minor, patch)
-        }
-        Ok(None) => tracing::info!("Bootloader reports no version (predates version reporting)"),
+        Ok(report) => tracing::info!("Bootloader reports {:?}", report),
         Err(e) => tracing::warn!("Could not read the bootloader version: {e}"),
     }
 
