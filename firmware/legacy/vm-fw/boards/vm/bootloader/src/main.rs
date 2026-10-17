@@ -24,6 +24,30 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{265744E6-40E8-41C4-AE17-F6F2EB187F1C}"];
 
+const fn parse_version_component(s: &str) -> u16 {
+    let b = s.as_bytes();
+    let mut val: u16 = 0;
+    let mut i = 0;
+    while i < b.len() {
+        val = val * 10 + (b[i] - b'0') as u16;
+        i += 1;
+    }
+    val
+}
+
+/// This bootloader's version, published as bcdDevice. Four bits of major, six
+/// of minor, six of patch; the host decodes the same layout.
+const BOOTLOADER_VERSION: u16 = {
+    let major = parse_version_component(env!("CARGO_PKG_VERSION_MAJOR"));
+    let minor = parse_version_component(env!("CARGO_PKG_VERSION_MINOR"));
+    let patch = parse_version_component(env!("CARGO_PKG_VERSION_PATCH"));
+    assert!(
+        major < 16 && minor < 64 && patch < 64,
+        "version does not fit bcdDevice"
+    );
+    (major << 12) | (minor << 6) | patch
+};
+
 #[entry]
 fn main() -> ! {
     let p = embassy_nrf::init(Default::default());
@@ -49,10 +73,14 @@ fn main() -> ! {
     if state == embassy_boot::State::DfuDetach {
         // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-        let mut config = embassy_usb::Config::new(0x1915, 0x520F);
-        config.manufacturer = Some("Nordic");
+        // Own product id, so the host can tell bootloader from application
+        // without opening the device; bcdDevice then carries this bootloader's
+        // version. The application's id plus 0x10.
+        let mut config = embassy_usb::Config::new(0x1915, 0x521F);
+        config.manufacturer = Some("Odyssey Arm");
         config.product = Some("USB-DFU Bootloader");
         config.serial_number = Some("1235678");
+        config.device_release = BOOTLOADER_VERSION;
 
         let fw_config =
             embassy_boot::FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);

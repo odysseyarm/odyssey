@@ -77,3 +77,22 @@ pub fn recovery_uuid(vid: u16, pid: u16) -> Option<[u8; 6]> {
 pub fn is_recovery_uuid(uuid: &[u8; 6]) -> bool {
     uuid[..4] == [0xff, 0xff, 0xff, 0xff]
 }
+
+/// Find a bootloader that enumerates under the application's product id.
+///
+/// Bootloaders now take an id of their own, which is what makes the two modes
+/// distinguishable from the descriptor alone. Anything flashed before that
+/// still answers on the application's id, so a device being recovered has to be
+/// looked for there too.
+pub fn find_bootloader_sharing_app_pid(
+    uuid: &[u8; 6],
+    vid: u16,
+    app_pid: u16,
+) -> Result<nusb::DeviceInfo, crate::firmware::DfuError> {
+    tracing::debug!(
+        "No bootloader at {:04x}:{:04x}; looking for one that still shares the application id",
+        vid,
+        crate::firmware::bootloader_pid(app_pid)
+    );
+    crate::firmware::find_device_by_uuid(uuid, vid, app_pid)
+}

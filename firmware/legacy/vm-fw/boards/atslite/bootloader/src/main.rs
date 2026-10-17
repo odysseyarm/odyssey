@@ -43,6 +43,30 @@ struct AppDfuFlag {
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F}"];
 
+const fn parse_version_component(s: &str) -> u16 {
+    let b = s.as_bytes();
+    let mut val: u16 = 0;
+    let mut i = 0;
+    while i < b.len() {
+        val = val * 10 + (b[i] - b'0') as u16;
+        i += 1;
+    }
+    val
+}
+
+/// This bootloader's version, published as bcdDevice. Four bits of major, six
+/// of minor, six of patch; the host decodes the same layout.
+const BOOTLOADER_VERSION: u16 = {
+    let major = parse_version_component(env!("CARGO_PKG_VERSION_MAJOR"));
+    let minor = parse_version_component(env!("CARGO_PKG_VERSION_MINOR"));
+    let patch = parse_version_component(env!("CARGO_PKG_VERSION_PATCH"));
+    assert!(
+        major < 16 && minor < 64 && patch < 64,
+        "version does not fit bcdDevice"
+    );
+    (major << 12) | (minor << 6) | patch
+};
+
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;
 const APP_DFU_FLAG_MAGIC: u32 = 0xDF00B071;
@@ -1418,10 +1442,32 @@ async fn main(spawner: Spawner) -> ! {
         defmt::info!("Creating USB driver with VBUS detect");
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
         defmt::info!("USB driver created");
-        let mut config = embassy_usb::Config::new(0x1915, 0x5210);
-        config.manufacturer = Some("Nordic");
+        // Derive the serial from FICR so each unit identifies itself. The
+        // previous build reported one hardcoded string for every device, which
+        // left the host unable to tell two of them apart while in DFU.
+        static SERIAL_BUF: static_cell::ConstStaticCell<[u8; 12]> =
+            static_cell::ConstStaticCell::new([0; 12]);
+        let serial_buf = SERIAL_BUF.take();
+        let ficr = embassy_nrf::pac::FICR;
+        let low = ficr.info().deviceid(0).read().to_le_bytes();
+        let high = ficr.info().deviceid(1).read().to_le_bytes();
+        let id_bytes = [low[0], low[1], low[2], low[3], high[0], high[1]];
+        for (i, &b) in id_bytes.iter().enumerate() {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            serial_buf[i * 2] = HEX[(b >> 4) as usize];
+            serial_buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
+        }
+        // SAFETY: serial_buf contains only ASCII hex digits
+        let serial = unsafe { core::str::from_utf8_unchecked(serial_buf) };
+
+        // Own product id so the host can tell the bootloader from the
+        // application without opening the device, which also frees bcdDevice to
+        // carry this bootloader's version. The application's id plus 0x10.
+        let mut config = embassy_usb::Config::new(0x1915, 0x5220);
+        config.manufacturer = Some("Odyssey Arm");
         config.product = Some("USB-DFU Bootloader");
-        config.serial_number = Some("1235678");
+        config.serial_number = Some(serial);
+        config.device_release = BOOTLOADER_VERSION;
 
         // Create a dummy updater - we use the legacy symbols which point to bank_a/bank_b
         // This satisfies the Control type signature but won't be used for dual-bank -

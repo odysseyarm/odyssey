@@ -43,6 +43,30 @@ struct AppDfuFlag {
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F}"];
 
+const fn parse_version_component(s: &str) -> u16 {
+    let b = s.as_bytes();
+    let mut val: u16 = 0;
+    let mut i = 0;
+    while i < b.len() {
+        val = val * 10 + (b[i] - b'0') as u16;
+        i += 1;
+    }
+    val
+}
+
+/// This bootloader's version, published as bcdDevice. Four bits of major, six
+/// of minor, six of patch; the host decodes the same layout.
+const BOOTLOADER_VERSION: u16 = {
+    let major = parse_version_component(env!("CARGO_PKG_VERSION_MAJOR"));
+    let minor = parse_version_component(env!("CARGO_PKG_VERSION_MINOR"));
+    let patch = parse_version_component(env!("CARGO_PKG_VERSION_PATCH"));
+    assert!(
+        major < 16 && minor < 64 && patch < 64,
+        "version does not fit bcdDevice"
+    );
+    (major << 12) | (minor << 6) | patch
+};
+
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;
 const APP_DFU_FLAG_MAGIC: u32 = 0xDF00B071;
@@ -1433,10 +1457,15 @@ async fn main(spawner: Spawner) -> ! {
         // SAFETY: serial_buf contains only ASCII hex digits
         let serial = unsafe { core::str::from_utf8_unchecked(serial_buf) };
 
-        let mut config = embassy_usb::Config::new(0x1915, 0x5211);
+        // The bootloader enumerates under its own product id so a host can tell
+        // it apart from the application without opening the device, which also
+        // frees bcdDevice to mean this bootloader's version rather than the
+        // application's. The id is the application's plus 0x10.
+        let mut config = embassy_usb::Config::new(0x1915, 0x5221);
         config.manufacturer = Some("Odyssey Arm");
         config.product = Some("USB-DFU Bootloader");
         config.serial_number = Some(serial);
+        config.device_release = BOOTLOADER_VERSION;
 
         // Create a dummy updater - we use the legacy symbols which point to bank_a/bank_b
         // This satisfies the Control type signature but won't be used for dual-bank -
