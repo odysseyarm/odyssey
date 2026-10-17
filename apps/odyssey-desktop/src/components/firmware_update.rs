@@ -13,6 +13,33 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+/// The Odyssey Desktop version this build is, for matching against the oldest
+/// desktop each firmware release declares it needs.
+fn desktop_version() -> [u16; 3] {
+    [
+        env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap_or(0),
+        env!("CARGO_PKG_VERSION_MINOR").parse().unwrap_or(0),
+        env!("CARGO_PKG_VERSION_PATCH").parse().unwrap_or(0),
+    ]
+}
+
+/// A firmware release newer than the one on offer that this desktop is too old
+/// to install. The user decides whether to update the desktop.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeldBack {
+    pub version: String,
+    pub min_desktop: String,
+}
+
+fn held_back_note(held_back: &HeldBack) -> Element {
+    rsx! {
+        span {
+            class: "text-xs text-gray-500 dark:text-gray-400 italic",
+            "v{held_back.version} needs Odyssey Desktop {held_back.min_desktop} or newer"
+        }
+    }
+}
+
 /// State for a single device's firmware update
 #[derive(Clone, Debug, PartialEq)]
 pub enum FirmwareUpdateState {
@@ -30,7 +57,10 @@ pub enum FirmwareUpdateState {
         device_type: String,
         vid: u16,
         pid: u16,
+        held_back: Option<HeldBack>,
     },
+    /// A newer firmware exists but this desktop is too old to install any of it
+    NeedsNewerDesktop(HeldBack),
     /// Currently downloading firmware
     Downloading,
     /// Sending DFU detach command
@@ -159,6 +189,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             FirmwareUpdateState::Idle
                 | FirmwareUpdateState::Available { .. }
                 | FirmwareUpdateState::NeedsUsbConnection { .. }
+                | FirmwareUpdateState::NeedsNewerDesktop(_)
         ) {
             let mut next_state = FirmwareUpdateState::Idle;
 
@@ -180,13 +211,16 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     // DFU-bootloader devices (no CONTROL, version [0,0,0]) — show latest firmware.
                     // Connected devices — show latest firmware only if it is actually newer,
                     // allowing cross-major/minor updates (e.g. protocol upgrades).
-                    let maybe_fw = if is_dfu_device {
-                        firmware::find_latest_firmware(&manifest, device_type)
-                    } else {
-                        firmware::find_latest_firmware(&manifest, device_type).filter(|fw| {
-                            fw.version_parts().map_or(false, |v| firmware::version_newer(device_version, v))
-                        })
+                    let offer = firmware::select_firmware(&manifest, device_type, desktop_version());
+                    let is_newer = |fw: &firmware::FirmwareEntry| {
+                        is_dfu_device
+                            || fw.version_parts().is_some_and(|v| firmware::version_newer(device_version, v))
                     };
+                    let maybe_fw = offer.offered.filter(|fw| is_newer(fw));
+                    let held_back = offer.held_back.filter(|fw| is_newer(fw)).map(|fw| HeldBack {
+                        version: fw.version.clone(),
+                        min_desktop: fw.min_desktop.clone(),
+                    });
 
                     if let Some(available_fw) = maybe_fw {
                         let available_version = available_fw.version.clone();
@@ -201,6 +235,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                 device_type,
                                 vid,
                                 pid,
+                                held_back: held_back.clone(),
                             };
                             if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
                                 if is_dfu_device {
@@ -243,6 +278,8 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                             }
                             next_state = new_state;
                         }
+                    } else if let Some(held_back) = held_back {
+                        next_state = FirmwareUpdateState::NeedsNewerDesktop(held_back);
                     }
                 }
             }
@@ -270,12 +307,14 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 }
             }
         }
+        FirmwareUpdateState::NeedsNewerDesktop(held_back) => held_back_note(&held_back),
         FirmwareUpdateState::Available {
             current,
             available,
             device_type,
             vid,
             pid,
+            held_back,
         } => {
             let manager = props.manager.clone();
             let manifest = manifest.clone();
@@ -289,6 +328,9 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         class: "text-xs text-yellow-600 dark:text-yellow-400",
                         if is_dfu_bootloader { "Device in DFU mode — flash v{available}" }
                         else { "Update available: v{current[0]}.{current[1]}.{current[2]} → v{available}" }
+                    }
+                    if let Some(held_back) = &held_back {
+                        {held_back_note(held_back)}
                     }
                     button {
                         // The state below is polled, so a second click can land
@@ -419,8 +461,9 @@ async fn run_firmware_update(
     if !in_bootloader && device_version == [0, 0, 0] {
         return Err("No firmware version".to_string());
     }
-    let firmware_entry = firmware::find_latest_firmware(&manifest, &device_type)
-        .ok_or("No firmware available for this device type")?;
+    let firmware_entry = firmware::select_firmware(&manifest, &device_type, desktop_version())
+        .offered
+        .ok_or("No firmware for this device type is installable by this version of Odyssey Desktop")?;
 
     // Which bank to write is only readable once the bootloader is running, so
     // fetch both candidates up front. Detaching is the point of no return: the
@@ -708,6 +751,7 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
     let state_display = match &current_state {
         FirmwareUpdateState::Idle => "Idle".to_string(),
         FirmwareUpdateState::NeedsUsbConnection { .. } => "Plug in USB to update".to_string(),
+        FirmwareUpdateState::NeedsNewerDesktop(_) => "Needs a newer Odyssey Desktop".to_string(),
         FirmwareUpdateState::Available { .. } => "Update available".to_string(),
         FirmwareUpdateState::Downloading => "Downloading...".to_string(),
         FirmwareUpdateState::Detaching => "Preparing device...".to_string(),

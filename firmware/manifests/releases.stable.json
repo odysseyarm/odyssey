@@ -1,0 +1,685 @@
+{
+  "version": 1,
+  "devices": {
+    "legacy-atslite1": {
+      "firmwares": [
+        {
+          "version": "0.1.18",
+          "files": {
+            "app-a": {
+              "sha256": "ca94d11e8f56a62b8dc3838c81acf5aa0d7e5889f4c19daf9b133ffe30c066c3",
+              "size": 364884
+            },
+            "app-b": {
+              "sha256": "f207020311deec6ec7a34c7a9d763363042bf2c8594aa73840bd0073b9868d5a",
+              "size": 364884
+            },
+            "net-core": {
+              "sha256": "440840748dc4c0360fae04c10a466f9e560e6db5e56acbb7bac9a4af7a29d6c0",
+              "size": 164536
+            },
+            "stage2-bootloader": {
+              "sha256": "2213dace64cadcf6a2d24648ccc55fd107950489d6686d2a6e6c22b7496267d2",
+              "size": 43120
+            }
+          },
+          "released": "2026-10-17",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.17",
+          "files": {
+            "app-a": {
+              "sha256": "9d023e2a84ea4b0bd46fc1a95ebe808316efdbdb63d9cf4d474cbb9cfc132845",
+              "size": 364692
+            },
+            "app-b": {
+              "sha256": "825f234d5d6f6de4f0c8a8ce426fa63644ef3a9ad242d17032c5ec77603b30b8",
+              "size": 364692
+            },
+            "net-core": {
+              "sha256": "440840748dc4c0360fae04c10a466f9e560e6db5e56acbb7bac9a4af7a29d6c0",
+              "size": 164536
+            },
+            "stage2-bootloader": {
+              "sha256": "2213dace64cadcf6a2d24648ccc55fd107950489d6686d2a6e6c22b7496267d2",
+              "size": 43120
+            }
+          },
+          "released": "2026-10-13",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.16",
+          "files": {
+            "app-a": {
+              "sha256": "ae4085e0d30d59b79f6877000b44f0709c3c94af9687f4223f96365b1bc5380d",
+              "size": 367764
+            },
+            "app-b": {
+              "sha256": "35427c464c8bcfbb89b574bcee6817763389dae87c2056c12c55d8d705a0d0f1",
+              "size": 367764
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-05-22",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.15",
+          "files": {
+            "app-a": {
+              "sha256": "3f5a5390d9194917165267ccd8d147fd1a71e0b64ddc46fe65ad1e9e2bc797b6",
+              "size": 368468
+            },
+            "app-b": {
+              "sha256": "357d6bde62909a76b18eeb7f96d38d6b090ef3ce6893d741d9cf1cd1568d6a4d",
+              "size": 368468
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-24",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.14",
+          "files": {
+            "app-a": {
+              "sha256": "f25065b8b5dfacc511e344a6b70c124931613695fc3e8f13775ed7c4fc490f91",
+              "size": 368468
+            },
+            "app-b": {
+              "sha256": "d57d24922306651b7dac69ca81de5292e5eaf496211381a69bf67a2c38ab7898",
+              "size": 368468
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-23",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.13",
+          "files": {
+            "app-a": {
+              "sha256": "4eb14b308f4979ae9dfa6858278f39314e27647d5b58d396af31560a3c7985a4",
+              "size": 368724
+            },
+            "app-b": {
+              "sha256": "f564b1df39870180dc3704aa851f0d269e45adea945b959d91b0faa83c473097",
+              "size": 368724
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.12",
+          "files": {
+            "app-a": {
+              "sha256": "c00c832784b92d7db4fee32ddf5dc6c687c5c7bef19eb9c36d15d1365bacb9df",
+              "size": 369144
+            },
+            "app-b": {
+              "sha256": "838a0339cf15a8f8fcc3dbc74dbbb736d3434760a72a9336753514eeccdc8a01",
+              "size": 369144
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.11",
+          "files": {
+            "app-a": {
+              "sha256": "ed75fd29bb53e193d5628f1c3328dd5f285cefc2b03b5b10a181b53a756069a9",
+              "size": 369144
+            },
+            "app-b": {
+              "sha256": "f0c7d9e1b7834718afec185cebb9fea06720790396500911709c1c13389a1132",
+              "size": 369144
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "5546d32c89eb2f2258e332d1b54b18342970d01e9be8c482fe4b486f5c3f77af",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.10",
+          "files": {
+            "app-a": {
+              "sha256": "864fc80e8a09025f520ec0672643797837f2009c879608288a838830a6d476a0",
+              "size": 383824
+            },
+            "app-b": {
+              "sha256": "bbe1a22847e542beff8bdf3c10e028427c71e35786b0c83f8c2366db9bf02fde",
+              "size": 383824
+            },
+            "net-core": {
+              "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
+              "size": 170600
+            },
+            "stage2-bootloader": {
+              "sha256": "a8eafcb0bdb0a95fb9f0c55582015bb44ded2e771575b1bcfc8b71405f348d98",
+              "size": 41280
+            }
+          },
+          "released": "2026-03-03",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.9",
+          "files": {
+            "app-a": {
+              "sha256": "20a8f11d534a0c8a87347beb1f9dc1a0388253ab47cb1d907a41408375093329",
+              "size": 379800
+            },
+            "app-b": {
+              "sha256": "ead509177dbfd9c883aa64ba6dc8d0a33d58fcd2ccc446724fc055a7176d6526",
+              "size": 379800
+            },
+            "net-core": {
+              "sha256": "fee9a4dc323b5867ddebcedeb2d31f725c988574d74dccb23d09dec186cd852a",
+              "size": 170528
+            },
+            "stage2-bootloader": {
+              "sha256": "d55b9bdd943dbe66ea1b10dc789860f5de1f769112c6aa9120f61155269e46a8",
+              "size": 42656
+            }
+          },
+          "released": "2026-02-26",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.8",
+          "files": {
+            "app-a": {
+              "sha256": "e59413c85425ab3f690da63bf13d699ace57fbeddd55dc11b2b0b4581894530b",
+              "size": 380256
+            },
+            "app-b": {
+              "sha256": "2c90c0ccf13ca73d2c75c6b964d510d48b3aea2ace1d6226a3f0f96f0d890813",
+              "size": 380256
+            },
+            "net-core": {
+              "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
+              "size": 170600
+            },
+            "stage2-bootloader": {
+              "sha256": "a8eafcb0bdb0a95fb9f0c55582015bb44ded2e771575b1bcfc8b71405f348d98",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-19",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.7",
+          "files": {
+            "app-a": {
+              "sha256": "b525db72bb3347003654aa9f78de18ef823dc87248033633d952c5a3bc4e28ff",
+              "size": 380256
+            },
+            "app-b": {
+              "sha256": "016c0d2a408683fdf8e83cf401fe5d9d728aaa0866a83e7f76f006efcf7365d2",
+              "size": 380256
+            },
+            "net-core": {
+              "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
+              "size": 170600
+            },
+            "stage2-bootloader": {
+              "sha256": "a8eafcb0bdb0a95fb9f0c55582015bb44ded2e771575b1bcfc8b71405f348d98",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-09",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.5",
+          "files": {
+            "app-a": {
+              "sha256": "c4834f11bade12c1f7216fc2f05ec90a240051868a18bf0af33ad6a926e7a108",
+              "size": 376992
+            },
+            "app-b": {
+              "sha256": "fd25213f1d99a2cbce3d31ac0e680356b50536fad744af6b988bb67f93174d15",
+              "size": 376992
+            },
+            "net-core": {
+              "sha256": "9bf49e4164c019a5750c33e191f2905420407a893258b7d450485b60d7cb68b2",
+              "size": 170600
+            },
+            "stage2-bootloader": {
+              "sha256": "c5330ea81c79e06858304f87de4c72cf178599ce33c29d87d5690837700409df",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-02",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        }
+      ]
+    },
+    "atslite1": {
+      "firmwares": [
+        {
+          "version": "0.1.15",
+          "files": {
+            "app-a": {
+              "sha256": "16c8d7ffc061e9cfffa5a6cf92bf940bd30e87d3a2528d2b352730cf794dcb3c",
+              "size": 306724
+            },
+            "app-b": {
+              "sha256": "63249c41970a6613b2bb6df3e883dbb276e130e73b3daf6d12542a30d2b47ef2",
+              "size": 306724
+            },
+            "net-core": {
+              "sha256": "440840748dc4c0360fae04c10a466f9e560e6db5e56acbb7bac9a4af7a29d6c0",
+              "size": 164536
+            },
+            "stage2-bootloader": {
+              "sha256": "23d28fa1c228e37feb484cff3e1811dabce22eb76de33fd47b15733ec4a71f66",
+              "size": 43472
+            }
+          },
+          "released": "2026-10-17",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.14",
+          "files": {
+            "app-a": {
+              "sha256": "fae49d39cea459570d2bbb5b72ece4393debaba96c61e4643dc83c9ff9f97961",
+              "size": 306468
+            },
+            "app-b": {
+              "sha256": "77de41d72fca4e3a7c5bbfdce40ffe226b03e8e34adf3e4723c423adcab3e37e",
+              "size": 306468
+            },
+            "net-core": {
+              "sha256": "440840748dc4c0360fae04c10a466f9e560e6db5e56acbb7bac9a4af7a29d6c0",
+              "size": 164536
+            },
+            "stage2-bootloader": {
+              "sha256": "23d28fa1c228e37feb484cff3e1811dabce22eb76de33fd47b15733ec4a71f66",
+              "size": 43472
+            }
+          },
+          "released": "2026-10-13",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.13",
+          "files": {
+            "app-a": {
+              "sha256": "444bb6564a80c6e3459fc4a0b62f2d9737f7c41a0f8b7f9891fddf32f001dc4f",
+              "size": 306852
+            },
+            "app-b": {
+              "sha256": "dfc65b6f74940e3d69879bf85a1ca4546d483cedc13624973c30315f78329dab",
+              "size": 306852
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "7f0e60bce02c398f92ec2c0b4388bcf0642a5ce03bb9c76a078526641fca44ac",
+              "size": 42072
+            }
+          },
+          "released": "2026-05-22",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.12",
+          "files": {
+            "app-a": {
+              "sha256": "1de8883f5edb05988374510ceaa5060a27fcec7f8835cca25ad6f4257ae089c4",
+              "size": 306468
+            },
+            "app-b": {
+              "sha256": "ac5213f985c12162184d4a1db172a7c7a9bae283d56488c356f0ea1783d3e5e5",
+              "size": 306468
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "3d0b9b1702685a09518ab39463234829e3e93f5d54372f51219fc9011c7145f0",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-24",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.11",
+          "files": {
+            "app-a": {
+              "sha256": "b3271f7b265ae49cbe1e8946d88c6fb854faec80e838dcb89e64bf5cdddc4dad",
+              "size": 306468
+            },
+            "app-b": {
+              "sha256": "a9dbf338a606873a95a32d5f6c4d7b05dd854b722162fa427a16a38e760db77c",
+              "size": 306468
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "3d0b9b1702685a09518ab39463234829e3e93f5d54372f51219fc9011c7145f0",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-23",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.10",
+          "files": {
+            "app-a": {
+              "sha256": "06825f31428f5f59a7817f2632b98c5f8d23ce9faea3d10785f98f57293ace6b",
+              "size": 306532
+            },
+            "app-b": {
+              "sha256": "6c63e5dfcbb4dd0d26857dd769ca543fd9d8119c9925aa4a700e56a86ba50f60",
+              "size": 306532
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "3d0b9b1702685a09518ab39463234829e3e93f5d54372f51219fc9011c7145f0",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.9",
+          "files": {
+            "app-a": {
+              "sha256": "4e64e0edb50aa79d79fcdc9d99b774aa0594cea5286aecd3e625ee8882471cfc",
+              "size": 306532
+            },
+            "app-b": {
+              "sha256": "849ffd7cdb983d8cfe67dab110e32f551a3f00b998eb9b08dccdec3c6f7ab054",
+              "size": 306532
+            },
+            "net-core": {
+              "sha256": "3a8e20de2e4e8ee49c271b10667730fed2501b8da4481b18dcb72ed093efdc43",
+              "size": 165456
+            },
+            "stage2-bootloader": {
+              "sha256": "3d0b9b1702685a09518ab39463234829e3e93f5d54372f51219fc9011c7145f0",
+              "size": 41720
+            }
+          },
+          "released": "2026-03-20",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.8",
+          "files": {
+            "app-a": {
+              "sha256": "b6ce966fb2edb38934a8d8543660b8cfa533de80d3bbec3cd3d3cc8991f658a7",
+              "size": 310324
+            },
+            "app-b": {
+              "sha256": "5d5c830497097e3060005f9aee738cf6be3f66ef4940bbc8edde930d1ff9b5c0",
+              "size": 310324
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-03-18",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.7",
+          "files": {
+            "app-a": {
+              "sha256": "7ee53064b40f4279a992694a79e7ca23c81e7aa714c95a6658d6bc3c3b6e9850",
+              "size": 306900
+            },
+            "app-b": {
+              "sha256": "70a4f13dece2bf3a22edf05a2b25ca0f568a9fc4d919a095f48546fb2dddd81d",
+              "size": 306900
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-03-10",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.6",
+          "files": {
+            "app-a": {
+              "sha256": "5037886412853f99a43eed5b721e15114de4fb21e0cbeff470907b3c2eb46268",
+              "size": 306772
+            },
+            "app-b": {
+              "sha256": "8ab7729a018b6bfb6944a7236288cd33f4625cf3f05e2b072bb5bf63d7e6df56",
+              "size": 306772
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-03-05",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.5",
+          "files": {
+            "app-a": {
+              "sha256": "fe8d097ceb3e023f0c8c6020a520f8a01c30ac27b8878ae8df9a80552c011b30",
+              "size": 307860
+            },
+            "app-b": {
+              "sha256": "d7a7b2589c10d2543bfc716156f85e3b1bffa01b69604dd964dfd736bd948929",
+              "size": 307860
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-03-03",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.4",
+          "files": {
+            "app-a": {
+              "sha256": "af8ba7b0f7f5aa415d2c6ac824dca1fcaf5f23e9d54dc94e70ce657b9722289e",
+              "size": 302308
+            },
+            "app-b": {
+              "sha256": "a4579aafe925def43694afdc83950a54acc845a711fdd4ad841b6e730246ef2b",
+              "size": 302308
+            },
+            "net-core": {
+              "sha256": "1281c9d12650f1b0e02d98a667e13f87a93765134a6deb08220616e60556118d",
+              "size": 170536
+            },
+            "stage2-bootloader": {
+              "sha256": "858ac24d0e8dc731b7fc6498372b7e7cc975e3bad05908b1682e22054a249cd6",
+              "size": 42656
+            }
+          },
+          "released": "2026-02-26",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.3",
+          "files": {
+            "app-a": {
+              "sha256": "094bff65788fe994a6587732fd9ae11b52bfc28b51a95a8487cd5935f6c3c505",
+              "size": 297876
+            },
+            "app-b": {
+              "sha256": "372d75d68f43047460b44ea4d2096016cee74b49d8c583a31a48401668555900",
+              "size": 297876
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-19",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.2",
+          "files": {
+            "app-a": {
+              "sha256": "a782e29634ced4f2062a305e82d11db215d2b44d9252f791f4aaea4073a7258a",
+              "size": 297876
+            },
+            "app-b": {
+              "sha256": "a81dccf9c6bf2b695df77f13d250e9c27d2c5267b308796e38d893cbbabceef9",
+              "size": 297876
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-11",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        },
+        {
+          "version": "0.1.1",
+          "files": {
+            "app-a": {
+              "sha256": "7ab39fda9a3466255ab7fd5176145a28e186ff492c98937ba3a3c9731fd3b963",
+              "size": 296980
+            },
+            "app-b": {
+              "sha256": "d295af8769eeb010c70d10886851a4bb49beaf2deceb76a98b73b6b7be777053",
+              "size": 296980
+            },
+            "net-core": {
+              "sha256": "9b05b8e1f165d08bda5a90ce7b710d17734943f4160cb52cddbac3ac743bd74c",
+              "size": 170608
+            },
+            "stage2-bootloader": {
+              "sha256": "0372169f8e38449ce32604b8b84e516d40fcf66e5441eb13d9dced8e2505762e",
+              "size": 41280
+            }
+          },
+          "released": "2026-02-11",
+          "requires_bootloader": 0,
+          "min_desktop": "0.6.0"
+        }
+      ]
+    }
+  }
+}

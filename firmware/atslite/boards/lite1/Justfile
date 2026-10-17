@@ -184,8 +184,10 @@ check:
 
 # Generate a release entry in manifests/releases.alpha.json from current build.
 # requires_bootloader is the lowest bootloader release this application can run
-# on, 0 for none. It has no default: leaving it out would silently mean "any".
-gen-release requires_bootloader:
+# on, 0 for none. min_desktop is the oldest Odyssey Desktop it is required and
+# tested with, which is not automatically the desktop shipping alongside it.
+# Neither has a default: leaving one out would silently mean "any".
+gen-release requires_bootloader min_desktop:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -222,6 +224,11 @@ gen-release requires_bootloader:
         exit 1
     fi
     REQUIRES_BOOTLOADER={{requires_bootloader}}
+    MIN_DESKTOP={{min_desktop}}
+    if ! [[ "$MIN_DESKTOP" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: min_desktop must be a version like 0.6.0, got '$MIN_DESKTOP'."
+        exit 1
+    fi
     if [ "$REQUIRES_BOOTLOADER" -gt "$BOOTLOADER_RELEASE" ]; then
         echo "Error: requires_bootloader $REQUIRES_BOOTLOADER is above the bootloader being published ($BOOTLOADER_RELEASE)."
         exit 1
@@ -254,6 +261,7 @@ gen-release requires_bootloader:
     {
       "version": "$VERSION",
       "requires_bootloader": $REQUIRES_BOOTLOADER,
+      "min_desktop": "$MIN_DESKTOP",
       "files": {
         "app-a": {
           "sha256": "$APP_A_SHA",
