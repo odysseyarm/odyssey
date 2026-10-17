@@ -250,6 +250,10 @@ async fn usb_device_manager(
         std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     )>::new()));
     let mut direct_usb_id_to_uuid = std::collections::HashMap::<String, [u8; 6]>::new();
+    // The last uuid seen for each product id, which is how a bootloader that
+    // reports a placeholder serial can still be matched to the device that just
+    // detached. See `migration`.
+    let mut last_uuid_by_pid = std::collections::HashMap::<u16, [u8; 6]>::new();
     // Maps opaque USB device id -> (uuid, pid) for devices detected in DFU mode or with broken
     // protocol.  These are surfaced in the device list so the user can flash firmware even when
     // normal communication is unavailable.
@@ -1116,8 +1120,33 @@ async fn usb_device_manager(
                                     && i.protocol() == DFU_PROTOCOL_DFU_MODE
                             });
                             if in_dfu_mode {
-                                let Some(uuid) = uuid_from_usb_serial(dev_info.serial_number()) else {
-                                    warn!("Device PID 0x{:04x} has DFU interface but no readable serial — cannot surface for update", pid);
+                                let uuid = match uuid_from_usb_serial(dev_info.serial_number()) {
+                                    Some(uuid) => Some(uuid),
+                                    // Bootloaders that predate per-device serials cannot
+                                    // identify themselves. Prefer the device last seen
+                                    // under this product id; a device that has been in
+                                    // the bootloader since before the app started has
+                                    // never been seen, so it gets a stand-in instead,
+                                    // which is the only way it reaches the device list
+                                    // and therefore the only way it can be recovered.
+                                    None if crate::migration::is_placeholder_serial(
+                                        dev_info.serial_number(),
+                                    ) =>
+                                    {
+                                        last_uuid_by_pid
+                                            .get(&pid)
+                                            .copied()
+                                            .or_else(|| {
+                                                crate::migration::recovery_uuid(
+                                                    dev_info.vendor_id(),
+                                                    pid,
+                                                )
+                                            })
+                                    }
+                                    None => None,
+                                };
+                                let Some(uuid) = uuid else {
+                                    warn!("Device PID 0x{:04x} is in DFU mode but reports no usable serial and was not seen before — cannot surface for update", pid);
                                     continue;
                                 };
                                 present_dfu_ids.insert(direct_usb_id.clone());
@@ -1156,6 +1185,7 @@ async fn usb_device_manager(
 
                 // Cache mapping from opaque nusb id() to UUID once we've successfully probed.
                 direct_usb_id_to_uuid.insert(direct_usb_id, uuid);
+                last_uuid_by_pid.insert(pid, uuid);
 
                 // Now check if device is already connected BEFORE creating a new connection
                 let should_connect = {
