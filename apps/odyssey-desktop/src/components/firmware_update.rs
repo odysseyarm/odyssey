@@ -547,9 +547,9 @@ async fn run_firmware_update(
             // bootloader that never took the update, so read it back.
             let now = firmware::read_bootloader_release_for_device(&device_uuid, vid, pid)
                 .map_err(|e| format!("Could not read the bootloader after updating it: {e}"))?;
-            if now.superseded_by(published) {
+            if !firmware::bootloader_took_update(now, published) {
                 return Err(format!(
-                    "Bootloader still reports {now:?} after updating to release {published}"
+                    "Bootloader reports {now:?} after updating to release {published}"
                 ));
             }
             tracing::info!("Bootloader now reports {:?}", now);

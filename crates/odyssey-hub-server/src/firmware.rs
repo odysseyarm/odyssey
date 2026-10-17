@@ -544,6 +544,15 @@ pub fn plan_bootloader(
     Ok(flash)
 }
 
+/// Whether a bootloader reads back as the image just written.
+///
+/// Exact, not "at least": the artifact declares the release it carries, so a
+/// higher counter is as much a mismatch between image and manifest as a lower
+/// one or a bootloader that kept its old image.
+pub fn bootloader_took_update(now: BootloaderRelease, published: u16) -> bool {
+    now == BootloaderRelease::Counter(published)
+}
+
 /// Open a DFU device and prepare it for flashing
 pub fn open_dfu_device(
     uuid: &[u8; 6],
@@ -915,6 +924,15 @@ mod tests {
         assert_eq!(plan_bootloader(Counter(2), Some(2), 0), Ok(false));
         assert_eq!(plan_bootloader(Counter(3), Some(2), 0), Ok(false));
         assert_eq!(plan_bootloader(Legacy, None, 0), Ok(false));
+    }
+
+    #[test]
+    fn only_the_published_counter_counts_as_written() {
+        use BootloaderRelease::{Counter, Legacy};
+        assert!(bootloader_took_update(Counter(2), 2));
+        assert!(!bootloader_took_update(Counter(1), 2));
+        assert!(!bootloader_took_update(Counter(3), 2));
+        assert!(!bootloader_took_update(Legacy, 2));
     }
 
     #[test]
