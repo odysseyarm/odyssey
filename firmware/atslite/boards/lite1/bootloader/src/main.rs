@@ -1485,6 +1485,7 @@ async fn main(spawner: Spawner) -> ! {
             active_bank_is_a,
         );
         state.set_state_flagger(&mut dfu_flagger);
+        state.set_bootloader_label(concat!("BOOTLOADER ", env!("CARGO_PKG_VERSION")));
 
         let mut builder = Builder::new(
             driver,
