@@ -46,25 +46,30 @@ pub struct FirmwareEntry {
     pub released: String,
 }
 
-/// A single file within a firmware entry
+/// A single file within a firmware entry.
+///
+/// `version` is optional and only meaningful for `stage2-bootloader`: the
+/// bootloader is versioned independently of the application, and the same image
+/// is republished unchanged across application releases.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileEntry {
     pub sha256: String,
     pub size: u64,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+impl FileEntry {
+    /// Parse `version` into `[major, minor, patch]`.
+    pub fn version_parts(&self) -> Option<[u16; 3]> {
+        parse_version(self.version.as_deref()?)
+    }
 }
 
 impl FirmwareEntry {
     /// Parse version string into [major, minor, patch]
     pub fn version_parts(&self) -> Option<[u16; 3]> {
-        let parts: Vec<&str> = self.version.split('.').collect();
-        if parts.len() != 3 {
-            return None;
-        }
-        Some([
-            parts[0].parse().ok()?,
-            parts[1].parse().ok()?,
-            parts[2].parse().ok()?,
-        ])
+        parse_version(&self.version)
     }
 }
 
@@ -401,6 +406,74 @@ pub fn determine_target_slot_for_device(
     determine_target_slot(&device, interface_num)
 }
 
+/// Read the bootloader version from the DFU interface's alt 2 string.
+///
+/// Bootloaders built from better-dfu label that alt setting `BOOTLOADER <ver>`.
+/// Anything older labels it plain `BOOTLOADER` and returns `None`, which the
+/// caller must read as "older than any published bootloader" rather than "up to
+/// date" — the version is the only thing those builds cannot tell us.
+pub fn read_bootloader_version(device: &nusb::Device, interface_num: u8) -> Option<[u16; 3]> {
+    let lang = device
+        .get_string_descriptor_supported_languages(Duration::from_secs(3))
+        .wait()
+        .ok()
+        .and_then(|mut langs| langs.next())
+        .unwrap_or_default();
+
+    for config in device.configurations() {
+        for interface in config.interfaces() {
+            if interface.interface_number() != interface_num {
+                continue;
+            }
+            for alt in interface.alt_settings() {
+                if alt.class() != DFU_CLASS || alt.subclass() != DFU_SUBCLASS {
+                    continue;
+                }
+                let Some(string_index) = alt.string_index() else {
+                    continue;
+                };
+                let Ok(desc) = device
+                    .get_string_descriptor(string_index, lang, Duration::from_secs(3))
+                    .wait()
+                else {
+                    continue;
+                };
+                if let Some(version) = desc.strip_prefix("BOOTLOADER ") {
+                    return parse_version(version.trim());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse a `major.minor.patch` string. Shared by the manifest and the
+/// bootloader's interface string so both reject the same malformed input.
+pub fn parse_version(version: &str) -> Option<[u16; 3]> {
+    let mut parts = version.split('.');
+    let parsed = [
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ];
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// Read the bootloader version of a device that is already in DFU mode.
+pub fn read_bootloader_version_for_device(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+) -> Result<Option<[u16; 3]>, DfuError> {
+    let info = find_device_by_uuid(uuid, vid, pid)?;
+    let device = info.open().wait()?;
+    let interface_num = find_dfu_interface(&device)?;
+    Ok(read_bootloader_version(&device, interface_num))
+}
+
 /// Open a DFU device and prepare it for flashing
 pub fn open_dfu_device(
     uuid: &[u8; 6],
@@ -720,6 +793,16 @@ pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]
     tracing::info!("Waiting for device to enter DFU mode...");
     wait_for_dfu_device(uuid, vid, pid, Duration::from_secs(10)).await?;
 
+    // The bootloader only identifies itself while it is the thing enumerating,
+    // so this is the one point in the update where its version is readable.
+    match read_bootloader_version_for_device(uuid, vid, pid) {
+        Ok(Some([major, minor, patch])) => {
+            tracing::info!("Bootloader version {}.{}.{}", major, minor, patch)
+        }
+        Ok(None) => tracing::info!("Bootloader reports no version (predates version reporting)"),
+        Err(e) => tracing::warn!("Could not read the bootloader version: {e}"),
+    }
+
     // Step 3: Determine target slot by reading alt interface strings
     let (slot_name, _slot_file, alt) = determine_target_slot_for_device(uuid, vid, pid)?;
     tracing::info!("Target slot: {} (alt {})", slot_name, alt);
@@ -743,6 +826,27 @@ mod tests {
         assert!(version_newer([0, 1, 0], [1, 0, 0]));
         assert!(!version_newer([0, 1, 1], [0, 1, 0]));
         assert!(!version_newer([0, 1, 0], [0, 1, 0]));
+    }
+
+    #[test]
+    fn parses_only_well_formed_versions() {
+        assert_eq!(parse_version("0.2.0"), Some([0, 2, 0]));
+        assert_eq!(parse_version("1.20.300"), Some([1, 20, 300]));
+        assert_eq!(parse_version("0.2"), None);
+        assert_eq!(parse_version("0.2.0.1"), None);
+        assert_eq!(parse_version(""), None);
+        assert_eq!(parse_version("0.2.x"), None);
+    }
+
+    #[test]
+    fn file_version_is_optional() {
+        let without: FileEntry =
+            serde_json::from_str(r#"{"sha256":"ab","size":1}"#).expect("parses");
+        assert_eq!(without.version_parts(), None);
+
+        let with: FileEntry =
+            serde_json::from_str(r#"{"sha256":"ab","size":1,"version":"0.2.0"}"#).expect("parses");
+        assert_eq!(with.version_parts(), Some([0, 2, 0]));
     }
 
     #[test]

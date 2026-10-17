@@ -97,6 +97,7 @@ pub struct Control<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwa
     net_string: Option<StringIndex>,
     bootloader_string: Option<StringIndex>,
     app_label: &'static str,
+    bootloader_label: &'static str,
     state_flagger: Option<&'d mut dyn FnMut()>,
 
     #[cfg(feature = "_verify")]
@@ -135,6 +136,7 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
             net_string: None,
             bootloader_string: None,
             app_label: "APP",
+            bootloader_label: "BOOTLOADER",
             state_flagger: None,
 
             #[cfg(feature = "_verify")]
@@ -148,6 +150,17 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
         self.net_string = Some(net_string);
         self.bootloader_string = Some(bootloader_string);
         self.app_label = app_label;
+    }
+
+    /// Override the alt 2 string with one carrying this bootloader's version,
+    /// e.g. `concat!("BOOTLOADER ", env!("CARGO_PKG_VERSION"))`.
+    ///
+    /// The host reads this to decide whether the installed bootloader predates
+    /// the one in the firmware manifest. A bootloader that leaves the default
+    /// in place reports no version, which the host treats as "older than
+    /// anything", since that is what every bootloader built before this did.
+    pub fn set_bootloader_label(&mut self, label: &'static str) {
+        self.bootloader_label = label;
     }
 
     /// Provide a callback used to flag DFU requested (e.g., write SWAP_MAGIC).
@@ -239,7 +252,7 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
 
         if let Some(bootloader_idx) = self.bootloader_string {
             if index == bootloader_idx {
-                return Some("BOOTLOADER");
+                return Some(self.bootloader_label);
             }
         }
 
