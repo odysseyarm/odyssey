@@ -1233,6 +1233,86 @@ mod serde_cbor_with {
     }
 }
 
+/// A version as published in the USB `bcdDevice` field.
+///
+/// Firmware and bootloaders put their version here so a host learns it from
+/// enumeration alone, without opening the device or speaking the control
+/// protocol.
+///
+/// The USB spec defines this field as binary-coded decimal with a single
+/// sub-minor digit, which cannot represent a patch above 9 — ours are already
+/// past that. The fields below are a private layout instead, so `lsusb` will
+/// print something that is not the version. The widths are types, so a
+/// component that cannot fit fails to compile at the call site.
+#[bitbybit::bitfield(u16)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct UsbDeviceRelease {
+    #[bits(12..=15, rw)]
+    pub major: arbitrary_int::u4,
+    #[bits(6..=11, rw)]
+    pub minor: arbitrary_int::u6,
+    #[bits(0..=5, rw)]
+    pub patch: arbitrary_int::u6,
+}
+
+impl UsbDeviceRelease {
+    /// `major` 15 is reserved: it does not mean version 15, it means the
+    /// remaining twelve bits use a layout this build does not know.
+    ///
+    /// Nothing is free to add later once devices ship, because a host cannot
+    /// ask a device how to read a field it already published. Holding one major
+    /// value back leaves room to switch to, say, a monotonic build counter
+    /// without the two encodings being indistinguishable. A host that sees it
+    /// must treat the version as unknown rather than guessing.
+    pub const RESERVED_MAJOR: u16 = 15;
+
+    /// Pack a version. Out-of-range components fail to build, at compile time
+    /// when called from a `const`.
+    pub const fn from_version(version: [u16; 3]) -> Self {
+        let [major, minor, patch] = version;
+        assert!(
+            major < Self::RESERVED_MAJOR,
+            "major 15 is reserved for a future layout"
+        );
+        Self::builder()
+            .with_major(arbitrary_int::u4::new(major as u8))
+            .with_minor(arbitrary_int::u6::new(minor as u8))
+            .with_patch(arbitrary_int::u6::new(patch as u8))
+            .build()
+    }
+
+    /// What the field says about the version.
+    pub const fn report(self) -> UsbVersionReport {
+        if self.raw_value() == 0 {
+            return UsbVersionReport::Unset;
+        }
+        if self.major().value() as u16 == Self::RESERVED_MAJOR {
+            return UsbVersionReport::Unreadable;
+        }
+        UsbVersionReport::Known([
+            self.major().value() as u16,
+            self.minor().value() as u16,
+            self.patch().value() as u16,
+        ])
+    }
+}
+
+/// The three things `bcdDevice` can tell a host, which must not be conflated.
+///
+/// `Unset` and `Unreadable` both mean "no version", but they call for opposite
+/// behaviour: the first is a device older than version reporting, which an
+/// update should replace; the second is a device newer than this build, which
+/// an update must leave alone or it would install something older.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbVersionReport {
+    /// The field was never set. The device predates version reporting.
+    Unset,
+    /// The field uses a layout this build does not know, so it was written by
+    /// something newer.
+    Unreadable,
+    Known([u16; 3]),
+}
+
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
