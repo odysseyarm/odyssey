@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 memory-spec = "0.1.0"
 
 [dependencies]
+odyssey-protocol = { path = "../../../../../../crates/odyssey-protocol", default-features = false }
 defmt = { version = "1", optional = true }
 defmt-rtt = { version = "1", optional = true }
 

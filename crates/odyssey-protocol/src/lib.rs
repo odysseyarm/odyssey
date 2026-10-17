@@ -1313,6 +1313,90 @@ pub enum UsbVersionReport {
     Known([u16; 3]),
 }
 
+/// A bootloader's release, published in its own `bcdDevice`.
+///
+/// Bootloaders are not versioned like applications. A host only asks "is the
+/// published image newer than the one running", which a monotonic counter
+/// answers without the semver ordering rules. The counter lives in the
+/// application layout's reserved major (`0xF000 | n`), so a value without that
+/// marker is unambiguously one written before counters existed.
+///
+/// That matters because shipped bootloaders never set the field and publish the
+/// USB stack's default, `0x0010`. Read as a bare number that is release 16 and
+/// would suppress every update below it; as `Legacy` it always updates.
+///
+/// Only meaningful for a device enumerating as a bootloader. The same bits in
+/// an application mean a layout this build does not know.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BootloaderRelease {
+    /// Published before counters existed.
+    Legacy,
+    /// Monotonic, from 1.
+    Counter(u16),
+}
+
+impl BootloaderRelease {
+    /// Largest counter the twelve payload bits hold.
+    pub const MAX_COUNTER: u16 = 0x0FFF;
+
+    /// The `bcdDevice` value a bootloader publishes for `counter`. Out-of-range
+    /// counters fail to build, at compile time when called from a `const`.
+    pub const fn bcd_device(counter: u16) -> u16 {
+        assert!(
+            counter >= 1 && counter <= Self::MAX_COUNTER,
+            "bootloader release counter must be 1..=4095"
+        );
+        ((UsbDeviceRelease::RESERVED_MAJOR as u16) << 12) | counter
+    }
+
+    pub const fn from_bcd_device(raw: u16) -> Self {
+        let counter = raw & Self::MAX_COUNTER;
+        if raw >> 12 == UsbDeviceRelease::RESERVED_MAJOR && counter != 0 {
+            Self::Counter(counter)
+        } else {
+            Self::Legacy
+        }
+    }
+
+    /// Whether a bootloader running `self` should be replaced by `published`.
+    /// A legacy bootloader is replaced by any counter.
+    pub const fn superseded_by(self, published: u16) -> bool {
+        match self {
+            Self::Legacy => true,
+            Self::Counter(running) => running < published,
+        }
+    }
+}
+
+#[cfg(test)]
+mod bootloader_release_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_default_is_legacy_not_release_16() {
+        let shipped = 0x0010;
+        assert_eq!(BootloaderRelease::from_bcd_device(shipped), BootloaderRelease::Legacy);
+        assert!(BootloaderRelease::from_bcd_device(shipped).superseded_by(1));
+    }
+
+    #[test]
+    fn counter_round_trips_and_orders() {
+        for n in [1, 2, 16, 4095] {
+            let raw = BootloaderRelease::bcd_device(n);
+            assert_eq!(BootloaderRelease::from_bcd_device(raw), BootloaderRelease::Counter(n));
+        }
+        assert!(!BootloaderRelease::Counter(2).superseded_by(2));
+        assert!(!BootloaderRelease::Counter(3).superseded_by(2));
+        assert!(BootloaderRelease::Counter(2).superseded_by(3));
+    }
+
+    #[test]
+    fn marker_without_payload_and_unset_are_legacy() {
+        assert_eq!(BootloaderRelease::from_bcd_device(0xF000), BootloaderRelease::Legacy);
+        assert_eq!(BootloaderRelease::from_bcd_device(0), BootloaderRelease::Legacy);
+    }
+}
+
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

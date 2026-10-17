@@ -43,29 +43,12 @@ struct AppDfuFlag {
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F}"];
 
-const fn parse_version_component(s: &str) -> u16 {
-    let b = s.as_bytes();
-    let mut val: u16 = 0;
-    let mut i = 0;
-    while i < b.len() {
-        val = val * 10 + (b[i] - b'0') as u16;
-        i += 1;
-    }
-    val
-}
+/// This bootloader's release counter. Raise it whenever the image changes: the
+/// host replaces a bootloader only when the published counter is higher.
+macro_rules! release { () => { 1 }; }
 
-/// This bootloader's version, published as bcdDevice. Four bits of major, six
-/// of minor, six of patch; the host decodes the same layout.
-const BOOTLOADER_VERSION: u16 = {
-    let major = parse_version_component(env!("CARGO_PKG_VERSION_MAJOR"));
-    let minor = parse_version_component(env!("CARGO_PKG_VERSION_MINOR"));
-    let patch = parse_version_component(env!("CARGO_PKG_VERSION_PATCH"));
-    assert!(
-        major < 16 && minor < 64 && patch < 64,
-        "version does not fit bcdDevice"
-    );
-    (major << 12) | (minor << 6) | patch
-};
+const BOOTLOADER_BCD_DEVICE: u16 =
+    odyssey_protocol::BootloaderRelease::bcd_device(release!());
 
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;
@@ -1465,7 +1448,7 @@ async fn main(spawner: Spawner) -> ! {
         config.manufacturer = Some("Odyssey Arm");
         config.product = Some("USB-DFU Bootloader");
         config.serial_number = Some(serial);
-        config.device_release = BOOTLOADER_VERSION;
+        config.device_release = BOOTLOADER_BCD_DEVICE;
 
         // Create a dummy updater - we use the legacy symbols which point to bank_a/bank_b
         // This satisfies the Control type signature but won't be used for dual-bank -
@@ -1514,7 +1497,7 @@ async fn main(spawner: Spawner) -> ! {
             active_bank_is_a,
         );
         state.set_state_flagger(&mut dfu_flagger);
-        state.set_bootloader_label(concat!("BOOTLOADER ", env!("CARGO_PKG_VERSION")));
+        state.set_bootloader_label(concat!("BOOTLOADER ", release!()));
 
         let mut builder = Builder::new(
             driver,

@@ -75,6 +75,7 @@ async fn main(spawner: Spawner) {
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_signal) = usb::usb_device(
         0x520F, // USB VM PID
+        utils::FIRMWARE_VERSION,
         DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,

@@ -182,8 +182,10 @@ check:
     cd netcore-bootloader && cargo check
     cd net-core && cargo check
 
-# Generate a release entry in manifests/releases.alpha.json from current build
-gen-release:
+# Generate a release entry in manifests/releases.alpha.json from current build.
+# requires_bootloader is the lowest bootloader release this application can run
+# on, 0 for none. It has no default: leaving it out would silently mean "any".
+gen-release requires_bootloader:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -211,10 +213,39 @@ gen-release:
 
     BOOTLOADER_SHA=$(sha256sum "$BUILD_DIR/stage2-bootloader.bin" | cut -d' ' -f1)
     BOOTLOADER_SIZE=$(stat -c%s "$BUILD_DIR/stage2-bootloader.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/stage2-bootloader.bin")
-    # The bootloader is versioned on its own and republished unchanged across
-    # application releases, so the host compares this against what the device
-    # reports rather than the release version.
-    BOOTLOADER_VERSION=$(grep '^version' bootloader/Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
+    # The bootloader is versioned on its own, by the counter in its source, and
+    # republished unchanged across application releases. The host compares it
+    # against what the device reports.
+    BOOTLOADER_RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' bootloader/src/main.rs)
+    if [ -z "$BOOTLOADER_RELEASE" ]; then
+        echo "Error: no release counter found in bootloader/src/main.rs"
+        exit 1
+    fi
+    REQUIRES_BOOTLOADER={{requires_bootloader}}
+    if [ "$REQUIRES_BOOTLOADER" -gt "$BOOTLOADER_RELEASE" ]; then
+        echo "Error: requires_bootloader $REQUIRES_BOOTLOADER is above the bootloader being published ($BOOTLOADER_RELEASE)."
+        exit 1
+    fi
+    # The counter is baked into the image, so a hash and a counter identify each
+    # other. A changed image under an unraised counter would never reach devices
+    # already reporting that counter; one counter on two images, or one image
+    # under two counters, means the manifest and the build disagree.
+    BOOTLOADERS='.devices.atslite1.firmwares[].files["stage2-bootloader"]'
+    SHA_RELEASES=$(jq -r --arg sha "$BOOTLOADER_SHA" "[$BOOTLOADERS | select(.sha256 == \$sha) | .release // 0] | unique | map(tostring) | join(\",\")" "$MANIFEST")
+    COUNTER_OTHER_IMAGES=$(jq -r --arg sha "$BOOTLOADER_SHA" --argjson r "$BOOTLOADER_RELEASE" "[$BOOTLOADERS | select(.release == \$r and .sha256 != \$sha)] | length" "$MANIFEST")
+    NEWEST_RELEASE=$(jq -r "[$BOOTLOADERS.release // 0] | max // 0" "$MANIFEST")
+    if [ -n "$SHA_RELEASES" ] && [ "$SHA_RELEASES" != "$BOOTLOADER_RELEASE" ]; then
+        echo "Error: this bootloader image is already published as release $SHA_RELEASES but its counter says $BOOTLOADER_RELEASE."
+        exit 1
+    fi
+    if [ "$COUNTER_OTHER_IMAGES" != 0 ]; then
+        echo "Error: release $BOOTLOADER_RELEASE is already published for a different bootloader image. Raise the counter in bootloader/src/main.rs."
+        exit 1
+    fi
+    if [ -z "$SHA_RELEASES" ] && [ "$BOOTLOADER_RELEASE" -le "$NEWEST_RELEASE" ]; then
+        echo "Error: the bootloader image changed but its release counter ($BOOTLOADER_RELEASE) is not above the newest published ($NEWEST_RELEASE)."
+        exit 1
+    fi
 
     TODAY=$(date +%Y-%m-%d)
 
@@ -222,6 +253,7 @@ gen-release:
     NEW_ENTRY=$(cat <<EOF
     {
       "version": "$VERSION",
+      "requires_bootloader": $REQUIRES_BOOTLOADER,
       "files": {
         "app-a": {
           "sha256": "$APP_A_SHA",
@@ -238,7 +270,7 @@ gen-release:
         "stage2-bootloader": {
           "sha256": "$BOOTLOADER_SHA",
           "size": $BOOTLOADER_SIZE,
-          "version": "$BOOTLOADER_VERSION"
+          "release": $BOOTLOADER_RELEASE
         }
       },
       "released": "$TODAY"

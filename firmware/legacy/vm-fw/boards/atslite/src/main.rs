@@ -334,6 +334,7 @@ async fn main(spawner: Spawner) {
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5210, // Atslite PID
+        FIRMWARE_VERSION,
         DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,

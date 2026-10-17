@@ -7,7 +7,7 @@ use dfu_core::DfuIo;
 use dfu_nusb::DfuNusb;
 use futures::io::Cursor;
 use nusb::MaybeFuture;
-use odyssey_protocol::UsbVersionReport;
+use odyssey_protocol::BootloaderRelease;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -43,8 +43,8 @@ pub const fn app_pid(pid: u16) -> u16 {
 }
 
 /// What a device's bcdDevice says about the bootloader it is running.
-pub fn bootloader_version(bcd_device: u16) -> UsbVersionReport {
-    odyssey_protocol::UsbDeviceRelease::new_with_raw_value(bcd_device).report()
+pub fn bootloader_release(bcd_device: u16) -> BootloaderRelease {
+    BootloaderRelease::from_bcd_device(bcd_device)
 }
 
 /// Top-level firmware manifest
@@ -62,13 +62,15 @@ pub struct DeviceManifest {
 
 /// A single firmware version entry.
 ///
-/// Fields added here must be optional: a host in the field parses the whole
-/// manifest or none of it, so one unknown required field stops every device
-/// from seeing any update. A change that older hosts must *not* act on goes
-/// with a bump of the manifest's top-level version instead.
+/// `requires_bootloader` is the lowest bootloader release this application can
+/// run on, `0` when it has no requirement. It is required, not optional: an
+/// entry that omitted it would read as unrestricted, so `gen-release` always
+/// writes it and a manifest missing it is rejected whole. Older hosts ignore
+/// fields they do not know, so adding one never stops them parsing.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FirmwareEntry {
     pub version: String,
+    pub requires_bootloader: u16,
     pub files: HashMap<String, FileEntry>,
     #[serde(default)]
     pub released: Option<String>,
@@ -76,22 +78,15 @@ pub struct FirmwareEntry {
 
 /// A single file within a firmware entry.
 ///
-/// `version` is optional and only meaningful for `stage2-bootloader`: the
-/// bootloader is versioned independently of the application, and the same image
-/// is republished unchanged across application releases.
+/// `release` is only present on `stage2-bootloader`: the bootloader is versioned
+/// independently of the application, and the same image is republished
+/// unchanged across application releases.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileEntry {
     pub sha256: String,
     pub size: u64,
     #[serde(default)]
-    pub version: Option<String>,
-}
-
-impl FileEntry {
-    /// Parse `version` into `[major, minor, patch]`.
-    pub fn version_parts(&self) -> Option<[u16; 3]> {
-        parse_version(self.version.as_deref()?)
-    }
+    pub release: Option<u16>,
 }
 
 impl FirmwareEntry {
@@ -466,17 +461,17 @@ pub fn parse_version(version: &str) -> Option<[u16; 3]> {
     Some(parsed)
 }
 
-/// Read the version of the bootloader a device is currently running.
+/// Read the release of the bootloader a device is currently running.
 ///
 /// The bootloader publishes it in bcdDevice, so this costs no transfers and
 /// needs neither an open device nor a claimed interface.
-pub fn read_bootloader_version_for_device(
+pub fn read_bootloader_release_for_device(
     uuid: &[u8; 6],
     vid: u16,
     pid: u16,
-) -> Result<UsbVersionReport, DfuError> {
+) -> Result<BootloaderRelease, DfuError> {
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
-    Ok(bootloader_version(info.device_version()))
+    Ok(bootloader_release(info.device_version()))
 }
 
 /// Find a device that is currently running its bootloader.
@@ -509,24 +504,44 @@ pub fn find_bootloader_alt_for_device(
     find_alt_for_slot(&device, interface_num, "BOOTLOADER")
 }
 
-/// Whether the published bootloader is newer than the one running.
-///
-/// A bootloader that reports no version predates version reporting, so any
-/// published version supersedes it.
-pub fn bootloader_update_needed(running: UsbVersionReport, published: [u16; 3]) -> bool {
-    match running {
-        UsbVersionReport::Known(running) => version_newer(running, published),
-        // Predates version reporting, so anything published supersedes it.
-        UsbVersionReport::Unset => true,
-        // Written by something newer than this build. Installing the published
-        // image would be a downgrade, so leave it alone.
-        UsbVersionReport::Unreadable => {
-            tracing::warn!(
-                "Bootloader reports a version this build cannot read; leaving it as it is"
-            );
-            false
-        }
+/// The application cannot run on any bootloader this device will end up with.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BootloaderTooOld {
+    pub required: u16,
+}
+
+impl std::fmt::Display for BootloaderTooOld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "this firmware needs bootloader release {} or newer and the release publishes none",
+            self.required
+        )
     }
+}
+
+/// Decide what the bootloader needs before the application is written.
+///
+/// Returns whether to flash `published`. Two rules, kept apart because they
+/// answer different questions: the fleet should converge on the published
+/// bootloader, so a superseded one is replaced; and the application has a floor
+/// below which it must not be installed, so the device is refused if neither the
+/// running nor the published bootloader reaches `requires`.
+pub fn plan_bootloader(
+    running: BootloaderRelease,
+    published: Option<u16>,
+    requires: u16,
+) -> Result<bool, BootloaderTooOld> {
+    let flash = published.is_some_and(|p| running.superseded_by(p));
+    let ending_at = match (flash, published, running) {
+        (true, Some(published), _) => published,
+        (_, _, BootloaderRelease::Counter(running)) => running,
+        (_, _, BootloaderRelease::Legacy) => 0,
+    };
+    if ending_at < requires {
+        return Err(BootloaderTooOld { required: requires });
+    }
+    Ok(flash)
 }
 
 /// Open a DFU device and prepare it for flashing
@@ -849,10 +864,10 @@ pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]
     wait_for_dfu_device(uuid, vid, pid, Duration::from_secs(10)).await?;
 
     // The bootloader only identifies itself while it is the thing enumerating,
-    // so this is the one point in the update where its version is readable.
-    match read_bootloader_version_for_device(uuid, vid, pid) {
-        Ok(report) => tracing::info!("Bootloader reports {:?}", report),
-        Err(e) => tracing::warn!("Could not read the bootloader version: {e}"),
+    // so this is the one point in the update where its release is readable.
+    match read_bootloader_release_for_device(uuid, vid, pid) {
+        Ok(release) => tracing::info!("Bootloader reports {:?}", release),
+        Err(e) => tracing::warn!("Could not read the bootloader release: {e}"),
     }
 
     // Step 3: Determine target slot by reading alt interface strings
@@ -891,14 +906,50 @@ mod tests {
     }
 
     #[test]
-    fn file_version_is_optional() {
-        let without: FileEntry =
-            serde_json::from_str(r#"{"sha256":"ab","size":1}"#).expect("parses");
-        assert_eq!(without.version_parts(), None);
+    fn bootloader_plan_follows_published_release() {
+        use BootloaderRelease::{Counter, Legacy};
+        // Legacy always updates once something is published.
+        assert_eq!(plan_bootloader(Legacy, Some(1), 0), Ok(true));
+        assert_eq!(plan_bootloader(Counter(1), Some(2), 0), Ok(true));
+        // Current, newer, or nothing published: leave it alone.
+        assert_eq!(plan_bootloader(Counter(2), Some(2), 0), Ok(false));
+        assert_eq!(plan_bootloader(Counter(3), Some(2), 0), Ok(false));
+        assert_eq!(plan_bootloader(Legacy, None, 0), Ok(false));
+    }
 
-        let with: FileEntry =
-            serde_json::from_str(r#"{"sha256":"ab","size":1,"version":"0.2.0"}"#).expect("parses");
-        assert_eq!(with.version_parts(), Some([0, 2, 0]));
+    #[test]
+    fn bootloader_requirement_is_a_floor() {
+        use BootloaderRelease::{Counter, Legacy};
+        // The published bootloader reaches the floor, so flashing it satisfies it.
+        assert_eq!(plan_bootloader(Legacy, Some(2), 2), Ok(true));
+        // Already at the floor.
+        assert_eq!(plan_bootloader(Counter(2), None, 2), Ok(false));
+        // Neither the running nor the published bootloader reaches it.
+        assert_eq!(
+            plan_bootloader(Counter(1), Some(1), 2),
+            Err(BootloaderTooOld { required: 2 })
+        );
+        assert_eq!(
+            plan_bootloader(Legacy, None, 1),
+            Err(BootloaderTooOld { required: 1 })
+        );
+    }
+
+    /// Every host parses the manifest whole or not at all, so one entry missing
+    /// a required field would hide every update from every device.
+    #[test]
+    fn committed_manifest_parses() {
+        let manifest: FirmwareManifest = serde_json::from_str(include_str!(
+            "../../../firmware/manifests/releases.alpha.json"
+        ))
+        .expect("committed manifest parses");
+        assert!(manifest.version <= SUPPORTED_MANIFEST_VERSION);
+        for (device, entries) in &manifest.devices {
+            assert!(!entries.firmwares.is_empty(), "{device} has no firmware");
+            for entry in &entries.firmwares {
+                assert!(entry.version_parts().is_some(), "{device} {}", entry.version);
+            }
+        }
     }
 
     #[test]

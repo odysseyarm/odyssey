@@ -449,14 +449,14 @@ async fn run_firmware_update(
     }
     // The stage2 bootloader is versioned separately and republished unchanged
     // across application releases, so it is only worth downloading when the
-    // release says which version it carries.
+    // release says which bootloader release it carries.
     let published_bootloader = firmware_entry
         .files
         .get("stage2-bootloader")
-        .and_then(|entry| entry.version_parts().map(|version| (entry, version)));
+        .and_then(|entry| entry.release.map(|release| (entry, release)));
     let bootloader_image = match published_bootloader {
-        Some((entry, version)) => {
-            tracing::info!("Release carries stage2 bootloader {:?}", version);
+        Some((entry, release)) => {
+            tracing::info!("Release carries stage2 bootloader release {}", release);
             let data = firmware::download_firmware(
                 &device_type,
                 &firmware_entry.version,
@@ -465,7 +465,7 @@ async fn run_firmware_update(
             )
             .await
             .map_err(|e| format!("Download of stage2-bootloader failed: {e}"))?;
-            Some((data, version))
+            Some((data, release))
         }
         None => None,
     };
@@ -498,15 +498,21 @@ async fn run_firmware_update(
     // The bootloader owns the flash writes for the application banks, so an
     // application that needs a newer bootloader has to wait for it. This is the
     // only window where the bootloader is the thing enumerating, which is both
-    // why its version is readable and why it can be written at all.
-    if let Some((bootloader_data, published)) = bootloader_image {
-        let running = firmware::read_bootloader_version_for_device(&device_uuid, vid, pid)
-            .map_err(|e| format!("Could not read the bootloader version: {e}"))?;
-        if firmware::bootloader_update_needed(running, published) {
+    // why its release is readable and why it can be written at all.
+    let running = firmware::read_bootloader_release_for_device(&device_uuid, vid, pid)
+        .map_err(|e| format!("Could not read the bootloader release: {e}"))?;
+    let flash_bootloader = firmware::plan_bootloader(
+        running,
+        bootloader_image.as_ref().map(|(_, release)| *release),
+        firmware_entry.requires_bootloader,
+    )
+    .map_err(|e| e.to_string())?;
+    match bootloader_image {
+        Some((bootloader_data, published)) if flash_bootloader => {
             let alt = firmware::find_bootloader_alt_for_device(&device_uuid, vid, pid)
                 .map_err(|e| format!("Bootloader cannot be updated over DFU: {e}"))?;
             tracing::info!(
-                "Updating bootloader {:?} -> {:?} on alt {}",
+                "Updating bootloader {:?} -> release {} on alt {}",
                 running,
                 published,
                 alt
@@ -535,9 +541,8 @@ async fn run_firmware_update(
             firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(15))
                 .await
                 .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
-        } else {
-            tracing::info!("Bootloader {:?} is current, skipping", running);
         }
+        _ => tracing::info!("Bootloader {:?} stays as it is", running),
     }
 
     // Determine target slot
