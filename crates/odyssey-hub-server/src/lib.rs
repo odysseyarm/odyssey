@@ -1,6 +1,7 @@
 ﻿mod accessories;
 mod device_tasks;
 pub mod firmware;
+mod migration;
 mod server;
 
 use std::{pin::Pin, sync::Arc};

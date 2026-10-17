@@ -285,21 +285,24 @@ pub fn find_device_by_uuid(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<nusb::D
         "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
         uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5]
     );
-    nusb::list_devices()
+    let candidates: Vec<_> = nusb::list_devices()
         .wait()
         .map_err(|e| DfuError::Usb(e))?
-        .find(|dev| {
-            dev.vendor_id() == vid
-                && dev.product_id() == pid
-                && dev
-                    .serial_number()
-                    .map(|s| {
-                        let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-                        clean.eq_ignore_ascii_case(&uuid_hex)
-                    })
-                    .unwrap_or(false)
-        })
-        .ok_or(DfuError::DeviceNotFound)
+        .filter(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
+        .collect();
+
+    if let Some(dev) = candidates.iter().find(|dev| {
+        dev.serial_number()
+            .map(|s| {
+                let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+                clean.eq_ignore_ascii_case(&uuid_hex)
+            })
+            .unwrap_or(false)
+    }) {
+        return Ok(dev.clone());
+    }
+
+    crate::migration::single_unidentifiable_device(candidates).ok_or(DfuError::DeviceNotFound)
 }
 
 /// Find the DFU interface number on a device
