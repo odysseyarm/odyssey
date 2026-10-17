@@ -25,6 +25,39 @@ pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
     (0x1915, 0x5212, "dongle"),
 ];
 
+/// The product id a device enumerates under while its bootloader is running.
+///
+/// The bootloaders add 0x10 to the application's id, so the two modes are
+/// distinguishable from the device descriptor alone and bcdDevice can mean the
+/// bootloader's own version while it is in charge. An offset rather than a bit:
+/// 0x5210 and 0x5211 already have bit 4 set, so setting it would not be
+/// reversible.
+pub const fn bootloader_pid(app_pid: u16) -> u16 {
+    app_pid + 0x10
+}
+
+/// The application's product id for a device currently in its bootloader.
+pub const fn app_pid(pid: u16) -> u16 {
+    pid - 0x10
+}
+
+/// Decode the version a bootloader publishes in bcdDevice.
+///
+/// Four bits of major, six of minor, six of patch, matching what the bootloader
+/// encodes. Bootloaders that predate this leave the field at zero, which reads
+/// back as `None` — the host must treat that as older than anything published,
+/// since it is the one thing those builds cannot report.
+pub fn bootloader_version(bcd_device: u16) -> Option<[u16; 3]> {
+    if bcd_device == 0 {
+        return None;
+    }
+    Some([
+        (bcd_device >> 12) & 0xf,
+        (bcd_device >> 6) & 0x3f,
+        bcd_device & 0x3f,
+    ])
+}
+
 /// Top-level firmware manifest
 #[derive(Debug, Clone, Deserialize)]
 pub struct FirmwareManifest {
@@ -403,55 +436,13 @@ pub fn determine_target_slot_for_device(
     vid: u16,
     pid: u16,
 ) -> Result<(&'static str, &'static str, u8), DfuError> {
-    let info = find_device_by_uuid(uuid, vid, pid)?;
+    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let interface_num = find_dfu_interface(&device)?;
     determine_target_slot(&device, interface_num)
 }
 
-/// Read the bootloader version from the DFU interface's alt 2 string.
-///
-/// Bootloaders built from better-dfu label that alt setting `BOOTLOADER <ver>`.
-/// Anything older labels it plain `BOOTLOADER` and returns `None`, which the
-/// caller must read as "older than any published bootloader" rather than "up to
-/// date" — the version is the only thing those builds cannot tell us.
-pub fn read_bootloader_version(device: &nusb::Device, interface_num: u8) -> Option<[u16; 3]> {
-    let lang = device
-        .get_string_descriptor_supported_languages(Duration::from_secs(3))
-        .wait()
-        .ok()
-        .and_then(|mut langs| langs.next())
-        .unwrap_or_default();
-
-    for config in device.configurations() {
-        for interface in config.interfaces() {
-            if interface.interface_number() != interface_num {
-                continue;
-            }
-            for alt in interface.alt_settings() {
-                if alt.class() != DFU_CLASS || alt.subclass() != DFU_SUBCLASS {
-                    continue;
-                }
-                let Some(string_index) = alt.string_index() else {
-                    continue;
-                };
-                let Ok(desc) = device
-                    .get_string_descriptor(string_index, lang, Duration::from_secs(3))
-                    .wait()
-                else {
-                    continue;
-                };
-                if let Some(version) = desc.strip_prefix("BOOTLOADER ") {
-                    return parse_version(version.trim());
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Parse a `major.minor.patch` string. Shared by the manifest and the
-/// bootloader's interface string so both reject the same malformed input.
+/// Parse a `major.minor.patch` string from the manifest.
 pub fn parse_version(version: &str) -> Option<[u16; 3]> {
     let mut parts = version.split('.');
     let parsed = [
@@ -465,16 +456,35 @@ pub fn parse_version(version: &str) -> Option<[u16; 3]> {
     Some(parsed)
 }
 
-/// Read the bootloader version of a device that is already in DFU mode.
+/// Read the version of the bootloader a device is currently running.
+///
+/// The bootloader publishes it in bcdDevice, so this costs no transfers and
+/// needs neither an open device nor a claimed interface.
 pub fn read_bootloader_version_for_device(
     uuid: &[u8; 6],
     vid: u16,
     pid: u16,
 ) -> Result<Option<[u16; 3]>, DfuError> {
-    let info = find_device_by_uuid(uuid, vid, pid)?;
-    let device = info.open().wait()?;
-    let interface_num = find_dfu_interface(&device)?;
-    Ok(read_bootloader_version(&device, interface_num))
+    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
+    Ok(bootloader_version(info.device_version()))
+}
+
+/// Find a device that is currently running its bootloader.
+///
+/// Callers pass the application's product id throughout; the bootloader
+/// enumerates under its own, so the translation lives here rather than at every
+/// call site.
+pub fn find_bootloader_by_uuid(
+    uuid: &[u8; 6],
+    vid: u16,
+    app_pid: u16,
+) -> Result<nusb::DeviceInfo, DfuError> {
+    match find_device_by_uuid(uuid, vid, bootloader_pid(app_pid)) {
+        Ok(info) => Ok(info),
+        // Bootloaders flashed before the split enumerate under the
+        // application's id instead.
+        Err(_) => crate::migration::find_bootloader_sharing_app_pid(uuid, vid, app_pid),
+    }
 }
 
 /// Find the alt setting that writes the stage2 bootloader itself.
@@ -483,7 +493,7 @@ pub fn find_bootloader_alt_for_device(
     vid: u16,
     pid: u16,
 ) -> Result<u8, DfuError> {
-    let info = find_device_by_uuid(uuid, vid, pid)?;
+    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let interface_num = find_dfu_interface(&device)?;
     find_alt_for_slot(&device, interface_num, "BOOTLOADER")
@@ -508,7 +518,7 @@ pub fn open_dfu_device(
     interface_num: u8,
     alt: u8,
 ) -> Result<DfuNusb, DfuError> {
-    let info = find_device_by_uuid(uuid, vid, pid)?;
+    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let interface = device.claim_interface(interface_num).wait()?;
     let dfu = DfuNusb::open(device, interface, alt)?;
@@ -673,7 +683,7 @@ pub async fn flash_firmware_with_progress<F>(
 where
     F: FnMut(usize, usize) + Unpin,
 {
-    let info = find_device_by_uuid(uuid, vid, pid)?;
+    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
 
     let interface_num = find_dfu_interface(&device)?;
@@ -756,7 +766,7 @@ pub async fn wait_for_dfu_device(
             return Err(DfuError::DeviceNotFound);
         }
 
-        if let Ok(info) = find_device_by_uuid(uuid, vid, pid) {
+        if let Ok(info) = find_bootloader_by_uuid(uuid, vid, pid) {
             tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
             // Check if device is in DFU mode
             if let Ok(device) = info.open().wait() {

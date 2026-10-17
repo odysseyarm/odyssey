@@ -1150,21 +1150,32 @@ async fn usb_device_manager(
                                     continue;
                                 };
                                 present_dfu_ids.insert(direct_usb_id.clone());
+                                // The rest of the system knows a device by the
+                                // product id its application enumerates under,
+                                // which is not the one the bootloader uses.
+                                let app_pid = crate::firmware::app_pid(pid);
                                 let already_tracked = device_handles.lock().await.contains_key(&uuid)
                                     || dfu_device_id_to_info.values().any(|(u, _)| u == &uuid);
                                 if !already_tracked {
-                                    info!("Device {:02x?} has DFU interface (PID 0x{:04x}), surfacing for firmware update (connect error: {})", uuid, pid, e);
-                                    dfu_device_id_to_info.insert(direct_usb_id.clone(), (uuid, pid));
+                                    let bootloader =
+                                        crate::firmware::bootloader_version(dev_info.device_version());
+                                    info!(
+                                        "Device {:02x?} is in DFU mode (PID 0x{:04x}, bootloader {:?}), surfacing for firmware update (connect error: {})",
+                                        uuid, pid, bootloader, e
+                                    );
+                                    dfu_device_id_to_info.insert(direct_usb_id.clone(), (uuid, app_pid));
                                     let dfu_meta = Device {
                                         uuid,
                                         transport: odyssey_hub_common::device::Transport::Usb,
                                         capabilities: odyssey_hub_common::device::DeviceCapabilities::new(
                                             odyssey_hub_common::device::DeviceCapabilities::DFU,
                                         ),
+                                        // No application is running, so there is no
+                                        // firmware version to report.
                                         firmware_version: [0, 0, 0],
                                         events_transport: odyssey_hub_common::device::EventsTransport::Wired,
                                         events_connected: false,
-                                        product_id: pid,
+                                        product_id: app_pid,
                                         name: Device::name_bytes(""),
                                     };
                                     let _ = message_channel
