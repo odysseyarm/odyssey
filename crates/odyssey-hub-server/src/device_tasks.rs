@@ -1472,6 +1472,21 @@ async fn usb_device_manager(
             let dh = device_handles.lock().await;
             for id in missing_direct_usb_ids {
                 if let Some(uuid) = direct_usb_id_to_uuid.remove(&id) {
+                    // A unit that re-enumerates (a reboot, a transport switch) shows up
+                    // at a new address while its old one is still in the map. The
+                    // handler for that UUID is then the new connection's, so telling it
+                    // its USB control left would tear it down seconds after it started.
+                    let reappeared = direct_usb_id_to_uuid
+                        .iter()
+                        .any(|(other, other_uuid)| *other_uuid == uuid && present_direct_usb_ids.contains(other));
+                    if reappeared {
+                        tracing::info!(
+                            "Direct USB address {} of {:02x?} is gone but the unit is present at another address",
+                            id,
+                            uuid
+                        );
+                        continue;
+                    }
                     if let Some((cmd_tx, _)) = dh.get(&uuid) {
                         tracing::info!(
                             "Direct USB device missing from scan, sending RemoveControlDevice: id={} uuid={:02x?}",
