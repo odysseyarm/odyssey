@@ -6,25 +6,6 @@ default-run = "odyssey-desktop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-default = ["orbbec"]
-# Orbbec depth cameras for automatic screen calibration. The SDK builds from
-# source with CMake and loads as a shared library at runtime, so builds that
-# cannot ship it turn this off. The calibration wizard then runs only against
-# its demo camera and lists no hardware.
-#
-# Runtime requirement: `libOrbbecSDK.so` (`OrbbecSDK.dll` on Windows) and its
-# `extensions/` directory must sit next to the executable. orbbec-sdk-sys
-# leaves both in its build directory and sets no rpath; build.rs makes
-# development builds (`cargo run`, `cargo test`, `dx serve`) find them there.
-# Packaging a release (MSI, AppImage, Nix) must still install both beside the
-# executable, which nothing in this repository does yet.
-#
-# `dep:orbbec-sdk-sys` is not used by this crate's code. It makes the SDK a
-# direct dependency, which is what makes cargo run the SDK's build script
-# before this crate's, so build.rs can find the library it built.
-orbbec = ["odyssey-autocalib/orbbec", "dep:orbbec-sdk-sys"]
-
 [dependencies]
 anyhow = "1"
 futures = { version = "0.3.30", default-features = false, features = ["std", "async-await"] }
@@ -51,7 +32,6 @@ btleplug = "0.11.8"
 uuid = "1.18.0"
 dfu-nusb = { git = "https://github.com/florg-32/dfu-nusb", branch = "bump-nusb-0.2" }
 parking_lot = "0.12"
-orbbec-sdk-sys = { version = "0.3.3", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "0.3.6"

@@ -6,12 +6,6 @@ repository = "https://github.com/odysseyarm/odyssey"
 license = "MIT OR Apache-2.0"
 description = "Automatic screen calibration from a depth camera, in pure Rust"
 
-[features]
-default = []
-# Orbbec depth cameras through the vendored OrbbecSDK v2. Off by default because
-# the SDK builds from source with CMake and links a shared library.
-orbbec = ["dep:orbbec-sdk-sys"]
-
 [dependencies]
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 odyssey-common = { path = "../odyssey-common", features = ["serde_json"] }
@@ -21,9 +15,9 @@ tracing = "0.1"
 rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-orbbec-sdk-sys = { version = "0.3.3", optional = true }
+# Loads the Orbbec SDK shared library at run time; nothing links against it.
+libloading = "0.8"
 parking_lot = "0.12"
 
-[[example]]
-name = "orbbec_probe"
-required-features = ["orbbec"]
+[dev-dependencies]
+tempfile = "3"

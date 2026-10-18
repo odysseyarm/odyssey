@@ -3,8 +3,9 @@
 use dioxus::prelude::*;
 use odyssey_common::MAX_SCREEN_ID;
 
+use super::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use super::screens::screen_label;
-use super::ui::{StepPage, CARD, PRIMARY_BUTTON, PRIMARY_ID};
+use super::ui::{StepPage, CARD, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
 use super::wizard::{CameraList, Wizard};
 use crate::components::wizard::{Icon, IconView, Spinner};
 use crate::components::ScreenPicker;
@@ -140,26 +141,20 @@ fn CameraPicker(wizard: Wizard) -> Element {
             NoCamera {
                 title: "Couldn't look for cameras".to_string(),
                 detail: "Unplug the camera and plug it back in. If this keeps happening, restart the app.".to_string(),
-                technical: error,
+                technical: vec![error],
             }
         },
-        CameraList::Found(list) if list.is_empty() => {
-            if cfg!(feature = "orbbec") || wizard.demo {
-                rsx! {
-                    NoCamera {
-                        title: "No camera found".to_string(),
-                        detail: "Plug in the Orbbec camera with its USB cable. This page notices by itself.".to_string(),
-                    }
-                }
-            } else {
-                rsx! {
-                    NoCamera {
-                        title: "This version has no camera support".to_string(),
-                        detail: "Install the full version of the app to calibrate with a camera.".to_string(),
-                    }
-                }
+        CameraList::Unavailable(status) => match camera_support::notice(&status) {
+            Some(notice) => rsx! { CameraSupportNotice { wizard, notice } },
+            None => rsx! {},
+        },
+        CameraList::Found(list) if list.is_empty() => rsx! {
+            NoCamera {
+                title: "No camera found".to_string(),
+                detail: "Plug in the Orbbec camera with its USB cable. This page notices by itself.".to_string(),
+                technical: Vec::new(),
             }
-        }
+        },
         CameraList::Found(list) => rsx! {
             div {
                 role: "radiogroup",
@@ -203,18 +198,49 @@ fn CameraPicker(wizard: Wizard) -> Element {
 }
 
 #[component]
-fn NoCamera(title: String, detail: String, technical: Option<String>) -> Element {
+fn NoCamera(title: String, detail: String, technical: Vec<String>, children: Element) -> Element {
     rsx! {
         div {
             class: "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-gray-300 px-4 py-6 text-center dark:border-gray-500",
             IconView { icon: Icon::Camera, class: "size-10 text-gray-400".to_string() }
             div { class: "text-xl font-semibold text-gray-900 dark:text-white", "{title}" }
             div { class: "text-base text-gray-600 dark:text-gray-300", "{detail}" }
-            if let Some(technical) = technical {
+            {children}
+            if !technical.is_empty() {
                 details {
-                    class: "text-sm text-gray-500 dark:text-gray-400",
-                    summary { class: "cursor-pointer", "Details" }
-                    code { class: "break-all", "{technical}" }
+                    class: "w-full text-left text-sm text-gray-500 dark:text-gray-400",
+                    summary { class: "cursor-pointer text-center", "Details" }
+                    div {
+                        class: "mt-2 flex flex-col gap-1",
+                        for (i, line) in technical.iter().enumerate() {
+                            code { key: "{i}", class: "break-words", "{line}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The camera library is missing, broken or the wrong version. The page keeps
+/// checking by itself; the button only saves the wait.
+#[component]
+fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
+    rsx! {
+        NoCamera {
+            title: notice.title,
+            detail: notice.detail,
+            technical: notice.details,
+            div {
+                class: "flex flex-wrap items-center justify-center gap-3 pt-2",
+                if notice.offer_download {
+                    a { class: PRIMARY_BUTTON, href: SDK_DOWNLOAD_URL, "Get the Orbbec SDK" }
+                }
+                button {
+                    r#type: "button",
+                    class: SECONDARY_BUTTON,
+                    onclick: move |_| wizard.request_camera_list(),
+                    "Check again"
                 }
             }
         }
