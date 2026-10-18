@@ -9,6 +9,8 @@
     ODYSSEY_ORBBEC_STAGE  Directory prepare_orbbec.py filled (offline only): EULA.rtf and the
                           SDK files the fragment installs.
 
+  Both variants accept OFFLINE_MODE=1 at install time (the offline one defaults to it).
+
   Run `just bundle-msi online|offline`, or see .github/workflows/desktop-release.yml.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
@@ -64,6 +66,16 @@
         <?endif?>
         <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 
+        <!-- OFFLINE_MODE=1 turns Odyssey's offline mode on for the whole machine (it writes the
+             HKLM value odyssey_hub_server::policy reads); deploy with
+             `msiexec /i Odyssey.msi OFFLINE_MODE=1`. The offline installer defaults it on, and
+             OFFLINE_MODE=0 leaves it off. -->
+        <?if $(env.ODYSSEY_MSI_VARIANT) = "offline" ?>
+        <Property Id="OFFLINE_MODE" Value="1" Secure="yes" />
+        <?else?>
+        <Property Id="OFFLINE_MODE" Secure="yes" />
+        <?endif?>
+
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="{{wix_program_files_folder}}">
                 <Directory Id="INSTALLDIR" Name="{{product_name}}">
@@ -74,9 +86,34 @@
                             Source="{{main_binary_path}}"
                             KeyPath="yes" />
                     </Component>
+                    <Component Id="OfflineModePolicy" Guid="*">
+                        <Condition>OFFLINE_MODE = "1"</Condition>
+                        <RegistryValue
+                            Root="HKLM"
+                            Key="SOFTWARE\{{publisher}}\{{product_name}}"
+                            Name="OfflineMode"
+                            Type="integer"
+                            Value="1"
+                            KeyPath="yes" />
+                    </Component>
 {{{install_tree}}}
                 </Directory>
             </Directory>
+
+            <?if $(env.ODYSSEY_MSI_VARIANT) = "offline" ?>
+            <!-- %ProgramData%\OdysseyArm\Odyssey\firmware-pack, where offline mode reads firmware. -->
+            <Directory Id="CommonAppDataFolder">
+                <Directory Id="OdysseyDataPublisher" Name="{{publisher}}">
+                    <Directory Id="OdysseyDataProduct" Name="{{product_name}}">
+                        <Directory Id="FirmwarePackFolder" Name="firmware-pack">
+                            <Component Id="FirmwarePackFolderComponent" Guid="*">
+                                <CreateFolder />
+                            </Component>
+                        </Directory>
+                    </Directory>
+                </Directory>
+            </Directory>
+            <?endif?>
 
             <Directory Id="ProgramMenuFolder">
                 <Directory Id="ProgramMenuSubfolder" Name="{{product_name}}">
@@ -132,6 +169,10 @@
             <ComponentRef Id="MainExecutable" />
             <ComponentRef Id="StartMenuShortcut" />
             <ComponentRef Id="DesktopShortcut" />
+            <ComponentRef Id="OfflineModePolicy" />
+            <?if $(env.ODYSSEY_MSI_VARIANT) = "offline" ?>
+            <ComponentRef Id="FirmwarePackFolderComponent" />
+            <?endif?>
 {{{component_refs_xml}}}
             {{#each component_group_refs}}
             <ComponentGroupRef Id="{{this}}" />
