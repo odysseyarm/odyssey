@@ -15,7 +15,7 @@ pub struct UserObj {
 // cbindgen all of a sudden doesn't create opaque types
 mod hack {
     #[allow(unused)]
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub struct Client;
 }
 
@@ -30,19 +30,19 @@ pub enum ClientError {
     ConnectFailure,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_new() -> *mut Client {
     Box::into_raw(Box::new(Client::default()))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_free(client: *mut Client) {
     unsafe {
         drop(Box::from_raw(client));
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_connect(
     handle: *const Handle,
     client: *mut Client,
@@ -62,7 +62,7 @@ pub extern "C" fn client_connect(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_get_device_list(
     handle: *const Handle,
     client: *mut Client,
@@ -92,7 +92,7 @@ pub extern "C" fn client_get_device_list(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_start_stream(
     handle: *const crate::Handle,
     client: *mut Client,
@@ -149,7 +149,7 @@ pub extern "C" fn client_start_stream(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_stop_stream(handle: *const Handle, client: *mut Client) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
@@ -160,7 +160,7 @@ pub extern "C" fn client_stop_stream(handle: *const Handle, client: *mut Client)
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_read_register(
     handle: *const Handle,
     client: *mut Client,
@@ -183,7 +183,7 @@ pub extern "C" fn client_read_register(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_write_register(
     handle: *const Handle,
     client: *mut Client,
@@ -212,7 +212,7 @@ pub extern "C" fn client_write_register(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_flash_settings(
     handle: *const Handle,
     client: *mut Client,
@@ -235,7 +235,7 @@ pub extern "C" fn client_flash_settings(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_reset_zero(
     handle: *const Handle,
     client: *mut Client,
@@ -260,7 +260,7 @@ pub extern "C" fn client_reset_zero(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_zero(
     handle: *const Handle,
     client: *mut Client,
@@ -295,7 +295,7 @@ pub extern "C" fn client_zero(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_reset_shot_delay(
     handle: *const Handle,
     client: *mut Client,
@@ -317,7 +317,7 @@ pub extern "C" fn client_reset_shot_delay(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_get_shot_delay(
     handle: *const Handle,
     client: *mut Client,
@@ -339,7 +339,7 @@ pub extern "C" fn client_get_shot_delay(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_set_shot_delay(
     handle: *const Handle,
     client: *mut Client,
@@ -365,7 +365,7 @@ pub extern "C" fn client_set_shot_delay(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_get_screen_info_by_id(
     handle: *const Handle,
     client: *mut Client,
@@ -395,7 +395,7 @@ pub extern "C" fn client_get_screen_info_by_id(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_subscribe_device_list(
     handle: *const Handle,
     client: *mut Client,
@@ -445,7 +445,7 @@ pub extern "C" fn client_subscribe_device_list(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn client_subscribe_shot_delay(
     handle: *const Handle,
     client: *mut Client,

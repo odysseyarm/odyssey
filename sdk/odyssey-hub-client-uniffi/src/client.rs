@@ -99,7 +99,7 @@ impl EventStream {
 impl DeviceListStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<Device>, ClientError> {
-        if let Some(msg) = self.inner.lock().await.next().await {
+        match self.inner.lock().await.next().await { Some(msg) => {
             match msg {
                 Ok(device_list) => Ok(device_list
                     .into_iter()
@@ -107,9 +107,9 @@ impl DeviceListStream {
                     .collect()),
                 Err(_) => Err(ClientError::StreamEnd),
             }
-        } else {
+        } _ => {
             Err(ClientError::StreamEnd)
-        }
+        }}
     }
 }
 
@@ -117,14 +117,14 @@ impl DeviceListStream {
 impl ShotDelayStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<u16, ClientError> {
-        if let Some(msg) = self.inner.lock().await.next().await {
+        match self.inner.lock().await.next().await { Some(msg) => {
             match msg {
                 Ok(delay) => Ok(delay),
                 Err(_) => Err(ClientError::StreamEnd),
             }
-        } else {
+        } _ => {
             Err(ClientError::StreamEnd)
-        }
+        }}
     }
 }
 
@@ -132,7 +132,7 @@ impl ShotDelayStream {
 impl AccessoryMapStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
-        if let Some(msg) = self.inner.lock().await.next().await {
+        match self.inner.lock().await.next().await { Some(msg) => {
             match msg {
                 Ok(map) => {
                     let entries: Vec<crate::ffi_common::AccessoryMapEntry> = map
@@ -154,9 +154,9 @@ impl AccessoryMapStream {
                 }
                 Err(_) => Err(ClientError::StreamEnd),
             }
-        } else {
+        } _ => {
             Err(ClientError::StreamEnd)
-        }
+        }}
     }
 }
 

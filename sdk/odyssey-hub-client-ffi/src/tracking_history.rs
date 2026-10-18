@@ -6,7 +6,7 @@ pub struct TrackingHistory {
     inner: Arc<Mutex<TrackingHistoryInner>>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tracking_history_new(capacity: u32) -> *mut TrackingHistory {
     let inner = TrackingHistoryInner::new(capacity as usize);
     let history = TrackingHistory {
@@ -15,7 +15,7 @@ pub extern "C" fn tracking_history_new(capacity: u32) -> *mut TrackingHistory {
     Box::into_raw(Box::new(history))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tracking_history_push(history: *mut TrackingHistory, event: TrackingEvent) {
     if let Some(history) = unsafe { history.as_ref() } {
         let mut lock = history.inner.lock().unwrap();
@@ -24,7 +24,7 @@ pub extern "C" fn tracking_history_push(history: *mut TrackingHistory, event: Tr
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tracking_history_latest(
     history: *mut TrackingHistory,
     out_event: *mut TrackingEvent,
@@ -42,7 +42,7 @@ pub extern "C" fn tracking_history_latest(
     false
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tracking_history_get_closest(
     history: *mut TrackingHistory,
     timestamp: u32,
@@ -61,7 +61,7 @@ pub extern "C" fn tracking_history_get_closest(
     false
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tracking_history_free(history: *mut TrackingHistory) {
     if !history.is_null() {
         unsafe {
