@@ -18,5 +18,5 @@ nalgebra = { version = "0.35", default-features = false, features = [ "libm", "m
 num = { version = "0.4.1", default-features = false, features = [ "libm" ] }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro", default-features = false }
 serde = { version = "1.0.198", features = [ "derive" ], optional = true }
-serde_json = { version = "1.0.116", optional = true }
+serde_json = { workspace = true, optional = true }
 simba = { version = "0.10", default-features = false }

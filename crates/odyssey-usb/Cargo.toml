@@ -6,32 +6,32 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.75"
-argmin = "0.11.0"
+anyhow = { workspace = true }
+argmin = { workspace = true }
 odyssey-common = { path = "../odyssey-common", features = ["std"] }
-enumn = "0.1.13"
+enumn = { workspace = true }
 nalgebra = "0.35"
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro", features = ["serde-serialize"] }
 serde = "1.0.204"
-serde_json = "1.0.121"
+serde_json = { workspace = true }
 socket2 = "0.6.0"
-tokio = { version = "1.32.0", features = ["macros", "rt-multi-thread", "rt", "sync", "time", "net", "io-util"] }
-tokio-stream = "0.1.14"
-tokio-util = "0.7"
-tracing = "0.1.40"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "rt", "sync", "time", "net", "io-util"] }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", features = ["std", "serde-std", "minicbor"] }
-num-traits = "0.2.19"
-num-derive = "0.4.2"
-nusb = { version = "0.2.1", features = ["tokio"] }
-postcard = { version = "1.1.3", features = ["use-std"] }
-minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
-heapless = "0.9"
+num-traits = { workspace = true }
+num-derive = { workspace = true }
+nusb = { workspace = true, features = ["tokio"] }
+postcard = { workspace = true, features = ["use-std"] }
+minicbor = { workspace = true }
+heapless = { workspace = true }
 futures = "0.3.31"
 rand = "0.8"
-parking_lot = "0.12"
+parking_lot = { workspace = true }
 
 [features]
 pyo3 = ["odyssey-protocol/pyo3"]
 
 [dev-dependencies]
-tokio = { version = "1.32.0", features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util"] }

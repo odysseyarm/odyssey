@@ -10,11 +10,11 @@ description = "Protobuf interface and From impl's for Odyssey Hub server"
 
 [dependencies]
 nalgebra = "0.35"
-odyssey-hub-common = { path = "../odyssey-hub-common", version = "0.1.0" }
+odyssey-hub-common = { workspace = true }
 prost = "0.12.4"
-tonic = { version = "0.11.0", features = ["prost"] }
-odyssey-usb = { path = "../odyssey-usb" }
-postcard = "1"
+tonic = { workspace = true, features = ["prost"] }
+odyssey-usb = { workspace = true }
+postcard = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.11.0"
