@@ -38,6 +38,16 @@ if [ -n "$head" ] && [ "$(printf '%s\n%s\n' "$head" "$version" | sort -V | tail 
     exit 1
 fi
 
+# A stable unit installs stable's head, so the candidate's net-core floor has to
+# be one that head delivers. Promoting the entry that requires a net core before
+# the bridge carrying it would publish a head no stable unit can ever install.
+required=$(jq -r '.requires_netcore // 0' <<<"$entry")
+carried=$(jq -r --arg d "$device" '.devices[$d].firmwares[0].files["net-core"].release // 0' "$stable")
+if [ "$required" -gt "$carried" ]; then
+    echo "error: $version requires net core release $required but stable's newest entry for $device carries $carried; promote the bridge entry that carries release $required first." >&2
+    exit 1
+fi
+
 jq --arg d "$device" --argjson e "$entry" \
     '.devices[$d].firmwares = [$e] + (.devices[$d].firmwares // [])' "$stable" > "$stable.tmp"
 mv "$stable.tmp" "$stable"

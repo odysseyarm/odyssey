@@ -145,8 +145,15 @@ alpha units:
 firmware/manifests/promote.sh <device> <version>
 ```
 
-`promote.sh` refuses to promote a version that is not newer than stable's
-current newest for the device.
+`promote.sh` refuses, before writing anything, a version that is not newer than
+stable's current newest for the device, and an entry whose `requires_netcore`
+is above the net core stable's newest entry carries. Stable units install
+stable's head, so promoting the entry that needs a net core before the bridge
+that delivers it would publish a head none of them can install; promote the
+bridge first, then the entry that requires it.
+
+`test-promote.sh` runs these refusals against synthetic manifests in a scratch
+directory and leaves the committed manifests alone.
 
 ## Schema rules
 
