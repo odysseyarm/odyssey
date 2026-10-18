@@ -10,11 +10,16 @@ name: Dongle Release
 #   .zip  signed package for serial DFU, which is also what the app updates over
 #
 # The build runs `just dist` so a release and a local build cannot drift.
+#
+# Run it by hand from the Actions tab (or `gh workflow run`) to test the build
+# without a tag: a run from a branch builds and uploads the artifacts but
+# publishes nothing.
 
 on:
   push:
     tags:
       - 'dongle-v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,13 +35,16 @@ jobs:
       - name: Verify tag version
         id: check
         run: |
-          tag_version="${GITHUB_REF_NAME#dongle-v}"
           crate_version=$(grep -m1 '^version' firmware/dongle-fw/Cargo.toml | cut -d'"' -f2)
-          if [ "$tag_version" != "$crate_version" ]; then
-            echo "Tag version ($tag_version) does not match firmware/dongle-fw/Cargo.toml version ($crate_version)" >&2
-            exit 1
+          # A manual run is from a branch, so there is no tag to compare.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag_version="${GITHUB_REF_NAME#dongle-v}"
+            if [ "$tag_version" != "$crate_version" ]; then
+              echo "Tag version ($tag_version) does not match firmware/dongle-fw/Cargo.toml version ($crate_version)" >&2
+              exit 1
+            fi
           fi
-          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "version=$crate_version" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build firmware
@@ -95,6 +103,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [check-version, build]
+    if: github.ref_type == 'tag'
     permissions:
       contents: write
     env:
