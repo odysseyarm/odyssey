@@ -1,6 +1,7 @@
 target
 build
 dist-bootloader
+dist-netcore
 .venv
 __pycache__
 .envrc
