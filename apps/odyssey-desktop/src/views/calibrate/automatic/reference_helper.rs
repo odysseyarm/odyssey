@@ -48,13 +48,13 @@ fn agreement_note(wizard: Wizard, size_m: [f64; 2]) -> Option<(String, bool)> {
         ),
         Agreement::Differs => (
             format!(
-                "{percent:.1}% from what the TV reports. TVs are often a little off, so that can be right."
+                "{percent:.1}% from what the TV reports. That's expected if the TV crops its picture, since you measured the whole picture, and displays are often a little off too."
             ),
             false,
         ),
         Agreement::FarOff => (
             format!(
-                "{percent:.0}% from what the TV reports. Check the unit, and where you measured from."
+                "{percent:.0}% from what the TV reports. A TV that crops a lot of its picture can do that. If it doesn't, check the unit and where you measured from."
             ),
             true,
         ),
@@ -292,7 +292,7 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
                 }
                 div {
                     role: "radiogroup",
-                    aria_label: "Unit",
+                    aria_label: "Unit of the number you typed",
                     class: "inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-500",
                     for (option, label) in [(Unit::Inches, "in"), (Unit::Centimeters, "cm"), (Unit::Millimeters, "mm")] {
                         {
