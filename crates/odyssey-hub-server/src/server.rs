@@ -625,16 +625,16 @@ impl Service for Server {
             .into();
 
         // Find the per-device sender and forward as DeviceTaskMessage::WriteVendor
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             // tag is u32 in proto; device tasks expect u8 vendor tag
             let tag_u8 = tag as u8;
             match tx.try_send(DeviceTaskMessage::WriteVendor(tag_u8, data)) {
                 Ok(()) => Ok(Response::new(EmptyReply {})),
                 Err(_) => Err(Status::unavailable("device task not available")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn read_register(
@@ -646,7 +646,7 @@ impl Service for Server {
             .device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::ReadRegister {
                 port: inner.port as u8,
@@ -661,9 +661,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn write_register(
@@ -675,7 +675,7 @@ impl Service for Server {
             .device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::WriteRegister {
                 port: inner.port as u8,
@@ -691,9 +691,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn read_config(
@@ -705,7 +705,7 @@ impl Service for Server {
             .device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::ReadConfig {
                 kind: inner.kind as u8,
@@ -720,9 +720,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn write_config(
@@ -734,7 +734,7 @@ impl Service for Server {
             .device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::WriteConfig {
                 kind: inner.kind as u8,
@@ -748,9 +748,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn flash_settings(
@@ -762,7 +762,7 @@ impl Service for Server {
             .device
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::FlashSettings { reply: reply_tx })
                 .await
@@ -772,9 +772,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn start_pairing(
@@ -787,7 +787,7 @@ impl Service for Server {
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
         tracing::info!("start_pairing RPC for device {:02x?}", dev.uuid);
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tracing::info!(
                 "start_pairing: sending message to device handler for {:02x?}",
@@ -808,13 +808,13 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             tracing::warn!(
                 "start_pairing: device {:02x?} not found in device list",
                 dev.uuid
             );
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn cancel_pairing(
@@ -827,7 +827,7 @@ impl Service for Server {
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
         tracing::info!("cancel_pairing RPC for device {:02x?}", dev.uuid);
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::CancelPairing { reply: reply_tx })
                 .await
@@ -837,13 +837,13 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             tracing::warn!(
                 "cancel_pairing: device {:02x?} not found in device list",
                 dev.uuid
             );
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn clear_bond(
@@ -856,7 +856,7 @@ impl Service for Server {
             .ok_or_else(|| Status::invalid_argument("device missing"))?
             .into();
         tracing::info!("clear_bond RPC for device {:02x?}", dev.uuid);
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::ClearBond { reply: reply_tx })
                 .await
@@ -866,13 +866,13 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             tracing::warn!(
                 "clear_bond: device {:02x?} not found in device list",
                 dev.uuid
             );
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn set_transport_mode(
@@ -889,7 +889,7 @@ impl Service for Server {
             dev.uuid,
             inner.usb_mode
         );
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             tracing::info!("set_transport_mode: device found, sending message to task");
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DeviceTaskMessage::SetTransportMode {
@@ -910,13 +910,13 @@ impl Service for Server {
                 }
                 Err(_) => Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             tracing::warn!(
                 "set_transport_mode: device {:02x?} not found in device list",
                 dev.uuid
             );
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     // -------------------- Dongle RPCs --------------------
@@ -933,7 +933,7 @@ impl Service for Server {
         req: tonic::Request<StartDonglePairingRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
-        if let Some(tx) = self.dongle_sender_for_id(&inner.dongle_id) {
+        match self.dongle_sender_for_id(&inner.dongle_id) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DongleTaskMessage::StartPairing {
                 timeout_ms: inner.timeout_ms,
@@ -946,9 +946,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("dongle task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("dongle"))
-        }
+        }}
     }
 
     async fn cancel_dongle_pairing(
@@ -956,7 +956,7 @@ impl Service for Server {
         req: tonic::Request<CancelDonglePairingRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let id = req.into_inner().dongle_id;
-        if let Some(tx) = self.dongle_sender_for_id(&id) {
+        match self.dongle_sender_for_id(&id) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DongleTaskMessage::CancelPairing { reply: reply_tx })
                 .await
@@ -966,9 +966,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("dongle task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("dongle"))
-        }
+        }}
     }
 
     async fn clear_dongle_bonds(
@@ -976,7 +976,7 @@ impl Service for Server {
         req: tonic::Request<ClearDongleBondsRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let id = req.into_inner().dongle_id;
-        if let Some(tx) = self.dongle_sender_for_id(&id) {
+        match self.dongle_sender_for_id(&id) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(DongleTaskMessage::ClearBonds { reply: reply_tx })
                 .await
@@ -986,9 +986,9 @@ impl Service for Server {
                 Ok(Err(e)) => Err(Status::internal(e)),
                 Err(_) => Err(Status::internal("dongle task dropped reply")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("dongle"))
-        }
+        }}
     }
 
     async fn set_device_name(
@@ -1003,7 +1003,7 @@ impl Service for Server {
         let name = inner.name;
 
         // Persist name to device firmware, which stores it in flash and updates BLE advertising.
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             let _ = tx
                 .send(DeviceTaskMessage::SetDeviceName {
@@ -1019,10 +1019,10 @@ impl Service for Server {
                 }
                 Err(_) => return Err(Status::internal("device task dropped reply")),
             }
-        } else {
+        } _ => {
             tracing::warn!("set_device_name: device {:02x?} not found", dev.uuid);
             return Err(Status::not_found("device"));
-        }
+        }}
 
         // Update device name in device list and notify subscribers
         {
@@ -1042,14 +1042,14 @@ impl Service for Server {
     ) -> Result<Response<EmptyReply>, Status> {
         let dev: common::device::Device = req.into_inner().into();
 
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             match tx.try_send(DeviceTaskMessage::ClearZero) {
                 Ok(()) => Ok(Response::new(EmptyReply {})),
                 Err(_) => Err(Status::unavailable("device task not available")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn reset_zero(
@@ -1058,27 +1058,27 @@ impl Service for Server {
     ) -> Result<Response<EmptyReply>, Status> {
         let dev: common::device::Device = req.into_inner().into();
 
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             match tx.try_send(DeviceTaskMessage::ResetZero) {
                 Ok(()) => Ok(Response::new(EmptyReply {})),
                 Err(_) => Err(Status::unavailable("device task not available")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn save_zero(&self, req: tonic::Request<Device>) -> Result<Response<EmptyReply>, Status> {
         let dev: common::device::Device = req.into_inner().into();
 
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             match tx.try_send(DeviceTaskMessage::SaveZero) {
                 Ok(()) => Ok(Response::new(EmptyReply {})),
                 Err(_) => Err(Status::unavailable("device task not available")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 
     async fn zero(&self, req: tonic::Request<ZeroRequest>) -> Result<Response<EmptyReply>, Status> {
@@ -1135,13 +1135,13 @@ impl Service for Server {
             })
             .transpose()?;
 
-        if let Some(tx) = self.sender_for_uuid(dev.uuid) {
+        match self.sender_for_uuid(dev.uuid) { Some(tx) => {
             match tx.try_send(DeviceTaskMessage::Zero(trans, point, te)) {
                 Ok(()) => Ok(Response::new(EmptyReply {})),
                 Err(_) => Err(Status::unavailable("device task not available")),
             }
-        } else {
+        } _ => {
             Err(Status::not_found("device"))
-        }
+        }}
     }
 }

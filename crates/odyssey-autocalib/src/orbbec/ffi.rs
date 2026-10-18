@@ -465,14 +465,14 @@ impl OrbbecSdk {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
     where
         P: AsRef<::std::ffi::OsStr>,
-    {
+    { unsafe {
         let library = ::libloading::Library::new(path)?;
         Self::from_library(library)
-    }
+    }}
     pub unsafe fn from_library<L>(library: L) -> Result<Self, ::libloading::Error>
     where
         L: Into<::libloading::Library>,
-    {
+    { unsafe {
         let __library = library.into();
         let ob_create_context = __library.get(b"ob_create_context\0").map(|sym| *sym)?;
         let ob_delete_context = __library.get(b"ob_delete_context\0").map(|sym| *sym)?;
@@ -713,339 +713,339 @@ impl OrbbecSdk {
             ob_get_minor_version,
             ob_get_patch_version,
         })
-    }
-    pub unsafe fn ob_create_context(&self, error: *mut *mut ob_error) -> *mut ob_context {
+    }}
+    pub unsafe fn ob_create_context(&self, error: *mut *mut ob_error) -> *mut ob_context { unsafe {
         (self.ob_create_context)(error)
-    }
-    pub unsafe fn ob_delete_context(&self, context: *mut ob_context, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_context(&self, context: *mut ob_context, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_context)(context, error)
-    }
+    }}
     pub unsafe fn ob_query_device_list(
         &self,
         context: *mut ob_context,
         error: *mut *mut ob_error,
-    ) -> *mut ob_device_list {
+    ) -> *mut ob_device_list { unsafe {
         (self.ob_query_device_list)(context, error)
-    }
+    }}
     pub unsafe fn ob_set_logger_to_file(
         &self,
         severity: ob_log_severity,
         directory: *const ::std::os::raw::c_char,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_set_logger_to_file)(severity, directory, error)
-    }
+    }}
     pub unsafe fn ob_set_extensions_directory(
         &self,
         directory: *const ::std::os::raw::c_char,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_set_extensions_directory)(directory, error)
-    }
-    pub unsafe fn ob_delete_device(&self, device: *mut ob_device, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_device(&self, device: *mut ob_device, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_device)(device, error)
-    }
+    }}
     pub unsafe fn ob_device_get_sensor_list(
         &self,
         device: *const ob_device,
         error: *mut *mut ob_error,
-    ) -> *mut ob_sensor_list {
+    ) -> *mut ob_sensor_list { unsafe {
         (self.ob_device_get_sensor_list)(device, error)
-    }
+    }}
     pub unsafe fn ob_device_set_int_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
         value: i32,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_device_set_int_property)(device, property_id, value, error)
-    }
+    }}
     pub unsafe fn ob_device_get_int_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
         error: *mut *mut ob_error,
-    ) -> i32 {
+    ) -> i32 { unsafe {
         (self.ob_device_get_int_property)(device, property_id, error)
-    }
+    }}
     pub unsafe fn ob_device_get_int_property_range(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
         error: *mut *mut ob_error,
-    ) -> ob_int_property_range {
+    ) -> ob_int_property_range { unsafe {
         (self.ob_device_get_int_property_range)(device, property_id, error)
-    }
+    }}
     pub unsafe fn ob_device_set_bool_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
         value: bool,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_device_set_bool_property)(device, property_id, value, error)
-    }
+    }}
     pub unsafe fn ob_device_get_bool_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
         error: *mut *mut ob_error,
-    ) -> bool {
+    ) -> bool { unsafe {
         (self.ob_device_get_bool_property)(device, property_id, error)
-    }
+    }}
     pub unsafe fn ob_device_is_property_supported(
         &self,
         device: *const ob_device,
         property_id: ob_property_id,
         permission: ob_permission_type,
         error: *mut *mut ob_error,
-    ) -> bool {
+    ) -> bool { unsafe {
         (self.ob_device_is_property_supported)(device, property_id, permission, error)
-    }
+    }}
     pub unsafe fn ob_delete_device_list(
         &self,
         list: *mut ob_device_list,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_delete_device_list)(list, error)
-    }
+    }}
     pub unsafe fn ob_device_list_get_count(
         &self,
         list: *const ob_device_list,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_device_list_get_count)(list, error)
-    }
+    }}
     pub unsafe fn ob_device_list_get_device_name(
         &self,
         list: *const ob_device_list,
         index: u32,
         error: *mut *mut ob_error,
-    ) -> *const ::std::os::raw::c_char {
+    ) -> *const ::std::os::raw::c_char { unsafe {
         (self.ob_device_list_get_device_name)(list, index, error)
-    }
+    }}
     pub unsafe fn ob_device_list_get_device_uid(
         &self,
         list: *const ob_device_list,
         index: u32,
         error: *mut *mut ob_error,
-    ) -> *const ::std::os::raw::c_char {
+    ) -> *const ::std::os::raw::c_char { unsafe {
         (self.ob_device_list_get_device_uid)(list, index, error)
-    }
+    }}
     pub unsafe fn ob_device_list_get_device_serial_number(
         &self,
         list: *const ob_device_list,
         index: u32,
         error: *mut *mut ob_error,
-    ) -> *const ::std::os::raw::c_char {
+    ) -> *const ::std::os::raw::c_char { unsafe {
         (self.ob_device_list_get_device_serial_number)(list, index, error)
-    }
+    }}
     pub unsafe fn ob_device_list_get_device_by_uid(
         &self,
         list: *const ob_device_list,
         uid: *const ::std::os::raw::c_char,
         error: *mut *mut ob_error,
-    ) -> *mut ob_device {
+    ) -> *mut ob_device { unsafe {
         (self.ob_device_list_get_device_by_uid)(list, uid, error)
-    }
+    }}
     pub unsafe fn ob_error_get_message(
         &self,
         error: *const ob_error,
-    ) -> *const ::std::os::raw::c_char {
+    ) -> *const ::std::os::raw::c_char { unsafe {
         (self.ob_error_get_message)(error)
-    }
+    }}
     pub unsafe fn ob_error_get_function(
         &self,
         error: *const ob_error,
-    ) -> *const ::std::os::raw::c_char {
+    ) -> *const ::std::os::raw::c_char { unsafe {
         (self.ob_error_get_function)(error)
-    }
-    pub unsafe fn ob_delete_error(&self, error: *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_error(&self, error: *mut ob_error) { unsafe {
         (self.ob_delete_error)(error)
-    }
+    }}
     pub unsafe fn ob_create_filter(
         &self,
         name: *const ::std::os::raw::c_char,
         error: *mut *mut ob_error,
-    ) -> *mut ob_filter {
+    ) -> *mut ob_filter { unsafe {
         (self.ob_create_filter)(name, error)
-    }
-    pub unsafe fn ob_delete_filter(&self, filter: *mut ob_filter, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_filter(&self, filter: *mut ob_filter, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_filter)(filter, error)
-    }
+    }}
     pub unsafe fn ob_filter_set_config_value(
         &self,
         filter: *mut ob_filter,
         config_name: *const ::std::os::raw::c_char,
         value: f64,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_filter_set_config_value)(filter, config_name, value, error)
-    }
+    }}
     pub unsafe fn ob_filter_process(
         &self,
         filter: *mut ob_filter,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> *mut ob_frame {
+    ) -> *mut ob_frame { unsafe {
         (self.ob_filter_process)(filter, frame, error)
-    }
-    pub unsafe fn ob_delete_frame(&self, frame: *const ob_frame, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_frame(&self, frame: *const ob_frame, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_frame)(frame, error)
-    }
+    }}
     pub unsafe fn ob_frame_get_format(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> ob_format {
+    ) -> ob_format { unsafe {
         (self.ob_frame_get_format)(frame, error)
-    }
+    }}
     pub unsafe fn ob_frame_get_timestamp_us(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> u64 {
+    ) -> u64 { unsafe {
         (self.ob_frame_get_timestamp_us)(frame, error)
-    }
+    }}
     pub unsafe fn ob_frame_get_data(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> *mut u8 {
+    ) -> *mut u8 { unsafe {
         (self.ob_frame_get_data)(frame, error)
-    }
+    }}
     pub unsafe fn ob_frame_get_data_size(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_frame_get_data_size)(frame, error)
-    }
+    }}
     pub unsafe fn ob_video_frame_get_width(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_video_frame_get_width)(frame, error)
-    }
+    }}
     pub unsafe fn ob_video_frame_get_height(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_video_frame_get_height)(frame, error)
-    }
+    }}
     pub unsafe fn ob_depth_frame_get_value_scale(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> f32 {
+    ) -> f32 { unsafe {
         (self.ob_depth_frame_get_value_scale)(frame, error)
-    }
+    }}
     pub unsafe fn ob_accel_frame_get_value(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> ob_accel_value {
+    ) -> ob_accel_value { unsafe {
         (self.ob_accel_frame_get_value)(frame, error)
-    }
+    }}
     pub unsafe fn ob_gyro_frame_get_value(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
-    ) -> ob_gyro_value {
+    ) -> ob_gyro_value { unsafe {
         (self.ob_gyro_frame_get_value)(frame, error)
-    }
+    }}
     pub unsafe fn ob_frameset_get_frame(
         &self,
         frameset: *const ob_frame,
         frame_type: ob_frame_type,
         error: *mut *mut ob_error,
-    ) -> *mut ob_frame {
+    ) -> *mut ob_frame { unsafe {
         (self.ob_frameset_get_frame)(frameset, frame_type, error)
-    }
+    }}
     pub unsafe fn ob_create_pipeline_with_device(
         &self,
         dev: *const ob_device,
         error: *mut *mut ob_error,
-    ) -> *mut ob_pipeline {
+    ) -> *mut ob_pipeline { unsafe {
         (self.ob_create_pipeline_with_device)(dev, error)
-    }
-    pub unsafe fn ob_delete_pipeline(&self, pipeline: *mut ob_pipeline, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_pipeline(&self, pipeline: *mut ob_pipeline, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_pipeline)(pipeline, error)
-    }
+    }}
     pub unsafe fn ob_pipeline_start_with_config(
         &self,
         pipeline: *mut ob_pipeline,
         config: *const ob_config,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_pipeline_start_with_config)(pipeline, config, error)
-    }
-    pub unsafe fn ob_pipeline_stop(&self, pipeline: *mut ob_pipeline, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_pipeline_stop(&self, pipeline: *mut ob_pipeline, error: *mut *mut ob_error) { unsafe {
         (self.ob_pipeline_stop)(pipeline, error)
-    }
+    }}
     pub unsafe fn ob_pipeline_wait_for_frameset(
         &self,
         pipeline: *mut ob_pipeline,
         timeout_ms: u32,
         error: *mut *mut ob_error,
-    ) -> *mut ob_frame {
+    ) -> *mut ob_frame { unsafe {
         (self.ob_pipeline_wait_for_frameset)(pipeline, timeout_ms, error)
-    }
+    }}
     pub unsafe fn ob_pipeline_get_stream_profile_list(
         &self,
         pipeline: *const ob_pipeline,
         sensorType: ob_sensor_type,
         error: *mut *mut ob_error,
-    ) -> *mut ob_stream_profile_list {
+    ) -> *mut ob_stream_profile_list { unsafe {
         (self.ob_pipeline_get_stream_profile_list)(pipeline, sensorType, error)
-    }
+    }}
     pub unsafe fn ob_pipeline_enable_frame_sync(
         &self,
         pipeline: *mut ob_pipeline,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_pipeline_enable_frame_sync)(pipeline, error)
-    }
-    pub unsafe fn ob_create_config(&self, error: *mut *mut ob_error) -> *mut ob_config {
+    }}
+    pub unsafe fn ob_create_config(&self, error: *mut *mut ob_error) -> *mut ob_config { unsafe {
         (self.ob_create_config)(error)
-    }
-    pub unsafe fn ob_delete_config(&self, config: *mut ob_config, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_config(&self, config: *mut ob_config, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_config)(config, error)
-    }
+    }}
     pub unsafe fn ob_config_enable_stream_with_stream_profile(
         &self,
         config: *mut ob_config,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_config_enable_stream_with_stream_profile)(config, profile, error)
-    }
+    }}
     pub unsafe fn ob_config_set_align_mode(
         &self,
         config: *mut ob_config,
         mode: ob_align_mode,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_config_set_align_mode)(config, mode, error)
-    }
+    }}
     pub unsafe fn ob_config_set_frame_aggregate_output_mode(
         &self,
         config: *mut ob_config,
         mode: ob_frame_aggregate_output_mode,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_config_set_frame_aggregate_output_mode)(config, mode, error)
-    }
+    }}
     pub unsafe fn ob_sensor_get_stream_profile_list(
         &self,
         sensor: *const ob_sensor,
         error: *mut *mut ob_error,
-    ) -> *mut ob_stream_profile_list {
+    ) -> *mut ob_stream_profile_list { unsafe {
         (self.ob_sensor_get_stream_profile_list)(sensor, error)
-    }
+    }}
     pub unsafe fn ob_sensor_start(
         &self,
         sensor: *mut ob_sensor,
@@ -1053,145 +1053,145 @@ impl OrbbecSdk {
         callback: ob_frame_callback,
         user_data: *mut ::std::os::raw::c_void,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_sensor_start)(sensor, profile, callback, user_data, error)
-    }
-    pub unsafe fn ob_sensor_stop(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_sensor_stop(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) { unsafe {
         (self.ob_sensor_stop)(sensor, error)
-    }
-    pub unsafe fn ob_delete_sensor(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) {
+    }}
+    pub unsafe fn ob_delete_sensor(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) { unsafe {
         (self.ob_delete_sensor)(sensor, error)
-    }
+    }}
     pub unsafe fn ob_sensor_list_get_count(
         &self,
         sensor_list: *const ob_sensor_list,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_sensor_list_get_count)(sensor_list, error)
-    }
+    }}
     pub unsafe fn ob_sensor_list_get_sensor_type(
         &self,
         sensor_list: *const ob_sensor_list,
         index: u32,
         error: *mut *mut ob_error,
-    ) -> ob_sensor_type {
+    ) -> ob_sensor_type { unsafe {
         (self.ob_sensor_list_get_sensor_type)(sensor_list, index, error)
-    }
+    }}
     pub unsafe fn ob_sensor_list_get_sensor_by_type(
         &self,
         sensor_list: *const ob_sensor_list,
         sensorType: ob_sensor_type,
         error: *mut *mut ob_error,
-    ) -> *mut ob_sensor {
+    ) -> *mut ob_sensor { unsafe {
         (self.ob_sensor_list_get_sensor_by_type)(sensor_list, sensorType, error)
-    }
+    }}
     pub unsafe fn ob_delete_sensor_list(
         &self,
         sensor_list: *mut ob_sensor_list,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_delete_sensor_list)(sensor_list, error)
-    }
+    }}
     pub unsafe fn ob_delete_stream_profile(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_delete_stream_profile)(profile, error)
-    }
+    }}
     pub unsafe fn ob_stream_profile_get_format(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> ob_format {
+    ) -> ob_format { unsafe {
         (self.ob_stream_profile_get_format)(profile, error)
-    }
+    }}
     pub unsafe fn ob_stream_profile_get_extrinsic_to(
         &self,
         source: *const ob_stream_profile,
         target: *mut ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> ob_extrinsic {
+    ) -> ob_extrinsic { unsafe {
         (self.ob_stream_profile_get_extrinsic_to)(source, target, error)
-    }
+    }}
     pub unsafe fn ob_video_stream_profile_get_fps(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_video_stream_profile_get_fps)(profile, error)
-    }
+    }}
     pub unsafe fn ob_video_stream_profile_get_width(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_video_stream_profile_get_width)(profile, error)
-    }
+    }}
     pub unsafe fn ob_video_stream_profile_get_height(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_video_stream_profile_get_height)(profile, error)
-    }
+    }}
     pub unsafe fn ob_video_stream_profile_get_intrinsic(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> ob_camera_intrinsic {
+    ) -> ob_camera_intrinsic { unsafe {
         (self.ob_video_stream_profile_get_intrinsic)(profile, error)
-    }
+    }}
     pub unsafe fn ob_video_stream_profile_get_distortion(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> ob_camera_distortion {
+    ) -> ob_camera_distortion { unsafe {
         (self.ob_video_stream_profile_get_distortion)(profile, error)
-    }
+    }}
     pub unsafe fn ob_accel_stream_profile_get_sample_rate(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> ob_accel_sample_rate {
+    ) -> ob_accel_sample_rate { unsafe {
         (self.ob_accel_stream_profile_get_sample_rate)(profile, error)
-    }
+    }}
     pub unsafe fn ob_gyro_stream_profile_get_sample_rate(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
-    ) -> ob_gyro_sample_rate {
+    ) -> ob_gyro_sample_rate { unsafe {
         (self.ob_gyro_stream_profile_get_sample_rate)(profile, error)
-    }
+    }}
     pub unsafe fn ob_stream_profile_list_get_count(
         &self,
         profile_list: *const ob_stream_profile_list,
         error: *mut *mut ob_error,
-    ) -> u32 {
+    ) -> u32 { unsafe {
         (self.ob_stream_profile_list_get_count)(profile_list, error)
-    }
+    }}
     pub unsafe fn ob_stream_profile_list_get_profile(
         &self,
         profile_list: *const ob_stream_profile_list,
         index: ::std::os::raw::c_int,
         error: *mut *mut ob_error,
-    ) -> *mut ob_stream_profile {
+    ) -> *mut ob_stream_profile { unsafe {
         (self.ob_stream_profile_list_get_profile)(profile_list, index, error)
-    }
+    }}
     pub unsafe fn ob_delete_stream_profile_list(
         &self,
         profile_list: *const ob_stream_profile_list,
         error: *mut *mut ob_error,
-    ) {
+    ) { unsafe {
         (self.ob_delete_stream_profile_list)(profile_list, error)
-    }
-    pub unsafe fn ob_get_major_version(&self) -> ::std::os::raw::c_int {
+    }}
+    pub unsafe fn ob_get_major_version(&self) -> ::std::os::raw::c_int { unsafe {
         (self.ob_get_major_version)()
-    }
-    pub unsafe fn ob_get_minor_version(&self) -> ::std::os::raw::c_int {
+    }}
+    pub unsafe fn ob_get_minor_version(&self) -> ::std::os::raw::c_int { unsafe {
         (self.ob_get_minor_version)()
-    }
-    pub unsafe fn ob_get_patch_version(&self) -> ::std::os::raw::c_int {
+    }}
+    pub unsafe fn ob_get_patch_version(&self) -> ::std::os::raw::c_int { unsafe {
         (self.ob_get_patch_version)()
-    }
+    }}
 }

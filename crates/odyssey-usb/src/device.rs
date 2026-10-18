@@ -290,7 +290,7 @@ impl PacketTransport {
     /// Create a PacketTransport that routes VM packets through a MuxDevice
     pub fn mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
         use rand::Rng;
-        let transport_id: u32 = rand::thread_rng().gen();
+        let transport_id: u32 = rand::thread_rng().r#gen();
         debug!(
             "PacketTransport::mux() [ID:{}] called for device {:02X}:{:02X}...",
             transport_id, device_addr[0], device_addr[1]
@@ -430,7 +430,7 @@ impl VmDevice {
         let state_cloned = Arc::clone(&state);
 
         use rand::Rng;
-        let dispatcher_id: u32 = rand::thread_rng().gen();
+        let dispatcher_id: u32 = rand::thread_rng().r#gen();
         debug!(
             "Created new VmDevice State [Dispatcher ID:{}]",
             dispatcher_id
@@ -631,7 +631,7 @@ impl VmDevice {
     }
 
     fn get_oneshot_slot(&self) -> anyhow::Result<(ResponseSlot, oneshot::Receiver<PacketData>)> {
-        if let Some(thread_state) = self.thread_state.upgrade() {
+        match self.thread_state.upgrade() { Some(thread_state) => {
             let mut response_channels = thread_state.response_channels.lock();
             // Slot reservation: IDs 0-207 for control, 208-255 for streaming
             // Control requests (oneshot) use the low range
@@ -665,9 +665,9 @@ impl VmDevice {
                     ));
                 }
             }
-        } else {
+        } _ => {
             debug!("ERROR: thread_state upgrade failed - State was dropped!");
-        }
+        }}
         Err(anyhow::anyhow!("Failed to allocate request id"))
     }
 
@@ -836,7 +836,7 @@ impl VmDevice {
     pub async fn stream(
         &self,
         stream_type: PacketType,
-    ) -> Result<impl Stream<Item = PacketData> + Send + Sync> {
+    ) -> Result<impl Stream<Item = PacketData> + Send + Sync + use<>> {
         if let Some(thread_state) = self.thread_state.upgrade() {
             if thread_state.streams_active[stream_type].swap(true, Ordering::Relaxed) {
                 return Err(anyhow!("cannot have more than one {stream_type:?} stream"));
@@ -867,7 +867,7 @@ impl VmDevice {
         Err(anyhow!("thread state dropped"))
     }
 
-    pub async fn stream_mot_data(&self) -> Result<impl Stream<Item = ObjectReport> + Send + Sync> {
+    pub async fn stream_mot_data(&self) -> Result<impl Stream<Item = ObjectReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::ObjectReport())
             .await?
@@ -876,7 +876,7 @@ impl VmDevice {
 
     pub async fn stream_combined_markers(
         &self,
-    ) -> Result<impl Stream<Item = CombinedMarkersReport> + Send + Sync> {
+    ) -> Result<impl Stream<Item = CombinedMarkersReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::CombinedMarkersReport())
             .await?
@@ -885,28 +885,28 @@ impl VmDevice {
 
     pub async fn stream_poc_markers(
         &self,
-    ) -> Result<impl Stream<Item = PocMarkersReport> + Send + Sync> {
+    ) -> Result<impl Stream<Item = PocMarkersReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::PocMarkersReport())
             .await?
             .filter_map(|x| x.poc_markers_report()))
     }
 
-    pub async fn stream_accel(&self) -> Result<impl Stream<Item = AccelReport> + Send + Sync> {
+    pub async fn stream_accel(&self) -> Result<impl Stream<Item = AccelReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::AccelReport())
             .await?
             .filter_map(|x| x.accel_report()))
     }
 
-    pub async fn stream_impact(&self) -> Result<impl Stream<Item = ImpactReport> + Send + Sync> {
+    pub async fn stream_impact(&self) -> Result<impl Stream<Item = ImpactReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::ImpactReport())
             .await?
             .filter_map(|x| x.impact_report()))
     }
 
-    pub async fn stream_battery(&self) -> Result<impl Stream<Item = BatteryReport> + Send + Sync> {
+    pub async fn stream_battery(&self) -> Result<impl Stream<Item = BatteryReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::BatteryReport())
             .await?
