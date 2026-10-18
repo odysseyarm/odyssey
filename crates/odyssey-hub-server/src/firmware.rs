@@ -275,6 +275,33 @@ pub fn select_firmware<'a>(
     offer
 }
 
+/// Whether offering `entry` to a unit changes anything worth a click.
+///
+/// A newer application always does. The same version does only as a repair: the
+/// entry carries a net core above the one the unit reports, which is what a
+/// failed net-core copy leaves behind once the application write has gone
+/// through. Without this the unit sits on the bridge with a stale net core,
+/// nothing newer is installable past its floor, and "run the update again" has
+/// nothing to offer.
+pub fn is_worth_installing(
+    entry: &FirmwareEntry,
+    installed: [u16; 3],
+    running_netcore: u16,
+) -> bool {
+    let Some(version) = entry.version_parts() else {
+        return false;
+    };
+    if version_newer(installed, version) {
+        return true;
+    }
+    version == installed
+        && entry
+            .files
+            .get("net-core")
+            .and_then(|file| file.release)
+            .is_some_and(|carried| carried > running_netcore)
+}
+
 /// Which GitHub release a firmware file is published under.
 ///
 /// The bootloader and the net core are released on their own, because they
@@ -1483,29 +1510,124 @@ mod tests {
         assert!(offer.net_core_blocked.is_none());
     }
 
-    /// Units only ever step forward through entries, so an entry whose floor no
-    /// older entry can raise a unit to would be unreachable: a unit never gets
-    /// past the entries before it. Historical entries carry no net core.
-    #[test]
-    fn committed_manifest_floors_are_reachable_through_older_entries() {
-        for (name, text) in [("alpha", ALPHA), ("stable", STABLE)] {
-            let manifest: FirmwareManifest = serde_json::from_str(text).unwrap();
-            for (device, entries) in &manifest.devices {
-                for (index, entry) in entries.firmwares.iter().enumerate() {
-                    let reachable = entries.firmwares[index + 1..]
-                        .iter()
-                        .filter_map(|older| older.files.get("net-core").and_then(|f| f.release))
-                        .max()
-                        .unwrap_or(0);
-                    assert!(
-                        entry.requires_netcore <= reachable,
-                        "{name} {device} {} requires net core {} but no older entry carries more than {reachable}",
-                        entry.version,
-                        entry.requires_netcore
-                    );
+    /// Walk a unit up through a manifest the way the desktop does: take the
+    /// newest entry its running net core allows, skip it unless installing it
+    /// is worth a click, and let the write raise the net core to the release
+    /// that entry carries. Returns the version the unit ends on. The
+    /// `min_desktop` axis is separate, so the desktop here is always new enough.
+    fn walk(manifest: &FirmwareManifest, device: &str, mut app: [u16; 3], mut running: u16) -> [u16; 3] {
+        for _ in 0..=2 * manifest.devices[device].firmwares.len() {
+            let Some(entry) = select_firmware(manifest, device, [u16::MAX; 3], running).offered
+            else {
+                break;
+            };
+            if !is_worth_installing(entry, app, running) {
+                break;
+            }
+            app = entry.version_parts().unwrap();
+            if let Some(release) = entry.files.get("net-core").and_then(|f| f.release) {
+                running = running.max(release);
+            }
+        }
+        app
+    }
+
+    /// A floor is only real if units can reach it. Selection is greedy, so an
+    /// entry that carries a net core is useless as a bridge when a newer entry
+    /// is installable without it: units take the newer one and never pick it up.
+    /// Checking that older entries carry a release is not enough; walk every
+    /// starting point a unit can have and require it to arrive at the newest.
+    fn unreachable_starts(manifest: &FirmwareManifest) -> Vec<String> {
+        let mut stuck = Vec::new();
+        for (device, entries) in &manifest.devices {
+            let newest = entries.firmwares[0].version_parts().unwrap();
+            let mut starts = vec![([0, 0, 0], 0u16)];
+            for entry in &entries.firmwares {
+                if let (Some(version), Some(release)) = (
+                    entry.version_parts(),
+                    entry.files.get("net-core").and_then(|f| f.release),
+                ) {
+                    // A unit that took the application but whose net-core copy
+                    // failed sits at this version with any lower release.
+                    for running in 0..=release {
+                        starts.push((version, running));
+                    }
+                }
+            }
+            for (app, running) in starts {
+                let ends = walk(manifest, device, app, running);
+                if ends != newest {
+                    stuck.push(format!(
+                        "{device}: a unit at {app:?} with net core {running} ends on {ends:?}, not {newest:?}"
+                    ));
                 }
             }
         }
+        stuck
+    }
+
+    #[test]
+    fn committed_manifests_let_every_unit_reach_the_newest_entry() {
+        for (name, text) in [("alpha", ALPHA), ("stable", STABLE)] {
+            let manifest: FirmwareManifest = serde_json::from_str(text).unwrap();
+            let stuck = unreachable_starts(&manifest);
+            assert!(stuck.is_empty(), "{name}: {stuck:?}");
+        }
+    }
+
+    #[test]
+    fn a_proper_bridge_reaches_the_newest_entry_from_every_start() {
+        let manifest = netcore_manifest(&[
+            ("0.3.0", 2, Some(2)),
+            ("0.2.1", 0, Some(2)),
+            ("0.2.0", 0, Some(1)),
+        ]);
+        assert_eq!(unreachable_starts(&manifest), Vec::<String>::new());
+    }
+
+    /// The bridge below is older than an entry that needs no net core, so units
+    /// pick the newer one, never receive the release, and cannot take 0.3.0.
+    #[test]
+    fn a_bridge_that_a_newer_entry_overtakes_leaves_units_stranded() {
+        let manifest = netcore_manifest(&[
+            ("0.3.0", 1, None),
+            ("0.2.0", 0, None),
+            ("0.1.0", 0, Some(1)),
+        ]);
+        assert_eq!(walk(&manifest, "atslite1", [0, 0, 0], 0), [0, 2, 0]);
+        assert!(!unreachable_starts(&manifest).is_empty());
+    }
+
+    /// The application write went through but the net-core copy did not, so the
+    /// unit sits on the bridge with a stale net core, below the next floor. The
+    /// only way forward is to install the bridge again.
+    #[test]
+    fn a_failed_net_core_copy_is_repaired_by_reinstalling_the_same_version() {
+        let manifest = netcore_manifest(&[
+            ("0.3.0", 2, Some(2)),
+            ("0.2.1", 0, Some(2)),
+            ("0.2.0", 0, Some(1)),
+        ]);
+        assert_eq!(walk(&manifest, "atslite1", [0, 2, 1], 1), [0, 3, 0]);
+        assert_eq!(walk(&manifest, "atslite1", [0, 2, 1], 0), [0, 3, 0]);
+    }
+
+    #[test]
+    fn the_same_version_is_only_offered_as_a_repair() {
+        let manifest = netcore_manifest(&[("0.2.1", 0, Some(2)), ("0.2.0", 0, None)]);
+        let bridge = &manifest.devices["atslite1"].firmwares[0];
+        let plain = &manifest.devices["atslite1"].firmwares[1];
+        // Net core behind what the entry carries: repair.
+        assert!(is_worth_installing(bridge, [0, 2, 1], 1));
+        assert!(is_worth_installing(bridge, [0, 2, 1], 0));
+        // Net core already there or ahead: nothing to do.
+        assert!(!is_worth_installing(bridge, [0, 2, 1], 2));
+        assert!(!is_worth_installing(bridge, [0, 2, 1], 3));
+        // An entry that carries no net core never repairs anything.
+        assert!(!is_worth_installing(plain, [0, 2, 0], 0));
+        // Newer always counts; older never does.
+        assert!(is_worth_installing(bridge, [0, 2, 0], 2));
+        assert!(!is_worth_installing(plain, [0, 2, 1], 0));
     }
 
     #[test]
