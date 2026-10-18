@@ -23,6 +23,18 @@ pub const PCD_CMD_MAGIC: u32 = 0x50434431; // "PCD1"
 /// Magic value to identify valid PCD status structure
 pub const PCD_STATUS_MAGIC: u32 = 0x50434453; // "PCDS"
 
+/// How many times the application core starts the network core bootloader for
+/// one update before it gives up and lets the unit back into DFU. A copy takes
+/// seconds, so a command still unanswered after a few tries is not going to be.
+pub const MAX_COPY_ATTEMPTS: u32 = 3;
+
+/// The attempt count to persist for this start, given the count stored in
+/// flash (erased flash means none yet), or `None` once the attempts are spent.
+pub fn next_copy_attempt(stored: u32) -> Option<u32> {
+    let used = if stored == u32::MAX { 0 } else { stored };
+    (used < MAX_COPY_ATTEMPTS).then_some(used + 1)
+}
+
 /// PCD command written by application core
 #[repr(C)]
 pub struct PcdCmd {
@@ -246,5 +258,17 @@ mod tests {
         ] {
             assert!(!region(true, Some(code)).copy_pending(), "{code:?}");
         }
+    }
+
+    #[test]
+    fn the_copy_is_attempted_a_bounded_number_of_times() {
+        // Erased flash means nothing was tried yet.
+        assert_eq!(next_copy_attempt(u32::MAX), Some(1));
+        assert_eq!(next_copy_attempt(0), Some(1));
+        assert_eq!(next_copy_attempt(1), Some(2));
+        assert_eq!(next_copy_attempt(MAX_COPY_ATTEMPTS - 1), Some(MAX_COPY_ATTEMPTS));
+        assert_eq!(next_copy_attempt(MAX_COPY_ATTEMPTS), None);
+        // A value that is neither erased nor a plausible count is not retried.
+        assert_eq!(next_copy_attempt(0xDEAD_BEEF), None);
     }
 }
