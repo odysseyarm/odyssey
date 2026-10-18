@@ -175,4 +175,76 @@ impl PcdRegion {
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
         &mut *(addr as *mut Self)
     }
+
+    /// Whether the application core still has to run the network core
+    /// bootloader: a command is waiting and no terminal status answers it.
+    ///
+    /// A freshly written command has no status at all (the bootloader clears it
+    /// when it writes the command), so a missing status counts as pending. Only
+    /// the status the network core bootloader writes after it finishes, or
+    /// fails, settles a command.
+    pub fn copy_pending(&self) -> bool {
+        if !self.cmd.is_valid() {
+            return false;
+        }
+        if !self.status.is_valid() {
+            return true;
+        }
+        !matches!(
+            self.status.get_status(),
+            Some(
+                PcdStatusCode::Success
+                    | PcdStatusCode::FailedCopy
+                    | PcdStatusCode::FailedVerify
+                    | PcdStatusCode::AppConfirmed
+            )
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn region(cmd: bool, status: Option<PcdStatusCode>) -> PcdRegion {
+        // SAFETY: every field is plain integers or atomics, for which all-zero is valid.
+        let mut r: PcdRegion = unsafe { core::mem::zeroed() };
+        if cmd {
+            r.cmd.set_update(0x1000, 4096);
+        }
+        if let Some(code) = status {
+            r.status.magic.store(PCD_STATUS_MAGIC, Ordering::Release);
+            r.status.status.store(code as u32, Ordering::Release);
+        }
+        r
+    }
+
+    #[test]
+    fn a_fresh_command_without_status_is_pending() {
+        assert!(region(true, None).copy_pending());
+    }
+
+    #[test]
+    fn no_command_is_never_pending() {
+        assert!(!region(false, None).copy_pending());
+        assert!(!region(false, Some(PcdStatusCode::Updating)).copy_pending());
+    }
+
+    #[test]
+    fn an_interrupted_copy_is_resumed() {
+        assert!(region(true, Some(PcdStatusCode::Updating)).copy_pending());
+        assert!(region(true, Some(PcdStatusCode::Idle)).copy_pending());
+    }
+
+    #[test]
+    fn a_terminal_status_settles_the_command() {
+        for code in [
+            PcdStatusCode::Success,
+            PcdStatusCode::FailedCopy,
+            PcdStatusCode::FailedVerify,
+            PcdStatusCode::AppConfirmed,
+        ] {
+            assert!(!region(true, Some(code)).copy_pending(), "{code:?}");
+        }
+    }
 }
