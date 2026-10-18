@@ -115,6 +115,11 @@ pub struct UiState {
     /// What kind of display the calibration wizard last calibrated on each
     /// monitor, so a projector is not asked about again as a TV.
     pub display_kinds: Vec<MonitorDisplayKind>,
+    /// Size a flat screen by the depth camera instead of by what the display
+    /// reports about itself. Off by default: a display's own size is a better
+    /// scale anchor when it is right. Applies to every monitor, and a size the
+    /// user types still wins over both.
+    pub prefer_camera_size: bool,
 }
 
 /// What a display is, as far as calibration cares: a flat panel has a known
@@ -570,6 +575,7 @@ mod tests {
                 monitor: key(),
                 kind: DisplayKind::Projector,
             }],
+            prefer_camera_size: true,
         };
 
         block_on(async {
@@ -611,6 +617,13 @@ mod tests {
         );
         let state: UiState = json5::from_str(r#"{ "from_a_newer_version": 3 }"#).unwrap();
         assert_eq!(state, UiState::default());
+    }
+
+    #[test]
+    fn camera_size_is_off_unless_asked_for() {
+        assert!(!UiState::default().prefer_camera_size);
+        let state: UiState = json5::from_str(r#"{ "prefer_camera_size": true }"#).unwrap();
+        assert!(state.prefer_camera_size);
     }
 
     fn other_key() -> MonitorKey {

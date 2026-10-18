@@ -450,6 +450,25 @@ impl Wizard {
         parse_entered(&self.size_text.read(), self.field())
     }
 
+    /// Whether flat screens are sized by the camera rather than by what the
+    /// display reports. A remembered setting, off until someone turns it on.
+    pub fn prefer_camera_size(self) -> bool {
+        self.ui_state.read().prefer_camera_size
+    }
+
+    /// Turns the camera-size preference on or off and remembers it.
+    pub fn set_prefer_camera_size(mut self, on: bool) {
+        self.ui_state.write().prefer_camera_size = on;
+        spawn(async move {
+            // Read again so anything else saved in the meantime is not overwritten.
+            let mut state = config::ui_state_async().await.into_value();
+            state.prefer_camera_size = on;
+            if let Err(e) = config::ui_state_save_async(&state).await {
+                tracing::warn!("Failed to save UI state: {e}");
+            }
+        });
+    }
+
     /// The size and edge rule the session will get for the current answers.
     pub fn size_plan(self) -> Option<SizePlan> {
         let aspect = self.aspect()?;
@@ -459,6 +478,7 @@ impl Wizard {
             self.finding.read().as_ref(),
             entered,
             aspect,
+            self.prefer_camera_size(),
         ))
     }
 
