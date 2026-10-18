@@ -375,10 +375,14 @@ gen-release requires_bootloader requires_netcore min_desktop:
     fi
     # requires_netcore is checked against the net core a unit is already running,
     # and nothing reads the net core back until the new application runs, so the
-    # net core this entry carries can never satisfy its own floor.
-    if [ "$REQUIRES_NETCORE" -gt "$NC_NEWEST_RELEASE" ]; then
-        echo "Error: requires_netcore $REQUIRES_NETCORE is above the newest net core already published in an entry ($NC_NEWEST_RELEASE)."
-        echo "A net-core bump ships in a bridge entry that requires only what is deployed; only a later entry may require it."
+    # net core this entry carries can never satisfy its own floor. Selection is
+    # greedy: units take the newest entry they are allowed, so a floor may only
+    # name a release the current newest entry delivers. A release carried only by
+    # an older entry gets overtaken and never reaches units.
+    NC_HEAD_RELEASE=$(jq -r '.devices["legacy-atslite1"].firmwares[0].files["net-core"].release // 0' "$MANIFEST")
+    if [ "$REQUIRES_NETCORE" -gt "$NC_HEAD_RELEASE" ]; then
+        echo "Error: requires_netcore $REQUIRES_NETCORE is above the net core carried by the newest entry ($NC_HEAD_RELEASE)."
+        echo "A net-core bump ships in a bridge entry that requires only what is deployed; the bridge has to be the newest entry when a later one requires the new release."
         exit 1
     fi
 
