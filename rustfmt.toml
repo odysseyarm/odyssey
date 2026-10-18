@@ -1,0 +1,17 @@
+# One formatting config for the whole repo: apps, crates, sdk and firmware.
+#
+# The options below are unstable, so this needs the nightly in
+# rust-toolchain.toml (rustup picks it up on its own).
+#
+# Every first-party crate is on edition 2024, which is why one edition here is
+# enough for files rustfmt is handed directly.
+unstable_features = true
+edition = "2024"
+style_edition = "2024"
+
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+
+# third_party/libui-rs is an upstream subtree (edition 2015); leave it as it is
+# so subtree updates keep merging cleanly.
+ignore = ["third_party"]

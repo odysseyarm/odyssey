@@ -1,4 +1,0 @@
-group_imports = "StdExternalCrate"
-imports_granularity = "Module"
-edition = "2021"
-max_width = 120
