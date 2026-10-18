@@ -3,7 +3,7 @@
 //! Then the success screen with what to do next.
 
 use dioxus::prelude::*;
-use odyssey_autocalib::session::EdgeCheck;
+use odyssey_autocalib::session::{EdgeCheck, SizeSource};
 
 use super::kind::source_label;
 use super::quality::{Verdict, assess, disagreement_message};
@@ -167,12 +167,14 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                     }
                 }
             }
-            if matches!(outcome.edges, EdgeCheck::Cropped { .. }) {
+            if outcome.size_source == SizeSource::Measured
+                && matches!(outcome.edges, EdgeCheck::Cropped { .. })
+            {
                 div {
                     class: "flex items-start gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100",
                     IconView { icon: Icon::Crop, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
                     span {
-                        "This screen hides the edge of its picture, so the size above is the whole picture, including the part you can't see. For the most exact result, turn off overscan in the TV's picture settings ('Just Scan' or 'PC mode') and measure again."
+                        "This screen hides the edge of its picture. The size above is the whole picture the computer draws, including the part you can't see, and the calibration is for that picture. Turning off overscan in the TV's picture settings ('Just Scan' or 'PC mode') makes all of it visible, which also lets the TV's own size be used."
                     }
                 }
             }
