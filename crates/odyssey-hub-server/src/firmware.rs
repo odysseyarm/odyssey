@@ -106,12 +106,17 @@ pub struct DeviceManifest {
 
 /// A single firmware version entry.
 ///
-/// `requires_bootloader` and `requires_netcore` are the lowest bootloader and
-/// net core releases this application can run on, `0` when it has no
-/// requirement. `min_desktop` is the oldest Odyssey Desktop that is actually
-/// required and tested with this firmware, which is not necessarily the desktop
-/// that shipped alongside it: coupling a hotfix to a desktop upgrade it does not
-/// need would strand users for no reason.
+/// `requires_bootloader` is the lowest bootloader release this application can
+/// run on, `0` when it has no requirement. `requires_netcore` is the net core
+/// release the unit must already be *running*, as it reports itself, before
+/// this entry may be installed; the entry's own `net-core` release never counts
+/// towards it, because nothing can report the net core between writing it and
+/// the new application running. A net core bump therefore ships in a bridge
+/// entry whose `requires_netcore` is only what units run today, and only a later
+/// entry may require the newer release. `min_desktop` is the oldest Odyssey
+/// Desktop that is actually required and tested with this firmware, which is
+/// not necessarily the desktop that shipped alongside it: coupling a hotfix to
+/// a desktop upgrade it does not need would strand users for no reason.
 ///
 /// All three are required, not optional: an entry that omitted one would read as
 /// unrestricted, so `gen-release` always writes them and a manifest missing one
@@ -203,14 +208,23 @@ pub async fn fetch_manifest(channel: FirmwareChannel) -> anyhow::Result<Firmware
     Ok(manifest)
 }
 
-/// What a manifest offers one device, given the desktop doing the offering.
+/// What a manifest offers one device, given the desktop doing the offering and
+/// the net core the unit is running.
+///
+/// `held_back` and `net_core_blocked` only ever name entries newer than
+/// `offered`: an older entry that was skipped is not news.
 #[derive(Debug, Clone, Copy)]
 pub struct FirmwareOffer<'a> {
-    /// The newest entry this desktop can install.
+    /// The newest entry this desktop can install on this unit.
     pub offered: Option<&'a FirmwareEntry>,
     /// A newer entry that exists but needs a newer desktop. The user is told so
     /// and chooses whether to update; nothing updates the desktop for them.
     pub held_back: Option<&'a FirmwareEntry>,
+    /// A newer entry the desktop could install, were the unit's net core
+    /// further along. When `offered` is set it is normally the bridge that
+    /// brings the net core up to what this entry requires; when it is not, the
+    /// unit has no path to this entry from the net core it runs.
+    pub net_core_blocked: Option<&'a FirmwareEntry>,
 }
 
 /// Choose firmware for a device type.
@@ -219,21 +233,26 @@ pub struct FirmwareOffer<'a> {
 /// allowed: the manifest says what a device should run, and refusing to cross
 /// a minor would strand devices on a line that is no longer built. An entry
 /// whose `min_desktop` is above `desktop`, or cannot be read, is not
-/// installable here.
+/// installable here. Neither is one whose `requires_netcore` is above
+/// `running_netcore`, the release the unit reports (`0` when it reports none,
+/// which never satisfies a floor above `0`). An entry skipped for both reasons
+/// counts as held back by the desktop.
 pub fn select_firmware<'a>(
     manifest: &'a FirmwareManifest,
     device_type: &str,
     desktop: [u16; 3],
+    running_netcore: u16,
 ) -> FirmwareOffer<'a> {
     let mut offer = FirmwareOffer {
         offered: None,
         held_back: None,
+        net_core_blocked: None,
     };
     let Some(device) = manifest.devices.get(device_type) else {
         return offer;
     };
     for entry in &device.firmwares {
-        let installable = match parse_version(&entry.min_desktop) {
+        let desktop_ok = match parse_version(&entry.min_desktop) {
             Some(min) => !version_newer(desktop, min),
             None => {
                 tracing::warn!(
@@ -244,11 +263,14 @@ pub fn select_firmware<'a>(
                 false
             }
         };
-        if installable {
+        if !desktop_ok {
+            offer.held_back.get_or_insert(entry);
+        } else if entry.requires_netcore > running_netcore {
+            offer.net_core_blocked.get_or_insert(entry);
+        } else {
             offer.offered = Some(entry);
             return offer;
         }
-        offer.held_back.get_or_insert(entry);
     }
     offer
 }
@@ -708,7 +730,8 @@ pub fn bootloader_took_update(now: BootloaderRelease, published: u16) -> bool {
 /// DFU alt setting label under which the stage2 bootloader exposes the net core.
 const NETCORE_ALT_LABEL: &str = "NET";
 
-/// The application cannot run on any net core this device will end up with.
+/// The unit is not running the net core the application needs before it may be
+/// installed.
 #[derive(Debug, PartialEq, Eq)]
 pub struct NetCoreTooOld {
     pub required: u16,
@@ -718,7 +741,8 @@ impl std::fmt::Display for NetCoreTooOld {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "this firmware needs net core release {} or newer and the release publishes none",
+            "this firmware needs the net core to be running release {} or newer before it is installed; \
+             install the earlier firmware that carries it first",
             self.required
         )
     }
@@ -730,28 +754,23 @@ impl std::fmt::Display for NetCoreTooOld {
 /// `running` is what the device last reported, `0` when it reported nothing:
 /// firmware that predates the property, a net core that did not answer, or a
 /// device that is in the bootloader. Unknown is treated as the oldest possible,
-/// so it is replaced whenever a release is published and never counts towards
-/// `requires`.
+/// so it is replaced whenever a release is published and never satisfies a
+/// `requires` above `0`.
 ///
 /// Returns whether to flash `published`. As for the bootloader, replacing a
-/// superseded image and refusing below the floor are separate rules: the update
-/// is refused if neither the running nor the published net core reaches
-/// `requires`. The floor is judged against what the update will install, not
-/// against what the device proves it ran afterwards; see [`plan_update_steps`].
+/// superseded image and refusing below the floor are separate rules, but the
+/// floor is judged against `running` alone: nothing reports the net core between
+/// writing it and the new application running, so the release this update
+/// publishes can never vouch for its own `requires`. See [`plan_update_steps`].
 pub fn plan_netcore(
     running: u16,
     published: Option<u16>,
     requires: u16,
 ) -> Result<bool, NetCoreTooOld> {
-    let flash = published.is_some_and(|p| running < p);
-    let ending_at = match (flash, published) {
-        (true, Some(published)) => published,
-        _ => running,
-    };
-    if ending_at < requires {
+    if running < requires {
         return Err(NetCoreTooOld { required: requires });
     }
-    Ok(flash)
+    Ok(published.is_some_and(|p| running < p))
 }
 
 /// Whether a net core reads back as the image just written.
@@ -787,14 +806,15 @@ pub enum UpdateStep {
 /// mode after a net core update, so the only way on is writing the application,
 /// and nothing reports the net core while the device is in the bootloader: the
 /// read-back needs the new application running and relaying the release.
-/// Consequently `requires` is enforced against what the update installs and
-/// confirmed only after the application is written, and a copy that failed
-/// silently is detected only then. A device left in that state keeps its old
-/// net core and reports it (or nothing), and running the update again retries.
+/// Consequently `requires` is enforced against the net core the device already
+/// runs, never against the one this update installs, and the read-back after the
+/// application is written only detects a copy that failed silently. A device
+/// left in that state keeps its old net core and reports it (or nothing), and
+/// running the update again retries.
 ///
 /// When nothing needs flashing the update is just the application. An
 /// unreported net core counts as release 0, so it is replaced whenever a release
-/// is published and never satisfies `requires`.
+/// is published and never satisfies a `requires` above `0`.
 pub fn plan_update_steps(
     running: u16,
     published: Option<u16>,
@@ -1205,19 +1225,21 @@ mod tests {
     }
 
     #[test]
-    fn netcore_requirement_is_a_floor() {
-        // The published net core reaches the floor, so flashing it satisfies it.
-        assert_eq!(plan_netcore(0, Some(2), 2), Ok(true));
-        assert_eq!(plan_netcore(1, Some(3), 2), Ok(true));
-        // Already at or above the floor.
+    fn netcore_requirement_is_judged_against_the_running_release() {
+        // Running at the floor (boundary) or above it.
         assert_eq!(plan_netcore(2, None, 2), Ok(false));
+        assert_eq!(plan_netcore(2, Some(3), 2), Ok(true));
         assert_eq!(plan_netcore(4, Some(3), 2), Ok(false));
-        // Neither the running nor the published net core reaches it.
-        assert_eq!(plan_netcore(1, Some(1), 2), Err(NetCoreTooOld { required: 2 }));
-        assert_eq!(plan_netcore(0, None, 1), Err(NetCoreTooOld { required: 1 }));
+        // Running below it.
         assert_eq!(plan_netcore(1, None, 2), Err(NetCoreTooOld { required: 2 }));
-        // A floor above a published release the device already exceeds is met.
-        assert_eq!(plan_netcore(5, Some(3), 4), Ok(false));
+        assert_eq!(plan_netcore(0, None, 1), Err(NetCoreTooOld { required: 1 }));
+        // The published release never satisfies the entry's own floor.
+        assert_eq!(plan_netcore(0, Some(2), 2), Err(NetCoreTooOld { required: 2 }));
+        assert_eq!(plan_netcore(1, Some(3), 2), Err(NetCoreTooOld { required: 2 }));
+        assert_eq!(plan_netcore(1, Some(1), 2), Err(NetCoreTooOld { required: 2 }));
+        // Unknown (0) never satisfies a floor above 0, and always satisfies 0.
+        assert_eq!(plan_netcore(0, Some(5), 1), Err(NetCoreTooOld { required: 1 }));
+        assert_eq!(plan_netcore(0, Some(5), 0), Ok(true));
     }
 
     #[test]
@@ -1248,17 +1270,18 @@ mod tests {
     #[test]
     fn net_core_floor_refuses_before_any_step_runs() {
         use UpdateStep::{FlashNetCore, VerifyNetCore, WriteApplication};
-        // Flashing the published release reaches the floor.
+        // Already at the floor, with and without a newer net core to write.
+        assert_eq!(plan_update_steps(3, None, 3), Ok(vec![WriteApplication]));
         assert_eq!(
-            plan_update_steps(1, Some(3), 3),
+            plan_update_steps(2, Some(3), 2),
             Ok(vec![FlashNetCore, WriteApplication, VerifyNetCore])
         );
-        // Already at the floor, nothing published.
-        assert_eq!(plan_update_steps(3, None, 3), Ok(vec![WriteApplication]));
-        // Neither the device nor the release reaches it.
+        // Flashing the published release does not reach the floor.
+        assert_eq!(plan_update_steps(1, Some(3), 3), Err(NetCoreTooOld { required: 3 }));
         assert_eq!(plan_update_steps(1, Some(2), 3), Err(NetCoreTooOld { required: 3 }));
         // An unknown net core never meets a floor on its own.
         assert_eq!(plan_update_steps(0, None, 1), Err(NetCoreTooOld { required: 1 }));
+        assert_eq!(plan_update_steps(0, Some(1), 1), Err(NetCoreTooOld { required: 1 }));
     }
 
     #[test]
@@ -1361,21 +1384,128 @@ mod tests {
         let manifest = manifest_with(&[("0.3.0", "0.8.0"), ("0.2.0", "0.6.0"), ("0.1.0", "0.6.0")]);
         // Below the newest entry's floor: offer the next one, mention the newest.
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [0, 7, 1])),
+            selected(select_firmware(&manifest, "atslite1", [0, 7, 1], 0)),
             (Some("0.2.0"), Some("0.3.0"))
         );
         // Exactly at the floor counts as meeting it.
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [0, 8, 0])),
+            selected(select_firmware(&manifest, "atslite1", [0, 8, 0], 0)),
             (Some("0.3.0"), None)
         );
         // Older than every floor: nothing installable, but say what exists.
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [0, 5, 0])),
+            selected(select_firmware(&manifest, "atslite1", [0, 5, 0], 0)),
             (None, Some("0.3.0"))
         );
         // Unknown device.
-        assert_eq!(selected(select_firmware(&manifest, "nope", [9, 9, 9])), (None, None));
+        assert_eq!(selected(select_firmware(&manifest, "nope", [9, 9, 9], 0)), (None, None));
+    }
+
+    /// Entries are `(version, requires_netcore, net-core release carried)`,
+    /// newest first, all installable by any desktop.
+    fn netcore_manifest(entries: &[(&str, u16, Option<u16>)]) -> FirmwareManifest {
+        let firmwares: Vec<_> = entries
+            .iter()
+            .map(|(version, requires, carries)| {
+                let files = match carries {
+                    Some(release) => serde_json::json!({
+                        "net-core": { "sha256": "00", "size": 1, "release": release },
+                    }),
+                    None => serde_json::json!({}),
+                };
+                serde_json::json!({
+                    "version": version,
+                    "requires_bootloader": 0,
+                    "requires_netcore": requires,
+                    "min_desktop": "0.6.0",
+                    "files": files,
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "devices": { "atslite1": { "firmwares": firmwares } },
+        }))
+        .unwrap()
+    }
+
+    fn netcore_selected(manifest: &FirmwareManifest, running: u16) -> (Option<&str>, Option<&str>) {
+        let offer = select_firmware(manifest, "atslite1", [1, 0, 0], running);
+        (
+            offer.offered.map(|e| e.version.as_str()),
+            offer.net_core_blocked.map(|e| e.version.as_str()),
+        )
+    }
+
+    #[test]
+    fn net_core_bump_ships_through_a_bridge_entry() {
+        let manifest = netcore_manifest(&[
+            ("0.3.0", 2, Some(2)),
+            ("0.2.1", 0, Some(2)),
+            ("0.2.0", 0, Some(1)),
+        ]);
+        // Units below the new net core reach the bridge, and are told why not 0.3.0.
+        for running in [0, 1] {
+            assert_eq!(
+                netcore_selected(&manifest, running),
+                (Some("0.2.1"), Some("0.3.0")),
+                "running {running}"
+            );
+        }
+        // Once the bridge has run, the later entry opens up.
+        assert_eq!(netcore_selected(&manifest, 2), (Some("0.3.0"), None));
+        assert_eq!(netcore_selected(&manifest, 3), (Some("0.3.0"), None));
+    }
+
+    #[test]
+    fn an_entry_never_satisfies_its_own_net_core_floor() {
+        // The only entry carries the release it requires; a unit below it has no path.
+        let manifest = netcore_manifest(&[("0.3.0", 2, Some(2))]);
+        assert_eq!(netcore_selected(&manifest, 1), (None, Some("0.3.0")));
+        assert_eq!(netcore_selected(&manifest, 2), (Some("0.3.0"), None));
+    }
+
+    #[test]
+    fn unknown_net_core_never_meets_a_floor_above_zero() {
+        let manifest = netcore_manifest(&[("0.2.0", 1, Some(1)), ("0.1.0", 0, None)]);
+        assert_eq!(netcore_selected(&manifest, 0), (Some("0.1.0"), Some("0.2.0")));
+        // Boundary: exactly the floor is enough.
+        assert_eq!(netcore_selected(&manifest, 1), (Some("0.2.0"), None));
+    }
+
+    #[test]
+    fn desktop_hold_takes_precedence_over_the_net_core_floor() {
+        let mut manifest = netcore_manifest(&[("0.2.0", 1, Some(1)), ("0.1.0", 0, None)]);
+        manifest.devices.get_mut("atslite1").unwrap().firmwares[0].min_desktop = "9.0.0".into();
+        let offer = select_firmware(&manifest, "atslite1", [1, 0, 0], 0);
+        assert_eq!(offer.offered.map(|e| e.version.as_str()), Some("0.1.0"));
+        assert_eq!(offer.held_back.map(|e| e.version.as_str()), Some("0.2.0"));
+        assert!(offer.net_core_blocked.is_none());
+    }
+
+    /// Units only ever step forward through entries, so an entry whose floor no
+    /// older entry can raise a unit to would be unreachable: a unit never gets
+    /// past the entries before it. Historical entries carry no net core.
+    #[test]
+    fn committed_manifest_floors_are_reachable_through_older_entries() {
+        for (name, text) in [("alpha", ALPHA), ("stable", STABLE)] {
+            let manifest: FirmwareManifest = serde_json::from_str(text).unwrap();
+            for (device, entries) in &manifest.devices {
+                for (index, entry) in entries.firmwares.iter().enumerate() {
+                    let reachable = entries.firmwares[index + 1..]
+                        .iter()
+                        .filter_map(|older| older.files.get("net-core").and_then(|f| f.release))
+                        .max()
+                        .unwrap_or(0);
+                    assert!(
+                        entry.requires_netcore <= reachable,
+                        "{name} {device} {} requires net core {} but no older entry carries more than {reachable}",
+                        entry.version,
+                        entry.requires_netcore
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1391,7 +1521,7 @@ mod tests {
     fn unreadable_min_desktop_is_never_offered() {
         let manifest = manifest_with(&[("0.2.0", "soon"), ("0.1.0", "0.6.0")]);
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [1, 0, 0])),
+            selected(select_firmware(&manifest, "atslite1", [1, 0, 0], 0)),
             (Some("0.1.0"), Some("0.2.0"))
         );
     }
