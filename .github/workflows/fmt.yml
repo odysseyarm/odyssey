@@ -1,0 +1,31 @@
+name: Format
+
+# Check Rust formatting for every tracked .rs file: apps, crates, sdk and
+# firmware. rustfmt is handed the files directly rather than going through
+# cargo fmt, because the sdk and firmware crates are separate workspaces and
+# this needs no dependency resolution. third_party (an upstream subtree) is left
+# out of the file list, because rustfmt still tries to parse files it is handed
+# even when rustfmt.toml ignores them.
+#
+# The toolchain is whatever rust-toolchain.toml says: rustup installs it the
+# first time rustfmt runs, so nothing here repeats the version.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check formatting
+        run: git ls-files -z '*.rs' ':!third_party' | xargs -0 rustfmt --check

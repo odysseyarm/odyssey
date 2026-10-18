@@ -1,0 +1,19 @@
+# The one toolchain pin for the whole repo: apps, crates, sdk and firmware, and
+# CI. rustup reads this from here (and from every directory below), so nothing
+# else repeats the date. Anything that does not run rustup has to read this file
+# instead of copying it: .github workflows install it through rustup, and a nix
+# shell can use `rust-bin.fromRustupToolchainFile ./rust-toolchain.toml`.
+#
+# It is a nightly because rustfmt.toml needs unstable options and the firmware
+# needs a nightly. Bump the date deliberately, and reformat in the same commit:
+# rustfmt's output changes between nightlies.
+[toolchain]
+channel = "nightly-2026-10-18"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer", "llvm-tools"]
+targets = [
+    "thumbv6m-none-eabi",
+    "thumbv7em-none-eabihf",
+    "thumbv8m.main-none-eabi",
+    "thumbv8m.main-none-eabihf",
+]
