@@ -500,7 +500,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
         FirmwareUpdateState::InstallingNetCore => rsx! {
             span {
                 class: "text-xs text-blue-500",
-                "Installing radio firmware (this can take a couple of minutes)..."
+                "Installing radio firmware..."
             }
         },
         FirmwareUpdateState::Rebooting => rsx! {
@@ -803,17 +803,43 @@ async fn flash_netcore(
             NETCORE_RESET_TIMEOUT.as_secs()
         ));
     }
-    firmware::wait_for_dfu_device(&device_uuid, vid, pid, NETCORE_INSTALL_TIMEOUT)
+    return_to_dfu(manager, device_uuid, vid, pid, NETCORE_INSTALL_TIMEOUT)
         .await
         .map_err(|e| {
             format!(
-                "Device did not return to DFU mode within {}s after the net core update ({e}). \
+                "Device did not come back within {}s after the net core update ({e}). \
                  Leave it connected and run the update again.",
                 NETCORE_INSTALL_TIMEOUT.as_secs()
             )
         })?;
     tracing::info!("Device is back in DFU mode");
     Ok(())
+}
+
+/// Wait for a device that has just reset to come back and put it in DFU mode,
+/// whichever way it returns: still in the bootloader, or running the
+/// application, which then gets detached again. A bootloader that finishes its
+/// work (swapping itself in, copying the net core) boots the application unless
+/// something asks for DFU, so the unit has to be taken back in rather than
+/// waited for.
+async fn return_to_dfu(
+    manager: &FirmwareUpdateManager,
+    device_uuid: [u8; 6],
+    vid: u16,
+    pid: u16,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        match enter_dfu(manager, device_uuid, vid, pid).await {
+            Ok(()) => return Ok(()),
+            Err(e) if std::time::Instant::now() < deadline => {
+                tracing::debug!("Device not back yet: {e}");
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Run the actual firmware update sequence
@@ -1044,19 +1070,9 @@ async fn ensure_bootloader(
             if !wait_for_bootloader_reset(&device_uuid, vid, pid, std::time::Duration::from_secs(15)).await {
                 return Err("Device did not reset after the bootloader update".to_string());
             }
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                match enter_dfu(manager, device_uuid, vid, pid).await {
-                    Ok(()) => break,
-                    Err(e) if std::time::Instant::now() < deadline => {
-                        tracing::debug!("Device not back yet after the bootloader update: {e}");
-                    }
-                    Err(e) => {
-                        return Err(format!("Device did not return after the bootloader update: {e}"));
-                    }
-                }
-            }
+            return_to_dfu(manager, device_uuid, vid, pid, std::time::Duration::from_secs(30))
+                .await
+                .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
 
             // A completed write and a returning device do not show the new
             // image is the one running. Nothing may go onto a bootloader that
@@ -1199,7 +1215,7 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
         }
         FirmwareUpdateState::VerifyingNetCore => "Checking radio firmware...".to_string(),
         FirmwareUpdateState::InstallingNetCore => {
-            "Installing radio firmware (this can take a couple of minutes)...".to_string()
+            "Installing radio firmware...".to_string()
         }
         FirmwareUpdateState::Rebooting => "Rebooting device...".to_string(),
         FirmwareUpdateState::Verifying => "Verifying update...".to_string(),
