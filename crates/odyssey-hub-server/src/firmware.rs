@@ -275,16 +275,15 @@ pub fn select_firmware<'a>(
     offer
 }
 
-/// The net core release to judge a unit by, or `None` when the hub has no real
-/// reading of it.
+/// The net core release to judge a unit by, or `None` when the hub has no settled
+/// reading of it (`DeviceCapabilities::NETCORE_KNOWN`).
 ///
-/// A unit on the cable is read through USB control, and a 0 from it is a real
-/// answer: a net core that predates release reporting. A unit reached only over
-/// Bluetooth is read through the packet stream after it connects, and a 0 there
-/// is also what it shows until that read has answered, so only a positive value
-/// counts.
-pub fn known_netcore_release(has_usb_control: bool, reported: u16) -> Option<u16> {
-    (has_usb_control || reported != 0).then_some(reported)
+/// The application reports 0 until its BLE controller has answered, which is
+/// also what a unit shows for a while after every reboot or transport swap, so
+/// an unsettled 0 must not be judged. A 0 that stays after the hub's last retry
+/// is the net core's real answer: it predates release reporting.
+pub fn known_netcore_release(settled: bool, reported: u16) -> Option<u16> {
+    settled.then_some(reported)
 }
 
 /// Whether offering `entry` to a unit changes anything worth a click.
@@ -1644,11 +1643,11 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_net_core_reading_is_only_real_over_the_cable() {
+    fn a_net_core_reading_only_counts_once_it_has_settled() {
+        // A 0 is a real answer once settled, and "not answered yet" before.
         assert_eq!(known_netcore_release(true, 0), Some(0));
         assert_eq!(known_netcore_release(true, 2), Some(2));
         assert_eq!(known_netcore_release(false, 0), None);
-        assert_eq!(known_netcore_release(false, 2), Some(2));
     }
 
     #[test]

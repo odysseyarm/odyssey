@@ -20,15 +20,22 @@ use odyssey_hub_common::events::{
 use std::collections::HashMap;
 
 use futures::stream::{self, BoxStream, SelectAll, StreamExt};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 use tokio::time::sleep;
 use tracing::{debug, info, trace, warn};
 
+/// Consecutive failed connect attempts to a dongle-reported device before the hub
+/// manager waits for a fresh snapshot instead of retrying on its own.
+const MAX_HUB_CONNECT_ATTEMPTS: u8 = 5;
+
 /// Events from the hub manager's merged stream
 enum HubEvent {
     Snapshot(Result<heapless::Vec<[u8; 6], 3>>),
+    /// Timer tick; re-drives snapshot processing for devices that failed to connect.
+    Retry,
 }
 
 enum DeviceStreamEvent {
@@ -109,7 +116,8 @@ pub enum DeviceTaskMessage {
     },
     /// The net core release counter read back from the application. Sent by the
     /// probe that starts when the control endpoint attaches, because the
-    /// application only learns it once its BLE controller has answered.
+    /// application only learns it once its BLE controller has answered. Marks the
+    /// reading as settled (`NETCORE_KNOWN`), including a settled 0.
     SetNetCoreRelease(u16),
     /// Clear bond(s) on the device. For ATS: clears single bond. For dongle: clears all bonds.
     ClearBond {
@@ -193,16 +201,65 @@ impl NetCoreLink {
     }
 }
 
-/// Read the net core release over `link` and hand it to the device's handler
-/// task.
+/// Gaps before each net core read.
+const NETCORE_PROBE_DELAYS_S: [u64; 6] = [0, 1, 2, 4, 8, 15];
+
+/// Poll `read` for the net core release; returns the release to report to the
+/// handler, or `None` to leave it unknown.
 ///
 /// The application asks the net core itself once its BLE host is running and
 /// keeps asking while the net core is still starting, so a read right after
 /// connecting can legitimately come back 0. The probe retries with growing
-/// gaps, and gives up for good after the last one: a net core that answers 0
-/// then is one that has no release to report, and polling it forever would only
-/// compete with the handler for the link. A failed or unanswered read leaves
-/// the release at 0 (unknown) and never affects the device itself.
+/// gaps, and gives up for good after the last one: polling forever would only
+/// compete with the handler for the link. A failed or unanswered read never
+/// affects the device itself and leaves the release unknown.
+///
+/// A 0 is only reported (as settled) when `settle_zero` and the *final* read
+/// itself answered 0: a net core that still says 0 after every retry has no
+/// release to report. An error or timeout after a 0 clears that, because the
+/// last word from the unit is then "no answer", not "0".
+async fn probe_net_core<F, Fut>(
+    delays_s: &[u64],
+    settle_zero: bool,
+    is_closed: impl Fn() -> bool,
+    mut read: F,
+) -> Option<u16>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<u16>>,
+{
+    let mut last_read_was_zero = false;
+    for &delay_s in delays_s {
+        sleep(Duration::from_secs(delay_s)).await;
+        if is_closed() {
+            return None;
+        }
+        match tokio::time::timeout(Duration::from_secs(3), read()).await {
+            Ok(Ok(0)) => {
+                last_read_was_zero = true;
+                debug!("Net core release not reported yet");
+            }
+            Ok(Ok(release)) => return Some(release),
+            Ok(Err(e)) => {
+                last_read_was_zero = false;
+                debug!("Could not read the net core release: {e}");
+            }
+            Err(_) => {
+                last_read_was_zero = false;
+                debug!("Reading the net core release timed out");
+            }
+        }
+    }
+    (settle_zero && last_read_was_zero).then_some(0)
+}
+
+/// Read the net core release over `link` and hand it to the device's handler
+/// task. See [`probe_net_core`] for when a reading counts.
+///
+/// Over the cable a settled 0 is real (the net core predates release
+/// reporting); over Bluetooth a 0 is also what an unanswered read looks like,
+/// so only a positive release is reported there. A device protocol that cannot
+/// carry the property never starts a probe and stays unknown.
 fn spawn_netcore_probe(
     link: NetCoreLink,
     device_protocol: Option<[u16; 3]>,
@@ -212,20 +269,16 @@ fn spawn_netcore_probe(
         return;
     }
     tokio::spawn(async move {
-        for delay_s in [0u64, 1, 2, 4, 8, 15] {
-            sleep(Duration::from_secs(delay_s)).await;
-            if handler.is_closed() {
-                return;
-            }
-            match tokio::time::timeout(Duration::from_secs(3), link.read()).await {
-                Ok(Ok(0)) => debug!("Net core release not reported yet"),
-                Ok(Ok(release)) => {
-                    let _ = handler.send(DeviceTaskMessage::SetNetCoreRelease(release)).await;
-                    return;
-                }
-                Ok(Err(e)) => debug!("Could not read the net core release: {e}"),
-                Err(_) => debug!("Reading the net core release timed out"),
-            }
+        let over_control = matches!(link, NetCoreLink::Control(_));
+        let release = probe_net_core(
+            &NETCORE_PROBE_DELAYS_S,
+            over_control,
+            || handler.is_closed(),
+            || link.read(),
+        )
+        .await;
+        if let Some(release) = release {
+            let _ = handler.send(DeviceTaskMessage::SetNetCoreRelease(release)).await;
         }
     });
 }
@@ -667,11 +720,39 @@ async fn usb_device_manager(
                         snapshot_stream.boxed()
                     };
 
+                    // Periodic tick used to retry devices whose connect failed.
+                    // Delay: a blocked connect attempt must not leave a burst of
+                    // overdue ticks that would fire retries back to back.
+                    let mut retry_interval = tokio::time::interval(Duration::from_secs(2));
+                    retry_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    let retry_ticks = stream::unfold(
+                        retry_interval,
+                        |mut interval| async move {
+                            interval.tick().await;
+                            Some((HubEvent::Retry, interval))
+                        },
+                    );
+                    let combined_stream = stream::select(combined_stream, retry_ticks);
                     tokio::pin!(combined_stream);
+                    let mut last_snapshot = heapless::Vec::<[u8; 6], 3>::new();
+                    // BLE address -> consecutive failed connect attempts.
+                    let mut failed_adds = std::collections::HashMap::<[u8; 6], u8>::new();
 
                     loop {
                         tokio::select! {
                             Some(event) = combined_stream.next() => {
+                        // A tick only matters while some device failed to connect and
+                        // still has attempts left; then re-run the last snapshot so the
+                        // device is retried even though the dongle sends no new snapshot.
+                        let (event, is_retry) = match event {
+                            HubEvent::Retry => {
+                                if !failed_adds.values().any(|n| *n < MAX_HUB_CONNECT_ATTEMPTS) {
+                                    continue;
+                                }
+                                (HubEvent::Snapshot(Ok(last_snapshot.clone())), true)
+                            }
+                            other => (other, false),
+                        };
                         match event {
                             HubEvent::Snapshot(snapshot_result) => {
                                 match snapshot_result {
@@ -682,7 +763,13 @@ async fn usb_device_manager(
                                             devs
                                         );
                                         use std::collections::HashSet;
+                                        last_snapshot = devs.clone();
+                                        if !is_retry {
+                                            // A fresh snapshot is a fresh chance for every device.
+                                            failed_adds.clear();
+                                        }
                                         let new_set: HashSet<[u8; 6]> = devs.into_iter().collect();
+                                        failed_adds.retain(|a, _| new_set.contains(a));
                                         // Compare against hub_devices (BLE addresses) not device_handles (UUIDs)
                                         let existing_set: HashSet<[u8; 6]> = hub_devices.clone();
 
@@ -709,6 +796,11 @@ async fn usb_device_manager(
                                         // Added devices
                                         for addr in &added {
                                             let addr_copy = *addr;
+                                            if is_retry
+                                                && failed_adds.get(&addr_copy).copied().unwrap_or(0) >= MAX_HUB_CONNECT_ATTEMPTS
+                                            {
+                                                continue;
+                                            }
                                             tracing::info!(
                                                 "DevicesSnapshot: Adding new device {:02x?}",
                                                 addr_copy
@@ -723,13 +815,16 @@ async fn usb_device_manager(
                                             {
                                                 Ok(v) => v,
                                                 Err(e) => {
+                                                    let attempts = failed_adds.entry(addr_copy).or_insert(0);
+                                                    *attempts += 1;
                                                     tracing::warn!(
-                                                        "Failed to connect to hub device {:02x?} during snapshot: {}",
-                                                        addr_copy, e
+                                                        "Failed to connect to hub device {:02x?} during snapshot (attempt {}/{}): {}",
+                                                        addr_copy, attempts, MAX_HUB_CONNECT_ATTEMPTS, e
                                                     );
                                                     continue;
                                                 }
                                             };
+                                            failed_adds.remove(&addr_copy);
 
                                             // Read actual UUID from device
                                             let uuid = match vm_device
@@ -985,6 +1080,7 @@ async fn usb_device_manager(
                                     }
                                 }
                             }
+                            HubEvent::Retry => unreachable!("converted to a snapshot above"),
                         }
                             } // close combined_stream arm
 
@@ -1150,7 +1246,7 @@ async fn usb_device_manager(
                             // Read events protocol version via packet interface.
                             // Only available when device is in USB transport mode (direct events).
                             let events_proto_semver = if transport_mode == odyssey_protocol::control::device::TransportMode::Usb {
-                                match vm_device.request(odyssey_protocol::PacketData::ReadVersion()).await {
+                                match vm_device.request_with_retry(odyssey_protocol::PacketData::ReadVersion(), Duration::from_secs(2), 3).await {
                                     Ok(odyssey_protocol::PacketData::ReadVersionResponse(v)) => {
                                         info!(
                                             "Device {:02x?} events protocol version: {}.{}.{}",
@@ -2513,12 +2609,14 @@ async fn device_handler_task(
                               device.uuid, device.capabilities);
                     }
                     Some(DeviceTaskMessage::SetNetCoreRelease(release)) => {
-                        if device.netcore_release != release {
+                        let was_known = device.capabilities.contains(DeviceCapabilities::NETCORE_KNOWN);
+                        if device.netcore_release != release || !was_known {
                             info!(
                                 "Net core of {:02x?} reports release {}",
                                 device.uuid, release
                             );
                             device.netcore_release = release;
+                            device.capabilities.insert(DeviceCapabilities::NETCORE_KNOWN);
                             let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
                         }
                     }
@@ -2546,6 +2644,7 @@ async fn device_handler_task(
                             // The net core can only be read over USB control, and it may be
                             // replaced while the cable is out, so the old reading is stale.
                             device.netcore_release = 0;
+                            device.capabilities.remove(DeviceCapabilities::NETCORE_KNOWN);
                             if let Some(events) = &connections.events_device {
                                 spawn_packet_netcore_probe(&self_tx, events, protocol_version);
                             }
@@ -3090,4 +3189,64 @@ fn build_markers_from_points(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod netcore_probe_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    /// Runs the probe against a scripted unit; the script must cover every read.
+    async fn probe(script: Vec<anyhow::Result<u16>>, settle_zero: bool) -> Option<u16> {
+        let delays = vec![0u64; script.len()];
+        let script = RefCell::new(VecDeque::from(script));
+        probe_net_core(&delays, settle_zero, || false, || {
+            let next = script.borrow_mut().pop_front().expect("read past the script");
+            async move { next }
+        })
+        .await
+    }
+
+    fn failed() -> anyhow::Result<u16> {
+        Err(anyhow::anyhow!("no answer"))
+    }
+
+    #[tokio::test]
+    async fn zero_on_every_read_settles_at_zero_over_the_cable() {
+        assert_eq!(probe(vec![Ok(0), Ok(0), Ok(0)], true).await, Some(0));
+    }
+
+    #[tokio::test]
+    async fn zero_over_bluetooth_stays_unknown() {
+        assert_eq!(probe(vec![Ok(0), Ok(0), Ok(0)], false).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_zero_followed_by_no_answer_stays_unknown() {
+        assert_eq!(probe(vec![Ok(0), failed(), failed()], true).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_zero_is_settled_only_by_the_final_read_answering_zero() {
+        assert_eq!(probe(vec![failed(), Ok(0), Ok(0)], true).await, Some(0));
+        assert_eq!(probe(vec![Ok(0), Ok(0), failed()], true).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_positive_release_is_reported_at_once() {
+        assert_eq!(probe(vec![Ok(0), Ok(3)], false).await, Some(3));
+    }
+
+    #[tokio::test]
+    async fn a_closed_handler_stops_the_probe() {
+        let reads = RefCell::new(0);
+        let out = probe_net_core(&[0, 0], true, || true, || {
+            *reads.borrow_mut() += 1;
+            async { Ok(0) }
+        })
+        .await;
+        assert_eq!(out, None);
+        assert_eq!(*reads.borrow(), 0);
+    }
 }
