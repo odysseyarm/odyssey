@@ -63,6 +63,24 @@ impl<T> ConfigLoadResult<T> {
     }
 }
 
+/* ---------------------------- Firmware channel ----------------------------- */
+
+/// The firmware channel the user chose, by name. `None` when they never chose
+/// one or the file cannot be read, which callers treat as the default.
+pub async fn firmware_channel_async() -> Option<String> {
+    let path = get_app_root(AppDataType::UserConfig, &APP_INFO)
+        .ok()?
+        .join("firmware_channel");
+    let name = fs::read_to_string(&path).await.ok()?;
+    Some(name.trim().to_string())
+}
+
+pub async fn firmware_channel_save_async(name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+    fs::write(config_dir.join("firmware_channel"), name).await?;
+    Ok(())
+}
+
 /* ------------------------------- Shot delays ------------------------------- */
 
 pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16>> {
