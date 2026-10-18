@@ -45,7 +45,7 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F
 
 /// This bootloader's release counter. Raise it whenever the image changes: the
 /// host replaces a bootloader only when the published counter is higher.
-macro_rules! release { () => { 1 }; }
+macro_rules! release { () => { 2 }; }
 
 const BOOTLOADER_BCD_DEVICE: u16 =
     odyssey_protocol::BootloaderRelease::bcd_device(release!());
@@ -1165,9 +1165,9 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    // If both cmd and status are cleared, there is no pending netcore DFU.
-    // If both cmd and status are cleared, there is no pending netcore DFU.
-    let mut netcore_dfu_pending = pcd.cmd.is_valid() && pcd.status.is_valid();
+    // A command nothing has answered yet is pending, whether or not the net core
+    // bootloader has written a status; terminal statuses were settled above.
+    let mut netcore_dfu_pending = pcd.copy_pending();
 
     if netcore_dfu_pending {
         defmt::info!("PCD command VALID - will start netcore bootloader");
