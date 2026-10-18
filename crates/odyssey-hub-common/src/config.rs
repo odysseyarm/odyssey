@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use crate::{accessory::AccessoryInfo, hexkeymap::HexKeyMapN};
 use app_dirs2::{get_app_root, AppDataType, AppInfo};
@@ -84,7 +87,7 @@ pub async fn firmware_channel_save_async(name: &str) -> Result<(), Box<dyn std::
 /* -------------------------------- UI state --------------------------------- */
 
 /// Identifies a monitor across launches. Models repeat across a desk (two
-/// identical panels share a name), so the key also carries the monitor's slot
+/// identical panels share a name), so the key also carries the monitor's position
 /// in the virtual desktop. Rearranging the monitors changes the key, which is
 /// the right outcome: the remembered pick no longer names the same screen.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -105,6 +108,36 @@ pub struct MonitorKey {
 pub struct UiState {
     /// The monitor the user last picked in the screen picker.
     pub selected_monitor: Option<MonitorKey>,
+    /// The screen (`screen_<id>.json`) the calibration wizard last saved for
+    /// each monitor, so the next calibration of that monitor starts on the
+    /// same screen number.
+    pub calibration_screens: Vec<MonitorScreen>,
+}
+
+/// A monitor and the screen (`screen_<id>.json`) calibrated for it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MonitorScreen {
+    pub monitor: MonitorKey,
+    pub screen_id: u8,
+}
+
+impl UiState {
+    /// The screen id last calibrated for `monitor`, if any.
+    pub fn calibration_screen(&self, monitor: &MonitorKey) -> Option<u8> {
+        self.calibration_screens
+            .iter()
+            .find(|s| &s.monitor == monitor)
+            .map(|s| s.screen_id)
+    }
+
+    /// Records that `screen_id` now holds `monitor`'s calibration. A screen id
+    /// holds one screen, so any other monitor that pointed at it loses the
+    /// claim.
+    pub fn remember_calibration_screen(&mut self, monitor: MonitorKey, screen_id: u8) {
+        self.calibration_screens
+            .retain(|s| s.monitor != monitor && s.screen_id != screen_id);
+        self.calibration_screens.push(MonitorScreen { monitor, screen_id });
+    }
 }
 
 fn ui_state_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -318,6 +351,16 @@ pub async fn device_offsets_save_async(
 
 /* ---------------------------- Screen calibrations --------------------------- */
 
+/// Directory holding `screen_<id>.json`, one file per calibrated screen.
+pub fn screens_dir() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?.join("screens"))
+}
+
+/// File name of the calibration for screen `id` inside [`screens_dir`].
+pub fn screen_file_name(id: u8) -> String {
+    format!("screen_{id}.json")
+}
+
 pub struct ScreenCalibrationsResult {
     pub calibrations: arrayvec::ArrayVec<
         (u8, ScreenCalibration<f32>),
@@ -326,73 +369,61 @@ pub struct ScreenCalibrationsResult {
     pub corrupted_screens: Vec<(u8, PathBuf, String)>,
 }
 
+/// Loads every `screen_<id>.json` in the user's screens directory.
 pub async fn screen_calibrations_async() -> ScreenCalibrationsResult {
-    use arrayvec::ArrayVec;
-    use tokio::fs;
-
-    let config_dir = match get_app_root(AppDataType::UserConfig, &APP_INFO) {
-        Ok(dir) => dir,
+    match screens_dir() {
+        Ok(dir) => screen_calibrations_from_dir_async(&dir).await,
         Err(e) => {
             tracing::error!("Failed to get config directory: {}", e);
-            return ScreenCalibrationsResult {
-                calibrations: ArrayVec::new(),
+            ScreenCalibrationsResult {
+                calibrations: arrayvec::ArrayVec::new(),
                 corrupted_screens: vec![],
-            };
+            }
         }
-    };
+    }
+}
 
-    let mut out = ArrayVec::<
-        (u8, ScreenCalibration<f32>),
-        { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
-    >::new();
+/// Loads every `screen_<id>.json` in `dir`, ordered by id. A file that is
+/// unreadable or does not parse is reported in `corrupted_screens` and left out
+/// of `calibrations`; a missing file is simply absent.
+pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibrationsResult {
+    let mut calibrations = arrayvec::ArrayVec::new();
     let mut corrupted_screens = Vec::new();
 
-    for i in 0..((odyssey_common::MAX_SCREEN_ID + 1) as usize) {
-        let path = config_dir
-            .join("screens")
-            .join(format!("screen_{}.json", i));
-        match fs::try_exists(&path).await {
-            Ok(true) => {
-                tracing::info!("Loading screen calibration from {}", path.display());
-                match fs::read_to_string(&path).await {
-                    Ok(txt) => match json5::from_str::<ScreenCalibration<f32>>(&txt) {
-                        Ok(cal) => {
-                            let _ = out.try_push((i as u8, cal));
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Corrupted screen calibration for screen {}: {}. Ignoring.",
-                                i,
-                                e
-                            );
-                            corrupted_screens.push((i as u8, path, e.to_string()));
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to read screen calibration for screen {}: {}. Ignoring.",
-                            i,
-                            e
-                        );
-                        corrupted_screens.push((i as u8, path, e.to_string()));
-                    }
-                }
-            }
-            Ok(false) => {
-                // File doesn't exist, this is normal
-            }
+    for i in 0..=odyssey_common::MAX_SCREEN_ID {
+        let path = dir.join(screen_file_name(i));
+        let txt = match fs::read_to_string(&path).await {
+            Ok(txt) => txt,
+            // A file that vanishes between listing and reading counts as absent.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
                 tracing::error!(
-                    "Failed to check screen calibration file for screen {}: {}",
+                    "Failed to read screen calibration for screen {}: {}. Ignoring.",
                     i,
                     e
                 );
+                corrupted_screens.push((i, path, e.to_string()));
+                continue;
+            }
+        };
+        tracing::info!("Loading screen calibration from {}", path.display());
+        match json5::from_str::<ScreenCalibration<f32>>(&txt) {
+            Ok(cal) => {
+                let _ = calibrations.try_push((i, cal));
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Corrupted screen calibration for screen {}: {}. Ignoring.",
+                    i,
+                    e
+                );
+                corrupted_screens.push((i, path, e.to_string()));
             }
         }
     }
 
     ScreenCalibrationsResult {
-        calibrations: out,
+        calibrations,
         corrupted_screens,
     }
 }
@@ -495,6 +526,10 @@ mod tests {
         let path = dir.join("nested").join("ui_state.json");
         let state = UiState {
             selected_monitor: Some(key()),
+            calibration_screens: vec![MonitorScreen {
+                monitor: key(),
+                screen_id: 3,
+            }],
         };
 
         block_on(async {
@@ -536,5 +571,47 @@ mod tests {
         );
         let state: UiState = json5::from_str(r#"{ "from_a_newer_version": 3 }"#).unwrap();
         assert_eq!(state, UiState::default());
+    }
+
+    fn other_key() -> MonitorKey {
+        MonitorKey {
+            x: 0,
+            name: Some("LG 27GP950".into()),
+            ..key()
+        }
+    }
+
+    #[test]
+    fn remembered_screen_is_per_monitor_and_replaced_on_recalibration() {
+        let mut state = UiState::default();
+        assert_eq!(state.calibration_screen(&key()), None);
+
+        state.remember_calibration_screen(key(), 2);
+        state.remember_calibration_screen(other_key(), 4);
+        assert_eq!(state.calibration_screen(&key()), Some(2));
+        assert_eq!(state.calibration_screen(&other_key()), Some(4));
+
+        state.remember_calibration_screen(key(), 1);
+        assert_eq!(state.calibration_screen(&key()), Some(1));
+        assert_eq!(state.calibration_screens.len(), 2);
+    }
+
+    #[test]
+    fn saving_over_a_screen_takes_it_from_the_monitor_that_had_it() {
+        let mut state = UiState::default();
+        state.remember_calibration_screen(key(), 2);
+        state.remember_calibration_screen(other_key(), 2);
+        assert_eq!(state.calibration_screen(&key()), None);
+        assert_eq!(state.calibration_screen(&other_key()), Some(2));
+    }
+
+    #[test]
+    fn ui_state_written_before_screens_existed_still_loads() {
+        let state: UiState = json5::from_str(
+            r#"{ "selected_monitor": { "name": null, "x": 0, "y": 0, "width": 1920, "height": 1080 } }"#,
+        )
+        .unwrap();
+        assert!(state.selected_monitor.is_some());
+        assert!(state.calibration_screens.is_empty());
     }
 }
