@@ -72,27 +72,29 @@ fn get_app_dfu_flag() -> &'static mut AppDfuFlag {
 }
 
 unsafe fn get_icmsg_config() -> icmsg::MemoryConfig {
-    extern "C" {
-        static mut __icmsg_tx_start: u32;
-        static __icmsg_tx_end: u32;
-        static mut __icmsg_rx_start: u32;
-        static __icmsg_rx_end: u32;
-    }
+    unsafe {
+        unsafe extern "C" {
+            static mut __icmsg_tx_start: u32;
+            static __icmsg_tx_end: u32;
+            static mut __icmsg_rx_start: u32;
+            static __icmsg_rx_end: u32;
+        }
 
-    const ALIGN: usize = 4;
-    let send_buffer_len = (&raw const __icmsg_tx_end).byte_offset_from(&raw const __icmsg_tx_start)
-        as u32
-        - core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-    let recv_buffer_len = (&raw const __icmsg_rx_end).byte_offset_from(&raw const __icmsg_rx_start)
-        as u32
-        - core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
+        const ALIGN: usize = 4;
+        let send_buffer_len = (&raw const __icmsg_tx_end)
+            .byte_offset_from(&raw const __icmsg_tx_start) as u32
+            - core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
+        let recv_buffer_len = (&raw const __icmsg_rx_end)
+            .byte_offset_from(&raw const __icmsg_rx_start) as u32
+            - core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
 
-    // App core perspective (opposite of netcore)
-    icmsg::MemoryConfig {
-        send_region: (&raw mut __icmsg_tx_start as *mut u32).cast(),
-        recv_region: (&raw mut __icmsg_rx_start as *mut u32).cast(),
-        send_buffer_len,
-        recv_buffer_len,
+        // App core perspective (opposite of netcore)
+        icmsg::MemoryConfig {
+            send_region: (&raw mut __icmsg_tx_start as *mut u32).cast(),
+            recv_region: (&raw mut __icmsg_rx_start as *mut u32).cast(),
+            send_buffer_len,
+            recv_buffer_len,
+        }
     }
 }
 
@@ -249,7 +251,7 @@ impl DfuForwarder for IpcForwarder {
         // Write PCD command to indicate network core DFU is pending
         let pcd = get_pcd_region();
 
-        extern "C" {
+        unsafe extern "C" {
             static __bootloader_dfu_region_start: u32;
         }
         let dfu_addr = unsafe { &__bootloader_dfu_region_start as *const u32 as u32 };
@@ -361,7 +363,7 @@ impl<'d> DualBankFlashWriter<'d> {
     }
 
     fn get_bank_range(&self, target: DfuTarget) -> (usize, usize) {
-        extern "C" {
+        unsafe extern "C" {
             static __bootloader_app_a_start: u32;
             static __bootloader_app_a_end: u32;
             static __bootloader_app_b_start: u32;
@@ -494,7 +496,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                     self.netcore_dfu_size
                 );
 
-                extern "C" {
+                unsafe extern "C" {
                     static __bootloader_dfu_region_start: u32;
                 }
                 let dfu_addr = unsafe { &__bootloader_dfu_region_start as *const u32 as u32 };
@@ -533,7 +535,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 // The DFU region already contains the new bootloader
                 // Write SWAP_MAGIC to stage1_state so stage1 performs the swap on next boot
 
-                extern "C" {
+                unsafe extern "C" {
                     static __stage1_state_start: u32;
                 }
                 let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as usize };
@@ -586,7 +588,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
         // Clear DFU state so the bootloader doesn't re-enter DFU on next boot.
         // Writing BOOT_MAGIC matches the state machine in check_dfu_state.
         // Bootloader state page symbols
-        extern "C" {
+        unsafe extern "C" {
             static __bootloader_state_start: u32;
         }
         let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
@@ -639,7 +641,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
 fn select_boot_bank(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
 ) -> (usize, &'static str, BootState) {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_app_a_start: u32;
         static __bootloader_app_b_start: u32;
     }
@@ -781,7 +783,7 @@ fn select_boot_bank(
 fn check_dfu_state(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
 ) -> bool {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
 
@@ -813,7 +815,7 @@ fn check_dfu_state(
 }
 
 fn get_boot_state_manager() -> BootStateManager {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
@@ -853,7 +855,7 @@ fn rewrite_state_page_with_netcore(
     netcore_info: Option<(u32, u32)>,
     attempts: u32,
 ) -> Result<(), ()> {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
 
@@ -958,7 +960,7 @@ fn flag_dfu_requested(
     app_dfu_flag.magic = APP_DFU_FLAG_MAGIC;
     app_dfu_flag.dfu_requested = 1;
 
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
@@ -1143,7 +1145,7 @@ async fn main(spawner: Spawner) -> ! {
     // If there is no RAM command, repopulate from flash (survives reset)
     if !pcd.cmd.is_valid() {
         unsafe {
-            extern "C" {
+            unsafe extern "C" {
                 static __bootloader_state_start: u32;
             }
             let state_addr = &__bootloader_state_start as *const u32 as usize;
@@ -1209,7 +1211,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut netcore_gave_up = false;
     if netcore_dfu_pending {
         let stored_attempts = unsafe {
-            extern "C" {
+            unsafe extern "C" {
                 static __bootloader_state_start: u32;
             }
             let state_addr = &__bootloader_state_start as *const u32 as usize;
@@ -1427,7 +1429,7 @@ async fn main(spawner: Spawner) -> ! {
     // confirmation (once per bootloader update, never on an ordinary boot), and
     // stage2's own state page is rewritten afterwards to refresh its cells.
     {
-        extern "C" {
+        unsafe extern "C" {
             static __stage1_state_start: u32;
         }
         let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as usize };
@@ -1609,7 +1611,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // Lock the locked RAM region before booting to prevent app from tampering
     {
-        extern "C" {
+        unsafe extern "C" {
             static __locked_ram_start: u32;
             static __locked_ram_end: u32;
         }
@@ -1641,7 +1643,7 @@ async fn main(spawner: Spawner) -> ! {
     // MOVED: stage1_state write now happens earlier (after select_boot_bank)
     // to avoid flash corruption issues when erasing right before app jump
     if false {
-        extern "C" {
+        unsafe extern "C" {
             static __stage1_state_start: u32;
         }
 
@@ -1655,7 +1657,7 @@ async fn main(spawner: Spawner) -> ! {
         );
 
         // Read stage2_state BEFORE erasing stage1_state to check if erase affects it
-        extern "C" {
+        unsafe extern "C" {
             static __bootloader_state_start: u32;
         }
         let stage2_state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
@@ -1741,7 +1743,9 @@ async fn main(spawner: Spawner) -> ! {
 
 #[exception]
 unsafe fn DefaultHandler(_: i16) -> ! {
-    const SCB_ICSR: *const u32 = 0xE000_ED04 as *const u32;
-    let irqn = core::ptr::read_volatile(SCB_ICSR) as u8 as i16 - 16;
-    panic!("DefaultHandler #{:?}", irqn);
+    unsafe {
+        const SCB_ICSR: *const u32 = 0xE000_ED04 as *const u32;
+        let irqn = core::ptr::read_volatile(SCB_ICSR) as u8 as i16 - 16;
+        panic!("DefaultHandler #{:?}", irqn);
+    }
 }

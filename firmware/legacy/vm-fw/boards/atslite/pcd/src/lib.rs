@@ -90,12 +90,12 @@ pub enum PcdStatusCode {
 impl PcdCmd {
     /// Initialize PCD command structure at given address
     pub unsafe fn at(addr: usize) -> &'static Self {
-        &*(addr as *const Self)
+        unsafe { &*(addr as *const Self) }
     }
 
     /// Initialize mutable PCD command structure at given address
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        &mut *(addr as *mut Self)
+        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Check if command is valid
@@ -130,12 +130,12 @@ impl PcdCmd {
 impl PcdStatus {
     /// Initialize PCD status structure at given address
     pub unsafe fn at(addr: usize) -> &'static Self {
-        &*(addr as *const Self)
+        unsafe { &*(addr as *const Self) }
     }
 
     /// Initialize mutable PCD status structure at given address
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        &mut *(addr as *mut Self)
+        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Check if status is valid
@@ -180,12 +180,12 @@ pub struct PcdRegion {
 impl PcdRegion {
     /// Get PCD region at given address
     pub unsafe fn at(addr: usize) -> &'static Self {
-        &*(addr as *const Self)
+        unsafe { &*(addr as *const Self) }
     }
 
     /// Get mutable PCD region at given address
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        &mut *(addr as *mut Self)
+        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Whether the application core still has to run the network core

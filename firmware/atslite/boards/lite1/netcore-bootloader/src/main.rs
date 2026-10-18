@@ -20,7 +20,7 @@ const FLASH_SIZE: u32 = 256 * 1024;
 
 // PCD region in ICMSG shared SRAM (netcore view: app RX)
 fn pcd_region_addr() -> usize {
-    extern "C" {
+    unsafe extern "C" {
         static __pcd_region_start: u32;
     }
     unsafe { &__pcd_region_start as *const u32 as usize }
@@ -95,7 +95,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
 /// Boot the network core application
 fn boot_app() -> ! {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_active_start: u32;
     }
 
@@ -118,7 +118,7 @@ fn boot_app() -> ! {
 }
 
 fn clear_state_flag(flash: &Mutex<NoopRawMutex, RefCell<Nvmc<'_>>>) {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_state_start: u32;
         static __bootloader_state_end: u32;
     }
@@ -133,7 +133,7 @@ fn clear_state_flag(flash: &Mutex<NoopRawMutex, RefCell<Nvmc<'_>>>) {
 
 /// Copy firmware image from app flash (dfu slot) into netcore active slot.
 fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), ()> {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_active_start: u32;
         static __bootloader_active_end: u32;
         static __bootloader_dfu_start: u32;

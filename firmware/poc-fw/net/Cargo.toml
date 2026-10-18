@@ -1,7 +1,7 @@
 [package]
 name = "poc-fw-net"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 nrf-pac = { version = "0.1.0", features = ["nrf5340-net", "rt"] }

@@ -1,6 +1,5 @@
 #![no_main]
 #![no_std]
-#![feature(never_type)]
 
 use common::object_mode::{ObjectModeContext, object_mode};
 use common::{Paj, settings, usb};

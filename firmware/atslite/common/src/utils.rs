@@ -29,19 +29,19 @@ pub fn set_pin_sense(
 #[macro_export]
 macro_rules! battery_model_inc {
     (
-        .param_1  = { $($p1:expr),* $(,)? },
-        .temps    = { $($temps:expr),* $(,)? },
-        .param_2  = { $($p2:expr),* $(,)? },
-        .param_3  = { $($p3:expr),* $(,)? },
-        .param_4  = { $($p4:expr),* $(,)? },
-        .param_5  = { $($p5:expr),* $(,)? },
-        .param_6  = { $($p6:expr),* $(,)? },
-        .param_7  = { $($p7:expr),* $(,)? },
-        .param_8  = { $($p8:expr),* $(,)? },
-        .param_9  = { $($p9:expr),* $(,)? },
-        .param_10 = { $($p10:expr),* $(,)? },
-        .param_11 = { $($p11:expr),* $(,)? },
-        .param_12 = { $($p12:expr),* $(,)? },
+        .param_1  = { $($p1:expr_2021),* $(,)? },
+        .temps    = { $($temps:expr_2021),* $(,)? },
+        .param_2  = { $($p2:expr_2021),* $(,)? },
+        .param_3  = { $($p3:expr_2021),* $(,)? },
+        .param_4  = { $($p4:expr_2021),* $(,)? },
+        .param_5  = { $($p5:expr_2021),* $(,)? },
+        .param_6  = { $($p6:expr_2021),* $(,)? },
+        .param_7  = { $($p7:expr_2021),* $(,)? },
+        .param_8  = { $($p8:expr_2021),* $(,)? },
+        .param_9  = { $($p9:expr_2021),* $(,)? },
+        .param_10 = { $($p10:expr_2021),* $(,)? },
+        .param_11 = { $($p11:expr_2021),* $(,)? },
+        .param_12 = { $($p12:expr_2021),* $(,)? },
         name: $name:literal,
     ) => {
         mod __battery_model_generated {

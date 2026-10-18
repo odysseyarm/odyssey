@@ -1,5 +1,5 @@
 [package]
-edition = "2021"
+edition = "2024"
 name = "atslite-stage1-bootloader"
 version = "0.1.0"
 description = "First-stage bootloader for atslite with direct-XIP"

@@ -1,6 +1,5 @@
 #![no_main]
 #![no_std]
-#![feature(never_type)]
 
 use core::cell::RefCell;
 
