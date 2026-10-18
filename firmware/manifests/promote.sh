@@ -30,6 +30,14 @@ if jq -e --arg d "$device" --arg v "$version" \
     exit 1
 fi
 
+# Hosts take the first installable entry, so stable has to stay newest-first.
+# Prepending anything that is not newer than the head would break that.
+head=$(jq -r --arg d "$device" '.devices[$d].firmwares[0].version // empty' "$stable")
+if [ -n "$head" ] && [ "$(printf '%s\n%s\n' "$head" "$version" | sort -V | tail -n 1)" != "$version" ]; then
+    echo "error: $version is not newer than $head, stable's current newest for $device; promote in order." >&2
+    exit 1
+fi
+
 jq --arg d "$device" --argjson e "$entry" \
     '.devices[$d].firmwares = [$e] + (.devices[$d].firmwares // [])' "$stable" > "$stable.tmp"
 mv "$stable.tmp" "$stable"
