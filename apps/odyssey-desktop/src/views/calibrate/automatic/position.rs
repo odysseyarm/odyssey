@@ -6,7 +6,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use odyssey_autocalib::session::Hint;
 
-use super::hints::screen_hint;
+use super::hints::{screen_hint, OVERSCAN_HELP};
 use super::settings::{COLOR_EXPOSURE_RANGE_US, COLOR_EXPOSURE_STEP_US};
 use super::ui::{focus_primary, Details, Fact, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
 use super::wizard::Wizard;
@@ -172,6 +172,16 @@ fn LivePreview(wizard: Wizard) -> Element {
     let dot_radius = 6.0 * unit;
     let line = 3.0 * unit;
     let quad = frame.quad.map(|q| q.iter().map(|p| format!("{:.1},{:.1}", p[0], p[1])).collect::<Vec<_>>().join(" "));
+    // Edges the display cuts off, drawn over the outline in red so the tech
+    // sees which sides to look at. The quad runs top left, top right, bottom
+    // right, bottom left.
+    let cropped_edges: Vec<[[f32; 2]; 2]> = match (frame.quad, frame.cropped) {
+        (Some(q), Some(sides)) => [(sides.top, 0), (sides.right, 1), (sides.bottom, 2), (sides.left, 3)]
+            .into_iter()
+            .filter_map(|(on, i)| on.then(|| [q[i], q[(i + 1) % 4]]))
+            .collect(),
+        _ => Vec::new(),
+    };
     rsx! {
         OverlayImage {
             src: frame.image.clone(),
@@ -185,6 +195,18 @@ fn LivePreview(wizard: Wizard) -> Element {
                     stroke: "{color}",
                     stroke_width: "{line}",
                     stroke_linejoin: "round",
+                }
+            }
+            for (i, edge) in cropped_edges.iter().enumerate() {
+                line {
+                    key: "cropped-{i}",
+                    x1: "{edge[0][0]}",
+                    y1: "{edge[0][1]}",
+                    x2: "{edge[1][0]}",
+                    y2: "{edge[1][1]}",
+                    stroke: "#ef4444",
+                    stroke_width: "{line * 2.2}",
+                    stroke_linecap: "round",
                 }
             }
             for (i, dot) in frame.dots.iter().enumerate() {
@@ -233,6 +255,20 @@ fn PositionDetails(wizard: Wizard) -> Element {
                 }
             }
             Fact { label: "Color exposure", value: format!("{exposure} µs") }
+            if preview.as_ref().is_some_and(|f| f.hint == Hint::EdgesCropped) {
+                div {
+                    class: "mt-1 flex flex-col gap-2 border-t border-gray-200 pt-3 dark:border-gray-600",
+                    div { class: "font-medium text-gray-900 dark:text-white", "Where to turn off overscan" }
+                    p { class: "text-gray-600 dark:text-gray-300", "Menu names differ between models and years. These are the usual places:" }
+                    for (brand, steps) in OVERSCAN_HELP {
+                        div {
+                            key: "{brand}",
+                            span { class: "font-semibold", "{brand}: " }
+                            "{steps}"
+                        }
+                    }
+                }
+            }
         }
     }
 }

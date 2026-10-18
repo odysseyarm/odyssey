@@ -223,11 +223,48 @@ struct ScreenMeasurement {
     color: RgbImage,
     edges: EdgeCheck,
     gravity_aligned: bool,
+    /// The burst the fit came from, kept so the same measurement can be solved
+    /// again under a different size anchor without the camera.
+    frames: Vec<Frames>,
 }
 
 struct MarkerMeasurement {
     summary: MarkerSummary,
     marker_px: [Point2<f32>; 6],
+    /// Blobs of each measured frame, kept for the same reason as the screen's
+    /// frames: markers are located against a fit, and a new fit moves them.
+    bursts: Vec<Vec<MarkerBlob>>,
+}
+
+/// Locates the markers in every burst frame against `fit` and averages the
+/// frames that matched.
+fn average_markers(
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    bursts: &[Vec<MarkerBlob>],
+) -> Result<(MarkerSummary, [Point2<f32>; 6]), SessionError> {
+    let mut sums = [nalgebra::Vector2::<f64>::zeros(); 6];
+    let mut max_offset = 0.0f64;
+    let mut successes = 0usize;
+    let mut last_error = None;
+    for blobs in bursts {
+        match markers::locate(geometry, fit, blobs) {
+            Ok(m) => {
+                successes += 1;
+                max_offset = max_offset.max(m.max_offset_m);
+                for (sum, p) in sums.iter_mut().zip(m.points_m) {
+                    *sum += p.coords;
+                }
+            }
+            Err(e) => last_error = Some(e),
+        }
+    }
+    if successes == 0 || successes * 2 < bursts.len() {
+        return Err(last_error.map(SessionError::Markers).unwrap_or(SessionError::Markers(MarkerError::TooFewBlobs { found: 0 })));
+    }
+    let points_m = sums.map(|s| Point2::from(s / successes as f64));
+    let marker_px = points_m.map(|p| fit.screen_to_color_px(p).map(pt32).unwrap_or_else(Point2::origin));
+    Ok((MarkerSummary { points_m, max_offset_m: max_offset }, marker_px))
 }
 
 pub struct Session {
@@ -422,8 +459,8 @@ impl Session {
             dots_used: fit.dots_used,
             quad_px: fit.quad_px.map(pt32),
         };
-        let color = frames.pop().map(|f| f.color).unwrap_or_else(|| RgbImage::new(0, 0));
-        self.screen = Some(ScreenMeasurement { fit, color, edges, gravity_aligned: self.gravity.is_ready() });
+        let color = frames.last().map(|f| f.color.clone()).unwrap_or_else(|| RgbImage::new(0, 0));
+        self.screen = Some(ScreenMeasurement { fit, color, edges, gravity_aligned: self.gravity.is_ready(), frames });
         // A new screen measurement invalidates markers measured against the old one.
         self.markers = None;
         progress(Step::Done);
@@ -462,62 +499,65 @@ impl Session {
             return Err(SessionError::ScreenNotMeasured);
         }
         self.enter_marker_mode()?;
-        let mut sums = [nalgebra::Vector2::<f64>::zeros(); 6];
-        let mut max_offset = 0.0f64;
-        let mut successes = 0usize;
-        let mut last_error = None;
         let total = MARKER_FRAMES;
+        let mut bursts = Vec::with_capacity(total);
         for frame in 0..total {
             progress(Step::Capturing { frame, total });
             let frames = self.grab()?;
-            let blobs: Vec<MarkerBlob> = markers::detect_blobs(&frames.ir);
-            let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
-            match markers::locate(&self.geometry, &screen.fit, &blobs) {
-                Ok(m) => {
-                    successes += 1;
-                    max_offset = max_offset.max(m.max_offset_m);
-                    for (sum, p) in sums.iter_mut().zip(m.points_m) {
-                        *sum += p.coords;
-                    }
-                }
-                Err(e) => last_error = Some(e),
-            }
+            bursts.push(markers::detect_blobs(&frames.ir));
         }
         progress(Step::Solving);
-        if successes == 0 || successes * 2 < total {
-            return Err(last_error.map(SessionError::Markers).unwrap_or(SessionError::Markers(MarkerError::TooFewBlobs { found: 0 })));
-        }
-        let points_m = sums.map(|s| Point2::from(s / successes as f64));
         let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
-        let marker_px = points_m.map(|p| screen.fit.screen_to_color_px(p).map(pt32).unwrap_or_else(Point2::origin));
-        self.markers = Some(MarkerMeasurement { summary: MarkerSummary { points_m, max_offset_m: max_offset }, marker_px });
+        let (summary, marker_px) = average_markers(&self.geometry, &screen.fit, &bursts)?;
+        self.markers = Some(MarkerMeasurement { summary, marker_px, bursts });
         progress(Step::Done);
-        self.markers.as_ref().map(|m| m.summary).ok_or(SessionError::MarkersNotMeasured)
+        Ok(summary)
     }
 
     /// The calibration and review data, once the screen and markers are measured.
     pub fn finish(&self) -> Result<Calibration, SessionError> {
         let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
         let markers = self.markers.as_ref().ok_or(SessionError::MarkersNotMeasured)?;
-        let calibration = build_calibration(&screen.fit, &markers.summary.points_m);
+        Ok(self.assemble(screen, &screen.fit, markers.summary, markers.marker_px))
+    }
+
+    /// The same measurement as [`finish`](Self::finish) with the declared
+    /// [`SessionOptions::known_size`] ignored: the size comes from the depth
+    /// camera. It solves the stored frames again and needs no camera, so a
+    /// review screen can offer it after the stream has stopped. Equals
+    /// `finish` when no size was declared.
+    pub fn finish_measured(&self) -> Result<Calibration, SessionError> {
+        let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
+        let markers = self.markers.as_ref().ok_or(SessionError::MarkersNotMeasured)?;
+        if self.options.known_size.is_none() {
+            return self.finish();
+        }
+        let alignment = self.gravity.camera_to_aligned();
+        let fit = solve_screen(&self.geometry, &self.pattern, &screen.frames, &alignment, &SolveOptions::default())?;
+        let (summary, marker_px) = average_markers(&self.geometry, &fit, &markers.bursts)?;
+        Ok(self.assemble(screen, &fit, summary, marker_px))
+    }
+
+    fn assemble(&self, screen: &ScreenMeasurement, fit: &ScreenFit, markers: MarkerSummary, marker_px: [Point2<f32>; 6]) -> Calibration {
+        let calibration = build_calibration(fit, &markers.points_m);
         let review = Review {
             color: screen.color.clone(),
-            plane_rmse_m: screen.fit.plane_rmse_m,
-            plane_max_error_m: screen.fit.plane_max_error_m,
-            plane_inliers: screen.fit.plane_inliers,
-            screen_quad_px: screen.fit.quad_px.map(pt32),
-            marker_px: markers.marker_px,
-            size_m: screen.fit.size_m,
-            diagonal_in: screen.fit.diagonal_in(),
-            size_source: screen.fit.size_source,
-            size_check: screen.fit.size_check,
+            plane_rmse_m: fit.plane_rmse_m,
+            plane_max_error_m: fit.plane_max_error_m,
+            plane_inliers: fit.plane_inliers,
+            screen_quad_px: fit.quad_px.map(pt32),
+            marker_px,
+            size_m: fit.size_m,
+            diagonal_in: fit.diagonal_in(),
+            size_source: fit.size_source,
+            size_check: fit.size_check,
             edges: screen.edges,
-            dots_used: screen.fit.dots_used,
+            dots_used: fit.dots_used,
             dots_expected: self.pattern.dots().len(),
-            marker_max_offset_m: markers.summary.max_offset_m,
+            marker_max_offset_m: markers.max_offset_m,
             gravity_aligned: screen.gravity_aligned,
         };
-        Ok(Calibration { calibration, review })
+        Calibration { calibration, review }
     }
 }
 

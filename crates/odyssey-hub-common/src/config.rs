@@ -112,6 +112,27 @@ pub struct UiState {
     /// each monitor, so the next calibration of that monitor starts on the
     /// same screen number.
     pub calibration_screens: Vec<MonitorScreen>,
+    /// What kind of display the calibration wizard last calibrated on each
+    /// monitor, so a projector is not asked about again as a TV.
+    pub display_kinds: Vec<MonitorDisplayKind>,
+}
+
+/// What a display is, as far as calibration cares: a flat panel has a known
+/// physical size, a projected picture does not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayKind {
+    /// A TV or monitor.
+    #[default]
+    Flat,
+    /// A projector, or any projected image.
+    Projector,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MonitorDisplayKind {
+    pub monitor: MonitorKey,
+    pub kind: DisplayKind,
 }
 
 /// A monitor and the screen (`screen_<id>.json`) calibrated for it.
@@ -137,6 +158,16 @@ impl UiState {
         self.calibration_screens
             .retain(|s| s.monitor != monitor && s.screen_id != screen_id);
         self.calibration_screens.push(MonitorScreen { monitor, screen_id });
+    }
+
+    /// The kind of display last calibrated on `monitor`, if any.
+    pub fn display_kind(&self, monitor: &MonitorKey) -> Option<DisplayKind> {
+        self.display_kinds.iter().find(|k| &k.monitor == monitor).map(|k| k.kind)
+    }
+
+    pub fn remember_display_kind(&mut self, monitor: MonitorKey, kind: DisplayKind) {
+        self.display_kinds.retain(|k| k.monitor != monitor);
+        self.display_kinds.push(MonitorDisplayKind { monitor, kind });
     }
 }
 
@@ -530,6 +561,10 @@ mod tests {
                 monitor: key(),
                 screen_id: 3,
             }],
+            display_kinds: vec![MonitorDisplayKind {
+                monitor: key(),
+                kind: DisplayKind::Projector,
+            }],
         };
 
         block_on(async {
@@ -606,6 +641,26 @@ mod tests {
     }
 
     #[test]
+    fn display_kind_is_remembered_per_monitor_and_replaced() {
+        let mut state = UiState::default();
+        assert_eq!(state.display_kind(&key()), None);
+        state.remember_display_kind(key(), DisplayKind::Projector);
+        state.remember_display_kind(other_key(), DisplayKind::Flat);
+        assert_eq!(state.display_kind(&key()), Some(DisplayKind::Projector));
+        assert_eq!(state.display_kind(&other_key()), Some(DisplayKind::Flat));
+        state.remember_display_kind(key(), DisplayKind::Flat);
+        assert_eq!(state.display_kind(&key()), Some(DisplayKind::Flat));
+        assert_eq!(state.display_kinds.len(), 2);
+    }
+
+    #[test]
+    fn display_kind_is_written_in_plain_words() {
+        let json = serde_json::to_string(&DisplayKind::Projector).unwrap();
+        assert_eq!(json, "\"projector\"");
+        assert_eq!(json5::from_str::<DisplayKind>("\"flat\"").unwrap(), DisplayKind::Flat);
+    }
+
+    #[test]
     fn ui_state_written_before_screens_existed_still_loads() {
         let state: UiState = json5::from_str(
             r#"{ "selected_monitor": { "name": null, "x": 0, "y": 0, "width": 1920, "height": 1080 } }"#,
@@ -613,5 +668,6 @@ mod tests {
         .unwrap();
         assert!(state.selected_monitor.is_some());
         assert!(state.calibration_screens.is_empty());
+        assert!(state.display_kinds.is_empty());
     }
 }

@@ -26,16 +26,19 @@ use dioxus::{logger::tracing, prelude::*};
 use odyssey_autocalib::camera::{CameraInfo, CaptureSettings};
 use odyssey_autocalib::orbbec::RuntimeStatus;
 use odyssey_autocalib::pattern::Pattern;
-use odyssey_autocalib::session::{KnownSize, SessionOptions, Step};
+use odyssey_autocalib::session::{SessionOptions, Step};
 use odyssey_hub_common::config::{self, MonitorKey, UiState};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use super::pattern_window::{self, PatternDisplay, PatternLoss, PatternMode};
-use super::settings::{parse_diagonal, DiagonalError, COLOR_EXPOSURE_RANGE_US, IR_EXPOSURE_RANGE_US};
+use super::kind::{self, DisplayKind, Finding, SizePlan};
+use super::settings::{
+    parse_entered, Entered, SizeError, SizeField, COLOR_EXPOSURE_RANGE_US, IR_EXPOSURE_RANGE_US,
+};
 use super::screens::{default_screen, saved_screens, SCREEN_COUNT};
 use super::worker::{
-    Backend, Command, Event, Failure, FailureKind, Finished, ListError, MarkerFrame, Mode, OpenRequest,
-    PreviewFrame, SessionEvent, Worker,
+    demo_scene, Backend, Command, Event, Failure, FailureKind, Finished, ListError, MarkerFrame, Mode, OpenRequest,
+    PreviewFrame, SessionEvent, Worker, DEMO_DIAGONAL_IN,
 };
 use crate::cli::{self, CalibrateArgs};
 use crate::components::screen_picker::{monitor_key, MonitorSelection};
@@ -116,7 +119,22 @@ pub struct Wizard {
     ui_state: Signal<UiState>,
     pub cameras: Signal<CameraList>,
     pub camera_choice: Signal<Option<String>>,
-    pub diagonal_text: Signal<String>,
+    /// The size field's text. Blank means "use what the display says, or
+    /// measure".
+    pub size_text: Signal<String>,
+    /// Which dimension the size field takes for a projector.
+    pub size_field: Signal<SizeField>,
+    /// The tech's explicit answer to "What are you calibrating?"; until then
+    /// the remembered or default kind shows.
+    kind_choice: Signal<Option<DisplayKind>>,
+    /// What the display's own information says about its size; `None` while
+    /// it is being read.
+    pub finding: Signal<Option<Finding>>,
+    /// Whether the "Not right? Enter the size yourself" field is open.
+    pub manual_size: Signal<bool>,
+    /// Show the camera's own measurement on the review instead of the declared
+    /// size.
+    pub use_measured: Signal<bool>,
     /// Command-line values that could not be honored, shown in Setup.
     pub notes: Signal<Vec<String>>,
     list_pending: Signal<bool>,
@@ -166,7 +184,11 @@ pub fn use_wizard() -> Wizard {
         let (tx, rx) = unbounded_channel::<PatternLoss>();
         (tx, Rc::new(RefCell::new(Some(rx))))
     });
-    let backend = if demo { Backend::Demo } else { Backend::Hardware };
+    let backend = if demo {
+        Backend::Demo { overscan_fraction: args.demo_overscan_percent.unwrap_or(0.0) / 100.0 }
+    } else {
+        Backend::Hardware
+    };
     let worker = use_signal({
         let tx = channel.0.clone();
         move || Rc::new(Worker::spawn(backend, tx))
@@ -185,7 +207,12 @@ pub fn use_wizard() -> Wizard {
         ui_state: use_signal(UiState::default),
         cameras: use_signal(|| CameraList::Searching),
         camera_choice: use_signal(|| args.camera.clone()),
-        diagonal_text: use_signal(|| args.diagonal_in.map(|d| d.to_string()).unwrap_or_default()),
+        size_text: use_signal(|| args.diagonal_in.map(|d| d.to_string()).unwrap_or_default()),
+        size_field: use_signal(|| SizeField::Diagonal),
+        kind_choice: use_signal(|| args.kind),
+        finding: use_signal(|| None),
+        manual_size: use_signal(|| args.diagonal_in.is_some()),
+        use_measured: use_signal(|| false),
         notes: use_signal(Vec::new),
         list_pending: use_signal(|| false),
         auto_start: use_signal(|| had_args && args.monitor.is_some()),
@@ -227,6 +254,34 @@ pub fn use_wizard() -> Wizard {
             *wizard.ui_state.write() = config::ui_state_async().await.into_value();
             wizard.refresh_saved_screens().await;
         }
+    });
+
+    // Read the selected display's own size whenever the selection changes.
+    // The lookup reads files, so it stays off the UI thread.
+    use_resource(move || async move {
+        let monitor = wizard.selected_monitor();
+        *wizard.finding.write() = None;
+        let Some(key) = monitor else { return };
+        let found = if demo {
+            let [w, h] = demo_scene(f64::from(key.width) / f64::from(key.height.max(1)), DEMO_DIAGONAL_IN, true, 0.0).screen_size_m;
+            Finding::demo(w, h)
+        } else {
+            let lookup = tokio::task::spawn_blocking(move || {
+                odyssey_autocalib::display::lookup(key.name.as_deref(), (key.width, key.height))
+            })
+            .await;
+            match lookup {
+                Ok(lookup) => Finding::from_lookup(&lookup),
+                // A panicked lookup is no reason to block calibration.
+                Err(_) => Finding::from_lookup(&odyssey_autocalib::display::DisplayLookup {
+                    edid: None,
+                    source: odyssey_autocalib::display::LookupSource::Unavailable,
+                    note: Some(odyssey_autocalib::display::LookupNote::NotFound),
+                }),
+            }
+        };
+        *wizard.finding.write() = Some(found);
+        wizard.maybe_auto_start();
     });
 
     // Camera events arrive from the camera thread.
@@ -337,12 +392,56 @@ impl Wizard {
         }
     }
 
-    pub fn diagonal(self) -> Result<Option<f64>, DiagonalError> {
-        parse_diagonal(&self.diagonal_text.read())
+    /// The kind of display Setup shows as chosen: the tech's answer, else the
+    /// one used last time on this monitor, else a flat screen.
+    pub fn kind(self) -> DisplayKind {
+        if let Some(chosen) = *self.kind_choice.read() {
+            return chosen;
+        }
+        let remembered = self
+            .selected_monitor()
+            .and_then(|key| self.ui_state.read().display_kind(&key));
+        kind::default_kind(remembered)
+    }
+
+    /// Answers "What are you calibrating?". The size typed for the other kind
+    /// no longer applies.
+    pub fn set_kind(mut self, kind: DisplayKind) {
+        if self.kind() != kind {
+            self.size_text.write().clear();
+            *self.manual_size.write() = false;
+            *self.size_field.write() = SizeField::Diagonal;
+        }
+        *self.kind_choice.write() = Some(kind);
+    }
+
+    /// The field the size box takes: flat screens are sold by diagonal, a
+    /// projected picture is also measured by width.
+    pub fn field(self) -> SizeField {
+        match self.kind() {
+            DisplayKind::Flat => SizeField::Diagonal,
+            DisplayKind::Projector => *self.size_field.read(),
+        }
+    }
+
+    /// The size the tech typed, if any.
+    pub fn entered(self) -> Result<Option<Entered>, SizeError> {
+        parse_entered(&self.size_text.read(), self.field())
+    }
+
+    /// The size and edge rule the session will get for the current answers.
+    pub fn size_plan(self) -> Option<SizePlan> {
+        let aspect = self.aspect()?;
+        let entered = self.entered().ok().flatten();
+        Some(kind::plan(self.kind(), self.finding.read().as_ref(), entered, aspect))
     }
 
     pub fn can_continue(self) -> bool {
-        self.selected_monitor().is_some() && self.camera().is_some() && self.diagonal().is_ok()
+        self.selected_monitor().is_some()
+            && self.camera().is_some()
+            && self.entered().is_ok()
+            // The display's size decides the plan, so wait until it is read.
+            && self.finding.read().is_some()
     }
 
     pub async fn refresh_saved_screens(mut self) {
@@ -381,6 +480,7 @@ impl Wizard {
 
     fn open_request(self, pattern_visible: bool) -> Option<OpenRequest> {
         let defaults = SessionOptions::default();
+        let plan = self.size_plan()?;
         Some(OpenRequest {
             camera: self.camera()?,
             settings: CaptureSettings {
@@ -390,10 +490,12 @@ impl Wizard {
             aspect: self.aspect()?,
             options: SessionOptions {
                 ir_exposure_us: *self.ir_exposure.peek(),
-                known_size: self.diagonal().ok().flatten().map(|inches| KnownSize::Diagonal { inches }),
+                known_size: plan.known_size,
+                require_visible_edges: plan.require_visible_edges,
                 ..defaults
             },
             pattern_visible,
+            size_origin: plan.origin,
         })
     }
 
@@ -461,6 +563,7 @@ impl Wizard {
                 kind: FailureKind::Internal,
                 details: "the selected monitor is no longer available".into(),
                 camera_open: false,
+                size_origin: None,
             });
             return;
         }
@@ -580,6 +683,7 @@ impl Wizard {
         *self.preview.write() = None;
         *self.markers.write() = None;
         *self.finished.write() = None;
+        *self.use_measured.write() = false;
         *self.saved_to.write() = None;
         *self.confirm_replace.write() = false;
         *self.save_error.write() = None;
@@ -591,7 +695,8 @@ impl Wizard {
     /// the size cleared, since it described the last screen.
     pub fn calibrate_another(mut self) {
         *self.screen_choice.write() = None;
-        self.diagonal_text.write().clear();
+        self.size_text.write().clear();
+        *self.manual_size.write() = false;
         self.back_to_setup();
     }
 
@@ -625,7 +730,8 @@ impl Wizard {
                 }
                 self.enter_markers();
             }
-            FailureKind::Internal => self.back_to_setup(),
+            // The size lives in Setup; trying again would meet the same error.
+            FailureKind::Internal | FailureKind::SizeInvalid | FailureKind::SizeShape => self.back_to_setup(),
             _ => self.begin_position(),
         }
     }
@@ -645,8 +751,10 @@ impl Wizard {
         *self.saving.write() = true;
         *self.save_error.write() = None;
         let key = self.selected_monitor();
+        let kind = self.kind();
+        let use_measured = *self.use_measured.peek();
         spawn(async move {
-            let calibration = finished.calibration;
+            let calibration = finished.outcome(use_measured).calibration;
             let written = tokio::task::spawn_blocking(move || {
                 let dir = config::screens_dir().map_err(|e| e.to_string())?;
                 odyssey_autocalib::session::save_calibration(&dir, screen_id, &calibration)
@@ -662,7 +770,8 @@ impl Wizard {
                         // Reload before saving so a field changed elsewhere
                         // meanwhile is not overwritten.
                         let mut state = config::ui_state_async().await.into_value();
-                        state.remember_calibration_screen(key, screen_id);
+                        state.remember_calibration_screen(key.clone(), screen_id);
+                        state.remember_display_kind(key, kind);
                         if let Err(e) = config::ui_state_save_async(&state).await {
                             tracing::warn!("could not remember the screen: {e}");
                         }
@@ -732,6 +841,7 @@ impl Wizard {
             }
             SessionEvent::Finished(finished) => {
                 *self.finished.write() = Some(Rc::new(*finished));
+                *self.use_measured.write() = false;
                 *self.saved_to.write() = None;
                 *self.confirm_replace.write() = false;
                 *self.save_error.write() = None;
