@@ -294,10 +294,12 @@ check:
     cd net-core && cargo check
 
 # Generate a release entry in manifests/releases.alpha.json from current build.
-# requires_bootloader and requires_netcore are the lowest bootloader and net-core
-# releases this application can run on, 0 for none. min_desktop is the oldest
-# Odyssey Desktop it is required and tested with, which is not automatically the
-# desktop shipping alongside it.
+# requires_bootloader is the lowest bootloader release this application can run
+# on, 0 for none. requires_netcore is the net-core release the unit must already
+# be running before this entry installs, 0 for none; this entry's own net core
+# never counts, so it may not exceed what an existing entry carries. min_desktop
+# is the oldest Odyssey Desktop it is required and tested with, which is not
+# automatically the desktop shipping alongside it.
 # None has a default: leaving one out would silently mean "any".
 gen-release requires_bootloader requires_netcore min_desktop:
     #!/usr/bin/env bash
@@ -376,10 +378,6 @@ gen-release requires_bootloader requires_netcore min_desktop:
         echo "Error: requires_netcore must be an integer, got '$REQUIRES_NETCORE'."
         exit 1
     fi
-    if [ "$REQUIRES_NETCORE" -gt "$NET_CORE_RELEASE" ]; then
-        echo "Error: requires_netcore $REQUIRES_NETCORE is above the net core being published ($NET_CORE_RELEASE)."
-        exit 1
-    fi
     # The counter is baked into the image, so a hash and a counter identify each
     # other. A changed image under an unraised counter would never reach devices
     # already reporting that counter; one counter on two images, or one image
@@ -416,6 +414,14 @@ gen-release requires_bootloader requires_netcore min_desktop:
     fi
     if [ -z "$NC_SHA_RELEASES" ] && [ "$NET_CORE_RELEASE" -le "$NC_NEWEST_RELEASE" ]; then
         echo "Error: the net-core image changed but its release counter ($NET_CORE_RELEASE) is not above the newest published ($NC_NEWEST_RELEASE)."
+        exit 1
+    fi
+    # requires_netcore is checked against the net core a unit is already running,
+    # and nothing reads the net core back until the new application runs, so the
+    # net core this entry carries can never satisfy its own floor.
+    if [ "$REQUIRES_NETCORE" -gt "$NC_NEWEST_RELEASE" ]; then
+        echo "Error: requires_netcore $REQUIRES_NETCORE is above the newest net core already published in an entry ($NC_NEWEST_RELEASE)."
+        echo "A net-core bump ships in a bridge entry that requires only what is deployed; only a later entry may require it."
         exit 1
     fi
 
