@@ -1,5 +1,6 @@
 //! Offers to download Orbbec's camera software, after the user has accepted
-//! Orbbec's licence, and to remove a copy that was downloaded.
+//! Orbbec's licence, to remove a copy that was downloaded, and to say when the
+//! copy in use is not the version this app is tested with.
 //!
 //! Only builds with the `sdk-download` feature contain the download. Builds for
 //! customers who may only run offline software leave it out, and
@@ -8,7 +9,8 @@
 use dioxus::prelude::*;
 
 use super::ui::SECONDARY_BUTTON;
-use super::wizard::Wizard;
+use super::wizard::{CameraList, Wizard};
+use crate::sdk_install::{self, Advisory, Delivery, Removal};
 
 #[cfg(feature = "sdk-download")]
 mod online {
@@ -17,12 +19,14 @@ mod online {
     use super::super::ui::PRIMARY_BUTTON;
     use super::super::wizard::Wizard;
     use crate::components::wizard::Spinner;
-    use crate::sdk_install::{self, Phase};
+    use crate::sdk_install::{self, Installed, Phase};
 
     #[derive(Clone, PartialEq)]
     enum State {
         Ready,
         Working(Phase),
+        /// Downloaded, but the copy in use cannot be replaced until Odyssey restarts.
+        Waiting,
         Failed(String),
     }
 
@@ -78,6 +82,13 @@ mod online {
                             "{describe(phase)}"
                         }
                     },
+                    State::Waiting => rsx! {
+                        div {
+                            role: "status",
+                            class: "text-sm text-gray-700 dark:text-gray-200",
+                            "Downloaded. Restart Odyssey to switch to it."
+                        }
+                    },
                     State::Failed(error) => rsx! {
                         div {
                             role: "alert",
@@ -95,15 +106,16 @@ mod online {
                         state.set(State::Working(Phase::Downloading { received: 0, total: 0 }));
                         spawn(async move {
                             match sdk_install::install(|phase| state.set(State::Working(phase))).await {
-                                Ok(_) => {
+                                Ok(Installed::Ready) => {
                                     state.set(State::Ready);
                                     wizard.request_camera_list();
                                 }
+                                Ok(Installed::AfterRestart) => state.set(State::Waiting),
                                 Err(error) => state.set(State::Failed(format!("{error:#}"))),
                             }
                         });
                     },
-                    "Download Orbbec SDK"
+                    "Download Orbbec SDK {pin.version}"
                 }
             }
         }
@@ -121,26 +133,90 @@ pub fn DownloadSdk(wizard: Wizard) -> Element {
     rsx! {}
 }
 
+const NOTE_CLASS: &str = "flex flex-col gap-2 rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100";
+
+/// Says so when the camera software in use is not the version this app is tested
+/// with. Only a warning: the loader accepts 2.8 and newer, so the cameras still
+/// work. When the copy is one Odyssey downloaded and it is older, the pinned one
+/// can be downloaded in its place; for a copy found elsewhere, or a newer one,
+/// there is nothing to offer.
+#[component]
+pub fn SdkVersionNote(wizard: Wizard) -> Element {
+    // Cameras were listed, so the library is loaded and the lookup below is cached.
+    if !matches!(*wizard.cameras.read(), CameraList::Found(_)) {
+        return rsx! {};
+    }
+    let Some(advisory) = sdk_install::current_advisory() else {
+        return rsx! {};
+    };
+
+    match advisory {
+        Advisory::Older {
+            found,
+            pinned,
+            replaceable,
+        } => rsx! {
+            div {
+                role: "note",
+                class: NOTE_CLASS,
+                span {
+                    class: "font-semibold",
+                    "The camera software is older than this app is tested with"
+                }
+                span {
+                    "Orbbec SDK {found} is in use and Odyssey is tested with {pinned}. \
+                     The camera should still work, but update it if you run into problems."
+                }
+                if replaceable && sdk_install::delivery() == Delivery::Download {
+                    DownloadSdk { wizard }
+                } else if !replaceable {
+                    span {
+                        class: "text-sm",
+                        "Odyssey didn't install it, so update it where you got it."
+                    }
+                }
+            }
+        },
+        Advisory::Newer { found, pinned } => rsx! {
+            div {
+                role: "note",
+                class: NOTE_CLASS,
+                span {
+                    class: "font-semibold",
+                    "The camera software is newer than this app is tested with"
+                }
+                span {
+                    "Orbbec SDK {found} is in use and Odyssey is tested with {pinned}. \
+                     It will probably work, but if the camera misbehaves, install {pinned}."
+                }
+            }
+        },
+    }
+}
+
 /// A line under the camera list for a copy of the SDK this app downloaded, with a
 /// way to delete it. Shows nothing otherwise, including for the installer's copy,
 /// which Windows removes with the app.
 #[component]
 pub fn DownloadedSdkRow(wizard: Wizard) -> Element {
-    use crate::sdk_install::{self, Delivery, Removal};
-
     let mut error = use_signal(|| None::<String>);
     if sdk_install::delivery() != Delivery::Download || !sdk_install::has_managed_copy() {
         return rsx! {};
     }
-    let pending = sdk_install::removal_pending();
+    let removal_pending = sdk_install::removal_pending();
+    let update_pending = sdk_install::update_pending();
 
     rsx! {
         div {
             class: "flex flex-wrap items-center gap-3 text-sm text-gray-500 dark:text-gray-400",
-            if pending {
+            if removal_pending {
                 "The camera software Odyssey downloaded will be removed the next time Odyssey starts."
             } else {
-                "Camera software downloaded by Odyssey."
+                if update_pending {
+                    "Camera software downloaded by Odyssey. A newer copy takes over the next time Odyssey starts."
+                } else {
+                    "Camera software downloaded by Odyssey."
+                }
                 button {
                     r#type: "button",
                     class: SECONDARY_BUTTON,
