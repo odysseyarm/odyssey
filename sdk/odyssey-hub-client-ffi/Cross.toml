@@ -21,3 +21,12 @@ pre-build = [
     "apt-get update && apt-get install -y pkg-config curl unzip libudev-dev:$CROSS_DEB_ARCH libdbus-1-dev:$CROSS_DEB_ARCH",
     "curl -sSfL https://github.com/protocolbuffers/protobuf/releases/download/v26.1/protoc-26.1-linux-x86_64.zip -o /tmp/protoc.zip && unzip -o /tmp/protoc.zip -d /usr/local 'bin/protoc' 'include/*' && chmod +x /usr/local/bin/protoc"
 ]
+
+# The crates this one depends on take their dependency versions from the repo's root
+# Cargo.toml ([workspace.dependencies]). cross mounts those crates' own directories
+# but not the root, so cargo inside the container cannot find the workspace root
+# ("failed to find a workspace root"). Mount the whole checkout, at the same path,
+# from the directory ODYSSEY_REPO names: CI sets it to the workspace, and locally it
+# is `git rev-parse --show-toplevel`.
+[build.env]
+volumes = ["ODYSSEY_REPO"]
