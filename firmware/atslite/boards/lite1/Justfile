@@ -1,4 +1,5 @@
 output_dir := "build"
+bootloader_dist := "dist-bootloader"
 net_core := "net-core"
 
 # Default recipe - show available commands
@@ -33,6 +34,61 @@ build-stage1:
 # Build lite1 stage2 bootloader (DFU)
 build-bootloader:
     cd bootloader && cargo build --release --target thumbv8m.main-none-eabihf --features defmt
+
+# Build the stage2 bootloader artifacts a bootloader release publishes.
+# OBJCOPY overrides the tool name on machines that call it something else.
+dist-bootloader: build-bootloader
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OBJCOPY=${OBJCOPY:-llvm-objcopy}
+    elf=bootloader/target/thumbv8m.main-none-eabihf/release/lite1-bootloader
+    rm -rf {{bootloader_dist}}
+    mkdir -p {{bootloader_dist}}
+    cp "$elf" {{bootloader_dist}}/stage2-bootloader.elf
+    "$OBJCOPY" -O binary "$elf" {{bootloader_dist}}/stage2-bootloader.bin
+    "$OBJCOPY" -O ihex "$elf" {{bootloader_dist}}/stage2-bootloader.hex
+    ls -l {{bootloader_dist}}
+
+# Publish the stage2 bootloader as its own GitHub release, atslite1-bootloader-v<release>.
+# Set DRY_RUN=1 to run every check and stop before publishing.
+#
+# The release is created as a draft and published last, so a tag never exists
+# without its assets; the bootloader-release workflow skips a tag that already
+# has a release, so the two ways of publishing cannot overwrite each other.
+release-bootloader: dist-bootloader
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' bootloader/src/main.rs)
+    if [ -z "$RELEASE" ]; then
+        echo "Error: no release counter found in bootloader/src/main.rs"
+        exit 1
+    fi
+    TAG="atslite1-bootloader-v$RELEASE"
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+        echo "Error: uncommitted changes; the release must be built from a commit."
+        exit 1
+    fi
+    COMMIT=$(git rev-parse HEAD)
+    if ! git branch -r --contains "$COMMIT" | grep -q 'origin/master'; then
+        echo "Error: $COMMIT is not on origin/master. Push it first."
+        exit 1
+    fi
+    if gh release view "$TAG" >/dev/null 2>&1; then
+        echo "Error: release $TAG already exists. Raise the counter in bootloader/src/main.rs."
+        exit 1
+    fi
+    BCD=$(printf '0x%04X' $((0xF000 | RELEASE)))
+    NOTES="ATS Lite 1 stage2 bootloader, release $RELEASE (bcdDevice $BCD). Installed by the desktop updater when a firmware release names this release. Do not delete."
+    if [ "${DRY_RUN:-}" = 1 ]; then
+        echo "Dry run: would publish $TAG from $COMMIT with:"
+        ls {{bootloader_dist}}
+        exit 0
+    fi
+    gh release create "$TAG" --draft --target "$COMMIT" \
+        --title "ATS Lite 1 bootloader release $RELEASE" --notes "$NOTES" \
+        {{bootloader_dist}}/stage2-bootloader.bin {{bootloader_dist}}/stage2-bootloader.hex {{bootloader_dist}}/stage2-bootloader.elf
+    gh release edit "$TAG" --draft=false
+    echo "Published $TAG"
 
 # Build lite1 net-core
 build-net:
@@ -195,8 +251,9 @@ gen-release requires_bootloader min_desktop:
     MANIFEST="../../../manifests/releases.alpha.json"
     BUILD_DIR="{{output_dir}}"
 
-    # Check that build files exist
-    for f in app-a.bin app-b.bin net-core.bin stage2-bootloader.bin; do
+    # Check that build files exist. The bootloader is not among them: it is
+    # released on its own and pinned from that release below.
+    for f in app-a.bin app-b.bin net-core.bin; do
         if [ ! -f "$BUILD_DIR/$f" ]; then
             echo "Error: $BUILD_DIR/$f not found. Run 'just build' first."
             exit 1
@@ -213,16 +270,24 @@ gen-release requires_bootloader min_desktop:
     NET_CORE_SHA=$(sha256sum "$BUILD_DIR/net-core.bin" | cut -d' ' -f1)
     NET_CORE_SIZE=$(stat -c%s "$BUILD_DIR/net-core.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/net-core.bin")
 
-    BOOTLOADER_SHA=$(sha256sum "$BUILD_DIR/stage2-bootloader.bin" | cut -d' ' -f1)
-    BOOTLOADER_SIZE=$(stat -c%s "$BUILD_DIR/stage2-bootloader.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/stage2-bootloader.bin")
     # The bootloader is versioned on its own, by the counter in its source, and
-    # republished unchanged across application releases. The host compares it
-    # against what the device reports.
+    # released on its own. Hash the published asset rather than a local build:
+    # a release built elsewhere is not bit-identical, and the manifest has to
+    # describe the bytes devices will actually download.
     BOOTLOADER_RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' bootloader/src/main.rs)
     if [ -z "$BOOTLOADER_RELEASE" ]; then
         echo "Error: no release counter found in bootloader/src/main.rs"
         exit 1
     fi
+    BOOTLOADER_TAG="atslite1-bootloader-v$BOOTLOADER_RELEASE"
+    STAGE2=$(mktemp)
+    trap 'rm -f "$STAGE2"' EXIT
+    if ! curl -fsSL "${RELEASES_BASE_URL:-https://github.com/odysseyarm/odyssey/releases/download}/$BOOTLOADER_TAG/stage2-bootloader.bin" -o "$STAGE2"; then
+        echo "Error: no published release $BOOTLOADER_TAG. Run 'just release-bootloader' first."
+        exit 1
+    fi
+    BOOTLOADER_SHA=$(sha256sum "$STAGE2" | cut -d' ' -f1)
+    BOOTLOADER_SIZE=$(stat -c%s "$STAGE2" 2>/dev/null || stat -f%z "$STAGE2")
     REQUIRES_BOOTLOADER={{requires_bootloader}}
     MIN_DESKTOP={{min_desktop}}
     if ! [[ "$MIN_DESKTOP" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

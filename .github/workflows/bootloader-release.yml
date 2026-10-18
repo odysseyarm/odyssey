@@ -1,0 +1,139 @@
+name: Bootloader Release
+
+# Build and publish a stage2 bootloader when a <device>-bootloader-vN tag is
+# pushed, e.g. atslite1-bootloader-v1. N is the bootloader's release counter, the
+# literal in its src/main.rs, and the tag has to agree with it.
+#
+# Releases made with `just release-bootloader` already exist by the time the tag
+# does, so this workflow stands down for them rather than overwrite assets the
+# manifest may already hash. It only builds for tags pushed by hand.
+#
+# The build runs `just dist-bootloader`, the recipe a local release runs, so the
+# two cannot drift.
+
+on:
+  push:
+    tags:
+      - '*-bootloader-v[0-9]*'
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve tag
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.exists.outputs.skip }}
+      device: ${{ steps.parse.outputs.device }}
+      release: ${{ steps.parse.outputs.release }}
+      board_dir: ${{ steps.parse.outputs.board_dir }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Skip tags that already have a release
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; nothing to build."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check the tag against the bootloader source
+        id: parse
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -eu
+          device="${GITHUB_REF_NAME%-bootloader-v*}"
+          release="${GITHUB_REF_NAME##*-bootloader-v}"
+          case "$device" in
+            atslite1) board_dir=firmware/atslite/boards/lite1 ;;
+            legacy-atslite1) board_dir=firmware/legacy/vm-fw/boards/atslite ;;
+            *) echo "Unknown device '$device' in tag $GITHUB_REF_NAME" >&2; exit 1 ;;
+          esac
+          case "$release" in
+            ''|*[!0-9]*) echo "Release '$release' is not a number" >&2; exit 1 ;;
+          esac
+          source_release=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' "$board_dir/bootloader/src/main.rs")
+          if [ "$release" != "$source_release" ]; then
+            echo "Tag release ($release) does not match $board_dir/bootloader/src/main.rs ($source_release)" >&2
+            exit 1
+          fi
+          {
+            echo "device=$device"
+            echo "release=$release"
+            echo "board_dir=$board_dir"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build bootloader
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Run from the board directory so rustup resolves its rust-toolchain.toml
+      # and installs the target and tools for that toolchain.
+      - name: Install the target and tools
+        working-directory: ${{ needs.resolve.outputs.board_dir }}
+        run: |
+          rustup target add thumbv8m.main-none-eabihf
+          rustup component add llvm-tools
+      # nrf-sdc-sys and nrf-mpsl-sys run bindgen over headers that need the
+      # bare-metal libc headers.
+      - name: Install the ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libclang-dev
+          arm=/usr/lib/arm-none-eabi
+          echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$arm -I$arm/include" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$(printf '%s\n' /usr/lib/llvm-*/lib | sort -V | tail -n 1)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ needs.resolve.outputs.board_dir }}/bootloader -> target
+          shared-key: bootloader-${{ needs.resolve.outputs.device }}
+      - uses: extractions/setup-just@v3
+      - name: Install cargo-binutils
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-binutils
+      - name: Build the release artifacts
+        working-directory: ${{ needs.resolve.outputs.board_dir }}
+        env:
+          OBJCOPY: rust-objcopy
+        run: just dist-bootloader
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bootloader
+          path: ${{ needs.resolve.outputs.board_dir }}/dist-bootloader
+
+  github-release:
+    name: Create GitHub Release
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE: ${{ needs.resolve.outputs.release }}
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: bootloader
+          path: dist
+      - name: Publish
+        run: |
+          set -eu
+          # A local release may have landed while the build ran.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME appeared during the build; leaving it alone."
+            exit 0
+          fi
+          bcd=$(printf '0x%04X' $((0xF000 | RELEASE)))
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Bootloader release $RELEASE" \
+            --notes "Stage2 bootloader release $RELEASE (bcdDevice $bcd). Installed by the desktop updater when a firmware release names this release. Do not delete." \
+            dist/stage2-bootloader.bin dist/stage2-bootloader.hex dist/stage2-bootloader.elf
