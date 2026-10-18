@@ -18,30 +18,31 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+use dioxus::core::Task;
 use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent};
 use dioxus::desktop::use_wry_event_handler;
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use dioxus_router::navigator;
-use dioxus::core::Task;
-use dioxus::{logger::tracing, prelude::*};
 use odyssey_autocalib::camera::{CameraInfo, CaptureSettings};
 use odyssey_autocalib::orbbec::RuntimeStatus;
 use odyssey_autocalib::pattern::Pattern;
 use odyssey_autocalib::session::{SessionOptions, Step};
 use odyssey_hub_common::config::{self, MonitorKey, UiState};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-use super::pattern_window::{self, PatternDisplay, PatternLoss, PatternMode};
 use super::kind::{self, DisplayKind, Finding, SizePlan};
+use super::pattern_window::{self, PatternDisplay, PatternLoss, PatternMode};
+use super::screens::{SCREEN_COUNT, default_screen, saved_screens};
 use super::settings::{
-    parse_entered, Entered, SizeError, SizeField, COLOR_EXPOSURE_RANGE_US, IR_EXPOSURE_RANGE_US,
+    COLOR_EXPOSURE_RANGE_US, Entered, IR_EXPOSURE_RANGE_US, SizeError, SizeField, parse_entered,
 };
-use super::screens::{default_screen, saved_screens, SCREEN_COUNT};
 use super::worker::{
-    demo_scene, Backend, Command, Event, Failure, FailureKind, Finished, ListError, MarkerFrame, Mode, OpenRequest,
-    PreviewFrame, SessionEvent, Worker, DEMO_DIAGONAL_IN,
+    Backend, Command, DEMO_DIAGONAL_IN, Event, Failure, FailureKind, Finished, ListError,
+    MarkerFrame, Mode, OpenRequest, PreviewFrame, SessionEvent, Worker, demo_scene,
 };
 use crate::cli::{self, CalibrateArgs};
-use crate::components::screen_picker::{monitor_key, MonitorSelection};
+use crate::components::screen_picker::{MonitorSelection, monitor_key};
 use crate::components::use_monitor_selection;
 use crate::{Route, ServerReady};
 
@@ -185,7 +186,9 @@ pub fn use_wizard() -> Wizard {
         (tx, Rc::new(RefCell::new(Some(rx))))
     });
     let backend = if demo {
-        Backend::Demo { overscan_fraction: args.demo_overscan_percent.unwrap_or(0.0) / 100.0 }
+        Backend::Demo {
+            overscan_fraction: args.demo_overscan_percent.unwrap_or(0.0) / 100.0,
+        }
     } else {
         Backend::Hardware
     };
@@ -217,7 +220,8 @@ pub fn use_wizard() -> Wizard {
         list_pending: use_signal(|| false),
         auto_start: use_signal(|| had_args && args.monitor.is_some()),
         color_exposure: use_signal(|| {
-            args.rgb_exposure_us.unwrap_or(CaptureSettings::default().color_exposure_us)
+            args.rgb_exposure_us
+                .unwrap_or(CaptureSettings::default().color_exposure_us)
         }),
         ir_exposure: use_signal(|| SessionOptions::default().ir_exposure_us),
         session: use_signal(|| 0),
@@ -245,7 +249,9 @@ pub fn use_wizard() -> Wizard {
         move || async move {
             if let Some(number) = monitor_arg {
                 if number > wizard.monitors.monitors().len() {
-                    wizard.note(format!("Display {number} isn't connected, so pick the screen below."));
+                    wizard.note(format!(
+                        "Display {number} isn't connected, so pick the screen below."
+                    ));
                     *wizard.auto_start.write() = false;
                 } else {
                     wizard.monitors.select(number - 1);
@@ -263,7 +269,13 @@ pub fn use_wizard() -> Wizard {
         *wizard.finding.write() = None;
         let Some(key) = monitor else { return };
         let found = if demo {
-            let [w, h] = demo_scene(f64::from(key.width) / f64::from(key.height.max(1)), DEMO_DIAGONAL_IN, true, 0.0).screen_size_m;
+            let [w, h] = demo_scene(
+                f64::from(key.width) / f64::from(key.height.max(1)),
+                DEMO_DIAGONAL_IN,
+                true,
+                0.0,
+            )
+            .screen_size_m;
             Finding::demo(w, h)
         } else {
             let lookup = tokio::task::spawn_blocking(move || {
@@ -332,7 +344,12 @@ pub fn use_wizard() -> Wizard {
     use_wry_event_handler({
         let own_id = dioxus::desktop::window().id();
         move |event, _| {
-            if let TaoEvent::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. } = event {
+            if let TaoEvent::WindowEvent {
+                window_id,
+                event: WindowEvent::CloseRequested,
+                ..
+            } = event
+            {
                 if *window_id == own_id && *wizard.stage.peek() != Stage::Setup {
                     wizard.back_to_setup();
                 }
@@ -363,7 +380,9 @@ impl Wizard {
 
     pub fn selected_monitor(self) -> Option<MonitorKey> {
         let monitors = self.monitors.monitors();
-        monitors.get(self.monitors.selected()?).map(|m| m.key.clone())
+        monitors
+            .get(self.monitors.selected()?)
+            .map(|m| m.key.clone())
     }
 
     /// The screen id Setup shows as chosen.
@@ -380,7 +399,9 @@ impl Wizard {
     /// The camera Setup shows as chosen: the picked one if it is still
     /// attached, otherwise the only one there is.
     pub fn camera(self) -> Option<CameraInfo> {
-        let CameraList::Found(list) = &*self.cameras.read() else { return None };
+        let CameraList::Found(list) = &*self.cameras.read() else {
+            return None;
+        };
         let chosen = self.camera_choice.read();
         let by_choice = chosen
             .as_deref()
@@ -433,7 +454,12 @@ impl Wizard {
     pub fn size_plan(self) -> Option<SizePlan> {
         let aspect = self.aspect()?;
         let entered = self.entered().ok().flatten();
-        Some(kind::plan(self.kind(), self.finding.read().as_ref(), entered, aspect))
+        Some(kind::plan(
+            self.kind(),
+            self.finding.read().as_ref(),
+            entered,
+            aspect,
+        ))
     }
 
     pub fn can_continue(self) -> bool {
@@ -446,7 +472,9 @@ impl Wizard {
 
     pub async fn refresh_saved_screens(mut self) {
         let found = tokio::task::spawn_blocking(|| {
-            config::screens_dir().map(|dir| saved_screens(&dir)).unwrap_or([false; SCREEN_COUNT])
+            config::screens_dir()
+                .map(|dir| saved_screens(&dir))
+                .unwrap_or([false; SCREEN_COUNT])
         })
         .await
         .unwrap_or([false; SCREEN_COUNT]);
@@ -502,7 +530,9 @@ impl Wizard {
     /// Opens a fresh camera session. Events of earlier sessions are ignored
     /// from here on.
     fn start_session(mut self, pattern_visible: bool) {
-        let Some(request) = self.open_request(pattern_visible) else { return };
+        let Some(request) = self.open_request(pattern_visible) else {
+            return;
+        };
         let session = *self.session.peek() + 1;
         *self.session.write() = session;
         *self.preview.write() = None;
@@ -549,7 +579,9 @@ impl Wizard {
     /// camera starts. If that monitor is the one the wizard is on, the pattern
     /// would hide the wizard, so the pattern waits for the countdown instead.
     pub fn begin_position(mut self) {
-        let Some(key) = self.selected_monitor() else { return };
+        let Some(key) = self.selected_monitor() else {
+            return;
+        };
         self.cancel_flow();
         self.close_pattern();
         self.notes.write().clear();
@@ -572,7 +604,10 @@ impl Wizard {
 
     /// Whether Next is available: the pattern has read "ready" long enough.
     pub fn position_ready(self) -> bool {
-        self.preview.read().as_ref().is_some_and(|p| p.ready_for >= READY_HOLD)
+        self.preview
+            .read()
+            .as_ref()
+            .is_some_and(|p| p.ready_for >= READY_HOLD)
     }
 
     pub fn measure_screen(mut self) {
@@ -638,7 +673,8 @@ impl Wizard {
     }
 
     pub fn set_ir_exposure(mut self, us: u32) {
-        *self.ir_exposure.write() = us.clamp(*IR_EXPOSURE_RANGE_US.start(), *IR_EXPOSURE_RANGE_US.end());
+        *self.ir_exposure.write() =
+            us.clamp(*IR_EXPOSURE_RANGE_US.start(), *IR_EXPOSURE_RANGE_US.end());
     }
 
     /// Sends the chosen infrared exposure to the camera. Each change costs the
@@ -648,7 +684,10 @@ impl Wizard {
     }
 
     pub fn set_color_exposure(mut self, us: u32) {
-        *self.color_exposure.write() = us.clamp(*COLOR_EXPOSURE_RANGE_US.start(), *COLOR_EXPOSURE_RANGE_US.end());
+        *self.color_exposure.write() = us.clamp(
+            *COLOR_EXPOSURE_RANGE_US.start(),
+            *COLOR_EXPOSURE_RANGE_US.end(),
+        );
     }
 
     fn enter_markers(mut self) {
@@ -731,7 +770,9 @@ impl Wizard {
                 self.enter_markers();
             }
             // The size lives in Setup; trying again would meet the same error.
-            FailureKind::Internal | FailureKind::SizeInvalid | FailureKind::SizeShape => self.back_to_setup(),
+            FailureKind::Internal | FailureKind::SizeInvalid | FailureKind::SizeShape => {
+                self.back_to_setup()
+            }
             _ => self.begin_position(),
         }
     }
@@ -741,7 +782,9 @@ impl Wizard {
     /// Saves unless that screen already holds a calibration and the tech has not
     /// confirmed replacing it.
     pub fn save(mut self, replace_confirmed: bool) {
-        let Some(finished) = self.finished.peek().clone() else { return };
+        let Some(finished) = self.finished.peek().clone() else {
+            return;
+        };
         let screen_id = self.screen_id();
         if self.saved.peek()[usize::from(screen_id)] && !replace_confirmed {
             *self.confirm_replace.write() = true;
@@ -778,7 +821,10 @@ impl Wizard {
                         *self.ui_state.write() = state;
                     }
                     self.refresh_saved_screens().await;
-                    *self.saved_to.write() = Some(SavedInfo { screen_id, path: path.display().to_string() });
+                    *self.saved_to.write() = Some(SavedInfo {
+                        screen_id,
+                        path: path.display().to_string(),
+                    });
                     self.set_stage(Stage::Saved);
                 }
                 Err(e) => {
@@ -877,7 +923,9 @@ impl Wizard {
             // The named camera is not attached; let the tech choose.
             *self.auto_start.write() = false;
             let name = self.camera_choice.peek().clone().unwrap_or_default();
-            self.note(format!("Camera '{name}' isn't connected, so pick one below."));
+            self.note(format!(
+                "Camera '{name}' isn't connected, so pick one below."
+            ));
             *self.camera_choice.write() = None;
         }
     }

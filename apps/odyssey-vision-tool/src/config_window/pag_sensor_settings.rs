@@ -1,12 +1,14 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use odyssey_usb::{device::VmDevice, packets::vm::Port};
-use iui::{controls::Form, UI};
+use iui::UI;
+use iui::controls::Form;
 use leptos_reactive::{
-    create_rw_signal, ReadSignal, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalUpdate,
-    SignalWith,
+    ReadSignal, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalUpdate, SignalWith,
+    create_rw_signal,
 };
+use odyssey_usb::device::VmDevice;
+use odyssey_usb::packets::vm::Port;
 
 use super::retry;
 
@@ -119,7 +121,9 @@ impl PagSensorSettingsForm {
         .await
         .and_then(|r| r.ok())
         .and_then(|p| match p {
-            odyssey_usb::packets::vm::Props::ProductId(id) => odyssey_usb::device::ProductId::from_u16(id),
+            odyssey_usb::packets::vm::Props::ProductId(id) => {
+                odyssey_usb::device::ProductId::from_u16(id)
+            }
             _ => None,
         });
         let is_pag7665 = product_id == Some(odyssey_usb::device::ProductId::AtsPro);

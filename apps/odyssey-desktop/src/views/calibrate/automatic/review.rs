@@ -5,9 +5,11 @@
 use dioxus::prelude::*;
 
 use super::kind::source_label;
-use super::quality::{assess, disagreement_message, Verdict};
+use super::quality::{Verdict, assess, disagreement_message};
 use super::screens::screen_label;
-use super::ui::{focus_primary, Details, Fact, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
+use super::ui::{
+    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+};
 use super::wizard::Wizard;
 use crate::components::wizard::{Icon, IconView, OverlayImage, StatusBanner, Tone};
 
@@ -32,7 +34,11 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
     // Enter does the obvious thing when the result is clearly good (save) or
     // clearly bad (redo). An amber result gets no default: the tech reads first.
     use_effect(move || {
-        let verdict = wizard.finished.read().as_ref().map(|f| assess(&f.outcome(false).measures).verdict);
+        let verdict = wizard
+            .finished
+            .read()
+            .as_ref()
+            .map(|f| assess(&f.outcome(false).measures).verdict);
         if matches!(verdict, Some(Verdict::Good | Verdict::Poor)) {
             focus_primary();
         }
@@ -59,11 +65,20 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
         .map(|m| m.display_name().to_string())
         .unwrap_or_else(|| "this screen".into());
 
-    let quad = outcome.screen_quad.iter().map(|p| format!("{:.1},{:.1}", p[0], p[1])).collect::<Vec<_>>().join(" ");
+    let quad = outcome
+        .screen_quad
+        .iter()
+        .map(|p| format!("{:.1},{:.1}", p[0], p[1]))
+        .collect::<Vec<_>>()
+        .join(" ");
     let unit = f64::from(finished.width) / 640.0;
     let outline = quality_color(quality.verdict);
 
-    let (save_class, redo_class) = if poor { (SECONDARY_BUTTON, PRIMARY_BUTTON) } else { (PRIMARY_BUTTON, SECONDARY_BUTTON) };
+    let (save_class, redo_class) = if poor {
+        (SECONDARY_BUTTON, PRIMARY_BUTTON)
+    } else {
+        (PRIMARY_BUTTON, SECONDARY_BUTTON)
+    };
     let save_label = if saving {
         "Saving…"
     } else if poor {

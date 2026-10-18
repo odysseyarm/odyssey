@@ -7,12 +7,12 @@ use odyssey_common::MAX_SCREEN_ID;
 use super::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use super::illustrations::{ProjectorIllustration, TvIllustration};
 use super::kind::DisplayKind;
-use super::settings::{SizeError, SizeField, DIAGONAL_RANGE_IN, WIDTH_RANGE_CM};
 use super::screens::screen_label;
-use super::ui::{StepPage, CARD, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
+use super::settings::{DIAGONAL_RANGE_IN, SizeError, SizeField, WIDTH_RANGE_CM};
+use super::ui::{CARD, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage};
 use super::wizard::{CameraList, Wizard};
-use crate::components::wizard::{Icon, IconView, Spinner};
 use crate::components::ScreenPicker;
+use crate::components::wizard::{Icon, IconView, Spinner};
 
 #[component]
 pub fn SetupStep(wizard: Wizard) -> Element {
@@ -514,8 +514,16 @@ fn SizeBox(wizard: Wizard, label: String) -> Element {
         .filter(|e| *left_box.read() || matches!(e, SizeError::NotANumber))
         .map(|e| e.message());
     let (unit, placeholder, range) = match field {
-        SizeField::Diagonal => ("inches", "Measure it for me", format!("{}–{}", DIAGONAL_RANGE_IN.start(), DIAGONAL_RANGE_IN.end())),
-        SizeField::Width => ("cm", "Measure it for me", format!("{}–{}", WIDTH_RANGE_CM.start(), WIDTH_RANGE_CM.end())),
+        SizeField::Diagonal => (
+            "inches",
+            "Measure it for me",
+            format!("{}–{}", DIAGONAL_RANGE_IN.start(), DIAGONAL_RANGE_IN.end()),
+        ),
+        SizeField::Width => (
+            "cm",
+            "Measure it for me",
+            format!("{}–{}", WIDTH_RANGE_CM.start(), WIDTH_RANGE_CM.end()),
+        ),
     };
     rsx! {
         div {

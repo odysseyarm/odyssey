@@ -1,4 +1,6 @@
-use core::{cmp, mem::MaybeUninit};
+use core::cmp;
+use core::mem::MaybeUninit;
+
 use embedded_io as eio;
 use embedded_io_async as eioa;
 

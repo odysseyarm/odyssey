@@ -1,16 +1,18 @@
+use std::f64::consts::PI;
+use std::sync::Arc;
+
+use arrayvec::ArrayVec;
+use iui::UI;
+use iui::controls::{Area, AreaDrawParams};
+use iui::draw::{Brush, DrawContext, FillMode, Path, SolidBrush, StrokeParams};
+use nalgebra::{Isometry3, Point2, Rotation2, Scale2, Transform2, Translation2, Vector2, Vector3};
+use parking_lot::Mutex;
+
+use crate::MotState;
 use crate::custom_shapes::{
     self, draw_crosshair_rotated, draw_diamond, draw_rect, draw_square, draw_text, solid_brush,
 };
 use crate::mot_runner::MotRunner;
-use crate::MotState;
-use arrayvec::ArrayVec;
-use iui::controls::{Area, AreaDrawParams};
-use iui::draw::{Brush, DrawContext, FillMode, Path, SolidBrush, StrokeParams};
-use iui::UI;
-use nalgebra::{Isometry3, Point2, Rotation2, Scale2, Transform2, Translation2, Vector2, Vector3};
-use parking_lot::Mutex;
-use std::f64::consts::PI;
-use std::sync::Arc;
 
 pub fn draw(
     _ctx: UI,

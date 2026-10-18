@@ -1,45 +1,37 @@
-﻿#![no_main]
+#![no_main]
 #![no_std]
 #![feature(never_type)]
 
-use defmt_rtt as _;
-use panic_probe as _;
-
-use atslite_board::transport_mode;
-
-use better_dfu::consts::DfuAttributes;
-use better_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
 use core::cell::RefCell;
+
+use atslite_board::l2cap::AtsliteL2capChannels;
+use atslite_board::pins::Board;
+use atslite_board::platform::AtslitePlatform;
+use atslite_board::pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle};
+use atslite_board::{
+    Irqs, ble, embassy_executor, embassy_nrf, imu, nrf5340_init, power, power_button, power_state,
+    split_board, transport_mode, utils,
+};
+use better_dfu::application::DfuMarker;
+use better_dfu::consts::DfuAttributes;
+use better_dfu::{Control, ResetImmediate, usb_dfu};
+use common::object_mode::{ObjectModeContext, object_mode};
+use common::{Paj, settings, usb};
+use defmt_rtt as _;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
-use embassy_nrf::{
-    gpio::{self, Input, Pin},
-    nvmc::Nvmc,
-    pac, peripherals,
-    twim::{self, Twim},
-};
+use embassy_nrf::gpio::{self, Input, Pin};
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::twim::{self, Twim};
+use embassy_nrf::{pac, peripherals};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::{Delay, Timer};
-use npm1300_rs::{self, NPM1300};
-use static_cell::StaticCell;
-
-use atslite_board::{
-    Irqs, ble, embassy_executor, embassy_nrf, imu,
-    l2cap::AtsliteL2capChannels,
-    nrf5340_init,
-    pins::Board,
-    platform::AtslitePlatform,
-    pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle},
-    power, power_button, power_state, split_board, utils,
-};
-use common::{
-    Paj,
-    object_mode::{ObjectModeContext, object_mode},
-    settings, usb,
-};
 use embassy_usb::msos;
+use npm1300_rs::{self, NPM1300};
+use panic_probe as _;
+use static_cell::StaticCell;
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";

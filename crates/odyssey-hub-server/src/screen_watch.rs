@@ -5,17 +5,15 @@
 //! `notify` is not in the dependency tree and six `stat` calls a second cost
 //! nothing.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
 use odyssey_common::ScreenCalibration;
 use odyssey_hub_common::config::{
-    screen_calibrations_from_dir_async, screen_file_name, ScreenCalibrationsResult,
+    ScreenCalibrationsResult, screen_calibrations_from_dir_async, screen_file_name,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -173,9 +171,11 @@ fn inode(_: &std::fs::Metadata) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use nalgebra::{Matrix3, Point3, UnitQuaternion};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    use nalgebra::{Matrix3, Point3, UnitQuaternion};
+
+    use super::*;
 
     struct TempDir(PathBuf);
 
@@ -244,7 +244,10 @@ mod tests {
     async fn start(dir: &TempDir) -> (ScreenCalibrationWatcher, Arc<ArcSwap<Calibrations>>) {
         let watcher = ScreenCalibrationWatcher::new(dir.0.clone()).await;
         let loaded = screen_calibrations_from_dir_async(&dir.0).await;
-        (watcher, Arc::new(ArcSwap::from_pointee(loaded.calibrations)))
+        (
+            watcher,
+            Arc::new(ArcSwap::from_pointee(loaded.calibrations)),
+        )
     }
 
     /// Polls until a change applies. The first differing scan only arms the
@@ -253,8 +256,15 @@ mod tests {
         watcher: &mut ScreenCalibrationWatcher,
         target: &ArcSwap<Calibrations>,
     ) -> Reload {
-        assert_eq!(watcher.poll_once(target).await, None, "applied without debounce");
-        watcher.poll_once(target).await.expect("change did not apply")
+        assert_eq!(
+            watcher.poll_once(target).await,
+            None,
+            "applied without debounce"
+        );
+        watcher
+            .poll_once(target)
+            .await
+            .expect("change did not apply")
     }
 
     #[tokio::test]
@@ -266,7 +276,12 @@ mod tests {
         save(&dir.0, 2, 1.5);
         let reload = settle(&mut watcher, &target).await;
 
-        assert_eq!(reload, Reload { kept_previous: vec![] });
+        assert_eq!(
+            reload,
+            Reload {
+                kept_previous: vec![]
+            }
+        );
         assert_eq!(scale_of(&target.load(), 2), Some(1.5));
         assert_eq!(watcher.poll_once(&target).await, None, "idle scan reloaded");
     }
@@ -362,7 +377,10 @@ mod tests {
         assert_eq!(watcher.poll_once(&target).await, None);
         save(&dir.0, 0, 2.0);
         assert_eq!(watcher.poll_once(&target).await, None);
-        let reload = watcher.poll_once(&target).await.expect("change did not apply");
+        let reload = watcher
+            .poll_once(&target)
+            .await
+            .expect("change did not apply");
 
         assert!(reload.kept_previous.is_empty());
         assert_eq!(scale_of(&target.load(), 0), Some(2.0));
@@ -403,14 +421,19 @@ mod tests {
         let task = tokio::spawn({
             let (target, cancel) = (target.clone(), cancel.clone());
             async move {
-                watcher.run_every(Duration::from_millis(10), target, cancel).await;
+                watcher
+                    .run_every(Duration::from_millis(10), target, cancel)
+                    .await;
             }
         });
 
         save(&dir.0, 5, 6.0);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while scale_of(&target.load(), 5).is_none() {
-            assert!(tokio::time::Instant::now() < deadline, "reload never happened");
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "reload never happened"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(scale_of(&target.load(), 5), Some(6.0));

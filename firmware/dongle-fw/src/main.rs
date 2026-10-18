@@ -1,4 +1,4 @@
-﻿#![no_main]
+#![no_main]
 #![no_std]
 
 mod ble;
@@ -9,18 +9,18 @@ mod pairing;
 mod storage;
 mod usb;
 
-#[cfg(feature = "rtt")]
-use {defmt_rtt as _, panic_probe as _};
-
 use core::sync::atomic::{AtomicBool, Ordering};
+
 use cortex_m_rt::{ExceptionFrame, exception};
 use defmt::{error, info, unwrap, warn};
 use embassy_executor::Spawner;
-use embassy_nrf::{bind_interrupts, peripherals, usb as nrf_usb};
-use embassy_nrf::{peripherals::RNG as NRF_RNG, rng};
+use embassy_nrf::peripherals::RNG as NRF_RNG;
+use embassy_nrf::{bind_interrupts, peripherals, rng, usb as nrf_usb};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal as SyncSignal;
+#[cfg(feature = "rtt")]
+use {defmt_rtt as _, panic_probe as _};
 
 // Channel for sending host responses (RequestDevices, ReadVersion, etc.)
 type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 8>;
@@ -30,29 +30,25 @@ pub static HOST_RESPONSES: HostResponseChannel = Channel::new();
 pub static DEVICE_LIST_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
 // use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
+use nrf_sdc::{self as sdc, mpsl};
 // Using trouble-host + nrf-sdc
 use odyssey_protocol::control::usb_mux::{
     BondStoreError, ClearBondsResult, PairingError, PairingOutcome, UsbMuxCtrlMsg,
 };
 use odyssey_protocol::mux::{DevicePacket, MAX_DEVICES, MuxMsg, Version};
-
-use static_cell::StaticCell;
-
-use nrf_sdc::{self as sdc, mpsl};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+use static_cell::StaticCell;
 use trouble_host::PacketPool;
 use trouble_host::prelude::DefaultPacketPool;
 
 type Controller = nrf_sdc::SoftdeviceController<'static>;
 type Pool = DefaultPacketPool;
 
-use crate::ble::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager, DevicePacketChannel};
-use crate::storage::Settings;
-
-use crate::storage::BondData;
-
 use heapless::Vec as HVec;
+
+use crate::ble::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager, DevicePacketChannel};
+use crate::storage::{BondData, Settings};
 
 // Host management channel to handle bond purge requests while keeping
 // preloading at boot. ClearBonds will send to this channel and wait for
@@ -79,7 +75,8 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
-                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data) {
+                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data)
+                {
                     defmt::info!("pairing: adv/scan match {:02x}", addr);
                     crate::ble::central::report_scan_address(addr, name);
                     break;
@@ -97,7 +94,8 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
-                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data) {
+                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data)
+                {
                     defmt::info!("pairing: adv match (EXT) {:02x}", addr);
                     crate::ble::central::report_scan_address(addr, name);
                     break;
@@ -385,8 +383,12 @@ async fn main(mut spawner: Spawner) {
     )));
 
     // Start background scanner (always-on active scan for name caching + pairing detection)
-    spawner.spawn(unwrap!(ble::pairing_scanner::background_scanner_task(stack)));
-    spawner.spawn(unwrap!(ble::pairing_scanner::pairing_monitor_task(settings)));
+    spawner.spawn(unwrap!(ble::pairing_scanner::background_scanner_task(
+        stack
+    )));
+    spawner.spawn(unwrap!(ble::pairing_scanner::pairing_monitor_task(
+        settings
+    )));
 
     spawner.spawn(unwrap!(bond_storage_task(settings)));
 }
@@ -417,7 +419,11 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
                 let paired_name = {
                     let cached = crate::ble::central::get_cached_device_name(&bond.bd_addr);
                     let pairing = crate::ble::central::get_pairing_name();
-                    info!("bond_storage: cached_name={:?} pairing_name={:?}", cached.as_str(), pairing.as_str());
+                    info!(
+                        "bond_storage: cached_name={:?} pairing_name={:?}",
+                        cached.as_str(),
+                        pairing.as_str()
+                    );
                     if cached.is_empty() { pairing } else { cached }
                 };
                 info!("bond_storage: paired_name={:?}", paired_name.as_str());
@@ -861,9 +867,9 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
         let cmd = control::recv_cmd().await;
         match cmd {
             C::ReadVersion() => {
-                control::try_send_event(C::ReadVersionResponse(
-                    odyssey_protocol::Version::new(FIRMWARE_SEMVER),
-                ));
+                control::try_send_event(C::ReadVersionResponse(odyssey_protocol::Version::new(
+                    FIRMWARE_SEMVER,
+                )));
             }
             C::ListBonds() => {
                 info!("CTL ListBonds received");

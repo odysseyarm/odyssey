@@ -1,3 +1,5 @@
+use core::cell::RefCell;
+
 use bt_hci::cmd;
 use bt_hci::cmd::CmdReturnBuf;
 use bt_hci::cmd::controller_baseband::*;
@@ -6,8 +8,8 @@ use bt_hci::cmd::le::*;
 use bt_hci::cmd::link_control::*;
 use bt_hci::cmd::status::*;
 use bt_hci::event::{CommandComplete, EventParams};
-use core::cell::RefCell;
-use embassy_sync::blocking_mutex::{raw::NoopRawMutex, Mutex};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use nrf_sdc::vendor::*;
 
 pub type CmdErr = cmd::Error<nrf_sdc::Error>;
@@ -105,7 +107,7 @@ use crate::IpcNotify;
 use crate::icmsg_config::ALIGN;
 
 pub async fn exec_cmd_by_opcode<'d, E>(
-	send: &'static Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
+    send: &'static Mutex<NoopRawMutex, RefCell<icmsg::Sender<IpcNotify<'static>, ALIGN>>>,
     ctrl: &crate::sdc::SoftdeviceController<'d>,
     opcode: bt_hci::cmd::Opcode,
     payload: &[u8],

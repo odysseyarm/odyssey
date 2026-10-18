@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
+use odyssey_hub_client::tracking_history::TrackingHistory;
+
 use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub;
-use dioxus::{logger::tracing, prelude::*};
-use odyssey_hub_client::tracking_history::TrackingHistory;
-use std::collections::HashMap;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
@@ -84,8 +87,7 @@ pub fn Zero(
                     match receiver.recv().await {
                         Ok((device, impact)) => {
                             let hub_ctx = hub.peek().clone();
-                            if let Some(signals) =
-                                device_signals.peek().get(&device.uuid).cloned()
+                            if let Some(signals) = device_signals.peek().get(&device.uuid).cloned()
                             {
                                 let shooting = *signals.shooting.peek();
                                 tracing::info!(

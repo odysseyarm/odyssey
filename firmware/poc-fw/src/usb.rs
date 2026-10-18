@@ -2,20 +2,17 @@ use core::cell::RefCell;
 
 use embassy_boot::{AlignedBuffer, BlockingFirmwareState, FirmwareUpdaterConfig};
 use embassy_embedded_hal::flash::partition::BlockingPartition;
-use embassy_nrf::{
-    Peri,
-    nvmc::Nvmc,
-    peripherals::USBD,
-    usb::{Driver, vbus_detect::HardwareVbusDetect},
-};
+use embassy_nrf::Peri;
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::peripherals::USBD;
+use embassy_nrf::usb::Driver;
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Duration;
-use embassy_usb::{
-    UsbDevice,
-    class::cdc_acm::{self, CdcAcmClass},
-    driver::EndpointError,
-};
+use embassy_usb::UsbDevice;
+use embassy_usb::class::cdc_acm::{self, CdcAcmClass};
+use embassy_usb::driver::EndpointError;
 use embassy_usb_dfu::consts::DfuAttributes;
 use embassy_usb_dfu::{Control, ResetImmediate, usb_dfu};
 use static_cell::{ConstStaticCell, StaticCell};

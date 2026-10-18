@@ -1,15 +1,17 @@
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
-use futures::StreamExt;
-use std::{collections::HashMap, num::NonZeroU64, time::Duration};
-
-use crate::hub; // HubContext
-use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType};
+use std::collections::HashMap;
+use std::num::NonZeroU64;
+use std::time::Duration;
 
 // UI-side BLE scan (btleplug)
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::Manager;
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
+use futures::StreamExt;
+use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType};
 use uuid::Uuid;
+
+use crate::hub; // HubContext
 
 #[derive(Props, PartialEq, Clone)]
 struct StatusChipProps {

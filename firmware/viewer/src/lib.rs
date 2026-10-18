@@ -1,26 +1,28 @@
-use std::{
-    fmt::Display,
-    fs::File,
-    io::BufWriter,
-    path::Path,
-    sync::{
-        atomic::{AtomicBool, AtomicU16, Ordering}, mpsc::Receiver, Arc, Mutex
-    },
-    time::{Duration, Instant},
-};
+use std::fmt::Display;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use draw_pattern_points::DrawPatternPoints;
-use image::{codecs::png::PngEncoder, ExtendedColorType, ImageEncoder};
+use image::codecs::png::PngEncoder;
+use image::{ExtendedColorType, ImageEncoder};
 use mot_data::MotData;
-use opencv::core::{FileStorage, FileStorageTrait, FileStorageTraitConst, FileStorage_FORMAT_JSON, FileStorage_WRITE, Mat, Point2f, Vector};
+use opencv::core::{
+    FileStorage, FileStorage_FORMAT_JSON, FileStorage_WRITE, FileStorageTrait,
+    FileStorageTraitConst, Mat, Point2f, Vector,
+};
 use serialport::{ClearBuffer, SerialPort};
 
-pub mod mot_data;
 pub mod aprilgrid;
 pub mod charuco;
 pub mod chessboard;
 pub mod circles;
 pub mod draw_pattern_points;
+pub mod mot_data;
 pub mod utils;
 
 use macroquad::prelude::*;
@@ -251,7 +253,7 @@ impl MainState {
         let image_width = res.x * image_scale;
         let image_height = res.y * image_scale;
         let padding = 10.0;
-        let image_area_side_len = image_width.max(image_height) + 2.0*padding;
+        let image_area_side_len = image_width.max(image_height) + 2.0 * padding;
         let image_area_size = vec2(image_area_side_len, image_area_side_len);
         let image_hpad = (image_area_size.x - image_width) / 2.0;
         let image_vpad = (image_area_size.y - image_height) / 2.0;
@@ -281,7 +283,13 @@ impl MainState {
 
         // Draw FPS
         let fps = 1.0 / wf_data.avg_frame_period;
-        draw_text(&format!("{:.1} fps", fps), padding, image_area_size.y + 20.0, 16.0, WHITE);
+        draw_text(
+            &format!("{:.1} fps", fps),
+            padding,
+            image_area_size.y + 20.0,
+            16.0,
+            WHITE,
+        );
         draw_text(
             &format!("{:.1} fps", fps),
             image_area_size.x + spacing + padding,
@@ -307,14 +315,17 @@ impl MainState {
         );
         draw_text(
             &format!("Device ID: {}", self.device_uuid),
-            98.0*5.0*2.0-180.0,
+            98.0 * 5.0 * 2.0 - 180.0,
             image_area_size.y + 40.0,
             16.0,
             WHITE,
         );
         if pat == DetectorPattern::AsymmetricCircles {
             draw_text(
-                &format!("{:23}spacing (i): {grid_spacing} mm    diameter (a): {diameter} mm", ""),
+                &format!(
+                    "{:23}spacing (i): {grid_spacing} mm    diameter (a): {diameter} mm",
+                    ""
+                ),
                 10.0,
                 image_area_size.y + 60.0,
                 16.0,
@@ -331,22 +342,30 @@ impl MainState {
 
         let wf_transform = Mat3::from_translation(image_pad)
             * Mat3::from_scale(vec2(image_scale, image_scale))
-            * Mat3::from_translation(res/2.0)
+            * Mat3::from_translation(res / 2.0)
             * Mat3::from_angle((self.orientation as u32 as f32).to_radians())
-            * Mat3::from_translation(-res/2.0);
-        let nf_transform = Mat3::from_translation(
-            vec2(image_area_size.x + spacing, 0.0) + image_pad,
-        )
-            * Mat3::from_scale(vec2(image_scale, image_scale))
-            * Mat3::from_translation(res/2.0)
-            * Mat3::from_angle((self.orientation as u32 as f32).to_radians())
-            * Mat3::from_translation(-res/2.0);
-
+            * Mat3::from_translation(-res / 2.0);
+        let nf_transform =
+            Mat3::from_translation(vec2(image_area_size.x + spacing, 0.0) + image_pad)
+                * Mat3::from_scale(vec2(image_scale, image_scale))
+                * Mat3::from_translation(res / 2.0)
+                * Mat3::from_angle((self.orientation as u32 as f32).to_radians())
+                * Mat3::from_translation(-res / 2.0);
 
         // Draw circles
         // fixme will look backwards for ats lite
-        draw_mot_data_circles(&wf_data.mot_data, self.object_resolution, wf_transform, true);
-        draw_mot_data_circles(&nf_data.mot_data, self.object_resolution, nf_transform, false);
+        draw_mot_data_circles(
+            &wf_data.mot_data,
+            self.object_resolution,
+            wf_transform,
+            true,
+        );
+        draw_mot_data_circles(
+            &nf_data.mot_data,
+            self.object_resolution,
+            nf_transform,
+            false,
+        );
 
         // Draw pattern points if available
         if let Some(pattern_points) = &wf_data.pattern_points {
@@ -372,13 +391,7 @@ impl MainState {
     }
 }
 
-fn draw_image(
-    image: &[u8],
-    resolution: (u16, u16),
-    offset: Vec2,
-    scale: f32,
-    rotation_rad: f32,
-) {
+fn draw_image(image: &[u8], resolution: (u16, u16), offset: Vec2, scale: f32, rotation_rad: f32) {
     let texture = Texture2D::from_rgba8(resolution.0, resolution.1, image);
     texture.set_filter(FilterMode::Nearest);
     draw_texture_ex(
@@ -440,7 +453,9 @@ pub async fn main() {
             eprintln!("Device did not respond with a valid protocol version");
             eprintln!("Please update the firmware");
         } else {
-            eprintln!("Device protocol version {version} does not match expected protocol version {PROTOCOL_VERSION}");
+            eprintln!(
+                "Device protocol version {version} does not match expected protocol version {PROTOCOL_VERSION}"
+            );
         }
         return;
     }
@@ -457,14 +472,29 @@ pub async fn main() {
         u32::from_le_bytes([r[8], r[9], r[10], r[11]]),
     );
     eprintln!("Resolution {}x{}", resolution.0, resolution.1);
-    eprintln!("Object resolution {}x{}", object_resolution.0, object_resolution.1);
+    eprintln!(
+        "Object resolution {}x{}",
+        object_resolution.0, object_resolution.1
+    );
 
     std::fs::create_dir_all(format!("calibrations/{device_uuid}/images")).unwrap();
     let capture_count = (0..)
-        .find(|i| !Path::new(&format!("calibrations/{device_uuid}/images/widefield_{:02}.png", i)).exists())
+        .find(|i| {
+            !Path::new(&format!(
+                "calibrations/{device_uuid}/images/widefield_{:02}.png",
+                i
+            ))
+            .exists()
+        })
         .unwrap();
 
-    let mut state = MainState::new(capture_count, port, device_uuid, resolution, object_resolution);
+    let mut state = MainState::new(
+        capture_count,
+        port,
+        device_uuid,
+        resolution,
+        object_resolution,
+    );
 
     loop {
         state.update();
@@ -483,12 +513,18 @@ async fn handle_input(state: &mut MainState) {
         // Capture and save image
         let wf_data = state.wf_data.lock().unwrap();
         if !wf_data.gray.is_empty() {
-            let path = format!("calibrations/{device_uuid}/images/widefield_{:02}.png", state.capture_count);
-            PngEncoder::new(BufWriter::new(
-                File::create(&path).unwrap(),
-            ))
-            .write_image(&wf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ExtendedColorType::L8)
-            .unwrap();
+            let path = format!(
+                "calibrations/{device_uuid}/images/widefield_{:02}.png",
+                state.capture_count
+            );
+            PngEncoder::new(BufWriter::new(File::create(&path).unwrap()))
+                .write_image(
+                    &wf_data.gray,
+                    u32::from(state.resolution.0),
+                    u32::from(state.resolution.1),
+                    ExtendedColorType::L8,
+                )
+                .unwrap();
             let wf_data_gray = wf_data.gray.clone();
             drop(wf_data);
             state.add_capture(Port::Wf, wf_data_gray, path.clone());
@@ -499,12 +535,18 @@ async fn handle_input(state: &mut MainState) {
 
         let nf_data = state.nf_data.lock().unwrap();
         if !nf_data.gray.is_empty() {
-            let path = format!("calibrations/{device_uuid}/images/nearfield_{:02}.png", state.capture_count);
-            PngEncoder::new(BufWriter::new(
-                File::create(&path).unwrap(),
-            ))
-            .write_image(&nf_data.gray, u32::from(state.resolution.0), u32::from(state.resolution.1), ExtendedColorType::L8)
-            .unwrap();
+            let path = format!(
+                "calibrations/{device_uuid}/images/nearfield_{:02}.png",
+                state.capture_count
+            );
+            PngEncoder::new(BufWriter::new(File::create(&path).unwrap()))
+                .write_image(
+                    &nf_data.gray,
+                    u32::from(state.resolution.0),
+                    u32::from(state.resolution.1),
+                    ExtendedColorType::L8,
+                )
+                .unwrap();
             let nf_data_gray = nf_data.gray.clone();
             drop(nf_data);
             state.add_capture(Port::Nf, nf_data_gray.clone(), path.clone());
@@ -534,7 +576,7 @@ async fn handle_input(state: &mut MainState) {
         let object_resolution = state.object_resolution;
         std::thread::spawn(move || match pat {
             DetectorPattern::AprilGrid => {
-            let config = aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.);
+                let config = aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.);
                 aprilgrid::calibrate_single(
                     &captures,
                     &captures_files,
@@ -733,16 +775,28 @@ async fn handle_input(state: &mut MainState) {
     }
     if is_key_pressed(KeyCode::I) {
         if shift {
-            state.detector_params.spacing_mm.fetch_sub(1, Ordering::Relaxed);
+            state
+                .detector_params
+                .spacing_mm
+                .fetch_sub(1, Ordering::Relaxed);
         } else {
-            state.detector_params.spacing_mm.fetch_add(1, Ordering::Relaxed);
+            state
+                .detector_params
+                .spacing_mm
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
     if is_key_pressed(KeyCode::A) {
         if shift {
-            state.detector_params.diameter_mm.fetch_sub(1, Ordering::Relaxed);
+            state
+                .detector_params
+                .diameter_mm
+                .fetch_sub(1, Ordering::Relaxed);
         } else {
-            state.detector_params.diameter_mm.fetch_add(1, Ordering::Relaxed);
+            state
+                .detector_params
+                .diameter_mm
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
     if is_key_pressed(KeyCode::D) {
@@ -765,7 +819,10 @@ async fn handle_input(state: &mut MainState) {
                 P::Chessboard => P::SymmetricCircles,
             }
         };
-        state.detector_params.pattern.store(new_value, Ordering::Relaxed);
+        state
+            .detector_params
+            .pattern
+            .store(new_value, Ordering::Relaxed);
     }
     if is_key_pressed(KeyCode::O) {
         if shift {
@@ -788,7 +845,6 @@ fn paj_reader_thread(
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
 ) {
-
     let mut buf = [0; 9898];
     loop {
         if reset.load(Ordering::Relaxed) {
@@ -814,29 +870,23 @@ fn paj_reader_thread(
         let pattern_points = match pattern {
             DetectorPattern::None => None,
             DetectorPattern::AprilGrid => {
-                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.));
-                match grid.get_corner_and_object_points(
-                    gray,
-                    (98, 98),
-                    object_resolution,
-                ) {
+                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(
+                    board_rows, board_cols, 28., 7.,
+                ));
+                match grid.get_corner_and_object_points(gray, (98, 98), object_resolution) {
                     Some((pattern_points, _)) => Some(pattern_points),
-                    None => {
-                        None
-                    }
+                    None => None,
                 }
             }
-            DetectorPattern::Chessboard => {
-                chessboard::get_chessboard_corners(
-                    gray,
-                    port,
-                    (98, 98),
-                    object_resolution,
-                    board_rows,
-                    board_cols,
-                    false,
-                )
-            }
+            DetectorPattern::Chessboard => chessboard::get_chessboard_corners(
+                gray,
+                port,
+                (98, 98),
+                object_resolution,
+                board_rows,
+                board_cols,
+                false,
+            ),
             DetectorPattern::AsymmetricCircles => {
                 let r = circles::get_circles_centers(
                     gray,
@@ -872,7 +922,7 @@ fn paj_reader_thread(
         } else {
             nf_data.lock().unwrap()
         };
-        paj_data.image.resize(4*98*98, 255);
+        paj_data.image.resize(4 * 98 * 98, 255);
         for i in 0..98 * 98 {
             paj_data.image[4 * i] = buf[i];
             paj_data.image[4 * i + 1] = buf[i];
@@ -883,8 +933,8 @@ fn paj_reader_thread(
         for (i, mut raw_mot) in buf[98 * 98..][..256].chunks(16).enumerate() {
             paj_data.mot_data[i] = MotData::parse(&mut raw_mot);
         }
-        paj_data.avg_frame_period = paj_data.avg_frame_period * 7. / 8.
-            + paj_data.last_frame.elapsed().as_secs_f64() / 8.;
+        paj_data.avg_frame_period =
+            paj_data.avg_frame_period * 7. / 8. + paj_data.last_frame.elapsed().as_secs_f64() / 8.;
         paj_data.last_frame = Instant::now();
         if let Some(points) = pattern_points {
             paj_data.pattern_points = Some(PatternPoints {
@@ -907,8 +957,7 @@ fn image_only_reader_thread(
     reset: Arc<AtomicBool>,
     quit: Arc<AtomicBool>,
 ) {
-
-    let mut gray = [0; 320*240];
+    let mut gray = [0; 320 * 240];
     loop {
         if reset.load(Ordering::Relaxed) {
             port.write(b"r").unwrap();
@@ -928,16 +977,12 @@ fn image_only_reader_thread(
         let pattern_points = match pattern {
             DetectorPattern::None => None,
             DetectorPattern::AprilGrid => {
-                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.));
-                match grid.get_corner_and_object_points(
-                    &gray,
-                    resolution,
-                    object_resolution,
-                ) {
+                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(
+                    board_rows, board_cols, 28., 7.,
+                ));
+                match grid.get_corner_and_object_points(&gray, resolution, object_resolution) {
                     Some((pattern_points, _)) => Some(pattern_points),
-                    None => {
-                        None
-                    }
+                    None => None,
                 }
             }
             DetectorPattern::AsymmetricCircles => {
@@ -968,21 +1013,19 @@ fn image_only_reader_thread(
                 pattern_found = r.pattern_found;
                 Some(r.points)
             }
-            DetectorPattern::Chessboard => {
-                chessboard::get_chessboard_corners(
-                    &gray,
-                    port,
-                    resolution,
-                    object_resolution,
-                    board_rows,
-                    board_cols,
-                    false,
-                )
-            }
+            DetectorPattern::Chessboard => chessboard::get_chessboard_corners(
+                &gray,
+                port,
+                resolution,
+                object_resolution,
+                board_rows,
+                board_cols,
+                false,
+            ),
         };
 
         let mut wf_data = wf_data.lock().unwrap();
-        wf_data.image.resize(4*320*240, 255);
+        wf_data.image.resize(4 * 320 * 240, 255);
         for (i, &v) in gray.iter().enumerate() {
             wf_data.image[4 * i] = v;
             wf_data.image[4 * i + 1] = v;
@@ -990,12 +1033,13 @@ fn image_only_reader_thread(
         }
         wf_data.gray.resize(gray.len(), 0);
         wf_data.gray.copy_from_slice(&gray);
-        wf_data.avg_frame_period = wf_data.avg_frame_period * 7. / 8.
-            + wf_data.last_frame.elapsed().as_secs_f64() / 8.;
+        wf_data.avg_frame_period =
+            wf_data.avg_frame_period * 7. / 8. + wf_data.last_frame.elapsed().as_secs_f64() / 8.;
         wf_data.last_frame = Instant::now();
         if let Some(points) = pattern_points {
             wf_data.pattern_points = Some(PatternPoints {
-                points, pattern_found
+                points,
+                pattern_found,
             });
         } else {
             wf_data.pattern_points = None;
@@ -1017,12 +1061,10 @@ fn _opencv_thread(
         match pattern {
             DetectorPattern::None => (),
             DetectorPattern::AprilGrid => {
-                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(board_rows, board_cols, 28., 7.));
-                match grid.get_corner_and_object_points(
-                    &image,
-                    resolution,
-                    object_resolution,
-                ) {
+                let grid = aprilgrid::AprilGrid::new(aprilgrid::AprilGridConfig::new(
+                    board_rows, board_cols, 28., 7.,
+                ));
+                match grid.get_corner_and_object_points(&image, resolution, object_resolution) {
                     Some((pattern_points, _)) => {
                         println!("AprilGrid: {:?}", pattern_points);
                     }
@@ -1121,13 +1163,17 @@ fn save_stereo_calibration(
     nf_image_files: &Vector<String>,
     device_uuid: DeviceUuid,
 ) {
-    let mut fs =
-        FileStorage::new_def(&format!("calibrations/{device_uuid}/stereo.json"), FileStorage_WRITE | FileStorage_FORMAT_JSON).unwrap();
+    let mut fs = FileStorage::new_def(
+        &format!("calibrations/{device_uuid}/stereo.json"),
+        FileStorage_WRITE | FileStorage_FORMAT_JSON,
+    )
+    .unwrap();
     if fs.is_opened().unwrap() {
         fs.write_mat("r", &r).unwrap();
         fs.write_mat("t", &t).unwrap();
         fs.write_f64("rms_error", reproj_err).unwrap();
-        fs.write_i32("num_captures", wf_image_files.len() as i32).unwrap();
+        fs.write_i32("num_captures", wf_image_files.len() as i32)
+            .unwrap();
         fs.write_str("method", &pattern.to_string()).unwrap();
         fs.write_i32("version", CALIBRATION_VERSION).unwrap();
         fs.write_str_vec("wf_image_files", wf_image_files).unwrap();
@@ -1142,14 +1188,10 @@ pub struct DeviceUuid([u8; 6]);
 
 impl Display for DeviceUuid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f,
+        write!(
+            f,
             "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-            self.0[0],
-            self.0[1],
-            self.0[2],
-            self.0[3],
-            self.0[4],
-            self.0[5],
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5],
         )
     }
 }

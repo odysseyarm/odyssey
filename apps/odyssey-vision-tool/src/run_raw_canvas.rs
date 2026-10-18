@@ -1,9 +1,11 @@
-use crate::mot_runner::MotRunner;
-use crate::{tracking_canvas_helpers, CloneButShorter};
-use iui::controls::{Area, AreaDrawParams, AreaHandler};
-use iui::UI;
-use parking_lot::Mutex;
 use std::sync::Arc;
+
+use iui::UI;
+use iui::controls::{Area, AreaDrawParams, AreaHandler};
+use parking_lot::Mutex;
+
+use crate::mot_runner::MotRunner;
+use crate::{CloneButShorter, tracking_canvas_helpers};
 
 pub struct RunRawCanvas {
     pub ctx: UI,

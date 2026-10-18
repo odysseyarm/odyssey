@@ -1,7 +1,7 @@
-use std::env;
-use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::{env, fs};
+
 use serde_json::Value;
 
 fn main() {
@@ -36,14 +36,28 @@ fn run(nf_calib: &Value, wf_calib: &Value, stereo_calib: &Value, outfile: &mut f
         .as_array()
         .expect("Expected image_files to be an array")
         .iter()
-        .map(|p| p.as_str().unwrap().split('/').skip(2).collect::<Vec<_>>().join("/"))
+        .map(|p| {
+            p.as_str()
+                .unwrap()
+                .split('/')
+                .skip(2)
+                .collect::<Vec<_>>()
+                .join("/")
+        })
         .collect();
 
     let wf_calib_images: Vec<String> = wf_calib["image_files"]
         .as_array()
         .expect("Expected image_files to be an array")
         .iter()
-        .map(|p| p.as_str().unwrap().split('/').skip(2).collect::<Vec<_>>().join("/"))
+        .map(|p| {
+            p.as_str()
+                .unwrap()
+                .split('/')
+                .skip(2)
+                .collect::<Vec<_>>()
+                .join("/")
+        })
         .collect();
 
     let stereo_calib_images = serde_json::json!({
@@ -138,5 +152,7 @@ fn run(nf_calib: &Value, wf_calib: &Value, stereo_calib: &Value, outfile: &mut f
         stereo_calib_images = serde_json::to_string(&stereo_calib_images).unwrap()
     );
 
-    outfile.write_all(html_content.as_bytes()).expect("Failed to write HTML content");
+    outfile
+        .write_all(html_content.as_bytes())
+        .expect("Failed to write HTML content");
 }

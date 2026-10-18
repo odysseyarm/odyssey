@@ -2,7 +2,9 @@
 //! Used for pairing, bond management, and version queries on lite/vm devices
 
 use core::sync::atomic::{AtomicPtr, Ordering};
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Channel};
+
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::channel::Channel;
 use odyssey_protocol::control::device::DeviceMsg;
 use static_cell::StaticCell;
 

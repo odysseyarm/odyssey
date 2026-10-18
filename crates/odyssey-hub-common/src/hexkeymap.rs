@@ -1,9 +1,10 @@
-use serde::de::{self, Deserializer, MapAccess, Visitor};
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
+
+use serde::de::{self, Deserializer, MapAccess, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 
 pub struct HexKeyMapN<T, const N: usize>(pub HashMap<[u8; N], T>);
 

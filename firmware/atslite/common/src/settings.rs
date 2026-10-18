@@ -17,14 +17,13 @@ mod settings_region {
 }
 
 use cfg_noodle::flash::Flash;
-use cfg_noodle::minicbor;
 use cfg_noodle::minicbor::{CborLen, Decode, Encode};
 use cfg_noodle::mutex::raw_impls::cs::CriticalSectionRawMutex as NoodleRawMutex;
 use cfg_noodle::sequential_storage::cache::NoCache;
-use cfg_noodle::{StorageList, StorageListNode};
+use cfg_noodle::{StorageList, StorageListNode, minicbor};
 use defmt::Format;
 use embassy_executor::Spawner;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -278,9 +277,9 @@ impl Settings {
 }
 
 mod heapless_str32_cbor {
-    use cfg_noodle::minicbor::{
-        decode::Error, encode::Error as EncodeError, encode::Write, Decoder, Encoder,
-    };
+    use cfg_noodle::minicbor::decode::Error;
+    use cfg_noodle::minicbor::encode::{Error as EncodeError, Write};
+    use cfg_noodle::minicbor::{Decoder, Encoder};
 
     pub fn encode<Ctx, W: Write>(
         s: &heapless::String<32>,

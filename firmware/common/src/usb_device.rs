@@ -9,16 +9,16 @@ use core::cmp::max;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt::info;
+use embassy_nrf::Peri;
 use embassy_nrf::interrupt::typelevel::Binding;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
-use embassy_nrf::Peri;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
 use embassy_usb::msos::windows_version;
-use embassy_usb::{msos, Config as UsbConfig, UsbDevice};
+use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::static_byte_buffer;

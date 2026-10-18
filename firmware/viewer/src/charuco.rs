@@ -1,12 +1,12 @@
-use opencv::{
-    core::{no_array, Mat, Point2f, Scalar, Size, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector},
-    highgui::{imshow, poll_key},
-    imgproc::{corner_sub_pix, cvt_color_def, resize, COLOR_GRAY2BGR, INTER_CUBIC},
-    objdetect::{
-        draw_detected_corners_charuco, draw_detected_markers, get_predefined_dictionary,
-        CharucoBoard, CharucoDetector, CharucoDetectorTraitConst, CharucoParameters,
-        CharucoParametersTrait, DetectorParameters, RefineParameters,
-    },
+use opencv::core::{
+    Mat, Point2f, Scalar, Size, TermCriteria_EPS, TermCriteria_MAX_ITER, Vector, no_array,
+};
+use opencv::highgui::{imshow, poll_key};
+use opencv::imgproc::{COLOR_GRAY2BGR, INTER_CUBIC, corner_sub_pix, cvt_color_def, resize};
+use opencv::objdetect::{
+    CharucoBoard, CharucoDetector, CharucoDetectorTraitConst, CharucoParameters,
+    CharucoParametersTrait, DetectorParameters, RefineParameters, draw_detected_corners_charuco,
+    draw_detected_markers, get_predefined_dictionary,
 };
 
 pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
@@ -53,11 +53,18 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
         )
         .unwrap();
     if charuco_corners.len() > 0 {
-        corner_sub_pix(&im, &mut charuco_corners, (5, 5).into(), (-1, -1).into(), opencv::core::TermCriteria {
-            typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
-            max_count: 30,
-            epsilon: 0.001,
-        }).unwrap();
+        corner_sub_pix(
+            &im,
+            &mut charuco_corners,
+            (5, 5).into(),
+            (-1, -1).into(),
+            opencv::core::TermCriteria {
+                typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
+                max_count: 30,
+                epsilon: 0.001,
+            },
+        )
+        .unwrap();
     }
     //
     // if marker_corners.len() > 0 {
@@ -77,11 +84,19 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
     let tmp = im_copy;
     let mut im_copy = Mat::default();
     resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
-    charuco_corners.as_mut_slice().iter_mut().for_each(|x| *x *= 512.0 / new_size.width as f32);
-    marker_corners = marker_corners.iter().map(|mut v| {
-        v.as_mut_slice().iter_mut().for_each(|x| *x *= 512.0 / new_size.height as f32);
-        v
-    }).collect();
+    charuco_corners
+        .as_mut_slice()
+        .iter_mut()
+        .for_each(|x| *x *= 512.0 / new_size.width as f32);
+    marker_corners = marker_corners
+        .iter()
+        .map(|mut v| {
+            v.as_mut_slice()
+                .iter_mut()
+                .for_each(|x| *x *= 512.0 / new_size.height as f32);
+            v
+        })
+        .collect();
 
     if marker_ids.len() > 0 {
         draw_detected_markers(

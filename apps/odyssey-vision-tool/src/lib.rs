@@ -1,9 +1,8 @@
 use arrayvec::ArrayVec;
+use nalgebra::{Isometry3, Matrix3, Matrix3x1, Point2, Rotation3};
 use odyssey_common::MARKER_PATTERN_LEN;
 use odyssey_cv::foveated::FoveatedAimpointState;
 use odyssey_usb::packets::vm::MotData;
-use nalgebra::Isometry3;
-use nalgebra::{Matrix3, Matrix3x1, Point2, Rotation3};
 use serde::Serialize;
 
 pub mod config_window;

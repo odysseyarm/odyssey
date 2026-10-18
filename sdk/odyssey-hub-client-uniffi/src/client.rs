@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
+use odyssey_hub_client::client::RpcError;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::ffi_common::*;
-use odyssey_hub_client::client::RpcError;
 
 #[derive(uniffi::Object, Debug, thiserror::Error)]
 #[error("{e:?}")] // default message is from anyhow.
@@ -99,17 +99,16 @@ impl EventStream {
 impl DeviceListStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<Device>, ClientError> {
-        match self.inner.lock().await.next().await { Some(msg) => {
-            match msg {
+        match self.inner.lock().await.next().await {
+            Some(msg) => match msg {
                 Ok(device_list) => Ok(device_list
                     .into_iter()
                     .map(|d| odyssey_hub_common::device::Device::from(d).into())
                     .collect()),
                 Err(_) => Err(ClientError::StreamEnd),
-            }
-        } _ => {
-            Err(ClientError::StreamEnd)
-        }}
+            },
+            _ => Err(ClientError::StreamEnd),
+        }
     }
 }
 
@@ -117,14 +116,13 @@ impl DeviceListStream {
 impl ShotDelayStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<u16, ClientError> {
-        match self.inner.lock().await.next().await { Some(msg) => {
-            match msg {
+        match self.inner.lock().await.next().await {
+            Some(msg) => match msg {
                 Ok(delay) => Ok(delay),
                 Err(_) => Err(ClientError::StreamEnd),
-            }
-        } _ => {
-            Err(ClientError::StreamEnd)
-        }}
+            },
+            _ => Err(ClientError::StreamEnd),
+        }
     }
 }
 
@@ -132,8 +130,8 @@ impl ShotDelayStream {
 impl AccessoryMapStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
-        match self.inner.lock().await.next().await { Some(msg) => {
-            match msg {
+        match self.inner.lock().await.next().await {
+            Some(msg) => match msg {
                 Ok(map) => {
                     let entries: Vec<crate::ffi_common::AccessoryMapEntry> = map
                         .into_iter()
@@ -153,10 +151,9 @@ impl AccessoryMapStream {
                     Ok(entries)
                 }
                 Err(_) => Err(ClientError::StreamEnd),
-            }
-        } _ => {
-            Err(ClientError::StreamEnd)
-        }}
+            },
+            _ => Err(ClientError::StreamEnd),
+        }
     }
 }
 

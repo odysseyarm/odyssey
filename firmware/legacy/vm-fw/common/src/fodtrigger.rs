@@ -67,8 +67,18 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         cc1.write(period_us);
         cc1.short_compare_clear();
 
-        let ppi_set = Ppi::new_one_to_two(ppi_set_ch, cc1.event_compare(), nf_ch.task_set(), wf_ch.task_set());
-        let ppi_clr = Ppi::new_one_to_two(ppi_clr_ch, cc0.event_compare(), nf_ch.task_clr(), wf_ch.task_clr());
+        let ppi_set = Ppi::new_one_to_two(
+            ppi_set_ch,
+            cc1.event_compare(),
+            nf_ch.task_set(),
+            wf_ch.task_set(),
+        );
+        let ppi_clr = Ppi::new_one_to_two(
+            ppi_clr_ch,
+            cc0.event_compare(),
+            nf_ch.task_clr(),
+            wf_ch.task_clr(),
+        );
 
         Self {
             timer,

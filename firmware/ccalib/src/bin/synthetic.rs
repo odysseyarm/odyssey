@@ -1,22 +1,17 @@
 use std::iter::zip;
 
-use ccalib::{
-    Flags, make_extrinsics, make_extrinsics_from_mat4,
-    utils::{fill_circle, imshow_multi, stroke_circle},
-};
+use ccalib::utils::{fill_circle, imshow_multi, stroke_circle};
+use ccalib::{Flags, make_extrinsics, make_extrinsics_from_mat4};
 use nalgebra::{Dyn, Matrix3, OMatrix, Rotation3, Translation3, U2, matrix, stack, vector};
-use opencv::{
-    calib3d::{
-        CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CirclesGridFinderParameters,
-        find_circles_grid,
-    },
-    core::{
-        BORDER_CONSTANT, CV_8UC1, CV_8UC3, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual,
-        Point2f, Ptr, ToInputArray, Vec3b, Vector,
-    },
-    features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params},
-    imgproc::{INTER_LINEAR, warp_perspective},
+use opencv::calib3d::{
+    CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CirclesGridFinderParameters, find_circles_grid,
 };
+use opencv::core::{
+    BORDER_CONSTANT, CV_8UC1, CV_8UC3, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual,
+    Point2f, Ptr, ToInputArray, Vec3b, Vector,
+};
+use opencv::features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params};
+use opencv::imgproc::{INTER_LINEAR, warp_perspective};
 
 fn get_circle_centers(im: &impl ToInputArray) -> Vector<Point2f> {
     let mut centers = Vector::<Point2f>::default();

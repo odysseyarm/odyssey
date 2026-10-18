@@ -4,7 +4,7 @@
 use dioxus::prelude::*;
 
 use super::hints::{failure_message, retry_label};
-use super::ui::{Details, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
+use super::ui::{Details, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage};
 use super::wizard::Wizard;
 use crate::components::wizard::StatusBanner;
 

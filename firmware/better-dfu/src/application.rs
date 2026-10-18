@@ -9,8 +9,8 @@ use embedded_storage::nor_flash::NorFlash;
 
 use crate::Reset;
 use crate::consts::{
-    APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_RT, DfuAttributes, Request, State, Status,
-    USB_CLASS_APPN_SPEC,
+    APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_RT, DfuAttributes, Request, State,
+    Status, USB_CLASS_APPN_SPEC,
 };
 
 /// Generic interface for a system that can signal to the bootloader that USB DFU mode is needed on the next boot.
@@ -25,7 +25,8 @@ pub trait DfuMarker {
 
 impl<'d, STATE: NorFlash> DfuMarker for BlockingFirmwareState<'d, STATE> {
     fn mark_dfu(&mut self) {
-        self.mark_dfu().expect("Failed to mark DFU mode in bootloader")
+        self.mark_dfu()
+            .expect("Failed to mark DFU mode in bootloader")
     }
 }
 
@@ -129,7 +130,14 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
 
         match Request::try_from(req.request) {
             Ok(Request::GetStatus) => {
-                buf[0..6].copy_from_slice(&[Status::Ok as u8, 0x32, 0x00, 0x00, self.state as u8, 0x00]);
+                buf[0..6].copy_from_slice(&[
+                    Status::Ok as u8,
+                    0x32,
+                    0x00,
+                    0x00,
+                    self.state as u8,
+                    0x00,
+                ]);
                 Some(InResponse::Accepted(buf))
             }
             _ => None,
@@ -160,7 +168,12 @@ pub fn usb_dfu<'d, D: Driver<'d>, MARK: DfuMarker, RST: Reset>(
 
     let mut iface = func.interface();
     handler.interface = Some(iface.interface_number());
-    let mut alt = iface.alt_setting(USB_CLASS_APPN_SPEC, APPN_SPEC_SUBCLASS_DFU, DFU_PROTOCOL_RT, None);
+    let mut alt = iface.alt_setting(
+        USB_CLASS_APPN_SPEC,
+        APPN_SPEC_SUBCLASS_DFU,
+        DFU_PROTOCOL_RT,
+        None,
+    );
     let timeout = timeout.as_millis() as u16;
     alt.descriptor(
         DESC_DFU_FUNCTIONAL,

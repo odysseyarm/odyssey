@@ -1,12 +1,14 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use odyssey_usb::{device::VmDevice, packets::vm::Port};
-use iui::{controls::Form, UI};
+use iui::UI;
+use iui::controls::Form;
 use leptos_reactive::{
-    create_rw_signal, ReadSignal, RwSignal, SignalGetUntracked, SignalSet, SignalUpdate,
-    SignalWith, SignalWithUntracked,
+    ReadSignal, RwSignal, SignalGetUntracked, SignalSet, SignalUpdate, SignalWith,
+    SignalWithUntracked, create_rw_signal,
 };
+use odyssey_usb::device::VmDevice;
+use odyssey_usb::packets::vm::Port;
 
 use super::retry;
 

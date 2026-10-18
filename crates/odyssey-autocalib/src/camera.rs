@@ -43,7 +43,11 @@ pub struct CameraInfo {
 /// is alive.
 pub trait CameraBackend {
     fn list(&self) -> Result<Vec<CameraInfo>, CameraError>;
-    fn open(&self, camera: &CameraInfo, settings: &CaptureSettings) -> Result<Box<dyn CameraStream>, CameraError>;
+    fn open(
+        &self,
+        camera: &CameraInfo,
+        settings: &CaptureSettings,
+    ) -> Result<Box<dyn CameraStream>, CameraError>;
 }
 
 /// Settings applied when a stream starts. The calibration UI exposes these as
@@ -58,7 +62,10 @@ pub struct CaptureSettings {
 
 impl Default for CaptureSettings {
     fn default() -> Self {
-        Self { color_exposure_us: 1500, color_gain: 1 }
+        Self {
+            color_exposure_us: 1500,
+            color_gain: 1,
+        }
     }
 }
 
@@ -113,12 +120,18 @@ pub struct Extrinsics {
 
 impl Extrinsics {
     pub fn identity() -> Self {
-        Self { rotation: Matrix3::identity(), translation: Vector3::zeros() }
+        Self {
+            rotation: Matrix3::identity(),
+            translation: Vector3::zeros(),
+        }
     }
 
     pub fn inverse(&self) -> Self {
         let rotation = self.rotation.transpose();
-        Self { rotation, translation: -(rotation * self.translation) }
+        Self {
+            rotation,
+            translation: -(rotation * self.translation),
+        }
     }
 
     pub fn apply(&self, p: &Vector3<f64>) -> Vector3<f64> {

@@ -266,7 +266,10 @@ mod tests {
         assert_eq!(next_copy_attempt(u32::MAX), Some(1));
         assert_eq!(next_copy_attempt(0), Some(1));
         assert_eq!(next_copy_attempt(1), Some(2));
-        assert_eq!(next_copy_attempt(MAX_COPY_ATTEMPTS - 1), Some(MAX_COPY_ATTEMPTS));
+        assert_eq!(
+            next_copy_attempt(MAX_COPY_ATTEMPTS - 1),
+            Some(MAX_COPY_ATTEMPTS)
+        );
         assert_eq!(next_copy_attempt(MAX_COPY_ATTEMPTS), None);
         // A value that is neither erased nor a plausible count is not retried.
         assert_eq!(next_copy_attempt(0xDEAD_BEEF), None);

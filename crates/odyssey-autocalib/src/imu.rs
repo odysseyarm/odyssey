@@ -37,18 +37,26 @@ pub struct Madgwick {
 impl Madgwick {
     /// Starts level with identity orientation.
     pub fn new(gain: f64) -> Self {
-        Self { q: Vector4::new(1.0, 0.0, 0.0, 0.0), gain }
+        Self {
+            q: Vector4::new(1.0, 0.0, 0.0, 0.0),
+            gain,
+        }
     }
 
     /// Starts from the orientation that points "up" at the measured specific
     /// force, so the filter does not spend its first second converging.
     pub fn from_accelerometer(gain: f64, accel: &Vector3<f64>) -> Self {
         let q = UnitQuaternion::rotation_between(accel, &Vector3::z()).unwrap_or_default();
-        Self { q: Vector4::new(q.w, q.i, q.j, q.k), gain }
+        Self {
+            q: Vector4::new(q.w, q.i, q.j, q.k),
+            gain,
+        }
     }
 
     pub fn orientation(&self) -> UnitQuaternion<f64> {
-        UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(self.q[0], self.q[1], self.q[2], self.q[3]))
+        UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            self.q[0], self.q[1], self.q[2], self.q[3],
+        ))
     }
 
     /// Integrates `gyro` (rad/s) over `dt` seconds and corrects toward `accel`.
@@ -72,9 +80,18 @@ impl Madgwick {
                 2.0 * (0.5 - q1 * q1 - q2 * q2) - a.z,
             );
             let jacobian = nalgebra::Matrix3x4::new(
-                -2.0 * q2, 2.0 * q3, -2.0 * q0, 2.0 * q1,
-                2.0 * q1, 2.0 * q0, 2.0 * q3, 2.0 * q2,
-                0.0, -4.0 * q1, -4.0 * q2, 0.0,
+                -2.0 * q2,
+                2.0 * q3,
+                -2.0 * q0,
+                2.0 * q1,
+                2.0 * q1,
+                2.0 * q0,
+                2.0 * q3,
+                2.0 * q2,
+                0.0,
+                -4.0 * q1,
+                -4.0 * q2,
+                0.0,
             );
             let gradient = jacobian.transpose() * f;
             let gn = gradient.norm();
@@ -127,7 +144,9 @@ impl GravityEstimator {
         let dt = self.last.map(|last| sample.timestamp.saturating_sub(last));
         self.last = Some(sample.timestamp);
         match dt {
-            Some(dt) if !dt.is_zero() && dt <= MAX_STEP => filter.update(&gyro, &accel, dt.as_secs_f64()),
+            Some(dt) if !dt.is_zero() && dt <= MAX_STEP => {
+                filter.update(&gyro, &accel, dt.as_secs_f64())
+            }
             _ => {}
         }
     }
@@ -152,7 +171,9 @@ impl GravityEstimator {
     /// Rotation taking camera-frame vectors to the aligned frame. Identity
     /// without IMU data, which assumes an upright camera.
     pub fn camera_to_aligned(&self) -> Matrix3<f64> {
-        let Some(filter) = &self.filter else { return Matrix3::identity() };
+        let Some(filter) = &self.filter else {
+            return Matrix3::identity();
+        };
         let m = camera_to_filter();
         m.transpose() * filter.orientation().to_rotation_matrix().into_inner() * m
     }
@@ -177,7 +198,11 @@ mod tests {
     use super::*;
 
     fn rest_sample(t_ms: u64, down: Vector3<f64>) -> ImuSample {
-        ImuSample { timestamp: Duration::from_millis(t_ms), gyro: Vector3::zeros(), accel: -down.normalize() * 9.81 }
+        ImuSample {
+            timestamp: Duration::from_millis(t_ms),
+            gyro: Vector3::zeros(),
+            accel: -down.normalize() * 9.81,
+        }
     }
 
     #[test]
@@ -231,6 +256,10 @@ mod tests {
             });
         }
         let tilt = g.tilt().unwrap();
-        assert!((tilt.roll_deg - rate.to_degrees()).abs() < 3.0, "roll {}", tilt.roll_deg);
+        assert!(
+            (tilt.roll_deg - rate.to_degrees()).abs() < 3.0,
+            "roll {}",
+            tilt.roll_deg
+        );
     }
 }

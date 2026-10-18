@@ -1,11 +1,10 @@
-﻿use std::num::NonZero;
+use std::num::NonZero;
 
 mod proto {
     tonic::include_proto!("odyssey.service_interface");
 }
-pub use proto::*;
-
 use odyssey_hub_common as common;
+pub use proto::*;
 
 // -------- Math type conversions --------
 

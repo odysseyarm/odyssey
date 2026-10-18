@@ -83,9 +83,9 @@ where
     I2c: embedded_hal_async::i2c::I2c,
     Delay: embedded_hal_async::delay::DelayNs,
 {
+    use npm1300_rs::Shphldtim;
     use npm1300_rs::gpios::{GpioConfigBuilder, GpioMode};
     use npm1300_rs::mainreg::Vbusin0EventMask;
-    use npm1300_rs::Shphldtim;
 
     pmic.set_ship_hold_press_timer(Shphldtim::Ms304).await?;
     pmic.use_ship_hold_button_only().await?;

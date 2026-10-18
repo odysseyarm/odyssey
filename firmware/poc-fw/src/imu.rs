@@ -1,19 +1,14 @@
-use embassy_nrf::{
-    Peri,
-    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull},
-    gpiote::{self, OutputChannelPolarity},
-    interrupt,
-    peripherals::SERIAL1,
-    ppi::{self, Ppi},
-    spim,
-    timer::{self, Timer},
-};
+use embassy_nrf::gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::gpiote::{self, OutputChannelPolarity};
+use embassy_nrf::peripherals::SERIAL1;
+use embassy_nrf::ppi::{self, Ppi};
+use embassy_nrf::timer::{self, Timer};
+use embassy_nrf::{Peri, interrupt, spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{ICM42688, Ready};
 
-pub type Imu =
-    ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>;
+pub type Imu = ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance>(

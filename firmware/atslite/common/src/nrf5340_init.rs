@@ -1,5 +1,5 @@
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource, LfxoCapacitance};
-use embassy_nrf::{pac, Peripherals};
+use embassy_nrf::{Peripherals, pac};
 
 /// Configure SPU so the network core can access the ICMSG {RX,TX} regions.
 unsafe fn configure_spu_for_network_core() {
@@ -14,8 +14,8 @@ unsafe fn configure_spu_for_network_core() {
 
     const RAM_BASE: u32 = 0x2000_0000;
     const RAM_REGION_SIZE: u32 = 8 * 1024; // 8 KiB per SPU RAM region (nRF53)
-                                           // Engineering A revision has 32 regions of 32KB, later revisions have 64 regions of 16KB
-                                           // Configure for both to be safe
+    // Engineering A revision has 32 regions of 32KB, later revisions have 64 regions of 16KB
+    // Configure for both to be safe
     const NUM_FLASH_REGIONS: usize = 64; // Maximum number of flash regions
 
     #[inline]

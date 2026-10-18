@@ -14,16 +14,18 @@ use std::time::Duration;
 
 use image::{GrayImage, RgbImage};
 use nalgebra::{Matrix3, Point2};
-use odyssey_common::{ScreenCalibration, MAX_SCREEN_ID};
+use odyssey_common::{MAX_SCREEN_ID, ScreenCalibration};
 
 use crate::camera::{CameraError, CameraGeometry, CameraStream, Frames};
 use crate::imu::{GravityEstimator, Tilt};
 use crate::markers::{self, MarkerBlob, MarkerError};
-use crate::pattern::{check_edges, detect, DetectFailure, Pattern};
+use crate::pattern::{DetectFailure, Pattern, check_edges, detect};
 pub use crate::pattern::{EdgeCheck, SideSet};
-use crate::plane::{apply_homography, project_pinhole, ransac_plane, RansacParams};
+use crate::plane::{RansacParams, apply_homography, project_pinhole, ransac_plane};
+use crate::solve::{
+    self, BURST_FRAMES, ScreenFit, SolveError, SolveOptions, build_calibration, solve_screen,
+};
 pub use crate::solve::{KnownSize, SizeCheck, SizeSource};
-use crate::solve::{self, build_calibration, solve_screen, ScreenFit, SolveError, SolveOptions, BURST_FRAMES};
 
 /// Infrared frames averaged when measuring markers.
 pub const MARKER_FRAMES: usize = 5;
@@ -160,9 +162,13 @@ pub enum MarkerHint {
     Ready,
     /// No bright spots at all: markers off, or the infrared view is blocked.
     NoMarkers,
-    TooFewMarkers { found: usize },
+    TooFewMarkers {
+        found: usize,
+    },
     /// Spots were found but too few sit where the markers belong.
-    WrongPlace { matched: usize },
+    WrongPlace {
+        matched: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -260,11 +266,23 @@ fn average_markers(
         }
     }
     if successes == 0 || successes * 2 < bursts.len() {
-        return Err(last_error.map(SessionError::Markers).unwrap_or(SessionError::Markers(MarkerError::TooFewBlobs { found: 0 })));
+        return Err(last_error
+            .map(SessionError::Markers)
+            .unwrap_or(SessionError::Markers(MarkerError::TooFewBlobs { found: 0 })));
     }
     let points_m = sums.map(|s| Point2::from(s / successes as f64));
-    let marker_px = points_m.map(|p| fit.screen_to_color_px(p).map(pt32).unwrap_or_else(Point2::origin));
-    Ok((MarkerSummary { points_m, max_offset_m: max_offset }, marker_px))
+    let marker_px = points_m.map(|p| {
+        fit.screen_to_color_px(p)
+            .map(pt32)
+            .unwrap_or_else(Point2::origin)
+    });
+    Ok((
+        MarkerSummary {
+            points_m,
+            max_offset_m: max_offset,
+        },
+        marker_px,
+    ))
 }
 
 pub struct Session {
@@ -285,7 +303,11 @@ fn pt32(p: Point2<f64>) -> Point2<f32> {
 impl Session {
     /// Starts a session on an open camera. `aspect` is the screen's width over
     /// height, which fixes the pattern.
-    pub fn start(mut stream: Box<dyn CameraStream>, aspect: f64, options: SessionOptions) -> Session {
+    pub fn start(
+        mut stream: Box<dyn CameraStream>,
+        aspect: f64,
+        options: SessionOptions,
+    ) -> Session {
         let geometry = *stream.geometry();
         // Depth quality depends on the projector, and a previous session may
         // have left the infrared sensor on a short exposure.
@@ -339,7 +361,8 @@ impl Session {
         if self.marker_mode {
             return Ok(());
         }
-        self.stream.set_ir_exposure_us(self.options.ir_exposure_us)?;
+        self.stream
+            .set_ir_exposure_us(self.options.ir_exposure_us)?;
         // Cameras without a switchable projector report `Ok(false)`; the
         // projector's dots then stay below the relative threshold anyway.
         let _ = self.stream.set_projector_enabled(false)?;
@@ -393,7 +416,11 @@ impl Session {
                 return Ok(preview);
             }
         };
-        preview.dots = detection.correspondences.iter().map(|c| pt32(c.raw)).collect();
+        preview.dots = detection
+            .correspondences
+            .iter()
+            .map(|c| pt32(c.raw))
+            .collect();
         preview.screen_quad = Some(detection.quad_px.map(pt32));
         preview.dots_matched = detection.quality.matched;
 
@@ -401,20 +428,34 @@ impl Session {
         preview.depth_coverage = depth.coverage;
         preview.distance_m = depth.distance_m;
 
-        preview.edges = check_edges(&self.pattern, &frames.color, &self.geometry.color, &detection.homography);
-        let edges_block = self.options.require_visible_edges && matches!(preview.edges, EdgeCheck::Cropped { .. });
+        preview.edges = check_edges(
+            &self.pattern,
+            &frames.color,
+            &self.geometry.color,
+            &detection.homography,
+        );
+        let edges_block = self.options.require_visible_edges
+            && matches!(preview.edges, EdgeCheck::Cropped { .. });
 
-        preview.hint = if !region_inside_images(&self.geometry, &detection.homography) || detection.quality.completeness() < 0.8 {
+        preview.hint = if !region_inside_images(&self.geometry, &detection.homography)
+            || detection.quality.completeness() < 0.8
+        {
             Hint::ScreenPartlyVisible
         } else if depth.distance_m.is_some_and(|d| d < MIN_DISTANCE_M) {
             Hint::TooClose
-        } else if depth.distance_m.is_some_and(|d| d > MAX_DISTANCE_M) || detection.quality.spacing_px < MIN_SPACING_PX {
+        } else if depth.distance_m.is_some_and(|d| d > MAX_DISTANCE_M)
+            || detection.quality.spacing_px < MIN_SPACING_PX
+        {
             Hint::TooFar
-        } else if tilt.is_some_and(|t| t.pitch_deg.abs() > MAX_PITCH_DEG || t.roll_deg.abs() > MAX_ROLL_DEG) {
+        } else if tilt
+            .is_some_and(|t| t.pitch_deg.abs() > MAX_PITCH_DEG || t.roll_deg.abs() > MAX_ROLL_DEG)
+        {
             Hint::CameraTiltedTooMuch
         } else if depth.cos_incidence.is_some_and(|c| c < MIN_INCIDENCE_COS) {
             Hint::ScreenTooOblique
-        } else if depth.coverage.is_none_or(|c| c < MIN_DEPTH_COVERAGE) || depth.plane_rmse_m.is_some_and(|e| e > MAX_PREVIEW_RMSE_M) {
+        } else if depth.coverage.is_none_or(|c| c < MIN_DEPTH_COVERAGE)
+            || depth.plane_rmse_m.is_some_and(|e| e > MAX_PREVIEW_RMSE_M)
+        {
             Hint::DepthPoor
         } else if edges_block {
             Hint::EdgesCropped
@@ -425,7 +466,10 @@ impl Session {
     }
 
     /// Captures a burst while the pattern is shown and measures the screen.
-    pub fn measure_screen(&mut self, progress: &mut dyn FnMut(Step)) -> Result<ScreenSummary, SessionError> {
+    pub fn measure_screen(
+        &mut self,
+        progress: &mut dyn FnMut(Step),
+    ) -> Result<ScreenSummary, SessionError> {
         self.leave_marker_mode();
         let total = self.options.burst_frames.max(1);
         let mut frames = Vec::with_capacity(total);
@@ -438,15 +482,24 @@ impl Session {
         // its whole image, so check the ring before spending time on the solve.
         let edges = frames
             .last()
-            .and_then(|f| detect(&self.pattern, &f.color, &self.geometry.color).ok().map(|d| (f, d)))
-            .map_or(EdgeCheck::Unknown, |(f, d)| check_edges(&self.pattern, &f.color, &self.geometry.color, &d.homography));
+            .and_then(|f| {
+                detect(&self.pattern, &f.color, &self.geometry.color)
+                    .ok()
+                    .map(|d| (f, d))
+            })
+            .map_or(EdgeCheck::Unknown, |(f, d)| {
+                check_edges(&self.pattern, &f.color, &self.geometry.color, &d.homography)
+            });
         if let (true, EdgeCheck::Cropped { sides }) = (self.options.require_visible_edges, edges) {
             return Err(SessionError::EdgesCropped(sides));
         }
 
         progress(Step::Solving);
         let alignment = self.gravity.camera_to_aligned();
-        let options = SolveOptions { known_size: self.options.known_size, ..SolveOptions::default() };
+        let options = SolveOptions {
+            known_size: self.options.known_size,
+            ..SolveOptions::default()
+        };
         let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)?;
         let summary = ScreenSummary {
             size_m: fit.size_m,
@@ -459,8 +512,17 @@ impl Session {
             dots_used: fit.dots_used,
             quad_px: fit.quad_px.map(pt32),
         };
-        let color = frames.last().map(|f| f.color.clone()).unwrap_or_else(|| RgbImage::new(0, 0));
-        self.screen = Some(ScreenMeasurement { fit, color, edges, gravity_aligned: self.gravity.is_ready(), frames });
+        let color = frames
+            .last()
+            .map(|f| f.color.clone())
+            .unwrap_or_else(|| RgbImage::new(0, 0));
+        self.screen = Some(ScreenMeasurement {
+            fit,
+            color,
+            edges,
+            gravity_aligned: self.gravity.is_ready(),
+            frames,
+        });
         // A new screen measurement invalidates markers measured against the old one.
         self.markers = None;
         progress(Step::Done);
@@ -485,8 +547,12 @@ impl Session {
         } else if let Some(screen) = &self.screen {
             match markers::locate(&self.geometry, &screen.fit, &blobs) {
                 Ok(m) => preview.matched = Some(m.blob_for_marker),
-                Err(MarkerError::LayoutMismatch { matched }) => preview.hint = MarkerHint::WrongPlace { matched },
-                Err(MarkerError::TooFewBlobs { found }) => preview.hint = MarkerHint::TooFewMarkers { found },
+                Err(MarkerError::LayoutMismatch { matched }) => {
+                    preview.hint = MarkerHint::WrongPlace { matched }
+                }
+                Err(MarkerError::TooFewBlobs { found }) => {
+                    preview.hint = MarkerHint::TooFewMarkers { found }
+                }
             }
         }
         Ok(preview)
@@ -494,7 +560,10 @@ impl Session {
 
     /// Measures the six markers from a short burst of infrared frames. Needs
     /// [`measure_screen`](Self::measure_screen) first.
-    pub fn measure_markers(&mut self, progress: &mut dyn FnMut(Step)) -> Result<MarkerSummary, SessionError> {
+    pub fn measure_markers(
+        &mut self,
+        progress: &mut dyn FnMut(Step),
+    ) -> Result<MarkerSummary, SessionError> {
         if self.screen.is_none() {
             return Err(SessionError::ScreenNotMeasured);
         }
@@ -507,17 +576,30 @@ impl Session {
             bursts.push(markers::detect_blobs(&frames.ir));
         }
         progress(Step::Solving);
-        let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
+        let screen = self
+            .screen
+            .as_ref()
+            .ok_or(SessionError::ScreenNotMeasured)?;
         let (summary, marker_px) = average_markers(&self.geometry, &screen.fit, &bursts)?;
-        self.markers = Some(MarkerMeasurement { summary, marker_px, bursts });
+        self.markers = Some(MarkerMeasurement {
+            summary,
+            marker_px,
+            bursts,
+        });
         progress(Step::Done);
         Ok(summary)
     }
 
     /// The calibration and review data, once the screen and markers are measured.
     pub fn finish(&self) -> Result<Calibration, SessionError> {
-        let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
-        let markers = self.markers.as_ref().ok_or(SessionError::MarkersNotMeasured)?;
+        let screen = self
+            .screen
+            .as_ref()
+            .ok_or(SessionError::ScreenNotMeasured)?;
+        let markers = self
+            .markers
+            .as_ref()
+            .ok_or(SessionError::MarkersNotMeasured)?;
         Ok(self.assemble(screen, &screen.fit, markers.summary, markers.marker_px))
     }
 
@@ -527,18 +609,36 @@ impl Session {
     /// review screen can offer it after the stream has stopped. Equals
     /// `finish` when no size was declared.
     pub fn finish_measured(&self) -> Result<Calibration, SessionError> {
-        let screen = self.screen.as_ref().ok_or(SessionError::ScreenNotMeasured)?;
-        let markers = self.markers.as_ref().ok_or(SessionError::MarkersNotMeasured)?;
+        let screen = self
+            .screen
+            .as_ref()
+            .ok_or(SessionError::ScreenNotMeasured)?;
+        let markers = self
+            .markers
+            .as_ref()
+            .ok_or(SessionError::MarkersNotMeasured)?;
         if self.options.known_size.is_none() {
             return self.finish();
         }
         let alignment = self.gravity.camera_to_aligned();
-        let fit = solve_screen(&self.geometry, &self.pattern, &screen.frames, &alignment, &SolveOptions::default())?;
+        let fit = solve_screen(
+            &self.geometry,
+            &self.pattern,
+            &screen.frames,
+            &alignment,
+            &SolveOptions::default(),
+        )?;
         let (summary, marker_px) = average_markers(&self.geometry, &fit, &markers.bursts)?;
         Ok(self.assemble(screen, &fit, summary, marker_px))
     }
 
-    fn assemble(&self, screen: &ScreenMeasurement, fit: &ScreenFit, markers: MarkerSummary, marker_px: [Point2<f32>; 6]) -> Calibration {
+    fn assemble(
+        &self,
+        screen: &ScreenMeasurement,
+        fit: &ScreenFit,
+        markers: MarkerSummary,
+        marker_px: [Point2<f32>; 6],
+    ) -> Calibration {
         let calibration = build_calibration(fit, &markers.points_m);
         let review = Review {
             color: screen.color.clone(),
@@ -557,7 +657,10 @@ impl Session {
             marker_max_offset_m: markers.max_offset_m,
             gravity_aligned: screen.gravity_aligned,
         };
-        Calibration { calibration, review }
+        Calibration {
+            calibration,
+            review,
+        }
     }
 }
 
@@ -592,11 +695,16 @@ struct DepthStats {
 fn region_inside_images(geometry: &CameraGeometry, unit_to_px: &Matrix3<f64>) -> bool {
     let (lo, hi) = solve::SCREEN_INSET;
     let color = &geometry.color;
-    [(lo, lo), (hi, lo), (hi, hi), (lo, hi)].into_iter().all(|(u, v)| {
-        apply_homography(unit_to_px, Point2::new(u, v)).is_some_and(|p| {
-            p.x >= 0.0 && p.y >= 0.0 && p.x <= f64::from(color.width - 1) && p.y <= f64::from(color.height - 1)
+    [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
+        .into_iter()
+        .all(|(u, v)| {
+            apply_homography(unit_to_px, Point2::new(u, v)).is_some_and(|p| {
+                p.x >= 0.0
+                    && p.y >= 0.0
+                    && p.x <= f64::from(color.width - 1)
+                    && p.y <= f64::from(color.height - 1)
+            })
         })
-    })
 }
 
 fn hint_without_pattern(color: &RgbImage, failure: DetectFailure) -> Hint {
@@ -604,7 +712,8 @@ fn hint_without_pattern(color: &RgbImage, failure: DetectFailure) -> Hint {
     let mut saturated = 0u32;
     let mut count = 0u32;
     for p in color.pixels().step_by(7) {
-        let luma = ((77 * u32::from(p[0]) + 150 * u32::from(p[1]) + 29 * u32::from(p[2])) >> 8) as usize;
+        let luma =
+            ((77 * u32::from(p[0]) + 150 * u32::from(p[1]) + 29 * u32::from(p[2])) >> 8) as usize;
         histogram[luma] += 1;
         count += 1;
         if luma >= 250 {
@@ -635,11 +744,23 @@ fn hint_without_pattern(color: &RgbImage, failure: DetectFailure) -> Hint {
 
 /// Distance, depth coverage and plane quality of the screen region in one
 /// frame.
-fn depth_stats(geometry: &CameraGeometry, frames: &Frames, unit_to_px: &Matrix3<f64>) -> DepthStats {
+fn depth_stats(
+    geometry: &CameraGeometry,
+    frames: &Frames,
+    unit_to_px: &Matrix3<f64>,
+) -> DepthStats {
     let color_from_depth = geometry.color_to_depth.inverse();
-    let points = solve::screen_depth_points(geometry, std::slice::from_ref(frames), unit_to_px, &color_from_depth);
+    let points = solve::screen_depth_points(
+        geometry,
+        std::slice::from_ref(frames),
+        unit_to_px,
+        &color_from_depth,
+    );
     if points.is_empty() {
-        return DepthStats { coverage: Some(0.0), ..DepthStats::default() };
+        return DepthStats {
+            coverage: Some(0.0),
+            ..DepthStats::default()
+        };
     }
 
     let mut z: Vec<f64> = points.iter().map(|p| p.z).collect();
@@ -657,12 +778,19 @@ fn depth_stats(geometry: &CameraGeometry, frames: &Frames, unit_to_px: &Matrix3<
                 (px.y - geometry.color.cy) / geometry.color.fy,
                 1.0,
             );
-            project_pinhole(&geometry.depth, &geometry.color_to_depth.apply(&(ray * distance)))
+            project_pinhole(
+                &geometry.depth,
+                &geometry.color_to_depth.apply(&(ray * distance)),
+            )
         })
         .collect();
     let stride = f64::from((frames.depth.width() / 320).max(1));
     let coverage = depth_corners.map(|c| {
-        let area: f64 = (0..4).map(|i| c[i].x * c[(i + 1) % 4].y - c[(i + 1) % 4].x * c[i].y).sum::<f64>().abs() / 2.0;
+        let area: f64 = (0..4)
+            .map(|i| c[i].x * c[(i + 1) % 4].y - c[(i + 1) % 4].x * c[i].y)
+            .sum::<f64>()
+            .abs()
+            / 2.0;
         ((points.len() as f64 * stride * stride) / area.max(1.0)).min(1.0) as f32
     });
 
@@ -670,11 +798,20 @@ fn depth_stats(geometry: &CameraGeometry, frames: &Frames, unit_to_px: &Matrix3<
     // estimate without the full burst.
     let step = (points.len() / 1500).max(1);
     let subset: Vec<_> = points.iter().step_by(step).copied().collect();
-    let fit = ransac_plane(&subset, &RansacParams { max_trials: 300, score_points: 1500, ..RansacParams::default() });
+    let fit = ransac_plane(
+        &subset,
+        &RansacParams {
+            max_trials: 300,
+            score_points: 1500,
+            ..RansacParams::default()
+        },
+    );
     DepthStats {
         coverage,
         distance_m: Some(distance as f32),
-        cos_incidence: fit.as_ref().map(|f| f.plane.normal.dot(&f.plane.point.normalize())),
+        cos_incidence: fit
+            .as_ref()
+            .map(|f| f.plane.normal.dot(&f.plane.point.normalize())),
         plane_rmse_m: fit.as_ref().map(|f| f.rmse),
     }
 }
@@ -687,7 +824,9 @@ pub fn screen_file_name(id: u8) -> String {
 /// Serializes a calibration the way the hub's loader expects: compact JSON
 /// with `rotation` as `[i, j, k, w]`, `homography` as nine column-major
 /// values and `object_points` as six `[x, y, z]` triples.
-pub fn calibration_to_json(calibration: &ScreenCalibration<f32>) -> Result<String, serde_json::Error> {
+pub fn calibration_to_json(
+    calibration: &ScreenCalibration<f32>,
+) -> Result<String, serde_json::Error> {
     serde_json::to_string(calibration)
 }
 
@@ -697,7 +836,10 @@ pub fn calibration_from_json(json: &str) -> Result<ScreenCalibration<f32>, serde
 
 fn check_id(id: u8) -> io::Result<()> {
     if id > MAX_SCREEN_ID {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("screen id {id} is above {MAX_SCREEN_ID}")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("screen id {id} is above {MAX_SCREEN_ID}"),
+        ));
     }
     Ok(())
 }
@@ -705,7 +847,11 @@ fn check_id(id: u8) -> io::Result<()> {
 /// Writes `screen_<id>.json` into `screens_dir`, creating the directory. The
 /// write goes through a temporary file so the hub never reads a partial
 /// calibration. Returns the file's path.
-pub fn save_calibration(screens_dir: &Path, id: u8, calibration: &ScreenCalibration<f32>) -> io::Result<PathBuf> {
+pub fn save_calibration(
+    screens_dir: &Path,
+    id: u8,
+    calibration: &ScreenCalibration<f32>,
+) -> io::Result<PathBuf> {
     check_id(id)?;
     std::fs::create_dir_all(screens_dir)?;
     let path = screens_dir.join(screen_file_name(id));
@@ -724,8 +870,9 @@ pub fn load_calibration(screens_dir: &Path, id: u8) -> io::Result<ScreenCalibrat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use nalgebra::{Matrix3, Point3, UnitQuaternion};
+
+    use super::*;
 
     fn sample() -> ScreenCalibration<f32> {
         ScreenCalibration {
@@ -750,7 +897,12 @@ mod tests {
         assert_eq!(back.homography, cal.homography);
         assert_eq!(back.object_points, cal.object_points);
         assert!((back.rotation.angle_to(&cal.rotation)).abs() < 1e-6);
-        let expected = [Point2::new(0.0, 0.0), Point2::new(1.0 / 0.82, 0.0), Point2::new(0.0, 1.0 / 1.46), Point2::new(1.0 / 0.82, 1.0 / 1.46)];
+        let expected = [
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0 / 0.82, 0.0),
+            Point2::new(0.0, 1.0 / 1.46),
+            Point2::new(1.0 / 0.82, 1.0 / 1.46),
+        ];
         for (got, want) in back.bounds().iter().zip(expected) {
             assert!((got - want).norm() < 1e-6, "{got:?} vs {want:?}");
         }
@@ -758,7 +910,8 @@ mod tests {
 
     #[test]
     fn json_layout_matches_the_hub_schema() {
-        let value: serde_json::Value = serde_json::from_str(&calibration_to_json(&sample()).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&calibration_to_json(&sample()).unwrap()).unwrap();
         assert_eq!(value["rotation"].as_array().unwrap().len(), 4);
         assert_eq!(value["homography"].as_array().unwrap().len(), 9);
         assert_eq!(value["object_points"].as_array().unwrap().len(), 6);
@@ -770,7 +923,8 @@ mod tests {
 
     #[test]
     fn save_and_load_use_the_hub_file_name() {
-        let dir = std::env::temp_dir().join(format!("odyssey-autocalib-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("odyssey-autocalib-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = save_calibration(&dir.join("screens"), 3, &sample()).unwrap();
         assert_eq!(path.file_name().unwrap(), "screen_3.json");

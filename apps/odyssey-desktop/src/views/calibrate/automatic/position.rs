@@ -6,9 +6,11 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use odyssey_autocalib::session::Hint;
 
-use super::hints::{screen_hint, OVERSCAN_HELP};
+use super::hints::{OVERSCAN_HELP, screen_hint};
 use super::settings::{COLOR_EXPOSURE_RANGE_US, COLOR_EXPOSURE_STEP_US};
-use super::ui::{focus_primary, Details, Fact, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
+use super::ui::{
+    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+};
 use super::wizard::Wizard;
 use super::worker::PreviewFrame;
 use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
@@ -18,7 +20,10 @@ const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(450);
 
 /// Brightness slider position as a percentage of its range.
 fn exposure_percent(us: u32) -> u32 {
-    let (lo, hi) = (*COLOR_EXPOSURE_RANGE_US.start(), *COLOR_EXPOSURE_RANGE_US.end());
+    let (lo, hi) = (
+        *COLOR_EXPOSURE_RANGE_US.start(),
+        *COLOR_EXPOSURE_RANGE_US.end(),
+    );
     (us.clamp(lo, hi) - lo) * 100 / (hi - lo)
 }
 
@@ -171,15 +176,25 @@ fn LivePreview(wizard: Wizard) -> Element {
     let unit = f64::from(frame.width) / 640.0;
     let dot_radius = 6.0 * unit;
     let line = 3.0 * unit;
-    let quad = frame.quad.map(|q| q.iter().map(|p| format!("{:.1},{:.1}", p[0], p[1])).collect::<Vec<_>>().join(" "));
+    let quad = frame.quad.map(|q| {
+        q.iter()
+            .map(|p| format!("{:.1},{:.1}", p[0], p[1]))
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
     // Edges the display cuts off, drawn over the outline in red so the tech
     // sees which sides to look at. The quad runs top left, top right, bottom
     // right, bottom left.
     let cropped_edges: Vec<[[f32; 2]; 2]> = match (frame.quad, frame.cropped) {
-        (Some(q), Some(sides)) => [(sides.top, 0), (sides.right, 1), (sides.bottom, 2), (sides.left, 3)]
-            .into_iter()
-            .filter_map(|(on, i)| on.then(|| [q[i], q[(i + 1) % 4]]))
-            .collect(),
+        (Some(q), Some(sides)) => [
+            (sides.top, 0),
+            (sides.right, 1),
+            (sides.bottom, 2),
+            (sides.left, 3),
+        ]
+        .into_iter()
+        .filter_map(|(on, i)| on.then(|| [q[i], q[(i + 1) % 4]]))
+        .collect(),
         _ => Vec::new(),
     };
     rsx! {
@@ -227,7 +242,9 @@ fn LivePreview(wizard: Wizard) -> Element {
 fn depth_text(frame: &PreviewFrame) -> (String, String) {
     (
         frame.distance_m.map_or("—".into(), |d| format!("{d:.2} m")),
-        frame.depth_coverage.map_or("—".into(), |c| format!("{:.0} %", c * 100.0)),
+        frame
+            .depth_coverage
+            .map_or("—".into(), |c| format!("{:.0} %", c * 100.0)),
     )
 }
 

@@ -1,4 +1,5 @@
 use core::sync::atomic::Ordering;
+
 use defmt::{error, info, warn};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;

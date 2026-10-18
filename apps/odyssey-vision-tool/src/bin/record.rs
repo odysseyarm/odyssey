@@ -1,8 +1,9 @@
-use std::{process::ExitCode, time::UNIX_EPOCH};
+use std::process::ExitCode;
+use std::time::UNIX_EPOCH;
 
-use odyssey_usb::device::VmDevice;
 use nusb::{DeviceInfo, MaybeFuture as _};
 use odyssey_protocol::control::device::TransportMode;
+use odyssey_usb::device::VmDevice;
 use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::StreamExt;
 #[allow(unused_imports)]
@@ -21,8 +22,7 @@ async fn get_devices() -> Vec<DeviceInfo> {
 
     let mut filtered = Vec::new();
     for info in devices.into_iter().filter(|info| {
-        info.vendor_id() == 0x1915
-            && (info.product_id() == 0x520F || info.product_id() == 0x5210)
+        info.vendor_id() == 0x1915 && (info.product_id() == 0x520F || info.product_id() == 0x5210)
     }) {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(TransportMode::Usb) => filtered.push(info),

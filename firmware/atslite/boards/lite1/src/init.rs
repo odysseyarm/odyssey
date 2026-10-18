@@ -1,9 +1,7 @@
 //! Board initialization
 
-use embassy_nrf::{
-    Peripherals,
-    config::{Config, HfclkSource, LfclkSource},
-};
+use embassy_nrf::Peripherals;
+use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 
 /// Initialize the nRF5340 and return peripherals
 pub fn init() -> Peripherals {

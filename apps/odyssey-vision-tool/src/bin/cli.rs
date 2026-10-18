@@ -1,11 +1,9 @@
 use std::process::ExitCode;
 
-use odyssey_usb::{
-    device::VmDevice,
-    packets::vm::Port,
-};
 use nusb::MaybeFuture as _;
 use odyssey_protocol::control::device::TransportMode;
+use odyssey_usb::device::VmDevice;
+use odyssey_usb::packets::vm::Port;
 fn print_help() {
     eprintln!("Usage: ./cli <usb>");
     eprintln!();

@@ -8,10 +8,9 @@ use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
 
 use crate::Reset;
 use crate::consts::{
-    APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_DFU, DfuAttributes, Request, State, Status,
-    USB_CLASS_APPN_SPEC,
+    APPN_SPEC_SUBCLASS_DFU, DESC_DFU_FUNCTIONAL, DFU_PROTOCOL_DFU, DfuAttributes, Request, State,
+    Status, USB_CLASS_APPN_SPEC,
 };
-
 
 /// Target for DFU firmware update
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +41,8 @@ pub trait DfuForwarder {
 /// Trait for handling dual-bank flash writes based on DFU target
 pub trait DualBankWriter {
     /// Write firmware data to the appropriate bank based on target
-    fn write_for_target(&mut self, target: DfuTarget, offset: usize, data: &[u8]) -> Result<(), ()>;
+    fn write_for_target(&mut self, target: DfuTarget, offset: usize, data: &[u8])
+    -> Result<(), ()>;
 
     /// Mark the appropriate bank as updated based on target
     fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), ()>;
@@ -69,7 +69,12 @@ impl DfuForwarder for NullForwarder {
 pub struct NullDualBankWriter;
 
 impl DualBankWriter for NullDualBankWriter {
-    fn write_for_target(&mut self, _target: DfuTarget, _offset: usize, _data: &[u8]) -> Result<(), ()> {
+    fn write_for_target(
+        &mut self,
+        _target: DfuTarget,
+        _offset: usize,
+        _data: &[u8],
+    ) -> Result<(), ()> {
         Err(())
     }
 
@@ -78,7 +83,15 @@ impl DualBankWriter for NullDualBankWriter {
     }
 }
 /// Internal state for USB DFU
-pub struct Control<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: DualBankWriter, const BLOCK_SIZE: usize> {
+pub struct Control<
+    'd,
+    DFU: NorFlash,
+    STATE: NorFlash,
+    RST: Reset,
+    FWD: DfuForwarder,
+    DBW: DualBankWriter,
+    const BLOCK_SIZE: usize,
+> {
     _updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
     attrs: DfuAttributes,
     state: State,
@@ -104,7 +117,16 @@ pub struct Control<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwa
     public_key: &'static [u8; 32],
 }
 
-impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: DualBankWriter, const BLOCK_SIZE: usize> Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE> {
+impl<
+    'd,
+    DFU: NorFlash,
+    STATE: NorFlash,
+    RST: Reset,
+    FWD: DfuForwarder,
+    DBW: DualBankWriter,
+    const BLOCK_SIZE: usize,
+> Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
+{
     /// Create a new DFU instance to handle DFU transfers.
     pub fn new(
         updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
@@ -145,7 +167,13 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
     }
 
     /// Provide string indices and labels for alternate settings.
-    pub fn set_interface_strings(&mut self, app_string: StringIndex, net_string: StringIndex, bootloader_string: StringIndex, app_label: &'static str) {
+    pub fn set_interface_strings(
+        &mut self,
+        app_string: StringIndex,
+        net_string: StringIndex,
+        bootloader_string: StringIndex,
+        app_label: &'static str,
+    ) {
         self.app_string = Some(app_string);
         self.net_string = Some(net_string);
         self.bootloader_string = Some(bootloader_string);
@@ -208,8 +236,15 @@ impl From<FirmwareUpdaterError> for Status {
     }
 }
 
-impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: DualBankWriter, const BLOCK_SIZE: usize> Handler
-    for Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
+impl<
+    'd,
+    DFU: NorFlash,
+    STATE: NorFlash,
+    RST: Reset,
+    FWD: DfuForwarder,
+    DBW: DualBankWriter,
+    const BLOCK_SIZE: usize,
+> Handler for Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
 {
     fn set_alternate_setting(&mut self, _interface: InterfaceNumber, alternate: u8) {
         match alternate {
@@ -303,7 +338,10 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
                 if final_transfer {
                     debug!("Receiving final transfer for {:?}", self.target);
                     let finished_target = self.target;
-                    match self.dual_bank_writer.mark_updated_for_target(finished_target) {
+                    match self
+                        .dual_bank_writer
+                        .mark_updated_for_target(finished_target)
+                    {
                         Ok(_) => {
                             self.reset_boot_state();
                             self.status = Status::Ok;
@@ -391,7 +429,14 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
                 }
 
                 //TODO: Configurable poll timeout, ability to add string for Vendor error
-                buf[0..6].copy_from_slice(&[self.status as u8, 0x32, 0x00, 0x00, self.state as u8, 0x00]);
+                buf[0..6].copy_from_slice(&[
+                    self.status as u8,
+                    0x32,
+                    0x00,
+                    0x00,
+                    self.state as u8,
+                    0x00,
+                ]);
                 Some(InResponse::Accepted(&buf[0..6]))
             }
             Ok(Request::GetState) => {
@@ -422,7 +467,16 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: Dua
 ///
 /// Once the host has initiated a DFU download operation, the chunks sent by the host will be written to the DFU partition.
 /// Once the final sync in the manifestation phase has been received, the handler will trigger a system reset to swap the new firmware.
-pub fn usb_dfu<'d, D: Driver<'d>, DFU: NorFlash, STATE: NorFlash, RST: Reset, FWD: DfuForwarder, DBW: DualBankWriter, const BLOCK_SIZE: usize>(
+pub fn usb_dfu<
+    'd,
+    D: Driver<'d>,
+    DFU: NorFlash,
+    STATE: NorFlash,
+    RST: Reset,
+    FWD: DfuForwarder,
+    DBW: DualBankWriter,
+    const BLOCK_SIZE: usize,
+>(
     builder: &mut Builder<'d, D>,
     handler: &'d mut Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>,
     func_modifier: impl Fn(&mut FunctionBuilder<'_, 'd, D>),
@@ -432,7 +486,11 @@ pub fn usb_dfu<'d, D: Driver<'d>, DFU: NorFlash, STATE: NorFlash, RST: Reset, FW
     let net_str_idx = builder.string();
     let bootloader_str_idx = builder.string();
 
-    let mut func = builder.function(USB_CLASS_APPN_SPEC, APPN_SPEC_SUBCLASS_DFU, DFU_PROTOCOL_DFU);
+    let mut func = builder.function(
+        USB_CLASS_APPN_SPEC,
+        APPN_SPEC_SUBCLASS_DFU,
+        DFU_PROTOCOL_DFU,
+    );
 
     // Here we give users the opportunity to add their own function level MSOS headers for instance.
     // This is useful when DFU functionality is part of a composite USB device.
@@ -442,8 +500,17 @@ pub fn usb_dfu<'d, D: Driver<'d>, DFU: NorFlash, STATE: NorFlash, RST: Reset, FW
     // Alt 0: inactive app bank (APP_B when A is active, APP_A when B is active)
     // Alt 1: NET
     // Alt 2: BOOTLOADER
-    let inactive_app_label = if handler.active_bank_is_a { "APP_B" } else { "APP_A" };
-    handler.set_interface_strings(inactive_str_idx, net_str_idx, bootloader_str_idx, inactive_app_label);
+    let inactive_app_label = if handler.active_bank_is_a {
+        "APP_B"
+    } else {
+        "APP_A"
+    };
+    handler.set_interface_strings(
+        inactive_str_idx,
+        net_str_idx,
+        bootloader_str_idx,
+        inactive_app_label,
+    );
     // Default target to the inactive app bank.
     handler.target = if handler.active_bank_is_a {
         DfuTarget::AppBankB

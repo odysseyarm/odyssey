@@ -1,7 +1,9 @@
-use crate::hub::HubContext;
-use dioxus::{logger::tracing, prelude::*};
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use odyssey_hub_client::client::DongleInfo;
 use odyssey_hub_common::device::Device;
+
+use crate::hub::HubContext;
 
 fn format_uuid(uuid: &[u8; 6]) -> String {
     format!(

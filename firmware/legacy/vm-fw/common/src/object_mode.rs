@@ -1,4 +1,4 @@
-﻿use core::convert::Infallible;
+use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use defmt::Format;
@@ -16,11 +16,13 @@ use nalgebra::Vector3;
 use paj7025::Paj7025Error;
 
 use crate::fodtrigger::FodTrigger;
-use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet};
 use crate::odyssey_protocol::control::device::TransportMode;
 use crate::odyssey_protocol::{
     self, BatteryReport, ConfigKind, Packet, PacketData, PacketType, PropKind, Props,
     ReadRegisterResponse, wire,
+};
+use crate::platform::{
+    Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet,
 };
 use crate::settings::{PajsSettings, Settings};
 use crate::usb::{self, UsbConfigHandle};
@@ -33,7 +35,12 @@ type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopR
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
 /// Context structure for object_mode - platform-agnostic
-pub struct ObjectModeContext<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: embassy_nrf::gpiote::Channel> {
+pub struct ObjectModeContext<
+    'd,
+    P: Platform,
+    C1: embassy_nrf::gpiote::Channel,
+    C2: embassy_nrf::gpiote::Channel,
+> {
     pub paj7025r2_group: PajGroup<'d, C1>,
     pub paj7025r3_group: PajGroup<'d, C2>,
     pub fod_set_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
@@ -57,12 +64,19 @@ pub struct ObjectModeContext<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, 
 }
 
 #[allow(unreachable_code)]
-pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: embassy_nrf::gpiote::Channel>(
+pub async fn object_mode<
+    'd,
+    P: Platform,
+    C1: embassy_nrf::gpiote::Channel,
+    C2: embassy_nrf::gpiote::Channel,
+>(
     pid: u16,
     mut ctx: ObjectModeContext<'d, P, C1, C2>,
 ) -> Result<ObjectModeContext<'d, P, C1, C2>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode on {}", P::NAME);
-    let pkt_writer = PacketWriter { snd: &mut ctx.usb_snd };
+    let pkt_writer = PacketWriter {
+        snd: &mut ctx.usb_snd,
+    };
     let mut pkt_rcv = PacketReader::new(&mut ctx.usb_rcv);
     let pkt_channel = Channel::<Packet, 64>::new();
     let stream_infos = StreamInfos::new();
@@ -115,7 +129,12 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         pkt_channel.sender(),
         &stream_infos,
     );
-    let e = battery_loop(pkt_channel.sender(), &stream_infos, ctx.battery_soc, ctx.battery_charging);
+    let e = battery_loop(
+        pkt_channel.sender(),
+        &stream_infos,
+        ctx.battery_soc,
+        ctx.battery_charging,
+    );
     // TODO turn these into tasks
     let r = join5(a, b, c, d, e).await;
 
@@ -167,7 +186,9 @@ async fn usb_rcv_loop<L: L2capChannels>(
                             Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
                                 // Endpoint disabled - wait for USB to actually be reconfigured
                                 // This blocks until the USB configured event fires
-                                defmt::debug!("USB endpoint disabled; waiting for reconfiguration...");
+                                defmt::debug!(
+                                    "USB endpoint disabled; waiting for reconfiguration..."
+                                );
                                 usb_configured.wait_for_event().await;
                                 defmt::debug!("USB reconfigured; resuming packet handling");
                                 continue;
@@ -205,7 +226,10 @@ async fn usb_rcv_loop<L: L2capChannels>(
         };
 
         // If we're in BLE mode, drop any USB-originating data packets (keep control).
-        if matches!(mode, TransportMode::Ble) && matches!(src, PacketSource::Usb) && !is_control_packet(&pkt) {
+        if matches!(mode, TransportMode::Ble)
+            && matches!(src, PacketSource::Usb)
+            && !is_control_packet(&pkt)
+        {
             defmt::debug!("[app] ignoring USB data packet while in BLE mode");
             continue;
         }
@@ -249,7 +273,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     register.address
                 );
                 let mut data: [u8; 1] = [0];
-                paj.read_register(register.bank, register.address, &mut data).await?;
+                paj.read_register(register.bank, register.address, &mut data)
+                    .await?;
                 defmt::debug!("[app] ReadRegister: read complete, data={}", data[0]);
                 Some(Packet {
                     id: pkt.id,
@@ -284,16 +309,24 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     ConfigKind::ImpactThreshold => {
                         wire::GeneralConfig::ImpactThreshold(settings.general.impact_threshold)
                     }
-                    ConfigKind::SuppressMs => wire::GeneralConfig::SuppressMs(settings.general.suppress_ms),
-                    ConfigKind::AccelConfig => wire::GeneralConfig::AccelConfig(settings.general.accel_config.into()),
-                    ConfigKind::GyroConfig => wire::GeneralConfig::GyroConfig(settings.general.gyro_config.clone()),
+                    ConfigKind::SuppressMs => {
+                        wire::GeneralConfig::SuppressMs(settings.general.suppress_ms)
+                    }
+                    ConfigKind::AccelConfig => {
+                        wire::GeneralConfig::AccelConfig(settings.general.accel_config.into())
+                    }
+                    ConfigKind::GyroConfig => {
+                        wire::GeneralConfig::GyroConfig(settings.general.gyro_config.clone())
+                    }
                     ConfigKind::CameraModelNf => {
                         wire::GeneralConfig::CameraModelNf(settings.general.camera_model_nf.clone())
                     }
                     ConfigKind::CameraModelWf => {
                         wire::GeneralConfig::CameraModelWf(settings.general.camera_model_wf.clone())
                     }
-                    ConfigKind::StereoIso => wire::GeneralConfig::StereoIso(settings.general.stereo_iso.clone()),
+                    ConfigKind::StereoIso => {
+                        wire::GeneralConfig::StereoIso(settings.general.stereo_iso.clone())
+                    }
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -306,8 +339,11 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     settings.general.impact_threshold,
                     settings.general.suppress_ms
                 );
-                settings.pajs =
-                    PajsSettings::read_from_pajs(&mut *paj7025r2.lock().await, &mut *paj7025r3.lock().await).await?;
+                settings.pajs = PajsSettings::read_from_pajs(
+                    &mut *paj7025r2.lock().await,
+                    &mut *paj7025r3.lock().await,
+                )
+                .await?;
                 settings.write();
                 defmt::info!("[app] FlashSettings: settings written to flash");
                 Some(Packet {
@@ -495,7 +531,8 @@ async fn imu_loop<P: Platform>(
         let gyr_transformed = P::transform_gyro(gyr);
 
         // Convert to SI units using platform-specific scaling
-        let accel = Vector3::new(acc_transformed[0], acc_transformed[1], acc_transformed[2]).cast::<f32>()
+        let accel = Vector3::new(acc_transformed[0], acc_transformed[1], acc_transformed[2])
+            .cast::<f32>()
             / P::ACC_LSB_PER_G
             * G;
 
@@ -542,7 +579,9 @@ async fn imu_loop<P: Platform>(
                     let id = stream_infos.impact.req_id();
                     let pkt = Packet {
                         id,
-                        data: PacketData::ImpactReport(odyssey_protocol::ImpactReport { timestamp: ts_micros }),
+                        data: PacketData::ImpactReport(odyssey_protocol::ImpactReport {
+                            timestamp: ts_micros,
+                        }),
                     };
                     if pkt_snd.try_send(pkt).is_err() {
                         defmt::warn!("Failed to send impact report due to full channel");
@@ -653,7 +692,11 @@ pub struct PacketWriter<'a> {
 impl PacketWriter<'_> {
     pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
         let payload = postcard::to_vec::<_, 1024>(pkt)?;
-        defmt::debug!("[USB] write_packet: payload_len={}, pkt_id={}", payload.len(), pkt.id);
+        defmt::debug!(
+            "[USB] write_packet: payload_len={}, pkt_id={}",
+            payload.len(),
+            pkt.id
+        );
         usb::write_transfer(self.snd, &payload, true).await?;
         Ok(())
     }

@@ -2,25 +2,18 @@
 
 use std::io::Write;
 
-use dioxus::{
-    desktop::{window, Config, WindowBuilder, WindowCloseBehaviour},
-    logger::tracing,
-    prelude::*,
-};
+use components::Navbar;
+use dioxus::desktop::{Config, WindowBuilder, WindowCloseBehaviour, window};
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use dioxus_router::components::HistoryProvider;
 use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
 use tokio_util::sync::CancellationToken;
-
-use components::Navbar;
-use views::Accessories;
-use views::Calibrate;
-use views::CalibrateAutomatic;
-use views::Home;
-use views::Pairing;
-use views::Settings;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, fmt};
+use views::{Accessories, Calibrate, CalibrateAutomatic, Home, Pairing, Settings};
 
 mod cli;
 mod components;
@@ -373,11 +366,14 @@ async fn handle_server_status(
                     // Try to connect to the existing instance and call BringToFront
                     let mut client = odyssey_hub_client::client::Client::default();
                     if let Ok(()) = client.connect().await {
-                        match client.bring_to_front().await { Ok(()) => {
-                            tracing::info!("Successfully brought existing instance to front");
-                        } _ => {
-                            tracing::warn!("Failed to bring existing instance to front");
-                        }}
+                        match client.bring_to_front().await {
+                            Ok(()) => {
+                                tracing::info!("Successfully brought existing instance to front");
+                            }
+                            _ => {
+                                tracing::warn!("Failed to bring existing instance to front");
+                            }
+                        }
                     }
 
                     // Return true to signal we should exit due to another instance

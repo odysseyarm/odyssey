@@ -7,7 +7,8 @@
 //! which kind to preselect, and which size and edge rule the session gets.
 
 use odyssey_autocalib::display::{
-    DisplayLookup, EdidInfo, LookupNote, LookupSource, PhysicalSize, Reliability, SizePrecision, SuspectReason,
+    DisplayLookup, EdidInfo, LookupNote, LookupSource, PhysicalSize, Reliability, SizePrecision,
+    SuspectReason,
 };
 use odyssey_autocalib::session::{KnownSize, SizeSource};
 pub use odyssey_hub_common::config::DisplayKind;
@@ -42,7 +43,10 @@ pub enum FindingKind {
     /// Dimensions that passed every reliability check.
     Found(PanelSize),
     /// Dimensions were reported but should not anchor a measurement.
-    Doubtful { reason: SuspectReason, reported: PanelSize },
+    Doubtful {
+        reason: SuspectReason,
+        reported: PanelSize,
+    },
     /// The EDID was read and holds no size: only an aspect ratio or nothing.
     /// Projectors report this, and so do some TVs.
     NoSize,
@@ -63,7 +67,15 @@ pub struct Finding {
 
 fn panel_size(info: &EdidInfo) -> Option<PanelSize> {
     match info.physical_size {
-        PhysicalSize::Dimensions { width_mm, height_mm, precision } => Some(PanelSize { width_mm, height_mm, precision }),
+        PhysicalSize::Dimensions {
+            width_mm,
+            height_mm,
+            precision,
+        } => Some(PanelSize {
+            width_mm,
+            height_mm,
+            precision,
+        }),
         PhysicalSize::AspectOnly(_) | PhysicalSize::Undefined => None,
     }
 }
@@ -77,7 +89,9 @@ fn source_words(source: &LookupSource) -> String {
                 .map_or_else(String::new, |n| format!(" ({})", n.to_string_lossy()));
             format!("The display's own EDID, read from the system's display list{connector}")
         }
-        LookupSource::WindowsRegistry(_) => "The display's own EDID, read from the Windows display registry".into(),
+        LookupSource::WindowsRegistry(_) => {
+            "The display's own EDID, read from the Windows display registry".into()
+        }
         LookupSource::Unavailable => "No display information was available".into(),
     }
 }
@@ -88,21 +102,31 @@ impl Finding {
         let kind = match &lookup.edid {
             Some(info) => match (panel_size(info), info.reliability) {
                 (Some(size), Reliability::Reliable) => FindingKind::Found(size),
-                (Some(reported), Reliability::Suspect(reason)) => FindingKind::Doubtful { reason, reported },
+                (Some(reported), Reliability::Suspect(reason)) => {
+                    FindingKind::Doubtful { reason, reported }
+                }
                 // Dimensions that are neither reliable nor suspect cannot occur;
                 // treat them as no usable size rather than trusting them.
                 (Some(_), Reliability::NoDimensions) | (None, _) => FindingKind::NoSize,
             },
             None => FindingKind::Missing(lookup.note.clone().unwrap_or(LookupNote::NotFound)),
         };
-        Self { kind, source, demo: false }
+        Self {
+            kind,
+            source,
+            demo: false,
+        }
     }
 
     /// The simulated TV the demo camera looks at.
     pub fn demo(width_m: f64, height_m: f64) -> Self {
         let mm = |m: f64| (m * 1000.0).round() as u32;
         Self {
-            kind: FindingKind::Found(PanelSize { width_mm: mm(width_m), height_mm: mm(height_m), precision: SizePrecision::Millimeters }),
+            kind: FindingKind::Found(PanelSize {
+                width_mm: mm(width_m),
+                height_mm: mm(height_m),
+                precision: SizePrecision::Millimeters,
+            }),
             source: "Demo mode: the simulated screen's true size".into(),
             demo: true,
         }
@@ -135,7 +159,9 @@ impl Finding {
                     format!("We read the screen size from the TV itself: {size}")
                 }
             }
-            FindingKind::Doubtful { .. } => "This display reports a size, but it doesn't look right".into(),
+            FindingKind::Doubtful { .. } => {
+                "This display reports a size, but it doesn't look right".into()
+            }
             FindingKind::NoSize => "This display doesn't report its size".into(),
             FindingKind::Missing(_) => "We couldn't read this display's size".into(),
         }
@@ -170,16 +196,26 @@ impl Finding {
         let mut lines = vec![format!("Source: {}", self.source)];
         match &self.kind {
             FindingKind::Found(p) => {
-                lines.push(format!("Reported size: {} × {} mm", p.width_mm, p.height_mm));
+                lines.push(format!(
+                    "Reported size: {} × {} mm",
+                    p.width_mm, p.height_mm
+                ));
                 lines.push(precision_words(p.precision).into());
             }
             FindingKind::Doubtful { reason, reported } => {
-                lines.push(format!("Reported size: {} × {} mm", reported.width_mm, reported.height_mm));
+                lines.push(format!(
+                    "Reported size: {} × {} mm",
+                    reported.width_mm, reported.height_mm
+                ));
                 lines.push(precision_words(reported.precision).into());
                 lines.push(format!("Not used because {}", suspect_words(*reason)));
             }
-            FindingKind::NoSize => lines.push("The display's information holds no physical size.".into()),
-            FindingKind::Missing(note) => lines.push(format!("Not used because {}", note_words(note))),
+            FindingKind::NoSize => {
+                lines.push("The display's information holds no physical size.".into())
+            }
+            FindingKind::Missing(note) => {
+                lines.push(format!("Not used because {}", note_words(note)))
+            }
         }
         lines
     }
@@ -196,9 +232,16 @@ fn suspect_words(reason: SuspectReason) -> String {
     match reason {
         SuspectReason::TooSmall => "the size is smaller than any real screen.".into(),
         SuspectReason::TooLarge => "the size is larger than any real screen.".into(),
-        SuspectReason::AspectPlaceholder => "the numbers look like an aspect ratio (such as 16 by 9), not a size.".into(),
-        SuspectReason::AspectMismatch { size_aspect, native_aspect } => {
-            format!("the reported shape ({size_aspect:.2}) doesn't match the screen's resolution ({native_aspect:.2}).")
+        SuspectReason::AspectPlaceholder => {
+            "the numbers look like an aspect ratio (such as 16 by 9), not a size.".into()
+        }
+        SuspectReason::AspectMismatch {
+            size_aspect,
+            native_aspect,
+        } => {
+            format!(
+                "the reported shape ({size_aspect:.2}) doesn't match the screen's resolution ({native_aspect:.2})."
+            )
         }
     }
 }
@@ -211,12 +254,16 @@ fn note_words(note: &LookupNote) -> String {
         LookupNote::Ambiguous { candidates } => {
             format!("{candidates} displays match this monitor, so none could be picked safely.")
         }
-        LookupNote::NoNativeResolution => "the display's information has no resolution to check it against.".into(),
+        LookupNote::NoNativeResolution => {
+            "the display's information has no resolution to check it against.".into()
+        }
         LookupNote::ResolutionMismatch { native, screen } => format!(
             "its resolution ({} × {}) doesn't fit this monitor ({} × {}).",
             native.0, native.1, screen.0, screen.1
         ),
-        LookupNote::Unreadable(kind) => format!("the display information couldn't be read ({kind})."),
+        LookupNote::Unreadable(kind) => {
+            format!("the display information couldn't be read ({kind}).")
+        }
         LookupNote::Invalid(e) => format!("the display information is invalid ({e})."),
     }
 }
@@ -242,23 +289,39 @@ pub struct SizePlan {
 /// The size and edge rule for a display of `kind`. A typed size wins over the
 /// display's own; a projector never uses the display's. `aspect` is the
 /// picture's width over height, which turns a typed width into a full size.
-pub fn plan(kind: DisplayKind, finding: Option<&Finding>, entered: Option<Entered>, aspect: f64) -> SizePlan {
+pub fn plan(
+    kind: DisplayKind,
+    finding: Option<&Finding>,
+    entered: Option<Entered>,
+    aspect: f64,
+) -> SizePlan {
     let require_visible_edges = kind == DisplayKind::Flat;
     if let Some(entered) = entered {
         let known_size = match entered {
             Entered::Diagonal { inches } => KnownSize::Diagonal { inches },
             Entered::Width { cm } => {
                 let width_m = cm / 100.0;
-                KnownSize::Dimensions { width_m, height_m: width_m / aspect }
+                KnownSize::Dimensions {
+                    width_m,
+                    height_m: width_m / aspect,
+                }
             }
         };
-        return SizePlan { known_size: Some(known_size), origin: Some(SizeOrigin::Entered), require_visible_edges };
+        return SizePlan {
+            known_size: Some(known_size),
+            origin: Some(SizeOrigin::Entered),
+            require_visible_edges,
+        };
     }
     let panel = match kind {
         DisplayKind::Flat => finding.and_then(Finding::known_size),
         DisplayKind::Projector => None,
     };
-    SizePlan { known_size: panel, origin: panel.map(|_| SizeOrigin::Panel), require_visible_edges }
+    SizePlan {
+        known_size: panel,
+        origin: panel.map(|_| SizeOrigin::Panel),
+        require_visible_edges,
+    }
 }
 
 /// Where the size on the review screen came from, in words.
@@ -275,11 +338,16 @@ pub fn source_label(source: SizeSource, origin: Option<SizeOrigin>) -> &'static 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use odyssey_autocalib::display::parse_edid;
 
+    use super::*;
+
     fn lookup(info: Option<EdidInfo>, note: Option<LookupNote>) -> DisplayLookup {
-        DisplayLookup { edid: info, source: LookupSource::Unavailable, note }
+        DisplayLookup {
+            edid: info,
+            source: LookupSource::Unavailable,
+            note,
+        }
     }
 
     fn edid(physical_size: PhysicalSize, reliability: Reliability) -> EdidInfo {
@@ -296,22 +364,53 @@ mod tests {
     }
 
     fn dims(width_mm: u32, height_mm: u32, precision: SizePrecision) -> PhysicalSize {
-        PhysicalSize::Dimensions { width_mm, height_mm, precision }
+        PhysicalSize::Dimensions {
+            width_mm,
+            height_mm,
+            precision,
+        }
     }
 
     #[test]
     fn a_reliable_edid_becomes_a_declared_panel_size() {
-        let f = Finding::from_lookup(&lookup(Some(edid(dims(1210, 680, SizePrecision::Millimeters), Reliability::Reliable)), None));
+        let f = Finding::from_lookup(&lookup(
+            Some(edid(
+                dims(1210, 680, SizePrecision::Millimeters),
+                Reliability::Reliable,
+            )),
+            None,
+        ));
         assert!(f.is_found());
-        assert_eq!(f.known_size(), Some(KnownSize::Dimensions { width_m: 1.21, height_m: 0.68 }));
-        assert_eq!(f.headline(), "We read the screen size from the TV itself: 55 inches (121 × 68 cm)");
+        assert_eq!(
+            f.known_size(),
+            Some(KnownSize::Dimensions {
+                width_m: 1.21,
+                height_m: 0.68
+            })
+        );
+        assert_eq!(
+            f.headline(),
+            "We read the screen size from the TV itself: 55 inches (121 × 68 cm)"
+        );
         assert!(f.advice().is_none());
     }
 
     #[test]
     fn precision_shows_only_in_the_details() {
-        let mm = Finding::from_lookup(&lookup(Some(edid(dims(1210, 680, SizePrecision::Millimeters), Reliability::Reliable)), None));
-        let cm = Finding::from_lookup(&lookup(Some(edid(dims(1210, 680, SizePrecision::Centimeters), Reliability::Reliable)), None));
+        let mm = Finding::from_lookup(&lookup(
+            Some(edid(
+                dims(1210, 680, SizePrecision::Millimeters),
+                Reliability::Reliable,
+            )),
+            None,
+        ));
+        let cm = Finding::from_lookup(&lookup(
+            Some(edid(
+                dims(1210, 680, SizePrecision::Centimeters),
+                Reliability::Reliable,
+            )),
+            None,
+        ));
         assert!(!mm.headline().to_lowercase().contains("precision"));
         assert!(mm.detail_lines().iter().any(|l| l.contains("millimeters")));
         assert!(cm.detail_lines().iter().any(|l| l.contains("5 mm")));
@@ -323,24 +422,38 @@ mod tests {
             SuspectReason::AspectPlaceholder,
             SuspectReason::TooSmall,
             SuspectReason::TooLarge,
-            SuspectReason::AspectMismatch { size_aspect: 1.6, native_aspect: 1.78 },
+            SuspectReason::AspectMismatch {
+                size_aspect: 1.6,
+                native_aspect: 1.78,
+            },
         ];
         for reason in reasons {
             let f = Finding::from_lookup(&lookup(
-                Some(edid(dims(160, 90, SizePrecision::Centimeters), Reliability::Suspect(reason))),
+                Some(edid(
+                    dims(160, 90, SizePrecision::Centimeters),
+                    Reliability::Suspect(reason),
+                )),
                 None,
             ));
             assert!(matches!(f.kind, FindingKind::Doubtful { .. }), "{reason:?}");
             assert_eq!(f.known_size(), None);
             assert!(f.advice().is_some());
-            assert!(f.detail_lines().iter().any(|l| l.starts_with("Not used because")), "{reason:?}");
+            assert!(
+                f.detail_lines()
+                    .iter()
+                    .any(|l| l.starts_with("Not used because")),
+                "{reason:?}"
+            );
         }
     }
 
     #[test]
     fn displays_without_a_size_are_not_guessed_to_be_projectors() {
         for physical in [PhysicalSize::Undefined, PhysicalSize::AspectOnly(1.78)] {
-            let f = Finding::from_lookup(&lookup(Some(edid(physical, Reliability::NoDimensions)), None));
+            let f = Finding::from_lookup(&lookup(
+                Some(edid(physical, Reliability::NoDimensions)),
+                None,
+            ));
             assert_eq!(f.kind, FindingKind::NoSize);
             assert_eq!(f.known_size(), None);
             assert!(f.projector_aside().is_some());
@@ -356,14 +469,20 @@ mod tests {
             LookupNote::UnsupportedPlatform,
             LookupNote::Ambiguous { candidates: 2 },
             LookupNote::NoNativeResolution,
-            LookupNote::ResolutionMismatch { native: (3840, 2160), screen: (1280, 1024) },
+            LookupNote::ResolutionMismatch {
+                native: (3840, 2160),
+                screen: (1280, 1024),
+            },
             LookupNote::Unreadable(std::io::ErrorKind::PermissionDenied),
         ] {
             let f = Finding::from_lookup(&lookup(None, Some(note.clone())));
             assert_eq!(f.kind, FindingKind::Missing(note));
             assert!(f.advice().is_some() && f.projector_aside().is_none());
         }
-        assert!(matches!(Finding::from_lookup(&lookup(None, None)).kind, FindingKind::Missing(LookupNote::NotFound)));
+        assert!(matches!(
+            Finding::from_lookup(&lookup(None, None)).kind,
+            FindingKind::Missing(LookupNote::NotFound)
+        ));
     }
 
     #[test]
@@ -376,31 +495,54 @@ mod tests {
         let sum = bytes.iter().fold(0u8, |a, b| a.wrapping_add(*b));
         bytes[127] = 0u8.wrapping_sub(sum);
         let info = parse_edid(&bytes).unwrap();
-        assert_eq!(Finding::from_lookup(&lookup(Some(info), None)).kind, FindingKind::NoSize);
+        assert_eq!(
+            Finding::from_lookup(&lookup(Some(info), None)).kind,
+            FindingKind::NoSize
+        );
     }
 
     #[test]
     fn the_remembered_kind_wins_and_flat_is_the_default() {
         assert_eq!(default_kind(None), DisplayKind::Flat);
-        assert_eq!(default_kind(Some(DisplayKind::Projector)), DisplayKind::Projector);
+        assert_eq!(
+            default_kind(Some(DisplayKind::Projector)),
+            DisplayKind::Projector
+        );
         assert_eq!(default_kind(Some(DisplayKind::Flat)), DisplayKind::Flat);
     }
 
     fn found() -> Finding {
-        Finding::from_lookup(&lookup(Some(edid(dims(1210, 680, SizePrecision::Millimeters), Reliability::Reliable)), None))
+        Finding::from_lookup(&lookup(
+            Some(edid(
+                dims(1210, 680, SizePrecision::Millimeters),
+                Reliability::Reliable,
+            )),
+            None,
+        ))
     }
 
     #[test]
     fn flat_screens_anchor_to_the_panel_and_require_their_edges() {
         let p = plan(DisplayKind::Flat, Some(&found()), None, 16.0 / 9.0);
-        assert_eq!(p.known_size, Some(KnownSize::Dimensions { width_m: 1.21, height_m: 0.68 }));
+        assert_eq!(
+            p.known_size,
+            Some(KnownSize::Dimensions {
+                width_m: 1.21,
+                height_m: 0.68
+            })
+        );
         assert_eq!(p.origin, Some(SizeOrigin::Panel));
         assert!(p.require_visible_edges);
     }
 
     #[test]
     fn a_typed_size_beats_the_panel() {
-        let p = plan(DisplayKind::Flat, Some(&found()), Some(Entered::Diagonal { inches: 40.0 }), 16.0 / 9.0);
+        let p = plan(
+            DisplayKind::Flat,
+            Some(&found()),
+            Some(Entered::Diagonal { inches: 40.0 }),
+            16.0 / 9.0,
+        );
         assert_eq!(p.known_size, Some(KnownSize::Diagonal { inches: 40.0 }));
         assert_eq!(p.origin, Some(SizeOrigin::Entered));
         assert!(p.require_visible_edges);
@@ -412,31 +554,67 @@ mod tests {
         let p = plan(DisplayKind::Flat, Some(&none), None, 16.0 / 9.0);
         assert_eq!((p.known_size, p.origin), (None, None));
         assert!(p.require_visible_edges);
-        assert_eq!(plan(DisplayKind::Flat, None, None, 16.0 / 9.0).known_size, None);
+        assert_eq!(
+            plan(DisplayKind::Flat, None, None, 16.0 / 9.0).known_size,
+            None
+        );
     }
 
     #[test]
     fn projectors_ignore_the_display_and_never_require_edges() {
         let p = plan(DisplayKind::Projector, Some(&found()), None, 16.0 / 9.0);
-        assert_eq!((p.known_size, p.origin, p.require_visible_edges), (None, None, false));
-        let typed = plan(DisplayKind::Projector, Some(&found()), Some(Entered::Diagonal { inches: 100.0 }), 16.0 / 9.0);
-        assert_eq!(typed.known_size, Some(KnownSize::Diagonal { inches: 100.0 }));
+        assert_eq!(
+            (p.known_size, p.origin, p.require_visible_edges),
+            (None, None, false)
+        );
+        let typed = plan(
+            DisplayKind::Projector,
+            Some(&found()),
+            Some(Entered::Diagonal { inches: 100.0 }),
+            16.0 / 9.0,
+        );
+        assert_eq!(
+            typed.known_size,
+            Some(KnownSize::Diagonal { inches: 100.0 })
+        );
         assert!(!typed.require_visible_edges);
     }
 
     #[test]
     fn a_typed_width_takes_its_height_from_the_pictures_shape() {
-        let p = plan(DisplayKind::Projector, None, Some(Entered::Width { cm: 240.0 }), 16.0 / 9.0);
-        let Some(KnownSize::Dimensions { width_m, height_m }) = p.known_size else { panic!("{p:?}") };
-        assert!((width_m - 2.4).abs() < 1e-9 && (height_m - 1.35).abs() < 1e-9, "{width_m} x {height_m}");
+        let p = plan(
+            DisplayKind::Projector,
+            None,
+            Some(Entered::Width { cm: 240.0 }),
+            16.0 / 9.0,
+        );
+        let Some(KnownSize::Dimensions { width_m, height_m }) = p.known_size else {
+            panic!("{p:?}")
+        };
+        assert!(
+            (width_m - 2.4).abs() < 1e-9 && (height_m - 1.35).abs() < 1e-9,
+            "{width_m} x {height_m}"
+        );
     }
 
     #[test]
     fn the_size_source_is_told_in_plain_words() {
-        assert_eq!(source_label(SizeSource::KnownDimensions, Some(SizeOrigin::Panel)), "From the TV's own information");
-        assert_eq!(source_label(SizeSource::KnownDiagonal, Some(SizeOrigin::Entered)), "From the size you entered");
-        assert_eq!(source_label(SizeSource::KnownDimensions, Some(SizeOrigin::Entered)), "From the size you entered");
-        assert_eq!(source_label(SizeSource::Measured, None), "Measured by the camera");
+        assert_eq!(
+            source_label(SizeSource::KnownDimensions, Some(SizeOrigin::Panel)),
+            "From the TV's own information"
+        );
+        assert_eq!(
+            source_label(SizeSource::KnownDiagonal, Some(SizeOrigin::Entered)),
+            "From the size you entered"
+        );
+        assert_eq!(
+            source_label(SizeSource::KnownDimensions, Some(SizeOrigin::Entered)),
+            "From the size you entered"
+        );
+        assert_eq!(
+            source_label(SizeSource::Measured, None),
+            "Measured by the camera"
+        );
     }
 
     #[test]

@@ -1,19 +1,18 @@
-use std::{error::Error, time::Instant};
+use std::error::Error;
+use std::time::Instant;
 
-use iui::{
-    controls::{Area, AreaDrawParams, AreaHandler, Window, WindowType},
-    draw::{plotters::PlottersBackend, Brush, FillMode, Path, SolidBrush},
-    UI,
-};
-use plotters::{
-    backend::DrawingBackend,
-    chart::ChartBuilder,
-    coord::Shift,
-    drawing::{DrawingArea, IntoDrawingArea},
-    element::{Circle, EmptyElement, Rectangle, Text},
-    series::{LineSeries, PointSeries, SurfaceSeries},
-    style::{colors::colormaps::VulcanoHSL, Color, HSLColor, IntoFont, BLACK, RED, WHITE},
-};
+use iui::UI;
+use iui::controls::{Area, AreaDrawParams, AreaHandler, Window, WindowType};
+use iui::draw::plotters::PlottersBackend;
+use iui::draw::{Brush, FillMode, Path, SolidBrush};
+use plotters::backend::DrawingBackend;
+use plotters::chart::ChartBuilder;
+use plotters::coord::Shift;
+use plotters::drawing::{DrawingArea, IntoDrawingArea};
+use plotters::element::{Circle, EmptyElement, Rectangle, Text};
+use plotters::series::{LineSeries, PointSeries, SurfaceSeries};
+use plotters::style::colors::colormaps::VulcanoHSL;
+use plotters::style::{BLACK, Color, HSLColor, IntoFont, RED, WHITE};
 
 fn main() {
     let ui = UI::init().expect("Couldn't initialize UI library");

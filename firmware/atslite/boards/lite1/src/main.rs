@@ -7,40 +7,36 @@
 #![no_main]
 #![feature(never_type)]
 
-use defmt_rtt as _;
-use panic_probe as _;
-
-use lite1::transport_mode;
-
-use better_dfu::consts::DfuAttributes;
-use better_dfu::{Control, ResetImmediate, application::DfuMarker, usb_dfu};
 use core::cell::RefCell;
+
+use better_dfu::application::DfuMarker;
+use better_dfu::consts::DfuAttributes;
+use better_dfu::{Control, ResetImmediate, usb_dfu};
+use defmt_rtt as _;
+use donger_common::usb_device as usb;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
-use embassy_nrf::{
-    gpio::{self, Input, Level, Output, OutputDrive, Pin, Pull},
-    nvmc::Nvmc,
-    pac, peripherals,
-    spim::{self, Spim},
-    twim::{self, Twim},
-};
+use embassy_nrf::gpio::{self, Input, Level, Output, OutputDrive, Pin, Pull};
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::twim::{self, Twim};
+use embassy_nrf::{pac, peripherals};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::{Delay, Timer};
 use embassy_usb::msos;
 use embedded_hal_bus::spi::ExclusiveDevice;
+use lite1::pins::Board;
+use lite1::pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle};
+use lite1::{
+    Irqs, ble, imu, object_mode, power, power_button, power_state, sensors, split_board,
+    transport_mode, utils,
+};
 use npm1300_rs::NPM1300;
 use pag7665qn::{Pag7665Qn, mode};
+use panic_probe as _;
 use static_cell::StaticCell;
-
-use donger_common::usb_device as usb;
-use lite1::{
-    Irqs, ble, imu, object_mode,
-    pins::Board,
-    pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle},
-    power, power_button, power_state, sensors, split_board, utils,
-};
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";

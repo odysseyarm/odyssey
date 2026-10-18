@@ -1,6 +1,14 @@
-use opencv::{
-    calib3d::{calibrate_camera, find_chessboard_corners, find_chessboard_corners_sb, stereo_calibrate, CALIB_FIX_INTRINSIC}, core::{no_array, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray, Vector, _InputArrayTraitConst}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgproc::{corner_sub_pix, resize, INTER_CUBIC}
+use opencv::calib3d::{
+    CALIB_FIX_INTRINSIC, calibrate_camera, find_chessboard_corners, find_chessboard_corners_sb,
+    stereo_calibrate,
 };
+use opencv::core::{
+    _InputArrayTraitConst, FileStorage, FileStorage_READ, Mat, Point2f, Point3f, Size,
+    TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, TermCriteria_MAX_ITER, ToInputArray,
+    Vector, no_array,
+};
+use opencv::hub_prelude::{FileNodeTraitConst, FileStorageTraitConst};
+use opencv::imgproc::{INTER_CUBIC, corner_sub_pix, resize};
 
 use crate::{DeviceUuid, Port};
 
@@ -26,11 +34,15 @@ pub fn my_stereo_calibrate(
     nf_image_files: &Vector<String>,
     device_uuid: DeviceUuid,
 ) {
-    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) =
+        &mut read_camera_params(&format!("calibrations/{device_uuid}/nearfield.json"))
+    else {
         println!("Couldn't get nearfield intrinsics");
         return;
     };
-    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
+    let Some((wf_camera_matrix, wf_dist_coeffs)) =
+        &mut read_camera_params(&format!("calibrations/{device_uuid}/widefield.json"))
+    else {
         println!("Couldn't get widefield intrinsics");
         return;
     };
@@ -48,14 +60,26 @@ pub fn my_stereo_calibrate(
     let mut wf_corners_arr = Vector::<Vector<Point2f>>::new();
     let mut nf_corners_arr = Vector::<Vector<Point2f>>::new();
     for (wf_image, nf_image) in wf.iter().zip(nf) {
-        let Some(wf_corners) =
-            get_chessboard_corners(wf_image, Port::Wf, resolution, object_resolution, board_rows, board_cols, false)
-        else {
+        let Some(wf_corners) = get_chessboard_corners(
+            wf_image,
+            Port::Wf,
+            resolution,
+            object_resolution,
+            board_rows,
+            board_cols,
+            false,
+        ) else {
             continue;
         };
-        let Some(nf_corners) =
-            get_chessboard_corners(nf_image, Port::Nf, resolution, object_resolution, board_rows, board_cols, false)
-        else {
+        let Some(nf_corners) = get_chessboard_corners(
+            nf_image,
+            Port::Nf,
+            resolution,
+            object_resolution,
+            board_rows,
+            board_cols,
+            false,
+        ) else {
             continue;
         };
         wf_corners_arr.push(wf_corners);
@@ -116,10 +140,23 @@ pub fn calibrate_single(
         }
     }
 
-    let corners_arr = images.iter().filter_map(|image| {
-        get_chessboard_corners(image, port, resolution, object_resolution, board_rows, board_cols, false)
-    }).collect::<Vector<Vector<Point2f>>>();
-    let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points).take(corners_arr.len()).collect();
+    let corners_arr = images
+        .iter()
+        .filter_map(|image| {
+            get_chessboard_corners(
+                image,
+                port,
+                resolution,
+                object_resolution,
+                board_rows,
+                board_cols,
+                false,
+            )
+        })
+        .collect::<Vector<Vector<Point2f>>>();
+    let object_points: Vector<Vector<Point3f>> = std::iter::repeat(board_points)
+        .take(corners_arr.len())
+        .collect();
 
     let mut camera_matrix = Mat::default();
     let mut dist_coeffs = Mat::default();
@@ -138,7 +175,8 @@ pub fn calibrate_single(
         &mut no_array(),
         0,
         criteria,
-    ).unwrap();
+    )
+    .unwrap();
     println!("RMS error: {}", reproj_err);
 
     super::save_single_calibration(
@@ -184,21 +222,48 @@ pub fn get_chessboard_corners_cv(
     let ss;
     if image.input_array().unwrap().size_def().unwrap() == (98, 98).into() {
         ss = 4.;
-        resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+        resize(
+            image,
+            &mut im_upscaled,
+            Size::new(0, 0),
+            ss,
+            ss,
+            INTER_CUBIC,
+        )
+        .unwrap();
     } else {
         ss = 1.;
         im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
     }
     if use_sb {
-        let _chessboard_found = find_chessboard_corners_sb(&im_upscaled, (board_cols, board_rows).into(), &mut corners, 0).unwrap();
+        let _chessboard_found = find_chessboard_corners_sb(
+            &im_upscaled,
+            (board_cols, board_rows).into(),
+            &mut corners,
+            0,
+        )
+        .unwrap();
     } else {
-        let _chessboard_found = find_chessboard_corners(&im_upscaled, (board_cols, board_rows).into(), &mut corners, 0).unwrap();
+        let _chessboard_found = find_chessboard_corners(
+            &im_upscaled,
+            (board_cols, board_rows).into(),
+            &mut corners,
+            0,
+        )
+        .unwrap();
         if corners.len() > 0 {
-            corner_sub_pix(&im_upscaled, &mut corners, (3, 3).into(), (-1, -1).into(), opencv::core::TermCriteria {
-                typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
-                max_count: 30,
-                epsilon: 0.001,
-            }).unwrap();
+            corner_sub_pix(
+                &im_upscaled,
+                &mut corners,
+                (3, 3).into(),
+                (-1, -1).into(),
+                opencv::core::TermCriteria {
+                    typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
+                    max_count: 30,
+                    epsilon: 0.001,
+                },
+            )
+            .unwrap();
         }
     }
     // scale corners back down

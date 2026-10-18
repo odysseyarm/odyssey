@@ -2,22 +2,19 @@
 mod sus;
 mod timer;
 
-use core::{
-    cell::UnsafeCell,
-    panic::PanicInfo,
-    sync::atomic::{AtomicBool, Ordering},
-    task::Context,
-};
+use core::cell::UnsafeCell;
+use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::Context;
 
 use critical_section::RestoreState;
 use defmt::{Encoder, Logger, unwrap};
 use embassy_executor::{Spawner, task};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pipe::Pipe};
-use embassy_usb::{
-    Builder, UsbDevice,
-    class::cdc_acm::{CdcAcmClass, State},
-};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pipe::Pipe;
+use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::{Builder, UsbDevice};
 use static_cell::StaticCell;
 use timer::Timer;
 

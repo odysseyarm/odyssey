@@ -1,20 +1,18 @@
-﻿use dioxus::{
-    desktop::{tao::window::Fullscreen, WindowBuilder},
-    logger::tracing,
-    prelude::*,
-};
-
-use crate::components::crosshair_manager::TrackingSender;
-use crate::components::{
-    use_monitor_selection, DeviceFirmwareUpdate, FirmwareUpdateManager, ScreenPicker,
-    SensorSettings, TransportModePanel, UpdatingDeviceRow,
-};
-use crate::components::firmware_update::{ensure_firmware_channel_loaded, FIRMWARE_CHANNEL};
-use crate::hub;
-use crate::Route;
+use dioxus::desktop::WindowBuilder;
+use dioxus::desktop::tao::window::Fullscreen;
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use dioxus_router::Link;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
+
+use crate::components::crosshair_manager::TrackingSender;
+use crate::components::firmware_update::{FIRMWARE_CHANNEL, ensure_firmware_channel_loaded};
+use crate::components::{
+    DeviceFirmwareUpdate, FirmwareUpdateManager, ScreenPicker, SensorSettings, TransportModePanel,
+    UpdatingDeviceRow, use_monitor_selection,
+};
+use crate::{Route, hub};
 
 #[component]
 pub fn Home() -> Element {

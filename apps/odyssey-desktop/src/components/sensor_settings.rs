@@ -1,8 +1,9 @@
-use crate::hub::HubContext;
-use dioxus::{logger::tracing, prelude::*};
-use dioxus::prelude::UnboundedReceiver;
+use dioxus::logger::tracing;
+use dioxus::prelude::{UnboundedReceiver, *};
 use futures::StreamExt;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
+
+use crate::hub::HubContext;
 
 // Product ID constants
 const PID_ATS_VM: u16 = 0x520F;
@@ -731,7 +732,13 @@ async fn paj_apply_to_device(
     hub.client
         .peek()
         .clone()
-        .write_register(device.clone(), port, 0x0C, 0x47, values.brightness_threshold)
+        .write_register(
+            device.clone(),
+            port,
+            0x0C,
+            0x47,
+            values.brightness_threshold,
+        )
         .await?;
     hub.client
         .peek()
@@ -1286,7 +1293,8 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
 
     // Derive the displayed mode: prefer the user override while waiting for reboot,
     // otherwise use the actual device state from the prop (updates on every render).
-    let device_is_usb = device.events_transport == odyssey_hub_common::device::EventsTransport::Wired;
+    let device_is_usb =
+        device.events_transport == odyssey_hub_common::device::EventsTransport::Wired;
     // Once the device reflects the user's requested mode, drop the override and clear the status.
     // We schedule this via spawn so we don't write to signals during the render phase.
     if let Some(u) = *user_pending_usb.read() {
@@ -1436,8 +1444,10 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     // through a signal rather than capturing them: both change while the
     // component stays mounted, since a unit whose Bluetooth events link attaches
     // after the first render only gains its sensor panels then.
-    let mut load_target =
-        use_signal(|| LoadTarget { device: device.clone(), can_tune_sensors });
+    let mut load_target = use_signal(|| LoadTarget {
+        device: device.clone(),
+        can_tune_sensors,
+    });
     let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| async move {
         while rx.next().await.is_some() {
             loading.set(true);
@@ -1450,21 +1460,39 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             // stale values end up being flashed back onto the device.
             let mut failure: Option<OpStatus> = None;
 
-            match hub_ctx.client.peek().clone().read_config(device.clone(), 0).await {
+            match hub_ctx
+                .client
+                .peek()
+                .clone()
+                .read_config(device.clone(), 0)
+                .await
+            {
                 Ok(v) => impact_threshold.set(v.to_string()),
                 Err(e) => {
                     tracing::error!("reading impact threshold: {e:#}");
                     failure.get_or_insert(rpc_failure("read the impact threshold", &e));
                 }
             }
-            match hub_ctx.client.peek().clone().read_config(device.clone(), 1).await {
+            match hub_ctx
+                .client
+                .peek()
+                .clone()
+                .read_config(device.clone(), 1)
+                .await
+            {
                 Ok(v) => suppress_ms.set(v.to_string()),
                 Err(e) => {
                     tracing::error!("reading suppress time: {e:#}");
                     failure.get_or_insert(rpc_failure("read the suppress time", &e));
                 }
             }
-            match hub_ctx.client.peek().clone().get_shot_delay(device.clone()).await {
+            match hub_ctx
+                .client
+                .peek()
+                .clone()
+                .get_shot_delay(device.clone())
+                .await
+            {
                 Ok(v) => shot_delay.set(v.to_string()),
                 Err(e) => {
                     tracing::error!("reading shot delay: {e:#}");
@@ -1509,7 +1537,10 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
         let device = device.clone();
         use_effect(use_reactive!(|(device, can_tune_sensors)| {
             let panels_appeared = !load_target.peek().can_tune_sensors && can_tune_sensors;
-            load_target.set(LoadTarget { device, can_tune_sensors });
+            load_target.set(LoadTarget {
+                device,
+                can_tune_sensors,
+            });
             if panels_appeared && *is_open.peek() {
                 load_co.send(());
             }
@@ -1531,8 +1562,12 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let sensor_issue_count = if !can_tune_sensors {
         0
     } else if is_paj {
-        paj_validate(&paj_nf_state.read()).err().map_or(0, |v| v.len())
-            + paj_validate(&paj_wf_state.read()).err().map_or(0, |v| v.len())
+        paj_validate(&paj_nf_state.read())
+            .err()
+            .map_or(0, |v| v.len())
+            + paj_validate(&paj_wf_state.read())
+                .err()
+                .map_or(0, |v| v.len())
     } else {
         pag_validate(&pag_state.read()).err().map_or(0, |v| v.len())
     };
@@ -1559,7 +1594,12 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
         async move {
             loading.set(true);
             status.set(OpStatus::Busy(
-                if persist { "Saving to device..." } else { "Applying..." }.into(),
+                if persist {
+                    "Saving to device..."
+                } else {
+                    "Applying..."
+                }
+                .into(),
             ));
             let hub_ctx = hub.peek().clone();
 
@@ -1799,13 +1839,25 @@ mod tests {
     use super::*;
 
     fn ok<T>(r: Result<T, Vec<FieldIssue>>) -> T {
-        match r { Ok(v) => v, Err(e) => panic!("unexpected issues: {:?}", e.iter().map(|i| i.field).collect::<Vec<_>>()) }
+        match r {
+            Ok(v) => v,
+            Err(e) => panic!(
+                "unexpected issues: {:?}",
+                e.iter().map(|i| i.field).collect::<Vec<_>>()
+            ),
+        }
     }
     fn issues<T>(r: Result<T, Vec<FieldIssue>>) -> Vec<FieldIssue> {
-        match r { Ok(_) => panic!("expected issues"), Err(e) => e }
+        match r {
+            Ok(_) => panic!("expected issues"),
+            Err(e) => e,
+        }
     }
     fn msg(r: Result<u32, FieldIssue>) -> String {
-        match r { Ok(v) => panic!("expected issue, got {v}"), Err(e) => e.message }
+        match r {
+            Ok(v) => panic!("expected issue, got {v}"),
+            Err(e) => e.message,
+        }
     }
 
     #[test]
@@ -1824,7 +1876,10 @@ mod tests {
         assert_eq!(v.resolution_x, 4095);
         assert_eq!(v.gain_index, 16);
         let entry = &GAIN_TABLE[v.gain_index];
-        assert_eq!(gain_index_from_reg(entry.b_global, entry.b_ggh), v.gain_index);
+        assert_eq!(
+            gain_index_from_reg(entry.b_global, entry.b_ggh),
+            v.gain_index
+        );
 
         let mut bad = paj_load_defaults(0);
         bad.brightness_threshold = "300".into();

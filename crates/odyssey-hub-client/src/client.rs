@@ -1,10 +1,12 @@
 use futures::StreamExt;
+use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+use interprocess::local_socket::traits::tokio::Stream;
 use interprocess::local_socket::{
-    tokio::prelude::LocalSocketStream, traits::tokio::Stream, GenericFilePath, GenericNamespaced,
-    NameType as _, ToFsName, ToNsName,
+    GenericFilePath, GenericNamespaced, NameType as _, ToFsName, ToNsName,
 };
 use odyssey_hub_common as common;
-use odyssey_hub_server_interface::{service_client::ServiceClient, DeviceListRequest};
+use odyssey_hub_server_interface::DeviceListRequest;
+use odyssey_hub_server_interface::service_client::ServiceClient;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, Uri};
 use tower::service_fn;
@@ -366,10 +368,7 @@ impl Client {
         }
     }
 
-    pub async fn clear_bond(
-        &mut self,
-        device: common::device::Device,
-    ) -> Result<(), ClientError> {
+    pub async fn clear_bond(&mut self, device: common::device::Device) -> Result<(), ClientError> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::ClearBondRequest {
                 device: Some(device.into()),
@@ -424,10 +423,7 @@ impl Client {
         }
     }
 
-    pub async fn reset_zero(
-        &mut self,
-        device: common::device::Device,
-    ) -> Result<(), ClientError> {
+    pub async fn reset_zero(&mut self, device: common::device::Device) -> Result<(), ClientError> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             service_client
@@ -470,20 +466,14 @@ impl Client {
                 target: Some(target.into()),
                 tracking_event: tracking_event_pb,
             });
-            service_client
-                .zero(request)
-                .await
-                .map_err(RpcError::from)?;
+            service_client.zero(request).await.map_err(RpcError::from)?;
             Ok(())
         } else {
             Err(ClientError::NotConnected)
         }
     }
 
-    pub async fn save_zero(
-        &mut self,
-        device: common::device::Device,
-    ) -> Result<(), ClientError> {
+    pub async fn save_zero(&mut self, device: common::device::Device) -> Result<(), ClientError> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             service_client
@@ -497,10 +487,7 @@ impl Client {
         }
     }
 
-    pub async fn clear_zero(
-        &mut self,
-        device: common::device::Device,
-    ) -> Result<(), ClientError> {
+    pub async fn clear_zero(&mut self, device: common::device::Device) -> Result<(), ClientError> {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(device.into());
             service_client
@@ -642,7 +629,8 @@ impl Client {
 
     pub async fn subscribe_dongle_list(
         &mut self,
-    ) -> Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, RpcError>> + use<>, ClientError> {
+    ) -> Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, RpcError>> + use<>, ClientError>
+    {
         if let Some(service_client) = &mut self.service_client {
             let request =
                 tonic::Request::new(odyssey_hub_server_interface::SubscribeDongleListRequest {});
@@ -765,11 +753,10 @@ impl Client {
         name: String,
     ) -> Result<(), ClientError> {
         if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SetDeviceNameRequest {
-                    device: Some(device.into()),
-                    name,
-                });
+            let request = tonic::Request::new(odyssey_hub_server_interface::SetDeviceNameRequest {
+                device: Some(device.into()),
+                name,
+            });
             service_client
                 .set_device_name(request)
                 .await

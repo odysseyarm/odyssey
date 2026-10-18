@@ -13,12 +13,11 @@ mod settings_region {
 }
 
 use bt_hci::param::BdAddr;
-use cfg_noodle::NdlDataStorage;
 use cfg_noodle::flash::Flash;
 use cfg_noodle::minicbor::{CborLen, Decode, Encode};
 use cfg_noodle::mutex::raw_impls::cs::CriticalSectionRawMutex as NoodleRawMutex;
 use cfg_noodle::sequential_storage::cache::NoCache;
-use cfg_noodle::{StorageList, StorageListNode};
+use cfg_noodle::{NdlDataStorage, StorageList, StorageListNode};
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
@@ -462,7 +461,11 @@ impl Settings {
                 let len = bytes.len().min(32) as u8;
                 let mut name_bytes = [0u8; 32];
                 name_bytes[..len as usize].copy_from_slice(&bytes[..len as usize]);
-                *entry = Some(DeviceNameEntry { bd_addr, name_bytes, name_len: len });
+                *entry = Some(DeviceNameEntry {
+                    bd_addr,
+                    name_bytes,
+                    name_len: len,
+                });
                 drop(names);
                 self.device_names_write().await;
                 return;

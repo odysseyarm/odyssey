@@ -1,17 +1,13 @@
-use embassy_futures::{
-    join::join,
-    select::{Either, select},
-};
+use embassy_futures::join::join;
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Duration;
 use embassy_usb::class::cdc_acm;
 use pag7661qn::mode;
 use static_cell::ConstStaticCell;
 
-use crate::{
-    CommonContext, PROTOCOL_VERSION, Pag, PagInt, UsbDriver, device_id,
-    usb::{wait_for_serial, write_serial},
-};
+use crate::usb::{wait_for_serial, write_serial};
+use crate::{CommonContext, PROTOCOL_VERSION, Pag, PagInt, UsbDriver, device_id};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;

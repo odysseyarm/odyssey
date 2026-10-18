@@ -1,16 +1,14 @@
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 
 use nalgebra::{Point2, Scalar};
+use num::FromPrimitive;
+use num::traits::Float;
 #[cfg(feature = "std")]
 use {
-    opencv_ros_camera::{Distortion, RosOpenCvIntrinsics},
     nalgebra::{Isometry3, RealField},
+    opencv_ros_camera::{Distortion, RosOpenCvIntrinsics},
     std::error::Error,
     std::io::Read,
-};
-use num::{
-    traits::Float,
-    FromPrimitive,
 };
 
 pub mod ocv_types;
@@ -90,7 +88,6 @@ where
     RosOpenCvIntrinsics::from_params_with_distortion(fx, _0, fy, cx, cy, distortion)
 }
 
-
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy)]
 pub struct Plane<F: Float + FromPrimitive + Scalar> {
@@ -151,6 +148,7 @@ impl<F: Float + FromPrimitive + Scalar + nalgebra::RealField> ScreenCalibration<
             Point2::new(_1, _0),
             Point2::new(_0, _1),
             Point2::new(_1, _1),
-        ].map(|p| inv_homography.transform_point(&p))
+        ]
+        .map(|p| inv_homography.transform_point(&p))
     }
 }

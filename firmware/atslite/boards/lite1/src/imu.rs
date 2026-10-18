@@ -2,15 +2,13 @@
 //!
 //! Uses ICM-42688-P via SPI on SERIAL0
 
-use embassy_nrf::{
-    Peri,
-    gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull},
-    gpiote::{self, OutputChannelPolarity},
-    peripherals::SERIAL0,
-    ppi::{self, Ppi},
-    spim::{self, Spim},
-    timer::{self, Timer},
-};
+use embassy_nrf::Peri;
+use embassy_nrf::gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::gpiote::{self, OutputChannelPolarity};
+use embassy_nrf::peripherals::SERIAL0;
+use embassy_nrf::ppi::{self, Ppi};
+use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::timer::{self, Timer};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{ICM42688, Ready};

@@ -6,37 +6,39 @@ mod cmd_dispatch;
 
 use core::cell::RefCell;
 
-use crate::{cmd_dispatch::exec_cmd_by_opcode, icmsg_config::ALIGN};
-use bt_hci::{
-    FromHciBytes, FromHciBytesError, PacketKind,
-    cmd::{self, Opcode, OpcodeGroup},
-    data::{AclPacketHeader, IsoPacketHeader, SyncPacketHeader},
-    event::EventPacketHeader,
-    param,
-};
+use bt_hci::cmd::{self, Opcode, OpcodeGroup};
+use bt_hci::data::{AclPacketHeader, IsoPacketHeader, SyncPacketHeader};
+use bt_hci::event::EventPacketHeader;
+use bt_hci::{FromHciBytes, FromHciBytesError, PacketKind, param};
 use defmt::{Debug2Format, unwrap};
+use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_nrf::{
-    interrupt::{InterruptExt as _, Priority},
-    ipc::{self, Ipc, IpcChannel},
-    mode::Async,
-    nvmc::{Nvmc, PAGE_SIZE},
-    peripherals::{self, RNG},
-    rng::{self, Rng},
-};
-use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
+use embassy_nrf::interrupt::{InterruptExt as _, Priority};
+use embassy_nrf::ipc::{self, Ipc, IpcChannel};
+use embassy_nrf::mode::Async;
+use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
+use embassy_nrf::peripherals::{self, RNG};
+use embassy_nrf::rng::{self, Rng};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Delay;
 use embedded_storage::nor_flash::NorFlash;
 use icmsg::{IcMsg, Notifier, WaitForNotify};
 use nrf_sdc::{self as sdc, mpsl};
+use panic_probe as _;
 use sdc::mpsl::MultiprotocolServiceLayer;
 use static_cell::StaticCell;
 
-use {defmt_rtt as _, panic_probe as _};
+use crate::cmd_dispatch::exec_cmd_by_opcode;
+use crate::icmsg_config::ALIGN;
 
 /// Release counter of this net-core image. Release tooling greps this exact line; keep it on one
 /// line. 0 is reserved for "unknown" on the host side.
-macro_rules! release { () => { 1 }; }
+macro_rules! release {
+    () => {
+        1
+    };
+}
 
 const RELEASE: u16 = release!();
 const _: () = assert!(RELEASE != 0);

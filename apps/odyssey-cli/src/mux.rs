@@ -1,8 +1,8 @@
 //! Mux (dongle) management commands
 
-use odyssey_usb::device::MuxDevice;
 use clap::Subcommand;
 use nusb::MaybeFuture as _;
+use odyssey_usb::device::MuxDevice;
 
 #[derive(Subcommand)]
 pub enum MuxCommands {
@@ -40,9 +40,7 @@ async fn connect_to_mux(device_index: Option<usize>) -> Result<MuxDevice, String
     let devices = list_muxes()?;
 
     if devices.is_empty() {
-        return Err(
-            "No mux found (VID:0x1915 PID:0x5212). Please connect a mux.".to_string(),
-        );
+        return Err("No mux found (VID:0x1915 PID:0x5212). Please connect a mux.".to_string());
     }
 
     let device_info = if let Some(idx) = device_index {
@@ -185,7 +183,7 @@ async fn cmd_clear_bonds(device: &MuxDevice) -> Result<(), String> {
 }
 
 async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
-    use nusb::transfer::{Bulk, Interrupt, In, Out};
+    use nusb::transfer::{Bulk, In, Interrupt, Out};
     let devices = list_muxes()?;
     if devices.is_empty() {
         return Err("No mux found (VID:0x1915 PID:0x5212)".to_string());

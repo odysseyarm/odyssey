@@ -22,8 +22,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::camera::{
-    CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings, DepthImage, Extrinsics,
-    Frames, ImuSample, Intrinsics,
+    CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings,
+    DepthImage, Extrinsics, Frames, ImuSample, Intrinsics,
 };
 use crate::markers::MARKER_LAYOUT;
 use crate::pattern::Pattern;
@@ -131,7 +131,10 @@ impl Default for SyntheticScene {
                 color,
                 depth,
                 ir: depth,
-                color_to_depth: Extrinsics { rotation: tilt.into_inner(), translation: Vector3::new(-0.032, 0.001, -0.002) },
+                color_to_depth: Extrinsics {
+                    rotation: tilt.into_inner(),
+                    translation: Vector3::new(-0.032, 0.001, -0.002),
+                },
                 ir_to_depth: Extrinsics::identity(),
             },
             marker_standoff_m: 0.0,
@@ -170,7 +173,12 @@ impl Truth {
     /// the physical screen frame.
     pub fn corners_m(&self) -> [Point2<f64>; 4] {
         let [w, h] = self.size_m;
-        [Point2::new(0.0, 0.0), Point2::new(w, 0.0), Point2::new(w, h), Point2::new(0.0, h)]
+        [
+            Point2::new(0.0, 0.0),
+            Point2::new(w, 0.0),
+            Point2::new(w, h),
+            Point2::new(0.0, h),
+        ]
     }
 
     pub fn diagonal_in(&self) -> f64 {
@@ -181,7 +189,9 @@ impl Truth {
     /// rotation is `camera_to_aligned`.
     pub fn calibration(&self, camera_to_aligned: &Matrix3<f64>) -> ScreenCalibration<f32> {
         let screen_from_aligned = self.screen_from_camera.rotation * camera_to_aligned.transpose();
-        let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(screen_from_aligned));
+        let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
+            screen_from_aligned,
+        ));
         let [w, h] = self.size_m;
         ScreenCalibration {
             rotation: rotation.cast(),
@@ -208,14 +218,19 @@ impl SyntheticScene {
     }
 
     fn pose(&self) -> Pose {
-        let rot = |axis: Vector3<f64>, deg: f64| Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(axis), deg.to_radians());
+        let rot = |axis: Vector3<f64>, deg: f64| {
+            Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(axis), deg.to_radians())
+        };
         let world_from_camera = (rot(Vector3::y(), self.camera_yaw_deg)
             * rot(Vector3::x(), -self.camera_pitch_deg)
             * rot(Vector3::z(), self.camera_roll_deg))
         .into_inner();
-        let world_from_screen = (rot(Vector3::y(), self.screen_yaw_deg) * rot(Vector3::x(), self.screen_pitch_deg)).into_inner();
+        let world_from_screen = (rot(Vector3::y(), self.screen_yaw_deg)
+            * rot(Vector3::x(), self.screen_pitch_deg))
+        .into_inner();
         let [w, h] = self.screen_size_m;
-        let top_left_world = self.screen_center_m - world_from_screen * Vector3::new(w / 2.0, h / 2.0, 0.0);
+        let top_left_world =
+            self.screen_center_m - world_from_screen * Vector3::new(w / 2.0, h / 2.0, 0.0);
         let screen_from_world = world_from_screen.transpose();
         Pose {
             world_from_camera,
@@ -235,7 +250,8 @@ impl SyntheticScene {
             size_m: [iw, ih],
             panel_m: self.screen_size_m,
             // The markers sit on the panel; the frame starts at the image's corner.
-            markers_m: MARKER_LAYOUT.map(|[u, v]| Point3::new(u * w - origin.x, v * h - origin.y, 0.0)),
+            markers_m: MARKER_LAYOUT
+                .map(|[u, v]| Point3::new(u * w - origin.x, v * h - origin.y, 0.0)),
         }
     }
 
@@ -249,7 +265,10 @@ impl SyntheticScene {
     /// Position of the image's top-left corner in panel coordinates; negative
     /// under overscan, since the image extends past the panel.
     pub fn image_origin_m(&self) -> Vector2<f64> {
-        Vector2::new(-self.screen_size_m[0] * self.overscan_fraction / 2.0, -self.screen_size_m[1] * self.overscan_fraction / 2.0)
+        Vector2::new(
+            -self.screen_size_m[0] * self.overscan_fraction / 2.0,
+            -self.screen_size_m[1] * self.overscan_fraction / 2.0,
+        )
     }
 
     /// Gravity direction in the camera frame.
@@ -285,10 +304,18 @@ impl SyntheticBackend {
 
 impl CameraBackend for SyntheticBackend {
     fn list(&self) -> Result<Vec<CameraInfo>, CameraError> {
-        Ok(vec![CameraInfo { id: "synthetic".into(), name: "Synthetic depth camera".into(), serial: "SYNTHETIC-0".into() }])
+        Ok(vec![CameraInfo {
+            id: "synthetic".into(),
+            name: "Synthetic depth camera".into(),
+            serial: "SYNTHETIC-0".into(),
+        }])
     }
 
-    fn open(&self, _camera: &CameraInfo, settings: &CaptureSettings) -> Result<Box<dyn CameraStream>, CameraError> {
+    fn open(
+        &self,
+        _camera: &CameraInfo,
+        settings: &CaptureSettings,
+    ) -> Result<Box<dyn CameraStream>, CameraError> {
         Ok(Box::new(SyntheticStream::new(self.scene.clone(), settings)))
     }
 }
@@ -349,11 +376,18 @@ impl SyntheticStream {
         let pose = scene.pose();
         let geometry = scene.geometry;
         let r_cs = pose.screen_from_camera.inverse();
-        let screen = ScenePlane { normal: r_cs.rotation * Vector3::z(), point: r_cs.translation };
+        let screen = ScenePlane {
+            normal: r_cs.rotation * Vector3::z(),
+            point: r_cs.translation,
+        };
         let wall_world_z = scene.screen_center_m.z + 1.5;
         let r_cw = pose.world_from_camera.transpose();
-        let wall = ScenePlane { normal: r_cw * Vector3::z(), point: r_cw * Vector3::new(0.0, 0.0, wall_world_z) };
-        let brightness = f64::from(settings.color_exposure_us) / 1500.0 * f64::from(settings.color_gain.max(1));
+        let wall = ScenePlane {
+            normal: r_cw * Vector3::z(),
+            point: r_cw * Vector3::new(0.0, 0.0, wall_world_z),
+        };
+        let brightness =
+            f64::from(settings.color_exposure_us) / 1500.0 * f64::from(settings.color_gain.max(1));
 
         let mut stream = Self {
             rng: StdRng::seed_from_u64(scene.seed),
@@ -420,7 +454,11 @@ impl SyntheticStream {
             let (a, b) = (corners[i], corners[(i + 1) % 4]);
             for s in 0..48 {
                 let f = s as f64 / 48.0;
-                let p = to_camera.apply(&Vector3::new(a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f, 0.0));
+                let p = to_camera.apply(&Vector3::new(
+                    a.0 + (b.0 - a.0) * f,
+                    a.1 + (b.1 - a.1) * f,
+                    0.0,
+                ));
                 if let Some(px) = project(intr, &p) {
                     outline.push(px);
                 }
@@ -438,7 +476,10 @@ impl SyntheticStream {
             }
             xs.sort_by(f64::total_cmp);
             for pair in xs.as_chunks::<2>().0 {
-                let (x0, x1) = (pair[0].ceil().max(0.0) as u32, (pair[1].floor().min(w as f64 - 1.0)).max(-1.0));
+                let (x0, x1) = (
+                    pair[0].ceil().max(0.0) as u32,
+                    (pair[1].floor().min(w as f64 - 1.0)).max(-1.0),
+                );
                 if x1 < 0.0 {
                     continue;
                 }
@@ -465,25 +506,43 @@ impl SyntheticStream {
                 hi = hi.sup(&px.coords);
             }
             let clamp = |v: f64, max: u32| v.clamp(0.0, f64::from(max) - 1.0) as u32;
-            Some((clamp((lo.x - pad).floor(), w), clamp((lo.y - pad).floor(), h), clamp((hi.x + pad).ceil(), w), clamp((hi.y + pad).ceil(), h)))
+            Some((
+                clamp((lo.x - pad).floor(), w),
+                clamp((lo.y - pad).floor(), h),
+                clamp((hi.x + pad).ceil(), w),
+                clamp((hi.y + pad).ceil(), h),
+            ))
         };
 
         for dot in pattern.dots() {
             let center_m = origin + Vector2::new(dot.u * image_w, dot.v * image_h);
             let radius = dot.radius_h * image_h;
             let reach = radius * 1.8;
-            let corners = [-1.0, 1.0].map(|dx| [-1.0, 1.0].map(|dy| center_m + Vector2::new(dx * reach, dy * reach)));
+            let corners = [-1.0, 1.0]
+                .map(|dx| [-1.0, 1.0].map(|dy| center_m + Vector2::new(dx * reach, dy * reach)));
             let points: Vec<_> = corners.into_iter().flatten().collect();
-            let Some(bounds) = pixel_box(&points, 3.0) else { continue };
-            self.paint(&mut img, bounds, |on_screen, footprint| ((radius - (on_screen - center_m).norm()) / footprint + 0.5).clamp(0.0, 1.0));
+            let Some(bounds) = pixel_box(&points, 3.0) else {
+                continue;
+            };
+            self.paint(&mut img, bounds, |on_screen, footprint| {
+                ((radius - (on_screen - center_m).norm()) / footprint + 0.5).clamp(0.0, 1.0)
+            });
         }
         for rect in pattern.frame_rects() {
             let (x0, y0) = (origin.x + rect.x * image_h, origin.y + rect.y * image_h);
             let (x1, y1) = (x0 + rect.width * image_h, y0 + rect.height * image_h);
-            let points = [Vector2::new(x0, y0), Vector2::new(x1, y0), Vector2::new(x1, y1), Vector2::new(x0, y1)];
-            let Some(bounds) = pixel_box(&points, 3.0) else { continue };
+            let points = [
+                Vector2::new(x0, y0),
+                Vector2::new(x1, y0),
+                Vector2::new(x1, y1),
+                Vector2::new(x0, y1),
+            ];
+            let Some(bounds) = pixel_box(&points, 3.0) else {
+                continue;
+            };
             self.paint(&mut img, bounds, |on_screen, footprint| {
-                overlap_share(on_screen.x, footprint, x0, x1) * overlap_share(on_screen.y, footprint, y0, y1)
+                overlap_share(on_screen.x, footprint, x0, x1)
+                    * overlap_share(on_screen.y, footprint, y0, y1)
             });
         }
         img
@@ -493,14 +552,24 @@ impl SyntheticStream {
     /// coverage of a shape, given on-screen position in meters and the pixel's
     /// footprint there. Light only reaches the camera from the panel, so
     /// coverage is clipped to it.
-    fn paint(&self, img: &mut RgbImage, bounds: (u32, u32, u32, u32), coverage: impl Fn(Vector2<f64>, f64) -> f64) {
+    fn paint(
+        &self,
+        img: &mut RgbImage,
+        bounds: (u32, u32, u32, u32),
+        coverage: impl Fn(Vector2<f64>, f64) -> f64,
+    ) {
         let [sw, sh] = self.scene.screen_size_m;
         let (x0, y0, x1, y1) = bounds;
         for y in y0..=y1 {
             for x in x0..=x1 {
-                let Some((on_screen, range, _)) = self.color_pixel_on_screen(Point2::new(f64::from(x), f64::from(y))) else { continue };
+                let Some((on_screen, range, _)) =
+                    self.color_pixel_on_screen(Point2::new(f64::from(x), f64::from(y)))
+                else {
+                    continue;
+                };
                 let footprint = range / self.geometry.color.fx;
-                let on_panel = overlap_share(on_screen.x, footprint, 0.0, sw) * overlap_share(on_screen.y, footprint, 0.0, sh);
+                let on_panel = overlap_share(on_screen.x, footprint, 0.0, sw)
+                    * overlap_share(on_screen.y, footprint, 0.0, sh);
                 let share = coverage(on_screen, footprint) * on_panel;
                 if share > 0.0 {
                     let level = self.scaled(5.0 + 230.0 * share);
@@ -522,12 +591,17 @@ impl SyntheticStream {
         self.depth_persistent_outlier = vec![false; (w * h) as usize];
         for y in 0..h {
             for x in 0..w {
-                let Some(ray) = pixel_ray(&intr, Point2::new(x as f64, y as f64)) else { continue };
+                let Some(ray) = pixel_ray(&intr, Point2::new(x as f64, y as f64)) else {
+                    continue;
+                };
                 let origin = color_from_depth.translation;
                 let direction = color_from_depth.rotation * ray;
                 let mut depth = None;
                 if let Some(t) = self.screen.hit(&origin, &direction) {
-                    let p = self.pose.screen_from_camera.apply(&(origin + direction * t));
+                    let p = self
+                        .pose
+                        .screen_from_camera
+                        .apply(&(origin + direction * t));
                     if (0.0..=sw).contains(&p.x) && (0.0..=sh).contains(&p.y) {
                         let (u, v) = (p.x / sw, p.y / sh);
                         let hidden = self
@@ -542,7 +616,9 @@ impl SyntheticStream {
                 }
                 let i = (y * w + x) as usize;
                 self.depth_base[i] = depth.unwrap_or(0.0) as f32;
-                if self.depth_base[i] > 0.0 && self.rng.random::<f64>() < self.scene.depth_outlier_fraction {
+                if self.depth_base[i] > 0.0
+                    && self.rng.random::<f64>() < self.scene.depth_outlier_fraction
+                {
                     self.depth_base[i] = self.rng.random_range(0.3f32..5.0);
                     self.depth_persistent_outlier[i] = true;
                 }
@@ -571,7 +647,11 @@ impl SyntheticStream {
     fn render_ir(&mut self) -> GrayImage {
         let intr = self.geometry.ir;
         let (w, h) = (intr.width, intr.height);
-        let (floor, noise) = if self.ir_exposure_low { (3.0, 3.0) } else { (45.0, 12.0) };
+        let (floor, noise) = if self.ir_exposure_low {
+            (3.0, 3.0)
+        } else {
+            (45.0, 12.0)
+        };
         let mut img = GrayImage::new(w, h);
         for p in img.pixels_mut() {
             let mut v = floor + self.rng.random::<f64>() * noise;
@@ -608,8 +688,14 @@ impl SyntheticStream {
             if base <= 0.0 || (holes > 0.0 && self.rng.random::<f64>() < holes) {
                 continue;
             }
-            let noisy = if self.depth_persistent_outlier[i] { base } else { base + sigma * gaussian(&mut self.rng) };
-            let raw = (noisy / f64::from(DEPTH_UNIT_M)).round().clamp(1.0, f64::from(u16::MAX)) as u16;
+            let noisy = if self.depth_persistent_outlier[i] {
+                base
+            } else {
+                base + sigma * gaussian(&mut self.rng)
+            };
+            let raw = (noisy / f64::from(DEPTH_UNIT_M))
+                .round()
+                .clamp(1.0, f64::from(u16::MAX)) as u16;
             img.as_mut()[i] = raw;
         }
         img
@@ -638,10 +724,22 @@ impl SyntheticStream {
         while self.next_imu <= self.clock {
             let noise = |rng: &mut StdRng, s: f64| s * gaussian(rng);
             let accel = -down * GRAVITY
-                + Vector3::new(noise(&mut self.rng, 0.03), noise(&mut self.rng, 0.03), noise(&mut self.rng, 0.03));
+                + Vector3::new(
+                    noise(&mut self.rng, 0.03),
+                    noise(&mut self.rng, 0.03),
+                    noise(&mut self.rng, 0.03),
+                );
             let gyro = Vector3::new(0.001, -0.0005, 0.0007)
-                + Vector3::new(noise(&mut self.rng, 0.002), noise(&mut self.rng, 0.002), noise(&mut self.rng, 0.002));
-            self.imu.push(ImuSample { timestamp: self.next_imu, gyro, accel });
+                + Vector3::new(
+                    noise(&mut self.rng, 0.002),
+                    noise(&mut self.rng, 0.002),
+                    noise(&mut self.rng, 0.002),
+                );
+            self.imu.push(ImuSample {
+                timestamp: self.next_imu,
+                gyro,
+                accel,
+            });
             self.next_imu += period;
         }
     }
@@ -661,7 +759,12 @@ impl CameraStream for SyntheticStream {
         let color = self.render_color_frame();
         let depth = self.render_depth();
         let ir = self.render_ir();
-        Ok(Frames { color, depth, depth_unit_m: DEPTH_UNIT_M, ir })
+        Ok(Frames {
+            color,
+            depth,
+            depth_unit_m: DEPTH_UNIT_M,
+            ir,
+        })
     }
 
     fn drain_imu(&mut self) -> Vec<ImuSample> {

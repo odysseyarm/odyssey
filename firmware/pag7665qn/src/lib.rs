@@ -1,10 +1,13 @@
 #![no_std]
 #![allow(dead_code)]
 
-use core::{convert::Infallible, future::Future};
+use core::convert::Infallible;
+use core::future::Future;
 
 use bytemuck::bytes_of_mut;
-use embedded_hal_async::{delay::DelayNs, digital, spi::SpiDevice};
+use embedded_hal_async::delay::DelayNs;
+use embedded_hal_async::digital;
+use embedded_hal_async::spi::SpiDevice;
 
 pub mod mode;
 pub mod spi;

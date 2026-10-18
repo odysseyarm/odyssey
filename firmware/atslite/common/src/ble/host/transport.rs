@@ -3,11 +3,10 @@
 use core::mem::MaybeUninit;
 
 use bt_hci::transport::WithIndicator;
+use bt_hci::{ControllerToHostPacket, FromHciBytes as _, HostToControllerPacket, WriteHci};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
 use embedded_io::{Error as _, ErrorKind, ErrorType};
-
-use bt_hci::{ControllerToHostPacket, FromHciBytes as _, HostToControllerPacket, WriteHci};
 
 use super::icmsg_config;
 use super::uninit_write_buf::UninitWriteBuf;

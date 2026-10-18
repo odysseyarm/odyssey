@@ -10,7 +10,7 @@
 use std::time::{Duration, Instant};
 
 use odyssey_autocalib::camera::{CameraBackend, CameraError, CaptureSettings, Intrinsics};
-use odyssey_autocalib::orbbec::{runtime_status, OrbbecBackend};
+use odyssey_autocalib::orbbec::{OrbbecBackend, runtime_status};
 
 fn describe(name: &str, i: &Intrinsics) {
     println!(
@@ -43,7 +43,10 @@ fn probe() -> Result<(), CameraError> {
         return Ok(());
     }
     for camera in &cameras {
-        println!("camera: {} (serial {}, id {})", camera.name, camera.serial, camera.id);
+        println!(
+            "camera: {} (serial {}, id {})",
+            camera.name, camera.serial, camera.id
+        );
     }
 
     let mut stream = backend.open(&cameras[0], &CaptureSettings::default())?;
@@ -52,8 +55,14 @@ fn probe() -> Result<(), CameraError> {
     describe("color", &g.color);
     describe("depth", &g.depth);
     describe("ir", &g.ir);
-    println!("  color->depth: R={:?} t={:?}", g.color_to_depth.rotation, g.color_to_depth.translation);
-    println!("  ir->depth:    R={:?} t={:?}", g.ir_to_depth.rotation, g.ir_to_depth.translation);
+    println!(
+        "  color->depth: R={:?} t={:?}",
+        g.color_to_depth.rotation, g.color_to_depth.translation
+    );
+    println!(
+        "  ir->depth:    R={:?} t={:?}",
+        g.ir_to_depth.rotation, g.ir_to_depth.translation
+    );
 
     let start = Instant::now();
     let (mut frames, mut imu) = (0u32, 0usize);
@@ -71,7 +80,8 @@ fn probe() -> Result<(), CameraError> {
         if frames == 1 || frames % 30 == 0 {
             let valid = f.depth.pixels().filter(|p| p.0[0] != 0).count();
             let (cx, cy) = (f.depth.width() / 2, f.depth.height() / 2);
-            let ir_mean = f.ir.pixels().map(|p| u64::from(p.0[0])).sum::<u64>() as f64 / f.ir.pixels().len() as f64;
+            let ir_mean = f.ir.pixels().map(|p| u64::from(p.0[0])).sum::<u64>() as f64
+                / f.ir.pixels().len() as f64;
             println!(
                 "frame {frames}: color {}x{} depth {}x{} ({:.0}% valid, centre {:?} m, unit {} m) ir {}x{} mean {ir_mean:.1}",
                 f.color.width(),
@@ -86,7 +96,13 @@ fn probe() -> Result<(), CameraError> {
             );
         }
     }
-    println!("{frames} frames and {imu} IMU samples in {:.1} s", start.elapsed().as_secs_f64());
-    println!("projector switchable: {}", stream.set_projector_enabled(true)?);
+    println!(
+        "{frames} frames and {imu} IMU samples in {:.1} s",
+        start.elapsed().as_secs_f64()
+    );
+    println!(
+        "projector switchable: {}",
+        stream.set_projector_enabled(true)?
+    );
     Ok(())
 }

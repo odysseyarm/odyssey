@@ -1,4 +1,3 @@
-
 /// Decoded tray icon, in whatever form the platform backend wants.
 struct TrayImage {
     width: u32,
@@ -44,11 +43,13 @@ pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) {
 /// the window, right click opens the menu.
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{show_window, tray_image, TrayImage};
     use dioxus::prelude::*;
-    use ksni::{menu::StandardItem, Icon, MenuItem, Tray, TrayMethods};
-    use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+    use ksni::menu::StandardItem;
+    use ksni::{Icon, MenuItem, Tray, TrayMethods};
+    use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
     use tokio_util::sync::CancellationToken;
+
+    use super::{TrayImage, show_window, tray_image};
 
     struct OdysseyTray {
         icon: Icon,
@@ -143,15 +144,15 @@ mod platform {
 
 #[cfg(not(target_os = "linux"))]
 mod platform {
-    use super::{show_window, tray_image};
-    use dioxus::desktop::{
-        muda::MenuItem,
-        trayicon::{
-            menu::Menu, Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-        },
-        use_muda_event_handler, use_tray_icon_event_handler,
+    use dioxus::desktop::muda::MenuItem;
+    use dioxus::desktop::trayicon::menu::Menu;
+    use dioxus::desktop::trayicon::{
+        Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
     };
+    use dioxus::desktop::{use_muda_event_handler, use_tray_icon_event_handler};
     use dioxus::prelude::*;
+
+    use super::{show_window, tray_image};
 
     pub fn use_tray(cancellation_token: tokio_util::sync::CancellationToken) {
         let image = tray_image();

@@ -4,14 +4,12 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+use core::mem::MaybeUninit;
 #[cfg(feature = "std")]
 use std::{error::Error as StdError, fmt::Display, vec::Vec};
 
 #[cfg(feature = "minicbor")]
 use minicbor::{CborLen, Decode, Encode};
-
-use core::mem::MaybeUninit;
-
 use nalgebra::{Isometry3, Point2, Vector3};
 use odyssey_protocol_macros::protocol_type;
 use opencv_ros_camera::RosOpenCvIntrinsicsPod;
@@ -72,10 +70,13 @@ impl From<DeviceName> for heapless::String<32> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-#[cfg_attr(feature = "serde", serde(bound(
-    serialize = "T: serde::Serialize",
-    deserialize = "T: serde::Deserialize<'de>"
-)))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "T: serde::Serialize",
+        deserialize = "T: serde::Deserialize<'de>"
+    ))
+)]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct List<T, const N: usize>(pub heapless::Vec<T, N>);
 
@@ -167,10 +168,7 @@ impl<C> Encode<C> for SetDeviceNameResult {
 
 #[cfg(feature = "minicbor")]
 impl<'b, C> Decode<'b, C> for SetDeviceNameResult {
-    fn decode(
-        d: &mut minicbor::Decoder<'b>,
-        ctx: &mut C,
-    ) -> Result<Self, minicbor::decode::Error> {
+    fn decode(d: &mut minicbor::Decoder<'b>, ctx: &mut C) -> Result<Self, minicbor::decode::Error> {
         Result::<(), SetDeviceNameError>::decode(d, ctx).map(Self::from)
     }
 }
@@ -288,10 +286,7 @@ pub enum PacketData {
         DeviceName,
     ),
     #[cfg_attr(feature = "minicbor", n(23))]
-    SetDeviceNameResponse(
-        #[cfg_attr(feature = "minicbor", n(0))]
-        SetDeviceNameResult,
-    ),
+    SetDeviceNameResponse(#[cfg_attr(feature = "minicbor", n(0))] SetDeviceNameResult),
 }
 
 #[protocol_type]
@@ -1161,7 +1156,9 @@ impl StreamUpdate {
 
 #[cfg(feature = "minicbor")]
 mod heapless_str32_cbor {
-    use minicbor::{decode::Error, encode::Error as EncodeError, encode::Write, Decoder, Encoder};
+    use minicbor::decode::Error;
+    use minicbor::encode::{Error as EncodeError, Write};
+    use minicbor::{Decoder, Encoder};
 
     use crate::DeviceName;
 
@@ -1388,7 +1385,10 @@ mod bootloader_release_tests {
     #[test]
     fn shipped_default_is_legacy_not_release_16() {
         let shipped = 0x0010;
-        assert_eq!(BootloaderRelease::from_bcd_device(shipped), BootloaderRelease::Legacy);
+        assert_eq!(
+            BootloaderRelease::from_bcd_device(shipped),
+            BootloaderRelease::Legacy
+        );
         assert!(BootloaderRelease::from_bcd_device(shipped).superseded_by(1));
     }
 
@@ -1396,7 +1396,10 @@ mod bootloader_release_tests {
     fn counter_round_trips_and_orders() {
         for n in [1, 2, 16, 4095] {
             let raw = BootloaderRelease::bcd_device(n);
-            assert_eq!(BootloaderRelease::from_bcd_device(raw), BootloaderRelease::Counter(n));
+            assert_eq!(
+                BootloaderRelease::from_bcd_device(raw),
+                BootloaderRelease::Counter(n)
+            );
         }
         assert!(!BootloaderRelease::Counter(2).superseded_by(2));
         assert!(!BootloaderRelease::Counter(3).superseded_by(2));
@@ -1405,8 +1408,14 @@ mod bootloader_release_tests {
 
     #[test]
     fn marker_without_payload_and_unset_are_legacy() {
-        assert_eq!(BootloaderRelease::from_bcd_device(0xF000), BootloaderRelease::Legacy);
-        assert_eq!(BootloaderRelease::from_bcd_device(0), BootloaderRelease::Legacy);
+        assert_eq!(
+            BootloaderRelease::from_bcd_device(0xF000),
+            BootloaderRelease::Legacy
+        );
+        assert_eq!(
+            BootloaderRelease::from_bcd_device(0),
+            BootloaderRelease::Legacy
+        );
     }
 }
 

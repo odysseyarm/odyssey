@@ -1,20 +1,19 @@
-use std::{cell::Cell, f64::consts::PI, ops::Range, rc::Rc};
+use std::cell::Cell;
+use std::f64::consts::PI;
+use std::ops::Range;
+use std::rc::Rc;
 
-use odyssey_cv::telemetry::Series;
-use iui::{
-    controls::{Area, AreaDrawParams, AreaHandler, AreaKeyEvent, Window, WindowType},
-    draw::plotters::PlottersBackend,
-    UI,
-};
+use iui::UI;
+use iui::controls::{Area, AreaDrawParams, AreaHandler, AreaKeyEvent, Window, WindowType};
+use iui::draw::plotters::PlottersBackend;
 use nalgebra::Vector3;
-use plotters::{
-    backend::DrawingBackend,
-    chart::{ChartBuilder, LabelAreaPosition},
-    coord::Shift,
-    drawing::{DrawingArea, IntoDrawingArea},
-    series::LineSeries,
-    style::{BLUE, GREEN, RED, WHITE},
-};
+use odyssey_cv::telemetry::Series;
+use plotters::backend::DrawingBackend;
+use plotters::chart::{ChartBuilder, LabelAreaPosition};
+use plotters::coord::Shift;
+use plotters::drawing::{DrawingArea, IntoDrawingArea};
+use plotters::series::LineSeries;
+use plotters::style::{BLUE, GREEN, RED, WHITE};
 
 use crate::CloneButShorter;
 
@@ -108,7 +107,7 @@ fn gyro_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f64_chart(
         area,
         "IMU Angular Velocity",
-        series.values.lock().unwrap().iter().map(|p| p.1 .1.cast()),
+        series.values.lock().unwrap().iter().map(|p| p.1.1.cast()),
         series.size,
         -0.03..0.03,
     );
@@ -119,7 +118,7 @@ fn accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f64_chart(
         area,
         "IMU Acceleration",
-        series.values.lock().unwrap().iter().map(|p| p.1 .0.cast()),
+        series.values.lock().unwrap().iter().map(|p| p.1.0.cast()),
         series.size,
         -10.0..10.0,
     );

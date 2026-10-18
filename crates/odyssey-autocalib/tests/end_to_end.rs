@@ -4,10 +4,11 @@
 use nalgebra::{Matrix3, Point2};
 use odyssey_autocalib::camera::{CameraBackend, CaptureSettings};
 use odyssey_autocalib::session::{
-    Calibration, EdgeCheck, Hint, KnownSize, MarkerHint, Session, SessionError, SessionOptions, SizeSource, Step,
+    Calibration, EdgeCheck, Hint, KnownSize, MarkerHint, Session, SessionError, SessionOptions,
+    SizeSource, Step,
 };
-use odyssey_autocalib::synthetic::{SyntheticBackend, SyntheticScene, Truth};
 use odyssey_autocalib::solve::SolveError;
+use odyssey_autocalib::synthetic::{SyntheticBackend, SyntheticScene, Truth};
 
 fn open(scene: &SyntheticScene, settings: &CaptureSettings, options: SessionOptions) -> Session {
     let backend = SyntheticBackend::new(scene.clone());
@@ -16,22 +17,43 @@ fn open(scene: &SyntheticScene, settings: &CaptureSettings, options: SessionOpti
     Session::start(stream, scene.aspect(), options)
 }
 
-fn calibrate(scene: &SyntheticScene, options: SessionOptions) -> (Calibration, Truth, Matrix3<f64>) {
+fn calibrate(
+    scene: &SyntheticScene,
+    options: SessionOptions,
+) -> (Calibration, Truth, Matrix3<f64>) {
     let mut session = open(scene, &CaptureSettings::default(), options);
     let preview = session.preview().unwrap();
-    assert_eq!(preview.hint, Hint::Ready, "preview: {} of {} dots", preview.dots_matched, preview.dots_expected);
+    assert_eq!(
+        preview.hint,
+        Hint::Ready,
+        "preview: {} of {} dots",
+        preview.dots_matched,
+        preview.dots_expected
+    );
 
     let mut steps = Vec::new();
     session.measure_screen(&mut |s| steps.push(s)).unwrap();
-    assert!(matches!(steps.first(), Some(Step::Capturing { frame: 0, .. })));
+    assert!(matches!(
+        steps.first(),
+        Some(Step::Capturing { frame: 0, .. })
+    ));
     assert_eq!(steps.last(), Some(&Step::Done));
 
     let marker_preview = session.preview_markers().unwrap();
-    assert_eq!(marker_preview.hint, MarkerHint::Ready, "{:?}", marker_preview.blobs);
+    assert_eq!(
+        marker_preview.hint,
+        MarkerHint::Ready,
+        "{:?}",
+        marker_preview.blobs
+    );
     assert!(marker_preview.matched.is_some());
     session.measure_markers(&mut |_| {}).unwrap();
 
-    let alignment = if scene.imu_enabled { scene.camera_to_aligned() } else { Matrix3::identity() };
+    let alignment = if scene.imu_enabled {
+        scene.camera_to_aligned()
+    } else {
+        Matrix3::identity()
+    };
     (session.finish().unwrap(), scene.truth(), alignment)
 }
 
@@ -51,11 +73,20 @@ fn assert_matches_truth(cal: &Calibration, truth: &Truth, alignment: &Matrix3<f6
 
     let size = cal.review.size_m;
     for (got, want) in size.iter().zip(truth.size_m) {
-        assert!((got / want - 1.0).abs() < 0.005, "size {size:?} vs {:?}", truth.size_m);
+        assert!(
+            (got / want - 1.0).abs() < 0.005,
+            "size {size:?} vs {:?}",
+            truth.size_m
+        );
     }
     assert!((cal.review.diagonal_in / truth.diagonal_in() - 1.0).abs() < 0.005);
 
-    for (i, (g, e)) in got.object_points.iter().zip(&expected.object_points).enumerate() {
+    for (i, (g, e)) in got
+        .object_points
+        .iter()
+        .zip(&expected.object_points)
+        .enumerate()
+    {
         let err = f64::from((g - e).norm());
         assert!(err < tol_m, "marker {i}: {g:?} vs {e:?} ({err} m)");
     }
@@ -74,7 +105,11 @@ fn default_scene_is_recovered() {
     let scene = SyntheticScene::default();
     let (cal, truth, alignment) = calibrate(&scene, SessionOptions::default());
     assert_matches_truth(&cal, &truth, &alignment, 0.003);
-    assert!(cal.review.plane_rmse_m < 0.004, "plane rmse {}", cal.review.plane_rmse_m);
+    assert!(
+        cal.review.plane_rmse_m < 0.004,
+        "plane rmse {}",
+        cal.review.plane_rmse_m
+    );
     assert_eq!(cal.review.dots_used, cal.review.dots_expected);
     assert!(cal.review.gravity_aligned);
     // Markers project into the color image inside the screen outline.
@@ -114,7 +149,11 @@ fn rotated_and_offset_camera() {
 
 #[test]
 fn works_without_an_imu() {
-    let scene = SyntheticScene { imu_enabled: false, camera_pitch_deg: 6.0, ..SyntheticScene::default() };
+    let scene = SyntheticScene {
+        imu_enabled: false,
+        camera_pitch_deg: 6.0,
+        ..SyntheticScene::default()
+    };
     let (cal, truth, alignment) = calibrate(&scene, SessionOptions::default());
     assert_eq!(alignment, Matrix3::identity());
     assert!(!cal.review.gravity_aligned);
@@ -137,14 +176,22 @@ fn known_diagonal_rectifies_the_size() {
     let mut scene = SyntheticScene::default();
     // The physical screen is 55 inches; the solver gets the user's answer.
     let truth_diagonal = 55.0;
-    let options = SessionOptions { known_size: Some(KnownSize::Diagonal { inches: truth_diagonal }), ..SessionOptions::default() };
+    let options = SessionOptions {
+        known_size: Some(KnownSize::Diagonal {
+            inches: truth_diagonal,
+        }),
+        ..SessionOptions::default()
+    };
     let (cal, truth, alignment) = calibrate(&scene, options);
     assert!((cal.review.diagonal_in - truth_diagonal).abs() / truth_diagonal < 0.002);
     assert_matches_truth(&cal, &truth, &alignment, 0.003);
 
     // A wrong answer is honored: the result is scaled to it.
     scene.seed = 2;
-    let options = SessionOptions { known_size: Some(KnownSize::Diagonal { inches: 60.0 }), ..SessionOptions::default() };
+    let options = SessionOptions {
+        known_size: Some(KnownSize::Diagonal { inches: 60.0 }),
+        ..SessionOptions::default()
+    };
     let (cal, _, _) = calibrate(&scene, options);
     assert!((cal.review.diagonal_in - 60.0).abs() < 0.05);
 }
@@ -154,35 +201,66 @@ fn preview_explains_what_is_wrong() {
     let default = SyntheticScene::default();
     let settings = CaptureSettings::default();
 
-    let mut blank = open(&SyntheticScene { show_pattern: false, ..default.clone() }, &settings, SessionOptions::default());
+    let mut blank = open(
+        &SyntheticScene {
+            show_pattern: false,
+            ..default.clone()
+        },
+        &settings,
+        SessionOptions::default(),
+    );
     assert_eq!(blank.preview().unwrap().hint, Hint::ScreenNotFound);
 
-    let dark_settings = CaptureSettings { color_exposure_us: 25, ..CaptureSettings::default() };
+    let dark_settings = CaptureSettings {
+        color_exposure_us: 25,
+        ..CaptureSettings::default()
+    };
     let mut dark = open(&default, &dark_settings, SessionOptions::default());
     assert_eq!(dark.preview().unwrap().hint, Hint::TooDark);
 
-    let bright_settings = CaptureSettings { color_exposure_us: 120_000, ..CaptureSettings::default() };
+    let bright_settings = CaptureSettings {
+        color_exposure_us: 120_000,
+        ..CaptureSettings::default()
+    };
     let mut bright = open(&default, &bright_settings, SessionOptions::default());
     assert_eq!(bright.preview().unwrap().hint, Hint::TooBright);
 
     // Screen larger than the view: only part of it is visible.
-    let wide = SyntheticScene { screen_size_m: [3.2, 1.8], ..default.clone() };
+    let wide = SyntheticScene {
+        screen_size_m: [3.2, 1.8],
+        ..default.clone()
+    };
     let mut partial = open(&wide, &settings, SessionOptions::default());
     assert_eq!(partial.preview().unwrap().hint, Hint::ScreenPartlyVisible);
 
-    let mut tilted = open(&SyntheticScene { camera_pitch_deg: 50.0, ..default.clone() }, &settings, SessionOptions::default());
+    let mut tilted = open(
+        &SyntheticScene {
+            camera_pitch_deg: 50.0,
+            ..default.clone()
+        },
+        &settings,
+        SessionOptions::default(),
+    );
     // Looking down 50 degrees may lose the screen too; either way the user is told.
     assert_ne!(tilted.preview().unwrap().hint, Hint::Ready);
 
     let mut depthless = open(
-        &SyntheticScene { depth_hole_fraction: 0.0, depth_dropout_region: Some([0.0, 0.0, 1.0, 1.0]), ..default.clone() },
+        &SyntheticScene {
+            depth_hole_fraction: 0.0,
+            depth_dropout_region: Some([0.0, 0.0, 1.0, 1.0]),
+            ..default.clone()
+        },
         &settings,
         SessionOptions::default(),
     );
     assert_eq!(depthless.preview().unwrap().hint, Hint::DepthPoor);
 
     let mut near = open(
-        &SyntheticScene { screen_size_m: [0.6, 0.34], screen_center_m: nalgebra::Vector3::new(0.0, 0.0, 0.45), ..default.clone() },
+        &SyntheticScene {
+            screen_size_m: [0.6, 0.34],
+            screen_center_m: nalgebra::Vector3::new(0.0, 0.0, 0.45),
+            ..default.clone()
+        },
         &settings,
         SessionOptions::default(),
     );
@@ -198,18 +276,41 @@ fn preview_explains_what_is_wrong() {
 
 #[test]
 fn measuring_without_a_pattern_fails_cleanly() {
-    let mut session = open(&SyntheticScene { show_pattern: false, ..SyntheticScene::default() }, &CaptureSettings::default(), SessionOptions::default());
+    let mut session = open(
+        &SyntheticScene {
+            show_pattern: false,
+            ..SyntheticScene::default()
+        },
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
     let err = session.measure_screen(&mut |_| {}).unwrap_err();
-    assert!(matches!(err, SessionError::Solve(SolveError::PatternNotFound(_))), "{err}");
+    assert!(
+        matches!(err, SessionError::Solve(SolveError::PatternNotFound(_))),
+        "{err}"
+    );
 }
 
 #[test]
 fn markers_need_a_measured_screen_and_a_visible_layout() {
-    let mut session = open(&SyntheticScene::default(), &CaptureSettings::default(), SessionOptions::default());
-    assert!(matches!(session.measure_markers(&mut |_| {}), Err(SessionError::ScreenNotMeasured)));
-    assert!(matches!(session.finish(), Err(SessionError::ScreenNotMeasured)));
+    let mut session = open(
+        &SyntheticScene::default(),
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
+    assert!(matches!(
+        session.measure_markers(&mut |_| {}),
+        Err(SessionError::ScreenNotMeasured)
+    ));
+    assert!(matches!(
+        session.finish(),
+        Err(SessionError::ScreenNotMeasured)
+    ));
     session.measure_screen(&mut |_| {}).unwrap();
-    assert!(matches!(session.finish(), Err(SessionError::MarkersNotMeasured)));
+    assert!(matches!(
+        session.finish(),
+        Err(SessionError::MarkersNotMeasured)
+    ));
 }
 
 #[test]
@@ -260,18 +361,33 @@ fn steep_viewing_angle_is_recovered() {
 /// dot's centroid and its true center.
 #[test]
 fn steep_viewing_angle_with_large_dots_is_recovered() {
-    use odyssey_autocalib::solve::{solve_screen, SolveOptions};
+    use odyssey_autocalib::solve::{SolveOptions, solve_screen};
 
-    let scene = SyntheticScene { dot_scale: 1.4, ..steep_scene() };
+    let scene = SyntheticScene {
+        dot_scale: 1.4,
+        ..steep_scene()
+    };
     let backend = SyntheticBackend::new(scene.clone());
     let camera = backend.list().unwrap().remove(0);
     let mut stream = backend.open(&camera, &CaptureSettings::default()).unwrap();
     let geometry = *stream.geometry();
-    let frames: Vec<_> = (0..9).map(|_| stream.next_frames(std::time::Duration::from_secs(1)).unwrap()).collect();
+    let frames: Vec<_> = (0..9)
+        .map(|_| {
+            stream
+                .next_frames(std::time::Duration::from_secs(1))
+                .unwrap()
+        })
+        .collect();
     let truth = scene.truth();
 
-    let fit = solve_screen(&geometry, &scene.pattern(), &frames, &scene.camera_to_aligned(), &SolveOptions::default())
-        .expect("solve");
+    let fit = solve_screen(
+        &geometry,
+        &scene.pattern(),
+        &frames,
+        &scene.camera_to_aligned(),
+        &SolveOptions::default(),
+    )
+    .expect("solve");
     for (got, want) in fit.corners_m.iter().zip(truth.corners_m()) {
         assert!((got - want).norm() < 0.003, "corner {got:?} vs {want:?}");
     }
@@ -281,29 +397,46 @@ fn steep_viewing_angle_with_large_dots_is_recovered() {
 }
 
 fn panel_size(scene: &SyntheticScene) -> KnownSize {
-    KnownSize::Dimensions { width_m: scene.screen_size_m[0], height_m: scene.screen_size_m[1] }
+    KnownSize::Dimensions {
+        width_m: scene.screen_size_m[0],
+        height_m: scene.screen_size_m[1],
+    }
 }
 
 fn size_error(cal: &Calibration, truth: &Truth) -> f64 {
     let [w, h] = cal.review.size_m;
-    (w / truth.size_m[0] - 1.0).abs().max((h / truth.size_m[1] - 1.0).abs())
+    (w / truth.size_m[0] - 1.0)
+        .abs()
+        .max((h / truth.size_m[1] - 1.0).abs())
 }
 
 #[test]
 fn a_known_panel_size_removes_depth_scale_error() {
-    let scene = SyntheticScene { depth_scale_error: 0.01, ..SyntheticScene::default() };
+    let scene = SyntheticScene {
+        depth_scale_error: 0.01,
+        ..SyntheticScene::default()
+    };
 
     let (unanchored, truth, alignment) = calibrate(&scene, SessionOptions::default());
     let drift = size_error(&unanchored, &truth);
-    eprintln!("1% depth scale error, depth only: size error {:.3}%", drift * 100.0);
+    eprintln!(
+        "1% depth scale error, depth only: size error {:.3}%",
+        drift * 100.0
+    );
     assert!((0.007..0.013).contains(&drift), "size error {drift}");
     assert_eq!(unanchored.review.size_source, SizeSource::Measured);
     assert!(unanchored.review.size_check.is_none());
 
-    let options = SessionOptions { known_size: Some(panel_size(&scene)), ..SessionOptions::default() };
+    let options = SessionOptions {
+        known_size: Some(panel_size(&scene)),
+        ..SessionOptions::default()
+    };
     let (anchored, truth, alignment_anchored) = calibrate(&scene, options);
     let residual = size_error(&anchored, &truth);
-    eprintln!("1% depth scale error, panel size known: size error {:.3}%", residual * 100.0);
+    eprintln!(
+        "1% depth scale error, panel size known: size error {:.3}%",
+        residual * 100.0
+    );
     assert!(residual < 0.002, "size error {residual}");
     assert_matches_truth(&anchored, &truth, &alignment_anchored, 0.003);
     assert_eq!(anchored.review.size_source, SizeSource::KnownDimensions);
@@ -311,7 +444,10 @@ fn a_known_panel_size_removes_depth_scale_error() {
     // The depth measurement is off by the scale error, and the check says so
     // without crossing the disagreement threshold.
     let check = anchored.review.size_check.expect("size check");
-    assert!((check.ratio_w - 1.01).abs() < 0.004 && (check.ratio_h - 1.01).abs() < 0.004, "{check:?}");
+    assert!(
+        (check.ratio_w - 1.01).abs() < 0.004 && (check.ratio_h - 1.01).abs() < 0.004,
+        "{check:?}"
+    );
     assert!(!check.disagrees());
     let _ = alignment;
 }
@@ -319,21 +455,50 @@ fn a_known_panel_size_removes_depth_scale_error() {
 #[test]
 fn a_declared_size_with_the_wrong_aspect_is_refused() {
     let scene = SyntheticScene::default();
-    let wrong = KnownSize::Dimensions { width_m: scene.screen_size_m[0], height_m: scene.screen_size_m[1] * 1.04 };
-    let mut session = open(&scene, &CaptureSettings::default(), SessionOptions { known_size: Some(wrong), ..SessionOptions::default() });
+    let wrong = KnownSize::Dimensions {
+        width_m: scene.screen_size_m[0],
+        height_m: scene.screen_size_m[1] * 1.04,
+    };
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions {
+            known_size: Some(wrong),
+            ..SessionOptions::default()
+        },
+    );
     let error = session.measure_screen(&mut |_| {}).unwrap_err();
-    assert!(matches!(error, SessionError::Solve(SolveError::KnownSizeAspectMismatch { .. })), "{error}");
+    assert!(
+        matches!(
+            error,
+            SessionError::Solve(SolveError::KnownSizeAspectMismatch { .. })
+        ),
+        "{error}"
+    );
 
     // 1% off is within the tolerance and is stretched onto the pattern.
-    let close = KnownSize::Dimensions { width_m: scene.screen_size_m[0], height_m: scene.screen_size_m[1] * 1.01 };
-    let mut session = open(&scene, &CaptureSettings::default(), SessionOptions { known_size: Some(close), ..SessionOptions::default() });
+    let close = KnownSize::Dimensions {
+        width_m: scene.screen_size_m[0],
+        height_m: scene.screen_size_m[1] * 1.01,
+    };
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions {
+            known_size: Some(close),
+            ..SessionOptions::default()
+        },
+    );
     session.measure_screen(&mut |_| {}).unwrap();
 }
 
 #[test]
 fn overscan_blocks_readiness_only_when_edges_are_required() {
     let settings = CaptureSettings::default();
-    let required = SessionOptions { require_visible_edges: true, ..SessionOptions::default() };
+    let required = SessionOptions {
+        require_visible_edges: true,
+        ..SessionOptions::default()
+    };
 
     let mut flat = open(&SyntheticScene::default(), &settings, required.clone());
     let preview = flat.preview().unwrap();
@@ -341,14 +506,24 @@ fn overscan_blocks_readiness_only_when_edges_are_required() {
     assert_eq!(preview.hint, Hint::Ready);
     assert!(preview.is_ready());
 
-    let overscanned = SyntheticScene { overscan_fraction: 0.03, ..SyntheticScene::default() };
+    let overscanned = SyntheticScene {
+        overscan_fraction: 0.03,
+        ..SyntheticScene::default()
+    };
     let mut blocked = open(&overscanned, &settings, required);
     let preview = blocked.preview().unwrap();
-    assert!(matches!(preview.edges, EdgeCheck::Cropped { sides } if sides.count() == 4), "{:?}", preview.edges);
+    assert!(
+        matches!(preview.edges, EdgeCheck::Cropped { sides } if sides.count() == 4),
+        "{:?}",
+        preview.edges
+    );
     assert_eq!(preview.hint, Hint::EdgesCropped);
     assert!(!preview.is_ready());
     let error = blocked.measure_screen(&mut |_| {}).unwrap_err();
-    assert!(matches!(error, SessionError::EdgesCropped(sides) if sides.count() == 4), "{error}");
+    assert!(
+        matches!(error, SessionError::EdgesCropped(sides) if sides.count() == 4),
+        "{error}"
+    );
 
     // A projector-style run reports the crop but is never held up by it.
     let mut projector = open(&overscanned, &settings, SessionOptions::default());
@@ -361,16 +536,25 @@ fn overscan_blocks_readiness_only_when_edges_are_required() {
 #[test]
 fn small_overscan_is_still_noticed() {
     let mut session = open(
-        &SyntheticScene { overscan_fraction: 0.012, ..SyntheticScene::default() },
+        &SyntheticScene {
+            overscan_fraction: 0.012,
+            ..SyntheticScene::default()
+        },
         &CaptureSettings::default(),
-        SessionOptions { require_visible_edges: true, ..SessionOptions::default() },
+        SessionOptions {
+            require_visible_edges: true,
+            ..SessionOptions::default()
+        },
     );
     assert_eq!(session.preview().unwrap().hint, Hint::EdgesCropped);
 }
 
 #[test]
 fn overscan_without_a_known_size_measures_the_displayed_image() {
-    let scene = SyntheticScene { overscan_fraction: 0.03, ..SyntheticScene::default() };
+    let scene = SyntheticScene {
+        overscan_fraction: 0.03,
+        ..SyntheticScene::default()
+    };
     let (cal, truth, alignment) = calibrate(&scene, SessionOptions::default());
     assert_matches_truth(&cal, &truth, &alignment, 0.003);
     // The measured size is the image, 3% larger than the panel.
@@ -379,17 +563,32 @@ fn overscan_without_a_known_size_measures_the_displayed_image() {
 
 #[test]
 fn overscan_makes_a_panel_size_disagree_with_the_measurement() {
-    let scene = SyntheticScene { overscan_fraction: 0.03, ..SyntheticScene::default() };
-    let options = SessionOptions { known_size: Some(panel_size(&scene)), ..SessionOptions::default() };
+    let scene = SyntheticScene {
+        overscan_fraction: 0.03,
+        ..SyntheticScene::default()
+    };
+    let options = SessionOptions {
+        known_size: Some(panel_size(&scene)),
+        ..SessionOptions::default()
+    };
     let (cal, _, _) = calibrate(&scene, options);
     let check = cal.review.size_check.expect("size check");
-    eprintln!("3% overscan against the panel size: ratios {:.4} x {:.4}", check.ratio_w, check.ratio_h);
+    eprintln!(
+        "3% overscan against the panel size: ratios {:.4} x {:.4}",
+        check.ratio_w, check.ratio_h
+    );
     assert!(check.disagrees(), "{check:?}");
-    assert!((check.ratio_w - 1.03).abs() < 0.004 && (check.ratio_h - 1.03).abs() < 0.004, "{check:?}");
+    assert!(
+        (check.ratio_w - 1.03).abs() < 0.004 && (check.ratio_h - 1.03).abs() < 0.004,
+        "{check:?}"
+    );
 
     // Without overscan the same declaration agrees.
     let clean = SyntheticScene::default();
-    let options = SessionOptions { known_size: Some(panel_size(&clean)), ..SessionOptions::default() };
+    let options = SessionOptions {
+        known_size: Some(panel_size(&clean)),
+        ..SessionOptions::default()
+    };
     let (cal, _, _) = calibrate(&clean, options);
     let check = cal.review.size_check.expect("size check");
     assert!(!check.disagrees(), "{check:?}");
@@ -404,15 +603,46 @@ fn an_uncropped_ring_is_never_reported_cropped() {
     let scenes = [
         ("default", default.clone()),
         ("steep", steep_scene()),
-        ("far", SyntheticScene { screen_center_m: nalgebra::Vector3::new(0.0, 0.0, 4.0), screen_yaw_deg: 25.0, ..default.clone() }),
-        ("noisy", SyntheticScene { color_noise: 6.0, depth_noise_m: 0.004, ..default.clone() }),
-        ("rolled", SyntheticScene { camera_roll_deg: 7.0, camera_yaw_deg: 11.0, camera_pitch_deg: 9.0, screen_yaw_deg: -22.0, ..default.clone() }),
+        (
+            "far",
+            SyntheticScene {
+                screen_center_m: nalgebra::Vector3::new(0.0, 0.0, 4.0),
+                screen_yaw_deg: 25.0,
+                ..default.clone()
+            },
+        ),
+        (
+            "noisy",
+            SyntheticScene {
+                color_noise: 6.0,
+                depth_noise_m: 0.004,
+                ..default.clone()
+            },
+        ),
+        (
+            "rolled",
+            SyntheticScene {
+                camera_roll_deg: 7.0,
+                camera_yaw_deg: 11.0,
+                camera_pitch_deg: 9.0,
+                screen_yaw_deg: -22.0,
+                ..default.clone()
+            },
+        ),
     ];
     for (name, scene) in scenes {
-        let mut session = open(&scene, &CaptureSettings::default(), SessionOptions::default());
+        let mut session = open(
+            &scene,
+            &CaptureSettings::default(),
+            SessionOptions::default(),
+        );
         let preview = session.preview().unwrap();
         eprintln!("{name}: edges {:?}, hint {:?}", preview.edges, preview.hint);
-        assert!(!matches!(preview.edges, EdgeCheck::Cropped { .. }), "{name}: {:?}", preview.edges);
+        assert!(
+            !matches!(preview.edges, EdgeCheck::Cropped { .. }),
+            "{name}: {:?}",
+            preview.edges
+        );
         // At 55 degrees of yaw, or 4 m away on a 720p camera, the border is
         // barely a pixel wide, which the check declines to judge instead of guessing.
         if !matches!(name, "steep" | "far") {
@@ -426,8 +656,17 @@ fn finish_measured_drops_the_declared_size_without_the_camera() {
     let scene = SyntheticScene::default();
     // A diagonal 40% too small: the declared size disagrees with the depth
     // measurement, which is what the review offers to override.
-    let wrong = KnownSize::Diagonal { inches: scene.truth().diagonal_in() * 0.6 };
-    let mut session = open(&scene, &CaptureSettings::default(), SessionOptions { known_size: Some(wrong), ..SessionOptions::default() });
+    let wrong = KnownSize::Diagonal {
+        inches: scene.truth().diagonal_in() * 0.6,
+    };
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions {
+            known_size: Some(wrong),
+            ..SessionOptions::default()
+        },
+    );
     session.preview().unwrap();
     session.measure_screen(&mut |_| {}).unwrap();
     session.preview_markers().unwrap();
@@ -441,7 +680,11 @@ fn finish_measured_drops_the_declared_size_without_the_camera() {
     assert_eq!(measured.review.size_source, SizeSource::Measured);
     assert!(measured.review.size_check.is_none());
     let truth = scene.truth();
-    assert!(size_error(&measured, &truth) < 0.01, "size error {}", size_error(&measured, &truth));
+    assert!(
+        size_error(&measured, &truth) < 0.01,
+        "size error {}",
+        size_error(&measured, &truth)
+    );
     // Markers follow the new fit: they sit at their layout positions on the real screen.
     assert_matches_truth(&measured, &truth, &scene.camera_to_aligned(), 0.012);
 }
@@ -449,10 +692,17 @@ fn finish_measured_drops_the_declared_size_without_the_camera() {
 #[test]
 fn finish_measured_without_a_declared_size_is_finish() {
     let scene = SyntheticScene::default();
-    let mut session = open(&scene, &CaptureSettings::default(), SessionOptions::default());
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
     session.preview().unwrap();
     session.measure_screen(&mut |_| {}).unwrap();
     session.preview_markers().unwrap();
     session.measure_markers(&mut |_| {}).unwrap();
-    assert_eq!(session.finish().unwrap().calibration.homography, session.finish_measured().unwrap().calibration.homography);
+    assert_eq!(
+        session.finish().unwrap().calibration.homography,
+        session.finish_measured().unwrap().calibration.homography
+    );
 }

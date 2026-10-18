@@ -7,9 +7,8 @@
 
 use std::fmt;
 
-use parking_lot::Mutex;
-
 use odyssey_hub_common::config::DisplayKind;
+use parking_lot::Mutex;
 
 use crate::views::calibrate::automatic::settings::{COLOR_EXPOSURE_RANGE_US, DIAGONAL_RANGE_IN};
 
@@ -97,7 +96,9 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
     while let Some(arg) = args.next() {
         // `--flag=value` and `--flag value` mean the same.
         let (flag, inline) = match arg.split_once('=') {
-            Some((flag, value)) if flag.starts_with("--") => (flag.to_owned(), Some(value.to_owned())),
+            Some((flag, value)) if flag.starts_with("--") => {
+                (flag.to_owned(), Some(value.to_owned()))
+            }
             _ => (arg, None),
         };
         let mut value = |flag: &str| -> Result<String, CliError> {
@@ -118,7 +119,11 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                 let v = value("--monitor")?;
                 match v.parse::<usize>() {
                     Ok(n) if n >= 1 => out.monitor = Some(n),
-                    _ => return err(format!("--monitor must be a display number starting at 1, got '{v}'")),
+                    _ => {
+                        return err(format!(
+                            "--monitor must be a display number starting at 1, got '{v}'"
+                        ));
+                    }
                 }
             }
             "--screen-id" => {
@@ -129,7 +134,7 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                         return err(format!(
                             "--screen-id must be between 0 and {}, got '{v}'",
                             odyssey_common::MAX_SCREEN_ID
-                        ))
+                        ));
                     }
                 }
             }
@@ -144,11 +149,13 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
             "--demo-overscan" => {
                 let v = value("--demo-overscan")?;
                 match v.parse::<f64>() {
-                    Ok(p) if (0.0..=DEMO_OVERSCAN_MAX_PERCENT).contains(&p) => out.demo_overscan_percent = Some(p),
+                    Ok(p) if (0.0..=DEMO_OVERSCAN_MAX_PERCENT).contains(&p) => {
+                        out.demo_overscan_percent = Some(p)
+                    }
                     _ => {
                         return err(format!(
                             "--demo-overscan must be a percentage between 0 and {DEMO_OVERSCAN_MAX_PERCENT}, got '{v}'"
-                        ))
+                        ));
                     }
                 }
             }
@@ -168,20 +175,22 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                             "--diagonal must be between {} and {} inches, got '{v}'",
                             DIAGONAL_RANGE_IN.start(),
                             DIAGONAL_RANGE_IN.end()
-                        ))
+                        ));
                     }
                 }
             }
             "--rgb-exposure" => {
                 let v = value("--rgb-exposure")?;
                 match v.parse::<u32>() {
-                    Ok(us) if COLOR_EXPOSURE_RANGE_US.contains(&us) => out.rgb_exposure_us = Some(us),
+                    Ok(us) if COLOR_EXPOSURE_RANGE_US.contains(&us) => {
+                        out.rgb_exposure_us = Some(us)
+                    }
                     _ => {
                         return err(format!(
                             "--rgb-exposure must be between {} and {} microseconds, got '{v}'",
                             COLOR_EXPOSURE_RANGE_US.start(),
                             COLOR_EXPOSURE_RANGE_US.end()
-                        ))
+                        ));
                     }
                 }
             }
@@ -243,8 +252,21 @@ mod tests {
     #[test]
     fn every_option_is_read() {
         let a = calibrate(&[
-            "--monitor", "2", "--screen-id", "3", "--kind", "projector", "--camera", "CP1234", "--diagonal", "55.5",
-            "--rgb-exposure", "2000", "--demo", "--demo-overscan", "3.5",
+            "--monitor",
+            "2",
+            "--screen-id",
+            "3",
+            "--kind",
+            "projector",
+            "--camera",
+            "CP1234",
+            "--diagonal",
+            "55.5",
+            "--rgb-exposure",
+            "2000",
+            "--demo",
+            "--demo-overscan",
+            "3.5",
         ]);
         assert_eq!(
             a,
@@ -271,9 +293,24 @@ mod tests {
 
     #[test]
     fn unknown_input_is_an_error_not_ignored() {
-        assert!(run(&["frobnicate"]).unwrap_err().to_string().contains("unknown command"));
-        assert!(run(&["calibrate", "--bogus"]).unwrap_err().to_string().contains("--bogus"));
-        assert!(run(&["calibrate", "stray"]).unwrap_err().to_string().contains("stray"));
+        assert!(
+            run(&["frobnicate"])
+                .unwrap_err()
+                .to_string()
+                .contains("unknown command")
+        );
+        assert!(
+            run(&["calibrate", "--bogus"])
+                .unwrap_err()
+                .to_string()
+                .contains("--bogus")
+        );
+        assert!(
+            run(&["calibrate", "stray"])
+                .unwrap_err()
+                .to_string()
+                .contains("stray")
+        );
         assert!(run(&["calibrate", "--demo=1"]).is_err());
     }
 
@@ -316,14 +353,25 @@ mod tests {
     #[test]
     fn kind_is_flat_or_projector() {
         assert_eq!(calibrate(&["--kind", "flat"]).kind, Some(DisplayKind::Flat));
-        assert_eq!(calibrate(&["--kind=projector"]).kind, Some(DisplayKind::Projector));
+        assert_eq!(
+            calibrate(&["--kind=projector"]).kind,
+            Some(DisplayKind::Projector)
+        );
         assert_eq!(calibrate(&[]).kind, None);
     }
 
     #[test]
     fn demo_overscan_needs_the_demo_and_is_documented() {
-        assert_eq!(calibrate(&["--demo", "--demo-overscan", "3"]).demo_overscan_percent, Some(3.0));
-        assert!(run(&["calibrate", "--demo-overscan", "3"]).unwrap_err().to_string().contains("--demo"));
+        assert_eq!(
+            calibrate(&["--demo", "--demo-overscan", "3"]).demo_overscan_percent,
+            Some(3.0)
+        );
+        assert!(
+            run(&["calibrate", "--demo-overscan", "3"])
+                .unwrap_err()
+                .to_string()
+                .contains("--demo")
+        );
         for flag in ["--kind", "--demo-overscan", "--diagonal"] {
             assert!(USAGE.contains(flag), "{flag} missing from --help");
         }

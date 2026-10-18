@@ -9,9 +9,11 @@ use odyssey_autocalib::session::MarkerHint;
 
 use super::hints::marker_hint;
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
-use super::ui::{focus_primary, Details, Fact, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
-use super::wizard::{Wizard, MARKERS_AUTO_MEASURE};
-use crate::components::wizard::{OverlayImage, Slider, StatusBanner, Icon, Tone};
+use super::ui::{
+    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+};
+use super::wizard::{MARKERS_AUTO_MEASURE, Wizard};
+use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
 
 /// How long the marker brightness slider rests before the camera follows it.
 const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(200);

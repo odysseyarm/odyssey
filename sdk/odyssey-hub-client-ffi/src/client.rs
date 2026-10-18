@@ -1,10 +1,10 @@
-use futures_util::stream::StreamExt;
-use odyssey_hub_client::client::Client;
 use std::ffi::c_void;
 
-use crate::Handle;
-
+use futures_util::stream::StreamExt;
+use odyssey_hub_client::client::Client;
 use odyssey_hub_common as common;
+
+use crate::Handle;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

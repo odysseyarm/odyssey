@@ -5,9 +5,9 @@
 //! analytic answers.
 
 use nalgebra::{DMatrix, Matrix3, Point2, SymmetricEigen, Vector2, Vector3};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::index::sample;
-use rand::SeedableRng;
 
 use crate::camera::{Extrinsics, Intrinsics};
 
@@ -46,7 +46,10 @@ pub fn project_pinhole(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64
     if p.z <= 1e-9 {
         return None;
     }
-    Some(Point2::new(p.x / p.z * intr.fx + intr.cx, p.y / p.z * intr.fy + intr.cy))
+    Some(Point2::new(
+        p.x / p.z * intr.fx + intr.cx,
+        p.y / p.z * intr.fy + intr.cy,
+    ))
 }
 
 const UNDISTORT_ITERATIONS: usize = 40;
@@ -70,7 +73,8 @@ pub fn undistort(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector2<f64>> 
         let r2 = x * x + y * y;
         let r4 = r2 * r2;
         let r6 = r4 * r2;
-        let inverse_radial = (1.0 + k4 * r2 + k5 * r4 + k6 * r6) / (1.0 + k1 * r2 + k2 * r4 + k3 * r6);
+        let inverse_radial =
+            (1.0 + k4 * r2 + k5 * r4 + k6 * r6) / (1.0 + k1 * r2 + k2 * r4 + k3 * r6);
         let dx = p1 * 2.0 * x * y + p2 * (r2 + 2.0 * x * x);
         let dy = p2 * 2.0 * x * y + p1 * (r2 + 2.0 * y * y);
         x = (xd - dx) * inverse_radial;
@@ -117,7 +121,10 @@ pub struct Plane {
 
 impl Plane {
     pub fn new(point: Vector3<f64>, normal: Vector3<f64>) -> Self {
-        Self { point, normal: normal.normalize() }
+        Self {
+            point,
+            normal: normal.normalize(),
+        }
     }
 
     /// Orthogonal distance, positive on the side the normal points to.
@@ -128,7 +135,11 @@ impl Plane {
     /// Where the ray `origin + t * direction` meets the plane, for `t > 0`.
     /// Closed form: the depth along a ray is linear in `t`, so no search is
     /// needed.
-    pub fn intersect_ray(&self, origin: &Vector3<f64>, direction: &Vector3<f64>) -> Option<Vector3<f64>> {
+    pub fn intersect_ray(
+        &self,
+        origin: &Vector3<f64>,
+        direction: &Vector3<f64>,
+    ) -> Option<Vector3<f64>> {
         let denom = self.normal.dot(direction);
         if denom.abs() < 1e-9 {
             return None;
@@ -139,7 +150,10 @@ impl Plane {
 
     /// The same plane expressed in another frame.
     pub fn transformed(&self, to: &Extrinsics) -> Plane {
-        Plane { point: to.apply(&self.point), normal: to.rotation * self.normal }
+        Plane {
+            point: to.apply(&self.point),
+            normal: to.rotation * self.normal,
+        }
     }
 }
 
@@ -187,7 +201,14 @@ pub struct RansacParams {
 
 impl Default for RansacParams {
     fn default() -> Self {
-        Self { sample_size: 30, threshold: 0.01, max_trials: 5000, confidence: 0.99, score_points: 4000, seed: 0x0D155EA }
+        Self {
+            sample_size: 30,
+            threshold: 0.01,
+            max_trials: 5000,
+            confidence: 0.99,
+            score_points: 4000,
+            seed: 0x0D155EA,
+        }
     }
 }
 
@@ -214,7 +235,11 @@ fn inlier_stats(plane: &Plane, points: &[Vector3<f64>], threshold: f64) -> (Vec<
             max = max.max(e);
         }
     }
-    let rmse = if inliers.is_empty() { 0.0 } else { (sum_sq / inliers.len() as f64).sqrt() };
+    let rmse = if inliers.is_empty() {
+        0.0
+    } else {
+        (sum_sq / inliers.len() as f64).sqrt()
+    };
     (inliers, rmse, max)
 }
 
@@ -233,7 +258,10 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
     let mut rng = StdRng::seed_from_u64(params.seed);
 
     let score_set: Vec<Vector3<f64>> = if n > params.score_points {
-        sample(&mut rng, n, params.score_points).into_iter().map(|i| points[i]).collect()
+        sample(&mut rng, n, params.score_points)
+            .into_iter()
+            .map(|i| points[i])
+            .collect()
     } else {
         points.to_vec()
     };
@@ -245,9 +273,18 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
     while trial < trials_needed.min(params.max_trials) {
         trial += 1;
         sample_points.clear();
-        sample_points.extend(sample(&mut rng, n, params.sample_size).into_iter().map(|i| points[i]));
-        let Some(plane) = fit_plane(&sample_points) else { continue };
-        let support = score_set.iter().filter(|p| plane.signed_distance(p).abs() <= params.threshold).count();
+        sample_points.extend(
+            sample(&mut rng, n, params.sample_size)
+                .into_iter()
+                .map(|i| points[i]),
+        );
+        let Some(plane) = fit_plane(&sample_points) else {
+            continue;
+        };
+        let support = score_set
+            .iter()
+            .filter(|p| plane.signed_distance(p).abs() <= params.threshold)
+            .count();
         if best.as_ref().is_none_or(|(_, s)| support > *s) {
             best = Some((plane, support));
             let w = support as f64 / score_set.len() as f64;
@@ -257,7 +294,9 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
             } else if all_good <= 0.0 {
                 params.max_trials
             } else {
-                ((1.0 - params.confidence).ln() / (-all_good).ln_1p()).ceil().max(1.0) as usize
+                ((1.0 - params.confidence).ln() / (-all_good).ln_1p())
+                    .ceil()
+                    .max(1.0) as usize
             };
         }
     }
@@ -278,7 +317,12 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
     if plane.normal.dot(&plane.point) < 0.0 {
         plane.normal = -plane.normal;
     }
-    Some(PlaneFit { plane, rmse, max_error, inliers })
+    Some(PlaneFit {
+        plane,
+        rmse,
+        max_error,
+        inliers,
+    })
 }
 
 /// Applies a 3x3 homography to a point.
@@ -296,7 +340,17 @@ fn normalization(points: &[Point2<f64>]) -> Option<Matrix3<f64>> {
         return None;
     }
     let s = std::f64::consts::SQRT_2 / mean_dist;
-    Some(Matrix3::new(s, 0.0, -s * c.x, 0.0, s, -s * c.y, 0.0, 0.0, 1.0))
+    Some(Matrix3::new(
+        s,
+        0.0,
+        -s * c.x,
+        0.0,
+        s,
+        -s * c.y,
+        0.0,
+        0.0,
+        1.0,
+    ))
 }
 
 /// Normalized direct linear transform: the homography `H` with `dst ~ H src`
@@ -327,14 +381,22 @@ pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix
     }
     let svd = a.svd(false, true);
     let v_t = svd.v_t?;
-    let (min_idx, _) = svd.singular_values.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1))?;
+    let (min_idx, _) = svd
+        .singular_values
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.total_cmp(b.1))?;
     let h = v_t.row(min_idx);
     let hn = Matrix3::new(h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8]);
     let h = td.try_inverse()? * hn * ts;
     if !h.iter().all(|v| v.is_finite()) {
         return None;
     }
-    let scale = if h[(2, 2)].abs() > 1e-12 { h[(2, 2)] } else { h.norm() };
+    let scale = if h[(2, 2)].abs() > 1e-12 {
+        h[(2, 2)]
+    } else {
+        h.norm()
+    };
     Some(h / scale)
 }
 
@@ -386,7 +448,11 @@ pub fn ransac_homography(
     let mut trial = 0;
     while trial < trials_needed.min(max_trials) {
         trial += 1;
-        let idx = if n == 4 { vec![0, 1, 2, 3] } else { sample(&mut rng, n, 4).into_vec() };
+        let idx = if n == 4 {
+            vec![0, 1, 2, 3]
+        } else {
+            sample(&mut rng, n, 4).into_vec()
+        };
         let s = [src[idx[0]], src[idx[1]], src[idx[2]], src[idx[3]]];
         let d = [dst[idx[0]], dst[idx[1]], dst[idx[2]], dst[idx[3]]];
         if !non_degenerate(&s) || !non_degenerate(&d) {
@@ -395,12 +461,22 @@ pub fn ransac_homography(
             }
             continue;
         }
-        let Some(h) = fit_homography(&s, &d) else { continue };
+        let Some(h) = fit_homography(&s, &d) else {
+            continue;
+        };
         let errors = transfer_errors(&h, src, dst);
-        let (count, sum) = errors.iter().filter(|e| **e <= threshold).fold((0usize, 0.0), |(c, s), e| (c + 1, s + e));
+        let (count, sum) = errors
+            .iter()
+            .filter(|e| **e <= threshold)
+            .fold((0usize, 0.0), |(c, s), e| (c + 1, s + e));
         if best.is_none_or(|(bc, bs)| count > bc || (count == bc && sum < bs)) {
             best = Some((count, sum));
-            best_inliers = errors.iter().enumerate().filter(|(_, e)| **e <= threshold).map(|(i, _)| i).collect();
+            best_inliers = errors
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| **e <= threshold)
+                .map(|(i, _)| i)
+                .collect();
             let w = count as f64 / n as f64;
             let all_good = w.powi(4);
             trials_needed = if all_good >= 1.0 - 1e-12 {
@@ -408,7 +484,9 @@ pub fn ransac_homography(
             } else if all_good <= 0.0 {
                 max_trials
             } else {
-                ((1.0 - 0.999f64).ln() / (-all_good).ln_1p()).ceil().max(1.0) as usize
+                ((1.0 - 0.999f64).ln() / (-all_good).ln_1p())
+                    .ceil()
+                    .max(1.0) as usize
             };
         }
         if n == 4 {
@@ -428,7 +506,12 @@ pub fn ransac_homography(
         }
         let h = refit(&inliers)?;
         let errors = transfer_errors(&h, src, dst);
-        inliers = errors.iter().enumerate().filter(|(_, e)| **e <= threshold).map(|(i, _)| i).collect();
+        inliers = errors
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| **e <= threshold)
+            .map(|(i, _)| i)
+            .collect();
     }
     if inliers.len() < 4 {
         return None;
@@ -436,13 +519,18 @@ pub fn ransac_homography(
     let h = refit(&inliers)?;
     let errors = transfer_errors(&h, src, dst);
     let sq: f64 = inliers.iter().map(|&i| errors[i] * errors[i]).sum();
-    Some(HomographyFit { h, rmse: (sq / inliers.len() as f64).sqrt(), inliers })
+    Some(HomographyFit {
+        h,
+        rmse: (sq / inliers.len() as f64).sqrt(),
+        inliers,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand::Rng;
+
+    use super::*;
 
     fn intrinsics() -> Intrinsics {
         Intrinsics {
@@ -460,7 +548,13 @@ mod tests {
     #[test]
     fn distortion_round_trips_across_the_image() {
         let intr = intrinsics();
-        for &(u, v) in &[(0.0, 0.0), (1279.0, 719.0), (640.0, 360.0), (10.5, 700.2), (1200.0, 30.0)] {
+        for &(u, v) in &[
+            (0.0, 0.0),
+            (1279.0, 719.0),
+            (640.0, 360.0),
+            (10.5, 700.2),
+            (1200.0, 30.0),
+        ] {
             let pixel = Point2::new(u, v);
             let ray = pixel_ray(&intr, pixel).unwrap();
             let back = project(&intr, &(ray * 2.5)).unwrap();
@@ -491,10 +585,17 @@ mod tests {
             points.push(truth.point + u * a + v * b + truth.normal * noise);
         }
         for _ in 0..200 {
-            points.push(Vector3::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0), rng.random_range(1.0..3.0)));
+            points.push(Vector3::new(
+                rng.random_range(-1.0..1.0),
+                rng.random_range(-1.0..1.0),
+                rng.random_range(1.0..3.0),
+            ));
         }
         let fit = ransac_plane(&points, &RansacParams::default()).unwrap();
-        assert!(fit.plane.normal.dot(&fit.plane.point) > 0.0, "normal points away from the camera");
+        assert!(
+            fit.plane.normal.dot(&fit.plane.point) > 0.0,
+            "normal points away from the camera"
+        );
         assert!(fit.plane.normal.dot(&truth.normal).abs() > 1.0 - 1e-5);
         assert!(fit.plane.signed_distance(&truth.point).abs() < 5e-4);
         assert!(fit.rmse < 0.0015, "rmse {}", fit.rmse);
@@ -508,8 +609,16 @@ mod tests {
         let hit = plane.intersect_ray(&Vector3::zeros(), &dir).unwrap();
         assert!(plane.signed_distance(&hit).abs() < 1e-12);
         assert!((hit.xy() / hit.z - dir.xy()).norm() < 1e-12);
-        assert!(plane.intersect_ray(&Vector3::zeros(), &Vector3::new(1.0, 0.0, 0.0)).is_none());
-        assert!(plane.intersect_ray(&Vector3::zeros(), &Vector3::new(0.0, 0.0, -1.0)).is_none());
+        assert!(
+            plane
+                .intersect_ray(&Vector3::zeros(), &Vector3::new(1.0, 0.0, 0.0))
+                .is_none()
+        );
+        assert!(
+            plane
+                .intersect_ray(&Vector3::zeros(), &Vector3::new(0.0, 0.0, -1.0))
+                .is_none()
+        );
     }
 
     fn truth_homography() -> Matrix3<f64> {
@@ -519,8 +628,13 @@ mod tests {
     #[test]
     fn dlt_recovers_exact_homography() {
         let h = truth_homography();
-        let src: Vec<_> = (0..6).flat_map(|i| (0..4).map(move |j| Point2::new(i as f64 * 0.2, j as f64 * 0.3))).collect();
-        let dst: Vec<_> = src.iter().map(|p| apply_homography(&h, *p).unwrap()).collect();
+        let src: Vec<_> = (0..6)
+            .flat_map(|i| (0..4).map(move |j| Point2::new(i as f64 * 0.2, j as f64 * 0.3)))
+            .collect();
+        let dst: Vec<_> = src
+            .iter()
+            .map(|p| apply_homography(&h, *p).unwrap())
+            .collect();
         let fit = fit_homography(&src, &dst).unwrap();
         for p in &src {
             let a = apply_homography(&h, *p).unwrap();
@@ -532,7 +646,12 @@ mod tests {
     #[test]
     fn dlt_with_four_points_matches_truth() {
         let h = truth_homography();
-        let src = [Point2::new(0.0, 0.0), Point2::new(1.0, 0.0), Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)];
+        let src = [
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(0.0, 1.0),
+        ];
         let dst = src.map(|p| apply_homography(&h, p).unwrap());
         let fit = fit_homography(&src, &dst).unwrap();
         let probe = Point2::new(0.37, 0.61);
@@ -566,7 +685,8 @@ mod tests {
         }
         assert_eq!(fit.inliers.len(), src.len() - bad.len());
         let probe = Point2::new(0.5, 0.5);
-        let err = (apply_homography(&fit.h, probe).unwrap() - apply_homography(&h, probe).unwrap()).norm();
+        let err = (apply_homography(&fit.h, probe).unwrap() - apply_homography(&h, probe).unwrap())
+            .norm();
         assert!(err < 0.2, "err {err}");
         assert!(fit.rmse < 0.15);
     }

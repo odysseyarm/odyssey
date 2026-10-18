@@ -4,42 +4,39 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use app_dirs2::{get_app_root, AppDataType};
-use odyssey_usb::device::GeneralSettings;
+use app_dirs2::{AppDataType, get_app_root};
 use iui::controls::{Area, FileTypeFilter, HorizontalBox};
 use iui::prelude::*;
 use leptos_reactive::{
-    create_effect, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalWith,
+    RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalWith, create_effect,
 };
-use parking_lot::Mutex;
-use tokio::task::AbortHandle;
-use tracing::{error, info, warn, Level};
-use tracing_subscriber::EnvFilter;
+use odyssey_common::ScreenCalibration;
+use odyssey_usb::device::GeneralSettings;
+use odyssey_vision_tool::consts::APP_INFO;
 use odyssey_vision_tool::mot_runner::MotRunner;
 use odyssey_vision_tool::run_canvas::RunCanvas;
 use odyssey_vision_tool::run_raw_canvas::RunRawCanvas;
 use odyssey_vision_tool::test_canvas::TestCanvas;
-use odyssey_vision_tool::{config_window, plots_window, TestFrame};
-use odyssey_vision_tool::{CloneButShorter, MotState};
+use odyssey_vision_tool::{CloneButShorter, MotState, TestFrame, config_window, plots_window};
+use parking_lot::Mutex;
+use tokio::task::AbortHandle;
+use tracing::{Level, error, info, warn};
+use tracing_subscriber::EnvFilter;
 #[cfg(feature = "bevy")]
 use {
     bevy::{
+        DefaultPlugins,
         app::{App, Startup, Update},
         ecs::system::{Commands, Query},
         prelude::*,
         window::{PresentMode, WindowCloseRequested, WindowPlugin, WindowTheme},
         winit::WinitPlugin,
-        DefaultPlugins,
     },
     bevy_atmosphere::plugin::{AtmosphereCamera, AtmospherePlugin},
     bevy_infinite_grid::{
         GridShadowCamera, InfiniteGridBundle, InfiniteGridPlugin, InfiniteGridSettings,
     },
 };
-
-use odyssey_vision_tool::consts::APP_INFO;
-
-use odyssey_common::ScreenCalibration;
 
 // Things to avoid doing
 // * Accessing signals outside of the main thread
@@ -521,7 +518,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |_| {
             let view = view.c();
             let new_device = device_rs.get();
-            eprintln!(">>> Device changed: {}", if new_device.is_some() { "Some(device)" } else { "None" });
+            eprintln!(
+                ">>> Device changed: {}",
+                if new_device.is_some() {
+                    "Some(device)"
+                } else {
+                    "None"
+                }
+            );
             view.lock().device = new_device;
         }
     });

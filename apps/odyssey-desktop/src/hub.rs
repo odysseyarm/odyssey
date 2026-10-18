@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use dioxus::{logger::tracing, prelude::*};
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use futures::StreamExt;
 use odyssey_hub_client::client::{Client, DongleInfo};
 use odyssey_hub_common::device::Device;
@@ -223,7 +224,9 @@ impl HubContext {
                 {
                     tracing::info!(
                         "BatteryEvent received for {:02x?}: {}% charging={}",
-                        device.uuid, battery.percent, battery.charging
+                        device.uuid,
+                        battery.percent,
+                        battery.charging
                     );
                     self.battery_states
                         .write()

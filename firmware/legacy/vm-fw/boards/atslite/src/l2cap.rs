@@ -1,12 +1,13 @@
 #![allow(static_mut_refs)]
 // Real L2CAP implementation for ATSlite (wraps BLE stack)
 
-use common::odyssey_protocol::Packet;
 use core::future::Future;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use common::odyssey_protocol::Packet;
+
 // Re-export the BLE L2CAP types
-pub use crate::ble::l2cap_bridge::{get_or_init, L2capChannels as Inner};
+pub use crate::ble::l2cap_bridge::{L2capChannels as Inner, get_or_init};
 use crate::ble::l2cap_bridge::{
     L2capControlRxChannel, L2capControlTxChannel, L2capDataRxChannel, L2capDataTxChannel,
 };

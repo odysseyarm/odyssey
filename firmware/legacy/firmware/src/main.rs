@@ -7,26 +7,25 @@ mod pinout;
 const PROTOCOL_VERSION: u32 = 1;
 
 use defmt::info;
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3};
-
+use embassy_nrf::config::Config;
 #[cfg(feature = "_nrf52840")]
 use embassy_nrf::config::Reg0Voltage;
-
-use embassy_nrf::{
-    config::Config, peripherals, spim::{self, Spim}, spis::{self, Spis}, usb::{
-        self,
-        vbus_detect::HardwareVbusDetect,
-        Driver,
-    }, Peripheral
-};
-use embassy_sync::{blocking_mutex::raw::{NoopRawMutex, RawMutex}, channel::{Channel, Receiver, Sender}};
-use embassy_usb::{
-    class::cdc_acm::{CdcAcmClass, State}, driver::EndpointError, Builder, UsbDevice
-};
+use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::spis::{self, Spis};
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
+use embassy_nrf::usb::{self, Driver};
+use embassy_nrf::{Peripheral, peripherals};
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::driver::EndpointError;
+use embassy_usb::{Builder, UsbDevice};
 use paj7025_nrf::Paj7025;
+use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
-use {defmt_rtt as _, panic_probe as _};
 
 #[link_section = ".ramtextload"]
 #[cortex_m_rt::pre_init]
@@ -47,14 +46,12 @@ unsafe fn init_ramtext() {
 
     #[cfg(feature = "mcuboot")]
     core::arch::asm!(
-        "cpsie i",  // Clear primask
-
+        "cpsie i", // Clear primask
         // Clear SHPR3
         "ldr r0, =0xE000ED20",
         "ldr r1, =0x0",
         "str r1, [r0]",
         "str r1, [r0, #4]", // Clear SHCSR
-
         // Clear SCR
         "ldr r0, =0xE000ED10",
         "str r1, [r0]",
@@ -83,7 +80,8 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 });
 
 const NUM_BUFFERS: usize = 2;
-static SHARED_BUFFERS: ConstStaticCell<[[u8; 98*98 + 98*3]; NUM_BUFFERS]> = ConstStaticCell::new([[0; 98*98+98*3]; NUM_BUFFERS]);
+static SHARED_BUFFERS: ConstStaticCell<[[u8; 98 * 98 + 98 * 3]; NUM_BUFFERS]> =
+    ConstStaticCell::new([[0; 98 * 98 + 98 * 3]; NUM_BUFFERS]);
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -105,9 +103,17 @@ async fn main(spawner: Spawner) {
 
     // log_stuff();
 
-    #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
+    #[cfg(any(
+        feature = "atslite-1-1",
+        feature = "atslite-2-2",
+        feature = "atslite-4-1"
+    ))]
     let nf_v_flip = false;
-    #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2", feature="atslite-4-1"))]
+    #[cfg(any(
+        feature = "atslite-1-1",
+        feature = "atslite-2-2",
+        feature = "atslite-4-1"
+    ))]
     let nf_h_flip = true;
 
     #[cfg(feature = "vm2")]
@@ -127,7 +133,8 @@ async fn main(spawner: Spawner) {
         &mut pinout!(p.wf_cs),
         &mut pinout!(p.wf_fod),
         !nf_v_flip,
-    ).await;
+    )
+    .await;
     let mut near = Paj7025::new(
         Spim::new(
             &mut pinout!(p.nf_spim),
@@ -140,7 +147,8 @@ async fn main(spawner: Spawner) {
         &mut pinout!(p.nf_cs),
         &mut pinout!(p.nf_fod),
         nf_v_flip,
-    ).await;
+    )
+    .await;
 
     wide.set_gain_1(0).await;
     wide.set_gain_2(0).await;
@@ -156,7 +164,8 @@ async fn main(spawner: Spawner) {
     // near.set_exposure_time(2048).await;
     near.set_frame_period(524288).await;
     // near.set_exposure_time(13000).await;
-    near.set_exposure_time_ns_image_mode(((4_000_000 as f32)*0.4) as u32).await;
+    near.set_exposure_time_ns_image_mode(((4_000_000 as f32) * 0.4) as u32)
+        .await;
     near.set_bank1_sync_updated(1).await;
     near.set_brightness_threshold(100).await;
     near.set_noise_threshold(15).await;
@@ -187,7 +196,7 @@ async fn main(spawner: Spawner) {
         } else {
             // only read from wide because i'm lazy
             wide.trigger_fod().await;
-            embassy_time::Timer::after_millis(1000/200).await;
+            embassy_time::Timer::after_millis(1000 / 200).await;
             wide.set_bank(0x05).await;
             wide.read_register_array(0x00, feature_buf).await;
             write_serial(&mut class, feature_buf).await;
@@ -223,8 +232,20 @@ async fn main(spawner: Spawner) {
     let [b0, b1] = shared_buffers;
     nf_free_buffers.try_send(b0).unwrap();
     wf_free_buffers.try_send(b1).unwrap();
-    let wide_loop = paj7025_image_loop(0, wide_spis, wf_free_buffers.receiver(), image_buffers.sender(), !nf_h_flip);
-    let near_loop = paj7025_image_loop(1, near_spis, nf_free_buffers.receiver(), image_buffers.sender(), nf_h_flip);
+    let wide_loop = paj7025_image_loop(
+        0,
+        wide_spis,
+        wf_free_buffers.receiver(),
+        image_buffers.sender(),
+        !nf_h_flip,
+    );
+    let near_loop = paj7025_image_loop(
+        1,
+        near_spis,
+        nf_free_buffers.receiver(),
+        image_buffers.sender(),
+        nf_h_flip,
+    );
     let buffer_mgmt_loop = async {
         loop {
             match cmd {
@@ -234,7 +255,7 @@ async fn main(spawner: Spawner) {
                     } else {
                         image_buffers.receive().await
                     };
-                    let id = buf[buf.len()-3];
+                    let id = buf[buf.len() - 3];
                     write_serial(&mut class, buf).await;
                     if id == 0 {
                         wf_free_buffers.try_send(buf).unwrap();
@@ -261,11 +282,7 @@ async fn main(spawner: Spawner) {
     // #[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2"))]
     // spawner.must_spawn(power_button_loop(pinout!(p.pwr_btn).into()));
 
-    join3(
-        near_loop,
-        wide_loop,
-        buffer_mgmt_loop,
-    ).await;
+    join3(near_loop, wide_loop, buffer_mgmt_loop).await;
 }
 
 // #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2"))]
@@ -300,11 +317,10 @@ fn shiftr(d: &mut [u8], n: u8) {
 async fn paj7025_image_loop<'b, T, M, const N: usize, const O: usize>(
     id: u8,
     mut spis: Spis<'_, T>,
-    free_buffers: Receiver<'_, M, &'b mut [u8; 98*98 + 98*3], N>,
-    image_buffers: Sender<'_, M, &'b mut [u8; 98*98 + 98*3], O>,
+    free_buffers: Receiver<'_, M, &'b mut [u8; 98 * 98 + 98 * 3], N>,
+    image_buffers: Sender<'_, M, &'b mut [u8; 98 * 98 + 98 * 3], O>,
     h_flip: bool,
-)
-where
+) where
     T: spis::Instance,
     M: RawMutex,
 {
@@ -326,7 +342,10 @@ where
                     buffer.rotate_right(9897 - len);
                     buffer[..9897 - len].fill(0);
                 }
-                for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b].iter().enumerate() {
+                for (i, &byte) in [0x2d, 0x5a, 0xb4, 0x69, 0xd2, 0xa5, 0x4b]
+                    .iter()
+                    .enumerate()
+                {
                     if buffer[buffer.len() - 6] == byte {
                         shiftr(buffer, i as u8 + 1);
                     }
@@ -334,20 +353,23 @@ where
             }
 
             // put the len bytes at the end because there is nothing there that we care about.
-            buffer[98*98 + 98*3 - 3] = id;
-            buffer[98*98 + 98*3 - 2] = len_bytes[0];
-            buffer[98*98 + 98*3 - 1] = len_bytes[1];
+            buffer[98 * 98 + 98 * 3 - 3] = id;
+            buffer[98 * 98 + 98 * 3 - 2] = len_bytes[0];
+            buffer[98 * 98 + 98 * 3 - 1] = len_bytes[1];
         }
         if h_flip {
             for i in 0..98 {
-                buffer[i*98..(i+1)*98].reverse();
+                buffer[i * 98..(i + 1) * 98].reverse();
             }
         }
         image_buffers.try_send(buffer).unwrap();
     }
 }
 
-async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(class: &mut CdcAcmClass<'d, D>, data: &[u8]) {
+async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
+    class: &mut CdcAcmClass<'d, D>,
+    data: &[u8],
+) {
     let max_packet_size = usize::from(class.max_packet_size());
     for chunk in data.chunks(max_packet_size) {
         class.write_packet(chunk).await.unwrap();
@@ -357,29 +379,39 @@ async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(class: &mut CdcAcm
     }
 }
 
-async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(class: &mut CdcAcmClass<'d, D>) -> u8 {
+async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
+    class: &mut CdcAcmClass<'d, D>,
+) -> u8 {
     loop {
         let mut buf = [0; 64];
         'a: {
-            let Ok(_n) = class.read_packet(&mut buf).await else { break 'a };
+            let Ok(_n) = class.read_packet(&mut buf).await else {
+                break 'a;
+            };
             return buf[0];
         }
     }
 }
 
 #[embassy_executor::task]
-async fn run_usb(mut device: UsbDevice<'static, embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>>) -> ! {
+async fn run_usb(
+    mut device: UsbDevice<
+        'static,
+        embassy_nrf::usb::Driver<'static, embassy_nrf::peripherals::USBD, HardwareVbusDetect>,
+    >,
+) -> ! {
     device.run().await
 }
 
-type StaticCdcAcmClass = CdcAcmClass<'static, Driver<'static, peripherals::USBD, HardwareVbusDetect>>;
-type StaticUsbDevice = UsbDevice<'static, usb::Driver<'static, peripherals::USBD, HardwareVbusDetect>>;
+type StaticCdcAcmClass =
+    CdcAcmClass<'static, Driver<'static, peripherals::USBD, HardwareVbusDetect>>;
+type StaticUsbDevice =
+    UsbDevice<'static, usb::Driver<'static, peripherals::USBD, HardwareVbusDetect>>;
 
 /// Panics if called more than once.
-fn usb_device(p: impl Peripheral<P = peripherals::USBD> + 'static) -> (
-    StaticCdcAcmClass,
-    StaticUsbDevice,
-) {
+fn usb_device(
+    p: impl Peripheral<P = peripherals::USBD> + 'static,
+) -> (StaticCdcAcmClass, StaticUsbDevice) {
     // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 

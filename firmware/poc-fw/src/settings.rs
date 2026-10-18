@@ -15,8 +15,7 @@ mod settings_region {
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use bytemuck::checked;
-use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit, bytes_of, bytes_of_mut};
+use bytemuck::{AnyBitPattern, CheckedBitPattern, NoUninit, bytes_of, bytes_of_mut, checked};
 use defmt::Format;
 use embassy_nrf::nvmc::PAGE_SIZE;
 use embedded_storage::nor_flash::NorFlash;

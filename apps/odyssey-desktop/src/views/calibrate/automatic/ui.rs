@@ -12,13 +12,20 @@ pub const PRIMARY_ID: &str = "primary-action";
 
 /// Moves keyboard focus to the main button.
 pub fn focus_primary() {
-    let _ = document::eval(&format!("document.getElementById('{PRIMARY_ID}')?.focus();"));
+    let _ = document::eval(&format!(
+        "document.getElementById('{PRIMARY_ID}')?.focus();"
+    ));
 }
 
 /// One step's page: a headline, one line of instruction, the content and a
 /// footer row of buttons.
 #[component]
-pub fn StepPage(title: String, subtitle: Option<String>, children: Element, footer: Element) -> Element {
+pub fn StepPage(
+    title: String,
+    subtitle: Option<String>,
+    children: Element,
+    footer: Element,
+) -> Element {
     rsx! {
         div {
             class: "flex flex-col gap-5",

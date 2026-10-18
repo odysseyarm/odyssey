@@ -14,22 +14,22 @@ mod usb;
 
 use core::cell::RefCell;
 
+use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_nrf::{
-    gpio::{Input, Level, Output, OutputDrive, Pull},
-    nvmc::Nvmc,
-    peripherals,
-    spim::{self, Spim},
-    usb::vbus_detect::HardwareVbusDetect,
-};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::peripherals;
+use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::Delay;
 use embassy_usb::class::cdc_acm;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use imu::{Imu, ImuInterrupt};
-use pag7661qn::{Pag7661Qn, Pag7661QnInterrupt, mode, spi::Pag7661QnSpi};
+use pag7661qn::spi::Pag7661QnSpi;
+use pag7661qn::{Pag7661Qn, Pag7661QnInterrupt, mode};
+use panic_probe as _;
 use settings::{Settings, init_settings};
-use {defmt_rtt as _, panic_probe as _};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
     SERIAL1 => spim::InterruptHandler<peripherals::SERIAL1>;
@@ -142,8 +142,7 @@ type Pag<M> = Pag7661Qn<
     M,
 >;
 type PagInt = Pag7661QnInterrupt<Input<'static>>;
-type UsbDriver =
-    embassy_nrf::usb::Driver<'static, HardwareVbusDetect>;
+type UsbDriver = embassy_nrf::usb::Driver<'static, HardwareVbusDetect>;
 
 struct CommonContext {
     usb_snd: cdc_acm::Sender<'static, UsbDriver>,
