@@ -283,10 +283,14 @@ pub fn select_firmware<'a>(
 /// through. Without this the unit sits on the bridge with a stale net core,
 /// nothing newer is installable past its floor, and "run the update again" has
 /// nothing to offer.
+///
+/// `running_netcore` is `None` when the net core cannot be read, as for a unit
+/// connected only over Bluetooth: the release is read through USB control, so
+/// "unknown" must not count as "behind" and offer a repair nobody needs.
 pub fn is_worth_installing(
     entry: &FirmwareEntry,
     installed: [u16; 3],
-    running_netcore: u16,
+    running_netcore: Option<u16>,
 ) -> bool {
     let Some(version) = entry.version_parts() else {
         return false;
@@ -299,7 +303,8 @@ pub fn is_worth_installing(
             .files
             .get("net-core")
             .and_then(|file| file.release)
-            .is_some_and(|carried| carried > running_netcore)
+            .zip(running_netcore)
+            .is_some_and(|(carried, running)| carried > running)
 }
 
 /// Which GitHub release a firmware file is published under.
@@ -1535,7 +1540,7 @@ mod tests {
             else {
                 break;
             };
-            if !is_worth_installing(entry, app, running) {
+            if !is_worth_installing(entry, app, Some(running)) {
                 break;
             }
             app = entry.version_parts().unwrap();
@@ -1632,16 +1637,19 @@ mod tests {
         let bridge = &manifest.devices["atslite1"].firmwares[0];
         let plain = &manifest.devices["atslite1"].firmwares[1];
         // Net core behind what the entry carries: repair.
-        assert!(is_worth_installing(bridge, [0, 2, 1], 1));
-        assert!(is_worth_installing(bridge, [0, 2, 1], 0));
+        assert!(is_worth_installing(bridge, [0, 2, 1], Some(1)));
+        assert!(is_worth_installing(bridge, [0, 2, 1], Some(0)));
         // Net core already there or ahead: nothing to do.
-        assert!(!is_worth_installing(bridge, [0, 2, 1], 2));
-        assert!(!is_worth_installing(bridge, [0, 2, 1], 3));
+        assert!(!is_worth_installing(bridge, [0, 2, 1], Some(2)));
+        assert!(!is_worth_installing(bridge, [0, 2, 1], Some(3)));
+        // A net core that cannot be read (Bluetooth only) is not evidence of a failed copy.
+        assert!(!is_worth_installing(bridge, [0, 2, 1], None));
         // An entry that carries no net core never repairs anything.
-        assert!(!is_worth_installing(plain, [0, 2, 0], 0));
-        // Newer always counts; older never does.
-        assert!(is_worth_installing(bridge, [0, 2, 0], 2));
-        assert!(!is_worth_installing(plain, [0, 2, 1], 0));
+        assert!(!is_worth_installing(plain, [0, 2, 0], Some(0)));
+        // Newer always counts, readable net core or not; older never does.
+        assert!(is_worth_installing(bridge, [0, 2, 0], Some(2)));
+        assert!(is_worth_installing(bridge, [0, 2, 0], None));
+        assert!(!is_worth_installing(plain, [0, 2, 1], Some(0)));
     }
 
     #[test]
