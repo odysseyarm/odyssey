@@ -617,6 +617,23 @@ pub fn find_bootloader_by_uuid(
     }
 }
 
+/// Whether the device is running its bootloader right now.
+///
+/// Callers pass the application's product id. Only the DFU-mode interface
+/// protocol counts: an application also exposes a DFU interface, for the runtime
+/// descriptor it accepts a detach on, and a bootloader that predates the product
+/// id split enumerates under the application's id, so neither id nor class says
+/// which of the two is in charge.
+pub fn is_device_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
+    find_bootloader_by_uuid(uuid, vid, pid).is_ok_and(|info| {
+        info.interfaces().any(|i| {
+            i.class() == DFU_CLASS
+                && i.subclass() == DFU_SUBCLASS
+                && i.protocol() == DFU_PROTOCOL_DFU_MODE
+        })
+    })
+}
+
 /// Find the alt setting that writes the stage2 bootloader itself.
 pub fn find_bootloader_alt_for_device(
     uuid: &[u8; 6],
@@ -707,17 +724,20 @@ impl std::fmt::Display for NetCoreTooOld {
     }
 }
 
-/// Decide what the net core needs before the application is written.
+/// Decide whether the net core has to be written, and whether the update is
+/// allowed at all.
 ///
-/// `running` is what the device reports, `0` when it reports nothing: firmware
-/// that predates the property, or a net core that did not answer. Unknown is
-/// treated as the oldest possible, so it is replaced whenever a release is
-/// published and never counts towards `requires`.
+/// `running` is what the device last reported, `0` when it reported nothing:
+/// firmware that predates the property, a net core that did not answer, or a
+/// device that is in the bootloader. Unknown is treated as the oldest possible,
+/// so it is replaced whenever a release is published and never counts towards
+/// `requires`.
 ///
 /// Returns whether to flash `published`. As for the bootloader, replacing a
-/// superseded image and refusing below the floor are separate rules: the device
+/// superseded image and refusing below the floor are separate rules: the update
 /// is refused if neither the running nor the published net core reaches
-/// `requires`.
+/// `requires`. The floor is judged against what the update will install, not
+/// against what the device proves it ran afterwards; see [`plan_update_steps`].
 pub fn plan_netcore(
     running: u16,
     published: Option<u16>,
@@ -747,59 +767,47 @@ pub fn netcore_took_update(now: u16, published: u16) -> bool {
 /// One stage of a firmware update, in the order a host performs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateStep {
-    /// Write the published net core image through the bootloader and let the
-    /// device copy it into net flash.
+    /// Write the published net core image through the bootloader. The net core
+    /// bootloader copies it into net flash afterwards, while the device sits in
+    /// the stage2 bootloader awaiting an application.
     FlashNetCore,
     /// Read the net core release back from the running application and require
     /// it to equal the published one ([`netcore_took_update`]).
     VerifyNetCore,
-    /// The bootloader and application session: detach, optional bootloader
-    /// update, application image, and the check that the device returns.
+    /// The bootloader and application session: detach if needed, optional
+    /// bootloader update, application image, and the check that the device
+    /// returns.
     WriteApplication,
 }
 
 /// Order the stages of an update for one device.
 ///
-/// `can_report` is whether the application running now relays the net core
-/// release, which only applications speaking device protocol 0.1.5 or newer do.
-/// It decides where the read-back can happen, never whether the net core is
-/// updated first: the net core is always written before the application, so an
-/// application is never installed on top of a net core step that has not run.
+/// When the net core has to be written the order is always net core, then
+/// application, then read-back. The stage2 bootloader leaves the device in DFU
+/// mode after a net core update, so the only way on is writing the application,
+/// and nothing reports the net core while the device is in the bootloader: the
+/// read-back needs the new application running and relaying the release.
+/// Consequently `requires` is enforced against what the update installs and
+/// confirmed only after the application is written, and a copy that failed
+/// silently is detected only then. A device left in that state keeps its old
+/// net core and reports it (or nothing), and running the update again retries.
 ///
-/// - A running application that can report verifies the net core immediately,
-///   so a copy that failed stops the update before the application is touched.
-/// - One that cannot report leaves nothing on the device able to read the net
-///   core back, so the verification comes after the new application is
-///   installed and relays the release. On this path the `requires` floor is
-///   enforced after the application is written, and a silently failed copy is
-///   only detected then. That is the residual risk of updating from firmware
-///   that predates the property.
-///
-/// An unreported net core counts as release 0 either way, so it is replaced
-/// whenever a release is published and never satisfies `requires`.
+/// When nothing needs flashing the update is just the application. An
+/// unreported net core counts as release 0, so it is replaced whenever a release
+/// is published and never satisfies `requires`.
 pub fn plan_update_steps(
-    can_report: bool,
     running: u16,
     published: Option<u16>,
     requires: u16,
 ) -> Result<Vec<UpdateStep>, NetCoreTooOld> {
-    let running = if can_report { running } else { 0 };
     if !plan_netcore(running, published, requires)? {
         return Ok(vec![UpdateStep::WriteApplication]);
     }
-    Ok(if can_report {
-        vec![
-            UpdateStep::FlashNetCore,
-            UpdateStep::VerifyNetCore,
-            UpdateStep::WriteApplication,
-        ]
-    } else {
-        vec![
-            UpdateStep::FlashNetCore,
-            UpdateStep::WriteApplication,
-            UpdateStep::VerifyNetCore,
-        ]
-    })
+    Ok(vec![
+        UpdateStep::FlashNetCore,
+        UpdateStep::WriteApplication,
+        UpdateStep::VerifyNetCore,
+    ])
 }
 
 /// Open a DFU device and prepare it for flashing
@@ -1221,37 +1229,20 @@ mod tests {
     }
 
     #[test]
-    fn net_core_is_written_before_the_application_and_read_back_where_possible() {
+    fn net_core_is_written_before_the_application_and_read_back_after_it() {
         use UpdateStep::{FlashNetCore, VerifyNetCore, WriteApplication};
-        // An application that relays the release proves the net core first.
-        assert_eq!(
-            plan_update_steps(true, 1, Some(2), 0),
-            Ok(vec![FlashNetCore, VerifyNetCore, WriteApplication])
-        );
-        // A reporting application whose net core answered nothing is replaced too.
-        assert_eq!(
-            plan_update_steps(true, 0, Some(2), 0),
-            Ok(vec![FlashNetCore, VerifyNetCore, WriteApplication])
-        );
-        // One that cannot relay is verified only through the application it installs.
-        assert_eq!(
-            plan_update_steps(false, 0, Some(2), 0),
-            Ok(vec![FlashNetCore, WriteApplication, VerifyNetCore])
-        );
-        // A value the device could not have reported is not trusted.
-        assert_eq!(
-            plan_update_steps(false, 9, Some(2), 0),
-            Ok(vec![FlashNetCore, WriteApplication, VerifyNetCore])
-        );
+        let flash = Ok(vec![FlashNetCore, WriteApplication, VerifyNetCore]);
+        // Superseded, and unknown (0), both replace the net core.
+        assert_eq!(plan_update_steps(1, Some(2), 0), flash);
+        assert_eq!(plan_update_steps(0, Some(2), 0), flash);
     }
 
     #[test]
     fn current_or_unpublished_net_core_leaves_only_the_application() {
         use UpdateStep::WriteApplication;
-        assert_eq!(plan_update_steps(true, 2, Some(2), 0), Ok(vec![WriteApplication]));
-        assert_eq!(plan_update_steps(true, 3, Some(2), 0), Ok(vec![WriteApplication]));
-        assert_eq!(plan_update_steps(true, 0, None, 0), Ok(vec![WriteApplication]));
-        assert_eq!(plan_update_steps(false, 0, None, 0), Ok(vec![WriteApplication]));
+        assert_eq!(plan_update_steps(2, Some(2), 0), Ok(vec![WriteApplication]));
+        assert_eq!(plan_update_steps(3, Some(2), 0), Ok(vec![WriteApplication]));
+        assert_eq!(plan_update_steps(0, None, 0), Ok(vec![WriteApplication]));
     }
 
     #[test]
@@ -1259,25 +1250,15 @@ mod tests {
         use UpdateStep::{FlashNetCore, VerifyNetCore, WriteApplication};
         // Flashing the published release reaches the floor.
         assert_eq!(
-            plan_update_steps(true, 1, Some(3), 3),
-            Ok(vec![FlashNetCore, VerifyNetCore, WriteApplication])
+            plan_update_steps(1, Some(3), 3),
+            Ok(vec![FlashNetCore, WriteApplication, VerifyNetCore])
         );
         // Already at the floor, nothing published.
-        assert_eq!(plan_update_steps(true, 3, None, 3), Ok(vec![WriteApplication]));
+        assert_eq!(plan_update_steps(3, None, 3), Ok(vec![WriteApplication]));
         // Neither the device nor the release reaches it.
-        assert_eq!(
-            plan_update_steps(true, 1, Some(2), 3),
-            Err(NetCoreTooOld { required: 3 })
-        );
-        // Without a way to read the device, nothing but a publication can meet the floor.
-        assert_eq!(
-            plan_update_steps(false, 0, None, 1),
-            Err(NetCoreTooOld { required: 1 })
-        );
-        assert_eq!(
-            plan_update_steps(false, 7, None, 1),
-            Err(NetCoreTooOld { required: 1 })
-        );
+        assert_eq!(plan_update_steps(1, Some(2), 3), Err(NetCoreTooOld { required: 3 }));
+        // An unknown net core never meets a floor on its own.
+        assert_eq!(plan_update_steps(0, None, 1), Err(NetCoreTooOld { required: 1 }));
     }
 
     #[test]
