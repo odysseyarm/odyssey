@@ -8,7 +8,7 @@ use super::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use super::illustrations::{ProjectorIllustration, TvIllustration};
 use super::kind::DisplayKind;
 use super::screens::screen_label;
-use super::sdk_download::{DownloadSdk, DownloadedSdkRow};
+use super::sdk_download::{DownloadSdk, DownloadedSdkRow, SdkVersionNote};
 use super::settings::{DIAGONAL_RANGE_IN, SizeError, SizeField, WIDTH_RANGE_CM};
 use super::ui::{CARD, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage};
 use super::wizard::{CameraList, Wizard};
@@ -67,6 +67,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                 class: "{CARD} flex flex-col gap-3",
                 h2 { class: "text-xl font-semibold text-gray-900 dark:text-white", "3. Which camera?" }
                 CameraPicker { wizard }
+                SdkVersionNote { wizard }
                 DownloadedSdkRow { wizard }
             }
 

@@ -1,5 +1,6 @@
-//! The Orbbec camera SDK on disk: where the app looks for it, and in the online
-//! build how it gets there.
+//! The Orbbec camera SDK on disk: where the app looks for it, whether the copy it
+//! found is the one this build is tested with, and in the online build how a copy
+//! gets there.
 //!
 //! The SDK is optional. It is a native library the automatic calibration wizard
 //! loads at run time (see `odyssey_autocalib::orbbec::runtime`), and it can come
@@ -11,10 +12,17 @@
 //!
 //! The version, files and hashes both paths use are in `orbbec-sdk.json`, which
 //! the Windows release workflow reads too, so there is one place to bump.
+//!
+//! Once the library is loaded it stays mapped until the app exits, and Windows will
+//! not rename or delete files that are mapped. Replacing or removing a copy that is
+//! in use therefore moves it aside in one step, which either works or changes
+//! nothing, and otherwise leaves a marker for the next start to act on.
 
+use std::cmp::Ordering;
+use std::io;
 use std::path::{Path, PathBuf};
 
-use odyssey_autocalib::orbbec::LIBRARY_NAME;
+use odyssey_autocalib::orbbec::{LIBRARY_NAME, RuntimeStatus, SdkVersion};
 
 use crate::paths;
 
@@ -22,31 +30,34 @@ use crate::paths;
 /// app's data folder (download).
 pub const DIR_NAME: &str = "orbbec-sdk";
 
-/// The pinned SDK: only the download and its tests need to know it. The offline
-/// build finds the SDK by directory alone.
-#[cfg(any(feature = "sdk-download", test))]
+/// The SDK this build is tested with.
 mod pin_file {
     use std::sync::LazyLock;
 
+    use odyssey_autocalib::orbbec::SdkVersion;
     use serde::Deserialize;
 
-    /// The SDK this build is tested with.
     const PIN_JSON: &str = include_str!("../orbbec-sdk.json");
 
+    // Only the online build downloads, so only it reads the URLs, hashes and files.
     #[derive(Debug, Deserialize)]
     pub struct Pin {
         pub version: String,
+        #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
         pub eula: Remote,
+        #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
         pub windows_x64: Archive,
     }
 
     #[derive(Debug, Deserialize)]
+    #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
     pub struct Remote {
         pub url: String,
         pub sha256: String,
     }
 
     #[derive(Debug, Deserialize)]
+    #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
     pub struct Archive {
         pub url: String,
         pub sha256: String,
@@ -62,16 +73,32 @@ mod pin_file {
         &PIN
     }
 
+    /// The pinned version as the loader reports versions.
+    pub fn pinned_version() -> SdkVersion {
+        let mut parts = pin().version.split('.').map(|part| {
+            part.parse::<u32>()
+                .expect("the pinned version is major.minor.patch; a test parses it")
+        });
+        let mut next = || parts.next().expect("the pinned version has three parts");
+        SdkVersion {
+            major: next(),
+            minor: next(),
+            patch: next(),
+        }
+    }
+
     /// Where a file of the archive lands, relative to the SDK directory: its place
     /// in the archive without the leading `bin/`, so the library sits beside its
     /// `extensions/` folder, which is the layout the loader expects.
+    #[cfg_attr(not(any(feature = "sdk-download", test)), allow(dead_code))]
     pub fn install_path(archive_path: &str) -> &str {
         archive_path.strip_prefix("bin/").unwrap_or(archive_path)
     }
 }
 
 #[cfg(any(feature = "sdk-download", test))]
-pub use pin_file::{install_path, pin};
+pub use pin_file::install_path;
+pub use pin_file::{pin, pinned_version};
 
 /// The directory the offline installer puts the SDK in.
 fn bundled_dir() -> Option<PathBuf> {
@@ -123,28 +150,141 @@ pub fn delivery() -> Delivery {
     }
 }
 
+// ------------------------------------------------------------ Versions --
+
+/// What to tell the user about a working SDK that is not the version this build
+/// is tested with. A library the loader accepts (2.8 or newer) can still differ
+/// from the pin; it is only a warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Advisory {
+    /// Older than the pin. `replaceable` is set when the running copy is one this
+    /// app downloaded, which a new download replaces; a copy found elsewhere is
+    /// the user's to update.
+    Older {
+        found: SdkVersion,
+        pinned: SdkVersion,
+        replaceable: bool,
+    },
+    /// Newer than the pin. There is nothing to do about it but to know.
+    Newer {
+        found: SdkVersion,
+        pinned: SdkVersion,
+    },
+}
+
+/// Compares the running SDK with `pinned`. `managed_dir` is where this app keeps
+/// its downloads, to tell its own copy from one found elsewhere.
+pub fn advisory(
+    status: &RuntimeStatus,
+    managed_dir: Option<&Path>,
+    pinned: SdkVersion,
+) -> Option<Advisory> {
+    let RuntimeStatus::Available {
+        version,
+        library_path,
+    } = status
+    else {
+        return None;
+    };
+    match version.cmp(&pinned) {
+        Ordering::Equal => None,
+        Ordering::Greater => Some(Advisory::Newer {
+            found: *version,
+            pinned,
+        }),
+        Ordering::Less => Some(Advisory::Older {
+            found: *version,
+            pinned,
+            // A library the system loader found by name has no path, and is not ours.
+            replaceable: library_path
+                .as_deref()
+                .zip(managed_dir)
+                .is_some_and(|(library, dir)| library.starts_with(dir)),
+        }),
+    }
+}
+
+/// [`advisory`] for the SDK the app is running. Call it once cameras have been
+/// listed: the library is then loaded and cached, so this is cheap.
+pub fn current_advisory() -> Option<Advisory> {
+    let status = odyssey_autocalib::orbbec::runtime_status(search_dir().as_deref());
+    advisory(&status, managed_dir().as_deref(), pinned_version())
+}
+
+// ------------------------------------------------- Replace and remove --
+
 /// How a removal ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Removal {
     Removed,
-    /// Windows would not delete the library, because the running app has it
-    /// loaded for good (see `runtime.rs`); it is deleted the next time the app
-    /// starts, by [`finish_pending_removal`].
+    /// The copy is in use, so nothing was touched; it is deleted the next time the
+    /// app starts, by [`finish_pending`].
     AfterRestart,
 }
 
-fn removal_marker(dir: &Path) -> PathBuf {
-    dir.with_file_name(format!("{DIR_NAME}.remove"))
+/// Renames a directory; a parameter so tests can stand in for a mapped library
+/// that Windows will not let go of.
+type Rename<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
+
+fn rename_fs(from: &Path, to: &Path) -> io::Result<()> {
+    std::fs::rename(from, to)
 }
 
-fn remove_at(dir: &Path) -> std::io::Result<Removal> {
-    let marker = removal_marker(dir);
-    match std::fs::remove_dir_all(dir) {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&marker);
-            Ok(Removal::Removed)
+fn sibling(dir: &Path, suffix: &str) -> PathBuf {
+    dir.with_file_name(format!("{DIR_NAME}.{suffix}"))
+}
+
+/// Where a finished download waits when the copy it replaces is in use.
+fn staging_dir(dir: &Path) -> PathBuf {
+    sibling(dir, "new")
+}
+
+/// Written into a staged copy once it is complete, so a download interrupted
+/// halfway is never swapped in.
+const STAGED_OK: &str = ".staged";
+
+fn removal_marker(dir: &Path) -> PathBuf {
+    sibling(dir, "remove")
+}
+
+/// Moves `dir` out of the way. One rename: it works or nothing changes, unlike
+/// deleting files one by one, which could strip a running SDK of its extensions
+/// before reaching the library Windows will not delete.
+fn move_aside(dir: &Path, rename: Rename<'_>) -> io::Result<Option<PathBuf>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let old = sibling(dir, "old");
+    let _ = std::fs::remove_dir_all(&old);
+    rename(dir, &old)?;
+    Ok(Some(old))
+}
+
+/// Puts the finished copy in `staging` where `dest` is, keeping the old one if
+/// anything fails.
+pub(crate) fn swap_in(staging: &Path, dest: &Path, rename: Rename<'_>) -> io::Result<()> {
+    let old = move_aside(dest, rename)?;
+    if let Err(e) = rename(staging, dest) {
+        if let Some(old) = &old {
+            let _ = rename(old, dest);
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        return Err(e);
+    }
+    let _ = std::fs::remove_file(dest.join(STAGED_OK));
+    if let Some(old) = old {
+        let _ = std::fs::remove_dir_all(old);
+    }
+    Ok(())
+}
+
+fn remove_at_with(dir: &Path, rename: Rename<'_>) -> io::Result<Removal> {
+    let marker = removal_marker(dir);
+    match move_aside(dir, rename) {
+        Ok(old) => {
+            if let Some(old) = old {
+                let _ = std::fs::remove_dir_all(old);
+            }
+            let _ = std::fs::remove_dir_all(staging_dir(dir));
             let _ = std::fs::remove_file(&marker);
             Ok(Removal::Removed)
         }
@@ -157,9 +297,9 @@ fn remove_at(dir: &Path) -> std::io::Result<Removal> {
 
 /// Deletes the downloaded copy, or arranges for it to be deleted at the next
 /// start when it is in use.
-pub fn remove_managed_copy() -> std::io::Result<Removal> {
+pub fn remove_managed_copy() -> io::Result<Removal> {
     match managed_dir() {
-        Some(dir) => remove_at(&dir),
+        Some(dir) => remove_at_with(&dir, &rename_fs),
         None => Ok(Removal::Removed),
     }
 }
@@ -169,21 +309,39 @@ pub fn removal_pending() -> bool {
     managed_dir().is_some_and(|dir| removal_marker(&dir).exists())
 }
 
-/// Completes a removal that had to wait for a restart. Call it at startup,
-/// before anything can load the library.
-pub fn finish_pending_removal() {
-    let Some(dir) = managed_dir() else { return };
-    if removal_marker(&dir).exists() {
-        if let Err(e) = remove_at(&dir) {
+/// Whether a downloaded replacement is waiting for the next start.
+pub fn update_pending() -> bool {
+    managed_dir().is_some_and(|dir| staging_dir(&dir).join(STAGED_OK).is_file())
+}
+
+fn finish_pending_at(dir: &Path, rename: Rename<'_>) {
+    // A removal asked for after a download wins over it.
+    if removal_marker(dir).exists() {
+        if let Err(e) = remove_at_with(dir, rename) {
             dioxus::logger::tracing::warn!(
                 "Could not finish removing the downloaded Orbbec SDK: {e}"
             );
         }
+        return;
+    }
+    let staging = staging_dir(dir);
+    if staging.join(STAGED_OK).is_file() {
+        if let Err(e) = swap_in(&staging, dir, rename) {
+            dioxus::logger::tracing::warn!("Could not switch to the downloaded Orbbec SDK: {e}");
+        }
+    }
+}
+
+/// Completes what had to wait for a restart: a removal, or a downloaded
+/// replacement. Call it at startup, before anything can load the library.
+pub fn finish_pending() {
+    if let Some(dir) = managed_dir() {
+        finish_pending_at(&dir, &rename_fs);
     }
 }
 
 #[cfg(feature = "sdk-download")]
-pub use download::{Phase, install};
+pub use download::{Installed, Phase, install};
 
 #[cfg(feature = "sdk-download")]
 mod download {
@@ -193,7 +351,7 @@ mod download {
     use anyhow::{Context, Result, bail};
     use sha2::{Digest, Sha256};
 
-    use super::{DIR_NAME, install_path, managed_dir, pin};
+    use super::{STAGED_OK, install_path, managed_dir, pin, rename_fs, staging_dir, swap_in};
 
     /// Largest file taken out of the archive. The real ones are a few MB; this
     /// only stops a corrupt or hostile archive from filling the disk.
@@ -207,10 +365,19 @@ mod download {
         Installing,
     }
 
-    /// Downloads, verifies and unpacks the pinned SDK into the app's data folder
-    /// and returns its directory. The previous copy is replaced only once the new
-    /// one is complete.
-    pub async fn install(mut progress: impl FnMut(Phase)) -> Result<std::path::PathBuf> {
+    /// How an install ended.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Installed {
+        /// The new copy is in place; the loader finds it from now on.
+        Ready,
+        /// The copy it replaces is loaded and cannot be moved, so the new one waits
+        /// beside it and takes over the next time the app starts.
+        AfterRestart,
+    }
+
+    /// Downloads, verifies and unpacks the pinned SDK into the app's data folder.
+    /// The previous copy is replaced only once the new one is complete.
+    pub async fn install(mut progress: impl FnMut(Phase)) -> Result<Installed> {
         let dest = managed_dir().context("this system has no app data folder")?;
         let pin = pin();
 
@@ -222,17 +389,28 @@ mod download {
         verify(&eula, &pin.eula.sha256).context("the Orbbec licence download is corrupt")?;
 
         progress(Phase::Installing);
-        let staging = dest.with_file_name(format!("{DIR_NAME}.new"));
+        let staging = staging_dir(&dest);
         let _ = std::fs::remove_dir_all(&staging);
         std::fs::create_dir_all(&staging)?;
         let unpacked = extract(&archive, &pin.windows_x64.files, &staging)
-            .and_then(|()| std::fs::write(staging.join("EULA.txt"), &eula).map_err(Into::into));
+            .and_then(|()| std::fs::write(staging.join("EULA.txt"), &eula).map_err(Into::into))
+            .and_then(|()| std::fs::write(staging.join(STAGED_OK), b"").map_err(Into::into));
         if let Err(e) = unpacked {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
         }
-        replace_dir(&staging, &dest)?;
-        Ok(dest)
+        match swap_in(&staging, &dest, &rename_fs) {
+            Ok(()) => Ok(Installed::Ready),
+            Err(e) => {
+                // Nothing of the old copy was touched. The finished one stays where
+                // it is and is switched in at the next start.
+                dioxus::logger::tracing::info!(
+                    "The Orbbec SDK in {} is in use; the new one takes over at the next start ({e})",
+                    dest.display()
+                );
+                Ok(Installed::AfterRestart)
+            }
+        }
     }
 
     async fn fetch(
@@ -309,23 +487,6 @@ mod download {
             std::fs::write(&target, contents)
                 .with_context(|| format!("could not write {}", target.display()))?;
         }
-        Ok(())
-    }
-
-    /// Puts `staging` where `dest` is, removing what was there.
-    fn replace_dir(staging: &Path, dest: &Path) -> Result<()> {
-        match std::fs::remove_dir_all(dest) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                return Err(e).with_context(|| {
-                    format!(
-                        "could not replace {}; close anything using the camera and try again",
-                        dest.display()
-                    )
-                });
-            }
-            _ => {}
-        }
-        std::fs::rename(staging, dest)?;
         Ok(())
     }
 
@@ -422,32 +583,22 @@ mod download {
             assert!(verify(b"abc", &hash.to_uppercase()).is_ok());
             assert!(verify(b"abd", &hash).is_err());
         }
-
-        #[test]
-        fn replacing_a_copy_swaps_it_whole() {
-            let root = tempdir("replace");
-            let dest = root.join("orbbec-sdk");
-            std::fs::create_dir_all(&dest).unwrap();
-            std::fs::write(dest.join("old.dll"), b"old").unwrap();
-            let staging = root.join("orbbec-sdk.new");
-            std::fs::create_dir_all(&staging).unwrap();
-            std::fs::write(staging.join("OrbbecSDK.dll"), b"new").unwrap();
-
-            replace_dir(&staging, &dest).unwrap();
-
-            assert!(dest.join("OrbbecSDK.dll").is_file());
-            assert!(
-                !dest.join("old.dll").exists(),
-                "nothing of the old copy survives"
-            );
-            assert!(!staging.exists());
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Error, ErrorKind};
+
     use super::*;
+
+    fn version(major: u32, minor: u32, patch: u32) -> SdkVersion {
+        SdkVersion {
+            major,
+            minor,
+            patch,
+        }
+    }
 
     #[test]
     fn the_pin_is_complete_and_installs_the_library_where_the_loader_looks() {
@@ -491,6 +642,16 @@ mod tests {
     }
 
     #[test]
+    fn the_pinned_version_is_one_the_loader_accepts() {
+        let pinned = pinned_version();
+        assert!(
+            pinned.is_supported(),
+            "the app must be tested with a version it accepts: {pinned}"
+        );
+        assert_eq!(pinned.to_string(), pin().version);
+    }
+
+    #[test]
     fn the_pinned_library_name_is_what_the_loader_loads_on_windows() {
         if cfg!(windows) {
             assert_eq!(LIBRARY_NAME, "OrbbecSDK.dll");
@@ -504,50 +665,269 @@ mod tests {
         }
     }
 
+    // ---- advisory
+
+    fn running(found: SdkVersion, path: Option<&str>) -> RuntimeStatus {
+        RuntimeStatus::Available {
+            version: found,
+            library_path: path.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn the_pinned_version_needs_no_advisory() {
+        let pinned = version(2, 10, 6);
+        assert_eq!(advisory(&running(pinned, None), None, pinned), None);
+    }
+
+    #[test]
+    fn an_older_copy_we_downloaded_can_be_replaced() {
+        let managed = Path::new("/data/Odyssey/orbbec-sdk");
+        let status = running(
+            version(2, 9, 0),
+            Some("/data/Odyssey/orbbec-sdk/OrbbecSDK.dll"),
+        );
+        assert_eq!(
+            advisory(&status, Some(managed), version(2, 10, 6)),
+            Some(Advisory::Older {
+                found: version(2, 9, 0),
+                pinned: version(2, 10, 6),
+                replaceable: true,
+            })
+        );
+    }
+
+    #[test]
+    fn an_older_copy_found_elsewhere_is_only_warned_about() {
+        let managed = Path::new("/data/Odyssey/orbbec-sdk");
+        for path in [Some("/opt/orbbec/OrbbecSDK.dll"), None] {
+            let status = running(version(2, 8, 3), path);
+            assert_eq!(
+                advisory(&status, Some(managed), version(2, 10, 6)),
+                Some(Advisory::Older {
+                    found: version(2, 8, 3),
+                    pinned: version(2, 10, 6),
+                    replaceable: false,
+                }),
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_newer_copy_is_a_warning_wherever_it_came_from() {
+        let managed = Path::new("/data/Odyssey/orbbec-sdk");
+        for path in [Some("/data/Odyssey/orbbec-sdk/OrbbecSDK.dll"), None] {
+            let status = running(version(2, 11, 0), path);
+            assert_eq!(
+                advisory(&status, Some(managed), version(2, 10, 6)),
+                Some(Advisory::Newer {
+                    found: version(2, 11, 0),
+                    pinned: version(2, 10, 6),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_patch_release_counts_too() {
+        let status = running(version(2, 10, 5), None);
+        assert!(matches!(
+            advisory(&status, None, version(2, 10, 6)),
+            Some(Advisory::Older { .. })
+        ));
+    }
+
+    #[test]
+    fn an_sdk_that_is_not_running_has_no_advisory() {
+        let status = RuntimeStatus::NotFound { tried: Vec::new() };
+        assert_eq!(advisory(&status, None, version(2, 10, 6)), None);
+    }
+
+    // ---- replacing and removing
+
     fn scratch(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("odyssey-sdk-removal-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("odyssey-sdk-swap-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    #[test]
-    fn removing_a_copy_deletes_it_and_leaves_no_marker() {
-        let root = scratch("remove");
-        let dir = root.join(DIR_NAME);
+    /// A copy of the SDK with a library and an extension, as `contents` says.
+    fn copy(dir: &Path, contents: &str) {
         std::fs::create_dir_all(dir.join("extensions")).unwrap();
-        std::fs::write(dir.join("OrbbecSDK.dll"), b"x").unwrap();
-        std::fs::write(removal_marker(&dir), b"").unwrap(); // left by an earlier attempt
+        std::fs::write(dir.join("OrbbecSDK.dll"), contents).unwrap();
+        std::fs::write(dir.join("extensions/ext.dll"), contents).unwrap();
+    }
 
-        assert_eq!(remove_at(&dir).unwrap(), Removal::Removed);
+    fn read(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("OrbbecSDK.dll")).unwrap()
+    }
 
-        assert!(!dir.exists());
-        assert!(!removal_marker(&dir).exists());
+    /// Windows refusing to move a directory with a mapped library in it.
+    fn in_use(_: &Path, _: &Path) -> io::Result<()> {
+        Err(Error::new(ErrorKind::PermissionDenied, "in use"))
+    }
+
+    #[test]
+    fn a_finished_download_replaces_the_old_copy_whole() {
+        let root = scratch("replace");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        let staging = staging_dir(&dest);
+        copy(&staging, "new");
+
+        swap_in(&staging, &dest, &rename_fs).unwrap();
+
+        assert_eq!(read(&dest), "new");
+        assert!(!staging.exists());
+        assert!(
+            !sibling(&dest, "old").exists(),
+            "the old copy is cleaned up"
+        );
+        assert!(
+            !dest.join(STAGED_OK).exists(),
+            "the marker does not outlive the swap"
+        );
+    }
+
+    #[test]
+    fn a_copy_in_use_is_left_exactly_as_it_was() {
+        // The library is mapped, so the move fails. Nothing may have been deleted by
+        // then: a running SDK loads its extensions lazily.
+        let root = scratch("in-use");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        let staging = staging_dir(&dest);
+        copy(&staging, "new");
+
+        assert!(swap_in(&staging, &dest, &in_use).is_err());
+
+        assert_eq!(read(&dest), "old");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("extensions/ext.dll")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            read(&staging),
+            "new",
+            "the download waits for the next start"
+        );
+    }
+
+    #[test]
+    fn a_failed_swap_puts_the_old_copy_back() {
+        // Moving the old copy aside works but moving the new one in does not.
+        let root = scratch("restore");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        let staging = staging_dir(&dest);
+        copy(&staging, "new");
+        let only_the_first_move = |from: &Path, to: &Path| {
+            if from == staging {
+                Err(Error::other("cannot move the new copy"))
+            } else {
+                std::fs::rename(from, to)
+            }
+        };
+
+        assert!(swap_in(&staging, &dest, &only_the_first_move).is_err());
+
+        assert_eq!(read(&dest), "old", "the user still has a working SDK");
+    }
+
+    #[test]
+    fn the_next_start_switches_to_a_finished_download() {
+        let root = scratch("next-start");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        let staging = staging_dir(&dest);
+        copy(&staging, "new");
+        std::fs::write(staging.join(STAGED_OK), b"").unwrap();
+
+        finish_pending_at(&dest, &rename_fs);
+
+        assert_eq!(read(&dest), "new");
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn the_next_start_ignores_a_download_that_did_not_finish() {
+        let root = scratch("unfinished");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        let staging = staging_dir(&dest);
+        copy(&staging, "half"); // no STAGED_OK
+
+        finish_pending_at(&dest, &rename_fs);
+
+        assert_eq!(read(&dest), "old");
+    }
+
+    #[test]
+    fn removing_a_copy_deletes_it_and_a_waiting_download() {
+        let root = scratch("remove");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        copy(&staging_dir(&dest), "new");
+        std::fs::write(removal_marker(&dest), b"").unwrap(); // left by an earlier attempt
+
+        assert_eq!(remove_at_with(&dest, &rename_fs).unwrap(), Removal::Removed);
+
+        assert!(!dest.exists());
+        assert!(!staging_dir(&dest).exists());
+        assert!(!removal_marker(&dest).exists());
     }
 
     #[test]
     fn removing_a_copy_that_is_already_gone_is_not_an_error() {
         let root = scratch("gone");
-        assert_eq!(remove_at(&root.join(DIR_NAME)).unwrap(), Removal::Removed);
+        assert_eq!(
+            remove_at_with(&root.join(DIR_NAME), &rename_fs).unwrap(),
+            Removal::Removed
+        );
     }
 
     #[test]
-    fn a_copy_that_cannot_be_deleted_is_marked_for_the_next_start() {
-        // A file where the directory should be: remove_dir_all fails, which stands in
-        // for Windows refusing to delete a library that is loaded.
-        let root = scratch("locked");
-        let dir = root.join(DIR_NAME);
-        std::fs::write(&dir, b"not a directory").unwrap();
-        let marker = removal_marker(&dir);
+    fn a_copy_in_use_is_marked_for_removal_and_not_touched() {
+        let root = scratch("remove-in-use");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
 
-        assert_eq!(remove_at(&dir).unwrap(), Removal::AfterRestart);
-        assert!(marker.exists(), "the next start finishes the job");
+        assert_eq!(
+            remove_at_with(&dest, &in_use).unwrap(),
+            Removal::AfterRestart
+        );
 
-        // The next start, with the thing no longer in the way, completes it.
-        std::fs::remove_file(&dir).unwrap();
-        std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(remove_at(&dir).unwrap(), Removal::Removed);
-        assert!(!dir.exists() && !marker.exists());
+        assert!(
+            removal_marker(&dest).exists(),
+            "the next start finishes the job"
+        );
+        assert_eq!(read(&dest), "old");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("extensions/ext.dll")).unwrap(),
+            "old"
+        );
+
+        // The next start, with nothing holding it, completes the removal.
+        finish_pending_at(&dest, &rename_fs);
+        assert!(!dest.exists() && !removal_marker(&dest).exists());
+    }
+
+    #[test]
+    fn a_removal_asked_for_after_a_download_wins_at_the_next_start() {
+        let root = scratch("remove-wins");
+        let dest = root.join(DIR_NAME);
+        copy(&dest, "old");
+        let staging = staging_dir(&dest);
+        copy(&staging, "new");
+        std::fs::write(staging.join(STAGED_OK), b"").unwrap();
+        std::fs::write(removal_marker(&dest), b"").unwrap();
+
+        finish_pending_at(&dest, &rename_fs);
+
+        assert!(!dest.exists(), "the user asked for it to go");
+        assert!(!staging.exists());
     }
 }
