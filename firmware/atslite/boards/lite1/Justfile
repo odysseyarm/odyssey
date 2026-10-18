@@ -1,5 +1,6 @@
 output_dir := "build"
 bootloader_dist := "dist-bootloader"
+netcore_dist := "dist-netcore"
 net_core := "net-core"
 
 # Default recipe - show available commands
@@ -93,6 +94,60 @@ release-bootloader: dist-bootloader
 # Build lite1 net-core
 build-net:
     cd {{net_core}} && cargo build --release
+
+# Build the net-core artifacts a net-core release publishes.
+# OBJCOPY overrides the tool name on machines that call it something else.
+dist-netcore: build-net
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OBJCOPY=${OBJCOPY:-llvm-objcopy}
+    elf={{net_core}}/target/thumbv8m.main-none-eabi/release/lite1-net-core
+    rm -rf {{netcore_dist}}
+    mkdir -p {{netcore_dist}}
+    cp "$elf" {{netcore_dist}}/net-core.elf
+    "$OBJCOPY" -O binary "$elf" {{netcore_dist}}/net-core.bin
+    "$OBJCOPY" -O ihex "$elf" {{netcore_dist}}/net-core.hex
+    ls -l {{netcore_dist}}
+
+# Publish the net core as its own GitHub release, atslite1-netcore-v<release>.
+# Set DRY_RUN=1 to run every check and stop before publishing.
+#
+# The release is created as a draft and published last, so a tag never exists
+# without its assets; the netcore-release workflow skips a tag that already
+# has a release, so the two ways of publishing cannot overwrite each other.
+release-netcore: dist-netcore
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' {{net_core}}/src/main.rs)
+    if [ -z "$RELEASE" ]; then
+        echo "Error: no release counter found in {{net_core}}/src/main.rs"
+        exit 1
+    fi
+    TAG="atslite1-netcore-v$RELEASE"
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+        echo "Error: uncommitted changes; the release must be built from a commit."
+        exit 1
+    fi
+    COMMIT=$(git rev-parse HEAD)
+    if ! git branch -r --contains "$COMMIT" | grep -q 'origin/master'; then
+        echo "Error: $COMMIT is not on origin/master. Push it first."
+        exit 1
+    fi
+    if gh release view "$TAG" >/dev/null 2>&1; then
+        echo "Error: release $TAG already exists. Raise the counter in {{net_core}}/src/main.rs."
+        exit 1
+    fi
+    NOTES="ATS Lite 1 net core (BLE controller) firmware, release $RELEASE. Installed by the desktop updater when a firmware release names this release. Do not delete."
+    if [ "${DRY_RUN:-}" = 1 ]; then
+        echo "Dry run: would publish $TAG from $COMMIT with:"
+        ls {{netcore_dist}}
+        exit 0
+    fi
+    gh release create "$TAG" --draft --target "$COMMIT" \
+        --title "ATS Lite 1 net-core release $RELEASE" --notes "$NOTES" \
+        {{netcore_dist}}/net-core.bin {{netcore_dist}}/net-core.hex {{netcore_dist}}/net-core.elf
+    gh release edit "$TAG" --draft=false
+    echo "Published $TAG"
 
 # Build lite1 netcore bootloader
 build-netcore-bootloader:
@@ -239,11 +294,12 @@ check:
     cd net-core && cargo check
 
 # Generate a release entry in manifests/releases.alpha.json from current build.
-# requires_bootloader is the lowest bootloader release this application can run
-# on, 0 for none. min_desktop is the oldest Odyssey Desktop it is required and
-# tested with, which is not automatically the desktop shipping alongside it.
-# Neither has a default: leaving one out would silently mean "any".
-gen-release requires_bootloader min_desktop:
+# requires_bootloader and requires_netcore are the lowest bootloader and net-core
+# releases this application can run on, 0 for none. min_desktop is the oldest
+# Odyssey Desktop it is required and tested with, which is not automatically the
+# desktop shipping alongside it.
+# None has a default: leaving one out would silently mean "any".
+gen-release requires_bootloader requires_netcore min_desktop:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -251,9 +307,9 @@ gen-release requires_bootloader min_desktop:
     MANIFEST="../../../manifests/releases.alpha.json"
     BUILD_DIR="{{output_dir}}"
 
-    # Check that build files exist. The bootloader is not among them: it is
-    # released on its own and pinned from that release below.
-    for f in app-a.bin app-b.bin net-core.bin; do
+    # Check that build files exist. The bootloader and net core are not among
+    # them: they are released on their own and pinned from those releases below.
+    for f in app-a.bin app-b.bin; do
         if [ ! -f "$BUILD_DIR/$f" ]; then
             echo "Error: $BUILD_DIR/$f not found. Run 'just build' first."
             exit 1
@@ -267,8 +323,23 @@ gen-release requires_bootloader min_desktop:
     APP_B_SHA=$(sha256sum "$BUILD_DIR/app-b.bin" | cut -d' ' -f1)
     APP_B_SIZE=$(stat -c%s "$BUILD_DIR/app-b.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/app-b.bin")
 
-    NET_CORE_SHA=$(sha256sum "$BUILD_DIR/net-core.bin" | cut -d' ' -f1)
-    NET_CORE_SIZE=$(stat -c%s "$BUILD_DIR/net-core.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/net-core.bin")
+    # The net core is versioned on its own too, by the counter in its source,
+    # and hashed from its published asset for the same reason as the bootloader.
+    NET_CORE_RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' net-core/src/main.rs)
+    if [ -z "$NET_CORE_RELEASE" ]; then
+        echo "Error: no release counter found in net-core/src/main.rs"
+        exit 1
+    fi
+    NET_CORE_TAG="atslite1-netcore-v$NET_CORE_RELEASE"
+    NET_CORE_BIN=$(mktemp)
+    STAGE2=$(mktemp)
+    trap 'rm -f "$STAGE2" "$NET_CORE_BIN"' EXIT
+    if ! curl -fsSL "${RELEASES_BASE_URL:-https://github.com/odysseyarm/odyssey/releases/download}/$NET_CORE_TAG/net-core.bin" -o "$NET_CORE_BIN"; then
+        echo "Error: no published release $NET_CORE_TAG. Run 'just release-netcore' first."
+        exit 1
+    fi
+    NET_CORE_SHA=$(sha256sum "$NET_CORE_BIN" | cut -d' ' -f1)
+    NET_CORE_SIZE=$(stat -c%s "$NET_CORE_BIN" 2>/dev/null || stat -f%z "$NET_CORE_BIN")
 
     # The bootloader is versioned on its own, by the counter in its source, and
     # released on its own. Hash the published asset rather than a local build:
@@ -280,8 +351,6 @@ gen-release requires_bootloader min_desktop:
         exit 1
     fi
     BOOTLOADER_TAG="atslite1-bootloader-v$BOOTLOADER_RELEASE"
-    STAGE2=$(mktemp)
-    trap 'rm -f "$STAGE2"' EXIT
     if ! curl -fsSL "${RELEASES_BASE_URL:-https://github.com/odysseyarm/odyssey/releases/download}/$BOOTLOADER_TAG/stage2-bootloader.bin" -o "$STAGE2"; then
         echo "Error: no published release $BOOTLOADER_TAG. Run 'just release-bootloader' first."
         exit 1
@@ -289,6 +358,11 @@ gen-release requires_bootloader min_desktop:
     BOOTLOADER_SHA=$(sha256sum "$STAGE2" | cut -d' ' -f1)
     BOOTLOADER_SIZE=$(stat -c%s "$STAGE2" 2>/dev/null || stat -f%z "$STAGE2")
     REQUIRES_BOOTLOADER={{requires_bootloader}}
+    REQUIRES_NETCORE={{requires_netcore}}
+    if ! [[ "$REQUIRES_BOOTLOADER" =~ ^[0-9]+$ ]]; then
+        echo "Error: requires_bootloader must be an integer, got '$REQUIRES_BOOTLOADER'."
+        exit 1
+    fi
     MIN_DESKTOP={{min_desktop}}
     if ! [[ "$MIN_DESKTOP" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "Error: min_desktop must be a version like 0.6.0, got '$MIN_DESKTOP'."
@@ -296,6 +370,14 @@ gen-release requires_bootloader min_desktop:
     fi
     if [ "$REQUIRES_BOOTLOADER" -gt "$BOOTLOADER_RELEASE" ]; then
         echo "Error: requires_bootloader $REQUIRES_BOOTLOADER is above the bootloader being published ($BOOTLOADER_RELEASE)."
+        exit 1
+    fi
+    if ! [[ "$REQUIRES_NETCORE" =~ ^[0-9]+$ ]]; then
+        echo "Error: requires_netcore must be an integer, got '$REQUIRES_NETCORE'."
+        exit 1
+    fi
+    if [ "$REQUIRES_NETCORE" -gt "$NET_CORE_RELEASE" ]; then
+        echo "Error: requires_netcore $REQUIRES_NETCORE is above the net core being published ($NET_CORE_RELEASE)."
         exit 1
     fi
     # The counter is baked into the image, so a hash and a counter identify each
@@ -318,6 +400,24 @@ gen-release requires_bootloader min_desktop:
         echo "Error: the bootloader image changed but its release counter ($BOOTLOADER_RELEASE) is not above the newest published ($NEWEST_RELEASE)."
         exit 1
     fi
+    # Same guards for the net core, whose counter is likewise baked into the
+    # image. Entries that predate the counter have no release and count as 0.
+    NETCORES='.devices.atslite1.firmwares[].files["net-core"]'
+    NC_SHA_RELEASES=$(jq -r --arg sha "$NET_CORE_SHA" "[$NETCORES | select(.sha256 == \$sha) | .release // 0] | unique | map(tostring) | join(\",\")" "$MANIFEST")
+    NC_COUNTER_OTHER_IMAGES=$(jq -r --arg sha "$NET_CORE_SHA" --argjson r "$NET_CORE_RELEASE" "[$NETCORES | select(.release == \$r and .sha256 != \$sha)] | length" "$MANIFEST")
+    NC_NEWEST_RELEASE=$(jq -r "[$NETCORES.release // 0] | max // 0" "$MANIFEST")
+    if [ -n "$NC_SHA_RELEASES" ] && [ "$NC_SHA_RELEASES" != "$NET_CORE_RELEASE" ]; then
+        echo "Error: this net-core image is already published as release $NC_SHA_RELEASES but its counter says $NET_CORE_RELEASE."
+        exit 1
+    fi
+    if [ "$NC_COUNTER_OTHER_IMAGES" != 0 ]; then
+        echo "Error: release $NET_CORE_RELEASE is already published for a different net-core image. Raise the counter in net-core/src/main.rs."
+        exit 1
+    fi
+    if [ -z "$NC_SHA_RELEASES" ] && [ "$NET_CORE_RELEASE" -le "$NC_NEWEST_RELEASE" ]; then
+        echo "Error: the net-core image changed but its release counter ($NET_CORE_RELEASE) is not above the newest published ($NC_NEWEST_RELEASE)."
+        exit 1
+    fi
 
     TODAY=$(date +%Y-%m-%d)
 
@@ -326,6 +426,7 @@ gen-release requires_bootloader min_desktop:
     {
       "version": "$VERSION",
       "requires_bootloader": $REQUIRES_BOOTLOADER,
+      "requires_netcore": $REQUIRES_NETCORE,
       "min_desktop": "$MIN_DESKTOP",
       "files": {
         "app-a": {
@@ -338,7 +439,8 @@ gen-release requires_bootloader min_desktop:
         },
         "net-core": {
           "sha256": "$NET_CORE_SHA",
-          "size": $NET_CORE_SIZE
+          "size": $NET_CORE_SIZE,
+          "release": $NET_CORE_RELEASE
         },
         "stage2-bootloader": {
           "sha256": "$BOOTLOADER_SHA",
@@ -358,5 +460,5 @@ gen-release requires_bootloader min_desktop:
     echo "Added release $VERSION to $MANIFEST"
     echo "  app-a: $APP_A_SHA ($APP_A_SIZE bytes)"
     echo "  app-b: $APP_B_SHA ($APP_B_SIZE bytes)"
-    echo "  net-core: $NET_CORE_SHA ($NET_CORE_SIZE bytes)"
+    echo "  net-core: $NET_CORE_SHA ($NET_CORE_SIZE bytes, release $NET_CORE_RELEASE)"
     echo "  stage2-bootloader: $BOOTLOADER_SHA ($BOOTLOADER_SIZE bytes)"
