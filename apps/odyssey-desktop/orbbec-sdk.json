@@ -1,5 +1,5 @@
 {
-  "_comment": "The Orbbec SDK this build is tested with. The desktop app (online build) and the Windows release workflow (offline build) both read this file; change the SDK here and nowhere else. `files` are paths inside the archive; a leading bin/ is dropped on install, so OrbbecSDK.dll lands beside its extensions/ folder, which is the layout runtime.rs expects.",
+  "_comment": "The Orbbec SDK this build is tested with. The desktop app (online build) and the Windows release workflow (offline build) both read this file; change the SDK here and nowhere else. `files` are paths inside the archive; a leading bin/ is dropped on install, so OrbbecSDK.dll lands beside its extensions/ folder, which is the layout runtime.rs expects. linux_x64 is only read by the nix dev shell (shell.nix); the app downloads and the installer carries the Windows archive.",
   "version": "2.10.6",
   "eula": {
     "url": "https://raw.githubusercontent.com/orbbec/OrbbecSDK_v2/v2.10.6/End%20User%20License%20Agreement.txt",
@@ -36,5 +36,10 @@
       "licenses/spdlog/LICENSE",
       "licenses/tinyxml2/LICENSE.txt"
     ]
+  },
+  "linux_x64": {
+    "url": "https://github.com/orbbec/OrbbecSDK_v2/releases/download/v2.10.6/OrbbecSDK_v2.10.6_202609291004_575347c_linux_x86_64.tar.gz",
+    "sha256": "23ec9f7023881cc9061bf0b4ba65735fb16c10e168fd5d62b1548c847e7ddb46",
+    "size": 10005802
   }
 }
