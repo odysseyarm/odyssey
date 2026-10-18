@@ -15,15 +15,15 @@ clean:
 
 # Build ATSlite application for bank A (default)
 build-app:
-    cargo +nightly build -Z build-std -Z build-std-features=optimize_for_size --release --target thumbv8m.main-none-eabihf
+    cargo build -Z build-std -Z build-std-features=optimize_for_size --release --target thumbv8m.main-none-eabihf
 
 # Build ATSlite application for bank A
 build-app-a:
-    APP_BANK=bank_a cargo +nightly build -Z build-std -Z build-std-features=optimize_for_size --release --target thumbv8m.main-none-eabihf --target-dir target-bank-a
+    APP_BANK=bank_a cargo build -Z build-std -Z build-std-features=optimize_for_size --release --target thumbv8m.main-none-eabihf --target-dir target-bank-a
 
 # Build ATSlite application for bank B
 build-app-b:
-    APP_BANK=bank_b cargo +nightly build -Z build-std -Z build-std-features=optimize_for_size --release --target thumbv8m.main-none-eabihf --target-dir target-bank-b
+    APP_BANK=bank_b cargo build -Z build-std -Z build-std-features=optimize_for_size --release --target thumbv8m.main-none-eabihf --target-dir target-bank-b
 
 # Build ATSlite stage1 bootloader
 build-stage1:
