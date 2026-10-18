@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use image::RgbImage;
-use nalgebra::{Matrix3, Point2};
+use nalgebra::{Matrix3, Point2, Vector2, Vector3};
 
 use crate::camera::Intrinsics;
 use crate::plane::{apply_homography, distort_pixel, fit_homography, ransac_homography, undistort_pixel};
@@ -71,6 +71,18 @@ impl Pattern {
         Self { aspect, cols, rows, dots }
     }
 
+    /// Like [`Pattern::new`] with every dot radius multiplied by `scale`,
+    /// clamped to `0.5..=1.4` so neighboring dots stay apart. Larger dots help
+    /// low-resolution cameras and stress the perspective correction.
+    pub fn with_dot_scale(aspect: f64, scale: f64) -> Self {
+        let mut pattern = Self::new(aspect);
+        let scale = if scale.is_finite() { scale.clamp(0.5, 1.4) } else { 1.0 };
+        for dot in &mut pattern.dots {
+            dot.radius_h *= scale;
+        }
+        pattern
+    }
+
     pub fn aspect(&self) -> f64 {
         self.aspect
     }
@@ -106,9 +118,14 @@ pub struct Correspondence {
     pub index: usize,
     /// Normalized pattern position `(u, v)`.
     pub pattern: Point2<f64>,
-    /// Center in the pinhole pixel grid, i.e. with lens distortion removed.
+    /// Estimated image of the dot's true center in the pinhole pixel grid,
+    /// i.e. with lens distortion and the perspective bias of the dot's
+    /// elliptical image removed.
     pub pixel: Point2<f64>,
-    /// Center in the raw image.
+    /// Measured centroid of the dot's image, undistorted but not corrected for
+    /// perspective. Differs from `pixel` by [`center_bias`].
+    pub centroid: Point2<f64>,
+    /// Centroid in the raw image.
     pub raw: Point2<f64>,
 }
 
@@ -485,14 +502,21 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
                 if across.perp(&down) <= 0.0 {
                     continue;
                 }
+                // Foreshortening at steep viewing angles squeezes one side of
+                // the grid, so this only rejects triples that cannot be corners.
                 let ratio = across.norm() / down.norm();
-                if ratio < expected_ratio / 2.5 || ratio > expected_ratio * 2.5 {
+                if ratio < expected_ratio / 6.0 || ratio > expected_ratio * 6.0 {
                     continue;
                 }
-                let guess = a + across + down;
-                let reach = 0.4 * across.norm().max(down.norm());
-                for (br, _) in index.within(&blobs, guess, reach) {
+                // The fourth corner is not where an affine guess puts it once
+                // perspective is strong, so any blob that keeps the quad convex
+                // is a candidate; the grid evaluation picks the real one.
+                for (br, blob) in blobs.iter().enumerate() {
                     if br == tl || br == tr || br == bl {
+                        continue;
+                    }
+                    let d = blob.undistorted;
+                    if (b - a).perp(&(d - b)) <= 0.0 || (d - b).perp(&(c - d)) <= 0.0 || (c - d).perp(&(a - c)) <= 0.0 {
                         continue;
                     }
                     let src = [tl_uv, tr_uv, bl_uv, br_uv];
@@ -532,16 +556,24 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
         return Err(DetectFailure::NoGrid { blobs: n });
     }
 
-    let mut correspondences: Vec<Correspondence> = matches
-        .iter()
-        .map(|&(d, b)| Correspondence {
-            index: d,
-            pattern: Point2::new(pattern.dots[d].u, pattern.dots[d].v),
-            pixel: blobs[b].undistorted,
-            raw: blobs[b].raw,
+    let spacing = median_spacing(pattern, &h).unwrap_or(20.0);
+    let Debiased { h, matches, centers } = remove_center_bias(pattern, &blobs, h, matches, (0.08 * spacing).max(1.0));
+
+    let mut order: Vec<usize> = (0..matches.len()).collect();
+    order.sort_by_key(|&i| matches[i].0);
+    let correspondences: Vec<Correspondence> = order
+        .into_iter()
+        .map(|i| {
+            let (d, b) = matches[i];
+            Correspondence {
+                index: d,
+                pattern: Point2::new(pattern.dots[d].u, pattern.dots[d].v),
+                pixel: centers[i],
+                centroid: blobs[b].undistorted,
+                raw: blobs[b].raw,
+            }
         })
         .collect();
-    correspondences.sort_by_key(|c| c.index);
 
     let sq: f64 = correspondences
         .iter()
@@ -562,6 +594,97 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
         *slot = distort_pixel(intrinsics, p);
     }
     Ok(Detection { correspondences, homography: h, quad_px, quality })
+}
+
+/// Passes of [`remove_center_bias`]. Each pass refits the homography the next
+/// one linearizes around; the correction converges geometrically, so three
+/// passes reach well below the centroid noise.
+const BIAS_PASSES: usize = 3;
+/// The correction has converged once no dot's offset moves by more than this.
+const BIAS_CONVERGED_PX: f64 = 0.01;
+
+/// Offset between the center of a dot's elliptical image and the image of the
+/// dot's true center, in pixels, for a pattern-to-pixel homography
+/// `unit_to_pixel`.
+///
+/// A circle seen obliquely images to an ellipse, and perspective foreshortens
+/// its far half more than its near half, so the ellipse center (which is where
+/// a centroid lands) is not the image of the circle's center. The ellipse
+/// center is the pole of the line at infinity with respect to the projected
+/// conic. With `M` mapping the unit circle to the image, that pole is
+/// `M diag(1, 1, -1) M^T (0, 0, 1)^T`.
+///
+/// The circle lives in physical pattern coordinates (units of screen height,
+/// so the dot is round); the homography takes normalized `(u, v)`, which
+/// stretch `x` by the aspect ratio.
+///
+/// Lens distortion is deliberately not part of this model. The centroids are
+/// undistorted point-wise before the correction, which treats a dot as a point
+/// for the lens even though its outline is bent slightly; at dot sizes of
+/// 1-2% of the screen height that second-order term stays far below the
+/// perspective term.
+pub fn center_bias(pattern: &Pattern, dot: usize, unit_to_pixel: &Matrix3<f64>) -> Option<Vector2<f64>> {
+    let d = pattern.dots.get(dot)?;
+    let (x, y) = (d.u * pattern.aspect, d.v);
+    let physical = unit_to_pixel * Matrix3::new(1.0 / pattern.aspect, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+    let m = physical * Matrix3::new(d.radius_h, 0.0, x, 0.0, d.radius_h, y, 0.0, 0.0, 1.0);
+    let bottom = m.row(2).transpose();
+    let pole = m * Matrix3::from_diagonal(&Vector3::new(1.0, 1.0, -1.0)) * bottom;
+    if pole.z.abs() < 1e-12 {
+        return None;
+    }
+    let ellipse_center = Point2::new(pole.x / pole.z, pole.y / pole.z);
+    let image_of_center = apply_homography(&physical, Point2::new(x, y))?;
+    Some(ellipse_center - image_of_center)
+}
+
+/// Estimates the image of each dot's true center from its measured centroid by
+/// subtracting [`center_bias`] under `unit_to_pixel`. `measured` pairs a dot
+/// index with its centroid in undistorted pixels. `None` if the homography
+/// leaves any dot degenerate.
+pub fn corrected_centers(
+    pattern: &Pattern,
+    unit_to_pixel: &Matrix3<f64>,
+    measured: &[(usize, Point2<f64>)],
+) -> Option<Vec<Point2<f64>>> {
+    measured.iter().map(|&(dot, p)| Some(p - center_bias(pattern, dot, unit_to_pixel)?)).collect()
+}
+
+/// Homography and matches after bias removal.
+struct Debiased {
+    h: Matrix3<f64>,
+    /// `(dot index, blob index)` pairs that survived the refits.
+    matches: Vec<(usize, usize)>,
+    /// Corrected centers, in the order of `matches`.
+    centers: Vec<Point2<f64>>,
+}
+
+/// Refits the homography on bias-corrected centers until the correction stops
+/// changing.
+fn remove_center_bias(
+    pattern: &Pattern,
+    blobs: &[Blob],
+    mut h: Matrix3<f64>,
+    mut matches: Vec<(usize, usize)>,
+    threshold: f64,
+) -> Debiased {
+    let mut centers: Vec<Point2<f64>> = matches.iter().map(|&(_, b)| blobs[b].undistorted).collect();
+    let mut previous = vec![Vector2::zeros(); matches.len()];
+    for _ in 0..BIAS_PASSES {
+        let Some(bias) = matches.iter().map(|&(d, _)| center_bias(pattern, d, &h)).collect::<Option<Vec<_>>>() else { break };
+        let change = bias.iter().zip(&previous).map(|(a, b)| (a - b).norm()).fold(0.0, f64::max);
+        if change < BIAS_CONVERGED_PX {
+            break;
+        }
+        let src: Vec<_> = matches.iter().map(|&(d, _)| Point2::new(pattern.dots[d].u, pattern.dots[d].v)).collect();
+        let dst: Vec<_> = matches.iter().zip(&bias).map(|(&(_, b), off)| blobs[b].undistorted - off).collect();
+        let Some(fit) = ransac_homography(&src, &dst, threshold, 200, 0x5EED) else { break };
+        h = fit.h;
+        centers = fit.inliers.iter().map(|&i| dst[i]).collect();
+        previous = fit.inliers.iter().map(|&i| bias[i]).collect();
+        matches = fit.inliers.iter().map(|&i| matches[i]).collect();
+    }
+    Debiased { h, matches, centers }
 }
 
 /// Pixel distance between horizontally adjacent dots near the grid center.
@@ -632,14 +755,14 @@ mod tests {
         img
     }
 
-    fn tilted_homography(pattern: &Pattern) -> Matrix3<f64> {
-        // Screen 1.2 m wide seen at ~2 m with some yaw and roll, as a
-        // homography from the unit square to undistorted pixels.
+    /// Homography from the unit square to undistorted pixels for a 1.2 m wide
+    /// screen at depth `z`, turned about the vertical axis by `yaw` radians
+    /// and offset `x` meters sideways.
+    fn pose_homography(pattern: &Pattern, yaw: f64, x: f64, z: f64) -> Matrix3<f64> {
         let w = 1.2;
         let h_m = w / pattern.aspect();
-        let (yaw, roll) = (0.35f64, 0.05f64);
-        let r = nalgebra::Rotation3::from_euler_angles(0.0, yaw, roll);
-        let center = nalgebra::Vector3::new(0.1, 0.0, 2.4);
+        let r = nalgebra::Rotation3::from_euler_angles(0.0, yaw, 0.05);
+        let center = nalgebra::Vector3::new(x, 0.0, z);
         let intr = intrinsics();
         let to_px = |u: f64, v: f64| {
             let local = nalgebra::Vector3::new((u - 0.5) * w, (v - 0.5) * h_m, 0.0);
@@ -649,6 +772,10 @@ mod tests {
         let src = [Point2::new(0.0, 0.0), Point2::new(1.0, 0.0), Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)];
         let dst = src.map(|p| to_px(p.x, p.y));
         fit_homography(&src, &dst).unwrap()
+    }
+
+    fn tilted_homography(pattern: &Pattern) -> Matrix3<f64> {
+        pose_homography(pattern, 0.35, 0.1, 2.4)
     }
 
     #[test]
@@ -720,5 +847,102 @@ mod tests {
         let det = detect(&pattern, &image, &intr).expect("pattern found");
         assert_eq!(det.quality.matched, 143);
         assert!(det.correspondences.iter().all(|c| c.index != 50));
+    }
+
+    /// Area centroid of the image of a dot's outline: the polygon through the
+    /// projected circle, integrated numerically so it shares no algebra with
+    /// [`center_bias`].
+    fn outline_centroid(pattern: &Pattern, dot: usize, h: &Matrix3<f64>) -> Point2<f64> {
+        let d = pattern.dots()[dot];
+        let n = 2000;
+        let ring: Vec<Point2<f64>> = (0..n)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / n as f64;
+                let u = (d.u * pattern.aspect() + d.radius_h * a.cos()) / pattern.aspect();
+                apply_homography(h, Point2::new(u, d.v + d.radius_h * a.sin())).unwrap()
+            })
+            .collect();
+        let (mut area, mut cx, mut cy) = (0.0, 0.0, 0.0);
+        for i in 0..n {
+            let (p, q) = (ring[i], ring[(i + 1) % n]);
+            let cross = p.x * q.y - q.x * p.y;
+            area += cross;
+            cx += (p.x + q.x) * cross;
+            cy += (p.y + q.y) * cross;
+        }
+        Point2::new(cx / (3.0 * area), cy / (3.0 * area))
+    }
+
+    #[test]
+    fn correction_removes_the_centroid_bias_of_noise_free_ellipses() {
+        let pattern = Pattern::with_dot_scale(16.0 / 9.0, 1.4);
+        let h = pose_homography(&pattern, 1.05, 0.3, 1.3);
+        let measured: Vec<(usize, Point2<f64>)> =
+            (0..pattern.dots().len()).map(|i| (i, outline_centroid(&pattern, i, &h))).collect();
+        let corrected = corrected_centers(&pattern, &h, &measured).unwrap();
+
+        let (mut raw_max, mut fixed_max) = (0.0f64, 0.0f64);
+        for ((i, centroid), fixed) in measured.iter().zip(&corrected) {
+            let d = pattern.dots()[*i];
+            let truth = apply_homography(&h, Point2::new(d.u, d.v)).unwrap();
+            raw_max = raw_max.max((centroid - truth).norm());
+            fixed_max = fixed_max.max((fixed - truth).norm());
+        }
+        assert!(raw_max > 0.3, "the case must have a visible bias, got {raw_max} px");
+        assert!(fixed_max < raw_max * 1e-4, "raw {raw_max} px, corrected {fixed_max} px");
+    }
+
+    #[test]
+    fn bias_grows_with_dot_size_and_obliqueness_and_points_toward_the_near_side() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let big = Pattern::with_dot_scale(16.0 / 9.0, 1.4);
+        let norm = |p: &Pattern, h: &Matrix3<f64>| center_bias(p, 60, h).unwrap().norm();
+        let frontal = pose_homography(&pattern, 0.0, 0.0, 2.0);
+        let steep = pose_homography(&pattern, 1.05, 0.0, 2.0);
+        assert!(norm(&pattern, &frontal) < 1e-9, "a fronto-parallel circle has no bias");
+        assert!(norm(&pattern, &steep) > norm(&pattern, &pose_homography(&pattern, 0.35, 0.0, 2.0)));
+        assert!(norm(&big, &steep) > 1.5 * norm(&pattern, &steep));
+    }
+
+    #[test]
+    fn correction_is_cheap() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let h = pose_homography(&pattern, 0.8, 0.1, 2.0);
+        let measured: Vec<(usize, Point2<f64>)> = (0..pattern.dots().len())
+            .map(|i| (i, apply_homography(&h, Point2::new(pattern.dots()[i].u, pattern.dots()[i].v)).unwrap()))
+            .collect();
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            std::hint::black_box(corrected_centers(&pattern, &h, &measured).unwrap());
+        }
+        let per_call = start.elapsed() / 100;
+        eprintln!("corrected_centers for {} dots: {per_call:?}", measured.len());
+        assert!(per_call < std::time::Duration::from_millis(5), "{per_call:?}");
+    }
+
+    /// Mean distance of the detected dot centers from the true image of the
+    /// dot centers, for the corrected estimate and the raw centroid.
+    fn detection_errors(pattern: &Pattern, h: &Matrix3<f64>) -> (f64, f64, f64) {
+        let intr = intrinsics();
+        let image = render(pattern, &intr, h);
+        let det = detect(pattern, &image, &intr).expect("pattern found");
+        let (mut fixed, mut raw, mut n) = (0.0, 0.0, 0.0);
+        for c in &det.correspondences {
+            let truth = apply_homography(h, c.pattern).unwrap();
+            fixed += (c.pixel - truth).norm();
+            raw += (c.centroid - truth).norm();
+            n += 1.0;
+        }
+        (fixed / n, raw / n, n)
+    }
+
+    #[test]
+    fn corrected_centers_beat_centroids_on_a_rendered_steep_pattern() {
+        let pattern = Pattern::with_dot_scale(16.0 / 9.0, 1.4);
+        let h = pose_homography(&pattern, 1.05, 0.3, 1.3);
+        let (fixed, raw, n) = detection_errors(&pattern, &h);
+        eprintln!("steep, large dots: {n} dots, mean error {raw:.3} px raw centroid, {fixed:.3} px corrected");
+        assert!(n >= 100.0);
+        assert!(fixed < 0.5 * raw, "corrected {fixed} px vs raw {raw} px");
     }
 }

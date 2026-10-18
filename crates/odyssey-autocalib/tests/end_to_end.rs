@@ -239,3 +239,43 @@ fn distant_and_noisy_screen() {
     let (cal, truth, alignment) = calibrate(&scene, SessionOptions::default());
     assert_matches_truth(&cal, &truth, &alignment, 0.003);
 }
+
+fn steep_scene() -> SyntheticScene {
+    SyntheticScene {
+        screen_yaw_deg: 55.0,
+        screen_center_m: nalgebra::Vector3::new(0.35, -0.1, 2.0),
+        camera_yaw_deg: 6.0,
+        camera_pitch_deg: 4.0,
+        ..SyntheticScene::default()
+    }
+}
+
+#[test]
+fn steep_viewing_angle_is_recovered() {
+    let (cal, truth, alignment) = calibrate(&steep_scene(), SessionOptions::default());
+    assert_matches_truth(&cal, &truth, &alignment, 0.003);
+}
+
+/// Large dots at a steep angle have the strongest perspective bias between a
+/// dot's centroid and its true center.
+#[test]
+fn steep_viewing_angle_with_large_dots_is_recovered() {
+    use odyssey_autocalib::solve::{solve_screen, SolveOptions};
+
+    let scene = SyntheticScene { dot_scale: 1.4, ..steep_scene() };
+    let backend = SyntheticBackend::new(scene.clone());
+    let camera = backend.list().unwrap().remove(0);
+    let mut stream = backend.open(&camera, &CaptureSettings::default()).unwrap();
+    let geometry = *stream.geometry();
+    let frames: Vec<_> = (0..9).map(|_| stream.next_frames(std::time::Duration::from_secs(1)).unwrap()).collect();
+    let truth = scene.truth();
+
+    let fit = solve_screen(&geometry, &scene.pattern(), &frames, &scene.camera_to_aligned(), &SolveOptions::default())
+        .expect("solve");
+    for (got, want) in fit.corners_m.iter().zip(truth.corners_m()) {
+        assert!((got - want).norm() < 0.003, "corner {got:?} vs {want:?}");
+    }
+    for (got, want) in fit.size_m.iter().zip(truth.size_m) {
+        assert!((got / want - 1.0).abs() < 0.005);
+    }
+}
