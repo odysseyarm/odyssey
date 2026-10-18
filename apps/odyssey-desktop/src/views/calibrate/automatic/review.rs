@@ -5,7 +5,7 @@
 use dioxus::prelude::*;
 use odyssey_autocalib::session::{EdgeCheck, SizeSource};
 
-use super::kind::source_label;
+use super::kind::{SizeOrigin, source_label};
 use super::quality::{Verdict, assess, disagreement_message};
 use super::screens::screen_label;
 use super::ui::{
@@ -163,6 +163,23 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                                 class: "mt-2",
                                 "A size from the TV or the box is exact if the TV shows its whole picture. The camera's own measurement is usually within about half a percent of the distance, so a few millimeters per meter, which makes it a good second opinion but slightly less exact. If the TV crops its picture, the camera's measurement is the one that matches what you see."
                             }
+                        }
+                    }
+                    div {
+                        class: "flex flex-col gap-1",
+                        button {
+                            class: SECONDARY_BUTTON,
+                            r#type: "button",
+                            onclick: move |_| wizard.check_by_hand(),
+                            if finished.size_origin == Some(SizeOrigin::Reference) {
+                                "Measure by hand again"
+                            } else {
+                                "Settle it with a tape measure or credit card"
+                            }
+                        }
+                        span {
+                            class: "text-sm",
+                            "Goes back to Setup with a tape measure line on the screen. About a minute, then measure again."
                         }
                     }
                 }

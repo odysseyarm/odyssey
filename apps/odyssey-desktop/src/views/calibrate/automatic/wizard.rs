@@ -27,12 +27,13 @@ use dioxus_router::navigator;
 use odyssey_autocalib::camera::{CameraInfo, CaptureSettings};
 use odyssey_autocalib::orbbec::RuntimeStatus;
 use odyssey_autocalib::pattern::Pattern;
-use odyssey_autocalib::session::{SessionOptions, Step};
+use odyssey_autocalib::session::{KnownSize, SessionOptions, Step};
 use odyssey_hub_common::config::{self, MonitorKey, UiState};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use super::kind::{self, DisplayKind, Finding, SizePlan};
 use super::pattern_window::{self, PatternDisplay, PatternLoss, PatternMode};
+use super::reference::{self, Method, Reference, ReferenceError, Unit};
 use super::screens::{SCREEN_COUNT, default_screen, saved_screens};
 use super::settings::{
     COLOR_EXPOSURE_RANGE_US, Entered, IR_EXPOSURE_RANGE_US, SizeError, SizeField, parse_entered,
@@ -104,6 +105,35 @@ pub struct SavedInfo {
     pub path: String,
 }
 
+/// The tape and card helper while it is open. The monitor shows its line or
+/// card; the controls are in Setup.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Helper {
+    /// The monitor showing the line or card.
+    pub monitor: MonitorKey,
+    pub method: Method,
+    /// The card frame's width on the screen, in pixels.
+    pub card_px: f64,
+    /// The narrowest and widest the card frame may be.
+    pub card_bounds: (f64, f64),
+    /// The length typed from the tape, and the unit it was read in.
+    pub tape_text: String,
+    pub tape_unit: Unit,
+}
+
+impl Helper {
+    fn mode(&self, monitor: &MonitorKey) -> PatternMode {
+        match self.method {
+            Method::Tape => PatternMode::Ruler {
+                line_px: reference::tape_line_px(monitor.width),
+            },
+            Method::Card => PatternMode::Card {
+                width_px: self.card_px,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct Wizard {
     pub demo: bool,
@@ -133,6 +163,11 @@ pub struct Wizard {
     pub finding: Signal<Option<Finding>>,
     /// Whether the "Not right? Enter the size yourself" field is open.
     pub manual_size: Signal<bool>,
+    /// A size the tech measured by hand with the tape or card, and the
+    /// monitor it describes.
+    pub reference: Signal<Option<(MonitorKey, Reference)>>,
+    /// The tape and card helper, while it is open.
+    pub helper: Signal<Option<Helper>>,
     /// Show the camera's own measurement on the review instead of the declared
     /// size.
     pub use_measured: Signal<bool>,
@@ -215,6 +250,8 @@ pub fn use_wizard() -> Wizard {
         kind_choice: use_signal(|| args.kind),
         finding: use_signal(|| None),
         manual_size: use_signal(|| args.diagonal_in.is_some()),
+        reference: use_signal(|| None),
+        helper: use_signal(|| None),
         use_measured: use_signal(|| false),
         notes: use_signal(Vec::new),
         list_pending: use_signal(|| false),
@@ -266,6 +303,16 @@ pub fn use_wizard() -> Wizard {
     // The lookup reads files, so it stays off the UI thread.
     use_resource(move || async move {
         let monitor = wizard.selected_monitor();
+        // The helper's picture is on the monitor that was chosen when it opened;
+        // a list refresh that leaves the choice alone must not close it.
+        let moved = wizard
+            .helper
+            .peek()
+            .as_ref()
+            .is_some_and(|helper| Some(&helper.monitor) != monitor.as_ref());
+        if moved {
+            wizard.cancel_helper();
+        }
         *wizard.finding.write() = None;
         let Some(key) = monitor else { return };
         let found = if demo {
@@ -319,6 +366,11 @@ pub fn use_wizard() -> Wizard {
             async move {
                 let Some(mut receiver) = receiver else { return };
                 while let Some(loss) = receiver.recv().await {
+                    if wizard.helper.peek().is_some() {
+                        wizard.cancel_helper();
+                        wizard.note("The measuring screen was closed.".into());
+                        continue;
+                    }
                     if wizard.pattern.peek().is_none() {
                         continue;
                     }
@@ -371,6 +423,9 @@ impl Wizard {
 
     pub fn set_stage(mut self, stage: Stage) {
         *self.stage.write() = stage;
+        if stage != Stage::Setup {
+            self.cancel_helper();
+        }
         if stage != Stage::Problem {
             *self.step.write() = stage.step();
         }
@@ -479,7 +534,167 @@ impl Wizard {
             entered,
             aspect,
             self.prefer_camera_size(),
+            self.reference_size(),
         ))
+    }
+
+    // ---------------------------------------------------- Tape and card --
+
+    /// The size measured by hand for the selected monitor, if any.
+    pub fn reference(self) -> Option<Reference> {
+        let key = self.selected_monitor()?;
+        self.reference
+            .read()
+            .as_ref()
+            .filter(|(monitor, _)| *monitor == key)
+            .map(|(_, reference)| *reference)
+    }
+
+    /// The whole picture's size from the hand measurement.
+    fn reference_size(self) -> Option<KnownSize> {
+        let key = self.selected_monitor()?;
+        Some(self.reference()?.known_size(key.width, key.height))
+    }
+
+    /// Width and height in meters that a flat screen reports for itself, when
+    /// it reported a usable size. A projector's own report says nothing true
+    /// about the picture.
+    pub fn panel_size_m(self) -> Option<[f64; 2]> {
+        if self.kind() != DisplayKind::Flat {
+            return None;
+        }
+        match self.finding.read().as_ref()?.known_size()? {
+            KnownSize::Dimensions { width_m, height_m } => Some([width_m, height_m]),
+            KnownSize::Diagonal { .. } => None,
+        }
+    }
+
+    /// The width the display reports for itself, which the card starts near.
+    fn panel_width_mm(self) -> Option<f64> {
+        self.panel_size_m().map(|[width_m, _]| width_m * 1000.0)
+    }
+
+    /// Opens the helper: its line or card goes up on the chosen monitor and
+    /// the controls appear in Setup. The picture would cover the controls if
+    /// it went up on the monitor this window is on, so that is refused.
+    pub fn open_helper(mut self, method: Method) {
+        let Some(key) = self.selected_monitor() else {
+            return;
+        };
+        let window = dioxus::desktop::window();
+        let current = window.current_monitor().map(|m| monitor_key(&m));
+        if pattern_window::covers_window(&window, &key, current) {
+            self.note(
+                "To measure by hand, move this window to a different screen than the one you're measuring, so the picture doesn't cover it. Then try again."
+                    .into(),
+            );
+            return;
+        }
+        let projected = self.kind() == DisplayKind::Projector;
+        let start = reference::card_start_px(self.panel_width_mm(), key.width, projected);
+        let card_bounds = reference::card_bounds_px(start, key.width, key.height);
+        let helper = Helper {
+            monitor: key.clone(),
+            method,
+            card_px: start.clamp(card_bounds.0, card_bounds.1),
+            card_bounds,
+            tape_text: String::new(),
+            tape_unit: Unit::Inches,
+        };
+        self.close_pattern();
+        if !self.open_pattern(helper.mode(&key)) {
+            self.note("The screen you chose is no longer available.".into());
+            return;
+        }
+        *self.helper.write() = Some(helper);
+    }
+
+    /// Switches the open helper between the tape and the card.
+    pub fn set_helper_method(mut self, method: Method) {
+        let Some(key) = self.selected_monitor() else {
+            return;
+        };
+        let mode = {
+            let mut helper = self.helper.write();
+            let Some(helper) = helper.as_mut() else {
+                return;
+            };
+            helper.method = method;
+            helper.mode(&key)
+        };
+        self.show(mode);
+    }
+
+    /// Resizes the card frame, within its bounds.
+    pub fn set_card_px(mut self, px: f64) {
+        let Some(key) = self.selected_monitor() else {
+            return;
+        };
+        let mode = {
+            let mut helper = self.helper.write();
+            let Some(helper) = helper.as_mut() else {
+                return;
+            };
+            let (lo, hi) = helper.card_bounds;
+            helper.card_px = reference::snap(px).clamp(lo, hi);
+            helper.mode(&key)
+        };
+        self.show(mode);
+    }
+
+    /// Records what was read off the tape.
+    pub fn set_tape(mut self, text: String, unit: Unit) {
+        if let Some(helper) = self.helper.write().as_mut() {
+            helper.tape_text = text;
+            helper.tape_unit = unit;
+        }
+    }
+
+    /// What the helper gives right now: nothing when it is closed.
+    pub fn helper_reading(self) -> Option<Result<Reference, ReferenceError>> {
+        let key = self.selected_monitor()?;
+        let helper = self.helper.read();
+        let helper = helper.as_ref()?;
+        Some(match helper.method {
+            Method::Card => Reference::from_card(helper.card_px),
+            Method::Tape => reference::parse_length_mm(&helper.tape_text, helper.tape_unit)
+                .and_then(|mm| {
+                    Reference::from_tape(f64::from(reference::tape_line_px(key.width)), mm)
+                }),
+        })
+    }
+
+    /// Takes the helper's reading as the screen's size.
+    pub fn apply_helper(mut self) {
+        let (Some(Ok(reading)), Some(key)) = (self.helper_reading(), self.selected_monitor())
+        else {
+            return;
+        };
+        *self.reference.write() = Some((key, reading));
+        // A hand measurement replaces anything typed before it.
+        self.size_text.write().clear();
+        *self.manual_size.write() = false;
+        self.cancel_helper();
+    }
+
+    /// Closes the helper and takes its picture down.
+    pub fn cancel_helper(mut self) {
+        if self.helper.peek().is_none() {
+            return;
+        }
+        *self.helper.write() = None;
+        self.close_pattern();
+    }
+
+    pub fn clear_reference(mut self) {
+        *self.reference.write() = None;
+    }
+
+    /// From the review, when the camera and the declared size disagree: back
+    /// to Setup with the tape ready, to settle which one is right.
+    pub fn check_by_hand(self) {
+        self.back_to_setup();
+        self.open_helper(Method::Tape);
     }
 
     pub fn can_continue(self) -> bool {

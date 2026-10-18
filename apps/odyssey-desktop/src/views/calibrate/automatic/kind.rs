@@ -22,6 +22,9 @@ pub enum SizeOrigin {
     Panel,
     /// Typed in by the tech.
     Entered,
+    /// Measured by hand with a tape or a credit card: the size of the picture
+    /// as displayed, hidden edge included.
+    Reference,
 }
 
 /// The physical size an EDID reported.
@@ -288,18 +291,19 @@ pub struct SizePlan {
     pub require_visible_edges: bool,
 }
 
-/// The size and edge rule for a display of `kind`. A typed size wins over the
-/// display's own; a projector never uses the display's. `aspect` is the
-/// picture's width over height, which turns a typed width into a full size.
-/// `prefer_camera` skips the display's own size, which leaves a flat screen
-/// exactly as if its EDID had said nothing: the camera measures it, and the
-/// picture may be cropped.
+/// The size and edge rule for a display of `kind`. A typed size wins, then a
+/// size measured by hand (`reference`), then the display's own; a projector
+/// never uses the display's. `aspect` is the picture's width over height,
+/// which turns a typed width into a full size. `prefer_camera` skips the
+/// display's own size, which leaves a flat screen exactly as if its EDID had
+/// said nothing: the camera measures it, and the picture may be cropped.
 pub fn plan(
     kind: DisplayKind,
     finding: Option<&Finding>,
     entered: Option<Entered>,
     aspect: f64,
     prefer_camera: bool,
+    reference: Option<KnownSize>,
 ) -> SizePlan {
     let flat = kind == DisplayKind::Flat;
     if let Some(entered) = entered {
@@ -319,6 +323,15 @@ pub fn plan(
             require_visible_edges: flat,
         };
     }
+    if let Some(reference) = reference {
+        // A hand measurement is of the picture itself, so a cropped edge does
+        // not make it wrong.
+        return SizePlan {
+            known_size: Some(reference),
+            origin: Some(SizeOrigin::Reference),
+            require_visible_edges: false,
+        };
+    }
     let panel = match kind {
         DisplayKind::Flat if !prefer_camera => finding.and_then(Finding::known_size),
         DisplayKind::Flat | DisplayKind::Projector => None,
@@ -335,6 +348,7 @@ pub fn source_label(source: SizeSource, origin: Option<SizeOrigin>) -> &'static 
     match (source, origin) {
         (SizeSource::Measured, _) => "Measured by the camera",
         (_, Some(SizeOrigin::Entered)) => "From the size you entered",
+        (_, Some(SizeOrigin::Reference)) => "From your tape or card measurement",
         (_, Some(SizeOrigin::Panel)) => "From the TV's own information",
         // A declared size always has an origin; the camera's number is the
         // honest fallback if that ever breaks.
@@ -529,7 +543,14 @@ mod tests {
 
     #[test]
     fn flat_screens_anchor_to_the_panel_and_require_their_edges() {
-        let p = plan(DisplayKind::Flat, Some(&found()), None, 16.0 / 9.0, false);
+        let p = plan(
+            DisplayKind::Flat,
+            Some(&found()),
+            None,
+            16.0 / 9.0,
+            false,
+            None,
+        );
         assert_eq!(
             p.known_size,
             Some(KnownSize::Dimensions {
@@ -549,6 +570,7 @@ mod tests {
             Some(Entered::Diagonal { inches: 40.0 }),
             16.0 / 9.0,
             false,
+            None,
         );
         assert_eq!(p.known_size, Some(KnownSize::Diagonal { inches: 40.0 }));
         assert_eq!(p.origin, Some(SizeOrigin::Entered));
@@ -557,7 +579,14 @@ mod tests {
 
     #[test]
     fn preferring_the_camera_plans_a_flat_screen_like_one_whose_edid_said_nothing() {
-        let p = plan(DisplayKind::Flat, Some(&found()), None, 16.0 / 9.0, true);
+        let p = plan(
+            DisplayKind::Flat,
+            Some(&found()),
+            None,
+            16.0 / 9.0,
+            true,
+            None,
+        );
         assert_eq!((p.known_size, p.origin), (None, None));
         assert!(!p.require_visible_edges);
     }
@@ -570,6 +599,7 @@ mod tests {
             Some(Entered::Diagonal { inches: 40.0 }),
             16.0 / 9.0,
             true,
+            None,
         );
         assert_eq!(p.known_size, Some(KnownSize::Diagonal { inches: 40.0 }));
         assert_eq!(p.origin, Some(SizeOrigin::Entered));
@@ -579,13 +609,68 @@ mod tests {
     #[test]
     fn a_flat_screen_without_a_size_is_measured_and_may_crop_its_picture() {
         let none = Finding::from_lookup(&lookup(None, Some(LookupNote::NotFound)));
-        let p = plan(DisplayKind::Flat, Some(&none), None, 16.0 / 9.0, false);
+        let p = plan(
+            DisplayKind::Flat,
+            Some(&none),
+            None,
+            16.0 / 9.0,
+            false,
+            None,
+        );
         assert_eq!((p.known_size, p.origin), (None, None));
         assert!(!p.require_visible_edges);
         assert_eq!(
-            plan(DisplayKind::Flat, None, None, 16.0 / 9.0, false).known_size,
+            plan(DisplayKind::Flat, None, None, 16.0 / 9.0, false, None).known_size,
             None
         );
+    }
+
+    fn by_hand() -> KnownSize {
+        KnownSize::Dimensions {
+            width_m: 1.2,
+            height_m: 0.675,
+        }
+    }
+
+    #[test]
+    fn a_hand_measurement_beats_the_panel_and_the_camera_and_needs_no_edges() {
+        for prefer_camera in [false, true] {
+            let p = plan(
+                DisplayKind::Flat,
+                Some(&found()),
+                None,
+                16.0 / 9.0,
+                prefer_camera,
+                Some(by_hand()),
+            );
+            assert_eq!(p.known_size, Some(by_hand()));
+            assert_eq!(p.origin, Some(SizeOrigin::Reference));
+            assert!(!p.require_visible_edges);
+        }
+        let projected = plan(
+            DisplayKind::Projector,
+            None,
+            None,
+            16.0 / 9.0,
+            false,
+            Some(by_hand()),
+        );
+        assert_eq!(projected.origin, Some(SizeOrigin::Reference));
+        assert!(!projected.require_visible_edges);
+    }
+
+    #[test]
+    fn a_typed_size_still_beats_a_hand_measurement() {
+        let p = plan(
+            DisplayKind::Flat,
+            Some(&found()),
+            Some(Entered::Diagonal { inches: 40.0 }),
+            16.0 / 9.0,
+            false,
+            Some(by_hand()),
+        );
+        assert_eq!(p.origin, Some(SizeOrigin::Entered));
+        assert!(p.require_visible_edges);
     }
 
     #[test]
@@ -596,6 +681,7 @@ mod tests {
             None,
             16.0 / 9.0,
             false,
+            None,
         );
         assert_eq!(
             (p.known_size, p.origin, p.require_visible_edges),
@@ -607,6 +693,7 @@ mod tests {
             Some(Entered::Diagonal { inches: 100.0 }),
             16.0 / 9.0,
             false,
+            None,
         );
         assert_eq!(
             typed.known_size,
@@ -623,6 +710,7 @@ mod tests {
             Some(Entered::Width { cm: 240.0 }),
             16.0 / 9.0,
             false,
+            None,
         );
         let Some(KnownSize::Dimensions { width_m, height_m }) = p.known_size else {
             panic!("{p:?}")

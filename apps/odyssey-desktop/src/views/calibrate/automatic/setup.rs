@@ -7,6 +7,7 @@ use odyssey_common::MAX_SCREEN_ID;
 use super::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use super::illustrations::{ProjectorIllustration, TvIllustration};
 use super::kind::DisplayKind;
+use super::reference_helper::ReferenceHelper;
 use super::screens::screen_label;
 use super::sdk_download::{DownloadSdk, DownloadedSdkRow, SdkVersionNote};
 use super::settings::{DIAGONAL_RANGE_IN, SizeError, SizeField, WIDTH_RANGE_CM};
@@ -81,6 +82,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                     }
                 }
                 SizeSection { wizard }
+                ReferenceHelper { wizard }
             }
         }
     }
@@ -392,6 +394,7 @@ fn FlatSize(wizard: Wizard) -> Element {
     let field_open = !finding.is_found() || *wizard.manual_size.read();
     let advice = finding.advice();
     let prefer_camera = wizard.prefer_camera_size();
+    let by_hand = wizard.reference().is_some();
     let aside = finding.projector_aside();
     let lines = finding.detail_lines();
 
@@ -414,6 +417,8 @@ fn FlatSize(wizard: Wizard) -> Element {
                         class: "text-lg font-medium text-gray-900 dark:text-white",
                         if typed && finding.is_found() {
                             "Using the size you entered instead of the TV's."
+                        } else if by_hand {
+                            "Using your tape or card measurement instead of the TV's."
                         } else if prefer_camera && finding.is_found() {
                             "The camera will measure the screen's size."
                         } else {
@@ -439,7 +444,7 @@ fn FlatSize(wizard: Wizard) -> Element {
                     }
                 }
             }
-            if finding.is_found() && !field_open {
+            if finding.is_found() && !field_open && !by_hand {
                 label {
                     r#for: "prefer-camera-size",
                     class: "flex w-fit items-start gap-3 text-base text-gray-900 dark:text-white",

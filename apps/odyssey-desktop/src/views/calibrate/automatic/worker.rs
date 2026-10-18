@@ -1063,7 +1063,7 @@ mod tests {
         use crate::views::calibrate::automatic::quality::{Verdict, assess};
 
         // What the wizard hands the session for a flat screen the camera sizes.
-        let plan = kind::plan(DisplayKind::Flat, None, None, 16.0 / 9.0, true);
+        let plan = kind::plan(DisplayKind::Flat, None, None, 16.0 / 9.0, true, None);
         assert!(plan.known_size.is_none() && !plan.require_visible_edges);
 
         for overscan in [0.03, DEMO_OVERSCAN_MAX_PERCENT / 100.0] {
@@ -1100,5 +1100,57 @@ mod tests {
             }
             assert_ne!(assess(&f.primary.measures).verdict, Verdict::Poor, "{at}");
         }
+    }
+
+    #[test]
+    fn a_tape_measured_flat_screen_is_calibrated_through_overscan_and_the_camera_agrees() {
+        use crate::cli::DEMO_OVERSCAN_MAX_PERCENT;
+        use crate::views::calibrate::automatic::kind::{self, DisplayKind};
+        use crate::views::calibrate::automatic::quality::{Verdict, assess};
+        use crate::views::calibrate::automatic::reference::{Reference, tape_line_px};
+
+        let overscan = DEMO_OVERSCAN_MAX_PERCENT / 100.0;
+        let truth = demo_scene(16.0 / 9.0, DEMO_DIAGONAL_IN, true, overscan).truth();
+
+        // A tech lays a tape along the line a 1920 x 1080 screen draws and reads what
+        // the displayed picture, overscan and all, really measures along it.
+        let (width_px, height_px) = (1920, 1080);
+        let line_px = f64::from(tape_line_px(width_px));
+        let mm_per_px = truth.size_m[0] * 1000.0 / f64::from(width_px);
+        let tape = Reference::from_tape(line_px, line_px * mm_per_px).expect("a plausible reading");
+
+        // What the wizard hands the session for it.
+        let plan = kind::plan(
+            DisplayKind::Flat,
+            None,
+            None,
+            16.0 / 9.0,
+            false,
+            Some(tape.known_size(width_px, height_px)),
+        );
+        assert_eq!(plan.origin, Some(SizeOrigin::Reference));
+        assert!(!plan.require_visible_edges);
+
+        let options = SessionOptions {
+            known_size: plan.known_size,
+            require_visible_edges: plan.require_visible_edges,
+            ..SessionOptions::default()
+        };
+        let backend = Backend::Demo {
+            overscan_fraction: overscan,
+        };
+        let Ended::Finished(f) = run_session(backend, options, plan.origin, false) else {
+            panic!("failed at {overscan} overscan")
+        };
+        assert_eq!(f.primary.size_source, SizeSource::KnownDimensions);
+        assert!(matches!(f.primary.edges, EdgeCheck::Cropped { .. }));
+        // The result is the hand measurement, which is the whole displayed picture ...
+        for (got, want) in f.primary.size_m.iter().zip(truth.size_m) {
+            assert!((got / want - 1.0).abs() < 1e-6, "{got} vs {want}");
+        }
+        // ... and the camera, measuring the same picture, agrees with it.
+        let check = f.primary.size_check.expect("a size check");
+        assert!(!check.disagrees(), "{check:?}");
+        assert_ne!(assess(&f.primary.measures).verdict, Verdict::Poor);
     }
 }
