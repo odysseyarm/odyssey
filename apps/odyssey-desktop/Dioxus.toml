@@ -16,6 +16,15 @@ short_description = "Odyssey PC application"
 [bundle.windows.wix]
 upgrade_code = "b881af96-4f5e-4bc7-99e7-f1c46f96c235"
 
+# The installer is built in two variants from one tree (see wix/main.wxs and
+# wix/prepare_orbbec.py): online carries no camera SDK and the app downloads it;
+# offline carries it as an optional feature. The fragment below is generated per
+# variant by `just bundle online|offline`, which also sets the environment the
+# template reads.
+template = "wix/main.wxs"
+fragment_paths = ["target/orbbec-stage/orbbec.wxs"]
+feature_refs = ["OrbbecSdk"]
+
 [web.resource]
 style = ["/assets/tailwind.css"]
 

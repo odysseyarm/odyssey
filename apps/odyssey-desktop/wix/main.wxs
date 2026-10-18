@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The WiX template for the Odyssey installer: dioxus-cli's built-in one (0.7.10), changed in
+  two places, both marked below. It is rendered by `dx bundle` (Handlebars), then compiled
+  by WiX's candle, which reads two environment variables the caller must set:
+
+    ODYSSEY_MSI_VARIANT   "online" or "offline". Offline carries the Orbbec camera SDK as an
+                          optional feature and asks for Orbbec's EULA; online carries nothing.
+    ODYSSEY_ORBBEC_STAGE  Directory prepare_orbbec.py filled (offline only): EULA.rtf and the
+                          SDK files the fragment installs.
+
+  Run `just bundle-msi online|offline`, or see .github/workflows/desktop-release.yml.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product
+        Id="*"
+        Name="{{product_name}}"
+        UpgradeCode="{{upgrade_code}}"
+        Language="1033"
+        Codepage="1252"
+        Version="{{version}}"
+        Manufacturer="{{publisher}}">
+
+        <Package
+            Id="*"
+            Keywords="Installer"
+            {{#if short_description}}
+            Description="{{short_description}}"
+            {{/if}}
+            Manufacturer="{{publisher}}"
+            InstallScope="perMachine"
+            Languages="1033"
+            Compressed="yes"
+            SummaryCodepage="1252" />
+
+        <MajorUpgrade
+            Schedule="afterInstallInitialize"
+            {{#if allow_downgrades}}
+            AllowDowngrades="yes"
+            {{else}}
+            DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit."
+            AllowSameVersionUpgrades="yes"
+            {{/if}} />
+
+        <MediaTemplate EmbedCab="yes" {{#if fips_compliant}}CompressionLevel="none"{{/if}} />
+
+        {{#if icon_path}}
+        <Icon Id="ProductIcon" SourceFile="{{icon_path}}" />
+        <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+        {{/if}}
+
+        <?if $(env.ODYSSEY_MSI_VARIANT) = "offline" ?>
+        <!-- The offline installer offers Orbbec camera support as an optional feature, so it
+             uses the feature tree, and its licence page is Orbbec's EULA (prepare_orbbec.py
+             writes it). -->
+        <WixVariable Id="WixUILicenseRtf" Value="$(env.ODYSSEY_ORBBEC_STAGE)\EULA.rtf" />
+        <UIRef Id="WixUI_FeatureTree" />
+        <?else?>
+        <UI>
+            <UIRef Id="WixUI_InstallDir" />
+            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
+            <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+        </UI>
+        <?endif?>
+        <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="{{wix_program_files_folder}}">
+                <Directory Id="INSTALLDIR" Name="{{product_name}}">
+                    <Component Id="MainExecutable" Guid="*">
+                        <File
+                            Id="MainExe"
+                            Name="{{main_binary_name}}"
+                            Source="{{main_binary_path}}"
+                            KeyPath="yes" />
+                    </Component>
+{{{install_tree}}}
+                </Directory>
+            </Directory>
+
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ProgramMenuSubfolder" Name="{{product_name}}">
+                    <Component Id="StartMenuShortcut" Guid="*">
+                        <Shortcut
+                            Id="ApplicationShortcut"
+                            Name="{{product_name}}"
+                            {{#if short_description}}
+                            Description="{{short_description}}"
+                            {{/if}}
+                            Target="[INSTALLDIR]{{main_binary_name}}"
+                            WorkingDirectory="INSTALLDIR" />
+                        <RemoveFolder Id="RemoveProgramMenuSubfolder" On="uninstall" />
+                        <RegistryValue
+                            Root="HKCU"
+                            Key="Software\{{publisher}}\{{product_name}}"
+                            Name="installed"
+                            Type="integer"
+                            Value="1"
+                            KeyPath="yes" />
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <Directory Id="DesktopFolder">
+                <Component Id="DesktopShortcut" Guid="*">
+                    <Shortcut
+                        Id="DesktopShortcut"
+                        Name="{{product_name}}"
+                        {{#if short_description}}
+                        Description="{{short_description}}"
+                        {{/if}}
+                        Target="[INSTALLDIR]{{main_binary_name}}"
+                        WorkingDirectory="INSTALLDIR" />
+                    <RegistryValue
+                        Root="HKCU"
+                        Key="Software\{{publisher}}\{{product_name}}"
+                        Name="desktop_shortcut"
+                        Type="integer"
+                        Value="1"
+                        KeyPath="yes" />
+                </Component>
+            </Directory>
+        </Directory>
+
+        <Feature
+            Id="MainFeature"
+            Title="{{product_name}}"
+            Level="1"
+            Display="expand"
+            ConfigurableDirectory="INSTALLDIR"
+            Absent="disallow">
+            <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="StartMenuShortcut" />
+            <ComponentRef Id="DesktopShortcut" />
+{{{component_refs_xml}}}
+            {{#each component_group_refs}}
+            <ComponentGroupRef Id="{{this}}" />
+            {{/each}}
+            {{#each component_refs}}
+            <ComponentRef Id="{{this}}" />
+            {{/each}}
+            {{#each feature_group_refs}}
+            <FeatureGroupRef Id="{{this}}" />
+            {{/each}}
+            {{#each feature_refs}}
+            <FeatureRef Id="{{this}}" />
+            {{/each}}
+            {{#each merge_refs}}
+            <MergeRef Id="{{this}}" />
+            {{/each}}
+        </Feature>
+    </Product>
+</Wix>
