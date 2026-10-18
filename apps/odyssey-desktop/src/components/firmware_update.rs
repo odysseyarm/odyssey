@@ -283,12 +283,13 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         desktop_version(),
                         device.netcore_release,
                     );
-                    // A zero from a unit with no cable can mean the Bluetooth read has
-                    // not answered yet, so it is not judged as "behind".
+                    // A zero the hub has not settled on yet can mean the net core has
+                    // not answered (e.g. right after a transport swap), so it is not
+                    // judged as "behind".
                     let readable_netcore = firmware::known_netcore_release(
                         device
                             .capabilities
-                            .contains(odyssey_hub_common::device::DeviceCapabilities::CONTROL),
+                            .contains(odyssey_hub_common::device::DeviceCapabilities::NETCORE_KNOWN),
                         device.netcore_release,
                     );
                     let is_newer = |fw: &firmware::FirmwareEntry| {

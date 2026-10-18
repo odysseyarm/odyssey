@@ -9605,6 +9605,7 @@ dependencies = [
  "odyssey-common",
  "odyssey-protocol",
  "opencv-ros-camera",
+ "parking_lot",
  "postcard",
  "rand 0.8.8",
  "serde",

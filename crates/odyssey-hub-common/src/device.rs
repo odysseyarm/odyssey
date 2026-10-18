@@ -24,6 +24,10 @@ impl DeviceCapabilities {
     /// Device is in DFU mode or has a broken protocol — only firmware flashing is available.
     /// When set, firmware_version is [0,0,0] (unknown) and normal communication is unavailable.
     pub const DFU: u8 = 0b100;
+    /// `netcore_release` is a settled reading rather than a read still in progress.
+    /// Without it a 0 is indistinguishable from "not answered yet", which a unit
+    /// shows for a while after every (re)boot, so it must not be judged as "behind".
+    pub const NETCORE_KNOWN: u8 = 0b1000;
 
     pub const fn empty() -> Self {
         Self { bits: 0 }
@@ -79,7 +83,8 @@ pub struct Device {
     /// Release counter of the nRF5340 net core (BLE controller) firmware, 0 if unknown.
     ///
     /// Unknown covers a device whose application predates the property, a net core
-    /// that does not report one, and a read that has not completed yet.
+    /// that does not report one, and a read that has not completed yet. A 0 only
+    /// means "reported no release" once [`DeviceCapabilities::NETCORE_KNOWN`] is set.
     pub netcore_release: u16,
 }
 
