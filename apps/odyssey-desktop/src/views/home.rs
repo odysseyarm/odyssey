@@ -9,7 +9,7 @@ use crate::components::{
     DeviceFirmwareUpdate, FirmwareUpdateManager, SensorSettings, TransportModePanel,
     UpdatingDeviceRow,
 };
-use crate::components::firmware_update::FIRMWARE_CHANNEL;
+use crate::components::firmware_update::{ensure_firmware_channel_loaded, FIRMWARE_CHANNEL};
 use crate::hub;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
@@ -54,11 +54,7 @@ pub fn Home() -> Element {
     // Without the manifest no update is ever offered, and one failed fetch used
     // to disable updates for the rest of the session. Keep trying, backing off
     // so an offline machine is not hammering the network.
-    use_future(|| async {
-        if FIRMWARE_CHANNEL.peek().is_none() {
-            *FIRMWARE_CHANNEL.write() = Some(firmware::FirmwareChannel::load().await);
-        }
-    });
+    use_future(ensure_firmware_channel_loaded);
     use_resource({
         let mut manifest = manifest.clone();
         move || async move {

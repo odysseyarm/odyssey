@@ -1,15 +1,11 @@
 use dioxus::{logger::tracing, prelude::*};
 use odyssey_hub_server::firmware::FirmwareChannel;
 
-use crate::components::firmware_update::FIRMWARE_CHANNEL;
+use crate::components::firmware_update::{ensure_firmware_channel_loaded, FIRMWARE_CHANNEL};
 
 #[component]
 pub fn Settings() -> Element {
-    use_future(|| async {
-        if FIRMWARE_CHANNEL.peek().is_none() {
-            *FIRMWARE_CHANNEL.write() = Some(FirmwareChannel::load().await);
-        }
-    });
+    use_future(ensure_firmware_channel_loaded);
     let current = FIRMWARE_CHANNEL().unwrap_or_default();
     let choose = move |channel: FirmwareChannel| {
         *FIRMWARE_CHANNEL.write() = Some(channel);

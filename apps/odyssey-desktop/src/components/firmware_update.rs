@@ -19,6 +19,21 @@ use std::sync::Arc;
 pub static FIRMWARE_CHANNEL: GlobalSignal<Option<firmware::FirmwareChannel>> =
     Signal::global(|| None);
 
+/// Fill [`FIRMWARE_CHANNEL`] from the saved choice if nothing has set it yet.
+///
+/// The check repeats after the load: a user can pick a channel while the saved
+/// one is still being read, and that pick must survive.
+pub async fn ensure_firmware_channel_loaded() {
+    if FIRMWARE_CHANNEL.peek().is_some() {
+        return;
+    }
+    let saved = firmware::FirmwareChannel::load().await;
+    let mut channel = FIRMWARE_CHANNEL.write();
+    if channel.is_none() {
+        *channel = Some(saved);
+    }
+}
+
 /// Where Odyssey Desktop releases are published.
 const DESKTOP_RELEASES_URL: &str = "https://github.com/odysseyarm/odyssey/releases";
 
