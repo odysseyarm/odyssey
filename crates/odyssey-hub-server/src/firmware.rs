@@ -28,20 +28,35 @@ pub enum FirmwareChannel {
 }
 
 impl FirmwareChannel {
-    /// `ODYSSEY_FIRMWARE_CHANNEL=alpha` opts in to the alpha channel.
-    pub fn from_env() -> Self {
-        match std::env::var("ODYSSEY_FIRMWARE_CHANNEL").as_deref() {
-            Ok("alpha") => Self::Alpha,
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Alpha => "alpha",
+        }
+    }
+
+    /// An unrecognised name falls back to stable: the safe channel is the one
+    /// to land on when a settings file is stale or hand-edited.
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "alpha" => Self::Alpha,
             _ => Self::Stable,
         }
     }
 
+    /// The channel the user chose, stable if they never did.
+    pub async fn load() -> Self {
+        odyssey_hub_common::config::firmware_channel_async()
+            .await
+            .map_or(Self::Stable, |name| Self::from_name(&name))
+    }
+
+    pub async fn save(self) -> Result<(), Box<dyn std::error::Error>> {
+        odyssey_hub_common::config::firmware_channel_save_async(self.name()).await
+    }
+
     fn manifest_url(self) -> String {
-        let name = match self {
-            Self::Stable => "stable",
-            Self::Alpha => "alpha",
-        };
-        format!("{MANIFEST_BASE_URL}/releases.{name}.json")
+        format!("{MANIFEST_BASE_URL}/releases.{}.json", self.name())
     }
 }
 
@@ -1127,6 +1142,15 @@ mod tests {
         );
         // Unknown device.
         assert_eq!(selected(select_firmware(&manifest, "nope", [9, 9, 9])), (None, None));
+    }
+
+    #[test]
+    fn channel_names_round_trip_and_unknown_falls_back_to_stable() {
+        for channel in [FirmwareChannel::Stable, FirmwareChannel::Alpha] {
+            assert_eq!(FirmwareChannel::from_name(channel.name()), channel);
+        }
+        assert_eq!(FirmwareChannel::from_name(""), FirmwareChannel::Stable);
+        assert_eq!(FirmwareChannel::from_name("nightly"), FirmwareChannel::Stable);
     }
 
     #[test]

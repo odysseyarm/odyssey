@@ -13,6 +13,15 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+/// The firmware channel in effect, `None` until the saved choice has loaded.
+/// Settings writes it and the manifest fetch follows it, so a change applies
+/// without a restart.
+pub static FIRMWARE_CHANNEL: GlobalSignal<Option<firmware::FirmwareChannel>> =
+    Signal::global(|| None);
+
+/// Where Odyssey Desktop releases are published.
+const DESKTOP_RELEASES_URL: &str = "https://github.com/odysseyarm/odyssey/releases";
+
 /// The Odyssey Desktop version this build is, for matching against the oldest
 /// desktop each firmware release declares it needs.
 fn desktop_version() -> [u16; 3] {
@@ -35,7 +44,12 @@ fn held_back_note(held_back: &HeldBack) -> Element {
     rsx! {
         span {
             class: "text-xs text-gray-500 dark:text-gray-400 italic",
-            "v{held_back.version} needs Odyssey Desktop {held_back.min_desktop} or newer"
+            "v{held_back.version} needs Odyssey Desktop {held_back.min_desktop} or newer. "
+            a {
+                class: "underline text-blue-600 dark:text-blue-400",
+                href: DESKTOP_RELEASES_URL,
+                "Get the latest"
+            }
         }
     }
 }
