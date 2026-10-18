@@ -169,7 +169,7 @@ pub fn failure_message(kind: FailureKind, size_origin: Option<SizeOrigin>) -> Me
             Icon::Crop,
             "The TV is cutting off the picture",
             format!(
-                "The {} of the picture can't be seen. Turn off overscan in the TV's picture settings ('Just Scan', 'Screen Fit' or 'PC mode'), then try again.",
+                "The {} of the picture can't be seen, so the TV's size doesn't match what the camera sees. Turn off overscan in the TV's picture settings ('Just Scan', 'Screen Fit' or 'PC mode'), then try again. If you can't, go back, clear any size you typed and tick \"Measure the size with the camera\": that works with the picture cut off.",
                 sides_words(sides)
             ),
         ),
