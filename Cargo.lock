@@ -9404,7 +9404,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-desktop"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
