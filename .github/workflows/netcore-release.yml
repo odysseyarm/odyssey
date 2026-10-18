@@ -11,10 +11,21 @@ name: Net Core Release
 # The build runs `just dist-netcore`, the recipe a local release runs, so the
 # two cannot drift.
 
+#
+# Run it by hand from the Actions tab (or `gh workflow run`) to test the build
+# as if that tag had been pushed: a run from a branch builds and uploads the artifacts but
+# publishes nothing.
+
 on:
   push:
     tags:
       - '*-netcore-v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build as, e.g. atslite1-netcore-v1. Builds only; nothing is published.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +34,8 @@ jobs:
   resolve:
     name: Resolve tag
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     outputs:
       skip: ${{ steps.exists.outputs.skip }}
       device: ${{ steps.parse.outputs.device }}
@@ -32,11 +45,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: Skip tags that already have a release
         id: exists
+        # A manual run is a dry run, so an existing release does not stop it.
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; nothing to build."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; nothing to build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -46,12 +61,12 @@ jobs:
         if: steps.exists.outputs.skip != 'true'
         run: |
           set -eu
-          device="${GITHUB_REF_NAME%-netcore-v*}"
-          release="${GITHUB_REF_NAME##*-netcore-v}"
+          device="${RELEASE_TAG%-netcore-v*}"
+          release="${RELEASE_TAG##*-netcore-v}"
           case "$device" in
             atslite1) board_dir=firmware/atslite/boards/lite1 ;;
             legacy-atslite1) board_dir=firmware/legacy/vm-fw/boards/atslite ;;
-            *) echo "Unknown device '$device' in tag $GITHUB_REF_NAME" >&2; exit 1 ;;
+            *) echo "Unknown device '$device' in tag $RELEASE_TAG" >&2; exit 1 ;;
           esac
           case "$release" in
             ''|*[!0-9]*) echo "Release '$release' is not a number" >&2; exit 1 ;;
@@ -74,8 +89,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # Run from the net-core directory so rustup resolves its
-      # rust-toolchain.toml and installs the target and tools for that toolchain.
+      # rustup resolves the repo's rust-toolchain.toml from here, so the target and
+      # tools are added to the pinned nightly.
       - name: Install the target and tools
         working-directory: ${{ needs.resolve.outputs.board_dir }}/net-core
         run: |
@@ -112,6 +127,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     needs: [resolve, build]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write

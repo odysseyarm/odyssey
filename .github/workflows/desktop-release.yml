@@ -10,11 +10,16 @@ name: Desktop Release
 # has no key for, so the checkout rewrites that URL to an authenticated HTTPS
 # one. ODYSSEY_CV_TOKEN is a fine-grained PAT scoped to odysseyarm/odyssey-cv,
 # Contents: read.
+#
+# Run it by hand from the Actions tab (or `gh workflow run`) to test the build
+# without a tag: a run from a branch builds and uploads the artifacts but
+# publishes nothing.
 
 on:
   push:
     tags:
       - 'odyssey-desktop-v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,13 +38,16 @@ jobs:
       - name: Verify tag version
         id: check
         run: |
-          tag_version="${GITHUB_REF_NAME#odyssey-desktop-v}"
           crate_version=$(grep -m1 '^version' apps/odyssey-desktop/Cargo.toml | cut -d'"' -f2)
-          if [ "$tag_version" != "$crate_version" ]; then
-            echo "Tag version ($tag_version) does not match apps/odyssey-desktop/Cargo.toml version ($crate_version)" >&2
-            exit 1
+          # A manual run is from a branch, so there is no tag to compare.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag_version="${GITHUB_REF_NAME#odyssey-desktop-v}"
+            if [ "$tag_version" != "$crate_version" ]; then
+              echo "Tag version ($tag_version) does not match apps/odyssey-desktop/Cargo.toml version ($crate_version)" >&2
+              exit 1
+            fi
           fi
-          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "version=$crate_version" >> "$GITHUB_OUTPUT"
 
   bundle:
     name: Bundle MSI
@@ -195,6 +203,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [check-version, bundle, appimage]
+    if: github.ref_type == 'tag'
     permissions:
       contents: write
     env:
