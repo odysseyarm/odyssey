@@ -259,6 +259,9 @@ pub struct Outcome {
     pub size_check: Option<SizeCheck>,
     pub measures: Measures,
     pub gravity_aligned: bool,
+    /// Whether the display showed the whole picture. `Cropped` is only
+    /// possible when the edges were not required, i.e. the camera sized it.
+    pub edges: EdgeCheck,
 }
 
 /// What the review screen needs once the calibration is done.
@@ -744,6 +747,7 @@ fn outcome(done: odyssey_autocalib::session::Calibration) -> Outcome {
         size_check: r.size_check,
         measures: Measures::from(r),
         gravity_aligned: r.gravity_aligned,
+        edges: r.edges,
         calibration: done.calibration,
     }
 }
@@ -1050,5 +1054,31 @@ mod tests {
             panic!("failed")
         };
         assert_eq!(f.primary.size_source, SizeSource::Measured);
+    }
+
+    #[test]
+    fn a_camera_sized_flat_screen_is_calibrated_through_overscan() {
+        use crate::views::calibrate::automatic::quality::{Verdict, assess};
+
+        let backend = Backend::Demo {
+            overscan_fraction: 0.03,
+        };
+        // What `kind::plan` hands the session for a flat screen the camera sizes.
+        let options = SessionOptions {
+            known_size: None,
+            require_visible_edges: false,
+            ..SessionOptions::default()
+        };
+        let Ended::Finished(f) = run_session(backend, options, None, false) else {
+            panic!("failed")
+        };
+        assert!(matches!(f.primary.edges, EdgeCheck::Cropped { .. }));
+        // The size is the whole picture, hidden edge included: 3% larger than the panel.
+        assert!(
+            (f.primary.diagonal_in - DEMO_DIAGONAL_IN * 1.03).abs() < 0.8,
+            "{}",
+            f.primary.diagonal_in
+        );
+        assert_ne!(assess(&f.primary.measures).verdict, Verdict::Poor);
     }
 }

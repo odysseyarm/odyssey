@@ -3,6 +3,7 @@
 //! Then the success screen with what to do next.
 
 use dioxus::prelude::*;
+use odyssey_autocalib::session::EdgeCheck;
 
 use super::kind::source_label;
 use super::quality::{Verdict, assess, disagreement_message};
@@ -163,6 +164,15 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                                 "A size from the TV or the box is exact if the TV shows its whole picture. The camera's own measurement is usually within about half a percent of the distance, so a few millimeters per meter, which makes it a good second opinion but slightly less exact. If the TV crops its picture, the camera's measurement is the one that matches what you see."
                             }
                         }
+                    }
+                }
+            }
+            if matches!(outcome.edges, EdgeCheck::Cropped { .. }) {
+                div {
+                    class: "flex items-start gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100",
+                    IconView { icon: Icon::Crop, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
+                    span {
+                        "This screen hides the edge of its picture, so the size above is the whole picture, including the part you can't see. For the most exact result, turn off overscan in the TV's picture settings ('Just Scan' or 'PC mode') and measure again."
                     }
                 }
             }
