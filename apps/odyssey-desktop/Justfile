@@ -1,28 +1,41 @@
 # Windows release recipes. dx bundles for the host platform only, so both of
 # these run on the Windows box.
 #
-#   just bundle          -> target/dx/Odyssey/bundle/windows/msi/*.msi
-#   just release         -> GitHub release odyssey-desktop-v<version> with the msi
+#   just bundle online   -> dist/online/*.msi   (the app downloads the Orbbec SDK)
+#   just bundle offline  -> dist/offline/*.msi  (carries the SDK; never downloads)
+#   just release         -> GitHub release odyssey-desktop-v<version> with what is in dist/
 #
 # version defaults to the one in Cargo.toml. token falls back to $env:GITHUB_TOKEN.
+# The offline variant needs python and network access to fetch the pinned SDK
+# (apps/odyssey-desktop/orbbec-sdk.json).
 
 repo := "odysseyarm/odyssey"
 
-# Build the app and wrap it in an MSI.
-bundle:
+# Build the app and wrap it in an MSI. variant is online or offline.
+bundle variant='online':
     #!pwsh
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
-    cargo bin dx bundle --desktop --package-types msi
+    $variant = '{{variant}}'
+    if ($variant -notin 'online', 'offline') { Write-Error 'variant is online or offline'; exit 1 }
 
-    $msi = Get-ChildItem -Recurse -Filter '*.msi' `
-        -Path (Join-Path $PWD.Path '..\..\target\dx') |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    # The installer template reads these (see wix/main.wxs).
+    python wix/prepare_orbbec.py $variant
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $env:ODYSSEY_MSI_VARIANT = $variant
+    $env:ODYSSEY_ORBBEC_STAGE = (Resolve-Path 'target/orbbec-stage').Path
+
+    # The offline app is the same code without the SDK downloader.
+    $features = if ($variant -eq 'offline') { @('--no-default-features') } else { @() }
+    cargo bin dx bundle --desktop --package-types msi --out-dir "dist/$variant" @features
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    $msi = Get-ChildItem -Filter '*.msi' -Path "dist/$variant" | Select-Object -First 1
     if (-not $msi) { Write-Error 'dx bundle produced no msi'; exit 1 }
     Write-Output $msi.FullName
 
-# Publish the MSI to a GitHub release tagged odyssey-desktop-v<version>.
+# Publish the MSIs in dist/ to a GitHub release tagged odyssey-desktop-v<version>.
 release version='' token='':
     #!pwsh
     Set-StrictMode -Version Latest
@@ -36,10 +49,12 @@ release version='' token='':
     if (-not $token) { $token = $env:GITHUB_TOKEN }
     if (-not $token) { Write-Error 'No token: pass one (just release <version> <token>) or set GITHUB_TOKEN'; exit 1 }
 
-    $msi = Get-ChildItem -Recurse -Filter '*.msi' `
-        -Path (Join-Path $PWD.Path '..\..\target\dx') |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $msi) { Write-Error 'No msi found (run: just bundle)'; exit 1 }
+    # What `just bundle online` and `just bundle offline` left in dist/.
+    $built = foreach ($v in 'online', 'offline') {
+        $msi = Get-ChildItem -Filter '*.msi' -Path "dist/$v" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($msi) { [pscustomobject]@{ Name = $v; Msi = $msi.FullName } }
+    }
+    if (-not $built) { Write-Error 'No msi found (run: just bundle online, and/or just bundle offline)'; exit 1 }
 
     $tag = "odyssey-desktop-v$version"
     $headers = @{
@@ -57,14 +72,17 @@ release version='' token='':
         $release = Invoke-RestMethod -Headers $headers -Method Post -Uri "$api/releases" -Body $body -ContentType 'application/json'
     }
 
-    $name = "Odyssey-$version-win-x64.msi"
-    $existing = $release.assets | Where-Object { $_.name -eq $name }
-    if ($existing) {
-        Invoke-RestMethod -Headers $headers -Method Delete -Uri "$api/releases/assets/$($existing.id)" | Out-Null
+    # online -> Odyssey-<v>-win-x64.msi, offline -> Odyssey-<v>-win-x64-offline.msi
+    foreach ($variant in $built) {
+        $name = if ($variant.Name -eq 'offline') { "Odyssey-$version-win-x64-offline.msi" } else { "Odyssey-$version-win-x64.msi" }
+        $existing = $release.assets | Where-Object { $_.name -eq $name }
+        if ($existing) {
+            Invoke-RestMethod -Headers $headers -Method Delete -Uri "$api/releases/assets/$($existing.id)" | Out-Null
+        }
+
+        $upload = "https://uploads.github.com/repos/{{repo}}/releases/$($release.id)/assets?name=$name"
+        Invoke-RestMethod -Headers $headers -Method Post -Uri $upload `
+            -ContentType 'application/octet-stream' -InFile $variant.Msi | Out-Null
+
+        Write-Output "Published $name to $tag"
     }
-
-    $upload = "https://uploads.github.com/repos/{{repo}}/releases/$($release.id)/assets?name=$name"
-    Invoke-RestMethod -Headers $headers -Method Post -Uri $upload `
-        -ContentType 'application/octet-stream' -InFile $msi.FullName | Out-Null
-
-    Write-Output "Published $name to $tag"

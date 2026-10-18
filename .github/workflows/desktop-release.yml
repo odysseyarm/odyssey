@@ -84,17 +84,43 @@ jobs:
           tool: cargo-binstall
       - name: Install dioxus-cli
         run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
-      - name: Bundle
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      # Two installers come from this one job. They are the same app: the offline
+      # one is built without the `sdk-download` feature and carries Orbbec's camera
+      # SDK, for customers who may only run offline software. Only the app crate
+      # is rebuilt for it. wix/prepare_orbbec.py stages what each variant needs,
+      # and the WiX template reads the two environment variables set here.
+      - name: Bundle the online installer
         working-directory: apps/odyssey-desktop
-        run: dx bundle --desktop --package-types msi
-      - name: Collect the installer
-        shell: pwsh
+        shell: bash
+        env:
+          ODYSSEY_MSI_VARIANT: online
+          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\apps\odyssey-desktop\target\orbbec-stage
         run: |
-          $msi = Get-ChildItem -Recurse -Filter '*.msi' -Path target/dx |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $msi) { Write-Error 'dx bundle produced no msi'; exit 1 }
-          New-Item -ItemType Directory -Path dist | Out-Null
-          Copy-Item $msi.FullName "dist/Odyssey-$env:VERSION-win-x64.msi"
+          python wix/prepare_orbbec.py online
+          dx bundle --desktop --package-types msi --out-dir dist/online
+      - name: Bundle the offline installer
+        working-directory: apps/odyssey-desktop
+        shell: bash
+        env:
+          ODYSSEY_MSI_VARIANT: offline
+          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\apps\odyssey-desktop\target\orbbec-stage
+        run: |
+          python wix/prepare_orbbec.py offline
+          dx bundle --desktop --package-types msi --no-default-features --out-dir dist/offline
+      - name: Collect the installers
+        shell: bash
+        run: |
+          mkdir dist
+          for variant in online offline; do
+            set -- apps/odyssey-desktop/dist/$variant/*.msi
+            if [ ! -f "$1" ]; then echo "dx bundle produced no $variant msi" >&2; exit 1; fi
+            suffix=""; [ "$variant" = offline ] && suffix="-offline"
+            cp "$1" "dist/Odyssey-$VERSION-win-x64$suffix.msi"
+          done
+          ls -l dist
       - uses: actions/upload-artifact@v6
         with:
           name: odyssey-desktop-msi
@@ -226,9 +252,10 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Odyssey Desktop v$VERSION" \
-              --notes "Odyssey $VERSION — Windows installer and Linux AppImage."
+              --notes "Odyssey $VERSION — Windows installer, Linux AppImage, and an offline Windows installer for machines that may not connect to the internet (it includes Orbbec's camera software and never downloads anything)."
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" --clobber \
             "Odyssey-$VERSION-win-x64.msi" \
+            "Odyssey-$VERSION-win-x64-offline.msi" \
             "Odyssey-$VERSION-x86_64.AppImage"
