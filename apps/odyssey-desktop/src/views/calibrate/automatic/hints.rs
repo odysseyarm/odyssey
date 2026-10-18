@@ -81,6 +81,12 @@ pub fn screen_hint(hint: Hint) -> Message {
             "Face the screen more directly",
             "The camera is looking at the screen from too far to the side. Move it in front of the screen.",
         ),
+        Hint::EdgesCropped => message(
+            Attention,
+            Icon::Warning,
+            "The screen is cutting off the picture",
+            "Turn off overscan in the display's picture settings (often called \"Just Scan\", \"Screen Fit\" or \"1:1 pixel mapping\").",
+        ),
     }
 }
 
@@ -177,7 +183,7 @@ pub fn progress(step: Step, what: &str) -> Progress {
 mod tests {
     use super::*;
 
-    const ALL_HINTS: [Hint; 10] = [
+    const ALL_HINTS: [Hint; 11] = [
         Hint::Ready,
         Hint::ScreenNotFound,
         Hint::ScreenPartlyVisible,
@@ -188,6 +194,7 @@ mod tests {
         Hint::DepthPoor,
         Hint::CameraTiltedTooMuch,
         Hint::ScreenTooOblique,
+        Hint::EdgesCropped,
     ];
 
     #[test]

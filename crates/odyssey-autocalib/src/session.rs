@@ -19,8 +19,10 @@ use odyssey_common::{ScreenCalibration, MAX_SCREEN_ID};
 use crate::camera::{CameraError, CameraGeometry, CameraStream, Frames};
 use crate::imu::{GravityEstimator, Tilt};
 use crate::markers::{self, MarkerBlob, MarkerError};
-use crate::pattern::{detect, DetectFailure, Pattern};
+use crate::pattern::{check_edges, detect, DetectFailure, Pattern};
+pub use crate::pattern::{EdgeCheck, SideSet};
 use crate::plane::{apply_homography, project_pinhole, ransac_plane, RansacParams};
+pub use crate::solve::{KnownSize, SizeCheck, SizeSource};
 use crate::solve::{self, build_calibration, solve_screen, ScreenFit, SolveError, SolveOptions, BURST_FRAMES};
 
 /// Infrared frames averaged when measuring markers.
@@ -36,16 +38,28 @@ pub struct SessionOptions {
     /// Infrared exposure for marker detection, microseconds. Short enough that
     /// only the marker LEDs stay bright.
     pub ir_exposure_us: u32,
-    /// Physical screen diagonal in inches, when the user knows it. The result
-    /// is rectified to this size and the screen's aspect ratio.
-    pub screen_diagonal_in: Option<f64>,
+    /// Declared screen size, from the display's EDID or the user. The result
+    /// is rectified to it, which removes depth scale error. Leave unset for a
+    /// projector, whose size only the depth camera can tell.
+    pub known_size: Option<KnownSize>,
+    /// Refuse to call the screen ready, and to measure it, while the display
+    /// crops the pattern's border. Set it together with a `known_size` taken
+    /// from the panel: an overscanned image is larger than the panel, so the
+    /// panel size is no scale anchor for it.
+    pub require_visible_edges: bool,
     /// How long to wait for each frame.
     pub frame_timeout: Duration,
 }
 
 impl Default for SessionOptions {
     fn default() -> Self {
-        Self { burst_frames: BURST_FRAMES, ir_exposure_us: 100, screen_diagonal_in: None, frame_timeout: Duration::from_secs(2) }
+        Self {
+            burst_frames: BURST_FRAMES,
+            ir_exposure_us: 100,
+            known_size: None,
+            require_visible_edges: false,
+            frame_timeout: Duration::from_secs(2),
+        }
     }
 }
 
@@ -61,6 +75,10 @@ pub enum SessionError {
     ScreenNotMeasured,
     #[error("the markers have not been measured yet")]
     MarkersNotMeasured,
+    /// The display crops the pattern's border on these sides and the options
+    /// ask for the whole image to be visible.
+    #[error("the screen does not show the whole picture; its border is cut off")]
+    EdgesCropped(SideSet),
 }
 
 /// The most important thing the user should change, or `Ready`.
@@ -80,6 +98,10 @@ pub enum Hint {
     CameraTiltedTooMuch,
     /// The camera looks at the screen from too steep an angle.
     ScreenTooOblique,
+    /// The display cuts off the picture's border (overscan), so its panel
+    /// size no longer matches the pattern. Reported only when
+    /// [`SessionOptions::require_visible_edges`] is set.
+    EdgesCropped,
 }
 
 /// One live frame with what the detector made of it.
@@ -98,6 +120,10 @@ pub struct Preview {
     /// Distance from the camera to the screen in meters.
     pub distance_m: Option<f32>,
     pub tilt: Option<Tilt>,
+    /// Whether the pattern's border ring is visible: `Cropped` means the
+    /// display shows less than the whole image (overscan). Only blocks
+    /// [`Hint::Ready`] when [`SessionOptions::require_visible_edges`] is set.
+    pub edges: EdgeCheck,
     pub hint: Hint,
 }
 
@@ -120,6 +146,9 @@ pub struct ScreenSummary {
     /// Width and height in meters.
     pub size_m: [f64; 2],
     pub diagonal_in: f64,
+    pub size_source: SizeSource,
+    pub size_check: Option<SizeCheck>,
+    pub edges: EdgeCheck,
     pub plane_rmse_m: f64,
     pub plane_max_error_m: f64,
     pub dots_used: usize,
@@ -169,6 +198,13 @@ pub struct Review {
     pub marker_px: [Point2<f32>; 6],
     pub size_m: [f64; 2],
     pub diagonal_in: f64,
+    /// Where `size_m` comes from.
+    pub size_source: SizeSource,
+    /// The depth-measured size against the declared one, when one was declared.
+    /// Check [`SizeCheck::disagrees`] to warn about overscan or a wrong size.
+    pub size_check: Option<SizeCheck>,
+    /// Whether the pattern's border was visible when the screen was measured.
+    pub edges: EdgeCheck,
     pub dots_used: usize,
     pub dots_expected: usize,
     pub marker_max_offset_m: f64,
@@ -185,6 +221,7 @@ pub struct Calibration {
 struct ScreenMeasurement {
     fit: ScreenFit,
     color: RgbImage,
+    edges: EdgeCheck,
     gravity_aligned: bool,
 }
 
@@ -308,6 +345,7 @@ impl Session {
             depth_coverage: None,
             distance_m: None,
             tilt,
+            edges: EdgeCheck::Unknown,
             hint: Hint::ScreenNotFound,
         };
 
@@ -326,6 +364,9 @@ impl Session {
         preview.depth_coverage = depth.coverage;
         preview.distance_m = depth.distance_m;
 
+        preview.edges = check_edges(&self.pattern, &frames.color, &self.geometry.color, &detection.homography);
+        let edges_block = self.options.require_visible_edges && matches!(preview.edges, EdgeCheck::Cropped { .. });
+
         preview.hint = if !region_inside_images(&self.geometry, &detection.homography) || detection.quality.completeness() < 0.8 {
             Hint::ScreenPartlyVisible
         } else if depth.distance_m.is_some_and(|d| d < MIN_DISTANCE_M) {
@@ -338,6 +379,8 @@ impl Session {
             Hint::ScreenTooOblique
         } else if depth.coverage.is_none_or(|c| c < MIN_DEPTH_COVERAGE) || depth.plane_rmse_m.is_some_and(|e| e > MAX_PREVIEW_RMSE_M) {
             Hint::DepthPoor
+        } else if edges_block {
+            Hint::EdgesCropped
         } else {
             Hint::Ready
         };
@@ -353,20 +396,34 @@ impl Session {
             progress(Step::Capturing { frame, total });
             frames.push(self.grab()?);
         }
+
+        // The declared size is only a valid scale anchor if the screen shows
+        // its whole image, so check the ring before spending time on the solve.
+        let edges = frames
+            .last()
+            .and_then(|f| detect(&self.pattern, &f.color, &self.geometry.color).ok().map(|d| (f, d)))
+            .map_or(EdgeCheck::Unknown, |(f, d)| check_edges(&self.pattern, &f.color, &self.geometry.color, &d.homography));
+        if let (true, EdgeCheck::Cropped { sides }) = (self.options.require_visible_edges, edges) {
+            return Err(SessionError::EdgesCropped(sides));
+        }
+
         progress(Step::Solving);
         let alignment = self.gravity.camera_to_aligned();
-        let options = SolveOptions { screen_diagonal_in: self.options.screen_diagonal_in, ..SolveOptions::default() };
+        let options = SolveOptions { known_size: self.options.known_size, ..SolveOptions::default() };
         let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)?;
         let summary = ScreenSummary {
             size_m: fit.size_m,
             diagonal_in: fit.diagonal_in(),
+            size_source: fit.size_source,
+            size_check: fit.size_check,
+            edges,
             plane_rmse_m: fit.plane_rmse_m,
             plane_max_error_m: fit.plane_max_error_m,
             dots_used: fit.dots_used,
             quad_px: fit.quad_px.map(pt32),
         };
         let color = frames.pop().map(|f| f.color).unwrap_or_else(|| RgbImage::new(0, 0));
-        self.screen = Some(ScreenMeasurement { fit, color, gravity_aligned: self.gravity.is_ready() });
+        self.screen = Some(ScreenMeasurement { fit, color, edges, gravity_aligned: self.gravity.is_ready() });
         // A new screen measurement invalidates markers measured against the old one.
         self.markers = None;
         progress(Step::Done);
@@ -452,6 +509,9 @@ impl Session {
             marker_px: markers.marker_px,
             size_m: screen.fit.size_m,
             diagonal_in: screen.fit.diagonal_in(),
+            size_source: screen.fit.size_source,
+            size_check: screen.fit.size_check,
+            edges: screen.edges,
             dots_used: screen.fit.dots_used,
             dots_expected: self.pattern.dots().len(),
             marker_max_offset_m: markers.summary.max_offset_m,

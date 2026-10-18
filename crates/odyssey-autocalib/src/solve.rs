@@ -48,11 +48,94 @@ const DOT_INLIER_M: f64 = 0.006;
 const MIN_PLANE_POINTS: usize = 200;
 const MIN_DOTS: usize = 12;
 
+/// A screen size the user or the display itself declares, used as the scale
+/// anchor instead of the depth camera's measurement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KnownSize {
+    /// Diagonal of the displayed image in inches; the aspect ratio comes from
+    /// the pattern.
+    Diagonal { inches: f64 },
+    /// Width and height of the displayed image in meters. Anchors both axes.
+    Dimensions { width_m: f64, height_m: f64 },
+}
+
+/// How far a declared width-to-height ratio may sit from the pattern's before
+/// the declaration is refused. A stretched or letterboxed desktop shows up
+/// here: scaling such a size onto the pattern would silently distort the
+/// screen.
+pub const KNOWN_ASPECT_TOLERANCE: f64 = 0.015;
+
+impl KnownSize {
+    /// Width and height in meters for a pattern of the given aspect ratio.
+    pub fn size_for_aspect(&self, aspect: f64) -> Result<[f64; 2], SolveError> {
+        match *self {
+            KnownSize::Diagonal { inches } if inches.is_finite() && inches > 0.0 => {
+                let height = inches * 0.0254 / (aspect * aspect + 1.0).sqrt();
+                Ok([aspect * height, height])
+            }
+            KnownSize::Dimensions { width_m, height_m } if width_m.is_finite() && height_m.is_finite() && width_m > 0.0 && height_m > 0.0 => {
+                let known_aspect = width_m / height_m;
+                if (known_aspect / aspect - 1.0).abs() > KNOWN_ASPECT_TOLERANCE {
+                    return Err(SolveError::KnownSizeAspectMismatch { known_aspect, screen_aspect: aspect });
+                }
+                Ok([width_m, height_m])
+            }
+            _ => Err(SolveError::KnownSizeInvalid),
+        }
+    }
+
+    fn source(&self) -> SizeSource {
+        match self {
+            KnownSize::Diagonal { .. } => SizeSource::KnownDiagonal,
+            KnownSize::Dimensions { .. } => SizeSource::KnownDimensions,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizeSource {
+    /// The depth camera's measurement.
+    Measured,
+    KnownDiagonal,
+    KnownDimensions,
+}
+
+/// Relative size difference above which the depth measurement and the
+/// declared size count as disagreeing. Depth scale error at room distances is
+/// well under this; overscan (typically 2-5%), a wrong EDID and a wrong
+/// diagonal usually exceed it.
+pub const SIZE_DISAGREEMENT: f64 = 0.02;
+
+/// The size measured from depth next to the size declared for the screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SizeCheck {
+    /// Width and height from the depth-derived fit, before rectification.
+    pub measured_m: [f64; 2],
+    /// Width and height that rectification imposed.
+    pub known_m: [f64; 2],
+    /// `measured / known` along the width.
+    pub ratio_w: f64,
+    /// `measured / known` along the height.
+    pub ratio_h: f64,
+}
+
+impl SizeCheck {
+    pub fn new(measured_m: [f64; 2], known_m: [f64; 2]) -> Self {
+        Self { measured_m, known_m, ratio_w: measured_m[0] / known_m[0], ratio_h: measured_m[1] / known_m[1] }
+    }
+
+    /// Whether either axis differs from the declared size by more than
+    /// [`SIZE_DISAGREEMENT`].
+    pub fn disagrees(&self) -> bool {
+        (self.ratio_w - 1.0).abs() > SIZE_DISAGREEMENT || (self.ratio_h - 1.0).abs() > SIZE_DISAGREEMENT
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolveOptions {
-    /// Physical screen diagonal in inches. When set, the screen is rectified
-    /// to this size and the pattern's aspect ratio.
-    pub screen_diagonal_in: Option<f64>,
+    /// Declared screen size. When set, the screen is rectified in 2D to this
+    /// size, so depth scale error no longer affects the result.
+    pub known_size: Option<KnownSize>,
     /// Seed for the plane RANSAC; fixed so a measurement is reproducible.
     pub seed: u64,
     /// Locate dots by the perspective-corrected center instead of the raw
@@ -62,7 +145,7 @@ pub struct SolveOptions {
 
 impl Default for SolveOptions {
     fn default() -> Self {
-        Self { screen_diagonal_in: None, seed: 0, perspective_correction: true }
+        Self { known_size: None, seed: 0, perspective_correction: true }
     }
 }
 
@@ -80,6 +163,13 @@ pub enum SolveError {
     Mirrored,
     #[error("dot positions do not agree with a flat screen")]
     DotsInconsistent,
+    #[error("the declared screen size must be positive")]
+    KnownSizeInvalid,
+    /// The declared width-to-height ratio differs from the displayed image's
+    /// by more than [`KNOWN_ASPECT_TOLERANCE`]. Rectifying anyway would
+    /// stretch the screen, so the measurement is refused.
+    #[error("the declared screen is {known_aspect:.3} wide per unit of height but the picture is {screen_aspect:.3}")]
+    KnownSizeAspectMismatch { known_aspect: f64, screen_aspect: f64 },
 }
 
 /// Everything measured about the screen.
@@ -99,7 +189,7 @@ pub struct ScreenFit {
     /// the optional rectification.
     pub unit_to_screen: Matrix3<f64>,
     /// 2D projective correction that took measured screen coordinates to the
-    /// requested size; identity without `screen_diagonal_in`.
+    /// declared size; identity without a known size.
     pub rectification: Matrix3<f64>,
     /// Screen corners in meters (top left, top right, bottom right, bottom
     /// left) in the screen frame.
@@ -113,6 +203,14 @@ pub struct ScreenFit {
     pub plane_inliers: usize,
     pub depth_samples: usize,
     pub dots_used: usize,
+    /// Where `size_m` comes from.
+    pub size_source: SizeSource,
+    /// The depth-measured size against the declared one; present exactly when
+    /// a known size was given.
+    pub size_check: Option<SizeCheck>,
+    /// Maps pattern unit coordinates to undistorted color pixels, as fitted to
+    /// the averaged dot centers.
+    pub unit_to_pixel: Matrix3<f64>,
     /// Root-mean-square distance of the dots from the fitted homography, meters.
     pub dot_rmse_m: f64,
     /// Screen corners (top left, top right, bottom right, bottom left) in the
@@ -152,6 +250,8 @@ pub fn solve_screen(
     camera_to_aligned: &Matrix3<f64>,
     options: &SolveOptions,
 ) -> Result<ScreenFit, SolveError> {
+    // Refuse a declaration that contradicts the picture before spending time on the burst.
+    let known = options.known_size.map(|k| k.size_for_aspect(pattern.aspect()).map(|size| (k.source(), size))).transpose()?;
     let (dots, dots_h) = merged_dots(geometry, pattern, frames, options.perspective_correction)?;
 
     let color_from_depth = geometry.color_to_depth.inverse();
@@ -236,16 +336,13 @@ pub fn solve_screen(
     }
     let measured_size_m = rect_size(&measured_corners);
 
-    let (rectification, size_m) = match options.screen_diagonal_in {
-        Some(diagonal_in) if diagonal_in > 0.0 => {
-            let aspect = pattern.aspect();
-            let height = diagonal_in * 0.0254 / (aspect * aspect + 1.0).sqrt();
-            let width = aspect * height;
+    let (rectification, size_m, size_source, size_check) = match known {
+        Some((source, [width, height])) => {
             let target = [Point2::new(0.0, 0.0), Point2::new(width, 0.0), Point2::new(width, height), Point2::new(0.0, height)];
             let rect = fit_homography(&measured_corners, &target).ok_or(SolveError::DotsInconsistent)?;
-            (rect, [width, height])
+            (rect, [width, height], source, Some(SizeCheck::new(measured_size_m, [width, height])))
         }
-        _ => (Matrix3::identity(), measured_size_m),
+        None => (Matrix3::identity(), measured_size_m, SizeSource::Measured, None),
     };
     let unit_to_screen = rectification * measured_unit_to_screen;
     let corners_m = unit_corners(&unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
@@ -282,6 +379,9 @@ pub fn solve_screen(
         plane_inliers: fit.inliers.len(),
         depth_samples: points.len(),
         dots_used: dots_fit.inliers.len(),
+        size_source,
+        size_check,
+        unit_to_pixel: dots_h,
         dot_rmse_m: (dot_sq / dots_fit.inliers.len() as f64).sqrt(),
         quad_px,
         camera_color: geometry.color,

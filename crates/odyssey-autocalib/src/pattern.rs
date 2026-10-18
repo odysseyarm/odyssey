@@ -21,6 +21,19 @@ const GRID_MARGIN_H: f64 = 0.1;
 const GRID_SPACING_H: f64 = 0.1;
 const DOT_RADIUS_H: f64 = 0.02;
 const ANCHOR_RADIUS_H: f64 = 0.035;
+/// Thickness of the border ring as a fraction of the screen height.
+pub const FRAME_THICKNESS_H: f64 = 0.006;
+const BRACKET_THICKNESS_H: f64 = 0.015;
+const BRACKET_LENGTH_H: f64 = 0.05;
+
+/// A filled rectangle of the pattern's border frame; see [`Pattern::frame_rects`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
 
 /// One dot of the pattern.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -85,6 +98,27 @@ impl Pattern {
 
     pub fn aspect(&self) -> f64 {
         self.aspect
+    }
+
+    /// The border ring and corner brackets as filled white rectangles, in the
+    /// pattern's own units: `x` runs `0..aspect` and `y` runs `0..1`, both in
+    /// screen heights, so the same numbers draw at any resolution.
+    ///
+    /// The ring sits on the image's outermost pixels. Where a display crops
+    /// the image the ring disappears, which is how [`check_edges`] notices
+    /// overscan. The brackets are thicker, so a cropped corner stays easy to
+    /// see even when a thin ring blurs away.
+    pub fn frame_rects(&self) -> Vec<FrameRect> {
+        let (w, t, bt, bl) = (self.aspect, FRAME_THICKNESS_H, BRACKET_THICKNESS_H, BRACKET_LENGTH_H);
+        let rect = |x, y, width, height| FrameRect { x, y, width, height };
+        let mut rects = vec![rect(0.0, 0.0, w, t), rect(0.0, 1.0 - t, w, t), rect(0.0, 0.0, t, 1.0), rect(w - t, 0.0, t, 1.0)];
+        for (x, y) in [(0.0, 0.0), (w - bl, 0.0), (0.0, 1.0 - bt), (w - bl, 1.0 - bt)] {
+            rects.push(rect(x, y, bl, bt));
+        }
+        for (x, y) in [(0.0, 0.0), (w - bt, 0.0), (0.0, 1.0 - bl), (w - bt, 1.0 - bl)] {
+            rects.push(rect(x, y, bt, bl));
+        }
+        rects
     }
 
     /// Grid size as `(columns, rows)`.
@@ -687,6 +721,189 @@ fn remove_center_bias(
     Debiased { h, matches, centers }
 }
 
+/// Which sides of the screen image. The ring on a side is the pattern's
+/// outermost pixel row or column there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SideSet {
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+    pub left: bool,
+}
+
+impl SideSet {
+    pub fn is_empty(&self) -> bool {
+        !(self.top || self.right || self.bottom || self.left)
+    }
+
+    pub fn count(&self) -> usize {
+        [self.top, self.right, self.bottom, self.left].into_iter().filter(|&s| s).count()
+    }
+}
+
+/// Whether the pattern's border ring reaches the camera, i.e. whether the
+/// screen shows its whole image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeCheck {
+    /// The ring is visible on all four sides.
+    Visible,
+    /// The ring is missing or broken on these sides: the display crops the
+    /// image (overscan) or something covers its border.
+    Cropped { sides: SideSet },
+    /// The ring cannot be judged: too faint or small in the picture, or partly
+    /// outside the camera's view. Never a reason to refuse a measurement.
+    Unknown,
+}
+
+const EDGE_SAMPLES_PER_SIDE: usize = 24;
+/// Samples run over this share of a side, which keeps them clear of the corner brackets.
+const EDGE_SPAN: (f64, f64) = (0.15, 0.85);
+const EDGE_MIN_VALID_SAMPLES: usize = 6;
+/// A side is visible when this share of its samples shows a ridge.
+const EDGE_VISIBLE_FRACTION: f64 = 0.7;
+/// Dots must stand out from the black by this many levels for the ring to be judged.
+const EDGE_MIN_CONTRAST: f64 = 40.0;
+/// A ridge must rise above both neighbors by this share of the dot contrast.
+const EDGE_RIDGE_FRACTION: f64 = 0.25;
+/// Rings narrower than this many pixels peak well below full brightness, so a
+/// bright wall behind a cropped ring would look like a ridge. Such samples are
+/// not judged.
+const EDGE_MIN_RING_PX: f64 = 1.2;
+
+fn luma_at(image: &RgbImage, x: u32, y: u32) -> f64 {
+    let p = image.get_pixel(x, y);
+    (77.0 * f64::from(p[0]) + 150.0 * f64::from(p[1]) + 29.0 * f64::from(p[2])) / 256.0
+}
+
+/// Brightest pixel in the 3x3 block around `p`; absorbs a pixel of
+/// registration error. `None` unless the block lies inside the image.
+fn luma_peak(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
+    let (x, y) = (p.x.round(), p.y.round());
+    if x < 1.0 || y < 1.0 || x + 2.0 > f64::from(image.width()) || y + 2.0 > f64::from(image.height()) {
+        return None;
+    }
+    let (x, y) = (x as u32, y as u32);
+    (y - 1..=y + 1).flat_map(|yy| (x - 1..=x + 1).map(move |xx| (xx, yy))).map(|(xx, yy)| luma_at(image, xx, yy)).reduce(f64::max)
+}
+
+fn luma_bilinear(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
+    let (x0, y0) = (p.x.floor(), p.y.floor());
+    if x0 < 0.0 || y0 < 0.0 || x0 + 2.0 > f64::from(image.width()) || y0 + 2.0 > f64::from(image.height()) {
+        return None;
+    }
+    let (fx, fy) = (p.x - x0, p.y - y0);
+    let (x0, y0) = (x0 as u32, y0 as u32);
+    let top = luma_at(image, x0, y0) * (1.0 - fx) + luma_at(image, x0 + 1, y0) * fx;
+    let bottom = luma_at(image, x0, y0 + 1) * (1.0 - fx) + luma_at(image, x0 + 1, y0 + 1) * fx;
+    Some(top * (1.0 - fy) + bottom * fy)
+}
+
+fn median(values: &mut [f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    Some(values[values.len() / 2])
+}
+
+/// Looks for the pattern's border ring in a color image, given the
+/// homography from pattern unit coordinates to undistorted pixels that
+/// [`detect`] found.
+///
+/// The ring is thin, so each sample compares the brightness on the ring's
+/// predicted center line with the brightness a few pixels to either side and
+/// asks for a ridge. A ridge needs no assumption about what lies outside the
+/// screen: a cropped ring leaves the bezel or wall there, which is flat, and
+/// the test fails however bright the room is.
+pub fn check_edges(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics, unit_to_pixel: &Matrix3<f64>) -> EdgeCheck {
+    let aspect = pattern.aspect;
+    let undistorted = |x: f64, y: f64| apply_homography(unit_to_pixel, Point2::new(x / aspect, y));
+    let raw = |p: Point2<f64>| distort_pixel(intrinsics, p);
+
+    let mut dot_levels: Vec<f64> =
+        pattern.dots.iter().filter_map(|d| undistorted(d.u * aspect, d.v)).filter_map(|p| luma_peak(image, raw(p))).collect();
+    let mut black_levels = Vec::new();
+    for r in 0..pattern.rows - 1 {
+        for c in 0..pattern.cols - 1 {
+            let (a, b) = (&pattern.dots[pattern.index(c, r)], &pattern.dots[pattern.index(c + 1, r + 1)]);
+            let center = undistorted((a.u + b.u) / 2.0 * aspect, (a.v + b.v) / 2.0);
+            if let Some(v) = center.and_then(|p| luma_bilinear(image, raw(p))) {
+                black_levels.push(v);
+            }
+        }
+    }
+    let (Some(dot), Some(black)) = (median(&mut dot_levels), median(&mut black_levels)) else { return EdgeCheck::Unknown };
+    let contrast = dot - black;
+    if contrast < EDGE_MIN_CONTRAST {
+        return EdgeCheck::Unknown;
+    }
+
+    let margin = EDGE_RIDGE_FRACTION * contrast;
+    let half = FRAME_THICKNESS_H / 2.0;
+    let mut cropped = SideSet::default();
+    let mut unknown = false;
+    for side in 0..4 {
+        // Direction from the ring toward the screen's middle.
+        let inward = match side {
+            0 => (0.0, 1.0),
+            1 => (-1.0, 0.0),
+            2 => (0.0, -1.0),
+            _ => (1.0, 0.0),
+        };
+        let (mut valid, mut ridges) = (0usize, 0usize);
+        for k in 0..EDGE_SAMPLES_PER_SIDE {
+            let t = EDGE_SPAN.0 + (EDGE_SPAN.1 - EDGE_SPAN.0) * k as f64 / (EDGE_SAMPLES_PER_SIDE - 1) as f64;
+            let (x, y) = match side {
+                0 => (aspect * t, half),
+                1 => (aspect - half, t),
+                2 => (aspect * t, 1.0 - half),
+                _ => (half, t),
+            };
+            let (Some(on_ring), Some(toward)) = (undistorted(x, y), undistorted(x + inward.0 * 0.01, y + inward.1 * 0.01)) else {
+                continue;
+            };
+            // How wide the ring appears here: perspective squeezes it on the
+            // far side and at steep angles, where it fades below what the
+            // camera resolves. Such samples say nothing either way.
+            let step = toward - on_ring;
+            let ring_px = step.norm() * FRAME_THICKNESS_H / 0.01;
+            if ring_px < EDGE_MIN_RING_PX {
+                continue;
+            }
+            let direction = step.normalize();
+            let offset = (2.0 * ring_px).clamp(2.5, 8.0);
+            let sample = (
+                luma_peak(image, raw(on_ring)),
+                luma_bilinear(image, raw(on_ring + direction * offset)),
+                luma_bilinear(image, raw(on_ring - direction * offset)),
+            );
+            if let (Some(ring), Some(inner), Some(outer)) = sample {
+                valid += 1;
+                if ring - inner.max(outer) > margin {
+                    ridges += 1;
+                }
+            }
+        }
+        if valid < EDGE_MIN_VALID_SAMPLES {
+            unknown = true;
+        } else if (ridges as f64) < EDGE_VISIBLE_FRACTION * valid as f64 {
+            match side {
+                0 => cropped.top = true,
+                1 => cropped.right = true,
+                2 => cropped.bottom = true,
+                _ => cropped.left = true,
+            }
+        }
+    }
+    if !cropped.is_empty() {
+        EdgeCheck::Cropped { sides: cropped }
+    } else if unknown {
+        EdgeCheck::Unknown
+    } else {
+        EdgeCheck::Visible
+    }
+}
+
 /// Pixel distance between horizontally adjacent dots near the grid center.
 fn median_spacing(pattern: &Pattern, h: &Matrix3<f64>) -> Option<f64> {
     let (c, r) = (pattern.cols / 2, pattern.rows / 2);
@@ -718,17 +935,25 @@ mod tests {
         }
     }
 
-    /// Draws the pattern through a known homography with the lens model, with
-    /// an optional second pattern-sized bright clutter blob field.
+    /// Draws the pattern through a known homography with the lens model.
     fn render(pattern: &Pattern, intr: &Intrinsics, h: &Matrix3<f64>) -> RgbImage {
+        render_cropped(pattern, intr, h, 0.0)
+    }
+
+    /// Like `render`, but the panel shows only the part of the pattern image
+    /// that lies `crop` (a fraction of each axis) inside its edges, as an
+    /// overscanning display does. Outside the panel the camera sees a lit wall.
+    fn render_cropped(pattern: &Pattern, intr: &Intrinsics, h: &Matrix3<f64>, crop: f64) -> RgbImage {
         let mut img = RgbImage::from_pixel(intr.width, intr.height, Rgb([14, 14, 14]));
         let inv = h.try_inverse().unwrap();
+        let frame = pattern.frame_rects();
+        let panel = crop..=1.0 - crop;
         // Screen region is darker than the surround; fill it by inverse mapping.
         for y in 0..intr.height {
             for x in 0..intr.width {
                 let Some(und) = undistort_pixel(intr, Point2::new(x as f64, y as f64)) else { continue };
                 let Some(uv) = apply_homography(&inv, und) else { continue };
-                let inside = (0.0..=1.0).contains(&uv.x) && (0.0..=1.0).contains(&uv.y);
+                let inside = panel.contains(&uv.x) && panel.contains(&uv.y);
                 let mut value: f64 = if inside { 5.0 } else { 70.0 };
                 if inside {
                     let first = pattern.dots()[0];
@@ -747,6 +972,12 @@ mod tests {
                     let edge = (d.radius_h - dist) * scale + 0.5;
                     if edge > 0.0 {
                         value = value.max(5.0 + 245.0 * edge.min(1.0));
+                    }
+                    let (px, py) = (uv.x * pattern.aspect(), uv.y);
+                    for rect in &frame {
+                        let inset = (px - rect.x).min(rect.x + rect.width - px).min(py - rect.y).min(rect.y + rect.height - py);
+                        let coverage = (inset * scale + 0.5).clamp(0.0, 1.0);
+                        value = value.max(5.0 + 245.0 * coverage);
                     }
                 }
                 img.put_pixel(x, y, Rgb([value as u8; 3]));
@@ -944,5 +1175,72 @@ mod tests {
         eprintln!("steep, large dots: {n} dots, mean error {raw:.3} px raw centroid, {fixed:.3} px corrected");
         assert!(n >= 100.0);
         assert!(fixed < 0.5 * raw, "corrected {fixed} px vs raw {raw} px");
+    }
+
+    #[test]
+    fn frame_is_a_ring_and_brackets_that_stay_clear_of_the_dots() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let rects = pattern.frame_rects();
+        assert_eq!(rects.len(), 12);
+        for r in &rects {
+            assert!(r.x >= 0.0 && r.y >= 0.0 && r.x + r.width <= pattern.aspect() + 1e-12 && r.y + r.height <= 1.0 + 1e-12, "{r:?}");
+        }
+        // No dot touches a rectangle, so the ring cannot merge with a dot blob.
+        for d in pattern.dots() {
+            let (cx, cy) = (d.u * pattern.aspect(), d.v);
+            for r in &rects {
+                let nearest = ((cx.clamp(r.x, r.x + r.width) - cx).powi(2) + (cy.clamp(r.y, r.y + r.height) - cy).powi(2)).sqrt();
+                assert!(nearest > d.radius_h + 0.01, "dot at ({cx}, {cy}) is {nearest} from {r:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn ring_does_not_disturb_detection_and_reads_as_visible() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let intr = intrinsics();
+        for (h, steep) in [(tilted_homography(&pattern), false), (pose_homography(&pattern, 0.9, 0.2, 1.6), true)] {
+            let image = render(&pattern, &intr, &h);
+            let det = detect(&pattern, &image, &intr).expect("pattern found");
+            assert_eq!(det.quality.matched, 144, "{:?}", det.quality);
+            assert!(det.quality.rms_px < 0.3, "{:?}", det.quality);
+            let edges = check_edges(&pattern, &image, &intr, &det.homography);
+            if steep {
+                // The far border is too narrow to judge, which must not read as cropped.
+                assert!(!matches!(edges, EdgeCheck::Cropped { .. }), "{edges:?}");
+            } else {
+                assert_eq!(edges, EdgeCheck::Visible);
+            }
+        }
+    }
+
+    #[test]
+    fn cropped_image_is_reported_side_by_side() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let intr = intrinsics();
+        let h = tilted_homography(&pattern);
+        // 1.5% off every edge: the ring (0.6% of the height) and brackets are gone on all four sides.
+        let image = render_cropped(&pattern, &intr, &h, 0.015);
+        let det = detect(&pattern, &image, &intr).expect("pattern found");
+        assert_eq!(
+            check_edges(&pattern, &image, &intr, &det.homography),
+            EdgeCheck::Cropped { sides: SideSet { top: true, right: true, bottom: true, left: true } }
+        );
+    }
+
+    #[test]
+    fn edges_are_unknown_when_nothing_can_be_judged() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let intr = intrinsics();
+        let h = tilted_homography(&pattern);
+        // The camera sees only the middle of a pattern drawn three times as large,
+        // so every ring location is outside the view.
+        let zoom = Matrix3::new(3.0, 0.0, -1.0, 0.0, 3.0, -1.0, 0.0, 0.0, 1.0);
+        let zoomed_h = h * zoom;
+        let zoomed = render(&pattern, &intr, &zoomed_h);
+        assert_eq!(check_edges(&pattern, &zoomed, &intr, &zoomed_h), EdgeCheck::Unknown);
+        // A washed-out picture has no contrast to judge by.
+        let faint = RgbImage::from_pixel(intr.width, intr.height, Rgb([30, 30, 30]));
+        assert_eq!(check_edges(&pattern, &faint, &intr, &h), EdgeCheck::Unknown);
     }
 }

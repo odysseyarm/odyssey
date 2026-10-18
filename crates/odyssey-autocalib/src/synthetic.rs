@@ -42,6 +42,14 @@ pub struct SyntheticScene {
     pub screen_size_m: [f64; 2],
     /// Center of the screen in the world frame.
     pub screen_center_m: Vector3<f64>,
+    /// How much a display overscans: the image is scaled up about its center
+    /// by `1 + overscan_fraction` while the panel keeps its size, so the
+    /// border of the image is cut off. The solver measures the image, not the
+    /// panel.
+    pub overscan_fraction: f64,
+    /// Multiplicative bias on every depth value (`0.01` reads 1% too far),
+    /// standing in for depth scale error.
+    pub depth_scale_error: f64,
     /// Rotation of the screen about the vertical axis, degrees.
     pub screen_yaw_deg: f64,
     /// Backward lean of the screen's top edge, degrees.
@@ -113,6 +121,8 @@ impl Default for SyntheticScene {
             screen_size_m: [aspect * height, height],
             screen_center_m: Vector3::new(0.0, 0.0, 2.0),
             screen_yaw_deg: 12.0,
+            overscan_fraction: 0.0,
+            depth_scale_error: 0.0,
             screen_pitch_deg: 0.0,
             camera_yaw_deg: 0.0,
             camera_pitch_deg: 0.0,
@@ -145,8 +155,13 @@ impl Default for SyntheticScene {
 pub struct Truth {
     /// Takes color-camera coordinates to the physical screen frame.
     pub screen_from_camera: Extrinsics,
+    /// Width and height of the displayed image: what the calibration must
+    /// recover. Equals `panel_m` without overscan.
     pub size_m: [f64; 2],
-    /// Markers in the physical screen frame, in layout order.
+    /// Width and height of the physical panel: what an EDID reports.
+    pub panel_m: [f64; 2],
+    /// Markers in the physical screen frame, whose origin is the image's
+    /// top-left corner, in layout order.
     pub markers_m: [Point3<f64>; 6],
 }
 
@@ -213,11 +228,28 @@ impl SyntheticScene {
 
     pub fn truth(&self) -> Truth {
         let [w, h] = self.screen_size_m;
+        let [iw, ih] = self.image_extent_m();
+        let origin = self.image_origin_m();
         Truth {
             screen_from_camera: self.pose().screen_from_camera,
-            size_m: self.screen_size_m,
-            markers_m: MARKER_LAYOUT.map(|[u, v]| Point3::new(u * w, v * h, 0.0)),
+            size_m: [iw, ih],
+            panel_m: self.screen_size_m,
+            // The markers sit on the panel; the frame starts at the image's corner.
+            markers_m: MARKER_LAYOUT.map(|[u, v]| Point3::new(u * w - origin.x, v * h - origin.y, 0.0)),
         }
+    }
+
+    /// Width and height in meters of the displayed image, which exceeds the
+    /// panel by the overscan.
+    pub fn image_extent_m(&self) -> [f64; 2] {
+        let scale = 1.0 + self.overscan_fraction;
+        [self.screen_size_m[0] * scale, self.screen_size_m[1] * scale]
+    }
+
+    /// Position of the image's top-left corner in panel coordinates; negative
+    /// under overscan, since the image extends past the panel.
+    pub fn image_origin_m(&self) -> Vector2<f64> {
+        Vector2::new(-self.screen_size_m[0] * self.overscan_fraction / 2.0, -self.screen_size_m[1] * self.overscan_fraction / 2.0)
     }
 
     /// Gravity direction in the camera frame.
@@ -297,6 +329,13 @@ pub struct SyntheticStream {
     imu: Vec<ImuSample>,
     ir_exposure_low: bool,
     projector_on: bool,
+}
+
+/// Share of a pixel's footprint (`footprint` wide, centered at `center`) that
+/// lies within `lo..hi` along one axis.
+fn overlap_share(center: f64, footprint: f64, lo: f64, hi: f64) -> f64 {
+    let (start, end) = (center - footprint / 2.0, center + footprint / 2.0);
+    ((end.min(hi) - start.max(lo)) / footprint).clamp(0.0, 1.0)
 }
 
 fn gaussian(rng: &mut StdRng) -> f64 {
@@ -412,28 +451,64 @@ impl SyntheticStream {
         if !self.scene.show_pattern {
             return img;
         }
-        for dot in self.scene.pattern().dots() {
-            let center_m = Vector2::new(dot.u * sw, dot.v * sh);
-            let radius = dot.radius_h * sh;
-            let center_cam = to_camera.apply(&Vector3::new(center_m.x, center_m.y, 0.0));
-            let Some(center_px) = project(intr, &center_cam) else { continue };
-            let half = (radius * 1.8 * intr.fx / center_cam.z).ceil() + 3.0;
-            let (x0, x1) = ((center_px.x - half).floor().max(0.0) as u32, (center_px.x + half).ceil().min(w as f64 - 1.0) as u32);
-            let (y0, y1) = ((center_px.y - half).floor().max(0.0) as u32, (center_px.y + half).ceil().min(h as f64 - 1.0) as u32);
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    let Some((on_screen, range, _)) = self.color_pixel_on_screen(Point2::new(x as f64, y as f64)) else { continue };
-                    let footprint = range / intr.fx;
-                    let coverage = ((radius - (on_screen - center_m).norm()) / footprint + 0.5).clamp(0.0, 1.0);
-                    if coverage > 0.0 {
-                        let level = self.scaled(5.0 + 230.0 * coverage);
-                        let current = img.get_pixel(x, y)[0];
-                        img.put_pixel(x, y, Rgb([level.max(current); 3]));
-                    }
+        // The displayed image is the panel scaled about its center by the
+        // overscan; only what lands on the panel reaches the camera.
+        let [image_w, image_h] = self.scene.image_extent_m();
+        let origin = self.scene.image_origin_m();
+        let pattern = self.scene.pattern();
+        let pixel_box = |points: &[Vector2<f64>], pad: f64| -> Option<(u32, u32, u32, u32)> {
+            let mut lo = Vector2::new(f64::INFINITY, f64::INFINITY);
+            let mut hi = Vector2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for p in points {
+                let px = project(intr, &to_camera.apply(&Vector3::new(p.x, p.y, 0.0)))?;
+                lo = lo.inf(&px.coords);
+                hi = hi.sup(&px.coords);
+            }
+            let clamp = |v: f64, max: u32| v.clamp(0.0, f64::from(max) - 1.0) as u32;
+            Some((clamp((lo.x - pad).floor(), w), clamp((lo.y - pad).floor(), h), clamp((hi.x + pad).ceil(), w), clamp((hi.y + pad).ceil(), h)))
+        };
+
+        for dot in pattern.dots() {
+            let center_m = origin + Vector2::new(dot.u * image_w, dot.v * image_h);
+            let radius = dot.radius_h * image_h;
+            let reach = radius * 1.8;
+            let corners = [-1.0, 1.0].map(|dx| [-1.0, 1.0].map(|dy| center_m + Vector2::new(dx * reach, dy * reach)));
+            let points: Vec<_> = corners.into_iter().flatten().collect();
+            let Some(bounds) = pixel_box(&points, 3.0) else { continue };
+            self.paint(&mut img, bounds, |on_screen, footprint| ((radius - (on_screen - center_m).norm()) / footprint + 0.5).clamp(0.0, 1.0));
+        }
+        for rect in pattern.frame_rects() {
+            let (x0, y0) = (origin.x + rect.x * image_h, origin.y + rect.y * image_h);
+            let (x1, y1) = (x0 + rect.width * image_h, y0 + rect.height * image_h);
+            let points = [Vector2::new(x0, y0), Vector2::new(x1, y0), Vector2::new(x1, y1), Vector2::new(x0, y1)];
+            let Some(bounds) = pixel_box(&points, 3.0) else { continue };
+            self.paint(&mut img, bounds, |on_screen, footprint| {
+                overlap_share(on_screen.x, footprint, x0, x1) * overlap_share(on_screen.y, footprint, y0, y1)
+            });
+        }
+        img
+    }
+
+    /// Brightens the pixels of `bounds` (`x0, y0, x1, y1`, inclusive) by the
+    /// coverage of a shape, given on-screen position in meters and the pixel's
+    /// footprint there. Light only reaches the camera from the panel, so
+    /// coverage is clipped to it.
+    fn paint(&self, img: &mut RgbImage, bounds: (u32, u32, u32, u32), coverage: impl Fn(Vector2<f64>, f64) -> f64) {
+        let [sw, sh] = self.scene.screen_size_m;
+        let (x0, y0, x1, y1) = bounds;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let Some((on_screen, range, _)) = self.color_pixel_on_screen(Point2::new(f64::from(x), f64::from(y))) else { continue };
+                let footprint = range / self.geometry.color.fx;
+                let on_panel = overlap_share(on_screen.x, footprint, 0.0, sw) * overlap_share(on_screen.y, footprint, 0.0, sh);
+                let share = coverage(on_screen, footprint) * on_panel;
+                if share > 0.0 {
+                    let level = self.scaled(5.0 + 230.0 * share);
+                    let current = img.get_pixel(x, y)[0];
+                    img.put_pixel(x, y, Rgb([level.max(current); 3]));
                 }
             }
         }
-        img
     }
 
     /// Ideal depth in meters per depth pixel; zero where the dropout region
@@ -529,7 +604,7 @@ impl SyntheticStream {
         let mut img = DepthImage::new(w, h);
         let (sigma, holes) = (self.scene.depth_noise_m, self.scene.depth_hole_fraction);
         for i in 0..(w * h) as usize {
-            let base = f64::from(self.depth_base[i]);
+            let base = f64::from(self.depth_base[i]) * (1.0 + self.scene.depth_scale_error);
             if base <= 0.0 || (holes > 0.0 && self.rng.random::<f64>() < holes) {
                 continue;
             }
