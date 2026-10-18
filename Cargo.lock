@@ -9375,7 +9375,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-desktop"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "btleplug",
