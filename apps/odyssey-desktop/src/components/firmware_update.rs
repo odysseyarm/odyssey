@@ -285,7 +285,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     );
                     let is_newer = |fw: &firmware::FirmwareEntry| {
                         is_dfu_device
-                            || fw.version_parts().is_some_and(|v| firmware::version_newer(device_version, v))
+                            || firmware::is_worth_installing(fw, device_version, device.netcore_release)
                     };
                     let maybe_fw = offer.offered.filter(|fw| is_newer(fw));
                     let held_back = offer.held_back.filter(|fw| is_newer(fw)).map(|fw| HeldBack {
