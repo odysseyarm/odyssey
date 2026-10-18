@@ -940,6 +940,16 @@ async fn run_firmware_update(
         None => None,
     };
 
+    ensure_bootloader(
+        manager,
+        device_uuid,
+        vid,
+        pid,
+        bootloader_image.as_ref(),
+        firmware_entry.requires_bootloader,
+    )
+    .await?;
+
     for step in steps {
         match step {
             firmware::UpdateStep::FlashNetCore => {
@@ -975,24 +985,25 @@ async fn run_firmware_update(
     Ok(())
 }
 
-/// Detach into the bootloader if needed, update the bootloader when the release
-/// calls for it, write the application to the inactive bank, and wait for the
-/// device to come back running it.
-async fn write_application(
+/// Bring the bootloader to the release the update carries, when it is behind or
+/// the application needs a newer one, and leave the device in DFU mode.
+///
+/// This runs before anything else is written. The bootloader performs the
+/// net-core copy and owns the application bank writes, so a fix to either only
+/// helps an update that comes after it. It is also the only window where the
+/// bootloader is the thing enumerating, which is both why its release is
+/// readable and why it can be written at all. Calling it again once the
+/// bootloader is current changes nothing.
+async fn ensure_bootloader(
     manager: &FirmwareUpdateManager,
     device_uuid: [u8; 6],
     vid: u16,
     pid: u16,
-    images: &mut std::collections::HashMap<&'static str, Vec<u8>>,
     bootloader_image: Option<&(Vec<u8>, u16)>,
     requires_bootloader: u16,
 ) -> Result<(), String> {
     enter_dfu(manager, device_uuid, vid, pid).await?;
 
-    // The bootloader owns the flash writes for the application banks, so an
-    // application that needs a newer bootloader has to wait for it. This is the
-    // only window where the bootloader is the thing enumerating, which is both
-    // why its release is readable and why it can be written at all.
     let running = firmware::read_bootloader_release_for_device(&device_uuid, vid, pid)
         .map_err(|e| format!("Could not read the bootloader release: {e}"))?;
     let flash_bootloader = firmware::plan_bootloader(
@@ -1032,14 +1043,14 @@ async fn write_application(
             .map_err(|e| format!("Bootloader flash failed: {e}"))?;
 
             // Writing the bootloader resets the device, so wait for it to come
-            // back before the application image goes out.
+            // back before anything else goes out.
             firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(15))
                 .await
                 .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
 
             // A completed write and a returning device do not show the new
-            // image is the one running. The application must not go onto a
-            // bootloader that never took the update, so read it back.
+            // image is the one running. Nothing may go onto a bootloader that
+            // never took the update, so read it back.
             let now = firmware::read_bootloader_release_for_device(&device_uuid, vid, pid)
                 .map_err(|e| format!("Could not read the bootloader after updating it: {e}"))?;
             if !firmware::bootloader_took_update(now, published) {
@@ -1051,6 +1062,22 @@ async fn write_application(
         }
         _ => tracing::info!("Bootloader {:?} stays as it is", running),
     }
+    Ok(())
+}
+
+/// Detach into the bootloader if needed, update the bootloader when the release
+/// calls for it, write the application to the inactive bank, and wait for the
+/// device to come back running it.
+async fn write_application(
+    manager: &FirmwareUpdateManager,
+    device_uuid: [u8; 6],
+    vid: u16,
+    pid: u16,
+    images: &mut std::collections::HashMap<&'static str, Vec<u8>>,
+    bootloader_image: Option<&(Vec<u8>, u16)>,
+    requires_bootloader: u16,
+) -> Result<(), String> {
+    ensure_bootloader(manager, device_uuid, vid, pid, bootloader_image, requires_bootloader).await?;
 
     // Determine target slot
     let (slot_name, slot_file, alt) = firmware::determine_target_slot_for_device(&device_uuid, vid, pid)
