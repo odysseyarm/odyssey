@@ -1,7 +1,7 @@
 [package]
 name = "odyssey-uniffi-bindgen"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # Project-local uniffi-bindgen. Shares this workspace's Cargo.lock, so the
 # generated bindings always match the uniffi version ohc_uniffi is compiled
