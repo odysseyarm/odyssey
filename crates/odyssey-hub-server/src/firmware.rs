@@ -251,22 +251,52 @@ pub fn select_firmware<'a>(
     offer
 }
 
+/// Which GitHub release a firmware file is published under.
+///
+/// The bootloader and the net core are released on their own, because they
+/// change far less often than the application and a bad one cannot be fixed
+/// without a probe. An application release entry pins the exact component
+/// releases it was tested with, so the combination stays recorded in the
+/// manifest while each image lives in the release that built it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseSource<'a> {
+    /// `<device>-v<version>`
+    Application { version: &'a str },
+    /// `<device>-bootloader-v<release>`
+    Bootloader { release: u16 },
+    /// `<device>-netcore-v<release>`
+    NetCore { release: u16 },
+}
+
+impl ReleaseSource<'_> {
+    /// The git tag of the release.
+    pub fn tag(&self, device_type: &str) -> String {
+        match self {
+            Self::Application { version } => format!("{device_type}-v{version}"),
+            Self::Bootloader { release } => format!("{device_type}-bootloader-v{release}"),
+            Self::NetCore { release } => format!("{device_type}-netcore-v{release}"),
+        }
+    }
+}
+
 /// Build the download URL for a firmware file
-pub fn build_download_url(device_type: &str, version: &str, filename: &str) -> String {
+pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename: &str) -> String {
     format!(
-        "{}/{}-v{}/{}.bin",
-        RELEASES_BASE_URL, device_type, version, filename
+        "{}/{}/{}.bin",
+        RELEASES_BASE_URL,
+        source.tag(device_type),
+        filename
     )
 }
 
 /// Download a firmware file and verify its SHA256 hash
 pub async fn download_firmware(
     device_type: &str,
-    version: &str,
+    source: ReleaseSource<'_>,
     filename: &str,
     expected_sha256: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let url = build_download_url(device_type, version, filename);
+    let url = build_download_url(device_type, source, filename);
     tracing::info!("Downloading firmware from {}", url);
 
     tracing::debug!("Creating reqwest client...");
@@ -1163,10 +1193,19 @@ mod tests {
     }
 
     #[test]
-    fn test_build_download_url() {
+    fn download_urls_follow_each_components_own_release() {
+        let url = |source| build_download_url("atslite1", source, "app-a");
         assert_eq!(
-            build_download_url("atslite", "0.1.1", "app-a"),
-            "https://github.com/odysseyarm/odyssey/releases/download/atslite-v0.1.1/app-a.bin"
+            url(ReleaseSource::Application { version: "0.1.15" }),
+            "https://github.com/odysseyarm/odyssey/releases/download/atslite1-v0.1.15/app-a.bin"
+        );
+        assert_eq!(
+            ReleaseSource::Bootloader { release: 3 }.tag("legacy-atslite1"),
+            "legacy-atslite1-bootloader-v3"
+        );
+        assert_eq!(
+            ReleaseSource::NetCore { release: 2 }.tag("atslite1"),
+            "atslite1-netcore-v2"
         );
     }
 }

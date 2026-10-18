@@ -508,7 +508,7 @@ async fn run_firmware_update(
         tracing::info!("Downloading {} for {}", slot_file, firmware_entry.version);
         let data = firmware::download_firmware(
             &device_type,
-            &firmware_entry.version,
+            firmware::ReleaseSource::Application { version: &firmware_entry.version },
             slot_file,
             &file_entry.sha256,
         )
@@ -531,7 +531,7 @@ async fn run_firmware_update(
             tracing::info!("Release carries stage2 bootloader release {}", release);
             let data = firmware::download_firmware(
                 &device_type,
-                &firmware_entry.version,
+                firmware::ReleaseSource::Bootloader { release },
                 "stage2-bootloader",
                 &entry.sha256,
             )
