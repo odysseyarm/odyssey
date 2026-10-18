@@ -1058,27 +1058,47 @@ mod tests {
 
     #[test]
     fn a_camera_sized_flat_screen_is_calibrated_through_overscan() {
+        use crate::cli::DEMO_OVERSCAN_MAX_PERCENT;
+        use crate::views::calibrate::automatic::kind::{self, DisplayKind};
         use crate::views::calibrate::automatic::quality::{Verdict, assess};
 
-        let backend = Backend::Demo {
-            overscan_fraction: 0.03,
-        };
-        // What `kind::plan` hands the session for a flat screen the camera sizes.
-        let options = SessionOptions {
-            known_size: None,
-            require_visible_edges: false,
-            ..SessionOptions::default()
-        };
-        let Ended::Finished(f) = run_session(backend, options, None, false) else {
-            panic!("failed")
-        };
-        assert!(matches!(f.primary.edges, EdgeCheck::Cropped { .. }));
-        // The size is the whole picture, hidden edge included: 3% larger than the panel.
-        assert!(
-            (f.primary.diagonal_in - DEMO_DIAGONAL_IN * 1.03).abs() < 0.8,
-            "{}",
-            f.primary.diagonal_in
-        );
-        assert_ne!(assess(&f.primary.measures).verdict, Verdict::Poor);
+        // What the wizard hands the session for a flat screen the camera sizes.
+        let plan = kind::plan(DisplayKind::Flat, None, None, 16.0 / 9.0, true);
+        assert!(plan.known_size.is_none() && !plan.require_visible_edges);
+
+        for overscan in [0.03, DEMO_OVERSCAN_MAX_PERCENT / 100.0] {
+            let options = SessionOptions {
+                known_size: plan.known_size,
+                require_visible_edges: plan.require_visible_edges,
+                ..SessionOptions::default()
+            };
+            let backend = Backend::Demo {
+                overscan_fraction: overscan,
+            };
+            let Ended::Finished(f) = run_session(backend, options, plan.origin, false) else {
+                panic!("failed at {overscan} overscan")
+            };
+            let truth = demo_scene(16.0 / 9.0, DEMO_DIAGONAL_IN, true, overscan).truth();
+            let at = format!("at {overscan} overscan");
+
+            assert!(matches!(f.primary.edges, EdgeCheck::Cropped { .. }), "{at}");
+            // The size is the whole picture, hidden edge included, not the panel.
+            for (got, want) in f.primary.size_m.iter().zip(truth.size_m) {
+                assert!((got / want - 1.0).abs() < 0.01, "{got} vs {want} {at}");
+            }
+            assert!(f.primary.diagonal_in > truth.diagonal_in() * 0.99, "{at}");
+            // The markers land where the simulated ones are, in the picture's frame.
+            for (got, want) in f
+                .primary
+                .calibration
+                .object_points
+                .iter()
+                .zip(truth.markers_m)
+            {
+                let miss = (got.cast::<f64>() - want).norm();
+                assert!(miss < 0.02, "marker {miss} m off {at}");
+            }
+            assert_ne!(assess(&f.primary.measures).verdict, Verdict::Poor, "{at}");
+        }
     }
 }
