@@ -2,6 +2,7 @@
 mod device_tasks;
 pub mod firmware;
 mod migration;
+mod screen_watch;
 mod server;
 
 use std::{pin::Pin, sync::Arc};
@@ -196,7 +197,15 @@ pub async fn run_server(
     // Collect config corruption events to send via ServerInit message
     let mut startup_corruptions = Vec::new();
 
-    // Load screen calibrations
+    // Load screen calibrations. The watcher snapshots the directory first so a write
+    // during the initial load is seen as a change afterwards.
+    let screen_watcher = match odyssey_hub_common::config::screens_dir() {
+        Ok(dir) => Some(screen_watch::ScreenCalibrationWatcher::new(dir).await),
+        Err(e) => {
+            tracing::warn!("Screen calibrations will not hot reload: {}", e);
+            None
+        }
+    };
     let screen_result = odyssey_hub_common::config::screen_calibrations_async().await;
     for (screen_id, path, error) in &screen_result.corrupted_screens {
         tracing::error!("Screen {} calibration corrupted: {}", screen_id, error);
@@ -212,6 +221,14 @@ pub async fn run_server(
     )));
 
     println!("Screen calibrations loaded: {:?}", screen_calibrations);
+
+    // Calibrations written while the hub runs (wizard, hand edits) apply without a
+    // restart. The guard stops the poller if run_server returns without a cancel.
+    let screen_watch_cancel = cancel_token.child_token();
+    let _screen_watch_stop = screen_watch_cancel.clone().drop_guard();
+    if let Some(watcher) = screen_watcher {
+        tokio::spawn(watcher.run(screen_calibrations.clone(), screen_watch_cancel));
+    }
 
     // Load device offsets
     let device_offsets_result = odyssey_hub_common::config::device_offsets_async().await;
@@ -553,4 +570,18 @@ pub async fn run_server(
     tracing::info!("Server main loop ended");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both apps hand `run_server` to `tokio::spawn`, so a non-`Send` value held
+    /// across an await inside it breaks them at compile time.
+    #[test]
+    fn run_server_future_is_send() {
+        fn assert_send<T: Send>(_: T) {}
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        assert_send(run_server(sender, CancellationToken::new()));
+    }
 }
