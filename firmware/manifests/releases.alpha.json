@@ -4,6 +4,33 @@
     "legacy-atslite1": {
       "firmwares": [
         {
+          "version": "0.1.19",
+          "requires_bootloader": 0,
+          "requires_netcore": 0,
+          "min_desktop": "0.6.4",
+          "files": {
+            "app-a": {
+              "sha256": "ea941c93f48599741d18d8b736c15dc876ff891a018804ec54009c79a622137b",
+              "size": 364628
+            },
+            "app-b": {
+              "sha256": "6338fa042764b5616017e8cad5e1ad70d7b8c6a614cb7fc3a4479bb8c2e2258d",
+              "size": 364628
+            },
+            "net-core": {
+              "sha256": "5d17f4b7a4d195895e7125f02eecdbfef2748b27842a0f248908294ce6ecd70b",
+              "size": 164648,
+              "release": 1
+            },
+            "stage2-bootloader": {
+              "sha256": "dcc4058788c6e5318f0eb8a613774214541570522feb4dbd8ff8d7558db06230",
+              "size": 43472,
+              "release": 1
+            }
+          },
+          "released": "2026-10-17"
+        },
+        {
           "version": "0.1.18",
           "files": {
             "app-a": {
@@ -332,6 +359,33 @@
     },
     "atslite1": {
       "firmwares": [
+        {
+          "version": "0.1.16",
+          "requires_bootloader": 0,
+          "requires_netcore": 0,
+          "min_desktop": "0.6.4",
+          "files": {
+            "app-a": {
+              "sha256": "ada2e03ec875ee91d44f39bbf85ebf3e26b202cdbbbc60ca2d80a8e01e958d7e",
+              "size": 308516
+            },
+            "app-b": {
+              "sha256": "8cd048afe622f393e48a75e1f2581bb5f9588ce12c52ff3b1fe9ef2b3b54a881",
+              "size": 308516
+            },
+            "net-core": {
+              "sha256": "5d17f4b7a4d195895e7125f02eecdbfef2748b27842a0f248908294ce6ecd70b",
+              "size": 164648,
+              "release": 1
+            },
+            "stage2-bootloader": {
+              "sha256": "01234eb533710e7c5127d1efe56e9d2c09a00a01218aba3ec53aca7fea16d104",
+              "size": 43488,
+              "release": 1
+            }
+          },
+          "released": "2026-10-17"
+        },
         {
           "version": "0.1.15",
           "files": {
