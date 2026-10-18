@@ -283,9 +283,15 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         desktop_version(),
                         device.netcore_release,
                     );
+                    // The net core is read through USB control; without it the
+                    // zero in `netcore_release` means unknown, not behind.
+                    let readable_netcore = device
+                        .capabilities
+                        .contains(odyssey_hub_common::device::DeviceCapabilities::CONTROL)
+                        .then_some(device.netcore_release);
                     let is_newer = |fw: &firmware::FirmwareEntry| {
                         is_dfu_device
-                            || firmware::is_worth_installing(fw, device_version, device.netcore_release)
+                            || firmware::is_worth_installing(fw, device_version, readable_netcore)
                     };
                     let maybe_fw = offer.offered.filter(|fw| is_newer(fw));
                     let held_back = offer.held_back.filter(|fw| is_newer(fw)).map(|fw| HeldBack {
