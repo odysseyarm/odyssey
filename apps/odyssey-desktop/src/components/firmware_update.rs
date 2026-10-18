@@ -1023,30 +1023,40 @@ async fn ensure_bootloader(
                 published,
                 alt
             );
-            manager.set_state(
+            flash_with_progress(
+                manager,
                 device_uuid,
-                FirmwareUpdateState::Flashing {
-                    progress: 0,
-                    total: bootloader_data.len(),
-                },
-            );
-            firmware::flash_firmware_with_progress(
-                &device_uuid,
                 vid,
                 pid,
                 "BOOTLOADER",
                 alt,
                 bootloader_data,
-                |_, _| {},
+                "Bootloader flash",
+                |progress, total| FirmwareUpdateState::Flashing { progress, total },
             )
-            .await
-            .map_err(|e| format!("Bootloader flash failed: {e}"))?;
+            .await?;
 
-            // Writing the bootloader resets the device, so wait for it to come
-            // back before anything else goes out.
-            firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(15))
-                .await
-                .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
+            // The write resets the device and the new bootloader boots the
+            // application, so the unit comes back running it, not in DFU. Wait
+            // out the old bootloader's enumeration first: it would otherwise
+            // satisfy the wait below and be read as if it were the new one.
+            manager.set_state(device_uuid, FirmwareUpdateState::Rebooting);
+            if !wait_for_bootloader_reset(&device_uuid, vid, pid, std::time::Duration::from_secs(15)).await {
+                return Err("Device did not reset after the bootloader update".to_string());
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                match enter_dfu(manager, device_uuid, vid, pid).await {
+                    Ok(()) => break,
+                    Err(e) if std::time::Instant::now() < deadline => {
+                        tracing::debug!("Device not back yet after the bootloader update: {e}");
+                    }
+                    Err(e) => {
+                        return Err(format!("Device did not return after the bootloader update: {e}"));
+                    }
+                }
+            }
 
             // A completed write and a returning device do not show the new
             // image is the one running. Nothing may go onto a bootloader that
