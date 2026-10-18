@@ -50,6 +50,9 @@ pub fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>) -> St
         Some(SizeOrigin::Entered) => format!(
             "The camera measured the screen {how_much} {direction} than the size you entered. The size may be wrong, or the TV may be cropping the picture."
         ),
+        Some(SizeOrigin::Reference) => format!(
+            "The camera measured the screen {how_much} {direction} than your tape or card measurement. The camera's depth reading can be a little off at a distance; if you measured carefully, yours is the better figure. If you're unsure, measure again."
+        ),
         _ => format!(
             "The camera measured the screen {how_much} {direction} than the TV says. The TV may be cropping the picture, or the size is wrong."
         ),

@@ -18,6 +18,7 @@ use odyssey_hub_common::config::MonitorKey;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 
+use super::reference;
 use crate::components::screen_picker::monitor_key;
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
@@ -27,7 +28,7 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 const PLACEMENT_CHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
 
 /// What the pattern window shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PatternMode {
     /// The dot pattern, white on black.
     Pattern,
@@ -35,6 +36,12 @@ pub enum PatternMode {
     Black,
     /// Seconds left before the pattern appears, over black.
     Countdown(u32),
+    /// A line `line_px` pixels long with a tick at each end, for a tape
+    /// measure. Drawn in screen pixels, not in the pattern's unit space.
+    Ruler { line_px: u32 },
+    /// A frame whose inside is a credit card `width_px` pixels wide, for
+    /// holding a real card against. Drawn in screen pixels.
+    Card { width_px: f64 },
 }
 
 /// Why the pattern window can no longer do its job.
@@ -54,6 +61,8 @@ struct Link(Arc<LinkInner>);
 
 struct LinkInner {
     pattern: Pattern,
+    /// The monitor's resolution, which the ruler and card are drawn in.
+    pixels: (u32, u32),
     mode: watch::Receiver<PatternMode>,
     lost: UnboundedSender<PatternLoss>,
 }
@@ -86,8 +95,10 @@ pub fn open(
     lost: UnboundedSender<PatternLoss>,
 ) -> PatternDisplay {
     let (mode, receiver) = watch::channel(initial);
+    let size = monitor.size();
     let link = Link(Arc::new(LinkInner {
         pattern,
+        pixels: (size.width, size.height),
         mode: receiver,
         lost: lost.clone(),
     }));
@@ -165,6 +176,7 @@ fn PatternScreen(link: Link) -> Element {
 
     let pattern = &link.0.pattern;
     let aspect = pattern.aspect();
+    let (screen_w, screen_h) = (f64::from(link.0.pixels.0), f64::from(link.0.pixels.1));
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -214,6 +226,74 @@ fn PatternScreen(link: Link) -> Element {
                     }
                 },
                 PatternMode::Black => rsx! {},
+                PatternMode::Ruler { line_px } => {
+                    let line = f64::from(line_px);
+                    let x0 = ((screen_w - line) / 2.0).floor();
+                    let y = (screen_h / 2.0).floor();
+                    rsx! {
+                        // The viewBox is the monitor's own pixels, so a unit here is one
+                        // pixel and the line is as long as the tech is told it is.
+                        svg {
+                            class: "size-full",
+                            view_box: "0 0 {screen_w} {screen_h}",
+                            preserve_aspect_ratio: "none",
+                            shape_rendering: "crispEdges",
+                            rect { x: "{x0}", y: "{y - 1.0}", width: "{line}", height: "2", fill: "white" }
+                            rect { x: "{x0 - 1.0}", y: "{y - 40.0}", width: "2", height: "80", fill: "white" }
+                            rect { x: "{x0 + line - 1.0}", y: "{y - 40.0}", width: "2", height: "80", fill: "white" }
+                            text {
+                                x: "{screen_w / 2.0}",
+                                y: "{y + 96.0}",
+                                text_anchor: "middle",
+                                fill: "#9ca3af",
+                                font_size: "28",
+                                font_family: "sans-serif",
+                                "Measure from the middle of one tick to the middle of the other"
+                            }
+                        }
+                    }
+                }
+                PatternMode::Card { width_px } => {
+                    let height_px = width_px * reference::CARD_HEIGHT_MM / reference::CARD_WIDTH_MM;
+                    let radius = width_px * reference::CARD_CORNER_OF_WIDTH;
+                    let (left, top) = ((screen_w - width_px) / 2.0, (screen_h - height_px) / 2.0);
+                    let frame = 4.0;
+                    rsx! {
+                        svg {
+                            class: "size-full",
+                            view_box: "0 0 {screen_w} {screen_h}",
+                            preserve_aspect_ratio: "none",
+                            shape_rendering: "geometricPrecision",
+                            // A white frame whose inside edge is exactly the card: a card of
+                            // the right size fills it with no dark gap and covers none of it.
+                            rect {
+                                x: "{left - frame}",
+                                y: "{top - frame}",
+                                width: "{width_px + 2.0 * frame}",
+                                height: "{height_px + 2.0 * frame}",
+                                rx: "{radius + frame}",
+                                fill: "white",
+                            }
+                            rect {
+                                x: "{left}",
+                                y: "{top}",
+                                width: "{width_px}",
+                                height: "{height_px}",
+                                rx: "{radius}",
+                                fill: "black",
+                            }
+                            text {
+                                x: "{screen_w / 2.0}",
+                                y: "{top + height_px + frame + 64.0}",
+                                text_anchor: "middle",
+                                fill: "#9ca3af",
+                                font_size: "28",
+                                font_family: "sans-serif",
+                                "Hold a card flat against the glass, inside the frame"
+                            }
+                        }
+                    }
+                }
                 PatternMode::Countdown(seconds) => rsx! {
                     div {
                         class: "size-full flex flex-col items-center justify-center gap-6 text-white",

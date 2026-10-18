@@ -15,6 +15,8 @@ pub mod pattern_window;
 mod position;
 mod problem;
 pub mod quality;
+pub mod reference;
+mod reference_helper;
 mod review;
 pub mod screens;
 mod sdk_download;
