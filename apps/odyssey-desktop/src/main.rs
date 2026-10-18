@@ -373,11 +373,11 @@ async fn handle_server_status(
                     // Try to connect to the existing instance and call BringToFront
                     let mut client = odyssey_hub_client::client::Client::default();
                     if let Ok(()) = client.connect().await {
-                        if let Ok(()) = client.bring_to_front().await {
+                        match client.bring_to_front().await { Ok(()) => {
                             tracing::info!("Successfully brought existing instance to front");
-                        } else {
+                        } _ => {
                             tracing::warn!("Failed to bring existing instance to front");
-                        }
+                        }}
                     }
 
                     // Return true to signal we should exit due to another instance

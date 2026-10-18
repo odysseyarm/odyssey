@@ -39,16 +39,16 @@ use leptos_reactive::{MaybeSignal, Memo, ReadSignal, RwSignal, Signal};
 macro_rules! layout {
 
     // ---------------------- Controls without children -----------------------
-    [ $ui:expr ,
-        let $ctl:ident = Area ( $handler:expr )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Area ( $handler:expr_2021 )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Area::new($ui, $handler);
     ];
 
     // Button
-    [ $ui:expr ,
-        let $ctl:ident = Button ( $text:expr $( , enabled: $enabled:expr $(,)? )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Button ( $text:expr_2021 $( , enabled: $enabled:expr_2021 $(,)? )? )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Button::new($ui, "");
@@ -80,8 +80,8 @@ macro_rules! layout {
     ];
 
     // Checkbox
-    [ $ui:expr ,
-        let $ctl:ident = Checkbox ( $text:expr $( , checked: $checked:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Checkbox ( $text:expr_2021 $( , checked: $checked:expr_2021 )? )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Checkbox::new($ui, $text);
@@ -89,7 +89,7 @@ macro_rules! layout {
     ];
 
     // ColorButton
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = ColorButton ()
     ] => [
         #[allow(unused_mut)]
@@ -97,9 +97,9 @@ macro_rules! layout {
     ];
 
     // Combobox
-    [ $ui:expr ,
-        let $ctl:ident = Combobox ( $( $prop:ident: $value:expr ),* $(,)? )
-        { $( $option:expr ),* }
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Combobox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
+        { $( $option:expr_2021 ),* }
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Combobox::new($ui);
@@ -108,7 +108,7 @@ macro_rules! layout {
     ];
 
     // DateTimePicker
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = DateTimePicker ( $kind:ident )
     ] => [
         #[allow(unused_mut)]
@@ -117,9 +117,9 @@ macro_rules! layout {
     ];
 
     // EditableCombobox
-    [ $ui:expr ,
-        let $ctl:ident = EditableCombobox ( $( $prop:ident: $value:expr ),* $(,)? )
-        { $( $option:expr ),* }
+    [ $ui:expr_2021 ,
+        let $ctl:ident = EditableCombobox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
+        { $( $option:expr_2021 ),* }
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::EditableCombobox::new($ui);
@@ -128,8 +128,8 @@ macro_rules! layout {
     ];
 
     // Entry
-    [ $ui:expr ,
-        let $ctl:ident = Entry ( $( $prop:ident: $value:expr ),* $(,)? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Entry ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Entry::new($ui);
@@ -137,7 +137,7 @@ macro_rules! layout {
     ];
 
     // FontButton
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = FontButton ()
     ] => [
         #[allow(unused_mut)]
@@ -145,7 +145,7 @@ macro_rules! layout {
     ];
 
     // HorizontalSeparator
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = HorizontalSeparator ()
     ] => [
         #[allow(unused_mut)]
@@ -153,14 +153,14 @@ macro_rules! layout {
     ];
 
     // Label
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = Label ( $text:literal )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Label::new($ui, $text);
     ];
-    [ $ui:expr ,
-        let $ctl:ident = Label ( $text:expr )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Label ( $text:expr_2021 )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Label::new($ui, "");
@@ -178,7 +178,7 @@ macro_rules! layout {
     ];
 
     // MultilineEntry
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = MultilineEntry ()
     ] => [
         #[allow(unused_mut)]
@@ -186,8 +186,8 @@ macro_rules! layout {
     ];
 
     // MultilineEntry, wrapping option
-    [ $ui:expr ,
-        let $ctl:ident = MultilineEntry ( wrapping: $wrapping:expr )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = MultilineEntry ( wrapping: $wrapping:expr_2021 )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = if $wrapping {
@@ -198,7 +198,7 @@ macro_rules! layout {
     ];
 
     // PasswordEntry
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = PasswordEntry ()
     ] => [
         #[allow(unused_mut)]
@@ -206,9 +206,9 @@ macro_rules! layout {
     ];
 
     // RadioButtons
-    [ $ui:expr ,
-        let $ctl:ident = RadioButtons ( $( selected: $selected:expr )? )
-        { $( $option:expr ),* }
+    [ $ui:expr_2021 ,
+        let $ctl:ident = RadioButtons ( $( selected: $selected:expr_2021 )? )
+        { $( $option:expr_2021 ),* }
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::RadioButtons::new($ui);
@@ -217,7 +217,7 @@ macro_rules! layout {
     ];
 
     // SearchEntry
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = SearchEntry ()
     ] => [
         #[allow(unused_mut)]
@@ -225,15 +225,15 @@ macro_rules! layout {
     ];
 
     // Slider
-    [ $ui:expr ,
-        let $ctl:ident = Slider ( $min:expr , $max:expr )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Slider ( $min:expr_2021 , $max:expr_2021 )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Slider::new($ui, $min, $max);
     ];
 
     // Spacer
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = Spacer ()
     ] => [
         #[allow(unused_mut)]
@@ -241,8 +241,8 @@ macro_rules! layout {
     ];
 
     // Spinbox, limited
-    [ $ui:expr ,
-        let $ctl:ident = Spinbox ( $min:expr , $max:expr $(, $prop:ident: $value:expr )* $(,)?)
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Spinbox ( $min:expr_2021 , $max:expr_2021 $(, $prop:ident: $value:expr_2021 )* $(,)?)
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Spinbox::new($ui, $min, $max);
@@ -250,8 +250,8 @@ macro_rules! layout {
     ];
 
     // Spinbox, unlimited
-    [ $ui:expr ,
-        let $ctl:ident = Spinbox ( $( $prop:ident: $value:expr ),* $(,)? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Spinbox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::Spinbox::new_unlimited($ui);
@@ -259,8 +259,8 @@ macro_rules! layout {
     ];
 
     // ProgressBar
-    [ $ui:expr ,
-        let $ctl:ident = ProgressBar ( $($value:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = ProgressBar ( $($value:expr_2021 )? )
     ] => [
         #[allow(unused_mut)]
         let mut $ctl = iui::controls::ProgressBar::new($ui);
@@ -280,10 +280,10 @@ macro_rules! layout {
     // ----------------- Controls with children (Containers) ------------------
 
     // Form
-    [ $ui:expr ,
-        let $ctl:ident = Form ( $( padded: $padded:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Form ( $( padded: $padded:expr_2021 )? )
         { $(
-            ( $strategy:ident, $name:expr ) :
+            ( $strategy:ident, $name:expr_2021 ) :
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
@@ -298,8 +298,8 @@ macro_rules! layout {
     ];
 
     // Group
-    [ $ui:expr ,
-        let $ctl:ident = Group ( $title:expr $( , margined: $margined:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = Group ( $title:expr_2021 $( , margined: $margined:expr_2021 )? )
         { $(
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )? }
@@ -314,8 +314,8 @@ macro_rules! layout {
     ];
 
     // HorizontalBox
-    [ $ui:expr ,
-        let $ctl:ident = HorizontalBox ( $( padded: $padded:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = HorizontalBox ( $( padded: $padded:expr_2021 )? )
         { $(
             $strategy:ident :
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
@@ -332,11 +332,11 @@ macro_rules! layout {
     ];
 
     // LayoutGrid
-    [ $ui:expr ,
-        let $ctl:ident = LayoutGrid ( $( padded: $padded:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = LayoutGrid ( $( padded: $padded:expr_2021 )? )
         { $(
             $( #[$attr:meta] )*
-            ( $x:expr , $y:expr ) ( $xspan:expr , $yspan:expr )
+            ( $x:expr_2021 , $y:expr_2021 ) ( $xspan:expr_2021 , $yspan:expr_2021 )
             $expand:ident ( $halign:ident , $valign:ident ) :
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
@@ -356,10 +356,10 @@ macro_rules! layout {
     ];
 
     // TabGroup
-    [ $ui:expr ,
+    [ $ui:expr_2021 ,
         let $ctl:ident = TabGroup ()
         { $(
-            ( $name:expr $( , margined: $margined:expr )? ) :
+            ( $name:expr_2021 $( , margined: $margined:expr_2021 )? ) :
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
@@ -373,8 +373,8 @@ macro_rules! layout {
     ];
 
     // VerticalBox
-    [ $ui:expr ,
-        let $ctl:ident = VerticalBox ( $( padded: $padded:expr )? )
+    [ $ui:expr_2021 ,
+        let $ctl:ident = VerticalBox ( $( padded: $padded:expr_2021 )? )
         { $(
             $strategy:ident :
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
@@ -391,7 +391,7 @@ macro_rules! layout {
     ];
 
     // Control properties
-    [ @args Spinbox $ui:expr; $ctl:ident value $value:expr] => [
+    [ @args Spinbox $ui:expr_2021; $ctl:ident value $value:expr_2021] => [
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
             let ctl = $ctl.clone();
@@ -402,7 +402,7 @@ macro_rules! layout {
             }
         })
     ];
-    [ @args $ty:ident $ui:expr; $ctl:ident value $value:expr] => [
+    [ @args $ty:ident $ui:expr_2021; $ctl:ident value $value:expr_2021] => [
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
             let ctl = $ctl.clone();
@@ -413,7 +413,7 @@ macro_rules! layout {
             }
         })
     ];
-    [ @args $ty:ident $ui:expr; $ctl:ident enabled $enabled:expr] => [
+    [ @args $ty:ident $ui:expr_2021; $ctl:ident enabled $enabled:expr_2021] => [
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
             let ctl = $ctl.clone();
@@ -428,21 +428,21 @@ macro_rules! layout {
             }
         });
     ];
-    [ @args Spinbox $ui:expr; $ctl:ident onchange $signal:expr] => [
+    [ @args Spinbox $ui:expr_2021; $ctl:ident onchange $signal:expr_2021] => [
         iui::controls::NumericEntry::on_changed(&mut $ctl, $ui, move |v| leptos_reactive::SignalSet::set(&$signal, v))
     ];
-    [ @args $ty:ident $ui:expr; $ctl:ident onchange $signal:expr] => [
+    [ @args $ty:ident $ui:expr_2021; $ctl:ident onchange $signal:expr_2021] => [
         iui::controls::TextEntry::on_changed(&mut $ctl, $ui, move |v| leptos_reactive::SignalSet::set(&$signal, v))
     ];
-    [ @args Spinbox $ui:expr; $ctl:ident signal $signal:expr] => [
+    [ @args Spinbox $ui:expr_2021; $ctl:ident signal $signal:expr_2021] => [
         $crate::layout!(@args Spinbox $ui; $ctl value $signal);
         $crate::layout!(@args Spinbox $ui; $ctl onchange $signal);
     ];
-    [ @args Entry $ui:expr; $ctl:ident signal $signal:expr] => [
+    [ @args Entry $ui:expr_2021; $ctl:ident signal $signal:expr_2021] => [
         $crate::layout!(@args Entry $ui; $ctl value $signal);
         $crate::layout!(@args Entry $ui; $ctl onchange $signal);
     ];
-    [ @args $ty:ident $ui:expr; $ctl:ident selected $selected:expr] => [
+    [ @args $ty:ident $ui:expr_2021; $ctl:ident selected $selected:expr_2021] => [
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
             let ctl = $ctl.clone();
@@ -453,10 +453,10 @@ macro_rules! layout {
             }
         })
     ];
-    [ @args $ty:ident $ui:expr; $ctl:ident onselect $signal:expr] => [
+    [ @args $ty:ident $ui:expr_2021; $ctl:ident onselect $signal:expr_2021] => [
         $ctl.on_selected($ui, move |v| leptos_reactive::SignalSet::set(&$signal, v))
     ];
-    [ @args Combobox $ui:expr; $ctl:ident signal $signal:expr] => [
+    [ @args Combobox $ui:expr_2021; $ctl:ident signal $signal:expr_2021] => [
         $crate::layout!(@args Combobox $ui; $ctl selected $signal);
         $crate::layout!(@args Combobox $ui; $ctl onselect $signal);
     ];

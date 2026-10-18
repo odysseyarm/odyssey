@@ -92,7 +92,7 @@ fn ob<T>(sdk: &Sdk, call: impl FnOnce(*mut *mut ffi::ob_error) -> T) -> Result<T
 /// `ob!(sdk, ob_fn(a, b))` calls `sdk.ob_fn(a, b, &mut error)` and yields a
 /// `Result`. `sdk` is a loaded [`Sdk`], usually the one inside a handle wrapper.
 macro_rules! ob {
-    ($sdk:expr, $f:ident($($a:expr),* $(,)?)) => {{
+    ($sdk:expr_2021, $f:ident($($a:expr_2021),* $(,)?)) => {{
         let sdk: &Sdk = &$sdk;
         // SAFETY: every call site passes handles borrowed from the RAII
         // wrappers below, which keep them alive for the duration of the call,

@@ -124,7 +124,7 @@ impl Client {
     pub async fn subscribe_device_list(
         &mut self,
     ) -> Result<
-        impl futures::Stream<Item = Result<Vec<common::device::Device>, RpcError>>,
+        impl futures::Stream<Item = Result<Vec<common::device::Device>, RpcError>> + use<>,
         ClientError,
     > {
         if let Some(service_client) = &mut self.service_client {
@@ -168,7 +168,7 @@ impl Client {
     pub async fn subscribe_accessory_map(
         &mut self,
     ) -> Result<
-        impl futures::Stream<Item = Result<common::accessory::AccessoryMap, RpcError>>,
+        impl futures::Stream<Item = Result<common::accessory::AccessoryMap, RpcError>> + use<>,
         ClientError,
     > {
         if let Some(service_client) = &mut self.service_client {
@@ -189,7 +189,7 @@ impl Client {
     pub async fn subscribe_events(
         &mut self,
     ) -> Result<
-        impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin,
+        impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin + use<>,
         ClientError,
     > {
         if let Some(service_client) = &mut self.service_client {
@@ -570,7 +570,7 @@ impl Client {
     pub async fn subscribe_shot_delay(
         &mut self,
         device: common::device::Device,
-    ) -> Result<impl futures::Stream<Item = Result<u16, RpcError>>, ClientError> {
+    ) -> Result<impl futures::Stream<Item = Result<u16, RpcError>> + use<>, ClientError> {
         if let Some(service_client) = &mut self.service_client {
             let request =
                 tonic::Request::new(odyssey_hub_server_interface::SubscribeShotDelayRequest {
@@ -642,7 +642,7 @@ impl Client {
 
     pub async fn subscribe_dongle_list(
         &mut self,
-    ) -> Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, RpcError>>, ClientError> {
+    ) -> Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, RpcError>> + use<>, ClientError> {
         if let Some(service_client) = &mut self.service_client {
             let request =
                 tonic::Request::new(odyssey_hub_server_interface::SubscribeDongleListRequest {});

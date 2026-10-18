@@ -216,7 +216,7 @@ impl PagSensorSettingsForm {
 
     pub fn validate(&self, errors: &mut Vec<String>) {
         macro_rules! validators {
-            ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr ),* $(,)? })? ),* $(,)?) => {
+            ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
                 $(
                     #[allow(unused_variables)]
                     let $reg = self.$reg.with_untracked(|s| s.parse::<$ty>());

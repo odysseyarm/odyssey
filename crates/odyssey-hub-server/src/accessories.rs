@@ -119,17 +119,17 @@ pub async fn accessory_manager(
                     info_map.iter().map(|(id, info)| (*id, info.ty)).collect();
 
                 for (id, ty) in snapshot {
-                    if let Some(p) = by_mac.get(&id).cloned() {
+                    match by_mac.get(&id).cloned() { Some(p) => {
                         periph_cache.entry(id).or_insert_with(|| p.clone());
 
                         let mut connected = p.is_connected().await.unwrap_or(false);
                         if !connected {
-                            if let Err(e) = p.connect().await {
+                            match p.connect().await { Err(e) => {
                                 warn!("Failed to connect to {id:?}: {e}");
-                            } else {
-                                if let Err(e) = p.discover_services().await {
+                            } _ => {
+                                match p.discover_services().await { Err(e) => {
                                     warn!("Failed to discover services for {id:?}: {e}");
-                                } else {
+                                } _ => {
                                     // pick characteristic by accessory type
                                     let target_char_uuid = match ty {
                                         AccessoryType::DryFireMag => NUS_TX_UUID,
@@ -141,9 +141,9 @@ pub async fn accessory_manager(
                                         .into_iter()
                                         .find(|c| c.uuid == target_char_uuid)
                                     {
-                                        if let Err(e) = p.subscribe(&ch).await {
+                                        match p.subscribe(&ch).await { Err(e) => {
                                             warn!("Subscribe failed for {id:?}: {e}");
-                                        } else {
+                                        } _ => {
                                             info!("Subscribed to {:?} notifications on {id:?}", ty);
                                             let notif_stream = match p.notifications().await {
                                                 Ok(s) => s,
@@ -225,21 +225,21 @@ pub async fn accessory_manager(
                                                 }
                                                 warn!("{:?} notifications ended for {:?}", ty, id);
                                             });
-                                        }
+                                        }}
                                     } else {
                                         warn!(
                                             "No target characteristic ({:?}) found for {id:?}",
                                             ty
                                         );
                                     }
-                                }
-                            }
+                                }}
+                            }}
                             connected = p.is_connected().await.unwrap_or(false);
                         }
                         *last_statuses.entry(id).or_insert(false) = connected;
-                    } else {
+                    } _ => {
                         *last_statuses.entry(id).or_insert(false) = false;
-                    }
+                    }}
                 }
 
                 send_if_changed(&info_map, &last_statuses, &map_tx);

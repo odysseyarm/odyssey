@@ -50,11 +50,11 @@ async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver
                     // Try to connect to the existing instance and call BringToFront
                     let mut client = odyssey_hub_client::client::Client::default();
                     if let Ok(()) = client.connect().await {
-                        if let Ok(()) = client.bring_to_front().await {
+                        match client.bring_to_front().await { Ok(()) => {
                             tracing::info!("Successfully notified existing instance");
-                        } else {
+                        } _ => {
                             tracing::warn!("Failed to notify existing instance");
-                        }
+                        }}
                     }
                 } else {
                     tracing::error!("Server start error: {}", e);

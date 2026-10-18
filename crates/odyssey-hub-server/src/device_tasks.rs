@@ -2172,7 +2172,7 @@ async fn device_handler_task(
                         };
                         // read_config uses packet protocol — works over BLE and USB alike.
                         // Only read_all_config (bulk camera data) is gated on USB transport mode.
-                        if let Some(dev) = connections.events_device.as_ref().cloned() {
+                        match connections.events_device.as_ref().cloned() { Some(dev) => {
                             if has_sensor_streams {
                                 streams_paused = true;
                                 sensor_streams = SelectAll::new();
@@ -2197,7 +2197,7 @@ async fn device_handler_task(
                                 );
                                 streams_resume_armed = true;
                             }
-                        } else if let Some(dev) = connections.control_device.as_ref() {
+                        } _ => if let Some(dev) = connections.control_device.as_ref() {
                             let result = match tokio::time::timeout(Duration::from_secs(3), dev.read_config_ctrl(ck)).await {
                                 Ok(Ok(gc)) => Ok(match gc {
                                     GeneralConfig::ImpactThreshold(v) => v,
@@ -2210,7 +2210,7 @@ async fn device_handler_task(
                             let _ = reply.send(result);
                         } else {
                             let _ = reply.send(Err("no device available for read_config".into()));
-                        }
+                        }}
                     }
                     Some(DeviceTaskMessage::WriteConfig { kind, value, reply }) => {
                         let gc = match kind {
@@ -2222,7 +2222,7 @@ async fn device_handler_task(
                             }
                         };
                         // write_config uses packet protocol — works over BLE and USB alike.
-                        if let Some(dev) = connections.events_device.as_ref().cloned() {
+                        match connections.events_device.as_ref().cloned() { Some(dev) => {
                             if has_sensor_streams {
                                 streams_paused = true;
                                 sensor_streams = SelectAll::new();
@@ -2242,7 +2242,7 @@ async fn device_handler_task(
                                 );
                                 streams_resume_armed = true;
                             }
-                        } else if let Some(dev) = connections.control_device.as_ref() {
+                        } _ => if let Some(dev) = connections.control_device.as_ref() {
                             let result = match tokio::time::timeout(Duration::from_secs(3), dev.write_config_ctrl(gc)).await {
                                 Ok(r) => r.map_err(|e| e.to_string()),
                                 Err(_) => Err("write_config_ctrl timed out".into()),
@@ -2250,7 +2250,7 @@ async fn device_handler_task(
                             let _ = reply.send(result);
                         } else {
                             let _ = reply.send(Err("no device available for write_config".into()));
-                        }
+                        }}
                     }
                     Some(DeviceTaskMessage::FlashSettings { reply }) => {
                         // flash_settings uses packet protocol — works over BLE and USB alike.
@@ -2340,7 +2340,7 @@ async fn device_handler_task(
                         }
                     }
                     Some(DeviceTaskMessage::SetTransportMode { usb_mode, reply }) => {
-                        if let Some(dev) = connections.control_device.clone() {
+                        match connections.control_device.clone() { Some(dev) => {
                             info!("SetTransportMode: usb_mode={} for device {:02x?}", usb_mode, device.uuid);
                             let r = match tokio::time::timeout(Duration::from_secs(3), dev.set_transport_mode(usb_mode)).await {
                                 Ok(Ok(mode)) => Ok(matches!(mode, odyssey_protocol::control::device::TransportMode::Usb)),
@@ -2363,10 +2363,10 @@ async fn device_handler_task(
                             info!("Rebooting device {:02x?} to apply transport mode change", device.uuid);
                             let _ = tokio::time::timeout(Duration::from_millis(500), dev.reboot()).await;
                             break;
-                        } else {
+                        } _ => {
                             warn!("SetTransportMode: no control device for {:02x?}", device.uuid);
                             let _ = reply.send(Err("no control device available".into()));
-                        }
+                        }}
                     }
                     Some(DeviceTaskMessage::SetDeviceName { name, reply }) => {
                         info!("SetDeviceName: name={:?} for device {:02x?}", name, device.uuid);
