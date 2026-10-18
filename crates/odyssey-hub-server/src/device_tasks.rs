@@ -176,18 +176,35 @@ fn semver_at_least(version: [u16; 3], required: [u16; 3]) -> bool {
 /// applications cannot decode the request.
 const NETCORE_RELEASE_PROTOCOL: [u16; 3] = [0, 1, 5];
 
-/// Read the net core release over a device's control endpoint and hand it to the
-/// device's handler task.
+/// How a net core release read reaches the application.
+enum NetCoreLink {
+    /// USB control endpoint: a unit on the cable.
+    Control(VmDevice),
+    /// The packet stream: a unit reached over Bluetooth through a dongle.
+    Packets(VmDevice),
+}
+
+impl NetCoreLink {
+    async fn read(&self) -> anyhow::Result<u16> {
+        match self {
+            Self::Control(device) => device.read_netcore_release().await,
+            Self::Packets(device) => device.read_netcore_release_over_packets().await,
+        }
+    }
+}
+
+/// Read the net core release over `link` and hand it to the device's handler
+/// task.
 ///
 /// The application asks the net core itself once its BLE host is running and
-/// keeps asking while the net core is still starting, so a read right after USB
-/// enumeration can legitimately come back 0. The probe retries with growing
+/// keeps asking while the net core is still starting, so a read right after
+/// connecting can legitimately come back 0. The probe retries with growing
 /// gaps, and gives up for good after the last one: a net core that answers 0
 /// then is one that has no release to report, and polling it forever would only
-/// compete with the handler for the control endpoint. A failed or unanswered
-/// read leaves the release at 0 (unknown) and never affects the device itself.
+/// compete with the handler for the link. A failed or unanswered read leaves
+/// the release at 0 (unknown) and never affects the device itself.
 fn spawn_netcore_probe(
-    control: VmDevice,
+    link: NetCoreLink,
     device_protocol: Option<[u16; 3]>,
     handler: mpsc::Sender<DeviceTaskMessage>,
 ) {
@@ -200,7 +217,7 @@ fn spawn_netcore_probe(
             if handler.is_closed() {
                 return;
             }
-            match tokio::time::timeout(Duration::from_secs(3), control.read_netcore_release()).await {
+            match tokio::time::timeout(Duration::from_secs(3), link.read()).await {
                 Ok(Ok(0)) => debug!("Net core release not reported yet"),
                 Ok(Ok(release)) => {
                     let _ = handler.send(DeviceTaskMessage::SetNetCoreRelease(release)).await;
@@ -211,6 +228,19 @@ fn spawn_netcore_probe(
             }
         }
     });
+}
+
+/// Starts a probe over the packet stream for a unit whose only link is
+/// Bluetooth. The handler passes a weak sender so that holding it does not keep
+/// its own channel open after every other owner has dropped theirs.
+fn spawn_packet_netcore_probe(
+    handler: &mpsc::WeakSender<DeviceTaskMessage>,
+    events: &VmDevice,
+    device_protocol: [u16; 3],
+) {
+    if let Some(handler) = handler.upgrade() {
+        spawn_netcore_probe(NetCoreLink::Packets(events.clone()), Some(device_protocol), handler);
+    }
 }
 
 /// Messages emitted by device_tasks to the rest of the system.
@@ -845,6 +875,7 @@ async fn usb_device_manager(
                                                     bond_names.clone(),
                                                     proto_version, // events protocol version read via PacketData::ReadVersion()
                                                     Some(hub_clone.clone()),
+                                                    ctrl_tx.downgrade(),
                                                 ));
 
                                                 let mut dh = device_handles_clone.lock().await;
@@ -1290,7 +1321,7 @@ async fn usb_device_manager(
                                 .send(DeviceTaskMessage::AddControlDevice(vm_device_temp.clone()))
                                 .await;
                             spawn_netcore_probe(
-                                vm_device_temp.clone(),
+                                NetCoreLink::Control(vm_device_temp.clone()),
                                 version.as_ref().map(|v| v.protocol_semver),
                                 existing_cmd_tx.clone(),
                             );
@@ -1401,6 +1432,7 @@ async fn usb_device_manager(
                     bond_names.clone(),
                     initial_protocol_version,
                     None, // USB-direct device: no hub to update
+                    tx.downgrade(),
                 ));
 
                 {
@@ -1423,7 +1455,7 @@ async fn usb_device_manager(
                     .await;
 
                 if let (Some(control), protocol, tx) = netcore_probe {
-                    spawn_netcore_probe(control, protocol, tx);
+                    spawn_netcore_probe(NetCoreLink::Control(control), protocol, tx);
                 }
 
             }
@@ -1650,6 +1682,7 @@ async fn device_handler_task(
     bond_names: Arc<tokio::sync::Mutex<std::collections::HashMap<[u8; 6], String>>>,
     mut protocol_version: [u16; 3],
     hub_device: Option<odyssey_usb::device::MuxDevice>,
+    self_tx: mpsc::WeakSender<DeviceTaskMessage>,
 ) {
     info!(
         "Starting device handler for device UUID {:02x?}",
@@ -2337,6 +2370,12 @@ async fn device_handler_task(
                         // Update the device in the device list
                         let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
 
+                        // A unit with no cable has no USB control to read the net core
+                        // through; ask over the packet stream instead.
+                        if connections.control_device.is_none() && device.netcore_release == 0 {
+                            spawn_packet_netcore_probe(&self_tx, &events_vm_device, protocol_version);
+                        }
+
                         info!("BLE mux events device added successfully for {:02x?}, has_sensor_streams: {}",
                               device.uuid, has_sensor_streams);
                     }
@@ -2492,6 +2531,9 @@ async fn device_handler_task(
                             // The net core can only be read over USB control, and it may be
                             // replaced while the cable is out, so the old reading is stale.
                             device.netcore_release = 0;
+                            if let Some(events) = &connections.events_device {
+                                spawn_packet_netcore_probe(&self_tx, events, protocol_version);
+                            }
                             // No longer a direct-USB handler — USB control is gone. Remove from
                             // the set so the next USB re-plug sends AddControlDevice correctly.
                             direct_usb_handler_uuids.lock().await.remove(&device.uuid);
