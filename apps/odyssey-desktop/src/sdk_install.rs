@@ -96,9 +96,9 @@ mod pin_file {
     }
 }
 
+pub use pin_file::pinned_version;
 #[cfg(any(feature = "sdk-download", test))]
-pub use pin_file::install_path;
-pub use pin_file::{pin, pinned_version};
+pub use pin_file::{install_path, pin};
 
 /// The directory the offline installer puts the SDK in.
 fn bundled_dir() -> Option<PathBuf> {

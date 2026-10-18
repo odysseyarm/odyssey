@@ -106,7 +106,8 @@
                 <Directory Id="OdysseyDataPublisher" Name="{{publisher}}">
                     <Directory Id="OdysseyDataProduct" Name="{{product_name}}">
                         <Directory Id="FirmwarePackFolder" Name="firmware-pack">
-                            <Component Id="FirmwarePackFolderComponent" Guid="*">
+                            <!-- A folder as the key path needs an explicit GUID; never change it. -->
+                            <Component Id="FirmwarePackFolderComponent" Guid="3F0B7A52-8C1D-4E7B-A6D5-9B2E41C70F18">
                                 <CreateFolder />
                             </Component>
                         </Directory>
