@@ -258,7 +258,7 @@ fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
                         Delivery::Installer => rsx! {
                             p {
                                 class: "max-w-xl text-sm text-gray-600 dark:text-gray-300",
-                                "This copy of Odyssey doesn't download software. To add Orbbec camera support, run the \
+                                "This copy of Odyssey doesn't download the camera software. To add Orbbec camera support, run the \
                                  Odyssey installer again, choose Change, and tick \"Orbbec camera support\"."
                             }
                         },

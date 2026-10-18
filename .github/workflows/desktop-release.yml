@@ -252,7 +252,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Odyssey Desktop v$VERSION" \
-              --notes "Odyssey $VERSION — Windows installer, Linux AppImage, and an offline Windows installer for machines that may not connect to the internet (it includes Orbbec's camera software and never downloads anything)."
+              --notes "Odyssey $VERSION — Windows installer, Linux AppImage, and an offline Windows installer that includes Orbbec's camera software so the app never has to download it."
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" --clobber \
