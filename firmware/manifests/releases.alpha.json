@@ -4,6 +4,33 @@
     "legacy-atslite1": {
       "firmwares": [
         {
+          "version": "0.1.22",
+          "requires_bootloader": 0,
+          "requires_netcore": 0,
+          "min_desktop": "0.6.4",
+          "files": {
+            "app-a": {
+              "sha256": "a113118a51882e6fb92306271194bda1c00988a98fdc77d79a3878d2661b7a5c",
+              "size": 364884
+            },
+            "app-b": {
+              "sha256": "466d388ff5238ce44634b1f009edc5c33abe729843a51e890c7470e3ee2c5773",
+              "size": 364884
+            },
+            "net-core": {
+              "sha256": "5d17f4b7a4d195895e7125f02eecdbfef2748b27842a0f248908294ce6ecd70b",
+              "size": 164648,
+              "release": 1
+            },
+            "stage2-bootloader": {
+              "sha256": "e3fa80972ca21ddb33d8c12e4173ca0ea68161360cc11d7f2c1bfb86d3e752fa",
+              "size": 44336,
+              "release": 4
+            }
+          },
+          "released": "2026-10-17"
+        },
+        {
           "version": "0.1.21",
           "requires_bootloader": 0,
           "requires_netcore": 0,
@@ -413,6 +440,33 @@
     },
     "atslite1": {
       "firmwares": [
+        {
+          "version": "0.1.19",
+          "requires_bootloader": 0,
+          "requires_netcore": 0,
+          "min_desktop": "0.6.4",
+          "files": {
+            "app-a": {
+              "sha256": "d988c38969374a885af33fdaebd12f8d5fb5388d36ae05008fcd94fd63a6e9f4",
+              "size": 308452
+            },
+            "app-b": {
+              "sha256": "c31a039812a788275cc3d74051d4938fa5acd5040866be1e7e4f48d964777432",
+              "size": 308452
+            },
+            "net-core": {
+              "sha256": "5d17f4b7a4d195895e7125f02eecdbfef2748b27842a0f248908294ce6ecd70b",
+              "size": 164648,
+              "release": 1
+            },
+            "stage2-bootloader": {
+              "sha256": "375785f25a91393f0ff2ddcafd8b3a6d88f0e80351d7e0488ef4d1875710bdd8",
+              "size": 44336,
+              "release": 4
+            }
+          },
+          "released": "2026-10-17"
+        },
         {
           "version": "0.1.18",
           "requires_bootloader": 0,
