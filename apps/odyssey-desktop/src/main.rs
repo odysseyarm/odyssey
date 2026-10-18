@@ -1,10 +1,13 @@
 #![windows_subsystem = "windows"]
 
+use std::io::Write;
+
 use dioxus::{
     desktop::{window, Config, WindowBuilder, WindowCloseBehaviour},
     logger::tracing,
     prelude::*,
 };
+use dioxus_router::components::HistoryProvider;
 use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -13,15 +16,23 @@ use tokio_util::sync::CancellationToken;
 
 use components::Navbar;
 use views::Accessories;
+use views::Calibrate;
+use views::CalibrateAutomatic;
 use views::Home;
 use views::Pairing;
 use views::Settings;
 
+mod cli;
 mod components;
 mod hub;
 mod paths;
 mod tray;
 mod views;
+
+/// Set once the hub server is listening. Views that must not act in a second
+/// app instance, which exits as soon as it finds the first, wait for it.
+#[derive(Clone, Copy, PartialEq)]
+pub struct ServerReady(pub Signal<bool>);
 
 fn main() {
     // Set up tracing to write to both stdout and a log file before Dioxus launches
@@ -42,6 +53,21 @@ fn main() {
             .with(fmt::layer().compact())
             .with(fmt::layer().with_ansi(false).with_writer(log_file))
             .init();
+    }
+
+    match cli::parse(std::env::args().skip(1)) {
+        Ok(cli::Command::Run) => {}
+        Ok(cli::Command::Calibrate(args)) => cli::set_pending_calibrate(args),
+        Ok(cli::Command::Help) => {
+            // The Windows build has no console; ignore a closed stdout.
+            let _ = writeln!(std::io::stdout(), "{}", cli::USAGE);
+            return;
+        }
+        Err(e) => {
+            tracing::error!("{e}");
+            let _ = writeln!(std::io::stderr(), "odyssey-desktop: {e}\n\n{}", cli::USAGE);
+            std::process::exit(2);
+        }
     }
 
     if cfg!(target_os = "windows") {
@@ -79,6 +105,12 @@ enum Route {
     Accessories {},
     #[route("/settings")]
     Settings {},
+    #[route("/calibrate")]
+    Calibrate {},
+    #[end_layout]
+    // The wizard fills the window, so it sits outside the navigation layout.
+    #[route("/calibrate/automatic")]
+    CalibrateAutomatic {},
 }
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
@@ -149,6 +181,11 @@ fn app() -> Element {
         }
     });
 
+    // Decided once: the wizard takes the command-line request when it opens,
+    // and a later re-render must not move the router.
+    let open_wizard = use_hook(cli::has_pending_calibrate);
+    use_context_provider(|| ServerReady(server_ready));
+
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
 
@@ -157,7 +194,19 @@ fn app() -> Element {
         }
 
         div {
-            Router::<Route> {}
+            if open_wizard {
+                // The command line asked for the wizard, so start on it.
+                HistoryProvider {
+                    history: |_| {
+                        std::rc::Rc::new(dioxus::history::MemoryHistory::with_initial_path(
+                            Route::CalibrateAutomatic {}.to_string(),
+                        )) as std::rc::Rc<dyn dioxus::history::History>
+                    },
+                    Router::<Route> {}
+                }
+            } else {
+                Router::<Route> {}
+            }
         }
     }
 }

@@ -53,7 +53,7 @@ impl MonitorInfo {
     }
 }
 
-fn monitor_key(handle: &MonitorHandle) -> MonitorKey {
+pub(crate) fn monitor_key(handle: &MonitorHandle) -> MonitorKey {
     let position = handle.position();
     let size = handle.size();
     MonitorKey {

@@ -276,6 +276,21 @@ impl Session {
         Ok(())
     }
 
+    /// Changes the infrared exposure used for marker detection. Takes effect
+    /// at once while the camera is in marker mode and at the next entry
+    /// otherwise, so a UI can offer an exposure slider next to the live marker
+    /// preview.
+    pub fn set_ir_exposure_us(&mut self, exposure_us: u32) -> Result<(), SessionError> {
+        self.options.ir_exposure_us = exposure_us;
+        if self.marker_mode {
+            self.stream.set_ir_exposure_us(exposure_us)?;
+            for _ in 0..SETTLE_FRAMES {
+                self.grab()?;
+            }
+        }
+        Ok(())
+    }
+
     /// Grabs one frame and reports whether the screen is ready to measure.
     pub fn preview(&mut self) -> Result<Preview, SessionError> {
         self.leave_marker_mode();

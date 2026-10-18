@@ -11,6 +11,8 @@ use crate::components::{
 };
 use crate::components::firmware_update::{ensure_firmware_channel_loaded, FIRMWARE_CHANNEL};
 use crate::hub;
+use crate::Route;
+use dioxus_router::Link;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 
@@ -158,7 +160,12 @@ pub fn Home() -> Element {
                     ScreenPicker { selection: monitor_selection }
 
                     div {
-                        class: "flex flex-row justify-end",
+                        class: "flex flex-row justify-end gap-3",
+                        Link {
+                            to: Route::Calibrate {},
+                            class: "shrink-0 text-gray-900 bg-white border border-gray-300 hover:bg-gray-100 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-base px-5 py-2.5 focus:outline-none dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:bg-gray-700 dark:focus:ring-gray-700",
+                            "Calibrate screen"
+                        }
                         button {
                             class: "shrink-0 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-base px-5 py-2.5 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800 disabled:opacity-50 disabled:pointer-events-none",
                             r#type: "button",
