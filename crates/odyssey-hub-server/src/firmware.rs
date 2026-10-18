@@ -275,6 +275,18 @@ pub fn select_firmware<'a>(
     offer
 }
 
+/// The net core release to judge a unit by, or `None` when the hub has no real
+/// reading of it.
+///
+/// A unit on the cable is read through USB control, and a 0 from it is a real
+/// answer: a net core that predates release reporting. A unit reached only over
+/// Bluetooth is read through the packet stream after it connects, and a 0 there
+/// is also what it shows until that read has answered, so only a positive value
+/// counts.
+pub fn known_netcore_release(has_usb_control: bool, reported: u16) -> Option<u16> {
+    (has_usb_control || reported != 0).then_some(reported)
+}
+
 /// Whether offering `entry` to a unit changes anything worth a click.
 ///
 /// A newer application always does. The same version does only as a repair: the
@@ -284,9 +296,9 @@ pub fn select_firmware<'a>(
 /// nothing newer is installable past its floor, and "run the update again" has
 /// nothing to offer.
 ///
-/// `running_netcore` is `None` when the net core cannot be read, as for a unit
-/// connected only over Bluetooth: the release is read through USB control, so
-/// "unknown" must not count as "behind" and offer a repair nobody needs.
+/// `running_netcore` is `None` when the net core's release is not known, so
+/// that "unknown" never counts as "behind" and offers a repair nobody needs.
+/// [`known_netcore_release`] decides which readings are real.
 pub fn is_worth_installing(
     entry: &FirmwareEntry,
     installed: [u16; 3],
@@ -1629,6 +1641,14 @@ mod tests {
         ]);
         assert_eq!(walk(&manifest, "atslite1", [0, 2, 1], 1), [0, 3, 0]);
         assert_eq!(walk(&manifest, "atslite1", [0, 2, 1], 0), [0, 3, 0]);
+    }
+
+    #[test]
+    fn a_zero_net_core_reading_is_only_real_over_the_cable() {
+        assert_eq!(known_netcore_release(true, 0), Some(0));
+        assert_eq!(known_netcore_release(true, 2), Some(2));
+        assert_eq!(known_netcore_release(false, 0), None);
+        assert_eq!(known_netcore_release(false, 2), Some(2));
     }
 
     #[test]

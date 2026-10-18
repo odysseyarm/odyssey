@@ -1803,6 +1803,18 @@ impl VmDevice {
         }
     }
 
+    /// Read the net core's release counter through the packet stream, the path a
+    /// unit reached over Bluetooth through a dongle answers on. Same semantics
+    /// and protocol gate as [`Self::read_netcore_release`], which needs a USB
+    /// control connection.
+    pub async fn read_netcore_release_over_packets(&self) -> Result<u16> {
+        use odyssey_protocol::{PropKind, Props};
+        match self.read_prop(PropKind::NetCoreRelease).await? {
+            Props::NetCoreRelease(release) => Ok(release),
+            other => Err(anyhow!("unexpected response: {other:?}")),
+        }
+    }
+
     /// Read the UUID from the device via control endpoint.
     pub async fn read_uuid(&self) -> Result<[u8; 6]> {
         use odyssey_protocol::control::device::DeviceMsg;
