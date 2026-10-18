@@ -54,9 +54,10 @@ The net core (the nRF5340 BLE controller) is released on its own under
 `<device>-netcore-v<N>`, with assets `net-core.{bin,hex,elf}`.
 
 1. Raise the counter in `net-core/src/main.rs` and merge to `master`. The
-   counter is the single-line literal
-   `macro_rules! release { () => { N }; }`; release tooling greps for exactly
-   that form. It is `1..=65535`; `0` means "unknown" and is never released.
+   counter is the literal in `macro_rules! release { () => { N }; }`; release
+   tooling reads it through `firmware/release-counter`, which ignores layout,
+   so rustfmt may format the macro as it likes. It is `1..=65535`; `0` means
+   "unknown" and is never released.
 2. Publish it, either way:
    - **Locally:** from the board directory, `just release-netcore`
      (`DRY_RUN=1` runs the checks and stops). It has the same checks and

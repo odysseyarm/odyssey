@@ -43,8 +43,11 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F
 
 /// This bootloader's release counter. Raise it whenever the image changes: the
 /// host replaces a bootloader only when the published counter is higher.
-#[rustfmt::skip]
-macro_rules! release { () => { 4 }; }
+macro_rules! release {
+    () => {
+        4
+    };
+}
 
 const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_device(release!());
 

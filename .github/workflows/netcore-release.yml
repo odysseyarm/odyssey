@@ -71,7 +71,7 @@ jobs:
           case "$release" in
             ''|*[!0-9]*) echo "Release '$release' is not a number" >&2; exit 1 ;;
           esac
-          source_release=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' "$board_dir/net-core/src/main.rs")
+          source_release=$(firmware/release-counter "$board_dir/net-core/src/main.rs")
           if [ "$release" != "$source_release" ]; then
             echo "Tag release ($release) does not match $board_dir/net-core/src/main.rs ($source_release)" >&2
             exit 1
