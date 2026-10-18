@@ -1783,6 +1783,26 @@ impl VmDevice {
         }
     }
 
+    /// Read the net core's release counter from the application, 0 when the net
+    /// core reports none.
+    ///
+    /// Only applications with device protocol 0.1.5 or newer understand the
+    /// request; older ones cannot decode it, so callers gate on the version.
+    pub async fn read_netcore_release(&self) -> Result<u16> {
+        use odyssey_protocol::control::device::DeviceMsg;
+        use odyssey_protocol::{PropKind, Props};
+        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::NetCoreRelease)).await?;
+        match self
+            .recv_ctrl_msg_filtered(Duration::from_secs(2), |msg| {
+                matches!(msg, DeviceMsg::ReadPropResponse(Props::NetCoreRelease(_)))
+            })
+            .await?
+        {
+            DeviceMsg::ReadPropResponse(Props::NetCoreRelease(release)) => Ok(release),
+            other => Err(anyhow!("unexpected response: {other:?}")),
+        }
+    }
+
     /// Read the UUID from the device via control endpoint.
     pub async fn read_uuid(&self) -> Result<[u8; 6]> {
         use odyssey_protocol::control::device::DeviceMsg;

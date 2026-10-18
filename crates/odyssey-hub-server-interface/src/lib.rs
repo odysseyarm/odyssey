@@ -118,6 +118,7 @@ impl From<common::device::Device> for proto::Device {
             events_connected: d.events_connected,
             product_id: d.product_id as u32,
             name: d.name().to_string(),
+            netcore_release: d.netcore_release as u32,
         }
     }
 }
@@ -146,6 +147,7 @@ impl From<proto::Device> for common::device::Device {
             events_connected: d.events_connected,
             product_id: d.product_id as u16,
             name: common::device::Device::name_bytes(&d.name),
+            netcore_release: u16::try_from(d.netcore_release).unwrap_or(0),
         }
     }
 }

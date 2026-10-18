@@ -109,6 +109,7 @@ message Device {
   bool events_connected = 6; // Whether events are currently being received
   uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
   string name = 8; // Human-readable device name (BLE bond name, USB product string, or user-set)
+  uint32 netcore_release = 9; // nRF5340 net core release counter, 0=unknown or not reported
 }
 
 message FirmwareVersion {

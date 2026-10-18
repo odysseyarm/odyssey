@@ -7,6 +7,7 @@
 //! - Dioxus components poll the shared state periodically to update the UI
 
 use dioxus::{logger::tracing, prelude::*};
+use slab::Slab;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, DeviceCapabilities as DC};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 use std::collections::HashMap;
@@ -98,6 +99,10 @@ pub enum FirmwareUpdateState {
     WaitingForDfu,
     /// Flashing firmware with progress (bytes_written, total_bytes)
     Flashing { progress: usize, total: usize },
+    /// Writing the net core (BLE controller) image with progress (bytes_written, total_bytes)
+    FlashingNetCore { progress: usize, total: usize },
+    /// Waiting for the net core to report the release that was just written
+    VerifyingNetCore,
     /// Waiting for device to reboot after flash
     Rebooting,
     /// Verifying the new firmware version
@@ -178,6 +183,8 @@ pub struct DeviceFirmwareUpdateProps {
     pub manifest: Signal<Option<FirmwareManifest>>,
     /// Firmware update manager
     pub manager: FirmwareUpdateManager,
+    /// Live device list, for reading the net core release back after it is written
+    pub devices: SyncSignal<Slab<Device>>,
 }
 
 /// A component that shows firmware update status and allows updating a single device
@@ -346,6 +353,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             held_back,
         } => {
             let manager = props.manager.clone();
+            let devices = props.devices;
             let manifest = manifest.clone();
             let device = device.clone();
             let is_dfu_bootloader = device.capabilities.contains(DC::DFU) && !device.capabilities.contains(DC::CONTROL);
@@ -380,6 +388,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                 device_type,
                                 vid,
                                 pid,
+                                devices,
                             );
                         },
                         "Update"
@@ -417,6 +426,30 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 }
             }
         }
+        FirmwareUpdateState::FlashingNetCore { progress, total } => {
+            let percent = if total > 0 {
+                (progress * 100) / total
+            } else {
+                0
+            };
+            rsx! {
+                div {
+                    class: "flex flex-col gap-1 min-w-32",
+                    span { class: "text-xs text-blue-500", "Updating radio firmware... {percent}%" }
+                    div {
+                        class: "w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2",
+                        div {
+                            class: "bg-blue-600 h-2 rounded-full transition-all duration-100",
+                            style: "width: {percent}%",
+                        }
+                    }
+                    span { class: "text-xs text-gray-400", "{progress / 1024} / {total / 1024} KB" }
+                }
+            }
+        }
+        FirmwareUpdateState::VerifyingNetCore => rsx! {
+            span { class: "text-xs text-blue-500", "Checking radio firmware..." }
+        },
         FirmwareUpdateState::Rebooting => rsx! {
             span { class: "text-xs text-blue-500", "Rebooting device..." }
         },
@@ -444,6 +477,7 @@ fn start_firmware_update(
     device_type: String,
     vid: u16,
     pid: u16,
+    devices: SyncSignal<Slab<Device>>,
 ) {
     let device_uuid = device.uuid;
 
@@ -456,7 +490,8 @@ fn start_firmware_update(
 
     // Spawn the entire update on tokio - completely independent of Dioxus
     tokio::spawn(async move {
-        let result = run_firmware_update(&manager, manifest, device, device_type, vid, pid).await;
+        let result =
+            run_firmware_update(&manager, manifest, device, device_type, vid, pid, devices).await;
 
         if let Err(e) = result {
             tracing::error!("Firmware update failed: {}", e);
@@ -469,6 +504,235 @@ fn start_firmware_update(
     });
 }
 
+/// How long the net core gets to report the release that was just written.
+///
+/// The application only learns the release once its BLE controller has
+/// answered, and the server's own probe retries for about half a minute after
+/// the device reconnects, so this has to outlast both.
+const NETCORE_REPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long a device gets to come back in application mode after a net core
+/// write. The net core bootloader copies the staged image into net flash
+/// before the application boots, which takes longer than an application reset.
+const NETCORE_REBOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+fn netcore_not_reported(published: u16) -> String {
+    format!(
+        "the net core did not report release {published}; the device may have no radio, \
+         run the update again"
+    )
+}
+
+/// The net core release the hub last read from a device that is in application
+/// mode, `None` while the device is absent or has no control connection.
+fn reported_netcore_release(devices: &SyncSignal<Slab<Device>>, uuid: &[u8; 6]) -> Option<u16> {
+    devices
+        .peek()
+        .iter()
+        .find(|(_, d)| &d.uuid == uuid && d.capabilities.contains(DC::CONTROL))
+        .map(|(_, d)| d.netcore_release)
+}
+
+/// Poll the hub's device list until the net core reports exactly `published`.
+///
+/// The hub rereads the release each time the device reconnects, so a reading
+/// from before the reset can only be a mismatch, never a false match: the old
+/// release differs from the one just written, and a device with no answer reads 0.
+async fn wait_for_netcore_release(
+    devices: &SyncSignal<Slab<Device>>,
+    uuid: &[u8; 6],
+    published: u16,
+) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let mut last = None;
+    while start.elapsed() < NETCORE_REPORT_TIMEOUT {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Some(now) = reported_netcore_release(devices, uuid) {
+            last = Some(now);
+            if firmware::netcore_took_update(now, published) {
+                tracing::info!("Net core now reports release {}", now);
+                return Ok(());
+            }
+        }
+    }
+    tracing::warn!(
+        "Net core did not report release {} (last reading: {:?})",
+        published,
+        last
+    );
+    Err(netcore_not_reported(published))
+}
+
+/// Poll until the device enumerates in application mode, `false` on timeout.
+async fn wait_for_app_mode(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+    timeout: std::time::Duration,
+) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if firmware::is_device_in_app_mode(uuid, vid, pid) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Put the device into DFU mode, detaching it first when it is running its
+/// application.
+async fn enter_dfu(
+    manager: &FirmwareUpdateManager,
+    device_uuid: [u8; 6],
+    vid: u16,
+    pid: u16,
+) -> Result<(), String> {
+    // If it has no vendor interface (class 0xFF) it cannot accept a DFU detach request —
+    // it is already waiting for a download.
+    let already_in_dfu = firmware::find_device_by_uuid(&device_uuid, vid, pid)
+        .map(|info| !info.interfaces().any(|i| i.class() == 0xFF))
+        .unwrap_or(false);
+
+    if already_in_dfu {
+        tracing::info!("Device {:02x?} is already in DFU mode, skipping detach", device_uuid);
+        return Ok(());
+    }
+
+    // Send DFU detach
+    tracing::info!("Sending DFU detach to {:04x}:{:04x} (uuid {:02x?})", vid, pid, device_uuid);
+    manager.set_state(device_uuid, FirmwareUpdateState::Detaching);
+    firmware::send_dfu_detach(&device_uuid, vid, pid)
+        .await
+        .map_err(|e| format!("DFU detach failed: {}", e))?;
+
+    // Wait for device to enter DFU mode
+    tracing::info!("Waiting for device to enter DFU mode");
+    manager.set_state(device_uuid, FirmwareUpdateState::WaitingForDfu);
+    firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(10))
+        .await
+        .map_err(|e| format!("Device did not enter DFU mode: {}", e))
+}
+
+/// Write one image to a DFU alt setting, publishing progress as it goes.
+async fn flash_with_progress(
+    manager: &FirmwareUpdateManager,
+    device_uuid: [u8; 6],
+    vid: u16,
+    pid: u16,
+    slot: &str,
+    alt: u8,
+    data: &[u8],
+    what: &str,
+    progress_state: fn(usize, usize) -> FirmwareUpdateState,
+) -> Result<(), String> {
+    let total_size = data.len();
+    manager.set_state(device_uuid, progress_state(0, total_size));
+
+    // Use atomic counter for progress
+    let progress_bytes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let progress_bytes_clone = progress_bytes.clone();
+    let manager_clone = manager.clone();
+
+    // Spawn progress updater
+    let progress_task = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let current = progress_bytes_clone.load(std::sync::atomic::Ordering::Relaxed);
+            manager_clone.set_state(device_uuid, progress_state(current, total_size));
+            if current >= total_size {
+                break;
+            }
+        }
+    });
+
+    // Flash
+    let progress_callback = {
+        let progress_bytes = progress_bytes.clone();
+        move |bytes_written: usize, _total: usize| {
+            progress_bytes.store(bytes_written, std::sync::atomic::Ordering::Relaxed);
+        }
+    };
+
+    let flash_result = firmware::flash_firmware_with_progress(
+        &device_uuid,
+        vid,
+        pid,
+        slot,
+        alt,
+        data,
+        progress_callback,
+    )
+    .await;
+
+    // Stop progress updater
+    progress_task.abort();
+
+    flash_result.map_err(|e| format!("{what} failed: {e}"))?;
+
+    // Verify flash was complete
+    let final_progress = progress_bytes.load(std::sync::atomic::Ordering::Relaxed);
+    if final_progress < total_size {
+        return Err(format!(
+            "{what} incomplete: {final_progress}/{total_size} bytes written"
+        ));
+    }
+    Ok(())
+}
+
+/// Write the net core image and wait for the device to boot again.
+///
+/// Completing the download only means the bootloader has the image staged: the
+/// net core bootloader copies it into net flash on the reset that follows, and
+/// stage2 boots on whether or not that copy succeeded. Whether it took is for
+/// the caller to read back.
+async fn flash_netcore(
+    manager: &FirmwareUpdateManager,
+    device_uuid: [u8; 6],
+    vid: u16,
+    pid: u16,
+    image: &[u8],
+    release: u16,
+    started_in_bootloader: bool,
+) -> Result<(), String> {
+    enter_dfu(manager, device_uuid, vid, pid).await?;
+
+    let alt = firmware::find_netcore_alt_for_device(&device_uuid, vid, pid)
+        .map_err(|e| format!("The net core cannot be updated over DFU: {e}"))?;
+    tracing::info!("Updating net core to release {} on alt {}", release, alt);
+    flash_with_progress(
+        manager,
+        device_uuid,
+        vid,
+        pid,
+        "NET",
+        alt,
+        image,
+        "Net core flash",
+        |progress, total| FirmwareUpdateState::FlashingNetCore { progress, total },
+    )
+    .await?;
+
+    manager.set_state(device_uuid, FirmwareUpdateState::Rebooting);
+    tracing::info!("Waiting for the device to copy the net core image and reboot...");
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    if wait_for_app_mode(&device_uuid, vid, pid, NETCORE_REBOOT_TIMEOUT).await {
+        tracing::info!("Device returned in application mode");
+    } else if started_in_bootloader {
+        // A device recovered from the bootloader may have no bootable
+        // application yet, in which case it stays in DFU mode and the
+        // application written next is what brings it back.
+        tracing::info!("Device is still in the bootloader after the net core write");
+    } else {
+        return Err(format!(
+            "Device did not return within {}s after the net core update. It may still be \
+             in the bootloader — leave it connected and try again.",
+            NETCORE_REBOOT_TIMEOUT.as_secs()
+        ));
+    }
+    Ok(())
+}
+
 /// Run the actual firmware update sequence
 async fn run_firmware_update(
     manager: &FirmwareUpdateManager,
@@ -477,6 +741,7 @@ async fn run_firmware_update(
     device_type: String,
     vid: u16,
     pid: u16,
+    devices: SyncSignal<Slab<Device>>,
 ) -> Result<(), String> {
     let device_uuid = device.uuid;
 
@@ -494,13 +759,57 @@ async fn run_firmware_update(
         .offered
         .ok_or("No firmware for this device type is installable by this version of Odyssey Desktop")?;
 
+    // The net core is released separately from the application, so the entry
+    // only says which release it was tested with. Whether it has to be written
+    // is decided here, before anything is downloaded or detached, so a floor
+    // that cannot be met refuses the update while the device is untouched.
+    //
+    // A device whose application reports no net core release is either too old
+    // to report one or has a net core that does not answer; the hub reports 0
+    // for both. Only a reading above 0 proves the application can relay it, so
+    // anything else takes the path where the read-back waits for the new
+    // application. There the requirement can only be checked after the
+    // application is written, because no running component can report the net
+    // core earlier; a silently failed copy surfaces then, as an error telling
+    // the user to run the update again.
+    let published_netcore = firmware_entry
+        .files
+        .get("net-core")
+        .and_then(|entry| entry.release.map(|release| (entry, release)));
+    let steps = firmware::plan_update_steps(
+        device.netcore_release != 0,
+        device.netcore_release,
+        published_netcore.map(|(_, release)| release),
+        firmware_entry.requires_netcore,
+    )
+    .map_err(|e| e.to_string())?;
+    tracing::info!("Update steps for {:02x?}: {:?}", device_uuid, steps);
+
     // Which bank to write is only readable once the bootloader is running, so
     // fetch both candidates up front. Detaching is the point of no return: the
     // app marks the boot state for DFU before resetting, and only a completed
     // download clears that mark, so a download that fails after the detach
-    // leaves the device in the bootloader across every later reboot.
+    // leaves the device in the bootloader across every later reboot. The same
+    // holds for the net core image, so every download happens before the first
+    // detach.
     manager.set_state(device_uuid, FirmwareUpdateState::Downloading);
-    let mut images = std::collections::HashMap::new();
+    let netcore_image = match published_netcore {
+        Some((entry, release)) if steps.contains(&firmware::UpdateStep::FlashNetCore) => {
+            tracing::info!("Downloading net-core release {}", release);
+            let data = firmware::download_firmware(
+                &device_type,
+                firmware::ReleaseSource::NetCore { release },
+                "net-core",
+                &entry.sha256,
+            )
+            .await
+            .map_err(|e| format!("Download of net-core failed: {e}"))?;
+            Some((data, release))
+        }
+        _ => None,
+    };
+    let mut images: std::collections::HashMap<&'static str, Vec<u8>> =
+        std::collections::HashMap::new();
     for slot_file in ["app-a", "app-b"] {
         let Some(file_entry) = firmware_entry.files.get(slot_file) else {
             continue;
@@ -542,30 +851,55 @@ async fn run_firmware_update(
         None => None,
     };
 
-    // Determine whether the device is already in DFU mode.
-    // If it has no vendor interface (class 0xFF) it cannot accept a DFU detach request —
-    // it is already waiting for a download.
-    let already_in_dfu = firmware::find_device_by_uuid(&device_uuid, vid, pid)
-        .map(|info| !info.interfaces().any(|i| i.class() == 0xFF))
-        .unwrap_or(false);
-
-    if !already_in_dfu {
-        // Send DFU detach
-        tracing::info!("Sending DFU detach to {:04x}:{:04x} (uuid {:02x?})", vid, pid, device_uuid);
-        manager.set_state(device_uuid, FirmwareUpdateState::Detaching);
-        firmware::send_dfu_detach(&device_uuid, vid, pid)
-            .await
-            .map_err(|e| format!("DFU detach failed: {}", e))?;
-
-        // Wait for device to enter DFU mode
-        tracing::info!("Waiting for device to enter DFU mode");
-        manager.set_state(device_uuid, FirmwareUpdateState::WaitingForDfu);
-        firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(10))
-            .await
-            .map_err(|e| format!("Device did not enter DFU mode: {}", e))?;
-    } else {
-        tracing::info!("Device {:02x?} is already in DFU mode, skipping detach", device_uuid);
+    for step in steps {
+        match step {
+            firmware::UpdateStep::FlashNetCore => {
+                let (image, release) = netcore_image
+                    .as_ref()
+                    .ok_or("The update plan flashes the net core but no image was downloaded")?;
+                flash_netcore(manager, device_uuid, vid, pid, image, *release, in_bootloader)
+                    .await?;
+            }
+            firmware::UpdateStep::VerifyNetCore => {
+                let (_, release) = netcore_image
+                    .as_ref()
+                    .ok_or("The update plan verifies the net core but none was written")?;
+                manager.set_state(device_uuid, FirmwareUpdateState::VerifyingNetCore);
+                wait_for_netcore_release(&devices, &device_uuid, *release).await?;
+            }
+            firmware::UpdateStep::WriteApplication => {
+                write_application(
+                    manager,
+                    device_uuid,
+                    vid,
+                    pid,
+                    &mut images,
+                    bootloader_image.as_ref(),
+                    firmware_entry.requires_bootloader,
+                )
+                .await?;
+            }
+        }
     }
+
+    tracing::info!("Firmware update complete!");
+    manager.set_state(device_uuid, FirmwareUpdateState::Complete);
+    Ok(())
+}
+
+/// Detach into the bootloader if needed, update the bootloader when the release
+/// calls for it, write the application to the inactive bank, and wait for the
+/// device to come back running it.
+async fn write_application(
+    manager: &FirmwareUpdateManager,
+    device_uuid: [u8; 6],
+    vid: u16,
+    pid: u16,
+    images: &mut std::collections::HashMap<&'static str, Vec<u8>>,
+    bootloader_image: Option<&(Vec<u8>, u16)>,
+    requires_bootloader: u16,
+) -> Result<(), String> {
+    enter_dfu(manager, device_uuid, vid, pid).await?;
 
     // The bootloader owns the flash writes for the application banks, so an
     // application that needs a newer bootloader has to wait for it. This is the
@@ -575,12 +909,13 @@ async fn run_firmware_update(
         .map_err(|e| format!("Could not read the bootloader release: {e}"))?;
     let flash_bootloader = firmware::plan_bootloader(
         running,
-        bootloader_image.as_ref().map(|(_, release)| *release),
-        firmware_entry.requires_bootloader,
+        bootloader_image.map(|(_, release)| *release),
+        requires_bootloader,
     )
     .map_err(|e| e.to_string())?;
     match bootloader_image {
         Some((bootloader_data, published)) if flash_bootloader => {
+            let published = *published;
             let alt = firmware::find_bootloader_alt_for_device(&device_uuid, vid, pid)
                 .map_err(|e| format!("Bootloader cannot be updated over DFU: {e}"))?;
             tracing::info!(
@@ -602,7 +937,7 @@ async fn run_firmware_update(
                 pid,
                 "BOOTLOADER",
                 alt,
-                &bootloader_data,
+                bootloader_data,
                 |_, _| {},
             )
             .await
@@ -646,70 +981,18 @@ async fn run_firmware_update(
 
     // Flash firmware with progress updates
     tracing::info!("Flashing firmware to {}", slot_name);
-    let total_size = firmware_data.len();
-    manager.set_state(
+    flash_with_progress(
+        manager,
         device_uuid,
-        FirmwareUpdateState::Flashing {
-            progress: 0,
-            total: total_size,
-        },
-    );
-
-    // Use atomic counter for progress
-    let progress_bytes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let progress_bytes_clone = progress_bytes.clone();
-    let manager_clone = manager.clone();
-
-    // Spawn progress updater
-    let progress_task = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let current = progress_bytes_clone.load(std::sync::atomic::Ordering::Relaxed);
-            manager_clone.set_state(
-                device_uuid,
-                FirmwareUpdateState::Flashing {
-                    progress: current,
-                    total: total_size,
-                },
-            );
-            if current >= total_size {
-                break;
-            }
-        }
-    });
-
-    // Flash
-    let progress_callback = {
-        let progress_bytes = progress_bytes.clone();
-        move |bytes_written: usize, _total: usize| {
-            progress_bytes.store(bytes_written, std::sync::atomic::Ordering::Relaxed);
-        }
-    };
-
-    let flash_result = firmware::flash_firmware_with_progress(
-        &device_uuid,
         vid,
         pid,
         slot_name,
         alt,
         &firmware_data,
-        progress_callback,
+        "Flash",
+        |progress, total| FirmwareUpdateState::Flashing { progress, total },
     )
-    .await;
-
-    // Stop progress updater
-    progress_task.abort();
-
-    flash_result.map_err(|e| format!("Flash failed: {}", e))?;
-
-    // Verify flash was complete
-    let final_progress = progress_bytes.load(std::sync::atomic::Ordering::Relaxed);
-    if final_progress < total_size {
-        return Err(format!(
-            "Flash incomplete: {}/{} bytes written",
-            final_progress, total_size
-        ));
-    }
+    .await?;
 
     // Wait for reboot
     manager.set_state(device_uuid, FirmwareUpdateState::Rebooting);
@@ -721,32 +1004,19 @@ async fn run_firmware_update(
     tracing::info!("Verifying firmware update...");
 
     let timeout = std::time::Duration::from_secs(15);
-    let start = std::time::Instant::now();
-    let mut reconnected = false;
-
-    while start.elapsed() < timeout {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        if firmware::is_device_in_app_mode(&device_uuid, vid, pid) {
-            tracing::info!("Device reconnected in application mode");
-            reconnected = true;
-            break;
-        }
-    }
-
-    if !reconnected {
+    if wait_for_app_mode(&device_uuid, vid, pid, timeout).await {
+        tracing::info!("Device reconnected in application mode");
+        Ok(())
+    } else {
         // The byte count above only proves the host finished feeding the
         // writer, so a device that never comes back is the one signal left
         // that the new image is not running.
-        return Err(format!(
+        Err(format!(
             "Device did not reappear within {}s after flashing. It may still be \
              in the bootloader — leave it connected and try again.",
             timeout.as_secs()
-        ));
+        ))
     }
-
-    tracing::info!("Firmware update complete!");
-    manager.set_state(device_uuid, FirmwareUpdateState::Complete);
-    Ok(())
 }
 
 /// Props for the updating device row component
@@ -793,6 +1063,15 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
             };
             format!("Flashing... {}%", percent)
         }
+        FirmwareUpdateState::FlashingNetCore { progress, total } => {
+            let percent = if *total > 0 {
+                (*progress * 100) / *total
+            } else {
+                0
+            };
+            format!("Updating radio firmware... {}%", percent)
+        }
+        FirmwareUpdateState::VerifyingNetCore => "Checking radio firmware...".to_string(),
         FirmwareUpdateState::Rebooting => "Rebooting device...".to_string(),
         FirmwareUpdateState::Verifying => "Verifying update...".to_string(),
         FirmwareUpdateState::Complete => "Update complete!".to_string(),
@@ -801,7 +1080,10 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
 
     let is_error = matches!(current_state, FirmwareUpdateState::Failed(_));
     let is_complete = matches!(current_state, FirmwareUpdateState::Complete);
-    let is_flashing = matches!(current_state, FirmwareUpdateState::Flashing { .. });
+    let is_flashing = matches!(
+        current_state,
+        FirmwareUpdateState::Flashing { .. } | FirmwareUpdateState::FlashingNetCore { .. }
+    );
 
     rsx! {
         div {
@@ -830,7 +1112,8 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
             if is_flashing {
                 {
                     let (progress, total) = match &current_state {
-                        FirmwareUpdateState::Flashing { progress, total } => (*progress, *total),
+                        FirmwareUpdateState::Flashing { progress, total }
+                        | FirmwareUpdateState::FlashingNetCore { progress, total } => (*progress, *total),
                         _ => (0, 1),
                     };
                     let percent = if total > 0 { (progress * 100) / total } else { 0 };

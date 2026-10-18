@@ -107,6 +107,10 @@ pub enum DeviceTaskMessage {
     CancelPairing {
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    /// The net core release counter read back from the application. Sent by the
+    /// probe that starts when the control endpoint attaches, because the
+    /// application only learns it once its BLE controller has answered.
+    SetNetCoreRelease(u16),
     /// Clear bond(s) on the device. For ATS: clears single bond. For dongle: clears all bonds.
     ClearBond {
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
@@ -166,6 +170,47 @@ fn semver_at_least(version: [u16; 3], required: [u16; 3]) -> bool {
     version[0] > required[0]
         || (version[0] == required[0] && version[1] > required[1])
         || (version[0] == required[0] && version[1] == required[1] && version[2] >= required[2])
+}
+
+/// First device protocol that carries `PropKind::NetCoreRelease`. Older
+/// applications cannot decode the request.
+const NETCORE_RELEASE_PROTOCOL: [u16; 3] = [0, 1, 5];
+
+/// Read the net core release over a device's control endpoint and hand it to the
+/// device's handler task.
+///
+/// The application asks the net core itself once its BLE host is running and
+/// keeps asking while the net core is still starting, so a read right after USB
+/// enumeration can legitimately come back 0. The probe retries with growing
+/// gaps, and gives up for good after the last one: a net core that answers 0
+/// then is one that has no release to report, and polling it forever would only
+/// compete with the handler for the control endpoint. A failed or unanswered
+/// read leaves the release at 0 (unknown) and never affects the device itself.
+fn spawn_netcore_probe(
+    control: VmDevice,
+    device_protocol: Option<[u16; 3]>,
+    handler: mpsc::Sender<DeviceTaskMessage>,
+) {
+    if !device_protocol.is_some_and(|p| semver_at_least(p, NETCORE_RELEASE_PROTOCOL)) {
+        return;
+    }
+    tokio::spawn(async move {
+        for delay_s in [0u64, 1, 2, 4, 8, 15] {
+            sleep(Duration::from_secs(delay_s)).await;
+            if handler.is_closed() {
+                return;
+            }
+            match tokio::time::timeout(Duration::from_secs(3), control.read_netcore_release()).await {
+                Ok(Ok(0)) => debug!("Net core release not reported yet"),
+                Ok(Ok(release)) => {
+                    let _ = handler.send(DeviceTaskMessage::SetNetCoreRelease(release)).await;
+                    return;
+                }
+                Ok(Err(e)) => debug!("Could not read the net core release: {e}"),
+                Err(_) => debug!("Reading the net core release timed out"),
+            }
+        }
+    });
 }
 
 /// Messages emitted by device_tasks to the rest of the system.
@@ -741,6 +786,7 @@ async fn usb_device_manager(
                                                 events_connected: false,
                                                 product_id,
                                                 name: name_for_device,
+                                                netcore_release: 0,
                                             };
 
                                             // Check if device is already connected via USB direct before creating handler
@@ -1177,6 +1223,7 @@ async fn usb_device_manager(
                                         events_connected: false,
                                         product_id: app_pid,
                                         name: Device::name_bytes(""),
+                                        netcore_release: 0,
                                     };
                                     let _ = message_channel
                                         .send(Message::Connect(dfu_meta, DeviceChannels { commands: None }))
@@ -1242,6 +1289,11 @@ async fn usb_device_manager(
                             let result = existing_cmd_tx
                                 .send(DeviceTaskMessage::AddControlDevice(vm_device_temp.clone()))
                                 .await;
+                            spawn_netcore_probe(
+                                vm_device_temp.clone(),
+                                version.as_ref().map(|v| v.protocol_semver),
+                                existing_cmd_tx.clone(),
+                            );
                             info!(
                                 "AddControlDevice message sent for {:02x?}, result: {:?}",
                                 uuid, result
@@ -1310,6 +1362,7 @@ async fn usb_device_manager(
                         == odyssey_protocol::control::device::TransportMode::Usb,
                     product_id: pid,
                     name: Device::name_bytes(&dev_info.product_string().filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_default()),
+                    netcore_release: 0,
                 };
 
                 let (tx, rx) = mpsc::channel(32);
@@ -1332,6 +1385,7 @@ async fn usb_device_manager(
                         }
                     };
 
+                let netcore_control = connections.control_device.clone();
                 let initial_protocol_version = events_proto_semver;
                 let handle = tokio::spawn(device_handler_task(
                     connections,
@@ -1354,6 +1408,11 @@ async fn usb_device_manager(
                     dh.insert(uuid, (tx.clone(), handle));
                     direct_usb_handler_uuids.lock().await.insert(uuid);
                 }
+                let netcore_probe = (
+                    netcore_control,
+                    version.as_ref().map(|v| v.protocol_semver),
+                    tx.clone(),
+                );
 
                 // Always pass the commands channel so server.device_list gets a working sender.
                 // The device handler task will process commands (like Zero) once events are available.
@@ -1362,6 +1421,10 @@ async fn usb_device_manager(
                 let _ = message_channel
                     .send(Message::Connect(device_meta.clone(), channels))
                     .await;
+
+                if let (Some(control), protocol, tx) = netcore_probe {
+                    spawn_netcore_probe(control, protocol, tx);
+                }
 
             }
         }
@@ -1419,6 +1482,7 @@ async fn usb_device_manager(
                     events_connected: false,
                     product_id: pid,
                     name: Device::name_bytes(""),
+                    netcore_release: 0,
                 };
                 let _ = message_channel.send(Message::Disconnect(disconnect_device)).await;
             }
@@ -2394,6 +2458,16 @@ async fn device_handler_task(
                         info!("USB control device added successfully for {:02x?}, capabilities: {:?}",
                               device.uuid, device.capabilities);
                     }
+                    Some(DeviceTaskMessage::SetNetCoreRelease(release)) => {
+                        if device.netcore_release != release {
+                            info!(
+                                "Net core of {:02x?} reports release {}",
+                                device.uuid, release
+                            );
+                            device.netcore_release = release;
+                            let _ = message_channel.send(Message::UpdateDevice(device.clone())).await;
+                        }
+                    }
                     Some(DeviceTaskMessage::RemoveControlDevice) => {
                         info!(
                             "RemoveControlDevice - removing USB control for {:02x?}",
@@ -2415,6 +2489,9 @@ async fn device_handler_task(
 
                         if has_independent_ble_events {
                             device.transport = odyssey_hub_common::device::Transport::UsbMux;
+                            // The net core can only be read over USB control, and it may be
+                            // replaced while the cable is out, so the old reading is stale.
+                            device.netcore_release = 0;
                             // No longer a direct-USB handler — USB control is gone. Remove from
                             // the set so the next USB re-plug sends AddControlDevice correctly.
                             direct_usb_handler_uuids.lock().await.remove(&device.uuid);
