@@ -70,6 +70,27 @@ fn held_back_note(held_back: &HeldBack) -> Element {
     }
 }
 
+/// A newer firmware release this unit cannot take yet because it must first run
+/// a newer net core than it does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NetCoreBlocked {
+    pub version: String,
+}
+
+/// `bridge` is the release on offer that carries the net core, when there is one.
+fn net_core_blocked_note(blocked: &NetCoreBlocked, bridge: Option<&str>) -> Element {
+    rsx! {
+        span {
+            class: "text-xs text-gray-500 dark:text-gray-400 italic",
+            if let Some(bridge) = bridge {
+                "v{blocked.version} needs a newer net core; update to v{bridge} first."
+            } else {
+                "No update path from this unit's net core (v{blocked.version} needs a newer one)."
+            }
+        }
+    }
+}
+
 /// State for a single device's firmware update
 #[derive(Clone, Debug, PartialEq)]
 pub enum FirmwareUpdateState {
@@ -88,9 +109,12 @@ pub enum FirmwareUpdateState {
         vid: u16,
         pid: u16,
         held_back: Option<HeldBack>,
+        net_core_blocked: Option<NetCoreBlocked>,
     },
     /// A newer firmware exists but this desktop is too old to install any of it
     NeedsNewerDesktop(HeldBack),
+    /// A newer firmware exists but the unit's net core is too old to take any of it
+    NetCoreBlockedNoPath(NetCoreBlocked),
     /// Currently downloading firmware
     Downloading,
     /// Sending DFU detach command
@@ -229,6 +253,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                 | FirmwareUpdateState::Available { .. }
                 | FirmwareUpdateState::NeedsUsbConnection { .. }
                 | FirmwareUpdateState::NeedsNewerDesktop(_)
+                | FirmwareUpdateState::NetCoreBlockedNoPath(_)
         ) {
             let mut next_state = FirmwareUpdateState::Idle;
 
@@ -250,7 +275,14 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     // DFU-bootloader devices (no CONTROL, version [0,0,0]) — show latest firmware.
                     // Connected devices — show latest firmware only if it is actually newer,
                     // allowing cross-major/minor updates (e.g. protocol upgrades).
-                    let offer = firmware::select_firmware(&manifest, device_type, desktop_version());
+                    // The same net core reading feeds `run_firmware_update`, so the
+                    // entry shown here is the entry that gets installed.
+                    let offer = firmware::select_firmware(
+                        &manifest,
+                        device_type,
+                        desktop_version(),
+                        device.netcore_release,
+                    );
                     let is_newer = |fw: &firmware::FirmwareEntry| {
                         is_dfu_device
                             || fw.version_parts().is_some_and(|v| firmware::version_newer(device_version, v))
@@ -260,6 +292,10 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         version: fw.version.clone(),
                         min_desktop: fw.min_desktop.clone(),
                     });
+                    let net_core_blocked =
+                        offer.net_core_blocked.filter(|fw| is_newer(fw)).map(|fw| NetCoreBlocked {
+                            version: fw.version.clone(),
+                        });
 
                     if let Some(available_fw) = maybe_fw {
                         let available_version = available_fw.version.clone();
@@ -275,6 +311,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                                 vid,
                                 pid,
                                 held_back: held_back.clone(),
+                                net_core_blocked: net_core_blocked.clone(),
                             };
                             if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
                                 if is_dfu_device {
@@ -319,6 +356,8 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                         }
                     } else if let Some(held_back) = held_back {
                         next_state = FirmwareUpdateState::NeedsNewerDesktop(held_back);
+                    } else if let Some(blocked) = net_core_blocked {
+                        next_state = FirmwareUpdateState::NetCoreBlockedNoPath(blocked);
                     }
                 }
             }
@@ -347,6 +386,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             }
         }
         FirmwareUpdateState::NeedsNewerDesktop(held_back) => held_back_note(&held_back),
+        FirmwareUpdateState::NetCoreBlockedNoPath(blocked) => net_core_blocked_note(&blocked, None),
         FirmwareUpdateState::Available {
             current,
             available,
@@ -354,6 +394,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             vid,
             pid,
             held_back,
+            net_core_blocked,
         } => {
             let manager = props.manager.clone();
             let devices = props.devices;
@@ -371,6 +412,9 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     }
                     if let Some(held_back) = &held_back {
                         {held_back_note(held_back)}
+                    }
+                    if let Some(blocked) = &net_core_blocked {
+                        {net_core_blocked_note(blocked, Some(&available))}
                     }
                     button {
                         // The state below is polled, so a second click can land
@@ -794,9 +838,15 @@ async fn run_firmware_update(
     if !in_bootloader && device_version == [0, 0, 0] {
         return Err("No firmware version".to_string());
     }
-    let firmware_entry = firmware::select_firmware(&manifest, &device_type, desktop_version())
-        .offered
-        .ok_or("No firmware for this device type is installable by this version of Odyssey Desktop")?;
+    // The same reading the row used to pick the entry, so both agree.
+    let firmware_entry = firmware::select_firmware(
+        &manifest,
+        &device_type,
+        desktop_version(),
+        device.netcore_release,
+    )
+    .offered
+    .ok_or("No firmware for this device type is installable by this unit and this version of Odyssey Desktop")?;
 
     // The net core is released separately from the application, so the entry
     // only says which release it was tested with. Whether it has to be written
@@ -807,11 +857,11 @@ async fn run_firmware_update(
     //
     // With the current stage2 nothing reports the net core while the device is
     // in the bootloader, and a net core update leaves the device there until an
-    // application is written. So the net core is written first and read back
-    // only after the new application runs. `requires_netcore` is judged here
-    // against what the update will install, and is confirmed by that read-back
-    // after the application is written: a silently failed copy is detected then,
-    // as an error telling the user to run the update again.
+    // application is written. So `requires_netcore` is judged against what the
+    // device already runs (the entry's own net core never counts), and the net
+    // core is written first and read back only after the new application runs,
+    // which detects a silently failed copy as an error telling the user to run
+    // the update again.
     let published_netcore = firmware_entry
         .files
         .get("net-core")
@@ -1089,6 +1139,7 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
         FirmwareUpdateState::Idle => "Idle".to_string(),
         FirmwareUpdateState::NeedsUsbConnection { .. } => "Plug in USB to update".to_string(),
         FirmwareUpdateState::NeedsNewerDesktop(_) => "Needs a newer Odyssey Desktop".to_string(),
+        FirmwareUpdateState::NetCoreBlockedNoPath(_) => "No update path from this net core".to_string(),
         FirmwareUpdateState::Available { .. } => "Update available".to_string(),
         FirmwareUpdateState::Downloading => "Downloading...".to_string(),
         FirmwareUpdateState::Detaching => "Preparing device...".to_string(),
