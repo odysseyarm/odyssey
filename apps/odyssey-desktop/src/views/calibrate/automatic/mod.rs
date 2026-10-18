@@ -7,6 +7,8 @@
 
 mod camera_support;
 pub mod hints;
+mod illustrations;
+pub mod kind;
 mod markers;
 mod measuring;
 pub mod pattern_window;

@@ -9,9 +9,12 @@ use std::fmt;
 
 use parking_lot::Mutex;
 
-use crate::views::calibrate::automatic::settings::{
-    COLOR_EXPOSURE_RANGE_US, DIAGONAL_RANGE_IN,
-};
+use odyssey_hub_common::config::DisplayKind;
+
+use crate::views::calibrate::automatic::settings::{COLOR_EXPOSURE_RANGE_US, DIAGONAL_RANGE_IN};
+
+/// Largest overscan the demo can simulate, in percent. Real TVs crop 2-5%.
+pub const DEMO_OVERSCAN_MAX_PERCENT: f64 = 15.0;
 
 pub const USAGE: &str = "\
 Usage:
@@ -22,10 +25,16 @@ Calibrate options (each one pre-fills a setup question; the wizard asks for
 anything left out):
   --monitor <n>          Display to calibrate, numbered as in the app (1 = first)
   --screen-id <n>        Screen id to save as (0-5; shown as Screen 1-6)
+  --kind <flat|projector>
+                         What is being calibrated: a TV or monitor, or a projector
   --camera <id>          Camera id or serial number
-  --diagonal <inches>    Screen diagonal, if known (otherwise it is measured)
+  --diagonal <inches>    Screen diagonal, if known (otherwise the TV's own size or
+                         the camera's measurement is used)
   --rgb-exposure <us>    Starting color exposure in microseconds
   --demo                 Use a simulated camera instead of hardware
+  --demo-overscan <percent>
+                         With --demo: make the simulated TV crop its picture by this
+                         much (0-15), to try the 'picture is cropped' advice
   -h, --help             Show this help";
 
 /// What the process was asked to do.
@@ -44,10 +53,13 @@ pub struct CalibrateArgs {
     pub monitor: Option<usize>,
     pub screen_id: Option<u8>,
     /// Matches a camera's id or serial number.
+    pub kind: Option<DisplayKind>,
     pub camera: Option<String>,
     pub diagonal_in: Option<f64>,
     pub rgb_exposure_us: Option<u32>,
     pub demo: bool,
+    /// How much the simulated TV overscans, in percent. Only with `demo`.
+    pub demo_overscan_percent: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +133,25 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                     }
                 }
             }
+            "--kind" => {
+                let v = value("--kind")?;
+                out.kind = Some(match v.as_str() {
+                    "flat" => DisplayKind::Flat,
+                    "projector" => DisplayKind::Projector,
+                    _ => return err(format!("--kind must be 'flat' or 'projector', got '{v}'")),
+                });
+            }
+            "--demo-overscan" => {
+                let v = value("--demo-overscan")?;
+                match v.parse::<f64>() {
+                    Ok(p) if (0.0..=DEMO_OVERSCAN_MAX_PERCENT).contains(&p) => out.demo_overscan_percent = Some(p),
+                    _ => {
+                        return err(format!(
+                            "--demo-overscan must be a percentage between 0 and {DEMO_OVERSCAN_MAX_PERCENT}, got '{v}'"
+                        ))
+                    }
+                }
+            }
             "--camera" => {
                 let v = value("--camera")?;
                 if v.is_empty() {
@@ -156,6 +187,9 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
             }
             other => return err(format!("unknown option '{other}' for 'calibrate'")),
         }
+    }
+    if out.demo_overscan_percent.is_some() && !out.demo {
+        return err("--demo-overscan only works together with --demo");
     }
     Ok(Command::Calibrate(out))
 }
@@ -209,18 +243,20 @@ mod tests {
     #[test]
     fn every_option_is_read() {
         let a = calibrate(&[
-            "--monitor", "2", "--screen-id", "3", "--camera", "CP1234", "--diagonal", "55.5",
-            "--rgb-exposure", "2000", "--demo",
+            "--monitor", "2", "--screen-id", "3", "--kind", "projector", "--camera", "CP1234", "--diagonal", "55.5",
+            "--rgb-exposure", "2000", "--demo", "--demo-overscan", "3.5",
         ]);
         assert_eq!(
             a,
             CalibrateArgs {
                 monitor: Some(2),
                 screen_id: Some(3),
+                kind: Some(DisplayKind::Projector),
                 camera: Some("CP1234".into()),
                 diagonal_in: Some(55.5),
                 rgb_exposure_us: Some(2000),
                 demo: true,
+                demo_overscan_percent: Some(3.5),
             }
         );
     }
@@ -255,6 +291,12 @@ mod tests {
             &["--rgb-exposure", "0"],
             &["--rgb-exposure", "99999999"],
             &["--camera", ""],
+            &["--kind", "tv"],
+            &["--kind"],
+            &["--demo", "--demo-overscan", "-1"],
+            &["--demo", "--demo-overscan", "40"],
+            &["--demo", "--demo-overscan", "lots"],
+            &["--demo-overscan", "3"],
         ] {
             let mut all = vec!["calibrate"];
             all.extend_from_slice(bad);
@@ -269,6 +311,22 @@ mod tests {
             &command,
             Command::Calibrate(CalibrateArgs { camera: Some(id), demo: false, .. }) if id == "--demo"
         ));
+    }
+
+    #[test]
+    fn kind_is_flat_or_projector() {
+        assert_eq!(calibrate(&["--kind", "flat"]).kind, Some(DisplayKind::Flat));
+        assert_eq!(calibrate(&["--kind=projector"]).kind, Some(DisplayKind::Projector));
+        assert_eq!(calibrate(&[]).kind, None);
+    }
+
+    #[test]
+    fn demo_overscan_needs_the_demo_and_is_documented() {
+        assert_eq!(calibrate(&["--demo", "--demo-overscan", "3"]).demo_overscan_percent, Some(3.0));
+        assert!(run(&["calibrate", "--demo-overscan", "3"]).unwrap_err().to_string().contains("--demo"));
+        for flag in ["--kind", "--demo-overscan", "--diagonal"] {
+            assert!(USAGE.contains(flag), "{flag} missing from --help");
+        }
     }
 
     #[test]

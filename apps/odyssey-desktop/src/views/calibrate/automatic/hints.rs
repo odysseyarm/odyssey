@@ -4,8 +4,9 @@
 //! Every `match` below is exhaustive on purpose: a new `Hint` or `MarkerHint`
 //! variant fails to compile here instead of reaching a tech as a blank banner.
 
-use odyssey_autocalib::session::{Hint, MarkerHint, Step};
+use odyssey_autocalib::session::{Hint, MarkerHint, SideSet, Step};
 
+use super::kind::SizeOrigin;
 use super::worker::FailureKind;
 use crate::components::wizard::{Icon, Tone};
 
@@ -75,17 +76,17 @@ pub fn screen_hint(hint: Hint) -> Message {
             "The camera is tilted",
             "Level the camera so it isn't pointing up or down or leaning to one side.",
         ),
+        Hint::EdgesCropped => message(
+            Attention,
+            Icon::Crop,
+            "The TV is cutting off the edges of the picture",
+            "Turn off overscan in the TV's picture settings (look for 'Just Scan', 'Screen Fit' or 'PC mode') so the whole picture shows.",
+        ),
         Hint::ScreenTooOblique => message(
             Attention,
             Icon::FaceOn,
             "Face the screen more directly",
             "The camera is looking at the screen from too far to the side. Move it in front of the screen.",
-        ),
-        Hint::EdgesCropped => message(
-            Attention,
-            Icon::Warning,
-            "The screen is cutting off the picture",
-            "Turn off overscan in the display's picture settings (often called \"Just Scan\", \"Screen Fit\" or \"1:1 pixel mapping\").",
         ),
     }
 }
@@ -117,46 +118,106 @@ pub fn marker_hint(hint: MarkerHint) -> Message {
 }
 
 /// What to tell the tech when a step fails: a headline and what to do next.
-pub fn failure_message(kind: FailureKind) -> Message {
-    let (icon, title, detail) = match kind {
+pub fn failure_message(kind: FailureKind, size_origin: Option<SizeOrigin>) -> Message {
+    let (icon, title, detail): (Icon, &str, String) = match kind {
         FailureKind::CameraOpen => (
             Icon::Camera,
             "The camera didn't start",
-            "Unplug the camera's USB cable and plug it back in (a USB 3 port directly on the computer works best), then try again.",
+            "Unplug the camera's USB cable and plug it back in (a USB 3 port directly on the computer works best), then try again.".into(),
         ),
         FailureKind::CameraLost => (
             Icon::Camera,
             "The camera stopped sending pictures",
-            "Check the USB cable is pushed in firmly, then try again.",
+            "Check the USB cable is pushed in firmly, then try again.".into(),
         ),
         FailureKind::ScreenDots => (
             Icon::Viewfinder,
             "I couldn't see the dot pattern",
-            "Keep the camera still with the whole screen in view, then try again.",
+            "Keep the camera still with the whole screen in view, then try again.".into(),
         ),
         FailureKind::ScreenDepth => (
             Icon::Cube,
             "The depth sensor couldn't read the screen",
-            "Keep the camera steady and away from direct sunlight and reflections on the screen, then try again.",
+            "Keep the camera steady and away from direct sunlight and reflections on the screen, then try again.".into(),
         ),
         FailureKind::ScreenGeometry => (
             Icon::FaceOn,
             "That doesn't look like a flat, front-facing screen",
-            "Make sure the camera faces the front of the screen, the screen is flat, and the dot pattern isn't stretched or covered, then try again.",
+            "Make sure the camera faces the front of the screen, the screen is flat, and the dot pattern isn't stretched or covered, then try again.".into(),
         ),
         FailureKind::Markers => (
             Icon::Bulb,
             "The markers weren't where they should be",
-            "Turn on all six tracker markers and check they are mounted on this screen, then try again.",
+            "Turn on all six tracker markers and check they are mounted on this screen, then try again.".into(),
         ),
+        FailureKind::EdgesCropped(sides) => (
+            Icon::Crop,
+            "The TV is cutting off the picture",
+            format!(
+                "The {} of the picture can't be seen. Turn off overscan in the TV's picture settings ('Just Scan', 'Screen Fit' or 'PC mode'), then try again.",
+                sides_words(sides)
+            ),
+        ),
+        FailureKind::SizeInvalid => (
+            Icon::Warning,
+            "That size doesn't look right",
+            "Go back and enter the diagonal in inches, or leave the size empty and let the camera measure it.".into(),
+        ),
+        FailureKind::SizeShape => match size_origin {
+            Some(SizeOrigin::Panel) => (
+                Icon::FaceOn,
+                "The TV's size doesn't match the shape of the picture",
+                "The picture on this display looks stretched or boxed in. Set the display to its normal resolution with no scaling, or go back and enter the size yourself.".into(),
+            ),
+            _ => (
+                Icon::FaceOn,
+                "The size you entered doesn't match the shape of the screen",
+                "A screen with that size would have a different shape than the picture. Go back and check the size, or leave it empty and let the camera measure it.".into(),
+            ),
+        },
         FailureKind::Internal => (
             Icon::Warning,
             "Something went wrong",
-            "Go back and start again. If it keeps happening, copy the Details and send them to support.",
+            "Go back and start again. If it keeps happening, copy the Details and send them to support.".into(),
         ),
     };
-    message(Tone::Bad, icon, title, detail)
+    message(Tone::Bad, icon, title, &detail)
 }
+
+/// "top and left", "all four edges": which sides of the picture a display cuts off.
+pub fn sides_words(sides: SideSet) -> String {
+    if sides.count() == 4 {
+        return "edges on all four sides".into();
+    }
+    let names: Vec<&str> = [(sides.top, "top"), (sides.right, "right"), (sides.bottom, "bottom"), (sides.left, "left")]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect();
+    match names.as_slice() {
+        [] => "edges".into(),
+        [one] => format!("{one} edge"),
+        [first, last] => format!("{first} and {last} edges"),
+        [init @ .., last] => format!("{} and {last} edges", init.join(", ")),
+    }
+}
+
+/// The label of the button on the problem screen that leads on from `kind`.
+pub fn retry_label(kind: FailureKind) -> &'static str {
+    match kind {
+        FailureKind::SizeInvalid | FailureKind::SizeShape => "Change the size",
+        _ => "Try again",
+    }
+}
+
+/// Where to turn off overscan, for the Details section. Menu names change
+/// between models and years, so the list says so.
+pub const OVERSCAN_HELP: [(&str, &str); 5] = [
+    ("Any TV", "Look in the picture settings for Picture Size, Aspect Ratio or Screen Fit. Choose 'Just Scan', 'Screen Fit', 'Full Pixel', 'Unscaled' or switch 'Overscan' off. Game mode or PC mode often does this for you."),
+    ("Samsung", "Picture → Picture Size Settings → Picture Size: Screen Fit, or switch to Game mode."),
+    ("LG", "Picture → Aspect Ratio → Just Scan (or use the Game picture mode)."),
+    ("Sony", "Display Area → Full Pixel."),
+    ("The computer", "In the graphics driver's settings (NVIDIA, AMD or Intel) turn scaling off and set overscan to 0 %."),
+];
 
 /// Text and bar position for a running measurement.
 #[derive(Debug, Clone, PartialEq)]
@@ -249,8 +310,10 @@ mod tests {
             FailureKind::Internal,
         ];
         let mut titles = Vec::new();
-        for kind in all {
-            let m = failure_message(kind);
+        let some_sides = SideSet { top: true, ..SideSet::default() };
+        let all: Vec<FailureKind> = all.into_iter().chain([FailureKind::EdgesCropped(some_sides), FailureKind::SizeInvalid, FailureKind::SizeShape]).collect();
+        for kind in all.iter().copied() {
+            let m = failure_message(kind, Some(SizeOrigin::Entered));
             assert!(!m.title.trim().is_empty() && m.detail.ends_with("."), "{kind:?}");
             assert_eq!(m.tone, Tone::Bad);
             titles.push(m.title);
@@ -258,6 +321,39 @@ mod tests {
         titles.sort();
         titles.dedup();
         assert_eq!(titles.len(), all.len());
+    }
+
+    #[test]
+    fn a_wrong_shape_reads_differently_for_the_tv_and_for_the_tech() {
+        let typed = failure_message(FailureKind::SizeShape, Some(SizeOrigin::Entered));
+        let panel = failure_message(FailureKind::SizeShape, Some(SizeOrigin::Panel));
+        assert!(typed.title.contains("you entered"));
+        assert!(panel.title.contains("TV's size"));
+    }
+
+    #[test]
+    fn cropped_sides_are_named() {
+        let sides = |top, right, bottom, left| SideSet { top, right, bottom, left };
+        assert_eq!(sides_words(sides(true, false, false, false)), "top edge");
+        assert_eq!(sides_words(sides(false, true, false, true)), "right and left edges");
+        assert_eq!(sides_words(sides(true, true, false, true)), "top, right and left edges");
+        assert_eq!(sides_words(sides(true, true, true, true)), "edges on all four sides");
+        let m = failure_message(FailureKind::EdgesCropped(sides(false, false, true, false)), None);
+        assert!(m.detail.contains("bottom edge") && m.detail.contains("Just Scan"));
+    }
+
+    #[test]
+    fn the_cropped_hint_points_at_the_tv_menu() {
+        let m = screen_hint(Hint::EdgesCropped);
+        assert!(m.detail.contains("Just Scan") && m.detail.contains("Screen Fit") && m.detail.contains("PC mode"));
+        assert!(OVERSCAN_HELP.iter().all(|(brand, steps)| !brand.is_empty() && !steps.is_empty()));
+    }
+
+    #[test]
+    fn size_errors_lead_back_to_the_size() {
+        assert_eq!(retry_label(FailureKind::SizeShape), "Change the size");
+        assert_eq!(retry_label(FailureKind::SizeInvalid), "Change the size");
+        assert_eq!(retry_label(FailureKind::Markers), "Try again");
     }
 
     #[test]

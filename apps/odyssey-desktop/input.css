@@ -53,3 +53,30 @@
         @apply px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded font-medium transition-colors;
     }
 }
+
+/* Calibration illustrations: a gentle twinkle and a shimmering projector beam.
+   Both stay still for people who ask their system for less motion. */
+.calib-sparkle {
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .calib-sparkle {
+        animation: calib-sparkle 2.6s ease-in-out infinite;
+    }
+
+    .calib-beam {
+        animation: calib-beam 3.2s ease-in-out infinite;
+    }
+}
+
+@keyframes calib-sparkle {
+    0%, 100% { opacity: 0.35; transform: scale(0.75); }
+    50% { opacity: 1; transform: scale(1.1); }
+}
+
+@keyframes calib-beam {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 1; }
+}

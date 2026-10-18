@@ -4,9 +4,10 @@
 
 use dioxus::prelude::*;
 
-use super::quality::{assess, Verdict};
+use super::kind::source_label;
+use super::quality::{assess, disagreement_message, Verdict};
 use super::screens::screen_label;
-use super::ui::{Details, Fact, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
+use super::ui::{focus_primary, Details, Fact, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
 use super::wizard::Wizard;
 use crate::components::wizard::{Icon, IconView, OverlayImage, StatusBanner, Tone};
 
@@ -28,10 +29,23 @@ fn headline(verdict: Verdict) -> (Icon, &'static str) {
 
 #[component]
 pub fn ReviewStep(wizard: Wizard) -> Element {
+    // Enter does the obvious thing when the result is clearly good (save) or
+    // clearly bad (redo). An amber result gets no default: the tech reads first.
+    use_effect(move || {
+        let verdict = wizard.finished.read().as_ref().map(|f| assess(&f.outcome(false).measures).verdict);
+        if matches!(verdict, Some(Verdict::Good | Verdict::Poor)) {
+            focus_primary();
+        }
+    });
     let Some(finished) = wizard.finished.read().clone() else {
         return rsx! {};
     };
-    let quality = assess(&finished.measures);
+    let use_measured = *wizard.use_measured.read();
+    let outcome = finished.outcome(use_measured);
+    let quality = assess(&outcome.measures);
+    let disagreement = outcome.size_check.filter(|c| c.disagrees());
+    let can_use_measured = finished.measured.is_some();
+    let source = source_label(outcome.size_source, finished.size_origin);
     let (icon, title) = headline(quality.verdict);
     let poor = quality.verdict == Verdict::Poor;
     let screen = screen_label(wizard.screen_id());
@@ -45,7 +59,7 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
         .map(|m| m.display_name().to_string())
         .unwrap_or_else(|| "this screen".into());
 
-    let quad = finished.screen_quad.iter().map(|p| format!("{:.1},{:.1}", p[0], p[1])).collect::<Vec<_>>().join(" ");
+    let quad = outcome.screen_quad.iter().map(|p| format!("{:.1},{:.1}", p[0], p[1])).collect::<Vec<_>>().join(" ");
     let unit = f64::from(finished.width) / 640.0;
     let outline = quality_color(quality.verdict);
 
@@ -104,6 +118,52 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                 detail: quality.advice(),
             }
 
+            if let Some(check) = disagreement {
+                div {
+                    role: "alert",
+                    class: "flex flex-col gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
+                    div {
+                        class: "flex items-start gap-3",
+                        IconView { icon: Icon::Warning, class: "mt-0.5 size-6 shrink-0 text-amber-600 dark:text-amber-400".to_string() }
+                        div {
+                            class: "flex flex-col gap-1",
+                            div { class: "text-lg font-semibold", "The camera and the screen's size don't agree" }
+                            div { class: "text-base", "{disagreement_message(&check, finished.size_origin)}" }
+                        }
+                    }
+                    if can_use_measured {
+                        div {
+                            button {
+                                class: SECONDARY_BUTTON,
+                                r#type: "button",
+                                onclick: move |_| *wizard.use_measured.write() = true,
+                                "Use the camera's measurement instead"
+                            }
+                        }
+                        details {
+                            class: "text-sm",
+                            summary { class: "cursor-pointer select-none font-medium", "What's the difference?" }
+                            p {
+                                class: "mt-2",
+                                "A size from the TV or the box is exact if the TV shows its whole picture. The camera's own measurement is usually within about half a percent of the distance, so a few millimeters per meter, which makes it a good second opinion but slightly less exact. If the TV crops its picture, the camera's measurement is the one that matches what you see."
+                            }
+                        }
+                    }
+                }
+            }
+            if use_measured && can_use_measured {
+                div {
+                    class: "flex flex-wrap items-center justify-between gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100",
+                    span { "Using the camera's own measurement instead of the declared size." }
+                    button {
+                        class: SECONDARY_BUTTON,
+                        r#type: "button",
+                        onclick: move |_| *wizard.use_measured.write() = false,
+                        "Go back to the declared size"
+                    }
+                }
+            }
+
             OverlayImage {
                 src: finished.image.clone(),
                 width: finished.width,
@@ -116,7 +176,7 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                     stroke_width: "{3.0 * unit}",
                     stroke_linejoin: "round",
                 }
-                for (i, marker) in finished.markers.iter().enumerate() {
+                for (i, marker) in outcome.markers.iter().enumerate() {
                     circle {
                         key: "{i}",
                         cx: "{marker[0]}",
@@ -144,12 +204,13 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                     div { class: "text-sm text-gray-500 dark:text-gray-400", "Screen size" }
                     div {
                         class: "text-2xl font-semibold text-gray-900 dark:text-white",
-                        "{finished.diagonal_in:.1} inches"
+                        "{outcome.diagonal_in:.1} inches"
                     }
                     div {
                         class: "text-sm text-gray-600 dark:text-gray-300",
-                        "{finished.size_m[0] * 100.0:.0} × {finished.size_m[1] * 100.0:.0} cm"
+                        "{outcome.size_m[0] * 100.0:.0} × {outcome.size_m[1] * 100.0:.0} cm"
                     }
+                    div { class: "mt-1 text-sm font-medium text-gray-700 dark:text-gray-200", "{source}" }
                 }
                 div {
                     class: "rounded-xl bg-white p-4 shadow dark:bg-gray-700",
@@ -198,7 +259,7 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                 }
                 Fact {
                     label: "Aligned to gravity",
-                    value: if finished.gravity_aligned { "yes".to_string() } else { "no (camera has no motion sensor data)".to_string() },
+                    value: if outcome.gravity_aligned { "yes".to_string() } else { "no (camera has no motion sensor data)".to_string() },
                 }
             }
         }

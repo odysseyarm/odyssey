@@ -420,3 +420,39 @@ fn an_uncropped_ring_is_never_reported_cropped() {
         }
     }
 }
+
+#[test]
+fn finish_measured_drops_the_declared_size_without_the_camera() {
+    let scene = SyntheticScene::default();
+    // A diagonal 40% too small: the declared size disagrees with the depth
+    // measurement, which is what the review offers to override.
+    let wrong = KnownSize::Diagonal { inches: scene.truth().diagonal_in() * 0.6 };
+    let mut session = open(&scene, &CaptureSettings::default(), SessionOptions { known_size: Some(wrong), ..SessionOptions::default() });
+    session.preview().unwrap();
+    session.measure_screen(&mut |_| {}).unwrap();
+    session.preview_markers().unwrap();
+    session.measure_markers(&mut |_| {}).unwrap();
+
+    let declared = session.finish().unwrap();
+    assert_eq!(declared.review.size_source, SizeSource::KnownDiagonal);
+    assert!(declared.review.size_check.is_some_and(|c| c.disagrees()));
+
+    let measured = session.finish_measured().unwrap();
+    assert_eq!(measured.review.size_source, SizeSource::Measured);
+    assert!(measured.review.size_check.is_none());
+    let truth = scene.truth();
+    assert!(size_error(&measured, &truth) < 0.01, "size error {}", size_error(&measured, &truth));
+    // Markers follow the new fit: they sit at their layout positions on the real screen.
+    assert_matches_truth(&measured, &truth, &scene.camera_to_aligned(), 0.012);
+}
+
+#[test]
+fn finish_measured_without_a_declared_size_is_finish() {
+    let scene = SyntheticScene::default();
+    let mut session = open(&scene, &CaptureSettings::default(), SessionOptions::default());
+    session.preview().unwrap();
+    session.measure_screen(&mut |_| {}).unwrap();
+    session.preview_markers().unwrap();
+    session.measure_markers(&mut |_| {}).unwrap();
+    assert_eq!(session.finish().unwrap().calibration.homography, session.finish_measured().unwrap().calibration.homography);
+}

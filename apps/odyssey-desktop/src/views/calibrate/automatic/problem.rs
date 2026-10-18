@@ -3,7 +3,7 @@
 
 use dioxus::prelude::*;
 
-use super::hints::failure_message;
+use super::hints::{failure_message, retry_label};
 use super::ui::{Details, StepPage, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON};
 use super::wizard::Wizard;
 use crate::components::wizard::StatusBanner;
@@ -13,7 +13,7 @@ pub fn ProblemStep(wizard: Wizard) -> Element {
     let Some(failure) = wizard.failure.read().clone() else {
         return rsx! {};
     };
-    let message = failure_message(failure.kind);
+    let message = failure_message(failure.kind, failure.size_origin);
     rsx! {
         StepPage {
             title: "That didn't work",
@@ -29,7 +29,7 @@ pub fn ProblemStep(wizard: Wizard) -> Element {
                     class: PRIMARY_BUTTON,
                     r#type: "button",
                     onclick: move |_| wizard.retry(),
-                    "Try again"
+                    "{retry_label(failure.kind)}"
                 }
             },
             StatusBanner { tone: message.tone, icon: message.icon, title: message.title, detail: message.detail }
