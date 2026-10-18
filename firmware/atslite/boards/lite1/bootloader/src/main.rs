@@ -45,7 +45,7 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F
 
 /// This bootloader's release counter. Raise it whenever the image changes: the
 /// host replaces a bootloader only when the published counter is higher.
-macro_rules! release { () => { 3 }; }
+macro_rules! release { () => { 4 }; }
 
 const BOOTLOADER_BCD_DEVICE: u16 =
     odyssey_protocol::BootloaderRelease::bcd_device(release!());
@@ -1398,86 +1398,46 @@ async fn main(spawner: Spawner) -> ! {
     // Select which bank to boot from (dual-bank logic)
     let (boot_offset, boot_bank_name, _boot_state) = select_boot_bank(&flash);
 
-    // DISABLED: Writing to stage1_state at 0xC000 causes flash retention corruption
-    // in adjacent page 0xD000 (stage2_state) within seconds.
-    // This is a hardware issue - erasing flash page affects neighboring pages.
-    // Stage1 rollback is only needed for bootloader updates, not app bank switching.
-    // TODO: Investigate nRF5340 errata or use non-adjacent pages
-    if false {
+    // Stage1 swaps a new bootloader in on trial and puts the old one back at the
+    // next reset unless the new one confirms it booted. Without that, a bootloader
+    // update lasts until the first reset, which is the next thing the host does.
+    //
+    // Erasing the stage1 state page has disturbed the neighbouring stage2 state
+    // page on this part, so the write happens only when stage1 is waiting for the
+    // confirmation (once per bootloader update, never on an ordinary boot), and
+    // stage2's own state page is rewritten afterwards to refresh its cells.
+    {
         extern "C" {
             static __stage1_state_start: u32;
         }
-
-        let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as u32 };
-
-        defmt::info!(
-            "Marking stage2 bootloader boot as successful for stage1 (writing to state at {:#010x})",
-            stage1_state_addr
-        );
-
-        // Read stage2_state BEFORE erasing stage1_state to check if erase affects it
-        extern "C" {
-            static __bootloader_state_start: u32;
+        let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as usize };
+        let stage1_magic = unsafe { core::ptr::read_volatile(stage1_state_addr as *const u32) };
+        if stage1_magic != better_boot::BOOT_MAGIC && stage1_magic != ERASED_WORD {
+            defmt::info!(
+                "Confirming this bootloader to stage1 (state word was {:#010x})",
+                stage1_magic
+            );
+            let (flag_word, state) = snapshot_state_words();
+            let confirmed: Result<(), ()> = flash.lock(|flash_cell| {
+                let mut flash = flash_cell.borrow_mut();
+                let page_start = stage1_state_addr & !(PAGE_SIZE - 1);
+                flash
+                    .erase(page_start as u32, (page_start + PAGE_SIZE) as u32)
+                    .map_err(|_| ())?;
+                flash
+                    .write(stage1_state_addr as u32, &better_boot::BOOT_MAGIC.to_le_bytes())
+                    .map_err(|_| ())?;
+                cortex_m::asm::dsb();
+                cortex_m::asm::isb();
+                Ok(())
+            });
+            if confirmed.is_err() {
+                defmt::error!("Failed to confirm the bootloader to stage1");
+            }
+            if rewrite_state_page_with_netcore(&flash, flag_word, state, None, ERASED_WORD).is_err() {
+                defmt::warn!("Failed to refresh the stage2 state page");
+            }
         }
-        let stage2_state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
-        let stage2_before = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
-        defmt::info!(
-            "[PRE-ERASE] stage2_state at {:#010x} = {:#010x}",
-            stage2_state_addr,
-            stage2_before
-        );
-
-        // Use better-boot to write stage1 state
-        let stage1_manager = BootStateManager::new(stage1_state_addr);
-        let stage1_state = BootState {
-            magic: STATE_MAGIC,
-            active_slot: 0,
-            pending_slot: 0,
-            boot_counter: 0,
-            reserved: 0,
-        };
-
-        flash.lock(|flash_cell| {
-            let mut flash = flash_cell.borrow_mut();
-
-            if let Err(_) =
-                stage1_manager.write_boot_state(&mut *flash, &stage1_state, PAGE_SIZE as u32)
-            {
-                defmt::error!("Failed to write stage1 state");
-                return;
-            }
-
-            defmt::info!("Stage1 state written successfully");
-
-            // Ensure flash operations complete
-            cortex_m::asm::dsb();
-            cortex_m::asm::isb();
-
-            // CRITICAL: Add delay to allow flash cell voltage to fully settle
-            // nRF5340 flash cells need time after erase/write before adjacent operations
-            for _ in 0..100000 {
-                cortex_m::asm::nop();
-            }
-
-            // Check if stage2_state was affected
-            let stage2_after = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
-            defmt::info!(
-                "[POST-WRITE] stage2_state at {:#010x} = {:#010x}",
-                stage2_state_addr,
-                stage2_after
-            );
-
-            // Verify what was written to stage1
-            let verify_magic = stage1_manager.read_magic();
-            let verify_state = stage1_manager.read();
-            defmt::info!(
-                "Stage1 state verified: magic={:#010x}, active={}, pending={}, counter={}",
-                verify_magic,
-                verify_state.active_slot,
-                verify_state.pending_slot,
-                verify_state.boot_counter
-            );
-        });
     }
 
     if should_enter_dfu {
