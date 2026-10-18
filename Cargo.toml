@@ -7,6 +7,7 @@ members = [
     "apps/odyssey-hub",
     "apps/odyssey-usb-cli",
     "apps/odyssey-vision-tool",
+    "crates/odyssey-autocalib",
     "crates/odyssey-common",
     "crates/odyssey-hub-client",
     "crates/odyssey-hub-common",

@@ -1,0 +1,23 @@
+//! Automatic screen calibration from a depth camera.
+//!
+//! A camera looks at the screen while the screen shows a known dot pattern.
+//! The depth image gives the screen's plane in metric units, the color image
+//! gives the pattern's pose within that plane, and the infrared image gives the
+//! positions of the tracker markers. [`solve`] turns those into the
+//! [`odyssey_common::ScreenCalibration`] the hub consumes.
+//!
+//! Camera access goes through [`camera::CameraBackend`], so the algorithm runs
+//! against the [`synthetic`] backend in tests and against real hardware through
+//! [`orbbec`].
+
+pub mod camera;
+pub mod imu;
+pub mod markers;
+pub mod pattern;
+pub mod plane;
+pub mod session;
+pub mod solve;
+pub mod synthetic;
+
+#[cfg(feature = "orbbec")]
+pub mod orbbec;
