@@ -23,6 +23,9 @@ pub enum CameraError {
     Timeout,
     #[error("camera SDK error: {0}")]
     Sdk(String),
+    /// The camera SDK is not usable on this machine; the text says why.
+    #[error("camera support is unavailable: {0}")]
+    RuntimeUnavailable(String),
 }
 
 /// One camera attached to the machine, as listed before it is opened.

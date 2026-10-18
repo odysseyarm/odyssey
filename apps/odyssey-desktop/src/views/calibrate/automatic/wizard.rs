@@ -24,6 +24,7 @@ use dioxus_router::navigator;
 use dioxus::core::Task;
 use dioxus::{logger::tracing, prelude::*};
 use odyssey_autocalib::camera::{CameraInfo, CaptureSettings};
+use odyssey_autocalib::orbbec::RuntimeStatus;
 use odyssey_autocalib::pattern::Pattern;
 use odyssey_autocalib::session::{SessionOptions, Step};
 use odyssey_hub_common::config::{self, MonitorKey, UiState};
@@ -33,8 +34,8 @@ use super::pattern_window::{self, PatternDisplay, PatternLoss, PatternMode};
 use super::settings::{parse_diagonal, DiagonalError, COLOR_EXPOSURE_RANGE_US, IR_EXPOSURE_RANGE_US};
 use super::screens::{default_screen, saved_screens, SCREEN_COUNT};
 use super::worker::{
-    Backend, Command, Event, Failure, FailureKind, Finished, MarkerFrame, Mode, OpenRequest, PreviewFrame,
-    SessionEvent, Worker,
+    Backend, Command, Event, Failure, FailureKind, Finished, ListError, MarkerFrame, Mode, OpenRequest,
+    PreviewFrame, SessionEvent, Worker,
 };
 use crate::cli::{self, CalibrateArgs};
 use crate::components::screen_picker::{monitor_key, MonitorSelection};
@@ -87,6 +88,8 @@ impl Stage {
 pub enum CameraList {
     Searching,
     Found(Vec<CameraInfo>),
+    /// The camera library is not usable; Setup explains why and what to do.
+    Unavailable(RuntimeStatus),
     Failed(String),
 }
 
@@ -685,7 +688,8 @@ impl Wizard {
                 *self.list_pending.write() = false;
                 *self.cameras.write() = match result {
                     Ok(list) => CameraList::Found(list),
-                    Err(e) => CameraList::Failed(e),
+                    Err(ListError::Runtime(status)) => CameraList::Unavailable(status),
+                    Err(ListError::Camera(e)) => CameraList::Failed(e),
                 };
                 self.maybe_auto_start();
             }

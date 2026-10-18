@@ -1,10 +1,16 @@
-//! Lists Orbbec cameras and, if one is attached, streams for about three
-//! seconds while printing its geometry and frame statistics.
+//! Reports whether the Orbbec SDK can be loaded, lists Orbbec cameras and, if
+//! one is attached, streams for about three seconds while printing its geometry
+//! and frame statistics.
+//!
+//! The SDK is found as described in `odyssey_autocalib::orbbec::runtime`;
+//! `ODYSSEY_ORBBEC_SDK_DIR` points the probe at a particular install. The exit
+//! code is 0 whenever the program runs to the end, including when the SDK or
+//! the camera is missing; the printed text says what happened.
 
 use std::time::{Duration, Instant};
 
 use odyssey_autocalib::camera::{CameraBackend, CameraError, CaptureSettings, Intrinsics};
-use odyssey_autocalib::orbbec::OrbbecBackend;
+use odyssey_autocalib::orbbec::{runtime_status, OrbbecBackend};
 
 fn describe(name: &str, i: &Intrinsics) {
     println!(
@@ -13,9 +19,25 @@ fn describe(name: &str, i: &Intrinsics) {
     );
 }
 
-fn main() -> Result<(), CameraError> {
+fn main() {
+    let status = runtime_status(None);
+    println!("runtime: {status}");
+    println!("runtime: {status:?}");
+    if let Err(e) = probe() {
+        println!("probe stopped: {e}");
+    }
+}
+
+fn probe() -> Result<(), CameraError> {
     let backend = OrbbecBackend::new();
-    let cameras = backend.list()?;
+    let cameras = match backend.list() {
+        Ok(cameras) => cameras,
+        Err(e @ CameraError::RuntimeUnavailable(_)) => {
+            println!("cameras: not listed ({e})");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     if cameras.is_empty() {
         println!("no camera found");
         return Ok(());

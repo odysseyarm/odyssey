@@ -20,8 +20,9 @@ use dioxus::logger::tracing;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{ExtendedColorType, GrayImage, RgbImage};
-use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CameraStream, CaptureSettings};
+use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CaptureSettings};
 use odyssey_autocalib::markers::MarkerError;
+use odyssey_autocalib::orbbec::{self, OrbbecBackend, RuntimeStatus};
 use odyssey_autocalib::session::{
     Hint, MarkerHint, MarkerPreview, Preview, Session, SessionError, SessionOptions, Step,
 };
@@ -49,41 +50,33 @@ pub const DEMO_DEFAULT_DIAGONAL_IN: f64 = 55.0;
 pub enum Backend {
     /// The simulated camera, and nothing else.
     Demo,
-    /// Attached hardware: Orbbec cameras when the `orbbec` feature is built in,
-    /// otherwise none.
+    /// Attached Orbbec cameras. Needs the Orbbec SDK installed on this machine;
+    /// without it listing fails with [`ListError::Runtime`].
     Hardware,
 }
 
-#[cfg(feature = "orbbec")]
-fn list_hardware() -> Result<Vec<CameraInfo>, CameraError> {
-    odyssey_autocalib::orbbec::OrbbecBackend::new().list()
+/// Why a camera listing has no list to show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListError {
+    /// The camera library is missing, broken or of an unsupported version.
+    Runtime(RuntimeStatus),
+    /// The library is there but enumerating cameras failed.
+    Camera(String),
 }
 
-#[cfg(not(feature = "orbbec"))]
-fn list_hardware() -> Result<Vec<CameraInfo>, CameraError> {
-    Ok(Vec::new())
-}
-
-#[cfg(feature = "orbbec")]
-fn open_hardware(
-    camera: &CameraInfo,
-    settings: &CaptureSettings,
-) -> Result<Box<dyn CameraStream>, CameraError> {
-    odyssey_autocalib::orbbec::OrbbecBackend::new().open(camera, settings)
-}
-
-#[cfg(not(feature = "orbbec"))]
-fn open_hardware(
-    _camera: &CameraInfo,
-    _settings: &CaptureSettings,
-) -> Result<Box<dyn CameraStream>, CameraError> {
-    Err(CameraError::NoDevice)
+fn list_hardware() -> Result<Vec<CameraInfo>, ListError> {
+    match orbbec::runtime_status(None) {
+        RuntimeStatus::Available { .. } => {
+            OrbbecBackend::new().list().map_err(|e| ListError::Camera(e.to_string()))
+        }
+        unavailable => Err(ListError::Runtime(unavailable)),
+    }
 }
 
 impl Backend {
-    fn list(self) -> Result<Vec<CameraInfo>, CameraError> {
+    fn list(self) -> Result<Vec<CameraInfo>, ListError> {
         match self {
-            Self::Demo => SyntheticBackend::default().list(),
+            Self::Demo => SyntheticBackend::default().list().map_err(|e| ListError::Camera(e.to_string())),
             Self::Hardware => list_hardware(),
         }
     }
@@ -98,7 +91,7 @@ impl Backend {
                 );
                 SyntheticBackend::new(scene).open(&request.camera, &request.settings)?
             }
-            Self::Hardware => open_hardware(&request.camera, &request.settings)?,
+            Self::Hardware => OrbbecBackend::new().open(&request.camera, &request.settings)?,
         };
         Ok(Session::start(stream, request.aspect, request.options.clone()))
     }
@@ -161,7 +154,7 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
-    Cameras(Result<Vec<CameraInfo>, String>),
+    Cameras(Result<Vec<CameraInfo>, ListError>),
     /// Something about the camera session `session`; the UI drops events of
     /// sessions it has already abandoned.
     Session { session: u64, event: SessionEvent },
@@ -429,7 +422,7 @@ impl Engine {
     fn handle(&mut self, command: Command) {
         match command {
             Command::ListCameras => {
-                let result = self.backend.list().map_err(|e| e.to_string());
+                let result = self.backend.list();
                 let _ = self.events.send(Event::Cameras(result));
             }
             Command::Open { session, request } => {

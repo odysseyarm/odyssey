@@ -8,16 +8,15 @@
 //!
 //! Camera access goes through [`camera::CameraBackend`], so the algorithm runs
 //! against the [`synthetic`] backend in tests and against real hardware through
-//! [`orbbec`].
+//! [`orbbec`], which loads the Orbbec SDK at run time and works without it
+//! being installed until a camera is actually needed.
 
 pub mod camera;
 pub mod imu;
 pub mod markers;
+pub mod orbbec;
 pub mod pattern;
 pub mod plane;
 pub mod session;
 pub mod solve;
 pub mod synthetic;
-
-#[cfg(feature = "orbbec")]
-pub mod orbbec;
