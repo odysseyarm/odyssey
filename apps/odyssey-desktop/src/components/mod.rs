@@ -9,3 +9,6 @@ pub use firmware_update::{DeviceFirmwareUpdate, FirmwareUpdateManager, UpdatingD
 
 pub mod sensor_settings;
 pub use sensor_settings::{SensorSettings, TransportModePanel};
+
+pub mod screen_picker;
+pub use screen_picker::{use_monitor_selection, ScreenPicker};

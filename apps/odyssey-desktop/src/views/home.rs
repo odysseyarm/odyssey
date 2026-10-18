@@ -6,8 +6,8 @@
 
 use crate::components::crosshair_manager::TrackingSender;
 use crate::components::{
-    DeviceFirmwareUpdate, FirmwareUpdateManager, SensorSettings, TransportModePanel,
-    UpdatingDeviceRow,
+    use_monitor_selection, DeviceFirmwareUpdate, FirmwareUpdateManager, ScreenPicker,
+    SensorSettings, TransportModePanel, UpdatingDeviceRow,
 };
 use crate::components::firmware_update::{ensure_firmware_channel_loaded, FIRMWARE_CHANNEL};
 use crate::hub;
@@ -18,11 +18,8 @@ use odyssey_hub_server::firmware::{self, FirmwareManifest};
 pub fn Home() -> Element {
     let hub = use_context::<Signal<hub::HubContext>>();
 
-    let window = dioxus::desktop::use_window();
-    let options = use_memo(move || window.available_monitors().collect::<Vec<_>>());
-
-    let mut selected_index = use_signal(|| 0_usize);
-    let selected_value = use_memo(move || options().get(selected_index()).cloned());
+    let monitor_selection = use_monitor_selection();
+    let selected_monitor = move || monitor_selection.selected_handle();
 
     let devices = (hub().devices)();
     let battery_states = (hub().battery_states)();
@@ -155,41 +152,20 @@ pub fn Home() -> Element {
                     }
                 }
 
-                form {
-                    class: "flex flex-col text-gray-500 dark:text-gray-400 gap-4",
+                div {
+                    class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow flex flex-col gap-3",
 
-                    label {
-                        class: "text-base font-medium",
-                        "Choose a display:"
-                    }
+                    ScreenPicker { selection: monitor_selection }
 
                     div {
-                        class: "flex flex-row items-center gap-2",
-
-                        select {
-                            class: "bg-gray-50 border border-gray-300 text-gray-900 text-base rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500",
-                            onchange: move |evt| {
-                                if let Ok(index) = evt.value().parse::<usize>() {
-                                    if index < options().len() {
-                                        selected_index.set(index);
-                                    }
-                                }
-                            },
-                            option { value: "", disabled: true, selected: selected_value().is_none(), "Select an option" },
-                            for (i, display) in options().iter().enumerate() {
-                                option {
-                                    value: "{i}",
-                                    "{display.name().unwrap_or(\"Unknown Display\".to_string())}",
-                                }
-                            }
-                        }
-
+                        class: "flex flex-row justify-end",
                         button {
-                            class: "w-12 shrink-0 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-base p-2.5 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800",
+                            class: "shrink-0 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-base px-5 py-2.5 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800 disabled:opacity-50 disabled:pointer-events-none",
                             r#type: "button",
+                            disabled: monitor_selection.selected().is_none(),
                             onclick: move |_| {
                                 async move {
-                                    if let Some(sel) = selected_value() {
+                                    if let Some(sel) = selected_monitor() {
                                         let tracking_sender = TrackingSender(hub.peek().tracking_events.clone());
                                         let dom = VirtualDom::new_with_props(crate::views::Zero, crate::views::zero::ZeroProps { hub, tracking_sender });
                                         let config = dioxus::desktop::Config::default().with_menu(None).with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::WindowCloses).with_window(WindowBuilder::new().with_position(sel.position()).with_fullscreen(Some(Fullscreen::Borderless(Some(sel)))));
