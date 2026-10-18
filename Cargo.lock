@@ -9511,6 +9511,7 @@ dependencies = [
  "heapless 0.9.3",
  "hex",
  "interprocess 2.4.4",
+ "json5",
  "nalgebra 0.35.0",
  "nusb",
  "odyssey-autocalib",
@@ -9539,6 +9540,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "winreg",
  "winres",
 ]
 

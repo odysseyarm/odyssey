@@ -26,6 +26,8 @@ pub fn Home() -> Element {
 
     // Firmware manifest - fetched once and shared across all device firmware update components
     let manifest: Signal<Option<FirmwareManifest>> = use_signal(|| None);
+    // Why there is no manifest, for the offline notice. The retrying itself is only logged.
+    let manifest_error: Signal<Option<String>> = use_signal(|| None);
 
     // Firmware update manager - shared state between tokio tasks and UI
     let manager = use_hook(FirmwareUpdateManager::new);
@@ -54,6 +56,7 @@ pub fn Home() -> Element {
     use_future(ensure_firmware_channel_loaded);
     use_resource({
         let mut manifest = manifest.clone();
+        let mut manifest_error = manifest_error;
         move || async move {
             // Reading the signal here re-runs this when Settings changes it.
             let Some(channel) = FIRMWARE_CHANNEL() else {
@@ -69,10 +72,12 @@ pub fn Home() -> Element {
                             channel.name(),
                             m.version
                         );
+                        manifest_error.set(None);
                         manifest.set(Some(m));
                         return;
                     }
                     Err(e) => {
+                        manifest_error.set(Some(e.to_string()));
                         tracing::warn!("Failed to fetch firmware manifest, retrying: {}", e);
                         tokio::time::sleep(delay).await;
                         delay = (delay * 2).min(std::time::Duration::from_secs(300));
@@ -95,6 +100,8 @@ pub fn Home() -> Element {
                     class: "text-center text-2xl font-bold text-gray-900 dark:text-white",
                     "Welcome!"
                 }
+
+                OfflineNotice { error: manifest_error() }
 
                 // Connected devices section
                 {
@@ -354,6 +361,39 @@ fn ConnectedDeviceRow(props: ConnectedDeviceRowProps) -> Element {
             SensorSettings {
                 hub: hub,
                 device: device.clone(),
+            }
+        }
+    }
+}
+
+/// Says so when offline mode is on and where firmware updates come from, and
+/// shows what is wrong with the firmware pack or the policy file. Shows nothing
+/// when everything is online and fine.
+#[component]
+fn OfflineNotice(error: Option<String>) -> Element {
+    let policy = odyssey_hub_server::policy::current();
+    if !policy.offline && policy.issues.is_empty() {
+        return rsx! {};
+    }
+    let dir = odyssey_hub_server::policy::firmware_pack_dir()
+        .display()
+        .to_string();
+
+    rsx! {
+        div {
+            role: "note",
+            class: "flex flex-col gap-1 rounded-lg border-2 border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
+            if policy.offline {
+                span { class: "font-semibold", "Offline mode is on" }
+                span {
+                    "Odyssey won't connect to the internet. Firmware updates come from the firmware pack in {dir}."
+                }
+                if let Some(error) = error {
+                    span { role: "alert", class: "font-medium", "{error}" }
+                }
+            }
+            for issue in policy.issues.iter() {
+                span { key: "{issue}", role: "alert", class: "font-medium", "{issue}" }
             }
         }
     }

@@ -2,6 +2,7 @@ mod accessories;
 mod device_tasks;
 pub mod firmware;
 mod migration;
+pub mod policy;
 mod screen_watch;
 mod server;
 

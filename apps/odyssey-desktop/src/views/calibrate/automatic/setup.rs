@@ -262,6 +262,14 @@ fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
                                  Odyssey installer again, choose Change, and tick \"Orbbec camera support\"."
                             }
                         },
+                        Delivery::Offline => rsx! {
+                            p {
+                                class: "max-w-xl text-sm text-gray-600 dark:text-gray-300",
+                                "Offline mode is on, so Odyssey won't download the camera software. Install it from \
+                                 the offline Odyssey installer (the \"Orbbec camera support\" option), or ask your \
+                                 administrator."
+                            }
+                        },
                     }
                 }
                 button {

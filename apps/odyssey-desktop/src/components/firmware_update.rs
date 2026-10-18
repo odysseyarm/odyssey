@@ -59,14 +59,20 @@ pub struct HeldBack {
 }
 
 fn held_back_note(held_back: &HeldBack) -> Element {
+    // Offline mode forbids offering a link to the web.
+    let offline = odyssey_hub_server::policy::offline();
     rsx! {
         span {
             class: "text-xs text-gray-500 dark:text-gray-400 italic",
             "v{held_back.version} needs Odyssey Desktop {held_back.min_desktop} or newer. "
-            a {
-                class: "underline text-blue-600 dark:text-blue-400",
-                href: DESKTOP_RELEASES_URL,
-                "Get the latest"
+            if offline {
+                "Ask your Odyssey provider for it."
+            } else {
+                a {
+                    class: "underline text-blue-600 dark:text-blue-400",
+                    href: DESKTOP_RELEASES_URL,
+                    "Get the latest"
+                }
             }
         }
     }

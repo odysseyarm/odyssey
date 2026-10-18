@@ -35,6 +35,7 @@ odyssey-common = { path = "../odyssey-common" }
 socket2 = "0.5.7"
 arrayvec = { workspace = true }
 serde_json = { workspace = true }
+json5 = "0.4.1"
 sysinfo = "0.32.0"
 arc-swap = "1.7.1"
 interprocess = { workspace = true, features = ["tokio"] }
@@ -47,6 +48,9 @@ reqwest = { workspace = true, features = ["json"] }
 sha2 = { workspace = true }
 hex = { workspace = true }
 thiserror = "2.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winres = "0.1.12"
