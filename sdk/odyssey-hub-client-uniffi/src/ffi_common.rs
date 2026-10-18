@@ -290,6 +290,9 @@ impl From<Device> for common::device::Device {
             events_connected: device.events_connected,
             product_id: device.product_id.unwrap_or(0),
             name: common::device::Device::name_bytes(&device.name),
+            // The bindings do not carry the net core release; the server resolves a
+            // device by uuid, so a reconstructed device does not need it.
+            netcore_release: 0,
         }
     }
 }

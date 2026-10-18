@@ -76,6 +76,11 @@ pub struct Device {
     /// Human-readable device name, null-terminated, up to 32 UTF-8 bytes + null.
     /// C/C++ layout: `uint8_t name[33]`
     pub name: [u8; 33],
+    /// Release counter of the nRF5340 net core (BLE controller) firmware, 0 if unknown.
+    ///
+    /// Unknown covers a device whose application predates the property, a net core
+    /// that does not report one, and a read that has not completed yet.
+    pub netcore_release: u16,
 }
 
 impl Device {
