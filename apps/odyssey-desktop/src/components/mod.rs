@@ -12,3 +12,5 @@ pub use sensor_settings::{SensorSettings, TransportModePanel};
 
 pub mod screen_picker;
 pub use screen_picker::{use_monitor_selection, ScreenPicker};
+
+pub mod wizard;
