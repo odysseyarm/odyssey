@@ -1,12 +1,12 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
-use crate::{accessory::AccessoryInfo, hexkeymap::HexKeyMapN};
-use app_dirs2::{get_app_root, AppDataType, AppInfo};
+use app_dirs2::{AppDataType, AppInfo, get_app_root};
 use odyssey_common::ScreenCalibration;
 use tokio::fs;
+
+use crate::accessory::AccessoryInfo;
+use crate::hexkeymap::HexKeyMapN;
 
 pub const APP_INFO: AppInfo = AppInfo {
     name: "odyssey",
@@ -157,17 +157,22 @@ impl UiState {
     pub fn remember_calibration_screen(&mut self, monitor: MonitorKey, screen_id: u8) {
         self.calibration_screens
             .retain(|s| s.monitor != monitor && s.screen_id != screen_id);
-        self.calibration_screens.push(MonitorScreen { monitor, screen_id });
+        self.calibration_screens
+            .push(MonitorScreen { monitor, screen_id });
     }
 
     /// The kind of display last calibrated on `monitor`, if any.
     pub fn display_kind(&self, monitor: &MonitorKey) -> Option<DisplayKind> {
-        self.display_kinds.iter().find(|k| &k.monitor == monitor).map(|k| k.kind)
+        self.display_kinds
+            .iter()
+            .find(|k| &k.monitor == monitor)
+            .map(|k| k.kind)
     }
 
     pub fn remember_display_kind(&mut self, monitor: MonitorKey, kind: DisplayKind) {
         self.display_kinds.retain(|k| k.monitor != monitor);
-        self.display_kinds.push(MonitorDisplayKind { monitor, kind });
+        self.display_kinds
+            .push(MonitorDisplayKind { monitor, kind });
     }
 }
 
@@ -657,7 +662,10 @@ mod tests {
     fn display_kind_is_written_in_plain_words() {
         let json = serde_json::to_string(&DisplayKind::Projector).unwrap();
         assert_eq!(json, "\"projector\"");
-        assert_eq!(json5::from_str::<DisplayKind>("\"flat\"").unwrap(), DisplayKind::Flat);
+        assert_eq!(
+            json5::from_str::<DisplayKind>("\"flat\"").unwrap(),
+            DisplayKind::Flat
+        );
     }
 
     #[test]

@@ -20,14 +20,24 @@ pub struct Message {
 }
 
 fn message(tone: Tone, icon: Icon, title: &str, detail: &str) -> Message {
-    Message { tone, icon, title: title.into(), detail: detail.into() }
+    Message {
+        tone,
+        icon,
+        title: title.into(),
+        detail: detail.into(),
+    }
 }
 
 /// What to tell the tech about the camera's view of the dot pattern.
 pub fn screen_hint(hint: Hint) -> Message {
     use Tone::{Attention, Good};
     match hint {
-        Hint::Ready => message(Good, Icon::Check, "Looks good", "Hold the camera steady and press Next."),
+        Hint::Ready => message(
+            Good,
+            Icon::Check,
+            "Looks good",
+            "Hold the camera steady and press Next.",
+        ),
         Hint::ScreenNotFound => message(
             Attention,
             Icon::Viewfinder,
@@ -95,7 +105,12 @@ pub fn screen_hint(hint: Hint) -> Message {
 pub fn marker_hint(hint: MarkerHint) -> Message {
     use Tone::{Attention, Good};
     match hint {
-        MarkerHint::Ready => message(Good, Icon::Check, "All 6 markers found", "Hold still. Measuring starts by itself."),
+        MarkerHint::Ready => message(
+            Good,
+            Icon::Check,
+            "All 6 markers found",
+            "Hold still. Measuring starts by itself.",
+        ),
         MarkerHint::NoMarkers => message(
             Attention,
             Icon::Bulb,
@@ -189,10 +204,15 @@ pub fn sides_words(sides: SideSet) -> String {
     if sides.count() == 4 {
         return "edges on all four sides".into();
     }
-    let names: Vec<&str> = [(sides.top, "top"), (sides.right, "right"), (sides.bottom, "bottom"), (sides.left, "left")]
-        .into_iter()
-        .filter_map(|(on, name)| on.then_some(name))
-        .collect();
+    let names: Vec<&str> = [
+        (sides.top, "top"),
+        (sides.right, "right"),
+        (sides.bottom, "bottom"),
+        (sides.left, "left"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
     match names.as_slice() {
         [] => "edges".into(),
         [one] => format!("{one} edge"),
@@ -212,11 +232,23 @@ pub fn retry_label(kind: FailureKind) -> &'static str {
 /// Where to turn off overscan, for the Details section. Menu names change
 /// between models and years, so the list says so.
 pub const OVERSCAN_HELP: [(&str, &str); 5] = [
-    ("Any TV", "Look in the picture settings for Picture Size, Aspect Ratio or Screen Fit. Choose 'Just Scan', 'Screen Fit', 'Full Pixel', 'Unscaled' or switch 'Overscan' off. Game mode or PC mode often does this for you."),
-    ("Samsung", "Picture → Picture Size Settings → Picture Size: Screen Fit, or switch to Game mode."),
-    ("LG", "Picture → Aspect Ratio → Just Scan (or use the Game picture mode)."),
+    (
+        "Any TV",
+        "Look in the picture settings for Picture Size, Aspect Ratio or Screen Fit. Choose 'Just Scan', 'Screen Fit', 'Full Pixel', 'Unscaled' or switch 'Overscan' off. Game mode or PC mode often does this for you.",
+    ),
+    (
+        "Samsung",
+        "Picture → Picture Size Settings → Picture Size: Screen Fit, or switch to Game mode.",
+    ),
+    (
+        "LG",
+        "Picture → Aspect Ratio → Just Scan (or use the Game picture mode).",
+    ),
     ("Sony", "Display Area → Full Pixel."),
-    ("The computer", "In the graphics driver's settings (NVIDIA, AMD or Intel) turn scaling off and set overscan to 0 %."),
+    (
+        "The computer",
+        "In the graphics driver's settings (NVIDIA, AMD or Intel) turn scaling off and set overscan to 0 %.",
+    ),
 ];
 
 /// Text and bar position for a running measurement.
@@ -235,8 +267,14 @@ pub fn progress(step: Step, what: &str) -> Progress {
             // Capturing fills most of the bar; solving and done take the rest.
             fraction: 0.85 * frame as f32 / total.max(1) as f32,
         },
-        Step::Solving => Progress { text: format!("Working out {what}…"), fraction: 0.9 },
-        Step::Done => Progress { text: "Done".into(), fraction: 1.0 },
+        Step::Solving => Progress {
+            text: format!("Working out {what}…"),
+            fraction: 0.9,
+        },
+        Step::Done => Progress {
+            text: "Done".into(),
+            fraction: 1.0,
+        },
     }
 }
 
@@ -262,7 +300,10 @@ mod tests {
     fn every_hint_has_words_and_only_ready_is_good() {
         for hint in ALL_HINTS {
             let m = screen_hint(hint);
-            assert!(!m.title.trim().is_empty() && !m.detail.trim().is_empty(), "{hint:?}");
+            assert!(
+                !m.title.trim().is_empty() && !m.detail.trim().is_empty(),
+                "{hint:?}"
+            );
             assert_eq!(m.tone == Tone::Good, hint == Hint::Ready, "{hint:?}");
         }
     }
@@ -291,10 +332,21 @@ mod tests {
         ];
         for hint in all {
             let m = marker_hint(hint);
-            assert!(!m.title.trim().is_empty() && !m.detail.trim().is_empty(), "{hint:?}");
+            assert!(
+                !m.title.trim().is_empty() && !m.detail.trim().is_empty(),
+                "{hint:?}"
+            );
         }
-        assert!(marker_hint(MarkerHint::TooFewMarkers { found: 4 }).title.contains('4'));
-        assert!(marker_hint(MarkerHint::WrongPlace { matched: 2 }).title.contains('2'));
+        assert!(
+            marker_hint(MarkerHint::TooFewMarkers { found: 4 })
+                .title
+                .contains('4')
+        );
+        assert!(
+            marker_hint(MarkerHint::WrongPlace { matched: 2 })
+                .title
+                .contains('2')
+        );
         assert_eq!(marker_hint(MarkerHint::Ready).tone, Tone::Good);
     }
 
@@ -310,11 +362,24 @@ mod tests {
             FailureKind::Internal,
         ];
         let mut titles = Vec::new();
-        let some_sides = SideSet { top: true, ..SideSet::default() };
-        let all: Vec<FailureKind> = all.into_iter().chain([FailureKind::EdgesCropped(some_sides), FailureKind::SizeInvalid, FailureKind::SizeShape]).collect();
+        let some_sides = SideSet {
+            top: true,
+            ..SideSet::default()
+        };
+        let all: Vec<FailureKind> = all
+            .into_iter()
+            .chain([
+                FailureKind::EdgesCropped(some_sides),
+                FailureKind::SizeInvalid,
+                FailureKind::SizeShape,
+            ])
+            .collect();
         for kind in all.iter().copied() {
             let m = failure_message(kind, Some(SizeOrigin::Entered));
-            assert!(!m.title.trim().is_empty() && m.detail.ends_with("."), "{kind:?}");
+            assert!(
+                !m.title.trim().is_empty() && m.detail.ends_with("."),
+                "{kind:?}"
+            );
             assert_eq!(m.tone, Tone::Bad);
             titles.push(m.title);
         }
@@ -333,20 +398,45 @@ mod tests {
 
     #[test]
     fn cropped_sides_are_named() {
-        let sides = |top, right, bottom, left| SideSet { top, right, bottom, left };
+        let sides = |top, right, bottom, left| SideSet {
+            top,
+            right,
+            bottom,
+            left,
+        };
         assert_eq!(sides_words(sides(true, false, false, false)), "top edge");
-        assert_eq!(sides_words(sides(false, true, false, true)), "right and left edges");
-        assert_eq!(sides_words(sides(true, true, false, true)), "top, right and left edges");
-        assert_eq!(sides_words(sides(true, true, true, true)), "edges on all four sides");
-        let m = failure_message(FailureKind::EdgesCropped(sides(false, false, true, false)), None);
+        assert_eq!(
+            sides_words(sides(false, true, false, true)),
+            "right and left edges"
+        );
+        assert_eq!(
+            sides_words(sides(true, true, false, true)),
+            "top, right and left edges"
+        );
+        assert_eq!(
+            sides_words(sides(true, true, true, true)),
+            "edges on all four sides"
+        );
+        let m = failure_message(
+            FailureKind::EdgesCropped(sides(false, false, true, false)),
+            None,
+        );
         assert!(m.detail.contains("bottom edge") && m.detail.contains("Just Scan"));
     }
 
     #[test]
     fn the_cropped_hint_points_at_the_tv_menu() {
         let m = screen_hint(Hint::EdgesCropped);
-        assert!(m.detail.contains("Just Scan") && m.detail.contains("Screen Fit") && m.detail.contains("PC mode"));
-        assert!(OVERSCAN_HELP.iter().all(|(brand, steps)| !brand.is_empty() && !steps.is_empty()));
+        assert!(
+            m.detail.contains("Just Scan")
+                && m.detail.contains("Screen Fit")
+                && m.detail.contains("PC mode")
+        );
+        assert!(
+            OVERSCAN_HELP
+                .iter()
+                .all(|(brand, steps)| !brand.is_empty() && !steps.is_empty())
+        );
     }
 
     #[test]
@@ -364,7 +454,10 @@ mod tests {
             Step::Solving,
             Step::Done,
         ];
-        let fractions: Vec<_> = steps.iter().map(|&s| progress(s, "the screen").fraction).collect();
+        let fractions: Vec<_> = steps
+            .iter()
+            .map(|&s| progress(s, "the screen").fraction)
+            .collect();
         assert!(fractions.windows(2).all(|w| w[0] <= w[1]), "{fractions:?}");
         assert_eq!(fractions.last(), Some(&1.0));
         assert!(progress(steps[0], "the screen").text.contains("1 of 5"));

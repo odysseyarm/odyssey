@@ -2,28 +2,21 @@
 #![no_std]
 #![feature(never_type)]
 
+use common::object_mode::{ObjectModeContext, object_mode};
+use common::{Paj, settings, usb};
 use defmt_rtt as _;
-use panic_probe as _;
-
 use embassy_executor::Spawner;
-use embassy_nrf::bind_interrupts;
-use embassy_nrf::{
-    config::{Config, Reg0Voltage},
-    interrupt,
-    nvmc::Nvmc,
-    pac, peripherals, spim,
-};
+use embassy_nrf::config::{Config, Reg0Voltage};
+use embassy_nrf::nvmc::Nvmc;
+use embassy_nrf::{bind_interrupts, interrupt, pac, peripherals, spim};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Timer;
+use panic_probe as _;
 use static_cell::StaticCell;
-
-use common::{
-    Paj,
-    object_mode::{ObjectModeContext, object_mode},
-    settings, usb,
-};
-use vm_board::{VmPlatform, imu, l2cap::VmL2capChannels, pins::Board, split_board, utils};
+use vm_board::l2cap::VmL2capChannels;
+use vm_board::pins::Board;
+use vm_board::{VmPlatform, imu, split_board, utils};
 
 const DEVICE_INTERFACE_GUID: &str = "{4d36e96c-e325-11ce-bfc1-08002be10318}";
 

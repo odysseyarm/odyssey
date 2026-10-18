@@ -1,8 +1,8 @@
 //! Bond command — manually create a bond between a dongle and a device
 
-use odyssey_usb::device::{MuxDevice, VmDevice};
 use clap::Args;
 use nusb::MaybeFuture as _;
+use odyssey_usb::device::{MuxDevice, VmDevice};
 
 #[derive(Args)]
 pub struct BondArgs {
@@ -53,7 +53,9 @@ async fn list_vm_devices() -> Result<Vec<nusb::DeviceInfo>, String> {
 /// The serial is 16 uppercase hex chars representing 8 bytes (low word then high word).
 fn bd_addr_from_serial(serial: &str) -> Result<[u8; 6], String> {
     if serial.len() < 12 {
-        return Err(format!("Serial number too short to derive BD address: {serial}"));
+        return Err(format!(
+            "Serial number too short to derive BD address: {serial}"
+        ));
     }
     let mut addr = [0u8; 6];
     for i in 0..6 {

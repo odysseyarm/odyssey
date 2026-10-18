@@ -7,14 +7,11 @@
 
 use std::time::Duration;
 
-use dioxus::{
-    desktop::{
-        tao::{monitor::MonitorHandle, window::Fullscreen},
-        use_window, Config, DesktopContext, WindowBuilder, WindowCloseBehaviour,
-    },
-    logger::tracing,
-    prelude::*,
-};
+use dioxus::desktop::tao::monitor::MonitorHandle;
+use dioxus::desktop::tao::window::Fullscreen;
+use dioxus::desktop::{Config, DesktopContext, WindowBuilder, WindowCloseBehaviour, use_window};
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use odyssey_hub_common::config::{self, MonitorKey};
 
 /// How often to look for monitors being plugged in or removed.

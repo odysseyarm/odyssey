@@ -6,13 +6,15 @@
 //! - The actual update runs entirely on tokio::spawn, independent of Dioxus component lifecycle
 //! - Dioxus components poll the shared state periodically to update the UI
 
-use dioxus::{logger::tracing, prelude::*};
-use slab::Slab;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, DeviceCapabilities as DC};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
-use std::collections::HashMap;
 use parking_lot::Mutex;
-use std::sync::Arc;
+use slab::Slab;
 
 /// The firmware channel in effect, `None` until the saved choice has loaded.
 /// Settings writes it and the manifest fetch follows it, so a change applies
@@ -287,9 +289,9 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     // not answered (e.g. right after a transport swap), so it is not
                     // judged as "behind".
                     let readable_netcore = firmware::known_netcore_release(
-                        device
-                            .capabilities
-                            .contains(odyssey_hub_common::device::DeviceCapabilities::NETCORE_KNOWN),
+                        device.capabilities.contains(
+                            odyssey_hub_common::device::DeviceCapabilities::NETCORE_KNOWN,
+                        ),
                         device.netcore_release,
                     );
                     let is_newer = |fw: &firmware::FirmwareEntry| {
@@ -297,14 +299,20 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                             || firmware::is_worth_installing(fw, device_version, readable_netcore)
                     };
                     let maybe_fw = offer.offered.filter(|fw| is_newer(fw));
-                    let held_back = offer.held_back.filter(|fw| is_newer(fw)).map(|fw| HeldBack {
-                        version: fw.version.clone(),
-                        min_desktop: fw.min_desktop.clone(),
-                    });
-                    let net_core_blocked =
-                        offer.net_core_blocked.filter(|fw| is_newer(fw)).map(|fw| NetCoreBlocked {
+                    let held_back = offer
+                        .held_back
+                        .filter(|fw| is_newer(fw))
+                        .map(|fw| HeldBack {
                             version: fw.version.clone(),
+                            min_desktop: fw.min_desktop.clone(),
                         });
+                    let net_core_blocked =
+                        offer
+                            .net_core_blocked
+                            .filter(|fw| is_newer(fw))
+                            .map(|fw| NetCoreBlocked {
+                                version: fw.version.clone(),
+                            });
 
                     if let Some(available_fw) = maybe_fw {
                         let available_version = available_fw.version.clone();
@@ -312,7 +320,9 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
 
                         // DFU devices always show the update button (they need to be flashed to
                         // recover).  Normal devices need CONTROL capability for USB flashing.
-                        if is_dfu_device || device.capabilities.contains(DeviceCapabilities::CONTROL) {
+                        if is_dfu_device
+                            || device.capabilities.contains(DeviceCapabilities::CONTROL)
+                        {
                             let new_state = FirmwareUpdateState::Available {
                                 current: device_version,
                                 available: available_version.clone(),
@@ -409,7 +419,8 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
             let devices = props.devices;
             let manifest = manifest.clone();
             let device = device.clone();
-            let is_dfu_bootloader = device.capabilities.contains(DC::DFU) && !device.capabilities.contains(DC::CONTROL);
+            let is_dfu_bootloader =
+                device.capabilities.contains(DC::DFU) && !device.capabilities.contains(DC::CONTROL);
 
             rsx! {
                 div {
@@ -662,12 +673,20 @@ async fn enter_dfu(
     let already_in_dfu = firmware::is_device_in_dfu_mode(&device_uuid, vid, pid);
 
     if already_in_dfu {
-        tracing::info!("Device {:02x?} is already in DFU mode, skipping detach", device_uuid);
+        tracing::info!(
+            "Device {:02x?} is already in DFU mode, skipping detach",
+            device_uuid
+        );
         return Ok(());
     }
 
     // Send DFU detach
-    tracing::info!("Sending DFU detach to {:04x}:{:04x} (uuid {:02x?})", vid, pid, device_uuid);
+    tracing::info!(
+        "Sending DFU detach to {:04x}:{:04x} (uuid {:02x?})",
+        vid,
+        pid,
+        device_uuid
+    );
     manager.set_state(device_uuid, FirmwareUpdateState::Detaching);
     firmware::send_dfu_detach(&device_uuid, vid, pid)
         .await
@@ -941,7 +960,9 @@ async fn run_firmware_update(
         tracing::info!("Downloading {} for {}", slot_file, firmware_entry.version);
         let data = firmware::download_firmware(
             &device_type,
-            firmware::ReleaseSource::Application { version: &firmware_entry.version },
+            firmware::ReleaseSource::Application {
+                version: &firmware_entry.version,
+            },
             slot_file,
             &file_entry.sha256,
         )
@@ -1076,12 +1097,25 @@ async fn ensure_bootloader(
             // out the old bootloader's enumeration first: it would otherwise
             // satisfy the wait below and be read as if it were the new one.
             manager.set_state(device_uuid, FirmwareUpdateState::Rebooting);
-            if !wait_for_bootloader_reset(&device_uuid, vid, pid, std::time::Duration::from_secs(15)).await {
+            if !wait_for_bootloader_reset(
+                &device_uuid,
+                vid,
+                pid,
+                std::time::Duration::from_secs(15),
+            )
+            .await
+            {
                 return Err("Device did not reset after the bootloader update".to_string());
             }
-            return_to_dfu(manager, device_uuid, vid, pid, std::time::Duration::from_secs(30))
-                .await
-                .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
+            return_to_dfu(
+                manager,
+                device_uuid,
+                vid,
+                pid,
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
 
             // A completed write and a returning device do not show the new
             // image is the one running. Nothing may go onto a bootloader that
@@ -1112,11 +1146,20 @@ async fn write_application(
     bootloader_image: Option<&(Vec<u8>, u16)>,
     requires_bootloader: u16,
 ) -> Result<(), String> {
-    ensure_bootloader(manager, device_uuid, vid, pid, bootloader_image, requires_bootloader).await?;
+    ensure_bootloader(
+        manager,
+        device_uuid,
+        vid,
+        pid,
+        bootloader_image,
+        requires_bootloader,
+    )
+    .await?;
 
     // Determine target slot
-    let (slot_name, slot_file, alt) = firmware::determine_target_slot_for_device(&device_uuid, vid, pid)
-        .map_err(|e| format!("Failed to determine target slot: {}", e))?;
+    let (slot_name, slot_file, alt) =
+        firmware::determine_target_slot_for_device(&device_uuid, vid, pid)
+            .map_err(|e| format!("Failed to determine target slot: {}", e))?;
 
     tracing::info!(
         "Target slot: {} (alt {}), firmware file: {}",
@@ -1201,7 +1244,9 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
         FirmwareUpdateState::Idle => "Idle".to_string(),
         FirmwareUpdateState::NeedsUsbConnection { .. } => "Plug in USB to update".to_string(),
         FirmwareUpdateState::NeedsNewerDesktop(_) => "Needs a newer Odyssey Desktop".to_string(),
-        FirmwareUpdateState::NetCoreBlockedNoPath(_) => "No update path from this net core".to_string(),
+        FirmwareUpdateState::NetCoreBlockedNoPath(_) => {
+            "No update path from this net core".to_string()
+        }
         FirmwareUpdateState::Available { .. } => "Update available".to_string(),
         FirmwareUpdateState::Downloading => "Downloading...".to_string(),
         FirmwareUpdateState::Detaching => "Preparing device...".to_string(),
@@ -1223,9 +1268,7 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
             format!("Updating radio firmware... {}%", percent)
         }
         FirmwareUpdateState::VerifyingNetCore => "Checking radio firmware...".to_string(),
-        FirmwareUpdateState::InstallingNetCore => {
-            "Installing radio firmware...".to_string()
-        }
+        FirmwareUpdateState::InstallingNetCore => "Installing radio firmware...".to_string(),
         FirmwareUpdateState::Rebooting => "Rebooting device...".to_string(),
         FirmwareUpdateState::Verifying => "Verifying update...".to_string(),
         FirmwareUpdateState::Complete => "Update complete!".to_string(),

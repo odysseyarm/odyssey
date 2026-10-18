@@ -1,5 +1,5 @@
 use embassy_futures::join::join3;
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
@@ -8,8 +8,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use trouble_host::prelude::*;
 
-use crate::settings;
-use crate::transport_mode;
+use crate::{settings, transport_mode};
 
 /// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
@@ -24,8 +23,12 @@ type Pool = DefaultPacketPool;
 struct Server {}
 
 /// Run the BLE stack.
-pub async fn run<C>(controller: C, seed: [u8; 32], device_name: &'static str, prod_prefix: &'static [u8])
-where
+pub async fn run<C>(
+    controller: C,
+    seed: [u8; 32],
+    device_name: &'static str,
+    prod_prefix: &'static [u8],
+) where
     C: Controller + bt_hci::controller::ControllerCmdSync<super::netcore::ReadNetCoreRelease>,
 {
     defmt::info!("[adv] advertising task starting");
@@ -485,7 +488,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     crate::power_state::update_led_for_ble_state().await;
     defmt::info!("[custom_task] BLE connected - LED state updated");
 
-    use embassy_futures::select::{select4, Either4};
+    use embassy_futures::select::{Either4, select4};
     match select4(
         control_tx_task(stack, control_writer, l2cap_channels.control_tx),
         control_rx_task(stack, control_reader, l2cap_channels.control_rx),
@@ -694,10 +697,11 @@ async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
     }
 }
 
-use core::sync::atomic::{AtomicBool, Ordering};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BmRaw;
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BmRaw;
 
 static ADV_RESTART_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 

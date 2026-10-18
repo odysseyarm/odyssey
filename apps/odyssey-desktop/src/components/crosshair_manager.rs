@@ -3,12 +3,11 @@
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 
-use dioxus::{
-    html::geometry::euclid::Rect,
-    logger::tracing,
-    prelude::*,
-};
-use odyssey_hub_common::{device::Device, events::TrackingEvent};
+use dioxus::html::geometry::euclid::Rect;
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
+use odyssey_hub_common::device::Device;
+use odyssey_hub_common::events::TrackingEvent;
 use tokio::sync::broadcast;
 
 /// Wrapper for broadcast::Sender that implements PartialEq (always false, triggers re-render)
@@ -66,7 +65,13 @@ pub fn CrosshairManager(
                 loop {
                     match receiver.recv().await {
                         Ok((device, tracking)) => {
-                            tracing::debug!("CrosshairManager[{}] received tracking event for device {:?}: aimpoint=({}, {})", instance_id, device.uuid, tracking.aimpoint.x, tracking.aimpoint.y);
+                            tracing::debug!(
+                                "CrosshairManager[{}] received tracking event for device {:?}: aimpoint=({}, {})",
+                                instance_id,
+                                device.uuid,
+                                tracking.aimpoint.x,
+                                tracking.aimpoint.y
+                            );
                             let rect = rect_signal.peek();
                             let width = rect.size.width as f64;
                             let height = rect.size.height as f64;
@@ -103,7 +108,9 @@ pub fn CrosshairManager(
         use_effect(move || {
             let devices = (hub().devices)();
             let current_keys: Vec<usize> = devices.iter().map(|(key, _)| key).collect();
-            crosshair_positions.write().retain(|k, _| current_keys.contains(k));
+            crosshair_positions
+                .write()
+                .retain(|k, _| current_keys.contains(k));
         });
     }
 

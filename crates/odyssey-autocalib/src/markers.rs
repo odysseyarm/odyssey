@@ -17,8 +17,14 @@ use crate::solve::ScreenFit;
 /// Marker positions as fractions of the screen's width and height, measured
 /// from the top-left corner. This is the layout the tracker hardware ships
 /// with; the order is the order of `ScreenCalibration::object_points`.
-pub const MARKER_LAYOUT: [[f64; 2]; 6] =
-    [[0.18, 0.29], [0.15, 0.82], [0.77, 0.80], [0.51, 0.35], [0.79, 0.25], [0.49, 0.76]];
+pub const MARKER_LAYOUT: [[f64; 2]; 6] = [
+    [0.18, 0.29],
+    [0.15, 0.82],
+    [0.77, 0.80],
+    [0.51, 0.35],
+    [0.79, 0.25],
+    [0.49, 0.76],
+];
 
 /// Pixels brighter than this fraction of the normalized range count as marker.
 const RELATIVE_THRESHOLD: f64 = 150.0 / 255.0;
@@ -50,7 +56,9 @@ pub enum MarkerError {
 
 /// Finds bright round spots in an infrared image, largest first.
 pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
-    let (lo, hi) = ir.pixels().fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+    let (lo, hi) = ir
+        .pixels()
+        .fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
     if (hi as f64 - lo as f64) < MIN_CONTRAST {
         return Vec::new();
     }
@@ -59,12 +67,23 @@ pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
     let width = ir.width() as usize;
     let weight = |x: u32, y: u32| {
         let v = raw[y as usize * width + x as usize] as f64;
-        if v >= threshold { v - lo as f64 + 1.0 } else { 0.0 }
+        if v >= threshold {
+            v - lo as f64 + 1.0
+        } else {
+            0.0
+        }
     };
     let mut blobs: Vec<MarkerBlob> = components(ir.width(), ir.height(), weight)
         .into_iter()
-        .filter(|c| (MIN_AREA_PX..=MAX_AREA_PX).contains(&c.area) && !c.touches_border && c.axis_ratio >= 0.3)
-        .map(|c| MarkerBlob { center: c.center, area: c.area })
+        .filter(|c| {
+            (MIN_AREA_PX..=MAX_AREA_PX).contains(&c.area)
+                && !c.touches_border
+                && c.axis_ratio >= 0.3
+        })
+        .map(|c| MarkerBlob {
+            center: c.center,
+            area: c.area,
+        })
         .collect();
     blobs.sort_by_key(|b| std::cmp::Reverse(b.area));
     blobs.truncate(MAX_BLOBS);
@@ -74,7 +93,11 @@ pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
 /// Where a bright spot lies on the screen, in final screen coordinates
 /// (meters), found by intersecting its infrared ray with the screen plane.
 /// The infrared camera need not share the depth camera's frame.
-pub fn blob_on_screen(geometry: &CameraGeometry, fit: &ScreenFit, blob: &MarkerBlob) -> Option<Point2<f64>> {
+pub fn blob_on_screen(
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    blob: &MarkerBlob,
+) -> Option<Point2<f64>> {
     let ray = pixel_ray(&geometry.ir, blob.center)?;
     let origin = geometry.ir_to_depth.translation;
     let direction = geometry.ir_to_depth.rotation * ray;
@@ -85,7 +108,9 @@ pub fn blob_on_screen(geometry: &CameraGeometry, fit: &ScreenFit, blob: &MarkerB
 
 /// The six marker positions the layout predicts, in final screen coordinates.
 pub fn expected_positions(fit: &ScreenFit) -> [Point2<f64>; 6] {
-    MARKER_LAYOUT.map(|[u, v]| apply_homography(&fit.unit_to_screen, Point2::new(u, v)).unwrap_or_else(Point2::origin))
+    MARKER_LAYOUT.map(|[u, v]| {
+        apply_homography(&fit.unit_to_screen, Point2::new(u, v)).unwrap_or_else(Point2::origin)
+    })
 }
 
 /// Result of matching blobs to the layout.
@@ -100,7 +125,11 @@ pub struct MarkerFit {
 }
 
 /// Matches `blobs` to the layout and measures the markers.
-pub fn locate(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> Result<MarkerFit, MarkerError> {
+pub fn locate(
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    blobs: &[MarkerBlob],
+) -> Result<MarkerFit, MarkerError> {
     if blobs.len() < 6 {
         return Err(MarkerError::TooFewBlobs { found: blobs.len() });
     }
@@ -108,7 +137,9 @@ pub fn locate(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) 
     // the matcher never selects them because they sit infinitely far away.
     let positions: Vec<Point2<f64>> = blobs
         .iter()
-        .map(|b| blob_on_screen(geometry, fit, b).unwrap_or(Point2::new(f64::INFINITY, f64::INFINITY)))
+        .map(|b| {
+            blob_on_screen(geometry, fit, b).unwrap_or(Point2::new(f64::INFINITY, f64::INFINITY))
+        })
         .collect();
     let expected = expected_positions(fit);
     let gate = MATCH_GATE_FRACTION * fit.size_m[0].hypot(fit.size_m[1]);
@@ -120,8 +151,16 @@ pub fn locate(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) 
         return Err(MarkerError::LayoutMismatch { matched });
     };
     let points_m = blob_for_marker.map(|i| positions[i]);
-    let max_offset_m = points_m.iter().zip(&expected).map(|(p, e)| (p - e).norm()).fold(0.0, f64::max);
-    Ok(MarkerFit { points_m, blob_for_marker, max_offset_m })
+    let max_offset_m = points_m
+        .iter()
+        .zip(&expected)
+        .map(|(p, e)| (p - e).norm())
+        .fold(0.0, f64::max);
+    Ok(MarkerFit {
+        points_m,
+        blob_for_marker,
+        max_offset_m,
+    })
 }
 
 /// Assigns each expected position a distinct observed position within `gate`
@@ -129,7 +168,11 @@ pub fn locate(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) 
 /// assignment exists. The search is exhaustive over the candidates inside the
 /// gate, which are few: the layout's markers are far apart relative to the
 /// gate.
-pub fn assign(expected: &[Point2<f64>; 6], observed: &[Point2<f64>], gate: f64) -> Option<[usize; 6]> {
+pub fn assign(
+    expected: &[Point2<f64>; 6],
+    observed: &[Point2<f64>],
+    gate: f64,
+) -> Option<[usize; 6]> {
     let candidates: Vec<Vec<(usize, f64)>> = expected
         .iter()
         .map(|e| {
@@ -174,15 +217,21 @@ pub fn assign(expected: &[Point2<f64>; 6], observed: &[Point2<f64>], gate: f64) 
             }
         }
     }
-    let mut search = Search { candidates: &candidates, used: vec![false; observed.len()], current: [0; 6], best: None };
+    let mut search = Search {
+        candidates: &candidates,
+        used: vec![false; observed.len()],
+        current: [0; 6],
+        best: None,
+    };
     search.run(0, 0.0);
     search.best.map(|(_, a)| a)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use image::Luma;
+
+    use super::*;
 
     fn layout_m(w: f64, h: f64) -> [Point2<f64>; 6] {
         MARKER_LAYOUT.map(|[u, v]| Point2::new(u * w, v * h))
@@ -193,7 +242,10 @@ mod tests {
         let expected = layout_m(1.2, 0.68);
         // Measured markers are a few millimeters off, listed in shuffled order,
         // with two clutter blobs: one near a marker, one far from everything.
-        let mut observed: Vec<Point2<f64>> = expected.iter().map(|p| Point2::new(p.x + 0.003, p.y - 0.002)).collect();
+        let mut observed: Vec<Point2<f64>> = expected
+            .iter()
+            .map(|p| Point2::new(p.x + 0.003, p.y - 0.002))
+            .collect();
         observed.swap(0, 4);
         observed.swap(1, 3);
         observed.push(Point2::new(expected[2].x - 0.05, expected[2].y - 0.04));
@@ -249,7 +301,9 @@ mod tests {
             img.put_pixel(100, 20, Luma([peak]));
             let blobs = detect_blobs(&img);
             assert_eq!(blobs.len(), 2, "{blobs:?}");
-            let near = |b: &MarkerBlob, x: f64, y: f64| (b.center.x - x).abs() < 0.5 && (b.center.y - y).abs() < 0.5;
+            let near = |b: &MarkerBlob, x: f64, y: f64| {
+                (b.center.x - x).abs() < 0.5 && (b.center.y - y).abs() < 0.5
+            };
             assert!(blobs.iter().any(|b| near(b, 50.0, 60.0)), "{blobs:?}");
             assert!(blobs.iter().any(|b| near(b, 150.0, 100.0)), "{blobs:?}");
         }

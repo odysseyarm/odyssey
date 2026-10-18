@@ -1,12 +1,12 @@
-use embassy_nrf::{
-    Peripherals,
-    config::{Config, HfclkSource, HfxoCapacitance, LfclkSource, LfxoCapacitance, ReghVoltage},
-    gpio::{Input, Pull},
-    pac,
+use embassy_nrf::config::{
+    Config, HfclkSource, HfxoCapacitance, LfclkSource, LfxoCapacitance, ReghVoltage,
 };
+use embassy_nrf::gpio::{Input, Pull};
+use embassy_nrf::{Peripherals, pac};
 
 fn start_network_core(delay: &mut cortex_m::delay::Delay) {
-    use embassy_nrf::pac::{self, reset::vals::Forceoff};
+    use embassy_nrf::pac::reset::vals::Forceoff;
+    use embassy_nrf::pac::{self};
     // Erratum 161
     unsafe {
         (0x50005618 as *mut u32).write_volatile(1);

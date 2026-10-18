@@ -1,5 +1,10 @@
-use opencv::{calib3d::{get_optimal_new_camera_matrix_def, undistort}, core::{FileStorage, FileStorage_READ, Mat, Size}, highgui::{imshow, wait_key_def}, hub_prelude::{FileNodeTraitConst, FileStorageTraitConst}, imgcodecs::{imread, imwrite_def, IMREAD_COLOR}, imgproc::{resize, INTER_CUBIC}};
 use clap::Parser;
+use opencv::calib3d::{get_optimal_new_camera_matrix_def, undistort};
+use opencv::core::{FileStorage, FileStorage_READ, Mat, Size};
+use opencv::highgui::{imshow, wait_key_def};
+use opencv::hub_prelude::{FileNodeTraitConst, FileStorageTraitConst};
+use opencv::imgcodecs::{IMREAD_COLOR, imread, imwrite_def};
+use opencv::imgproc::{INTER_CUBIC, resize};
 
 #[derive(Parser)]
 struct Cli {
@@ -13,16 +18,41 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
     let (camera_matrix, dist_coeffs) = read_camara_params(&cli.camera_params);
-    let new_camera_matrix = get_optimal_new_camera_matrix_def(&camera_matrix, &dist_coeffs, Size::new(4095, 4095), 1.0).unwrap();
+    let new_camera_matrix =
+        get_optimal_new_camera_matrix_def(&camera_matrix, &dist_coeffs, Size::new(4095, 4095), 1.0)
+            .unwrap();
     let tmp = imread(&cli.image, IMREAD_COLOR).unwrap();
     let mut im = Mat::default();
     resize(&tmp, &mut im, Size::new(4095, 4095), 0.0, 0.0, INTER_CUBIC).unwrap();
     let mut unim = Mat::default();
-    undistort(&im, &mut unim, &camera_matrix, &dist_coeffs, &new_camera_matrix).unwrap();
+    undistort(
+        &im,
+        &mut unim,
+        &camera_matrix,
+        &dist_coeffs,
+        &new_camera_matrix,
+    )
+    .unwrap();
     let mut scaled_unim = Mat::default();
     let mut scaled_im = Mat::default();
-    resize(&unim, &mut scaled_unim, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
-    resize(&im, &mut scaled_im, Size::new(512, 512), 0.0, 0.0, INTER_CUBIC).unwrap();
+    resize(
+        &unim,
+        &mut scaled_unim,
+        Size::new(512, 512),
+        0.0,
+        0.0,
+        INTER_CUBIC,
+    )
+    .unwrap();
+    resize(
+        &im,
+        &mut scaled_im,
+        Size::new(512, 512),
+        0.0,
+        0.0,
+        INTER_CUBIC,
+    )
+    .unwrap();
     imshow("distorted", &scaled_im).unwrap();
     imshow("undistorted", &scaled_unim).unwrap();
     wait_key_def().unwrap();

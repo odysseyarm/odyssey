@@ -1,9 +1,9 @@
 //! Direct device (lite/vm) management commands
 
-use odyssey_usb::device::VmDevice;
 use clap::Subcommand;
 use nusb::MaybeFuture as _;
 use odyssey_protocol::control::device::TransportMode;
+use odyssey_usb::device::VmDevice;
 
 #[derive(Subcommand)]
 pub enum DeviceCommands {
@@ -239,8 +239,10 @@ async fn cmd_pair(device: &VmDevice, timeout: u32) -> Result<(), String> {
             match device.wait_pairing_event().await {
                 Ok(bond) => {
                     let addr = bond.uuid;
-                    println!("Successfully paired with device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+                    println!(
+                        "Successfully paired with device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
+                    );
                     Ok(())
                 }
                 Err(e) => Err(format!("Pairing failed: {}", e)),

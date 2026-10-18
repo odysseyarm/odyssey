@@ -1,7 +1,8 @@
-use dioxus::{logger::tracing, prelude::*};
+use dioxus::logger::tracing;
+use dioxus::prelude::*;
 use odyssey_hub_server::firmware::FirmwareChannel;
 
-use crate::components::firmware_update::{ensure_firmware_channel_loaded, FIRMWARE_CHANNEL};
+use crate::components::firmware_update::{FIRMWARE_CHANNEL, ensure_firmware_channel_loaded};
 
 #[component]
 pub fn Settings() -> Element {

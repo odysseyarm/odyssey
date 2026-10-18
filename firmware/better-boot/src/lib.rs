@@ -7,6 +7,7 @@
 #![no_std]
 
 use core::ptr;
+
 use embedded_storage::nor_flash::NorFlash;
 
 // Magic constants matching embassy-boot

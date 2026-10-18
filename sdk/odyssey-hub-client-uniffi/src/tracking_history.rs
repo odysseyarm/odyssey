@@ -25,11 +25,7 @@ impl TrackingHistory {
 
     #[uniffi::method]
     pub fn latest(&self) -> Option<TrackingEvent> {
-        self.inner
-            .lock()
-            .unwrap()
-            .latest()
-            .map(|e| e.into())
+        self.inner.lock().unwrap().latest().map(|e| e.into())
     }
 
     #[uniffi::method]

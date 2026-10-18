@@ -1,10 +1,8 @@
-use std::{
-    env,
-    fs::{self, File},
-    io::{Read, Write},
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::env;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     // Get optional override for library path from CLI argument
@@ -133,7 +131,10 @@ fn main() {
             .unwrap();
         let patched = contents
             .replace("internal enum Transport", "public enum Transport")
-            .replace("internal enum EventsTransport", "public enum EventsTransport");
+            .replace(
+                "internal enum EventsTransport",
+                "public enum EventsTransport",
+            );
         File::create(&common_file)
             .unwrap()
             .write_all(patched.as_bytes())

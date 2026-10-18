@@ -27,7 +27,8 @@ pub(crate) use impl_from;
 
 macro_rules! static_byte_buffer {
     ($size:expr) => {{
-        static BUFFER: static_cell::ConstStaticCell<[u8; $size]> = static_cell::ConstStaticCell::new([0; $size]);
+        static BUFFER: static_cell::ConstStaticCell<[u8; $size]> =
+            static_cell::ConstStaticCell::new([0; $size]);
         BUFFER.take()
     }};
 }

@@ -1,19 +1,28 @@
-use std::{fs, io, path::PathBuf};
-use postcard::take_from_bytes;
+use std::path::PathBuf;
+use std::{fs, io};
+
 use odyssey_usb::packets::vm::{GeneralConfig, Packet};
+use postcard::take_from_bytes;
 
 pub fn read_file(path: &PathBuf) -> io::Result<(GeneralConfig, Vec<(u128, Packet)>)> {
     let data = fs::read(path)?;
     let mut bytes: &[u8] = &data;
 
-    let (general_config, rest) = take_from_bytes::<GeneralConfig>(bytes)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("GeneralConfig decode: {e:?}")))?;
+    let (general_config, rest) = take_from_bytes::<GeneralConfig>(bytes).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("GeneralConfig decode: {e:?}"),
+        )
+    })?;
     bytes = rest;
 
     let mut packets = Vec::new();
     while !bytes.is_empty() {
         if bytes.len() < 16 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF in timestamp"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "EOF in timestamp",
+            ));
         }
 
         let mut tsb = [0u8; 16];
@@ -27,10 +36,16 @@ pub fn read_file(path: &PathBuf) -> io::Result<(GeneralConfig, Vec<(u128, Packet
                 packets.push((timestamp, pkt));
             }
             Err(postcard::Error::DeserializeUnexpectedEnd) => {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF in Packet"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF in Packet",
+                ));
             }
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Packet decode: {e:?}")));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Packet decode: {e:?}"),
+                ));
             }
         }
     }

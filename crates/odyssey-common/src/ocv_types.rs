@@ -1,6 +1,5 @@
 use nalgebra::{Isometry3, Matrix3, RealField, Rotation3, Translation3, Vector3, Vector5};
 use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
-
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 

@@ -1,5 +1,5 @@
-﻿use odyssey_usb::packets::vm::VendorData;
 use odyssey_hub_common as common;
+use odyssey_usb::packets::vm::VendorData;
 
 #[macro_export]
 macro_rules! impl_from_simple {

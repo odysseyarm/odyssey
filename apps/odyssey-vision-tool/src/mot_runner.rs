@@ -1,19 +1,21 @@
-use crate::{CloneButShorter, Marker, TestFrame};
+use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
+
 use ahrs::Ahrs;
 use arrayvec::ArrayVec;
-use odyssey_common::MARKER_PATTERN_LEN;
-use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
-use odyssey_usb::device::{GeneralSettings, VmDevice};
-use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData};
 use iui::concurrent::Context;
 use leptos_reactive::RwSignal;
 use nalgebra::{Matrix3, Point2, Rotation3, Scalar, Translation3, UnitVector3, Vector2, Vector3};
+use odyssey_common::MARKER_PATTERN_LEN;
+use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
+use odyssey_protocol::PocMarkersReport;
+use odyssey_usb::device::{GeneralSettings, VmDevice};
+use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
-use odyssey_protocol::PocMarkersReport;
-use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
 use tokio_stream::StreamExt;
+
+use crate::{CloneButShorter, Marker, TestFrame};
 
 pub fn transform_aimpoint_to_identity(
     center_aim: Point2<f64>,

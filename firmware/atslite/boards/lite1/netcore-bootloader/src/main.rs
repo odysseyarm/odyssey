@@ -6,7 +6,8 @@ use core::cell::RefCell;
 #[cfg(feature = "rtt")]
 use defmt_rtt as _;
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
-use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use nrf_pac as pac;
 #[cfg(not(feature = "rtt"))]
 use panic_halt as _;

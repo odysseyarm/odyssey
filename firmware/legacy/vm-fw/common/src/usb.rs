@@ -83,7 +83,9 @@ pub fn usb_device<Irqs>(
     UsbConfigHandle,
 )
 where
-    Irqs: Binding<embassy_nrf::interrupt::typelevel::USBD, embassy_nrf::usb::InterruptHandler<USBD>> + Copy + 'static,
+    Irqs: Binding<embassy_nrf::interrupt::typelevel::USBD, embassy_nrf::usb::InterruptHandler<USBD>>
+        + Copy
+        + 'static,
 {
     let driver = UsbDriver::new(usbd, irqs, vbus);
 
@@ -91,7 +93,10 @@ where
     let serial_buf = SERIAL_BUF.take();
     let ficr = embassy_nrf::pac::FICR;
     #[cfg(feature = "nrf52840")]
-    let (low, high) = (ficr.deviceid(0).read().to_le_bytes(), ficr.deviceid(1).read().to_le_bytes());
+    let (low, high) = (
+        ficr.deviceid(0).read().to_le_bytes(),
+        ficr.deviceid(1).read().to_le_bytes(),
+    );
     #[cfg(not(feature = "nrf52840"))]
     let (low, high) = (
         ficr.info().deviceid(0).read().to_le_bytes(),
@@ -145,7 +150,8 @@ where
         msos::PropertyData::RegMultiSz(&[guid]),
     ));
 
-    static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> = ConstStaticCell::new(Signal::new());
+    static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> =
+        ConstStaticCell::new(Signal::new());
     let signal = SIGNAL.take();
     USB_CONFIGURED.store(false, Ordering::Release);
 
@@ -185,7 +191,10 @@ struct MyHandler {
 }
 
 impl MyHandler {
-    pub fn new(signal: &'static Signal<ThreadModeRawMutex, bool>, flag: &'static AtomicBool) -> Self {
+    pub fn new(
+        signal: &'static Signal<ThreadModeRawMutex, bool>,
+        flag: &'static AtomicBool,
+    ) -> Self {
         Self { signal, flag }
     }
 }
@@ -208,7 +217,10 @@ impl embassy_usb::Handler for MyHandler {
         // Vendor|Interface, request SEND=0x30
         // Note: We don't check wIndex - the combination of Vendor request type
         // and request code 0x30 uniquely identifies our vendor interface
-        if req.request_type == RequestType::Vendor && req.recipient == Recipient::Interface && req.request == 0x30 {
+        if req.request_type == RequestType::Vendor
+            && req.recipient == Recipient::Interface
+            && req.request == 0x30
+        {
             match postcard::from_bytes::<DeviceMsg>(data) {
                 Ok(msg) => {
                     crate::device_control::try_send_cmd(msg);
@@ -231,7 +243,10 @@ impl embassy_usb::Handler for MyHandler {
         // Vendor|Interface, request RECV=0x31
         // Note: We don't check wIndex - the combination of Vendor request type
         // and request code 0x31 uniquely identifies our vendor interface
-        if req.request_type == RequestType::Vendor && req.recipient == Recipient::Interface && req.request == 0x31 {
+        if req.request_type == RequestType::Vendor
+            && req.recipient == Recipient::Interface
+            && req.request == 0x31
+        {
             if let Some(msg) = crate::device_control::try_recv_event() {
                 match postcard::to_slice(&msg, buf) {
                     Ok(out) => Some(InResponse::Accepted(out)),
@@ -247,7 +262,10 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
-pub async fn read_transfer<'d>(ep: &mut Endpoint<'d, Out>, buf: &mut [u8]) -> Result<usize, EndpointError> {
+pub async fn read_transfer<'d>(
+    ep: &mut Endpoint<'d, Out>,
+    buf: &mut [u8],
+) -> Result<usize, EndpointError> {
     let max_packet = max(ep.info().max_packet_size, 1) as usize;
     let mut offset = 0;
 

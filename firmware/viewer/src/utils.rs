@@ -1,5 +1,5 @@
 use nalgebra::{Dim, Matrix, Scalar, Storage};
-use opencv::core::{Mat, MatTrait, CV_32FC1};
+use opencv::core::{CV_32FC1, Mat, MatTrait};
 use simba::scalar::SubsetOf;
 
 /// Convert a [`nalgebra::Matrix`] to a CV_32FC1 [`opencv::core::Mat`]

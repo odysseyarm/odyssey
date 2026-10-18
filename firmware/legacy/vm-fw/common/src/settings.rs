@@ -28,8 +28,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, WithTimeout as _};
 use embedded_hal_bus::spi::DeviceError;
-use paj7025::Paj7025Error;
 use odyssey_protocol::wire::{CameraCalibrationParams, StereoCalibrationParams};
+use paj7025::Paj7025Error;
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
 
@@ -69,7 +69,8 @@ fn flush() {
 
 static NODE_PAJS: StorageListNode<PajsSettings> = StorageListNode::new("settings/pajs");
 static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("settings/general");
-static NODE_TRANSIENT: StorageListNode<TransientSettings> = StorageListNode::new("settings/transient");
+static NODE_TRANSIENT: StorageListNode<TransientSettings> =
+    StorageListNode::new("settings/transient");
 
 static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
 
@@ -204,7 +205,8 @@ pub async fn init_settings(
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
     pajr2: &mut Paj,
     pajr3: &mut Paj,
-) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
+) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>
+{
     let region = get_settings_region();
     defmt::info!(
         "[settings] Settings flash region: {:#010x}..{:#010x} (size={}KB)",
@@ -256,7 +258,10 @@ pub async fn init_settings(
 
     s.apply(pajr2, pajr3).await?;
     let settings_ref = SETTINGS_CELL.init(s);
-    SETTINGS_PTR.store(settings_ref as *mut Settings, core::sync::atomic::Ordering::Release);
+    SETTINGS_PTR.store(
+        settings_ref as *mut Settings,
+        core::sync::atomic::Ordering::Release,
+    );
     Ok(settings_ref)
 }
 
@@ -268,7 +273,8 @@ pub async fn init_legacy_settings(
     flush_fn: fn(),
     pajr2: &mut Paj,
     pajr3: &mut Paj,
-) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
+) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>
+{
     set_active(list, flush_fn);
 
     let h_pajs = NODE_PAJS
@@ -296,7 +302,10 @@ pub async fn init_legacy_settings(
 
     s.apply(pajr2, pajr3).await?;
     let settings_ref = SETTINGS_CELL.init(s);
-    SETTINGS_PTR.store(settings_ref as *mut Settings, core::sync::atomic::Ordering::Release);
+    SETTINGS_PTR.store(
+        settings_ref as *mut Settings,
+        core::sync::atomic::Ordering::Release,
+    );
     Ok(settings_ref)
 }
 
@@ -532,11 +541,46 @@ async fn paj_read_settings(
     paj: &mut Paj,
 ) -> Result<PajSettings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
     Ok(PajSettings {
-        area_threshold_max: paj.ll.control().bank_0().cmd_oahb().read_async().await?.value(),
-        area_threshold_min: paj.ll.control().bank_c().cmd_oalb().read_async().await?.value(),
-        brightness_threshold: paj.ll.control().bank_c().cmd_thd().read_async().await?.value(),
-        exposure_time: paj.ll.control().bank_1().b_expo_r().read_async().await?.value(),
-        frame_period: paj.ll.control().bank_c().cmd_frame_period().read_async().await?.value(),
+        area_threshold_max: paj
+            .ll
+            .control()
+            .bank_0()
+            .cmd_oahb()
+            .read_async()
+            .await?
+            .value(),
+        area_threshold_min: paj
+            .ll
+            .control()
+            .bank_c()
+            .cmd_oalb()
+            .read_async()
+            .await?
+            .value(),
+        brightness_threshold: paj
+            .ll
+            .control()
+            .bank_c()
+            .cmd_thd()
+            .read_async()
+            .await?
+            .value(),
+        exposure_time: paj
+            .ll
+            .control()
+            .bank_1()
+            .b_expo_r()
+            .read_async()
+            .await?
+            .value(),
+        frame_period: paj
+            .ll
+            .control()
+            .bank_c()
+            .cmd_frame_period()
+            .read_async()
+            .await?
+            .value(),
         frame_subtraction: paj
             .ll
             .control()
@@ -545,8 +589,22 @@ async fn paj_read_settings(
             .read_async()
             .await?
             .value(),
-        gain_1: paj.ll.control().bank_1().b_global_r().read_async().await?.value(),
-        gain_2: paj.ll.control().bank_1().b_ggh_r().read_async().await?.value(),
+        gain_1: paj
+            .ll
+            .control()
+            .bank_1()
+            .b_global_r()
+            .read_async()
+            .await?
+            .value(),
+        gain_2: paj
+            .ll
+            .control()
+            .bank_1()
+            .b_ggh_r()
+            .read_async()
+            .await?
+            .value(),
         max_object_cnt: paj
             .ll
             .control()
@@ -555,7 +613,14 @@ async fn paj_read_settings(
             .read_async()
             .await?
             .value(),
-        noise_threshold: paj.ll.control().bank_0().cmd_nthd().read_async().await?.value(),
+        noise_threshold: paj
+            .ll
+            .control()
+            .bank_0()
+            .cmd_nthd()
+            .read_async()
+            .await?
+            .value(),
         operation_mode: paj
             .ll
             .control()
@@ -597,7 +662,10 @@ impl PajsSettings {
         pajr2: &mut Paj,
         pajr3: &mut Paj,
     ) -> Result<Self, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
-        Ok(Self(paj_read_settings(pajr2).await?, paj_read_settings(pajr3).await?))
+        Ok(Self(
+            paj_read_settings(pajr2).await?,
+            paj_read_settings(pajr3).await?,
+        ))
     }
 }
 
@@ -615,7 +683,10 @@ mod heapless_str32_cbor {
         Ok(())
     }
 
-    pub fn decode<'b, Ctx>(d: &mut Decoder<'b>, _ctx: &mut Ctx) -> Result<heapless::String<32>, Error> {
+    pub fn decode<'b, Ctx>(
+        d: &mut Decoder<'b>,
+        _ctx: &mut Ctx,
+    ) -> Result<heapless::String<32>, Error> {
         let s = d.str()?;
         let mut hs: heapless::String<32> = heapless::String::new();
         for c in s.chars() {
@@ -669,8 +740,16 @@ impl Default for GeneralSettings {
                 dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0],
             },
             camera_model_wf: CameraCalibrationParams {
-                camera_matrix: [1434.9723, 0.0, 2036.575, 0.0, 1437.214, 2088.8027, 0.0, 0.0, 1.0],
-                dist_coeffs: [0.039820533, -0.03993317, 0.00043006078, -0.0012057066, 0.005302235],
+                camera_matrix: [
+                    1434.9723, 0.0, 2036.575, 0.0, 1437.214, 2088.8027, 0.0, 0.0, 1.0,
+                ],
+                dist_coeffs: [
+                    0.039820533,
+                    -0.03993317,
+                    0.00043006078,
+                    -0.0012057066,
+                    0.005302235,
+                ],
             },
             stereo_iso: Default::default(),
             transport_mode: odyssey_protocol::control::device::TransportMode::Ble,

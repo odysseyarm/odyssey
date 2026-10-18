@@ -16,17 +16,17 @@ mod position;
 mod problem;
 pub mod quality;
 mod review;
+pub mod screens;
 pub mod settings;
 mod setup;
-pub mod screens;
 mod ui;
 pub mod wizard;
 pub mod worker;
 
 use dioxus::prelude::*;
+use wizard::{Stage, use_wizard};
 
 use crate::components::wizard::Stepper;
-use wizard::{use_wizard, Stage};
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
@@ -105,4 +105,3 @@ pub fn CalibrateAutomatic() -> Element {
         }
     }
 }
-

@@ -1,4 +1,5 @@
-use std::{env, fs, path::Path};
+use std::path::Path;
+use std::{env, fs};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // cbindgen probes rustc for target cfg info via a raw `rustc` invocation

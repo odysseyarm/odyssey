@@ -1,12 +1,14 @@
-use crate::custom_shapes::{draw_crosshair, draw_grid, draw_text};
-use crate::mot_runner::MotRunner;
+use std::sync::Arc;
+
+use iui::UI;
 use iui::controls::{Area, AreaDrawParams, AreaHandler, AreaKeyEvent, Window};
 use iui::draw::{Brush, FillMode, Path, SolidBrush, StrokeParams};
-use iui::UI;
 use nalgebra::{Isometry3, Point2, Translation3};
 use parking_lot::Mutex;
-use std::sync::Arc;
 use tracing::debug;
+
+use crate::custom_shapes::{draw_crosshair, draw_grid, draw_text};
+use crate::mot_runner::MotRunner;
 
 pub struct TestCanvas {
     pub ctx: UI,
@@ -171,8 +173,7 @@ impl AreaHandler for TestCanvas {
                     b'z' => {
                         let t = Translation3::new(0., -0.0381, 0.);
                         let quat = {
-                            let screen_calibrations =
-                                &self.runner.lock().screen_calibrations;
+                            let screen_calibrations = &self.runner.lock().screen_calibrations;
                             let fv_state = &self.runner.lock().state.fv_state;
                             odyssey_cv::helpers::calculate_zero_offset_quat(
                                 t,

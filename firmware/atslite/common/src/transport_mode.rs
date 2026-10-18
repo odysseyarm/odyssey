@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use odyssey_protocol::control::device::TransportMode;
 
 static MODE: AtomicU8 = AtomicU8::new(TransportMode::Ble as u8);

@@ -1,27 +1,26 @@
 mod pag_sensor_settings;
 mod paj_sensor_settings;
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
-use crate::{mot_runner::MotRunner, CloneButShorter};
 use anyhow::Result;
-use odyssey_usb::{
-    device::{MuxDevice, VmConnectionInfo, VmDevice},
-    packets::vm::{AccelConfig, GeneralConfig, GyroConfig, Port, PropKind},
-};
-use iui::{
-    controls::{Button, Form},
-    prelude::{Window, WindowType},
-    UI,
-};
+use iui::UI;
+use iui::controls::{Button, Form};
+use iui::prelude::{Window, WindowType};
 use leptos_reactive::{
-    create_effect, create_rw_signal, ReadSignal, RwSignal, SignalGet, SignalGetUntracked,
-    SignalSet, SignalWith, SignalWithUntracked,
+    ReadSignal, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalWith,
+    SignalWithUntracked, create_effect, create_rw_signal,
 };
 use nusb::MaybeFuture as _;
+use odyssey_protocol::control::device::TransportMode;
+use odyssey_usb::device::{MuxDevice, VmConnectionInfo, VmDevice};
+use odyssey_usb::packets::vm::{AccelConfig, GeneralConfig, GyroConfig, Port, PropKind};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
-use odyssey_protocol::control::device::TransportMode;
+
+use crate::CloneButShorter;
+use crate::mot_runner::MotRunner;
 
 pub fn config_window(
     ui: &UI,
@@ -90,8 +89,9 @@ pub fn config_window(
             let mut nf_form = nf_form.c();
             let mut wf_form = wf_form.c();
             let mut pag_form = pag_form.c();
-            general_settings.device_pid.with(|pid| {
-                match odyssey_usb::device::ProductId::from_u16(*pid) {
+            general_settings
+                .device_pid
+                .with(|pid| match odyssey_usb::device::ProductId::from_u16(*pid) {
                     Some(odyssey_usb::device::ProductId::AtsVm)
                     | Some(odyssey_usb::device::ProductId::AtsLite) => {
                         nf_form.show(&ui);
@@ -108,8 +108,7 @@ pub fn config_window(
                         wf_form.hide(&ui);
                         pag_form.hide(&ui);
                     }
-                }
-            });
+                });
         }
     });
 
@@ -340,7 +339,10 @@ pub fn config_window(
                 });
 
                 if let Some((existing_mux, existing_mux_devices)) = existing_mux_and_devices {
-                    eprintln!("Reusing existing mux connection for refresh (with {} existing mux devices)", existing_mux_devices.len());
+                    eprintln!(
+                        "Reusing existing mux connection for refresh (with {} existing mux devices)",
+                        existing_mux_devices.len()
+                    );
 
                     let device_list = device_list.c();
 
@@ -477,8 +479,9 @@ pub fn config_window(
                 return false;
             }
 
-            match odyssey_usb::device::ProductId::from_u16(general_settings.device_pid.get_untracked())
-            {
+            match odyssey_usb::device::ProductId::from_u16(
+                general_settings.device_pid.get_untracked(),
+            ) {
                 Some(odyssey_usb::device::ProductId::AtsVm)
                 | Some(odyssey_usb::device::ProductId::AtsLite) => {
                     wf_settings.validate(&mut errors);
@@ -787,7 +790,7 @@ impl GeneralSettingsForm {
             None => {
                 return Err(anyhow::anyhow!(
                     "Timeout reading device config after 3 attempts"
-                ))
+                ));
             }
         };
 
@@ -804,7 +807,7 @@ impl GeneralSettingsForm {
                 None => {
                     return Err(anyhow::anyhow!(
                         "Timeout reading ProductId after 3 attempts"
-                    ))
+                    ));
                 }
             };
 
@@ -899,10 +902,14 @@ impl GeneralSettingsForm {
             .write_config(GeneralConfig::GyroConfig(config.gyro_config.clone()))
             .await?;
         device
-            .write_config(GeneralConfig::CameraModelNf((&config.camera_model_nf).into()))
+            .write_config(GeneralConfig::CameraModelNf(
+                (&config.camera_model_nf).into(),
+            ))
             .await?;
         device
-            .write_config(GeneralConfig::CameraModelWf((&config.camera_model_wf).into()))
+            .write_config(GeneralConfig::CameraModelWf(
+                (&config.camera_model_wf).into(),
+            ))
             .await?;
         device
             .write_config(GeneralConfig::StereoIso(config.stereo_iso.clone()))
@@ -1028,7 +1035,8 @@ fn set_calibration_upload_handlers(
             if let Some(path) = win.open_file(&ui) {
                 let Ok(()) = (|| {
                     let reader = std::fs::File::open(&path)?;
-                    let iso = odyssey_common::get_isometry_from_opencv_stereo_calibration_json(reader)?;
+                    let iso =
+                        odyssey_common::get_isometry_from_opencv_stereo_calibration_json(reader)?;
                     stereo_iso.set(iso);
                     win.modal_msg(
                         &ui,

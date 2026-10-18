@@ -3,8 +3,8 @@
 
 use dioxus::prelude::*;
 
-use super::hints::{progress, Progress};
-use super::ui::{StepPage, SECONDARY_BUTTON};
+use super::hints::{Progress, progress};
+use super::ui::{SECONDARY_BUTTON, StepPage};
 use super::wizard::Wizard;
 use crate::components::wizard::Spinner;
 
@@ -19,7 +19,10 @@ pub fn MeasuringStep(
     // Until the camera thread reports its first step there is nothing to count.
     let shown = match *wizard.progress.read() {
         Some(step) => progress(step, &what),
-        None => Progress { text: "Getting ready…".into(), fraction: 0.0 },
+        None => Progress {
+            text: "Getting ready…".into(),
+            fraction: 0.0,
+        },
     };
     let percent = (shown.fraction * 100.0).round();
 

@@ -18,8 +18,8 @@ mod ffi;
 pub mod runtime;
 
 use std::collections::VecDeque;
-use std::ffi::{c_char, c_void, CStr, CString};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::ffi::{CStr, CString, c_char, c_void};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
 use std::slice;
@@ -30,11 +30,13 @@ use image::{GrayImage, RgbImage};
 use nalgebra::{Matrix3, Vector3};
 use parking_lot::Mutex;
 
-pub use self::runtime::{runtime_status, RuntimeStatus, SdkVersion, LIBRARY_NAME, SDK_DIR_ENV, SUPPORTED_VERSIONS};
 use self::runtime::Sdk;
+pub use self::runtime::{
+    LIBRARY_NAME, RuntimeStatus, SDK_DIR_ENV, SUPPORTED_VERSIONS, SdkVersion, runtime_status,
+};
 use crate::camera::{
-    CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings, DepthImage, Extrinsics,
-    Frames, ImuSample, Intrinsics,
+    CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings,
+    DepthImage, Extrinsics, Frames, ImuSample, Intrinsics,
 };
 
 /// Frame rate every video stream is requested at.
@@ -77,7 +79,11 @@ fn check(sdk: &Sdk, err: *mut ffi::ob_error) -> Result<(), CameraError> {
         sdk.ob_delete_error(err);
         (message, function)
     };
-    Err(CameraError::Sdk(if function.is_empty() { message } else { format!("{function}: {message}") }))
+    Err(CameraError::Sdk(if function.is_empty() {
+        message
+    } else {
+        format!("{function}: {message}")
+    }))
 }
 
 /// Runs one SDK call with a fresh error out-parameter and turns a populated
@@ -115,14 +121,26 @@ fn initialize(sdk: &Sdk, extensions: Option<&Path>) {
     let no_directory = CString::default();
     best_effort(
         "ob_set_logger_to_file",
-        ob!(sdk, ob_set_logger_to_file(ffi::OBLogSeverity_OB_LOG_SEVERITY_OFF, no_directory.as_ptr())),
+        ob!(
+            sdk,
+            ob_set_logger_to_file(
+                ffi::OBLogSeverity_OB_LOG_SEVERITY_OFF,
+                no_directory.as_ptr()
+            )
+        ),
     );
     let Some(dir) = extensions else { return };
     match dir.to_str().map(CString::new) {
         Some(Ok(dir_c)) => {
-            best_effort("ob_set_extensions_directory", ob!(sdk, ob_set_extensions_directory(dir_c.as_ptr())));
+            best_effort(
+                "ob_set_extensions_directory",
+                ob!(sdk, ob_set_extensions_directory(dir_c.as_ptr())),
+            );
         }
-        _ => tracing::warn!("extensions directory {} cannot be passed to the SDK; it keeps its own lookup", dir.display()),
+        _ => tracing::warn!(
+            "extensions directory {} cannot be passed to the SDK; it keeps its own lookup",
+            dir.display()
+        ),
     }
 }
 
@@ -143,7 +161,10 @@ macro_rules! handle {
             /// Takes ownership of a handle the SDK returned.
             fn new(sdk: &Sdk, p: *mut $raw, what: &str) -> Result<Self, CameraError> {
                 NonNull::new(p)
-                    .map(|ptr| Self { sdk: Arc::clone(sdk), ptr })
+                    .map(|ptr| Self {
+                        sdk: Arc::clone(sdk),
+                        ptr,
+                    })
                     .ok_or_else(|| CameraError::Sdk(format!("{what}: the SDK returned no object")))
             }
 
@@ -168,7 +189,11 @@ handle!(DeviceList, ffi::ob_device_list, ob_delete_device_list);
 handle!(Device, ffi::ob_device, ob_delete_device);
 handle!(Pipeline, ffi::ob_pipeline, ob_delete_pipeline);
 handle!(Config, ffi::ob_config, ob_delete_config);
-handle!(ProfileList, ffi::ob_stream_profile_list, ob_delete_stream_profile_list);
+handle!(
+    ProfileList,
+    ffi::ob_stream_profile_list,
+    ob_delete_stream_profile_list
+);
 handle!(Profile, ffi::ob_stream_profile, ob_delete_stream_profile);
 handle!(SensorList, ffi::ob_sensor_list, ob_delete_sensor_list);
 handle!(Sensor, ffi::ob_sensor, ob_delete_sensor);
@@ -183,7 +208,11 @@ impl Context {
 
 impl DeviceList {
     fn query(ctx: &Context) -> Result<Self, CameraError> {
-        Self::new(&ctx.sdk, ob!(ctx.sdk, ob_query_device_list(ctx.as_ptr()))?, "ob_query_device_list")
+        Self::new(
+            &ctx.sdk,
+            ob!(ctx.sdk, ob_query_device_list(ctx.as_ptr()))?,
+            "ob_query_device_list",
+        )
     }
 
     fn len(&self) -> Result<u32, CameraError> {
@@ -191,19 +220,28 @@ impl DeviceList {
     }
 
     fn uid(&self, index: u32) -> Result<String, CameraError> {
-        let p = ob!(self.sdk, ob_device_list_get_device_uid(self.as_ptr(), index))?;
+        let p = ob!(
+            self.sdk,
+            ob_device_list_get_device_uid(self.as_ptr(), index)
+        )?;
         // SAFETY: the string lives in the list, which `self` keeps alive; `c_str` copies it.
         Ok(unsafe { c_str(p) })
     }
 
     fn name(&self, index: u32) -> Result<String, CameraError> {
-        let p = ob!(self.sdk, ob_device_list_get_device_name(self.as_ptr(), index))?;
+        let p = ob!(
+            self.sdk,
+            ob_device_list_get_device_name(self.as_ptr(), index)
+        )?;
         // SAFETY: the string lives in the list, which `self` keeps alive; `c_str` copies it.
         Ok(unsafe { c_str(p) })
     }
 
     fn serial(&self, index: u32) -> Result<String, CameraError> {
-        let p = ob!(self.sdk, ob_device_list_get_device_serial_number(self.as_ptr(), index))?;
+        let p = ob!(
+            self.sdk,
+            ob_device_list_get_device_serial_number(self.as_ptr(), index)
+        )?;
         // SAFETY: the string lives in the list, which `self` keeps alive; `c_str` copies it.
         Ok(unsafe { c_str(p) })
     }
@@ -215,12 +253,22 @@ impl DeviceList {
 
 impl Device {
     fn supports(&self, id: ffi::ob_property_id) -> bool {
-        ob!(self.sdk, ob_device_is_property_supported(self.as_ptr(), id, ffi::OBPermissionType_OB_PERMISSION_READ_WRITE))
-            .unwrap_or(false)
+        ob!(
+            self.sdk,
+            ob_device_is_property_supported(
+                self.as_ptr(),
+                id,
+                ffi::OBPermissionType_OB_PERMISSION_READ_WRITE
+            )
+        )
+        .unwrap_or(false)
     }
 
     fn set_bool(&self, id: ffi::ob_property_id, value: bool) -> Result<(), CameraError> {
-        ob!(self.sdk, ob_device_set_bool_property(self.as_ptr(), id, value))
+        ob!(
+            self.sdk,
+            ob_device_set_bool_property(self.as_ptr(), id, value)
+        )
     }
 
     fn get_bool(&self, id: ffi::ob_property_id) -> Result<bool, CameraError> {
@@ -232,14 +280,20 @@ impl Device {
     }
 
     fn set_int(&self, id: ffi::ob_property_id, value: i32) -> Result<(), CameraError> {
-        ob!(self.sdk, ob_device_set_int_property(self.as_ptr(), id, value))
+        ob!(
+            self.sdk,
+            ob_device_set_int_property(self.as_ptr(), id, value)
+        )
     }
 
     /// Sets an integer property after fitting `value` into the range and step
     /// the camera reports, since out-of-range writes fail. Returns the value
     /// written.
     fn set_int_clamped(&self, id: ffi::ob_property_id, value: i32) -> Result<i32, CameraError> {
-        let range = ob!(self.sdk, ob_device_get_int_property_range(self.as_ptr(), id))?;
+        let range = ob!(
+            self.sdk,
+            ob_device_get_int_property_range(self.as_ptr(), id)
+        )?;
         let mut fitted = value;
         if range.min <= range.max {
             fitted = fitted.clamp(range.min, range.max);
@@ -252,18 +306,28 @@ impl Device {
     }
 
     fn sensor_list(&self) -> Result<SensorList, CameraError> {
-        SensorList::new(&self.sdk, ob!(self.sdk, ob_device_get_sensor_list(self.as_ptr()))?, "ob_device_get_sensor_list")
+        SensorList::new(
+            &self.sdk,
+            ob!(self.sdk, ob_device_get_sensor_list(self.as_ptr()))?,
+            "ob_device_get_sensor_list",
+        )
     }
 
     /// Applies the capture settings the calibration depends on. Settings persist
     /// in the camera across sessions, so every one is written explicitly.
     fn apply_capture_settings(&self, settings: &CaptureSettings) -> Result<(), CameraError> {
         if self.supports(ffi::OBPropertyID_OB_PROP_COLOR_SHARPNESS_INT) {
-            let result = self.set_int_clamped(ffi::OBPropertyID_OB_PROP_COLOR_SHARPNESS_INT, COLOR_SHARPNESS);
+            let result = self.set_int_clamped(
+                ffi::OBPropertyID_OB_PROP_COLOR_SHARPNESS_INT,
+                COLOR_SHARPNESS,
+            );
             best_effort("color sharpness", result);
         }
         if self.supports(ffi::OBPropertyID_OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT) {
-            let result = self.set_int(ffi::OBPropertyID_OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT, POWER_LINE_60_HZ);
+            let result = self.set_int(
+                ffi::OBPropertyID_OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT,
+                POWER_LINE_60_HZ,
+            );
             best_effort("color power-line frequency", result);
         }
         if self.supports(ffi::OBPropertyID_OB_PROP_COLOR_AUTO_EXPOSURE_BOOL) {
@@ -273,10 +337,16 @@ impl Device {
         }
         let to_i32 = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
         if self.supports(ffi::OBPropertyID_OB_PROP_COLOR_GAIN_INT) {
-            self.set_int_clamped(ffi::OBPropertyID_OB_PROP_COLOR_GAIN_INT, to_i32(settings.color_gain))?;
+            self.set_int_clamped(
+                ffi::OBPropertyID_OB_PROP_COLOR_GAIN_INT,
+                to_i32(settings.color_gain),
+            )?;
         }
         if self.supports(ffi::OBPropertyID_OB_PROP_COLOR_EXPOSURE_INT) {
-            self.set_int_clamped(ffi::OBPropertyID_OB_PROP_COLOR_EXPOSURE_INT, to_i32(settings.color_exposure_us))?;
+            self.set_int_clamped(
+                ffi::OBPropertyID_OB_PROP_COLOR_EXPOSURE_INT,
+                to_i32(settings.color_exposure_us),
+            )?;
         }
         self.restore_ir_auto_exposure()
     }
@@ -301,7 +371,9 @@ enum Projector {
 impl Projector {
     fn detect(device: &Device) -> Option<Self> {
         if device.supports(ffi::OBPropertyID_OB_PROP_LASER_CONTROL_INT) {
-            let original = device.get_int(ffi::OBPropertyID_OB_PROP_LASER_CONTROL_INT).ok()?;
+            let original = device
+                .get_int(ffi::OBPropertyID_OB_PROP_LASER_CONTROL_INT)
+                .ok()?;
             return Some(Self::Control { original });
         }
         if device.supports(ffi::OBPropertyID_OB_PROP_LASER_BOOL) {
@@ -329,8 +401,12 @@ impl Projector {
 
     fn restore(self, device: &Device) -> Result<(), CameraError> {
         match self {
-            Self::Control { original } => device.set_int(ffi::OBPropertyID_OB_PROP_LASER_CONTROL_INT, original),
-            Self::Switch { original } => device.set_bool(ffi::OBPropertyID_OB_PROP_LASER_BOOL, original),
+            Self::Control { original } => {
+                device.set_int(ffi::OBPropertyID_OB_PROP_LASER_CONTROL_INT, original)
+            }
+            Self::Switch { original } => {
+                device.set_bool(ffi::OBPropertyID_OB_PROP_LASER_BOOL, original)
+            }
         }
     }
 }
@@ -357,25 +433,47 @@ impl Profile {
 
     /// Takes points from this stream's camera frame to `target`'s.
     fn extrinsics_to(&self, target: &Profile) -> Result<Extrinsics, CameraError> {
-        let e = ob!(self.sdk, ob_stream_profile_get_extrinsic_to(self.as_ptr(), target.as_ptr()))?;
+        let e = ob!(
+            self.sdk,
+            ob_stream_profile_get_extrinsic_to(self.as_ptr(), target.as_ptr())
+        )?;
         let r = e.rot;
         let rotation = Matrix3::from_row_slice(&r.map(f64::from));
         // The SDK reports translations in millimeters.
-        let translation = Vector3::new(f64::from(e.trans[0]), f64::from(e.trans[1]), f64::from(e.trans[2])) / 1000.0;
-        Ok(Extrinsics { rotation, translation })
+        let translation = Vector3::new(
+            f64::from(e.trans[0]),
+            f64::from(e.trans[1]),
+            f64::from(e.trans[2]),
+        ) / 1000.0;
+        Ok(Extrinsics {
+            rotation,
+            translation,
+        })
     }
 
     fn intrinsics(&self) -> Result<Intrinsics, CameraError> {
-        let i = ob!(self.sdk, ob_video_stream_profile_get_intrinsic(self.as_ptr()))?;
-        let d = ob!(self.sdk, ob_video_stream_profile_get_distortion(self.as_ptr()))?;
+        let i = ob!(
+            self.sdk,
+            ob_video_stream_profile_get_intrinsic(self.as_ptr())
+        )?;
+        let d = ob!(
+            self.sdk,
+            ob_video_stream_profile_get_distortion(self.as_ptr())
+        )?;
         let (width, height) = self.size()?;
         let all = [d.k1, d.k2, d.k3, d.k4, d.k5, d.k6].map(f64::from);
         let k = match d.model {
             ffi::OBCameraDistortionModel_OB_DISTORTION_NONE => [0.0; 6],
             ffi::OBCameraDistortionModel_OB_DISTORTION_BROWN_CONRADY
-            | ffi::OBCameraDistortionModel_OB_DISTORTION_MODIFIED_BROWN_CONRADY => [all[0], all[1], all[2], 0.0, 0.0, 0.0],
+            | ffi::OBCameraDistortionModel_OB_DISTORTION_MODIFIED_BROWN_CONRADY => {
+                [all[0], all[1], all[2], 0.0, 0.0, 0.0]
+            }
             ffi::OBCameraDistortionModel_OB_DISTORTION_BROWN_CONRADY_K6 => all,
-            _ => return Err(CameraError::Unsupported("Brown-Conrady lens distortion model")),
+            _ => {
+                return Err(CameraError::Unsupported(
+                    "Brown-Conrady lens distortion model",
+                ));
+            }
         };
         let p = if d.model == ffi::OBCameraDistortionModel_OB_DISTORTION_NONE {
             [0.0; 2]
@@ -402,10 +500,16 @@ struct Choice {
 }
 
 impl ProfileList {
-    fn for_sensor_type(pipeline: &Pipeline, sensor: ffi::ob_sensor_type) -> Result<Self, CameraError> {
+    fn for_sensor_type(
+        pipeline: &Pipeline,
+        sensor: ffi::ob_sensor_type,
+    ) -> Result<Self, CameraError> {
         Self::new(
             &pipeline.sdk,
-            ob!(pipeline.sdk, ob_pipeline_get_stream_profile_list(pipeline.as_ptr(), sensor))?,
+            ob!(
+                pipeline.sdk,
+                ob_pipeline_get_stream_profile_list(pipeline.as_ptr(), sensor)
+            )?,
             "ob_pipeline_get_stream_profile_list",
         )
     }
@@ -413,7 +517,10 @@ impl ProfileList {
     fn for_sensor(sensor: &Sensor) -> Result<Self, CameraError> {
         Self::new(
             &sensor.sdk,
-            ob!(sensor.sdk, ob_sensor_get_stream_profile_list(sensor.as_ptr()))?,
+            ob!(
+                sensor.sdk,
+                ob_sensor_get_stream_profile_list(sensor.as_ptr())
+            )?,
             "ob_sensor_get_stream_profile_list",
         )
     }
@@ -425,7 +532,10 @@ impl ProfileList {
     fn get(&self, index: u32) -> Result<Profile, CameraError> {
         Profile::new(
             &self.sdk,
-            ob!(self.sdk, ob_stream_profile_list_get_profile(self.as_ptr(), index as i32))?,
+            ob!(
+                self.sdk,
+                ob_stream_profile_list_get_profile(self.as_ptr(), index as i32)
+            )?,
             "ob_stream_profile_list_get_profile",
         )
     }
@@ -448,7 +558,10 @@ impl ProfileList {
                 }
             }
             if let Some((_, profile)) = best {
-                return Ok(Some(Choice { profile, format: wanted }));
+                return Ok(Some(Choice {
+                    profile,
+                    format: wanted,
+                }));
             }
         }
         Ok(None)
@@ -459,11 +572,26 @@ impl ProfileList {
 /// Native RGB comes first so no conversion runs when the camera offers it.
 const COLOR_FORMATS: [(ffi::ob_format, Option<ffi::ob_convert_format>); 6] = [
     (ffi::OBFormat_OB_FORMAT_RGB, None),
-    (ffi::OBFormat_OB_FORMAT_MJPG, Some(ffi::OBConvertFormat_FORMAT_MJPG_TO_RGB)),
-    (ffi::OBFormat_OB_FORMAT_YUYV, Some(ffi::OBConvertFormat_FORMAT_YUYV_TO_RGB)),
-    (ffi::OBFormat_OB_FORMAT_UYVY, Some(ffi::OBConvertFormat_FORMAT_UYVY_TO_RGB)),
-    (ffi::OBFormat_OB_FORMAT_NV12, Some(ffi::OBConvertFormat_FORMAT_NV12_TO_RGB)),
-    (ffi::OBFormat_OB_FORMAT_I420, Some(ffi::OBConvertFormat_FORMAT_I420_TO_RGB)),
+    (
+        ffi::OBFormat_OB_FORMAT_MJPG,
+        Some(ffi::OBConvertFormat_FORMAT_MJPG_TO_RGB),
+    ),
+    (
+        ffi::OBFormat_OB_FORMAT_YUYV,
+        Some(ffi::OBConvertFormat_FORMAT_YUYV_TO_RGB),
+    ),
+    (
+        ffi::OBFormat_OB_FORMAT_UYVY,
+        Some(ffi::OBConvertFormat_FORMAT_UYVY_TO_RGB),
+    ),
+    (
+        ffi::OBFormat_OB_FORMAT_NV12,
+        Some(ffi::OBConvertFormat_FORMAT_NV12_TO_RGB),
+    ),
+    (
+        ffi::OBFormat_OB_FORMAT_I420,
+        Some(ffi::OBConvertFormat_FORMAT_I420_TO_RGB),
+    ),
 ];
 
 /// Which infrared imager feeds marker detection.
@@ -474,8 +602,14 @@ struct IrSource {
 }
 
 const IR_SOURCES: [IrSource; 2] = [
-    IrSource { sensor: ffi::OBSensorType_OB_SENSOR_IR_LEFT, frame: ffi::OBFrameType_OB_FRAME_IR_LEFT },
-    IrSource { sensor: ffi::OBSensorType_OB_SENSOR_IR, frame: ffi::OBFrameType_OB_FRAME_IR },
+    IrSource {
+        sensor: ffi::OBSensorType_OB_SENSOR_IR_LEFT,
+        frame: ffi::OBFrameType_OB_FRAME_IR_LEFT,
+    },
+    IrSource {
+        sensor: ffi::OBSensorType_OB_SENSOR_IR,
+        frame: ffi::OBFrameType_OB_FRAME_IR,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -485,7 +619,10 @@ const IR_SOURCES: [IrSource; 2] = [
 impl Frame {
     /// Wraps a frame the SDK handed out, or `None` for null.
     fn adopt(sdk: &Sdk, raw: *mut ffi::ob_frame) -> Option<Self> {
-        NonNull::new(raw).map(|ptr| Self { sdk: Arc::clone(sdk), ptr })
+        NonNull::new(raw).map(|ptr| Self {
+            sdk: Arc::clone(sdk),
+            ptr,
+        })
     }
 
     fn data(&self) -> Result<&[u8], CameraError> {
@@ -539,7 +676,8 @@ fn gray_from_frame(frame: &Frame) -> Result<GrayImage, CameraError> {
         return Err(CameraError::Unsupported("8-bit infrared frames"));
     }
     let (w, h, buf) = frame.pixels(1)?;
-    GrayImage::from_raw(w, h, buf).ok_or_else(|| CameraError::Sdk("infrared frame size mismatch".into()))
+    GrayImage::from_raw(w, h, buf)
+        .ok_or_else(|| CameraError::Sdk("infrared frame size mismatch".into()))
 }
 
 fn depth_from_frame(frame: &Frame) -> Result<(DepthImage, f32), CameraError> {
@@ -547,8 +685,12 @@ fn depth_from_frame(frame: &Frame) -> Result<(DepthImage, f32), CameraError> {
         return Err(CameraError::Unsupported("16-bit depth frames"));
     }
     let (w, h, bytes) = frame.pixels(2)?;
-    let raw: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    let image = DepthImage::from_raw(w, h, raw).ok_or_else(|| CameraError::Sdk("depth frame size mismatch".into()))?;
+    let raw: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let image = DepthImage::from_raw(w, h, raw)
+        .ok_or_else(|| CameraError::Sdk("depth frame size mismatch".into()))?;
     // The SDK's value scale is millimeters per raw unit.
     let scale_mm = ob!(frame.sdk, ob_depth_frame_get_value_scale(frame.as_ptr()))?;
     Ok((image, scale_mm / 1000.0))
@@ -610,13 +752,21 @@ unsafe extern "C" fn imu_callback(frame: *mut ffi::ob_frame, user_data: *mut c_v
     // SAFETY: `user_data` is the `ImuCallbackCtx` leaked in `ImuSensor::start`.
     // It is freed only after `ob_sensor_stop` returns, which ends callbacks.
     let ctx = unsafe { &*(user_data as *const ImuCallbackCtx) };
-    let Some(frame) = Frame::adopt(&ctx.sdk, frame) else { return };
+    let Some(frame) = Frame::adopt(&ctx.sdk, frame) else {
+        return;
+    };
     // A panic must not unwind into the SDK's C++ threads.
     let _ = catch_unwind(AssertUnwindSafe(|| {
-        let Ok(timestamp_us) = ob!(ctx.sdk, ob_frame_get_timestamp_us(frame.as_ptr())) else { return };
+        let Ok(timestamp_us) = ob!(ctx.sdk, ob_frame_get_timestamp_us(frame.as_ptr())) else {
+            return;
+        };
         let read = match ctx.kind {
-            ImuKind::Accel => ob!(ctx.sdk, ob_accel_frame_get_value(frame.as_ptr())).map(|v| [v.x, v.y, v.z]),
-            ImuKind::Gyro => ob!(ctx.sdk, ob_gyro_frame_get_value(frame.as_ptr())).map(|v| [v.x, v.y, v.z]),
+            ImuKind::Accel => {
+                ob!(ctx.sdk, ob_accel_frame_get_value(frame.as_ptr())).map(|v| [v.x, v.y, v.z])
+            }
+            ImuKind::Gyro => {
+                ob!(ctx.sdk, ob_gyro_frame_get_value(frame.as_ptr())).map(|v| [v.x, v.y, v.z])
+            }
         };
         let Ok([x, y, z]) = read else { return };
         let v = ctx.to_color * Vector3::new(f64::from(x), f64::from(y), f64::from(z));
@@ -629,7 +779,11 @@ unsafe extern "C" fn imu_callback(frame: *mut ffi::ob_frame, user_data: *mut c_v
                     if state.samples.len() >= IMU_BUFFER_LIMIT {
                         state.samples.pop_front();
                     }
-                    state.samples.push_back(ImuSample { timestamp: Duration::from_micros(timestamp_us), gyro: v, accel });
+                    state.samples.push_back(ImuSample {
+                        timestamp: Duration::from_micros(timestamp_us),
+                        gyro: v,
+                        accel,
+                    });
                 }
             }
         }
@@ -663,28 +817,56 @@ impl ImuSensor {
         if !present {
             return Ok(None);
         }
-        let sensor = Sensor::new(sdk, ob!(sdk, ob_sensor_list_get_sensor_by_type(sensors.as_ptr(), wanted))?, "IMU sensor")?;
+        let sensor = Sensor::new(
+            sdk,
+            ob!(
+                sdk,
+                ob_sensor_list_get_sensor_by_type(sensors.as_ptr(), wanted)
+            )?,
+            "IMU sensor",
+        )?;
 
         let profiles = ProfileList::for_sensor(&sensor)?;
         let mut best: Option<(f64, Profile)> = None;
         for i in 0..profiles.len()? {
             let profile = profiles.get(i)?;
             let rate = match kind {
-                ImuKind::Accel => ob!(sdk, ob_accel_stream_profile_get_sample_rate(profile.as_ptr()))?,
-                ImuKind::Gyro => ob!(sdk, ob_gyro_stream_profile_get_sample_rate(profile.as_ptr()))?,
+                ImuKind::Accel => ob!(
+                    sdk,
+                    ob_accel_stream_profile_get_sample_rate(profile.as_ptr())
+                )?,
+                ImuKind::Gyro => ob!(
+                    sdk,
+                    ob_gyro_stream_profile_get_sample_rate(profile.as_ptr())
+                )?,
             };
             let distance = (imu_hz(rate) - IMU_TARGET_HZ).abs();
             if best.as_ref().is_none_or(|(d, _)| distance < *d) {
                 best = Some((distance, profile));
             }
         }
-        let Some((_, profile)) = best else { return Ok(None) };
+        let Some((_, profile)) = best else {
+            return Ok(None);
+        };
 
         let to_color = profile.extrinsics_to(color)?.rotation;
-        let ctx = Box::into_raw(Box::new(ImuCallbackCtx { kind, to_color, shared: Arc::clone(shared), sdk: Arc::clone(sdk) }));
+        let ctx = Box::into_raw(Box::new(ImuCallbackCtx {
+            kind,
+            to_color,
+            shared: Arc::clone(shared),
+            sdk: Arc::clone(sdk),
+        }));
         // SAFETY: `ctx` stays allocated until `ImuSensor::drop`, which stops the
         // sensor first; the callback is the only other user of it.
-        let started = ob!(sdk, ob_sensor_start(sensor.as_ptr(), profile.as_ptr(), Some(imu_callback), ctx as *mut c_void));
+        let started = ob!(
+            sdk,
+            ob_sensor_start(
+                sensor.as_ptr(),
+                profile.as_ptr(),
+                Some(imu_callback),
+                ctx as *mut c_void
+            )
+        );
         if let Err(e) = started {
             // SAFETY: the sensor never started, so no callback holds `ctx`.
             drop(unsafe { Box::from_raw(ctx) });
@@ -696,7 +878,10 @@ impl ImuSensor {
 
 impl Drop for ImuSensor {
     fn drop(&mut self) {
-        best_effort("ob_sensor_stop", ob!(self.sensor.sdk, ob_sensor_stop(self.sensor.as_ptr())));
+        best_effort(
+            "ob_sensor_stop",
+            ob!(self.sensor.sdk, ob_sensor_stop(self.sensor.as_ptr())),
+        );
         // SAFETY: `ctx` came from `Box::into_raw` and the sensor is stopped, so
         // no callback can still be reading it.
         drop(unsafe { Box::from_raw(self.ctx) });
@@ -741,11 +926,21 @@ impl CameraBackend for OrbbecBackend {
         let context = Context::create(&self.sdk()?)?;
         let devices = DeviceList::query(&context)?;
         (0..devices.len()?)
-            .map(|i| Ok(CameraInfo { id: devices.uid(i)?, name: devices.name(i)?, serial: devices.serial(i)? }))
+            .map(|i| {
+                Ok(CameraInfo {
+                    id: devices.uid(i)?,
+                    name: devices.name(i)?,
+                    serial: devices.serial(i)?,
+                })
+            })
             .collect()
     }
 
-    fn open(&self, camera: &CameraInfo, settings: &CaptureSettings) -> Result<Box<dyn CameraStream>, CameraError> {
+    fn open(
+        &self,
+        camera: &CameraInfo,
+        settings: &CaptureSettings,
+    ) -> Result<Box<dyn CameraStream>, CameraError> {
         Ok(Box::new(OrbbecStream::open(self.sdk()?, camera, settings)?))
     }
 }
@@ -775,17 +970,27 @@ pub struct OrbbecStream {
 unsafe impl Send for OrbbecStream {}
 
 impl OrbbecStream {
-    fn open(sdk: Sdk, camera: &CameraInfo, settings: &CaptureSettings) -> Result<Self, CameraError> {
+    fn open(
+        sdk: Sdk,
+        camera: &CameraInfo,
+        settings: &CaptureSettings,
+    ) -> Result<Self, CameraError> {
         let context = Context::create(&sdk)?;
         let devices = DeviceList::query(&context)?;
         let uid = CString::new(camera.id.as_str()).map_err(|_| CameraError::NoDevice)?;
-        let raw = ob!(sdk, ob_device_list_get_device_by_uid(devices.as_ptr(), uid.as_ptr()));
+        let raw = ob!(
+            sdk,
+            ob_device_list_get_device_by_uid(devices.as_ptr(), uid.as_ptr())
+        );
         let device = match raw {
             Ok(raw) => Device::new(&sdk, raw, "ob_device_list_get_device_by_uid")?,
             Err(_) => return Err(CameraError::NoDevice),
         };
-        let pipeline =
-            Pipeline::new(&sdk, ob!(sdk, ob_create_pipeline_with_device(device.as_ptr()))?, "ob_create_pipeline_with_device")?;
+        let pipeline = Pipeline::new(
+            &sdk,
+            ob!(sdk, ob_create_pipeline_with_device(device.as_ptr()))?,
+            "ob_create_pipeline_with_device",
+        )?;
 
         device.apply_capture_settings(settings)?;
 
@@ -793,12 +998,21 @@ impl OrbbecStream {
         let color_formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
         let color_list = ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
             .map_err(|_| CameraError::Unsupported("a color stream"))?;
-        let color = color_list.best(&color_formats)?.ok_or(CameraError::Unsupported("a 30 fps RGB-convertible color stream"))?;
-        let convert = COLOR_FORMATS.iter().find(|(f, _)| *f == color.format).and_then(|(_, c)| *c);
+        let color = color_list
+            .best(&color_formats)?
+            .ok_or(CameraError::Unsupported(
+                "a 30 fps RGB-convertible color stream",
+            ))?;
+        let convert = COLOR_FORMATS
+            .iter()
+            .find(|(f, _)| *f == color.format)
+            .and_then(|(_, c)| *c);
 
         let mut ir = None;
         for source in IR_SOURCES {
-            let Ok(list) = ProfileList::for_sensor_type(&pipeline, source.sensor) else { continue };
+            let Ok(list) = ProfileList::for_sensor_type(&pipeline, source.sensor) else {
+                continue;
+            };
             if let Some(choice) = list.best(&[ffi::OBFormat_OB_FORMAT_Y8])? {
                 ir = Some((source, choice));
                 break;
@@ -824,18 +1038,31 @@ impl OrbbecStream {
             None => None,
             Some(kind) => {
                 let name = CString::new("FormatConverter").expect("literal has no NUL");
-                let filter = Filter::new(&sdk, ob!(sdk, ob_create_filter(name.as_ptr()))?, "format converter")?;
+                let filter = Filter::new(
+                    &sdk,
+                    ob!(sdk, ob_create_filter(name.as_ptr()))?,
+                    "format converter",
+                )?;
                 let key = CString::new("convertType").expect("literal has no NUL");
-                ob!(sdk, ob_filter_set_config_value(filter.as_ptr(), key.as_ptr(), f64::from(kind)))?;
+                ob!(
+                    sdk,
+                    ob_filter_set_config_value(filter.as_ptr(), key.as_ptr(), f64::from(kind))
+                )?;
                 Some(filter)
             }
         };
 
         let config = Config::new(&sdk, ob!(sdk, ob_create_config())?, "ob_create_config")?;
         for profile in [&color.profile, &ir.profile, &depth.profile] {
-            ob!(sdk, ob_config_enable_stream_with_stream_profile(config.as_ptr(), profile.as_ptr()))?;
+            ob!(
+                sdk,
+                ob_config_enable_stream_with_stream_profile(config.as_ptr(), profile.as_ptr())
+            )?;
         }
-        ob!(sdk, ob_config_set_align_mode(config.as_ptr(), ffi::OBAlignMode_ALIGN_DISABLE))?;
+        ob!(
+            sdk,
+            ob_config_set_align_mode(config.as_ptr(), ffi::OBAlignMode_ALIGN_DISABLE)
+        )?;
         ob!(
             sdk,
             ob_config_set_frame_aggregate_output_mode(
@@ -863,7 +1090,10 @@ impl OrbbecStream {
             _devices: devices,
             _context: context,
         };
-        ob!(sdk, ob_pipeline_start_with_config(stream.pipeline.as_ptr(), config.as_ptr()))?;
+        ob!(
+            sdk,
+            ob_pipeline_start_with_config(stream.pipeline.as_ptr(), config.as_ptr())
+        )?;
         stream.pipeline_started = true;
         stream.start_imu(&color.profile);
         Ok(stream)
@@ -876,7 +1106,11 @@ impl OrbbecStream {
             let sensors = self.device.sensor_list()?;
             let accel = ImuSensor::start(&sensors, ImuKind::Accel, color, &self.imu_state)?;
             let gyro = ImuSensor::start(&sensors, ImuKind::Gyro, color, &self.imu_state)?;
-            Ok(accel.into_iter().zip(gyro).flat_map(|(a, g)| [a, g]).collect())
+            Ok(accel
+                .into_iter()
+                .zip(gyro)
+                .flat_map(|(a, g)| [a, g])
+                .collect())
         })();
         if let Some(sensors) = best_effort("IMU start", started) {
             self.imu = sensors;
@@ -894,16 +1128,25 @@ impl OrbbecStream {
         };
         let rgb = self.color_to_rgb(color)?;
         let (w, h, buf) = rgb.pixels(3)?;
-        let color = RgbImage::from_raw(w, h, buf).ok_or_else(|| CameraError::Sdk("color frame size mismatch".into()))?;
+        let color = RgbImage::from_raw(w, h, buf)
+            .ok_or_else(|| CameraError::Sdk("color frame size mismatch".into()))?;
         let (depth, depth_unit_m) = depth_from_frame(&depth)?;
-        Ok(Some(Frames { color, depth, depth_unit_m, ir: gray_from_frame(&ir)? }))
+        Ok(Some(Frames {
+            color,
+            depth,
+            depth_unit_m,
+            ir: gray_from_frame(&ir)?,
+        }))
     }
 
     fn color_to_rgb(&self, frame: Frame) -> Result<Frame, CameraError> {
         let frame = match &self.converter {
             Some(filter) if frame.format()? != ffi::OBFormat_OB_FORMAT_RGB => Frame::new(
                 &filter.sdk,
-                ob!(filter.sdk, ob_filter_process(filter.as_ptr(), frame.as_ptr()))?,
+                ob!(
+                    filter.sdk,
+                    ob_filter_process(filter.as_ptr(), frame.as_ptr())
+                )?,
                 "color format conversion",
             )?,
             _ => frame,
@@ -923,7 +1166,10 @@ impl Drop for OrbbecStream {
         }
         self.imu.clear();
         if self.pipeline_started {
-            best_effort("ob_pipeline_stop", ob!(self.pipeline.sdk, ob_pipeline_stop(self.pipeline.as_ptr())));
+            best_effort(
+                "ob_pipeline_stop",
+                ob!(self.pipeline.sdk, ob_pipeline_stop(self.pipeline.as_ptr())),
+            );
         }
     }
 }
@@ -938,7 +1184,10 @@ impl CameraStream for OrbbecStream {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             let wait_ms = u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX);
-            let raw = ob!(self.pipeline.sdk, ob_pipeline_wait_for_frameset(self.pipeline.as_ptr(), wait_ms))?;
+            let raw = ob!(
+                self.pipeline.sdk,
+                ob_pipeline_wait_for_frameset(self.pipeline.as_ptr(), wait_ms)
+            )?;
             if let Some(set) = Frame::adopt(&self.pipeline.sdk, raw) {
                 if let Some(frames) = self.assemble(&set)? {
                     return Ok(frames);
@@ -955,19 +1204,30 @@ impl CameraStream for OrbbecStream {
     }
 
     fn set_ir_exposure_us(&mut self, exposure_us: u32) -> Result<(), CameraError> {
-        if !self.device.supports(ffi::OBPropertyID_OB_PROP_IR_EXPOSURE_INT) {
+        if !self
+            .device
+            .supports(ffi::OBPropertyID_OB_PROP_IR_EXPOSURE_INT)
+        {
             return Err(CameraError::Unsupported("infrared exposure control"));
         }
-        if self.device.supports(ffi::OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL) {
-            self.device.set_bool(ffi::OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL, false)?;
+        if self
+            .device
+            .supports(ffi::OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL)
+        {
+            self.device
+                .set_bool(ffi::OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL, false)?;
         }
         let value = i32::try_from(exposure_us).unwrap_or(i32::MAX);
-        self.device.set_int_clamped(ffi::OBPropertyID_OB_PROP_IR_EXPOSURE_INT, value)?;
+        self.device
+            .set_int_clamped(ffi::OBPropertyID_OB_PROP_IR_EXPOSURE_INT, value)?;
         Ok(())
     }
 
     fn set_ir_auto_exposure(&mut self) -> Result<(), CameraError> {
-        if !self.device.supports(ffi::OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL) {
+        if !self
+            .device
+            .supports(ffi::OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL)
+        {
             return Err(CameraError::Unsupported("infrared auto exposure"));
         }
         self.device.restore_ir_auto_exposure()

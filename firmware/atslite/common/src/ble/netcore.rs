@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicU16, Ordering};
 
 use bt_hci::cmd;
 use bt_hci::controller::ControllerCmdSync;
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{Duration, Timer, with_timeout};
 use trouble_host::prelude::{Controller, PacketPool, Stack};
 
 cmd! {
@@ -65,7 +65,10 @@ where
                 defmt::warn!("[ble] net-core release query failed (attempt {})", attempt);
             }
             Err(_) => {
-                defmt::warn!("[ble] net-core release query timed out (attempt {})", attempt);
+                defmt::warn!(
+                    "[ble] net-core release query timed out (attempt {})",
+                    attempt
+                );
             }
         }
     }

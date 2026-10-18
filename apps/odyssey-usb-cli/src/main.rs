@@ -1,6 +1,7 @@
+use std::time::Instant;
+
 use argmin::core::observers::ObserverMode;
-use argmin::core::Error;
-use argmin::core::{CostFunction, Executor, Gradient};
+use argmin::core::{CostFunction, Error, Executor, Gradient};
 use argmin_observer_slog::SlogLogger;
 use clap::Parser;
 use futures::StreamExt;
@@ -9,7 +10,6 @@ use nusb::MaybeFuture as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serialport::SerialPortType;
-use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Serialize, Deserialize)]
@@ -168,9 +168,10 @@ async fn main() {
         return;
     }
 
-    let mut device = odyssey_usb::device::VmDevice::connect_usb(devices.into_iter().next().unwrap())
-        .await
-        .unwrap();
+    let mut device =
+        odyssey_usb::device::VmDevice::connect_usb(devices.into_iter().next().unwrap())
+            .await
+            .unwrap();
 
     println!("Connected to device");
 

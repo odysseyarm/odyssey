@@ -9,10 +9,10 @@
 //! [`Command::Close`], after [`Command::Finish`], on any camera error and when
 //! the [`Worker`] is dropped. Nothing else keeps a stream alive.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -24,8 +24,8 @@ use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CaptureS
 use odyssey_autocalib::markers::MarkerError;
 use odyssey_autocalib::orbbec::{self, OrbbecBackend, RuntimeStatus};
 use odyssey_autocalib::session::{
-    EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, Session, SessionError, SessionOptions, SideSet, SizeCheck,
-    SizeSource, Step,
+    EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, Session, SessionError, SessionOptions,
+    SideSet, SizeCheck, SizeSource, Step,
 };
 use odyssey_autocalib::solve::SolveError;
 use odyssey_autocalib::synthetic::{SyntheticBackend, SyntheticScene};
@@ -70,9 +70,9 @@ pub enum ListError {
 
 fn list_hardware() -> Result<Vec<CameraInfo>, ListError> {
     match orbbec::runtime_status(None) {
-        RuntimeStatus::Available { .. } => {
-            OrbbecBackend::new().list().map_err(|e| ListError::Camera(e.to_string()))
-        }
+        RuntimeStatus::Available { .. } => OrbbecBackend::new()
+            .list()
+            .map_err(|e| ListError::Camera(e.to_string())),
         unavailable => Err(ListError::Runtime(unavailable)),
     }
 }
@@ -80,7 +80,9 @@ fn list_hardware() -> Result<Vec<CameraInfo>, ListError> {
 impl Backend {
     fn list(self) -> Result<Vec<CameraInfo>, ListError> {
         match self {
-            Self::Demo { .. } => SyntheticBackend::default().list().map_err(|e| ListError::Camera(e.to_string())),
+            Self::Demo { .. } => SyntheticBackend::default()
+                .list()
+                .map_err(|e| ListError::Camera(e.to_string())),
             Self::Hardware => list_hardware(),
         }
     }
@@ -88,12 +90,21 @@ impl Backend {
     fn open(self, request: &OpenRequest) -> Result<Session, CameraError> {
         let stream = match self {
             Self::Demo { overscan_fraction } => {
-                let scene = demo_scene(request.aspect, DEMO_DIAGONAL_IN, request.pattern_visible, overscan_fraction);
+                let scene = demo_scene(
+                    request.aspect,
+                    DEMO_DIAGONAL_IN,
+                    request.pattern_visible,
+                    overscan_fraction,
+                );
                 SyntheticBackend::new(scene).open(&request.camera, &request.settings)?
             }
             Self::Hardware => OrbbecBackend::new().open(&request.camera, &request.settings)?,
         };
-        Ok(Session::start(stream, request.aspect, request.options.clone()))
+        Ok(Session::start(
+            stream,
+            request.aspect,
+            request.options.clone(),
+        ))
     }
 }
 
@@ -101,8 +112,17 @@ impl Backend {
 /// renders the same dot grid the wizard draws because both derive it from this
 /// aspect ratio, and it sits farther from a larger screen so the screen fills
 /// a similar part of the picture.
-pub fn demo_scene(aspect: f64, diagonal_in: f64, pattern_visible: bool, overscan_fraction: f64) -> SyntheticScene {
-    let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 16.0 / 9.0 };
+pub fn demo_scene(
+    aspect: f64,
+    diagonal_in: f64,
+    pattern_visible: bool,
+    overscan_fraction: f64,
+) -> SyntheticScene {
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        aspect
+    } else {
+        16.0 / 9.0
+    };
     let diagonal_m = diagonal_in * 0.0254;
     let height = diagonal_m / (aspect * aspect + 1.0).sqrt();
     let mut scene = SyntheticScene {
@@ -146,7 +166,10 @@ pub enum Command {
     ListCameras,
     /// Closes any open session, opens the camera and starts previewing. Events
     /// that follow carry `session`.
-    Open { session: u64, request: OpenRequest },
+    Open {
+        session: u64,
+        request: OpenRequest,
+    },
     SetMode(Mode),
     SetIrExposure(u32),
     MeasureScreen,
@@ -161,7 +184,10 @@ pub enum Event {
     Cameras(Result<Vec<CameraInfo>, ListError>),
     /// Something about the camera session `session`; the UI drops events of
     /// sessions it has already abandoned.
-    Session { session: u64, event: SessionEvent },
+    Session {
+        session: u64,
+        event: SessionEvent,
+    },
 }
 
 #[derive(Debug)]
@@ -296,7 +322,9 @@ impl FailureKind {
         match error {
             SolveError::PatternNotFound(_) => Self::ScreenDots,
             SolveError::TooFewDepthPoints { .. } | SolveError::NoPlane => Self::ScreenDepth,
-            SolveError::DegeneratePose | SolveError::Mirrored | SolveError::DotsInconsistent => Self::ScreenGeometry,
+            SolveError::DegeneratePose | SolveError::Mirrored | SolveError::DotsInconsistent => {
+                Self::ScreenGeometry
+            }
             SolveError::KnownSizeInvalid => Self::SizeInvalid,
             SolveError::KnownSizeAspectMismatch { .. } => Self::SizeShape,
         }
@@ -306,7 +334,9 @@ impl FailureKind {
         match error {
             SessionError::Camera(_) => Self::CameraLost,
             SessionError::Solve(e) => Self::of_solve(e),
-            SessionError::Markers(MarkerError::TooFewBlobs { .. } | MarkerError::LayoutMismatch { .. }) => Self::Markers,
+            SessionError::Markers(
+                MarkerError::TooFewBlobs { .. } | MarkerError::LayoutMismatch { .. },
+            ) => Self::Markers,
             SessionError::EdgesCropped(sides) => Self::EdgesCropped(*sides),
             SessionError::ScreenNotMeasured | SessionError::MarkersNotMeasured => Self::Internal,
         }
@@ -364,7 +394,10 @@ impl Worker {
             .name("calibration-camera".into())
             .spawn(move || engine.run(receiver))
             .expect("the OS refused to start a thread");
-        Self { commands, in_flight }
+        Self {
+            commands,
+            in_flight,
+        }
     }
 
     pub fn send(&self, command: Command) {
@@ -444,7 +477,10 @@ impl Engine {
     }
 
     fn emit(&self, event: SessionEvent) {
-        let _ = self.events.send(Event::Session { session: self.session, event });
+        let _ = self.events.send(Event::Session {
+            session: self.session,
+            event,
+        });
     }
 
     fn close(&mut self) {
@@ -461,7 +497,12 @@ impl Engine {
         if !keep_camera {
             self.close_quietly();
         }
-        self.emit(SessionEvent::Failed(Failure { kind, details, camera_open: keep_camera, size_origin: self.size_origin }));
+        self.emit(SessionEvent::Failed(Failure {
+            kind,
+            details,
+            camera_open: keep_camera,
+            size_origin: self.size_origin,
+        }));
     }
 
     fn close_quietly(&mut self) {
@@ -484,8 +525,14 @@ impl Engine {
                 self.require_edges = request.options.require_visible_edges;
                 match self.backend.open(&request) {
                     Ok(opened) => {
-                        tracing::info!("camera opened: {} (calibration session {session})", request.camera.name);
-                        self.live = Some(Live { session: opened, ready: Stability::default() });
+                        tracing::info!(
+                            "camera opened: {} (calibration session {session})",
+                            request.camera.name
+                        );
+                        self.live = Some(Live {
+                            session: opened,
+                            ready: Stability::default(),
+                        });
                         self.mode = Mode::Preview;
                         self.emit(SessionEvent::Opened);
                     }
@@ -518,7 +565,10 @@ impl Engine {
         self.mode = Mode::Hold;
         let (events, session) = (&self.events, self.session);
         let result = live.session.measure_screen(&mut |step| {
-            let _ = events.send(Event::Session { session, event: SessionEvent::Progress(step) });
+            let _ = events.send(Event::Session {
+                session,
+                event: SessionEvent::Progress(step),
+            });
         });
         match result {
             Ok(_) => self.emit(SessionEvent::ScreenMeasured),
@@ -531,7 +581,10 @@ impl Engine {
         self.mode = Mode::Hold;
         let (events, session) = (&self.events, self.session);
         let result = live.session.measure_markers(&mut |step| {
-            let _ = events.send(Event::Session { session, event: SessionEvent::Progress(step) });
+            let _ = events.send(Event::Session {
+                session,
+                event: SessionEvent::Progress(step),
+            });
         });
         match result {
             Ok(_) => self.emit(SessionEvent::MarkersMeasured),
@@ -562,7 +615,8 @@ impl Engine {
         });
         match result {
             Ok((declared, measured)) => {
-                let (image, width, height) = encode_rgb(&declared.review.color, u32::MAX, REVIEW_JPEG_QUALITY);
+                let (image, width, height) =
+                    encode_rgb(&declared.review.color, u32::MAX, REVIEW_JPEG_QUALITY);
                 let finished = Finished {
                     image,
                     width,
@@ -590,7 +644,11 @@ impl Engine {
                     self.timeouts = 0;
                     let ready_for = live.ready.observe(preview.is_ready(), now);
                     if self.claim_frame() {
-                        self.emit(SessionEvent::Preview(Box::new(preview_frame(preview, ready_for, self.require_edges))));
+                        self.emit(SessionEvent::Preview(Box::new(preview_frame(
+                            preview,
+                            ready_for,
+                            self.require_edges,
+                        ))));
                     }
                 }
                 Err(e) => self.stream_error(e),
@@ -598,10 +656,13 @@ impl Engine {
             Mode::Markers => match live.session.preview_markers() {
                 Ok(preview) => {
                     self.timeouts = 0;
-                    let all_matched = preview.hint == MarkerHint::Ready && preview.matched.is_some();
+                    let all_matched =
+                        preview.hint == MarkerHint::Ready && preview.matched.is_some();
                     let stable_for = live.ready.observe(all_matched, now);
                     if self.claim_frame() {
-                        self.emit(SessionEvent::Markers(Box::new(marker_frame(preview, stable_for))));
+                        self.emit(SessionEvent::Markers(Box::new(marker_frame(
+                            preview, stable_for,
+                        ))));
                     }
                 }
                 Err(e) => self.stream_error(e),
@@ -638,7 +699,12 @@ fn encode_rgb(image: &RgbImage, max_width: u32, quality: u8) -> (String, u32, u3
     let result = if w > max_width && max_width > 0 {
         let scaled_h = (u64::from(h) * u64::from(max_width) / u64::from(w)).max(1) as u32;
         let small = image::imageops::resize(image, max_width, scaled_h, FilterType::Triangle);
-        encoder.encode(small.as_raw(), small.width(), small.height(), ExtendedColorType::Rgb8)
+        encoder.encode(
+            small.as_raw(),
+            small.width(),
+            small.height(),
+            ExtendedColorType::Rgb8,
+        )
     } else {
         encoder.encode(image.as_raw(), w, h, ExtendedColorType::Rgb8)
     };
@@ -682,7 +748,8 @@ fn xy(p: nalgebra::Point2<f32>) -> [f32; 2] {
 }
 
 fn preview_frame(preview: Preview, ready_for: Duration, require_edges: bool) -> PreviewFrame {
-    let (image, width, height) = encode_rgb(&preview.color, PREVIEW_MAX_WIDTH, PREVIEW_JPEG_QUALITY);
+    let (image, width, height) =
+        encode_rgb(&preview.color, PREVIEW_MAX_WIDTH, PREVIEW_JPEG_QUALITY);
     PreviewFrame {
         image,
         width,
@@ -718,9 +785,10 @@ fn marker_frame(preview: MarkerPreview, stable_for: Duration) -> MarkerFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use odyssey_autocalib::pattern::Pattern;
     use odyssey_autocalib::session::KnownSize;
+
+    use super::*;
 
     #[test]
     fn stability_counts_an_unbroken_run_and_resets_on_a_gap() {
@@ -758,9 +826,17 @@ mod tests {
     fn solve_errors_map_to_advice_categories() {
         use odyssey_autocalib::pattern::DetectFailure;
         let kind = |e: SolveError| FailureKind::of_session(&SessionError::Solve(e));
-        assert_eq!(kind(SolveError::PatternNotFound(DetectFailure::NoDots { blobs: 0 })), FailureKind::ScreenDots);
+        assert_eq!(
+            kind(SolveError::PatternNotFound(DetectFailure::NoDots {
+                blobs: 0
+            })),
+            FailureKind::ScreenDots
+        );
         assert_eq!(kind(SolveError::NoPlane), FailureKind::ScreenDepth);
-        assert_eq!(kind(SolveError::TooFewDepthPoints { found: 3 }), FailureKind::ScreenDepth);
+        assert_eq!(
+            kind(SolveError::TooFewDepthPoints { found: 3 }),
+            FailureKind::ScreenDepth
+        );
         assert_eq!(kind(SolveError::Mirrored), FailureKind::ScreenGeometry);
         assert_eq!(
             FailureKind::of_session(&SessionError::Camera(CameraError::Timeout)),
@@ -768,11 +844,21 @@ mod tests {
         );
         assert_eq!(kind(SolveError::KnownSizeInvalid), FailureKind::SizeInvalid);
         assert_eq!(
-            kind(SolveError::KnownSizeAspectMismatch { known_aspect: 1.6, screen_aspect: 1.78 }),
+            kind(SolveError::KnownSizeAspectMismatch {
+                known_aspect: 1.6,
+                screen_aspect: 1.78
+            }),
             FailureKind::SizeShape
         );
-        let sides = SideSet { top: true, left: true, ..SideSet::default() };
-        assert_eq!(FailureKind::of_session(&SessionError::EdgesCropped(sides)), FailureKind::EdgesCropped(sides));
+        let sides = SideSet {
+            top: true,
+            left: true,
+            ..SideSet::default()
+        };
+        assert_eq!(
+            FailureKind::of_session(&SessionError::EdgesCropped(sides)),
+            FailureKind::EdgesCropped(sides)
+        );
     }
 
     /// How a scripted session on the camera thread ended.
@@ -784,7 +870,12 @@ mod tests {
     /// Runs the whole flow on the camera thread against the simulated camera,
     /// measuring as soon as the preview is ready (or, with `measure_anyway`,
     /// at the first preview), and checks the camera is released at the end.
-    fn run_session(backend: Backend, options: SessionOptions, origin: Option<SizeOrigin>, measure_anyway: bool) -> Ended {
+    fn run_session(
+        backend: Backend,
+        options: SessionOptions,
+        origin: Option<SizeOrigin>,
+        measure_anyway: bool,
+    ) -> Ended {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let worker = Worker::spawn(backend, tx);
 
@@ -811,14 +902,17 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(120);
         while let Some(event) = rx.blocking_recv() {
             assert!(Instant::now() < deadline, "timed out");
-            let Event::Session { session, event } = event else { continue };
+            let Event::Session { session, event } = event else {
+                continue;
+            };
             assert_eq!(session, 7);
             match event {
                 SessionEvent::Opened | SessionEvent::Progress(_) => {}
                 SessionEvent::Preview(frame) => {
                     worker.frame_consumed();
                     assert!(frame.image.starts_with("data:image/jpeg;base64,"));
-                    let ready = frame.hint == Hint::Ready && frame.ready_for >= Duration::from_millis(300);
+                    let ready =
+                        frame.hint == Hint::Ready && frame.ready_for >= Duration::from_millis(300);
                     if (ready || measure_anyway) && !measuring {
                         measuring = true;
                         worker.send(Command::MeasureScreen);
@@ -849,11 +943,17 @@ mod tests {
     }
 
     fn demo() -> Backend {
-        Backend::Demo { overscan_fraction: 0.0 }
+        Backend::Demo {
+            overscan_fraction: 0.0,
+        }
     }
 
     fn flat(known: Option<KnownSize>) -> SessionOptions {
-        SessionOptions { known_size: known, require_visible_edges: true, ..SessionOptions::default() }
+        SessionOptions {
+            known_size: known,
+            require_visible_edges: true,
+            ..SessionOptions::default()
+        }
     }
 
     fn panel() -> Option<KnownSize> {
@@ -863,49 +963,87 @@ mod tests {
 
     #[test]
     fn a_session_without_a_declared_size_measures_and_releases_the_camera() {
-        let Ended::Finished(f) = run_session(demo(), SessionOptions::default(), None, false) else { panic!("failed") };
+        let Ended::Finished(f) = run_session(demo(), SessionOptions::default(), None, false) else {
+            panic!("failed")
+        };
         assert!(f.image.starts_with("data:image/jpeg"));
-        assert!((f.primary.diagonal_in - DEMO_DIAGONAL_IN).abs() < 0.5, "{}", f.primary.diagonal_in);
+        assert!(
+            (f.primary.diagonal_in - DEMO_DIAGONAL_IN).abs() < 0.5,
+            "{}",
+            f.primary.diagonal_in
+        );
         assert_eq!(f.primary.size_source, SizeSource::Measured);
         assert!(f.measured.is_none() && f.primary.size_check.is_none());
     }
 
     #[test]
     fn the_panel_size_anchors_a_flat_screen_and_the_camera_agrees() {
-        let Ended::Finished(f) = run_session(demo(), flat(panel()), Some(SizeOrigin::Panel), false) else { panic!("failed") };
+        let Ended::Finished(f) = run_session(demo(), flat(panel()), Some(SizeOrigin::Panel), false)
+        else {
+            panic!("failed")
+        };
         assert_eq!(f.primary.size_source, SizeSource::KnownDimensions);
         let check = f.primary.size_check.expect("a size check");
         assert!(!check.disagrees(), "{check:?}");
-        assert!(f.primary.measures.size_disagreement.is_some_and(|d| d < 0.02));
+        assert!(
+            f.primary
+                .measures
+                .size_disagreement
+                .is_some_and(|d| d < 0.02)
+        );
         // Declared and measured results are both on offer, and the latter is the camera's.
         let measured = f.measured.as_ref().expect("the camera's own result");
         assert_eq!(measured.size_source, SizeSource::Measured);
-        assert!(std::ptr::eq(f.outcome(false), &f.primary) && std::ptr::eq(f.outcome(true), measured));
+        assert!(
+            std::ptr::eq(f.outcome(false), &f.primary) && std::ptr::eq(f.outcome(true), measured)
+        );
     }
 
     #[test]
     fn a_wrong_typed_size_disagrees_and_the_measured_result_corrects_it() {
         let wrong = Some(KnownSize::Diagonal { inches: 40.0 });
-        let Ended::Finished(f) = run_session(demo(), flat(wrong), Some(SizeOrigin::Entered), false) else { panic!("failed") };
+        let Ended::Finished(f) = run_session(demo(), flat(wrong), Some(SizeOrigin::Entered), false)
+        else {
+            panic!("failed")
+        };
         assert!(f.primary.size_check.expect("check").disagrees());
         assert!((f.primary.diagonal_in - 40.0).abs() < 0.01);
         let measured = f.measured.as_ref().expect("measured");
-        assert!((measured.diagonal_in - DEMO_DIAGONAL_IN).abs() < 0.8, "{}", measured.diagonal_in);
+        assert!(
+            (measured.diagonal_in - DEMO_DIAGONAL_IN).abs() < 0.8,
+            "{}",
+            measured.diagonal_in
+        );
     }
 
     #[test]
     fn an_overscanning_tv_cannot_be_measured_until_its_picture_is_fixed() {
-        let backend = Backend::Demo { overscan_fraction: 0.03 };
-        let Ended::Failed(f) = run_session(backend, flat(panel()), Some(SizeOrigin::Panel), true) else { panic!("finished") };
-        assert!(matches!(f.kind, FailureKind::EdgesCropped(sides) if sides.count() == 4), "{f:?}");
+        let backend = Backend::Demo {
+            overscan_fraction: 0.03,
+        };
+        let Ended::Failed(f) = run_session(backend, flat(panel()), Some(SizeOrigin::Panel), true)
+        else {
+            panic!("finished")
+        };
+        assert!(
+            matches!(f.kind, FailureKind::EdgesCropped(sides) if sides.count() == 4),
+            "{f:?}"
+        );
         assert_eq!(f.size_origin, Some(SizeOrigin::Panel));
     }
 
     #[test]
     fn a_projector_ignores_overscan() {
-        let backend = Backend::Demo { overscan_fraction: 0.03 };
-        let options = SessionOptions { require_visible_edges: false, ..SessionOptions::default() };
-        let Ended::Finished(f) = run_session(backend, options, None, false) else { panic!("failed") };
+        let backend = Backend::Demo {
+            overscan_fraction: 0.03,
+        };
+        let options = SessionOptions {
+            require_visible_edges: false,
+            ..SessionOptions::default()
+        };
+        let Ended::Finished(f) = run_session(backend, options, None, false) else {
+            panic!("failed")
+        };
         assert_eq!(f.primary.size_source, SizeSource::Measured);
     }
 }

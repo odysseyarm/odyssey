@@ -5,13 +5,13 @@
 use core::pin::pin;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Instant, Timer};
-use npm1300_rs::leds::LedMode;
 use npm1300_rs::NPM1300;
+use npm1300_rs::leds::LedMode;
 
 static CMD_CH: Channel<CriticalSectionRawMutex, LedCmd, 4> = Channel::new();
 static BLE_CONNECTED: AtomicBool = AtomicBool::new(false);
@@ -279,11 +279,7 @@ fn color_for(state: LedState, frame_idx: u8) -> (bool, bool, bool) {
 
 fn frames_in_state(state: LedState) -> u8 {
     let (_, off) = state.frames();
-    if off == 0 {
-        1
-    } else {
-        2
-    }
+    if off == 0 { 1 } else { 2 }
 }
 
 /// PMIC LED animator task

@@ -3,7 +3,7 @@
 //! The wording lives here, apart from the views, so each situation's message
 //! is plain data a test can read.
 
-use odyssey_autocalib::orbbec::{RuntimeStatus, LIBRARY_NAME, SDK_DIR_ENV};
+use odyssey_autocalib::orbbec::{LIBRARY_NAME, RuntimeStatus, SDK_DIR_ENV};
 
 /// Where Orbbec publishes the SDK. The latest release is always a 2.x one the
 /// backend accepts.
@@ -43,16 +43,22 @@ pub fn notice(status: &RuntimeStatus) -> Option<Notice> {
         }
         RuntimeStatus::LoadFailed { library, error } => Some(Notice {
             title: "Camera support couldn't start".to_string(),
-            detail: "The camera library was found but could not be loaded. Restarting the app or the \
+            detail:
+                "The camera library was found but could not be loaded. Restarting the app or the \
                      computer sometimes clears this."
-                .to_string(),
+                    .to_string(),
             details: vec![format!("Library: {library}"), format!("Error: {error}")],
             offer_download: false,
         }),
         RuntimeStatus::UnsupportedVersion { found, supported } => Some(Notice {
             title: "The camera software is the wrong version".to_string(),
-            detail: format!("Orbbec SDK {found} is installed. This app works with Orbbec SDK {supported}."),
-            details: vec![format!("Installed version: {found}"), format!("Works with: {supported}")],
+            detail: format!(
+                "Orbbec SDK {found} is installed. This app works with Orbbec SDK {supported}."
+            ),
+            details: vec![
+                format!("Installed version: {found}"),
+                format!("Works with: {supported}"),
+            ],
             offer_download: true,
         }),
     }
@@ -76,7 +82,11 @@ mod tests {
     #[test]
     fn a_usable_library_needs_no_notice() {
         let status = RuntimeStatus::Available {
-            version: SdkVersion { major: 2, minor: 10, patch: 6 },
+            version: SdkVersion {
+                major: 2,
+                minor: 10,
+                patch: 6,
+            },
             library_path: None,
         };
         assert_eq!(notice(&status), None);
@@ -88,9 +98,18 @@ mod tests {
         assert_eq!(n.title, "Camera support isn't installed");
         assert!(n.offer_download);
         let details = n.details.join("\n");
-        assert!(details.contains("libOrbbecSDK.so.2 through the system library search path"), "{details}");
-        assert!(details.contains(&format!("{SDK_DIR_ENV} is not set")), "{details}");
-        assert!(details.contains(&format!("set the environment variable {SDK_DIR_ENV}")), "{details}");
+        assert!(
+            details.contains("libOrbbecSDK.so.2 through the system library search path"),
+            "{details}"
+        );
+        assert!(
+            details.contains(&format!("{SDK_DIR_ENV} is not set")),
+            "{details}"
+        );
+        assert!(
+            details.contains(&format!("set the environment variable {SDK_DIR_ENV}")),
+            "{details}"
+        );
     }
 
     #[test]
@@ -107,19 +126,32 @@ mod tests {
             error: "libudev.so.1: cannot open shared object file".to_string(),
         };
         let n = notice(&status).unwrap();
-        assert!(n.detail.starts_with("The camera library was found but could not be loaded"));
+        assert!(
+            n.detail
+                .starts_with("The camera library was found but could not be loaded")
+        );
         assert!(!n.offer_download);
         let everything = format!("{} {} {}", n.title, n.detail, n.details.join(" ")).to_lowercase();
         assert!(!everything.contains("install"), "{everything}");
         let details = n.details.join("\n");
-        assert!(details.contains("/opt/orbbec/libOrbbecSDK.so.2"), "{details}");
-        assert!(details.contains("libudev.so.1: cannot open shared object file"), "{details}");
+        assert!(
+            details.contains("/opt/orbbec/libOrbbecSDK.so.2"),
+            "{details}"
+        );
+        assert!(
+            details.contains("libudev.so.1: cannot open shared object file"),
+            "{details}"
+        );
     }
 
     #[test]
     fn wrong_version_names_the_found_and_the_working_versions() {
         let status = RuntimeStatus::UnsupportedVersion {
-            found: SdkVersion { major: 1, minor: 9, patch: 4 },
+            found: SdkVersion {
+                major: 1,
+                minor: 9,
+                patch: 4,
+            },
             supported: "2.8 or newer in the 2.x series (tested with 2.10.6)",
         };
         let n = notice(&status).unwrap();

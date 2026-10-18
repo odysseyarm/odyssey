@@ -8,7 +8,8 @@ use cortex_m_rt::{entry, exception};
 use defmt_rtt as _;
 use embassy_boot_nrf::*;
 use embassy_nrf::nvmc::Nvmc;
-use embassy_sync::blocking_mutex::{Mutex, raw::NoopRawMutex};
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 #[cfg(feature = "defmt")]

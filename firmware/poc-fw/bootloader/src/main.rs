@@ -6,16 +6,14 @@ use core::cell::RefCell;
 use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
-use embassy_nrf::nvmc::Nvmc;
-use embassy_nrf::nvmc::PAGE_SIZE;
-use embassy_nrf::{
-    peripherals,
-    usb::{vbus_detect::HardwareVbusDetect, Driver},
-};
+use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
+use embassy_nrf::peripherals;
+use embassy_nrf::usb::Driver;
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_usb::{msos, Builder};
+use embassy_usb::{Builder, msos};
 use embassy_usb_dfu::consts::DfuAttributes;
-use embassy_usb_dfu::{usb_dfu, Control, ResetImmediate};
+use embassy_usb_dfu::{Control, ResetImmediate, usb_dfu};
 
 embassy_nrf::bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
@@ -41,7 +39,7 @@ fn main() -> ! {
     let mut aligned_buf = embassy_boot::AlignedBuffer([0; PAGE_SIZE]);
     let mut boot = embassy_boot::BootLoader::new(config);
     let state = boot.prepare_boot(aligned_buf.as_mut()).unwrap();
-    
+
     if state == embassy_boot::State::DfuDetach {
         // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
@@ -89,7 +87,7 @@ fn main() -> ! {
         });
 
         let mut dev = builder.build();
-        
+
         embassy_futures::block_on(dev.run());
     }
 

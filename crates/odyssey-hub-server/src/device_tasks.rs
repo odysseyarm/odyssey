@@ -1,31 +1,32 @@
-﻿use ahrs::Ahrs;
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
+
+use ahrs::Ahrs;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use arrayvec::ArrayVec;
-use odyssey_common::{ros_opencv_intrinsics_type_convert, ScreenCalibration};
+use futures::stream::{self, BoxStream, SelectAll, StreamExt};
+use nalgebra::{
+    Isometry3, Matrix3, Matrix3x1, Point2, Point3, Rotation3, Translation3, UnitQuaternion,
+    UnitVector3, Vector2, Vector3,
+};
+use odyssey_common::{ScreenCalibration, ros_opencv_intrinsics_type_convert};
+use odyssey_hub_common::device::{Device, DeviceCapabilities};
+use odyssey_hub_common::events::{
+    AccelerometerEvent, DeviceEvent, DeviceEventKind, Event, ImpactEvent, Pose, TrackingEvent,
+};
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::{
     AccelReport, BatteryReport, CombinedMarkersReport, ConfigKind, GeneralConfig, ImpactReport,
     Packet, PacketData, PocMarkersReport, VendorData,
 };
-use nalgebra::{
-    Isometry3, Matrix3, Matrix3x1, Point2, Point3, Rotation3, Translation3, UnitQuaternion,
-    UnitVector3, Vector2, Vector3,
-};
-use odyssey_hub_common::device::{Device, DeviceCapabilities};
-use crate::firmware::{DFU_CLASS, DFU_PROTOCOL_DFU_MODE, DFU_SUBCLASS};
-use odyssey_hub_common::events::{
-    AccelerometerEvent, DeviceEvent, DeviceEventKind, Event, ImpactEvent, Pose, TrackingEvent,
-};
-use std::collections::HashMap;
-
-use futures::stream::{self, BoxStream, SelectAll, StreamExt};
-use std::future::Future;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tokio::time::sleep;
 use tracing::{debug, info, trace, warn};
+
+use crate::firmware::{DFU_CLASS, DFU_PROTOCOL_DFU_MODE, DFU_SUBCLASS};
 
 /// Consecutive failed connect attempts to a dongle-reported device before the hub
 /// manager waits for a fresh snapshot instead of retrying on its own.
@@ -47,13 +48,13 @@ enum DeviceStreamEvent {
     Vendor(u8, VendorData),
 }
 
+use nalgebra::Point2 as NaPoint2;
 /// Events from the device handler's merged stream
 // odyssey_cv foveated helpers
 use odyssey_cv::{
     foveated::FoveatedAimpointState, helpers as ats_helpers, to_normalized_image_coordinates,
     undistort_points,
 };
-use nalgebra::Point2 as NaPoint2;
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
 // per-handler foveated state and last-timestamp are local to each device handler now.
@@ -278,7 +279,9 @@ fn spawn_netcore_probe(
         )
         .await;
         if let Some(release) = release {
-            let _ = handler.send(DeviceTaskMessage::SetNetCoreRelease(release)).await;
+            let _ = handler
+                .send(DeviceTaskMessage::SetNetCoreRelease(release))
+                .await;
         }
     });
 }
@@ -292,7 +295,11 @@ fn spawn_packet_netcore_probe(
     device_protocol: [u16; 3],
 ) {
     if let Some(handler) = handler.upgrade() {
-        spawn_netcore_probe(NetCoreLink::Packets(events.clone()), Some(device_protocol), handler);
+        spawn_netcore_probe(
+            NetCoreLink::Packets(events.clone()),
+            Some(device_protocol),
+            handler,
+        );
     }
 }
 
@@ -317,7 +324,10 @@ pub async fn device_tasks(
     message_channel: mpsc::Sender<Message>,
     screen_calibrations: Arc<
         ArcSwap<
-            ArrayVec<(u8, ScreenCalibration<f32>), { (odyssey_common::MAX_SCREEN_ID + 1) as usize }>,
+            ArrayVec<
+                (u8, ScreenCalibration<f32>),
+                { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
+            >,
         >,
     >,
     device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
@@ -350,7 +360,10 @@ async fn usb_device_manager(
     message_channel: mpsc::Sender<Message>,
     screen_calibrations: Arc<
         ArcSwap<
-            ArrayVec<(u8, ScreenCalibration<f32>), { (odyssey_common::MAX_SCREEN_ID + 1) as usize }>,
+            ArrayVec<
+                (u8, ScreenCalibration<f32>),
+                { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
+            >,
         >,
     >,
     device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
@@ -506,7 +519,10 @@ async fn usb_device_manager(
 
                     if task_finished {
                         // Task finished, remove from list so we can reconnect
-                        info!("Hub manager task finished for {:?}, removing from list to allow reconnect", dev_info.id());
+                        info!(
+                            "Hub manager task finished for {:?}, removing from list to allow reconnect",
+                            dev_info.id()
+                        );
                         hub_managers_guard.remove(idx);
                     } else {
                         // Task still running, skip
@@ -518,7 +534,8 @@ async fn usb_device_manager(
                 drop(hub_managers_guard); // Release lock before connecting
 
                 info!("Attempting to connect to hub/dongle device");
-                let hub = match odyssey_usb::device::MuxDevice::connect_usb(dev_info.clone()).await {
+                let hub = match odyssey_usb::device::MuxDevice::connect_usb(dev_info.clone()).await
+                {
                     Ok(hub) => hub,
                     Err(e) => {
                         warn!("Failed to connect to USB hub device: {}", e);
@@ -614,9 +631,16 @@ async fn usb_device_manager(
                     let bonded_devices = if supports_list_bonds {
                         match hub_clone.list_bonds().await {
                             Ok(bonds) => {
-                                tracing::info!("list_bonds (startup): {} bonds returned", bonds.len());
+                                tracing::info!(
+                                    "list_bonds (startup): {} bonds returned",
+                                    bonds.len()
+                                );
                                 for b in &bonds {
-                                    tracing::info!("  bond: uuid={:02x?} name={:?}", b.uuid, b.name.as_str());
+                                    tracing::info!(
+                                        "  bond: uuid={:02x?} name={:?}",
+                                        b.uuid,
+                                        b.name.as_str()
+                                    );
                                 }
                                 let addrs: Vec<[u8; 6]> = bonds.iter().map(|b| b.uuid).collect();
                                 {
@@ -626,7 +650,10 @@ async fn usb_device_manager(
                                             bn.insert(b.uuid, b.name.to_string());
                                         }
                                     }
-                                    tracing::info!("bond_names after startup list_bonds: {:?}", bn.keys().collect::<Vec<_>>());
+                                    tracing::info!(
+                                        "bond_names after startup list_bonds: {:?}",
+                                        bn.keys().collect::<Vec<_>>()
+                                    );
                                 }
                                 addrs
                             }
@@ -670,9 +697,10 @@ async fn usb_device_manager(
                                 Err(e) => {
                                     if attempt < 3 {
                                         tracing::debug!(
-                                                    "Failed to request devices (attempt {}): {}, retrying...",
-                                                    attempt, e
-                                                );
+                                            "Failed to request devices (attempt {}): {}, retrying...",
+                                            attempt,
+                                            e
+                                        );
                                         tokio::time::sleep(std::time::Duration::from_millis(200))
                                             .await;
                                     } else {
@@ -725,13 +753,10 @@ async fn usb_device_manager(
                     // overdue ticks that would fire retries back to back.
                     let mut retry_interval = tokio::time::interval(Duration::from_secs(2));
                     retry_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                    let retry_ticks = stream::unfold(
-                        retry_interval,
-                        |mut interval| async move {
-                            interval.tick().await;
-                            Some((HubEvent::Retry, interval))
-                        },
-                    );
+                    let retry_ticks = stream::unfold(retry_interval, |mut interval| async move {
+                        interval.tick().await;
+                        Some((HubEvent::Retry, interval))
+                    });
                     let combined_stream = stream::select(combined_stream, retry_ticks);
                     tokio::pin!(combined_stream);
                     let mut last_snapshot = heapless::Vec::<[u8; 6], 3>::new();
@@ -1164,12 +1189,17 @@ async fn usb_device_manager(
                         if let Some((cmd_tx, _handle)) = dh.get(&uuid) {
                             // Send RemoveEventsDevice to remove BLE mux events
                             // The handler will decide if it should exit (no control) or continue (has USB control)
-                            tracing::info!("Sending RemoveEventsDevice for addr {:02x?} (UUID {:02x?})", addr, uuid);
+                            tracing::info!(
+                                "Sending RemoveEventsDevice for addr {:02x?} (UUID {:02x?})",
+                                addr,
+                                uuid
+                            );
                             let _ = cmd_tx.send(DeviceTaskMessage::RemoveEventsDevice).await;
                         } else {
                             tracing::warn!(
                                 "Device addr {:02x?} (UUID {:02x?}) not found in device_handles during cleanup",
-                                addr, uuid
+                                addr,
+                                uuid
                             );
                         }
                     }
@@ -1202,7 +1232,8 @@ async fn usb_device_manager(
                         Ok(vm_device) => {
                             // Read UUID - use control plane for AtsLite/AtsPro (control endpoint),
                             // packet protocol for AtsVm. Retries up to 3 times.
-                            let Some(uuid) = read_uuid_with_retry(&vm_device, product_id).await else {
+                            let Some(uuid) = read_uuid_with_retry(&vm_device, product_id).await
+                            else {
                                 continue;
                             };
 
@@ -1245,8 +1276,17 @@ async fn usb_device_manager(
 
                             // Read events protocol version via packet interface.
                             // Only available when device is in USB transport mode (direct events).
-                            let events_proto_semver = if transport_mode == odyssey_protocol::control::device::TransportMode::Usb {
-                                match vm_device.request_with_retry(odyssey_protocol::PacketData::ReadVersion(), Duration::from_secs(2), 3).await {
+                            let events_proto_semver = if transport_mode
+                                == odyssey_protocol::control::device::TransportMode::Usb
+                            {
+                                match vm_device
+                                    .request_with_retry(
+                                        odyssey_protocol::PacketData::ReadVersion(),
+                                        Duration::from_secs(2),
+                                        3,
+                                    )
+                                    .await
+                                {
                                     Ok(odyssey_protocol::PacketData::ReadVersionResponse(v)) => {
                                         info!(
                                             "Device {:02x?} events protocol version: {}.{}.{}",
@@ -1258,11 +1298,17 @@ async fn usb_device_manager(
                                         v.protocol_semver
                                     }
                                     Ok(other) => {
-                                        warn!("Unexpected response reading events version from {:02x?}: {:?}", uuid, other);
+                                        warn!(
+                                            "Unexpected response reading events version from {:02x?}: {:?}",
+                                            uuid, other
+                                        );
                                         [0, 0, 0]
                                     }
                                     Err(e) => {
-                                        warn!("Failed to read events protocol version from {:02x?}: {}", uuid, e);
+                                        warn!(
+                                            "Failed to read events protocol version from {:02x?}: {}",
+                                            uuid, e
+                                        );
                                         [0, 0, 0]
                                     }
                                 }
@@ -1270,13 +1316,20 @@ async fn usb_device_manager(
                                 [0, 0, 0]
                             };
 
-                            (uuid, version, events_proto_semver, transport_mode, vm_device)
+                            (
+                                uuid,
+                                version,
+                                events_proto_semver,
+                                transport_mode,
+                                vm_device,
+                            )
                         }
                         Err(e) => {
                             debug!("Failed to connect to USB device: {}", e);
                             // If we already have a running handler for this USB device (interface
                             // is claimed), the connect failure is expected — skip DFU surfacing.
-                            if let Some(&existing_uuid) = direct_usb_id_to_uuid.get(&direct_usb_id) {
+                            if let Some(&existing_uuid) = direct_usb_id_to_uuid.get(&direct_usb_id)
+                            {
                                 if device_handles.lock().await.contains_key(&existing_uuid) {
                                     continue;
                                 }
@@ -1306,20 +1359,20 @@ async fn usb_device_manager(
                                         dev_info.serial_number(),
                                     ) =>
                                     {
-                                        last_uuid_by_pid
-                                            .get(&pid)
-                                            .copied()
-                                            .or_else(|| {
-                                                crate::migration::recovery_uuid(
-                                                    dev_info.vendor_id(),
-                                                    pid,
-                                                )
-                                            })
+                                        last_uuid_by_pid.get(&pid).copied().or_else(|| {
+                                            crate::migration::recovery_uuid(
+                                                dev_info.vendor_id(),
+                                                pid,
+                                            )
+                                        })
                                     }
                                     None => None,
                                 };
                                 let Some(uuid) = uuid else {
-                                    warn!("Device PID 0x{:04x} is in DFU mode but reports no usable serial and was not seen before — cannot surface for update", pid);
+                                    warn!(
+                                        "Device PID 0x{:04x} is in DFU mode but reports no usable serial and was not seen before — cannot surface for update",
+                                        pid
+                                    );
                                     continue;
                                 };
                                 present_dfu_ids.insert(direct_usb_id.clone());
@@ -1327,33 +1380,41 @@ async fn usb_device_manager(
                                 // product id its application enumerates under,
                                 // which is not the one the bootloader uses.
                                 let app_pid = crate::firmware::app_pid(pid);
-                                let already_tracked = device_handles.lock().await.contains_key(&uuid)
-                                    || dfu_device_id_to_info.values().any(|(u, _)| u == &uuid);
+                                let already_tracked =
+                                    device_handles.lock().await.contains_key(&uuid)
+                                        || dfu_device_id_to_info.values().any(|(u, _)| u == &uuid);
                                 if !already_tracked {
-                                    let bootloader =
-                                        crate::firmware::bootloader_release(dev_info.device_version());
+                                    let bootloader = crate::firmware::bootloader_release(
+                                        dev_info.device_version(),
+                                    );
                                     info!(
                                         "Device {:02x?} is in DFU mode (PID 0x{:04x}, bootloader {:?}), surfacing for firmware update (connect error: {})",
                                         uuid, pid, bootloader, e
                                     );
-                                    dfu_device_id_to_info.insert(direct_usb_id.clone(), (uuid, app_pid));
+                                    dfu_device_id_to_info
+                                        .insert(direct_usb_id.clone(), (uuid, app_pid));
                                     let dfu_meta = Device {
                                         uuid,
                                         transport: odyssey_hub_common::device::Transport::Usb,
-                                        capabilities: odyssey_hub_common::device::DeviceCapabilities::new(
-                                            odyssey_hub_common::device::DeviceCapabilities::DFU,
-                                        ),
+                                        capabilities:
+                                            odyssey_hub_common::device::DeviceCapabilities::new(
+                                                odyssey_hub_common::device::DeviceCapabilities::DFU,
+                                            ),
                                         // No application is running, so there is no
                                         // firmware version to report.
                                         firmware_version: [0, 0, 0],
-                                        events_transport: odyssey_hub_common::device::EventsTransport::Wired,
+                                        events_transport:
+                                            odyssey_hub_common::device::EventsTransport::Wired,
                                         events_connected: false,
                                         product_id: app_pid,
                                         name: Device::name_bytes(""),
                                         netcore_release: 0,
                                     };
                                     let _ = message_channel
-                                        .send(Message::Connect(dfu_meta, DeviceChannels { commands: None }))
+                                        .send(Message::Connect(
+                                            dfu_meta,
+                                            DeviceChannels { commands: None },
+                                        ))
                                         .await;
                                 } else {
                                     // Already tracked — just keep it alive in present set
@@ -1488,7 +1549,13 @@ async fn usb_device_manager(
                     events_connected: transport_mode
                         == odyssey_protocol::control::device::TransportMode::Usb,
                     product_id: pid,
-                    name: Device::name_bytes(&dev_info.product_string().filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_default()),
+                    name: Device::name_bytes(
+                        &dev_info
+                            .product_string()
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .unwrap_or_default(),
+                    ),
                     netcore_release: 0,
                 };
 
@@ -1553,7 +1620,6 @@ async fn usb_device_manager(
                 if let (Some(control), protocol, tx) = netcore_probe {
                     spawn_netcore_probe(NetCoreLink::Control(control), protocol, tx);
                 }
-
             }
         }
 
@@ -1572,9 +1638,9 @@ async fn usb_device_manager(
                     // at a new address while its old one is still in the map. The
                     // handler for that UUID is then the new connection's, so telling it
                     // its USB control left would tear it down seconds after it started.
-                    let reappeared = direct_usb_id_to_uuid
-                        .iter()
-                        .any(|(other, other_uuid)| *other_uuid == uuid && present_direct_usb_ids.contains(other));
+                    let reappeared = direct_usb_id_to_uuid.iter().any(|(other, other_uuid)| {
+                        *other_uuid == uuid && present_direct_usb_ids.contains(other)
+                    });
                     if reappeared {
                         tracing::info!(
                             "Direct USB address {} of {:02x?} is gone but the unit is present at another address",
@@ -1627,7 +1693,9 @@ async fn usb_device_manager(
                     name: Device::name_bytes(""),
                     netcore_release: 0,
                 };
-                let _ = message_channel.send(Message::Disconnect(disconnect_device)).await;
+                let _ = message_channel
+                    .send(Message::Disconnect(disconnect_device))
+                    .await;
             }
         }
 
@@ -1653,8 +1721,14 @@ fn uuid_from_usb_serial(serial: Option<&str>) -> Option<[u8; 6]> {
 /// Read a device UUID with up to 3 retries.
 /// Uses the control plane (read_uuid) for AtsLite/AtsPro (have a control endpoint),
 /// or the packet protocol (read_prop) for AtsVm.
-async fn read_uuid_with_retry(vm_device: &VmDevice, product_id: odyssey_protocol::ProductId) -> Option<[u8; 6]> {
-    if matches!(product_id, odyssey_protocol::ProductId::AtsLite | odyssey_protocol::ProductId::AtsPro) {
+async fn read_uuid_with_retry(
+    vm_device: &VmDevice,
+    product_id: odyssey_protocol::ProductId,
+) -> Option<[u8; 6]> {
+    if matches!(
+        product_id,
+        odyssey_protocol::ProductId::AtsLite | odyssey_protocol::ProductId::AtsPro
+    ) {
         for attempt in 1u8..=3 {
             match vm_device.read_uuid().await {
                 Ok(uuid) => return Some(uuid),
@@ -1689,7 +1763,10 @@ async fn read_uuid_with_retry(vm_device: &VmDevice, product_id: odyssey_protocol
                     sleep(Duration::from_millis(500)).await;
                 }
                 Err(e) => {
-                    warn!("Failed to read UUID after 3 attempts: {}, skipping device", e);
+                    warn!(
+                        "Failed to read UUID after 3 attempts: {}, skipping device",
+                        e
+                    );
                 }
             }
         }
@@ -1781,7 +1858,10 @@ async fn device_handler_task(
     control_rx: mpsc::Receiver<DeviceTaskMessage>,
     screen_calibrations: Arc<
         ArcSwap<
-            ArrayVec<(u8, ScreenCalibration<f32>), { (odyssey_common::MAX_SCREEN_ID + 1) as usize }>,
+            ArrayVec<
+                (u8, ScreenCalibration<f32>),
+                { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
+            >,
         >,
     >,
     device_offsets: Arc<Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
@@ -1842,10 +1922,7 @@ async fn device_handler_task(
         );
         match tokio::time::timeout(Duration::from_secs(5), events_device.read_all_config()).await {
             Ok(Ok(cfg)) => {
-                info!(
-                    "Successfully read config for device {:02x?}",
-                    device.uuid
-                );
+                info!("Successfully read config for device {:02x?}", device.uuid);
                 Some(cfg)
             }
             Ok(Err(e)) => {
@@ -2823,7 +2900,10 @@ async fn handle_stream_event(
     fv_state: &mut FoveatedAimpointState,
     screen_calibrations: &Arc<
         ArcSwap<
-            ArrayVec<(u8, ScreenCalibration<f32>), { (odyssey_common::MAX_SCREEN_ID + 1) as usize }>,
+            ArrayVec<
+                (u8, ScreenCalibration<f32>),
+                { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
+            >,
         >,
     >,
     prev_accel_timestamp: &mut Option<u32>,
@@ -2843,8 +2923,7 @@ async fn handle_stream_event(
     };
     trace!(
         "handle_stream_event for device {:02x?}: {}",
-        device.uuid,
-        event_type
+        device.uuid, event_type
     );
 
     match event {
@@ -2917,12 +2996,10 @@ async fn handle_stream_event(
                 "Battery event dispatched for {:02x?}: {}% charging={}",
                 device.uuid, report.percent, report.charging
             );
-            let ev_kind = DeviceEventKind::BatteryEvent(
-                odyssey_hub_common::events::BatteryEvent {
-                    percent: report.percent,
-                    charging: report.charging,
-                },
-            );
+            let ev_kind = DeviceEventKind::BatteryEvent(odyssey_hub_common::events::BatteryEvent {
+                percent: report.percent,
+                charging: report.charging,
+            });
             let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(device.clone(), ev_kind)));
         }
         DeviceStreamEvent::CombinedMarkers(report) => {
@@ -3006,7 +3083,10 @@ async fn handle_stream_event(
             let tracking_pose = match tracking_pose {
                 Some(p) => p,
                 None => {
-                    trace!("Raycast failed to produce pose for device {:02x?}, skipping tracking event", device.uuid);
+                    trace!(
+                        "Raycast failed to produce pose for device {:02x?}, skipping tracking event",
+                        device.uuid
+                    );
                     return Ok(());
                 }
             };
@@ -3020,10 +3100,7 @@ async fn handle_stream_event(
             };
             trace!(
                 "Sending TrackingEvent for device {:02x?}: aimpoint=({:.3}, {:.3}), distance={:.3}",
-                device.uuid,
-                aimpoint.x,
-                aimpoint.y,
-                distance
+                device.uuid, aimpoint.x, aimpoint.y, distance
             );
             let _ = event_sender.send(Event::DeviceEvent(DeviceEvent(
                 device.clone(),
@@ -3193,18 +3270,27 @@ fn build_markers_from_points(
 
 #[cfg(test)]
 mod netcore_probe_tests {
-    use super::*;
     use std::cell::RefCell;
     use std::collections::VecDeque;
+
+    use super::*;
 
     /// Runs the probe against a scripted unit; the script must cover every read.
     async fn probe(script: Vec<anyhow::Result<u16>>, settle_zero: bool) -> Option<u16> {
         let delays = vec![0u64; script.len()];
         let script = RefCell::new(VecDeque::from(script));
-        probe_net_core(&delays, settle_zero, || false, || {
-            let next = script.borrow_mut().pop_front().expect("read past the script");
-            async move { next }
-        })
+        probe_net_core(
+            &delays,
+            settle_zero,
+            || false,
+            || {
+                let next = script
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("read past the script");
+                async move { next }
+            },
+        )
         .await
     }
 
@@ -3241,10 +3327,15 @@ mod netcore_probe_tests {
     #[tokio::test]
     async fn a_closed_handler_stops_the_probe() {
         let reads = RefCell::new(0);
-        let out = probe_net_core(&[0, 0], true, || true, || {
-            *reads.borrow_mut() += 1;
-            async { Ok(0) }
-        })
+        let out = probe_net_core(
+            &[0, 0],
+            true,
+            || true,
+            || {
+                *reads.borrow_mut() += 1;
+                async { Ok(0) }
+            },
+        )
         .await;
         assert_eq!(out, None);
         assert_eq!(*reads.borrow(), 0);

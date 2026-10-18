@@ -4,7 +4,7 @@ use opencv::core::{Point2f, Size, Vector};
 
 pub fn _find_circles_grid_special_old(
     centers: &Vector<Point2f>,
-    board_size: Size
+    board_size: Size,
 ) -> Option<Vector<Point2f>> {
     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
 
@@ -68,10 +68,7 @@ pub fn _find_circles_grid_special_old(
     }
 }
 
-pub fn find_circles_grid_special(
-    centers: &[Point2f],
-    board_size: Size
-) -> Option<Vector<Point2f>> {
+pub fn find_circles_grid_special(centers: &[Point2f], board_size: Size) -> Option<Vector<Point2f>> {
     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
     if centers.len() != expected_num_outer_points {
         return None;
@@ -82,14 +79,15 @@ pub fn find_circles_grid_special(
         return None;
     }
 
-    let top_left = corners_ix.iter().copied().min_by_key(|&i| TotalF32(hull[i].x + hull[i].y)).unwrap();
+    let top_left = corners_ix
+        .iter()
+        .copied()
+        .min_by_key(|&i| TotalF32(hull[i].x + hull[i].y))
+        .unwrap();
     let top_left = hull[top_left];
 
     let center: Point2f =
-        hull[corners_ix[0]] +
-        hull[corners_ix[1]] +
-        hull[corners_ix[2]] +
-        hull[corners_ix[3]];
+        hull[corners_ix[0]] + hull[corners_ix[1]] + hull[corners_ix[2]] + hull[corners_ix[3]];
     let center = center / 4.0;
 
     let mut sorted_centers = centers.to_vec();
@@ -97,15 +95,17 @@ pub fn find_circles_grid_special(
         let v = p - center;
         TotalF32(f32::atan2(v.y, v.x))
     });
-    let top_left_i = sorted_centers.iter().copied().position(|x| x == top_left).unwrap();
+    let top_left_i = sorted_centers
+        .iter()
+        .copied()
+        .position(|x| x == top_left)
+        .unwrap();
     sorted_centers.rotate_left(top_left_i);
     Some(sorted_centers.into())
 }
 
 /// Returns `None` if less than 3 points are provided.
-pub fn convex_hull(
-    points: Vec<Point2f>,
-) -> Option<Vec<Point2f>> {
+pub fn convex_hull(points: Vec<Point2f>) -> Option<Vec<Point2f>> {
     if points.len() <= 2 {
         return None;
     }
@@ -118,7 +118,7 @@ pub fn convex_hull(
         while hull.len() >= 2 {
             let a = hull[hull.len() - 2];
             let b = hull[hull.len() - 1];
-            if (b-a).cross(c-a) <= 0.0 {
+            if (b - a).cross(c - a) <= 0.0 {
                 hull.pop();
             } else {
                 break;
@@ -132,7 +132,7 @@ pub fn convex_hull(
         while hull.len() - hl + 1 >= 2 {
             let a = hull[hull.len() - 2];
             let b = hull[hull.len() - 1];
-            if (b-a).cross(c-a) <= 0.0 {
+            if (b - a).cross(c - a) <= 0.0 {
                 hull.pop();
             } else {
                 break;
@@ -144,9 +144,7 @@ pub fn convex_hull(
     Some(hull)
 }
 
-pub fn find_corners(
-    hull: &[Point2f]
-) -> Vec<usize> {
+pub fn find_corners(hull: &[Point2f]) -> Vec<usize> {
     let mut corners = vec![];
     for (i, &cur) in hull.iter().enumerate() {
         let prev = hull[(i + hull.len() - 1) % hull.len()];
@@ -183,5 +181,4 @@ impl PartialEq for TotalF32 {
     }
 }
 
-impl Eq for TotalF32 {
-}
+impl Eq for TotalF32 {}

@@ -8,12 +8,10 @@ use better_dfu::{Control, NullDualBankWriter, NullForwarder, ResetImmediate, usb
 use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
-use embassy_nrf::nvmc::Nvmc;
-use embassy_nrf::nvmc::PAGE_SIZE;
-use embassy_nrf::{
-    peripherals,
-    usb::{Driver, vbus_detect::HardwareVbusDetect},
-};
+use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
+use embassy_nrf::peripherals;
+use embassy_nrf::usb::Driver;
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_usb::{Builder, msos};
 
@@ -26,10 +24,13 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{265744E6-40E8-41C4-AE17-F6F2EB187F1C
 
 /// This bootloader's release counter. Raise it whenever the image changes: the
 /// host replaces a bootloader only when the published counter is higher.
-macro_rules! release { () => { 1 }; }
+macro_rules! release {
+    () => {
+        1
+    };
+}
 
-const BOOTLOADER_BCD_DEVICE: u16 =
-    odyssey_protocol::BootloaderRelease::bcd_device(release!());
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_device(release!());
 
 #[entry]
 fn main() -> ! {

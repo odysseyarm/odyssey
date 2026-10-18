@@ -72,13 +72,20 @@ pub fn parse_entered(text: &str, field: SizeField) -> Result<Option<Entered>, Si
         return Ok(None);
     }
     // Accept a decimal comma, which is how many keyboards' locales type it.
-    let value: f64 = text.replace(',', ".").parse().map_err(|_| SizeError::NotANumber)?;
+    let value: f64 = text
+        .replace(',', ".")
+        .parse()
+        .map_err(|_| SizeError::NotANumber)?;
     if !value.is_finite() {
         return Err(SizeError::NotANumber);
     }
     match field {
-        SizeField::Diagonal if DIAGONAL_RANGE_IN.contains(&value) => Ok(Some(Entered::Diagonal { inches: value })),
-        SizeField::Width if WIDTH_RANGE_CM.contains(&value) => Ok(Some(Entered::Width { cm: value })),
+        SizeField::Diagonal if DIAGONAL_RANGE_IN.contains(&value) => {
+            Ok(Some(Entered::Diagonal { inches: value }))
+        }
+        SizeField::Width if WIDTH_RANGE_CM.contains(&value) => {
+            Ok(Some(Entered::Width { cm: value }))
+        }
         _ => Err(SizeError::OutOfRange(field)),
     }
 }
@@ -116,15 +123,34 @@ mod tests {
         assert_eq!(diagonal("big"), Err(SizeError::NotANumber));
         assert_eq!(diagonal("NaN"), Err(SizeError::NotANumber));
         assert_eq!(diagonal("inf"), Err(SizeError::NotANumber));
-        assert_eq!(diagonal("550"), Err(SizeError::OutOfRange(SizeField::Diagonal)));
-        assert_eq!(diagonal("-5"), Err(SizeError::OutOfRange(SizeField::Diagonal)));
+        assert_eq!(
+            diagonal("550"),
+            Err(SizeError::OutOfRange(SizeField::Diagonal))
+        );
+        assert_eq!(
+            diagonal("-5"),
+            Err(SizeError::OutOfRange(SizeField::Diagonal))
+        );
     }
 
     #[test]
     fn widths_are_centimeters() {
-        assert_eq!(parse_entered("240", SizeField::Width), Ok(Some(Entered::Width { cm: 240.0 })));
-        assert_eq!(parse_entered("240 cm", SizeField::Width), Ok(Some(Entered::Width { cm: 240.0 })));
-        assert_eq!(parse_entered("5", SizeField::Width), Err(SizeError::OutOfRange(SizeField::Width)));
-        assert!(SizeError::OutOfRange(SizeField::Width).message().contains("cm"));
+        assert_eq!(
+            parse_entered("240", SizeField::Width),
+            Ok(Some(Entered::Width { cm: 240.0 }))
+        );
+        assert_eq!(
+            parse_entered("240 cm", SizeField::Width),
+            Ok(Some(Entered::Width { cm: 240.0 }))
+        );
+        assert_eq!(
+            parse_entered("5", SizeField::Width),
+            Err(SizeError::OutOfRange(SizeField::Width))
+        );
+        assert!(
+            SizeError::OutOfRange(SizeField::Width)
+                .message()
+                .contains("cm")
+        );
     }
 }

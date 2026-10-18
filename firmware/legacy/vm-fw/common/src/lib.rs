@@ -16,16 +16,23 @@ pub mod utils;
 // Type aliases for PAJ sensors
 use core::convert::Infallible;
 
+pub use embassy_nrf;
 use embassy_nrf::gpio::{AnyPin, Output};
 use embassy_nrf::spim::{self, Spim};
+pub use embassy_sync;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
+pub use embassy_time;
 use embassy_time::Delay;
+pub use embassy_usb;
 use embedded_hal_bus::spi::{DeviceError, ExclusiveDevice};
-pub use {embassy_nrf, embassy_sync, embassy_time, embassy_usb, paj7025, odyssey_protocol};
+pub use odyssey_protocol;
+pub use paj7025;
 
-pub type Paj =
-    paj7025::Paj7025<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, DeviceError<spim::Error, Infallible>>;
+pub type Paj = paj7025::Paj7025<
+    ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
+    DeviceError<spim::Error, Infallible>,
+>;
 // Generic PajGroup that works with any GPIOTE channel type
 pub type PajGroup<'a, C> = (
     &'a AsyncMutex<NoopRawMutex, Paj>,

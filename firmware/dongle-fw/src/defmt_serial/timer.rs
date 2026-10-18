@@ -1,8 +1,6 @@
 #![allow(unused)]
-use core::{
-    pin::Pin,
-    task::{Context, Poll, Waker},
-};
+use core::pin::Pin;
+use core::task::{Context, Poll, Waker};
 
 use embassy_time::{Duration, Instant};
 

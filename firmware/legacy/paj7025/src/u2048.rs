@@ -1,4 +1,5 @@
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, Shr};
+
 use crypto_bigint::{Encoding as _, U2048};
 
 #[repr(transparent)]
@@ -7,33 +8,94 @@ pub struct U2048x(pub U2048);
 
 impl U2048x {
     pub const ZERO: Self = Self(U2048::ZERO);
-    pub const ONE:  Self = Self(U2048::ONE);
+    pub const ONE: Self = Self(U2048::ONE);
 
-    pub fn to_le_bytes(self) -> [u8; 256] { self.0.to_le_bytes() }
-    pub fn from_le_bytes(b: [u8; 256]) -> Self { Self(U2048::from_le_bytes(b)) }
+    pub fn to_le_bytes(self) -> [u8; 256] {
+        self.0.to_le_bytes()
+    }
+    pub fn from_le_bytes(b: [u8; 256]) -> Self {
+        Self(U2048::from_le_bytes(b))
+    }
 }
 
-impl From<U2048> for U2048x { fn from(v: U2048) -> Self { Self(v) } }
-impl From<U2048x> for U2048 { fn from(v: U2048x) -> Self { v.0 } }
+impl From<U2048> for U2048x {
+    fn from(v: U2048) -> Self {
+        Self(v)
+    }
+}
+impl From<U2048x> for U2048 {
+    fn from(v: U2048x) -> Self {
+        v.0
+    }
+}
 
-impl BitAnd for U2048x { type Output = Self; #[inline] fn bitand(self, rhs: Self) -> Self { Self(self.0 & rhs.0) } }
-impl BitOr  for U2048x { type Output = Self; #[inline] fn bitor (self, rhs: Self) -> Self { Self(self.0 | rhs.0) } }
-impl BitXor for U2048x { type Output = Self; #[inline] fn bitxor(self, rhs: Self) -> Self { Self(self.0 ^ rhs.0) } }
-impl Not    for U2048x { type Output = Self; #[inline] fn not(self) -> Self { Self(!self.0) } }
+impl BitAnd for U2048x {
+    type Output = Self;
+    #[inline]
+    fn bitand(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
+}
+impl BitOr for U2048x {
+    type Output = Self;
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+impl BitXor for U2048x {
+    type Output = Self;
+    #[inline]
+    fn bitxor(self, rhs: Self) -> Self {
+        Self(self.0 ^ rhs.0)
+    }
+}
+impl Not for U2048x {
+    type Output = Self;
+    #[inline]
+    fn not(self) -> Self {
+        Self(!self.0)
+    }
+}
 
-impl BitAndAssign for U2048x { #[inline] fn bitand_assign(&mut self, rhs: Self) { self.0 &= rhs.0; } }
-impl BitOrAssign  for U2048x { #[inline] fn bitor_assign (&mut self, rhs: Self) { self.0 |= rhs.0; } }
-impl BitXorAssign for U2048x { #[inline] fn bitxor_assign(&mut self, rhs: Self) { self.0 ^= rhs.0; } }
+impl BitAndAssign for U2048x {
+    #[inline]
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.0;
+    }
+}
+impl BitOrAssign for U2048x {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+impl BitXorAssign for U2048x {
+    #[inline]
+    fn bitxor_assign(&mut self, rhs: Self) {
+        self.0 ^= rhs.0;
+    }
+}
 
-impl Shr<usize> for U2048x { type Output = Self; fn shr(self, rhs: usize) -> Self { Self(self.0.shr_vartime(rhs as u32)) } }
-impl Shl<usize> for U2048x { type Output = Self; fn shl(self, rhs: usize) -> Self { Self(self.0.shl_vartime(rhs as u32)) } }
+impl Shr<usize> for U2048x {
+    type Output = Self;
+    fn shr(self, rhs: usize) -> Self {
+        Self(self.0.shr_vartime(rhs as u32))
+    }
+}
+impl Shl<usize> for U2048x {
+    type Output = Self;
+    fn shl(self, rhs: usize) -> Self {
+        Self(self.0.shl_vartime(rhs as u32))
+    }
+}
 
 impl device_driver::ops::TruncateToU8 for U2048x {
     #[inline]
     fn truncate(self) -> u8 {
         self.0.to_le_bytes()[0]
     }
-    
+
     #[inline]
     fn detruncate(x: u8) -> Self {
         let mut b = [0u8; 256];

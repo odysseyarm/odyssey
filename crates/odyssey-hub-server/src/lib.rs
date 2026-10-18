@@ -1,17 +1,18 @@
-﻿mod accessories;
+mod accessories;
 mod device_tasks;
 pub mod firmware;
 mod migration;
 mod screen_watch;
 mod server;
 
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
+use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
 use futures_concurrency::prelude::*;
+use interprocess::local_socket::traits::tokio::Listener;
 use interprocess::local_socket::{
-    traits::tokio::Listener, GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _,
-    ToFsName, ToNsName,
+    GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _, ToFsName, ToNsName,
 };
 #[cfg(target_os = "windows")]
 use interprocess::os::windows::{
@@ -19,14 +20,13 @@ use interprocess::os::windows::{
     security_descriptor::{AsSecurityDescriptorMutExt, SecurityDescriptor},
 };
 use odyssey_hub_server_interface::service_server::ServiceServer;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::{broadcast, mpsc},
-};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::server::Connected;
 
-use crate::{accessories::accessory_manager, device_tasks::device_tasks};
+use crate::accessories::accessory_manager;
+use crate::device_tasks::device_tasks;
 
 pub enum Message {
     ServerInit(Result<Vec<odyssey_hub_common::config::ConfigCorruptionEvent>, std::io::Error>),
@@ -402,7 +402,10 @@ pub async fn run_server(
                                 }
                             }
                             drop(dl_guard);
-                            tracing::info!("Added/updated device {:02x?} in device list, sending list_change notification", d1.uuid);
+                            tracing::info!(
+                                "Added/updated device {:02x?} in device list, sending list_change notification",
+                                d1.uuid
+                            );
                             let _ = list_change_sender.send(());
                         }
                         device_tasks::Message::Disconnect(d) => {
@@ -432,15 +435,10 @@ pub async fn run_server(
                         }
                         device_tasks::Message::UpdateDevice(updated_device) => {
                             let uuid = updated_device.uuid;
-                            tracing::info!(
-                                "Processing device update for {:02x?}",
-                                uuid
-                            );
+                            tracing::info!("Processing device update for {:02x?}", uuid);
                             let mut dl = dl.lock();
                             // Find the device by UUID only
-                            if let Some(entry) =
-                                dl.iter_mut().find(|(d, _)| d.uuid == uuid)
-                            {
+                            if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == uuid) {
                                 tracing::info!(
                                     "Updating device {:02x?} capabilities from {:?} to {:?}",
                                     uuid,
@@ -464,7 +462,8 @@ pub async fn run_server(
                         device_tasks::Message::UpdateName(uuid, name) => {
                             let mut dl = dl.lock();
                             if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == uuid) {
-                                entry.0.name = odyssey_hub_common::device::Device::name_bytes(&name);
+                                entry.0.name =
+                                    odyssey_hub_common::device::Device::name_bytes(&name);
                             }
                             drop(dl);
                             let _ = list_change_sender.send(());

@@ -9,28 +9,18 @@ pub mod pins;
 pub mod platform;
 
 // Re-export from atslite-common
-pub use atslite_common::ble;
-pub use atslite_common::device_control;
-pub use atslite_common::device_control_task;
-pub use atslite_common::nrf5340_init;
-pub use atslite_common::pmic_leds;
-pub use atslite_common::power;
-pub use atslite_common::power_button;
-pub use atslite_common::power_state;
-pub use atslite_common::transport_mode;
-pub use atslite_common::utils;
-
+pub use atslite_common::{
+    ble, device_control, device_control_task, nrf5340_init, pmic_leds, power, power_button,
+    power_state, transport_mode, utils,
+};
 // Re-export common (vm-fw common for object mode, settings, etc.)
 pub use common;
-
-// Re-export platform implementation
-pub use platform::AtslitePlatform;
-
 // Re-export embassy for convenience
 pub use embassy_executor;
 pub use embassy_nrf;
-
 use embassy_nrf::{bind_interrupts, cryptocell_rng, interrupt, pac, peripherals, spim, twim};
+// Re-export platform implementation
+pub use platform::AtslitePlatform;
 
 bind_interrupts!(pub struct Irqs {
     SERIAL0 => spim::InterruptHandler<peripherals::SERIAL0>;

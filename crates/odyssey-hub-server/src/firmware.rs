@@ -508,7 +508,11 @@ pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
 /// this is the only safe way to pick one of several identical devices: flashing
 /// resolves the device several times over, and the wrong match writes an image
 /// into a device the user did not choose.
-pub fn find_device_by_uuid(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
+pub fn find_device_by_uuid(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+) -> Result<nusb::DeviceInfo, DfuError> {
     let uuid_hex = format!(
         "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
         uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5]
@@ -700,11 +704,7 @@ pub fn is_device_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
 }
 
 /// Find the alt setting that writes the stage2 bootloader itself.
-pub fn find_bootloader_alt_for_device(
-    uuid: &[u8; 6],
-    vid: u16,
-    pid: u16,
-) -> Result<u8, DfuError> {
+pub fn find_bootloader_alt_for_device(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<u8, DfuError> {
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let interface_num = find_dfu_interface(&device)?;
@@ -1195,7 +1195,12 @@ pub async fn wait_for_dfu_device(
 ///
 /// Note: This function automatically determines which slot to flash by reading
 /// the DFU interface alt settings after the device enters DFU mode.
-pub async fn update_firmware(uuid: &[u8; 6], vid: u16, pid: u16, firmware: &[u8]) -> Result<(), DfuError> {
+pub async fn update_firmware(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+    firmware: &[u8],
+) -> Result<(), DfuError> {
     tracing::info!("Starting firmware update for {:04x}:{:04x}", vid, pid);
 
     // Step 1: Send DFU detach
@@ -1291,11 +1296,23 @@ mod tests {
         assert_eq!(plan_netcore(1, None, 2), Err(NetCoreTooOld { required: 2 }));
         assert_eq!(plan_netcore(0, None, 1), Err(NetCoreTooOld { required: 1 }));
         // The published release never satisfies the entry's own floor.
-        assert_eq!(plan_netcore(0, Some(2), 2), Err(NetCoreTooOld { required: 2 }));
-        assert_eq!(plan_netcore(1, Some(3), 2), Err(NetCoreTooOld { required: 2 }));
-        assert_eq!(plan_netcore(1, Some(1), 2), Err(NetCoreTooOld { required: 2 }));
+        assert_eq!(
+            plan_netcore(0, Some(2), 2),
+            Err(NetCoreTooOld { required: 2 })
+        );
+        assert_eq!(
+            plan_netcore(1, Some(3), 2),
+            Err(NetCoreTooOld { required: 2 })
+        );
+        assert_eq!(
+            plan_netcore(1, Some(1), 2),
+            Err(NetCoreTooOld { required: 2 })
+        );
         // Unknown (0) never satisfies a floor above 0, and always satisfies 0.
-        assert_eq!(plan_netcore(0, Some(5), 1), Err(NetCoreTooOld { required: 1 }));
+        assert_eq!(
+            plan_netcore(0, Some(5), 1),
+            Err(NetCoreTooOld { required: 1 })
+        );
         assert_eq!(plan_netcore(0, Some(5), 0), Ok(true));
     }
 
@@ -1334,11 +1351,23 @@ mod tests {
             Ok(vec![FlashNetCore, WriteApplication, VerifyNetCore])
         );
         // Flashing the published release does not reach the floor.
-        assert_eq!(plan_update_steps(1, Some(3), 3), Err(NetCoreTooOld { required: 3 }));
-        assert_eq!(plan_update_steps(1, Some(2), 3), Err(NetCoreTooOld { required: 3 }));
+        assert_eq!(
+            plan_update_steps(1, Some(3), 3),
+            Err(NetCoreTooOld { required: 3 })
+        );
+        assert_eq!(
+            plan_update_steps(1, Some(2), 3),
+            Err(NetCoreTooOld { required: 3 })
+        );
         // An unknown net core never meets a floor on its own.
-        assert_eq!(plan_update_steps(0, None, 1), Err(NetCoreTooOld { required: 1 }));
-        assert_eq!(plan_update_steps(0, Some(1), 1), Err(NetCoreTooOld { required: 1 }));
+        assert_eq!(
+            plan_update_steps(0, None, 1),
+            Err(NetCoreTooOld { required: 1 })
+        );
+        assert_eq!(
+            plan_update_steps(0, Some(1), 1),
+            Err(NetCoreTooOld { required: 1 })
+        );
     }
 
     #[test]
@@ -1371,7 +1400,10 @@ mod tests {
                 serde_json::from_str(text).unwrap_or_else(|e| panic!("{name} parses: {e}"));
             assert!(manifest.version <= SUPPORTED_MANIFEST_VERSION);
             for (device, entries) in &manifest.devices {
-                assert!(!entries.firmwares.is_empty(), "{name} {device} has no firmware");
+                assert!(
+                    !entries.firmwares.is_empty(),
+                    "{name} {device} has no firmware"
+                );
                 let mut previous: Option<[u16; 3]> = None;
                 for entry in &entries.firmwares {
                     let version = entry.version_parts().unwrap_or_else(|| {
@@ -1385,7 +1417,10 @@ mod tests {
                     );
                     // Hosts take the first installable entry, so order is semantics.
                     if let Some(newer) = previous {
-                        assert!(version_newer(version, newer), "{name} {device} is not newest-first");
+                        assert!(
+                            version_newer(version, newer),
+                            "{name} {device} is not newest-first"
+                        );
                     }
                     previous = Some(version);
                 }
@@ -1404,7 +1439,11 @@ mod tests {
                 let in_alpha = alpha["devices"][device]["firmwares"]
                     .as_array()
                     .is_some_and(|all| all.contains(entry));
-                assert!(in_alpha, "stable {device} {} is not an alpha entry", entry["version"]);
+                assert!(
+                    in_alpha,
+                    "stable {device} {} is not an alpha entry",
+                    entry["version"]
+                );
             }
         }
     }
@@ -1455,7 +1494,10 @@ mod tests {
             (None, Some("0.3.0"))
         );
         // Unknown device.
-        assert_eq!(selected(select_firmware(&manifest, "nope", [9, 9, 9], 0)), (None, None));
+        assert_eq!(
+            selected(select_firmware(&manifest, "nope", [9, 9, 9], 0)),
+            (None, None)
+        );
     }
 
     /// Entries are `(version, requires_netcore, net-core release carried)`,
@@ -1525,7 +1567,10 @@ mod tests {
     #[test]
     fn unknown_net_core_never_meets_a_floor_above_zero() {
         let manifest = netcore_manifest(&[("0.2.0", 1, Some(1)), ("0.1.0", 0, None)]);
-        assert_eq!(netcore_selected(&manifest, 0), (Some("0.1.0"), Some("0.2.0")));
+        assert_eq!(
+            netcore_selected(&manifest, 0),
+            (Some("0.1.0"), Some("0.2.0"))
+        );
         // Boundary: exactly the floor is enough.
         assert_eq!(netcore_selected(&manifest, 1), (Some("0.2.0"), None));
     }
@@ -1545,7 +1590,12 @@ mod tests {
     /// is worth a click, and let the write raise the net core to the release
     /// that entry carries. Returns the version the unit ends on. The
     /// `min_desktop` axis is separate, so the desktop here is always new enough.
-    fn walk(manifest: &FirmwareManifest, device: &str, mut app: [u16; 3], mut running: u16) -> [u16; 3] {
+    fn walk(
+        manifest: &FirmwareManifest,
+        device: &str,
+        mut app: [u16; 3],
+        mut running: u16,
+    ) -> [u16; 3] {
         for _ in 0..=2 * manifest.devices[device].firmwares.len() {
             let Some(entry) = select_firmware(manifest, device, [u16::MAX; 3], running).offered
             else {
@@ -1677,7 +1727,10 @@ mod tests {
             assert_eq!(FirmwareChannel::from_name(channel.name()), channel);
         }
         assert_eq!(FirmwareChannel::from_name(""), FirmwareChannel::Stable);
-        assert_eq!(FirmwareChannel::from_name("nightly"), FirmwareChannel::Stable);
+        assert_eq!(
+            FirmwareChannel::from_name("nightly"),
+            FirmwareChannel::Stable
+        );
     }
 
     #[test]

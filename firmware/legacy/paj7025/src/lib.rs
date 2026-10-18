@@ -4,14 +4,14 @@ pub mod types;
 mod u2048;
 
 use device_driver::AsyncRegisterInterface;
-use embedded_hal_async::spi::{Operation};
+use embedded_hal_async::spi::Operation;
 
 use crate::types::ObjectFormat1;
 
-const REG_BANK_SELECT: u8 = 0xEF;     // Non-bank register for bank switching
-const CMD_MULTI: u8 = 0x01;           // CMD[6:0] = 0x00 single, 0x01 multi
-const CMD_READ:  u8 = 0x80;           // CMD bit7 = 1 => Read
-const CMD_WRITE: u8 = 0x00;           // CMD bit7 = 0 => Write
+const REG_BANK_SELECT: u8 = 0xEF; // Non-bank register for bank switching
+const CMD_MULTI: u8 = 0x01; // CMD[6:0] = 0x00 single, 0x01 multi
+const CMD_READ: u8 = 0x80; // CMD bit7 = 1 => Read
+const CMD_WRITE: u8 = 0x00; // CMD bit7 = 0 => Write
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -44,15 +44,15 @@ where
         data: &mut [u8],
     ) -> Result<(), Self::Error> {
         let bank: u8 = (address >> 8) as u8;
-        let reg:  u8 = (address & 0xFF) as u8;
+        let reg: u8 = (address & 0xFF) as u8;
 
         let cmd_bank = [CMD_WRITE | 0x00, REG_BANK_SELECT];
         let bank_val = [bank];
-        let mut ops1 = [
-            Operation::Write(&cmd_bank),
-            Operation::Write(&bank_val),
-        ];
-        self.spi_device.transaction(&mut ops1).await.map_err(Paj7025Error::Spi)?;
+        let mut ops1 = [Operation::Write(&cmd_bank), Operation::Write(&bank_val)];
+        self.spi_device
+            .transaction(&mut ops1)
+            .await
+            .map_err(Paj7025Error::Spi)?;
 
         let cmd = CMD_READ | if data.len() > 1 { CMD_MULTI } else { 0 };
         let cmd_addr = [cmd, reg];
@@ -60,7 +60,10 @@ where
             Operation::Write(&cmd_addr),
             Operation::TransferInPlace(data),
         ];
-        self.spi_device.transaction(&mut ops2).await.map_err(Paj7025Error::Spi)?;
+        self.spi_device
+            .transaction(&mut ops2)
+            .await
+            .map_err(Paj7025Error::Spi)?;
         Ok(())
     }
 
@@ -71,23 +74,23 @@ where
         data: &[u8],
     ) -> Result<(), Self::Error> {
         let bank: u8 = (address >> 8) as u8;
-        let reg:  u8 = (address & 0xFF) as u8;
+        let reg: u8 = (address & 0xFF) as u8;
 
         let cmd_bank = [CMD_WRITE | 0x00, REG_BANK_SELECT];
         let bank_val = [bank];
-        let mut ops1 = [
-            Operation::Write(&cmd_bank),
-            Operation::Write(&bank_val),
-        ];
-        self.spi_device.transaction(&mut ops1).await.map_err(Paj7025Error::Spi)?;
+        let mut ops1 = [Operation::Write(&cmd_bank), Operation::Write(&bank_val)];
+        self.spi_device
+            .transaction(&mut ops1)
+            .await
+            .map_err(Paj7025Error::Spi)?;
 
         let cmd = CMD_WRITE | if data.len() > 1 { CMD_MULTI } else { 0 };
         let cmd_addr = [cmd, reg];
-        let mut ops2 = [
-            Operation::Write(&cmd_addr),
-            Operation::Write(data),
-        ];
-        self.spi_device.transaction(&mut ops2).await.map_err(Paj7025Error::Spi)?;
+        let mut ops2 = [Operation::Write(&cmd_addr), Operation::Write(data)];
+        self.spi_device
+            .transaction(&mut ops2)
+            .await
+            .map_err(Paj7025Error::Spi)?;
         Ok(())
     }
 }
@@ -111,10 +114,10 @@ where
             ll: low_level::Paj7025::new(DeviceInterface::new(spi_device)),
             _marker: core::marker::PhantomData,
         };
-        
+
         Ok(driver)
     }
-    
+
     pub async fn read_register(
         &mut self,
         bank: u8,
@@ -159,7 +162,9 @@ where
             E: core::fmt::Debug,
         {
             let addr = ((bank as u16) << 8) | reg as u16;
-            ll.interface().write_register(addr, 0, core::slice::from_ref(&val)).await
+            ll.interface()
+                .write_register(addr, 0, core::slice::from_ref(&val))
+                .await
         }
 
         #[inline(always)]
@@ -220,7 +225,7 @@ where
 
         // ---------- Bank 12 (gain/expo/thresholds) ----------
         w(&mut self.ll, 0x0C, 0x0B, gain_global).await?; // B_global
-        w(&mut self.ll, 0x0C, 0x0C, gain_ggh).await?;     // B_ggh
+        w(&mut self.ll, 0x0C, 0x0C, gain_ggh).await?; // B_ggh
 
         // Exposure 0x2000 (units 200ns) split as in C: 0x0F=0x00, 0x10=0x20
         w(&mut self.ll, 0x0C, 0x0F, 0x00).await?; // Texp LSB

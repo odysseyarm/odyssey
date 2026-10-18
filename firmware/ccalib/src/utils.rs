@@ -1,15 +1,13 @@
 use nalgebra::{Matrix3, Vector3};
-use opencv::{
-    calib3d::undistort_points,
-    core::{
-        BORDER_CONSTANT, CV_32FC1, Mat, MatTraitManual as _, Point2f, Size, ToInputArray,
-        ToInputOutputArray, ToOutputArray, Vector, no_array,
-    },
-    highgui::{
-        WND_PROP_VISIBLE, destroy_window, get_window_property, imshow, set_window_title, wait_key,
-    },
-    imgproc::{INTER_LINEAR, LINE_AA, ellipse, remap},
+use opencv::calib3d::undistort_points;
+use opencv::core::{
+    BORDER_CONSTANT, CV_32FC1, Mat, MatTraitManual as _, Point2f, Size, ToInputArray,
+    ToInputOutputArray, ToOutputArray, Vector, no_array,
 };
+use opencv::highgui::{
+    WND_PROP_VISIBLE, destroy_window, get_window_property, imshow, set_window_title, wait_key,
+};
+use opencv::imgproc::{INTER_LINEAR, LINE_AA, ellipse, remap};
 
 pub fn distort_image(
     undistorted: &impl ToInputArray,

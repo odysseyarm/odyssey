@@ -1,8 +1,8 @@
-use app_dirs2::{get_app_root, AppDataType};
-use odyssey_common::MARKER_PATTERN_LEN;
+use app_dirs2::{AppDataType, get_app_root};
 use nalgebra::{ComplexField, Point3, RealField, Scalar};
-use odyssey_vision_tool::consts::APP_INFO;
+use odyssey_common::MARKER_PATTERN_LEN;
 use odyssey_vision_tool::ScreenInfo;
+use odyssey_vision_tool::consts::APP_INFO;
 
 pub const MARKER_DEPTH_METERS: f64 = 0.0117;
 

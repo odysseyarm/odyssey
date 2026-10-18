@@ -1,35 +1,28 @@
-use core::{
-    cell::RefCell,
-    mem::{MaybeUninit, transmute},
-    sync::atomic::{AtomicBool, AtomicU8, Ordering},
-};
+use core::cell::RefCell;
+use core::mem::{MaybeUninit, transmute};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bytemuck::{cast_slice, from_bytes};
 use defmt::Format;
-use embassy_futures::{
-    join::join4,
-    select::{Either, select},
-};
+use embassy_futures::join::join4;
+use embassy_futures::select::{Either, select};
 use embassy_nrf::nvmc::Nvmc;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex as AsyncMutex, watch::Watch};
-use embassy_usb::{class::cdc_acm, driver::EndpointError};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex as AsyncMutex;
+use embassy_sync::watch::Watch;
+use embassy_usb::class::cdc_acm;
+use embassy_usb::driver::EndpointError;
 use icm426xx::fifo::FifoPacket4;
 use nalgebra::Vector3;
-use pag7661qn::{
-    Interface,
-    mode::{self, ModeT},
-};
-use protodongers::{
-    Packet, PacketData as P, PacketType, Props, ReadRegisterResponse,
-};
+use pag7661qn::Interface;
+use pag7661qn::mode::{self, ModeT};
+use protodongers::{Packet, PacketData as P, PacketType, Props, ReadRegisterResponse};
 use static_cell::ConstStaticCell;
 
-use crate::{
-    CommonContext, Pag, UsbDriver, device_id,
-    imu::{Imu, ImuInterrupt},
-    settings::{PagSettings, Settings},
-    usb::write_serial,
-};
+use crate::imu::{Imu, ImuInterrupt};
+use crate::settings::{PagSettings, Settings};
+use crate::usb::write_serial;
+use crate::{CommonContext, Pag, UsbDriver, device_id};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
@@ -111,7 +104,7 @@ async fn usb_rcv_loop(
             }
             Ok(p) => p,
         };
-        
+
         defmt::debug!("Received packet: {}", defmt::Debug2Format(&pkt));
 
         let response = match pkt.data {
@@ -305,8 +298,13 @@ async fn obj_loop(
                 pag.switch_mode_mut(mode::Object.mode()).await.unwrap();
             }
 
-            match embassy_time::with_timeout(embassy_time::Duration::from_millis(100), pag_int.wait()).await {
-                Ok(_) => {},
+            match embassy_time::with_timeout(
+                embassy_time::Duration::from_millis(100),
+                pag_int.wait(),
+            )
+            .await
+            {
+                Ok(_) => {}
                 Err(embassy_time::TimeoutError) => {
                     defmt::debug!("obj timeout");
                     // set the mode back to object mode in case it was set to Idle by usb_rcv_loop
@@ -377,7 +375,12 @@ impl<'a> PacketReader<'a> {
         rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
         buf: &'a mut [u8; 1024],
     ) -> Self {
-        Self { rcv, buf, n: 0, start: 0 }
+        Self {
+            rcv,
+            buf,
+            n: 0,
+            start: 0,
+        }
     }
 
     /// Ensure at least `need` bytes are buffered contiguously at buf[start .. start+n]
@@ -388,13 +391,13 @@ impl<'a> PacketReader<'a> {
                     self.start = 0;
                 } else {
                     // compact once when we run out of tail space
-                    self.buf.copy_within(self.start .. self.start + self.n, 0);
+                    self.buf.copy_within(self.start..self.start + self.n, 0);
                     self.start = 0;
                 }
             }
             let wrote = self
                 .rcv
-                .read_packet(&mut self.buf[self.start + self.n ..])
+                .read_packet(&mut self.buf[self.start + self.n..])
                 .await?;
             self.n += wrote;
         }
@@ -421,13 +424,16 @@ impl<'a> PacketReader<'a> {
                 if frame_len == 0 {
                     self.start += 1;
                     self.n -= 1;
-                    if self.n == 0 { self.start = 0; }
+                    if self.n == 0 {
+                        self.start = 0;
+                    }
                     continue;
                 }
 
                 // decode COBS in-place within the window
-                let window = &mut self.buf[self.start .. self.start + frame_len];
-                let decoded_len = cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
+                let window = &mut self.buf[self.start..self.start + frame_len];
+                let decoded_len =
+                    cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
 
                 // parse the decoded payload
                 let mut slice = &window[..decoded_len];
@@ -436,7 +442,9 @@ impl<'a> PacketReader<'a> {
                 // consume this frame + its trailing 0x00 delimiter
                 self.start += frame_len + 1;
                 self.n -= frame_len + 1;
-                if self.n == 0 { self.start = 0; }
+                if self.n == 0 {
+                    self.start = 0;
+                }
 
                 return Ok(pkt);
             }

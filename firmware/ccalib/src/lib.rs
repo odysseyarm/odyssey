@@ -1,14 +1,15 @@
-use std::{cell::RefCell, iter::zip};
+use std::cell::RefCell;
+use std::iter::zip;
 
-use argmin::{
-    core::{Executor, State, observers::ObserverMode},
-    solver::trustregion::{Dogleg, Steihaug, TrustRegion},
-};
+use argmin::core::observers::ObserverMode;
+use argmin::core::{Executor, State};
+use argmin::solver::trustregion::{Dogleg, Steihaug, TrustRegion};
 use argmin_observer_slog::SlogLogger;
+use nalgebra::allocator::Allocator;
 use nalgebra::{
     Const, DVector, DefaultAllocator, Dim, Dyn, Matrix, Matrix3, Matrix4, OMatrix, OVector,
-    RealField, Rotation3, Scalar, Storage, U1, U3, Unit, Vector, Vector2, Vector3,
-    allocator::Allocator, dvector, matrix, vector,
+    RealField, Rotation3, Scalar, Storage, U1, U3, Unit, Vector, Vector2, Vector3, dvector, matrix,
+    vector,
 };
 use num_dual::{DualNum, DualVec};
 use num_traits::{One, Zero};
@@ -208,7 +209,8 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         .expect("optimization failed");
 
     let status = result.state.get_termination_status().clone();
-    let mut best_param = CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), flags);
+    let mut best_param =
+        CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), flags);
     let cost = result.state.best_cost;
     let rmse = f64::sqrt(cost / (object_points.len() * images_points.len()) as f64);
     println!("Converged after {} iterations", result.state.iter);
@@ -219,10 +221,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     println!("cy: {}", best_param.intrinsics.cy);
     println!("d: {:?}", best_param.intrinsics.distortion);
     println!("cost: {cost}");
-    println!(
-        "RMSE: {}",
-        rmse
-    );
+    println!("RMSE: {}", rmse);
     println!();
     best_param.rmse = rmse;
     best_param
@@ -392,13 +391,9 @@ impl<D: Scalar + Zero + One> CameraIntrinsics<D> {
     }
 
     pub fn distortion(&self) -> [D; 5] {
-        self.distortion.clone().unwrap_or([
-            D::zero(),
-            D::zero(),
-            D::zero(),
-            D::zero(),
-            D::zero(),
-        ])
+        self.distortion
+            .clone()
+            .unwrap_or([D::zero(), D::zero(), D::zero(), D::zero(), D::zero()])
     }
 }
 

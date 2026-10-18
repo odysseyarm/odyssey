@@ -12,7 +12,9 @@ use image::RgbImage;
 use nalgebra::{Matrix3, Point2, Vector2, Vector3};
 
 use crate::camera::Intrinsics;
-use crate::plane::{apply_homography, distort_pixel, fit_homography, ransac_homography, undistort_pixel};
+use crate::plane::{
+    apply_homography, distort_pixel, fit_homography, ransac_homography, undistort_pixel,
+};
 
 /// Distance from the screen edge to the first dot row, as a fraction of the
 /// screen height.
@@ -61,9 +63,15 @@ pub struct Pattern {
 impl Pattern {
     /// `aspect` is screen width divided by screen height.
     pub fn new(aspect: f64) -> Self {
-        let aspect = if aspect.is_finite() { aspect.clamp(0.5, 4.0) } else { 16.0 / 9.0 };
+        let aspect = if aspect.is_finite() {
+            aspect.clamp(0.5, 4.0)
+        } else {
+            16.0 / 9.0
+        };
         // Epsilons keep floor() from dropping a row to float error (0.8/0.1).
-        let count = |extent: f64| (((extent - 2.0 * GRID_MARGIN_H) / GRID_SPACING_H + 1e-9).floor() as usize + 1).max(4);
+        let count = |extent: f64| {
+            (((extent - 2.0 * GRID_MARGIN_H) / GRID_SPACING_H + 1e-9).floor() as usize + 1).max(4)
+        };
         let cols = count(aspect);
         let rows = count(1.0);
 
@@ -72,16 +80,26 @@ impl Pattern {
         let mut dots = Vec::with_capacity(cols * rows);
         for r in 0..rows {
             for c in 0..cols {
-                let anchor = (r == 0 && c == 0) || (r == 0 && c == cols - 1) || (r == rows - 1 && c == 0);
+                let anchor =
+                    (r == 0 && c == 0) || (r == 0 && c == cols - 1) || (r == rows - 1 && c == 0);
                 dots.push(Dot {
                     u: (x0 + c as f64 * GRID_SPACING_H) / aspect,
                     v: y0 + r as f64 * GRID_SPACING_H,
-                    radius_h: if anchor { ANCHOR_RADIUS_H } else { DOT_RADIUS_H },
+                    radius_h: if anchor {
+                        ANCHOR_RADIUS_H
+                    } else {
+                        DOT_RADIUS_H
+                    },
                     anchor,
                 });
             }
         }
-        Self { aspect, cols, rows, dots }
+        Self {
+            aspect,
+            cols,
+            rows,
+            dots,
+        }
     }
 
     /// Like [`Pattern::new`] with every dot radius multiplied by `scale`,
@@ -89,7 +107,11 @@ impl Pattern {
     /// low-resolution cameras and stress the perspective correction.
     pub fn with_dot_scale(aspect: f64, scale: f64) -> Self {
         let mut pattern = Self::new(aspect);
-        let scale = if scale.is_finite() { scale.clamp(0.5, 1.4) } else { 1.0 };
+        let scale = if scale.is_finite() {
+            scale.clamp(0.5, 1.4)
+        } else {
+            1.0
+        };
         for dot in &mut pattern.dots {
             dot.radius_h *= scale;
         }
@@ -109,13 +131,38 @@ impl Pattern {
     /// overscan. The brackets are thicker, so a cropped corner stays easy to
     /// see even when a thin ring blurs away.
     pub fn frame_rects(&self) -> Vec<FrameRect> {
-        let (w, t, bt, bl) = (self.aspect, FRAME_THICKNESS_H, BRACKET_THICKNESS_H, BRACKET_LENGTH_H);
-        let rect = |x, y, width, height| FrameRect { x, y, width, height };
-        let mut rects = vec![rect(0.0, 0.0, w, t), rect(0.0, 1.0 - t, w, t), rect(0.0, 0.0, t, 1.0), rect(w - t, 0.0, t, 1.0)];
-        for (x, y) in [(0.0, 0.0), (w - bl, 0.0), (0.0, 1.0 - bt), (w - bl, 1.0 - bt)] {
+        let (w, t, bt, bl) = (
+            self.aspect,
+            FRAME_THICKNESS_H,
+            BRACKET_THICKNESS_H,
+            BRACKET_LENGTH_H,
+        );
+        let rect = |x, y, width, height| FrameRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let mut rects = vec![
+            rect(0.0, 0.0, w, t),
+            rect(0.0, 1.0 - t, w, t),
+            rect(0.0, 0.0, t, 1.0),
+            rect(w - t, 0.0, t, 1.0),
+        ];
+        for (x, y) in [
+            (0.0, 0.0),
+            (w - bl, 0.0),
+            (0.0, 1.0 - bt),
+            (w - bl, 1.0 - bt),
+        ] {
             rects.push(rect(x, y, bl, bt));
         }
-        for (x, y) in [(0.0, 0.0), (w - bt, 0.0), (0.0, 1.0 - bl), (w - bt, 1.0 - bl)] {
+        for (x, y) in [
+            (0.0, 0.0),
+            (w - bt, 0.0),
+            (0.0, 1.0 - bl),
+            (w - bt, 1.0 - bl),
+        ] {
             rects.push(rect(x, y, bt, bl));
         }
         rects
@@ -209,7 +256,11 @@ pub(crate) struct Component {
 /// Labels 4-connected foreground regions. `weight(x, y)` is positive for
 /// foreground pixels and also weights the centroid, so antialiased edges
 /// contribute proportionally to their brightness.
-pub(crate) fn components(width: u32, height: u32, weight: impl Fn(u32, u32) -> f64) -> Vec<Component> {
+pub(crate) fn components(
+    width: u32,
+    height: u32,
+    weight: impl Fn(u32, u32) -> f64,
+) -> Vec<Component> {
     let (w, h) = (width as usize, height as usize);
     let mut seen = vec![false; w * h];
     let mut stack = Vec::new();
@@ -277,7 +328,10 @@ pub(crate) fn components(width: u32, height: u32, weight: impl Fn(u32, u32) -> f
 }
 
 fn luma(image: &RgbImage) -> Vec<u8> {
-    image.pixels().map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32) >> 8) as u8).collect()
+    image
+        .pixels()
+        .map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32) >> 8) as u8)
+        .collect()
 }
 
 /// Integral image for windowed means.
@@ -369,7 +423,11 @@ fn find_blobs(image: &RgbImage, intr: &Intrinsics) -> Vec<Blob> {
         .filter_map(|c| {
             let raw = c.center;
             let undistorted = undistort_pixel(intr, raw)?;
-            Some(Blob { raw, undistorted, area: c.area as f64 })
+            Some(Blob {
+                raw,
+                undistorted,
+                area: c.area as f64,
+            })
         })
         .collect()
 }
@@ -384,7 +442,10 @@ impl PointIndex {
     fn new(blobs: &[Blob], cell: f64) -> Self {
         let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
         for (i, b) in blobs.iter().enumerate() {
-            cells.entry(Self::key(cell, b.undistorted)).or_default().push(i as u32);
+            cells
+                .entry(Self::key(cell, b.undistorted))
+                .or_default()
+                .push(i as u32);
         }
         Self { cell, cells }
     }
@@ -394,7 +455,12 @@ impl PointIndex {
     }
 
     /// Blobs within `radius` of `p`, with their distances.
-    fn within<'a>(&'a self, blobs: &'a [Blob], p: Point2<f64>, radius: f64) -> impl Iterator<Item = (usize, f64)> + 'a {
+    fn within<'a>(
+        &'a self,
+        blobs: &'a [Blob],
+        p: Point2<f64>,
+        radius: f64,
+    ) -> impl Iterator<Item = (usize, f64)> + 'a {
         let span = (radius / self.cell).ceil() as i32;
         let (kx, ky) = Self::key(self.cell, p);
         (-span..=span)
@@ -427,12 +493,20 @@ impl Matcher<'_> {
     /// within `gate` times the local dot spacing, one blob per dot.
     fn evaluate(&self, h: &Matrix3<f64>, gate: f64) -> Option<Evaluation> {
         let p = self.pattern;
-        let predicted: Vec<Point2<f64>> =
-            p.dots.iter().map(|d| apply_homography(h, Point2::new(d.u, d.v))).collect::<Option<_>>()?;
+        let predicted: Vec<Point2<f64>> = p
+            .dots
+            .iter()
+            .map(|d| apply_homography(h, Point2::new(d.u, d.v)))
+            .collect::<Option<_>>()?;
 
         // A projection of a screen is convex and keeps the winding order.
         let corner = |c, r| predicted[p.index(c, r)];
-        let quad = [corner(0, 0), corner(p.cols - 1, 0), corner(p.cols - 1, p.rows - 1), corner(0, p.rows - 1)];
+        let quad = [
+            corner(0, 0),
+            corner(p.cols - 1, 0),
+            corner(p.cols - 1, p.rows - 1),
+            corner(0, p.rows - 1),
+        ];
         for i in 0..4 {
             let (a, b, c) = (quad[i], quad[(i + 1) % 4], quad[(i + 2) % 4]);
             if (b - a).perp(&(c - b)) <= 0.0 {
@@ -446,12 +520,24 @@ impl Matcher<'_> {
                 let i = p.index(c, r);
                 let here = predicted[i];
                 let mut spacing = f64::INFINITY;
-                if c > 0 { spacing = spacing.min((predicted[p.index(c - 1, r)] - here).norm()); }
-                if c + 1 < p.cols { spacing = spacing.min((predicted[p.index(c + 1, r)] - here).norm()); }
-                if r > 0 { spacing = spacing.min((predicted[p.index(c, r - 1)] - here).norm()); }
-                if r + 1 < p.rows { spacing = spacing.min((predicted[p.index(c, r + 1)] - here).norm()); }
+                if c > 0 {
+                    spacing = spacing.min((predicted[p.index(c - 1, r)] - here).norm());
+                }
+                if c + 1 < p.cols {
+                    spacing = spacing.min((predicted[p.index(c + 1, r)] - here).norm());
+                }
+                if r > 0 {
+                    spacing = spacing.min((predicted[p.index(c, r - 1)] - here).norm());
+                }
+                if r + 1 < p.rows {
+                    spacing = spacing.min((predicted[p.index(c, r + 1)] - here).norm());
+                }
                 let radius = gate * spacing;
-                if let Some((blob, d)) = self.index.within(self.blobs, here, radius).min_by(|a, b| a.1.total_cmp(&b.1)) {
+                if let Some((blob, d)) = self
+                    .index
+                    .within(self.blobs, here, radius)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                {
                     candidates.push((d / radius, i, blob));
                 }
             }
@@ -500,19 +586,31 @@ fn anchor_candidates(blobs: &[Blob]) -> Vec<usize> {
         }
     }
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    scored.into_iter().take(MAX_ANCHOR_CANDIDATES).map(|s| s.1).collect()
+    scored
+        .into_iter()
+        .take(MAX_ANCHOR_CANDIDATES)
+        .map(|s| s.1)
+        .collect()
 }
 
 /// Finds the pattern in `image`, a raw (distorted) color frame taken with
 /// `intrinsics`.
-pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> Result<Detection, DetectFailure> {
+pub fn detect(
+    pattern: &Pattern,
+    image: &RgbImage,
+    intrinsics: &Intrinsics,
+) -> Result<Detection, DetectFailure> {
     let blobs = find_blobs(image, intrinsics);
     let n = blobs.len();
     if n < 8 {
         return Err(DetectFailure::NoDots { blobs: n });
     }
     let index = PointIndex::new(&blobs, 16.0);
-    let matcher = Matcher { pattern, blobs: &blobs, index: &index };
+    let matcher = Matcher {
+        pattern,
+        blobs: &blobs,
+        index: &index,
+    };
     let total = pattern.dots.len();
     let anchors = anchor_candidates(&blobs);
 
@@ -520,8 +618,12 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
         let d = &pattern.dots[pattern.index(c, r)];
         Point2::new(d.u, d.v)
     };
-    let (tl_uv, tr_uv, bl_uv, br_uv) =
-        (corner_uv(0, 0), corner_uv(pattern.cols - 1, 0), corner_uv(0, pattern.rows - 1), corner_uv(pattern.cols - 1, pattern.rows - 1));
+    let (tl_uv, tr_uv, bl_uv, br_uv) = (
+        corner_uv(0, 0),
+        corner_uv(pattern.cols - 1, 0),
+        corner_uv(0, pattern.rows - 1),
+        corner_uv(pattern.cols - 1, pattern.rows - 1),
+    );
     let expected_ratio = (pattern.cols - 1) as f64 / (pattern.rows - 1) as f64;
 
     let mut best: Option<(f64, Matrix3<f64>)> = None;
@@ -531,7 +633,11 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
                 if tl == tr || tl == bl || tr == bl {
                     continue;
                 }
-                let (a, b, c) = (blobs[tl].undistorted, blobs[tr].undistorted, blobs[bl].undistorted);
+                let (a, b, c) = (
+                    blobs[tl].undistorted,
+                    blobs[tr].undistorted,
+                    blobs[bl].undistorted,
+                );
                 let (across, down) = (b - a, c - a);
                 if across.perp(&down) <= 0.0 {
                     continue;
@@ -550,13 +656,20 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
                         continue;
                     }
                     let d = blob.undistorted;
-                    if (b - a).perp(&(d - b)) <= 0.0 || (d - b).perp(&(c - d)) <= 0.0 || (c - d).perp(&(a - c)) <= 0.0 {
+                    if (b - a).perp(&(d - b)) <= 0.0
+                        || (d - b).perp(&(c - d)) <= 0.0
+                        || (c - d).perp(&(a - c)) <= 0.0
+                    {
                         continue;
                     }
                     let src = [tl_uv, tr_uv, bl_uv, br_uv];
                     let dst = [a, b, c, blobs[br].undistorted];
-                    let Some(h) = fit_homography(&src, &dst) else { continue };
-                    let Some(eval) = matcher.evaluate(&h, SEED_GATE) else { continue };
+                    let Some(h) = fit_homography(&src, &dst) else {
+                        continue;
+                    };
+                    let Some(eval) = matcher.evaluate(&h, SEED_GATE) else {
+                        continue;
+                    };
                     if best.as_ref().is_none_or(|(s, _)| eval.score > *s) {
                         best = Some((eval.score, h));
                     }
@@ -564,7 +677,9 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
             }
         }
     }
-    let Some((seed_score, mut h)) = best else { return Err(DetectFailure::NoGrid { blobs: n }) };
+    let Some((seed_score, mut h)) = best else {
+        return Err(DetectFailure::NoGrid { blobs: n });
+    };
     if seed_score < (0.4 * total as f64).max(8.0) {
         return Err(DetectFailure::NoGrid { blobs: n });
     }
@@ -573,12 +688,24 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
     // which also pulls in dots the four-corner seed predicted loosely.
     let mut matches = Vec::new();
     for _ in 0..4 {
-        let Some(eval) = matcher.evaluate(&h, REFINE_GATE) else { break };
-        let src: Vec<Point2<f64>> = eval.matches.iter().map(|(d, _)| Point2::new(pattern.dots[*d].u, pattern.dots[*d].v)).collect();
-        let dst: Vec<Point2<f64>> = eval.matches.iter().map(|(_, b)| blobs[*b].undistorted).collect();
+        let Some(eval) = matcher.evaluate(&h, REFINE_GATE) else {
+            break;
+        };
+        let src: Vec<Point2<f64>> = eval
+            .matches
+            .iter()
+            .map(|(d, _)| Point2::new(pattern.dots[*d].u, pattern.dots[*d].v))
+            .collect();
+        let dst: Vec<Point2<f64>> = eval
+            .matches
+            .iter()
+            .map(|(_, b)| blobs[*b].undistorted)
+            .collect();
         let spacing = median_spacing(pattern, &h).unwrap_or(20.0);
         let threshold = (0.08 * spacing).max(1.0);
-        let Some(fit) = ransac_homography(&src, &dst, threshold, 200, 0x5EED) else { break };
+        let Some(fit) = ransac_homography(&src, &dst, threshold, 200, 0x5EED) else {
+            break;
+        };
         let changed = fit.inliers.len() != matches.len();
         h = fit.h;
         matches = fit.inliers.iter().map(|&i| eval.matches[i]).collect();
@@ -591,7 +718,11 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
     }
 
     let spacing = median_spacing(pattern, &h).unwrap_or(20.0);
-    let Debiased { h, matches, centers } = remove_center_bias(pattern, &blobs, h, matches, (0.08 * spacing).max(1.0));
+    let Debiased {
+        h,
+        matches,
+        centers,
+    } = remove_center_bias(pattern, &blobs, h, matches, (0.08 * spacing).max(1.0));
 
     let mut order: Vec<usize> = (0..matches.len()).collect();
     order.sort_by_key(|&i| matches[i].0);
@@ -624,10 +755,16 @@ pub fn detect(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics) -> R
     let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
     let mut quad_px = [Point2::origin(); 4];
     for (slot, (u, v)) in quad_px.iter_mut().zip(corners) {
-        let p = apply_homography(&h, Point2::new(u, v)).ok_or(DetectFailure::NoGrid { blobs: n })?;
+        let p =
+            apply_homography(&h, Point2::new(u, v)).ok_or(DetectFailure::NoGrid { blobs: n })?;
         *slot = distort_pixel(intrinsics, p);
     }
-    Ok(Detection { correspondences, homography: h, quad_px, quality })
+    Ok(Detection {
+        correspondences,
+        homography: h,
+        quad_px,
+        quality,
+    })
 }
 
 /// Passes of [`remove_center_bias`]. Each pass refits the homography the next
@@ -657,10 +794,15 @@ const BIAS_CONVERGED_PX: f64 = 0.01;
 /// for the lens even though its outline is bent slightly; at dot sizes of
 /// 1-2% of the screen height that second-order term stays far below the
 /// perspective term.
-pub fn center_bias(pattern: &Pattern, dot: usize, unit_to_pixel: &Matrix3<f64>) -> Option<Vector2<f64>> {
+pub fn center_bias(
+    pattern: &Pattern,
+    dot: usize,
+    unit_to_pixel: &Matrix3<f64>,
+) -> Option<Vector2<f64>> {
     let d = pattern.dots.get(dot)?;
     let (x, y) = (d.u * pattern.aspect, d.v);
-    let physical = unit_to_pixel * Matrix3::new(1.0 / pattern.aspect, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+    let physical =
+        unit_to_pixel * Matrix3::new(1.0 / pattern.aspect, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
     let m = physical * Matrix3::new(d.radius_h, 0.0, x, 0.0, d.radius_h, y, 0.0, 0.0, 1.0);
     let bottom = m.row(2).transpose();
     let pole = m * Matrix3::from_diagonal(&Vector3::new(1.0, 1.0, -1.0)) * bottom;
@@ -681,7 +823,10 @@ pub fn corrected_centers(
     unit_to_pixel: &Matrix3<f64>,
     measured: &[(usize, Point2<f64>)],
 ) -> Option<Vec<Point2<f64>>> {
-    measured.iter().map(|&(dot, p)| Some(p - center_bias(pattern, dot, unit_to_pixel)?)).collect()
+    measured
+        .iter()
+        .map(|&(dot, p)| Some(p - center_bias(pattern, dot, unit_to_pixel)?))
+        .collect()
 }
 
 /// Homography and matches after bias removal.
@@ -702,23 +847,47 @@ fn remove_center_bias(
     mut matches: Vec<(usize, usize)>,
     threshold: f64,
 ) -> Debiased {
-    let mut centers: Vec<Point2<f64>> = matches.iter().map(|&(_, b)| blobs[b].undistorted).collect();
+    let mut centers: Vec<Point2<f64>> =
+        matches.iter().map(|&(_, b)| blobs[b].undistorted).collect();
     let mut previous = vec![Vector2::zeros(); matches.len()];
     for _ in 0..BIAS_PASSES {
-        let Some(bias) = matches.iter().map(|&(d, _)| center_bias(pattern, d, &h)).collect::<Option<Vec<_>>>() else { break };
-        let change = bias.iter().zip(&previous).map(|(a, b)| (a - b).norm()).fold(0.0, f64::max);
+        let Some(bias) = matches
+            .iter()
+            .map(|&(d, _)| center_bias(pattern, d, &h))
+            .collect::<Option<Vec<_>>>()
+        else {
+            break;
+        };
+        let change = bias
+            .iter()
+            .zip(&previous)
+            .map(|(a, b)| (a - b).norm())
+            .fold(0.0, f64::max);
         if change < BIAS_CONVERGED_PX {
             break;
         }
-        let src: Vec<_> = matches.iter().map(|&(d, _)| Point2::new(pattern.dots[d].u, pattern.dots[d].v)).collect();
-        let dst: Vec<_> = matches.iter().zip(&bias).map(|(&(_, b), off)| blobs[b].undistorted - off).collect();
-        let Some(fit) = ransac_homography(&src, &dst, threshold, 200, 0x5EED) else { break };
+        let src: Vec<_> = matches
+            .iter()
+            .map(|&(d, _)| Point2::new(pattern.dots[d].u, pattern.dots[d].v))
+            .collect();
+        let dst: Vec<_> = matches
+            .iter()
+            .zip(&bias)
+            .map(|(&(_, b), off)| blobs[b].undistorted - off)
+            .collect();
+        let Some(fit) = ransac_homography(&src, &dst, threshold, 200, 0x5EED) else {
+            break;
+        };
         h = fit.h;
         centers = fit.inliers.iter().map(|&i| dst[i]).collect();
         previous = fit.inliers.iter().map(|&i| bias[i]).collect();
         matches = fit.inliers.iter().map(|&i| matches[i]).collect();
     }
-    Debiased { h, matches, centers }
+    Debiased {
+        h,
+        matches,
+        centers,
+    }
 }
 
 /// Which sides of the screen image. The ring on a side is the pattern's
@@ -737,7 +906,10 @@ impl SideSet {
     }
 
     pub fn count(&self) -> usize {
-        [self.top, self.right, self.bottom, self.left].into_iter().filter(|&s| s).count()
+        [self.top, self.right, self.bottom, self.left]
+            .into_iter()
+            .filter(|&s| s)
+            .count()
     }
 }
 
@@ -779,16 +951,27 @@ fn luma_at(image: &RgbImage, x: u32, y: u32) -> f64 {
 /// registration error. `None` unless the block lies inside the image.
 fn luma_peak(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
     let (x, y) = (p.x.round(), p.y.round());
-    if x < 1.0 || y < 1.0 || x + 2.0 > f64::from(image.width()) || y + 2.0 > f64::from(image.height()) {
+    if x < 1.0
+        || y < 1.0
+        || x + 2.0 > f64::from(image.width())
+        || y + 2.0 > f64::from(image.height())
+    {
         return None;
     }
     let (x, y) = (x as u32, y as u32);
-    (y - 1..=y + 1).flat_map(|yy| (x - 1..=x + 1).map(move |xx| (xx, yy))).map(|(xx, yy)| luma_at(image, xx, yy)).reduce(f64::max)
+    (y - 1..=y + 1)
+        .flat_map(|yy| (x - 1..=x + 1).map(move |xx| (xx, yy)))
+        .map(|(xx, yy)| luma_at(image, xx, yy))
+        .reduce(f64::max)
 }
 
 fn luma_bilinear(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
     let (x0, y0) = (p.x.floor(), p.y.floor());
-    if x0 < 0.0 || y0 < 0.0 || x0 + 2.0 > f64::from(image.width()) || y0 + 2.0 > f64::from(image.height()) {
+    if x0 < 0.0
+        || y0 < 0.0
+        || x0 + 2.0 > f64::from(image.width())
+        || y0 + 2.0 > f64::from(image.height())
+    {
         return None;
     }
     let (fx, fy) = (p.x - x0, p.y - y0);
@@ -815,24 +998,38 @@ fn median(values: &mut [f64]) -> Option<f64> {
 /// asks for a ridge. A ridge needs no assumption about what lies outside the
 /// screen: a cropped ring leaves the bezel or wall there, which is flat, and
 /// the test fails however bright the room is.
-pub fn check_edges(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics, unit_to_pixel: &Matrix3<f64>) -> EdgeCheck {
+pub fn check_edges(
+    pattern: &Pattern,
+    image: &RgbImage,
+    intrinsics: &Intrinsics,
+    unit_to_pixel: &Matrix3<f64>,
+) -> EdgeCheck {
     let aspect = pattern.aspect;
     let undistorted = |x: f64, y: f64| apply_homography(unit_to_pixel, Point2::new(x / aspect, y));
     let raw = |p: Point2<f64>| distort_pixel(intrinsics, p);
 
-    let mut dot_levels: Vec<f64> =
-        pattern.dots.iter().filter_map(|d| undistorted(d.u * aspect, d.v)).filter_map(|p| luma_peak(image, raw(p))).collect();
+    let mut dot_levels: Vec<f64> = pattern
+        .dots
+        .iter()
+        .filter_map(|d| undistorted(d.u * aspect, d.v))
+        .filter_map(|p| luma_peak(image, raw(p)))
+        .collect();
     let mut black_levels = Vec::new();
     for r in 0..pattern.rows - 1 {
         for c in 0..pattern.cols - 1 {
-            let (a, b) = (&pattern.dots[pattern.index(c, r)], &pattern.dots[pattern.index(c + 1, r + 1)]);
+            let (a, b) = (
+                &pattern.dots[pattern.index(c, r)],
+                &pattern.dots[pattern.index(c + 1, r + 1)],
+            );
             let center = undistorted((a.u + b.u) / 2.0 * aspect, (a.v + b.v) / 2.0);
             if let Some(v) = center.and_then(|p| luma_bilinear(image, raw(p))) {
                 black_levels.push(v);
             }
         }
     }
-    let (Some(dot), Some(black)) = (median(&mut dot_levels), median(&mut black_levels)) else { return EdgeCheck::Unknown };
+    let (Some(dot), Some(black)) = (median(&mut dot_levels), median(&mut black_levels)) else {
+        return EdgeCheck::Unknown;
+    };
     let contrast = dot - black;
     if contrast < EDGE_MIN_CONTRAST {
         return EdgeCheck::Unknown;
@@ -852,14 +1049,18 @@ pub fn check_edges(pattern: &Pattern, image: &RgbImage, intrinsics: &Intrinsics,
         };
         let (mut valid, mut ridges) = (0usize, 0usize);
         for k in 0..EDGE_SAMPLES_PER_SIDE {
-            let t = EDGE_SPAN.0 + (EDGE_SPAN.1 - EDGE_SPAN.0) * k as f64 / (EDGE_SAMPLES_PER_SIDE - 1) as f64;
+            let t = EDGE_SPAN.0
+                + (EDGE_SPAN.1 - EDGE_SPAN.0) * k as f64 / (EDGE_SAMPLES_PER_SIDE - 1) as f64;
             let (x, y) = match side {
                 0 => (aspect * t, half),
                 1 => (aspect - half, t),
                 2 => (aspect * t, 1.0 - half),
                 _ => (half, t),
             };
-            let (Some(on_ring), Some(toward)) = (undistorted(x, y), undistorted(x + inward.0 * 0.01, y + inward.1 * 0.01)) else {
+            let (Some(on_ring), Some(toward)) = (
+                undistorted(x, y),
+                undistorted(x + inward.0 * 0.01, y + inward.1 * 0.01),
+            ) else {
                 continue;
             };
             // How wide the ring appears here: perspective squeezes it on the
@@ -919,8 +1120,9 @@ fn median_spacing(pattern: &Pattern, h: &Matrix3<f64>) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use image::Rgb;
+
+    use super::*;
 
     fn intrinsics() -> Intrinsics {
         Intrinsics {
@@ -943,7 +1145,12 @@ mod tests {
     /// Like `render`, but the panel shows only the part of the pattern image
     /// that lies `crop` (a fraction of each axis) inside its edges, as an
     /// overscanning display does. Outside the panel the camera sees a lit wall.
-    fn render_cropped(pattern: &Pattern, intr: &Intrinsics, h: &Matrix3<f64>, crop: f64) -> RgbImage {
+    fn render_cropped(
+        pattern: &Pattern,
+        intr: &Intrinsics,
+        h: &Matrix3<f64>,
+        crop: f64,
+    ) -> RgbImage {
         let mut img = RgbImage::from_pixel(intr.width, intr.height, Rgb([14, 14, 14]));
         let inv = h.try_inverse().unwrap();
         let frame = pattern.frame_rects();
@@ -951,15 +1158,23 @@ mod tests {
         // Screen region is darker than the surround; fill it by inverse mapping.
         for y in 0..intr.height {
             for x in 0..intr.width {
-                let Some(und) = undistort_pixel(intr, Point2::new(x as f64, y as f64)) else { continue };
-                let Some(uv) = apply_homography(&inv, und) else { continue };
+                let Some(und) = undistort_pixel(intr, Point2::new(x as f64, y as f64)) else {
+                    continue;
+                };
+                let Some(uv) = apply_homography(&inv, und) else {
+                    continue;
+                };
                 let inside = panel.contains(&uv.x) && panel.contains(&uv.y);
                 let mut value: f64 = if inside { 5.0 } else { 70.0 };
                 if inside {
                     let first = pattern.dots()[0];
                     let (cols, rows) = pattern.grid();
-                    let c = (((uv.x - first.u) * pattern.aspect() / GRID_SPACING_H).round().max(0.0) as usize).min(cols - 1);
-                    let r = (((uv.y - first.v) / GRID_SPACING_H).round().max(0.0) as usize).min(rows - 1);
+                    let c = (((uv.x - first.u) * pattern.aspect() / GRID_SPACING_H)
+                        .round()
+                        .max(0.0) as usize)
+                        .min(cols - 1);
+                    let r = (((uv.y - first.v) / GRID_SPACING_H).round().max(0.0) as usize)
+                        .min(rows - 1);
                     let d = pattern.dots()[r * cols + c];
                     let dx = (uv.x - d.u) * pattern.aspect();
                     let dy = uv.y - d.v;
@@ -967,7 +1182,7 @@ mod tests {
                     // One screen height is `scale` pixels along v.
                     let scale = (apply_homography(h, Point2::new(uv.x, uv.y + 0.001)).unwrap()
                         - apply_homography(h, uv).unwrap())
-                        .norm()
+                    .norm()
                         / 0.001;
                     let edge = (d.radius_h - dist) * scale + 0.5;
                     if edge > 0.0 {
@@ -975,7 +1190,10 @@ mod tests {
                     }
                     let (px, py) = (uv.x * pattern.aspect(), uv.y);
                     for rect in &frame {
-                        let inset = (px - rect.x).min(rect.x + rect.width - px).min(py - rect.y).min(rect.y + rect.height - py);
+                        let inset = (px - rect.x)
+                            .min(rect.x + rect.width - px)
+                            .min(py - rect.y)
+                            .min(rect.y + rect.height - py);
                         let coverage = (inset * scale + 0.5).clamp(0.0, 1.0);
                         value = value.max(5.0 + 245.0 * coverage);
                     }
@@ -1000,7 +1218,12 @@ mod tests {
             let p = r * local + center;
             Point2::new(p.x / p.z * intr.fx + intr.cx, p.y / p.z * intr.fy + intr.cy)
         };
-        let src = [Point2::new(0.0, 0.0), Point2::new(1.0, 0.0), Point2::new(1.0, 1.0), Point2::new(0.0, 1.0)];
+        let src = [
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(0.0, 1.0),
+        ];
         let dst = src.map(|p| to_px(p.x, p.y));
         fit_homography(&src, &dst).unwrap()
     }
@@ -1014,9 +1237,19 @@ mod tests {
         let p = Pattern::new(16.0 / 9.0);
         assert_eq!(p.grid(), (16, 9));
         assert_eq!(p.dots().len(), 144);
-        let anchors: Vec<_> = p.dots().iter().enumerate().filter(|(_, d)| d.anchor).map(|(i, _)| i).collect();
+        let anchors: Vec<_> = p
+            .dots()
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.anchor)
+            .map(|(i, _)| i)
+            .collect();
         assert_eq!(anchors, vec![0, 15, 128], "TL, TR, BL");
-        assert!(p.dots().iter().all(|d| (0.0..=1.0).contains(&d.u) && (0.0..=1.0).contains(&d.v)));
+        assert!(
+            p.dots()
+                .iter()
+                .all(|d| (0.0..=1.0).contains(&d.u) && (0.0..=1.0).contains(&d.v))
+        );
         // Round dots: spacing in screen-height units is isotropic.
         let d0 = p.dots()[1];
         let d1 = p.dots()[0];
@@ -1037,7 +1270,12 @@ mod tests {
         assert!(det.quality.rms_px < 0.3, "{:?}", det.quality);
         for c in &det.correspondences {
             let truth = apply_homography(&h, c.pattern).unwrap();
-            assert!((truth - c.pixel).norm() < 0.4, "dot {} off by {}", c.index, (truth - c.pixel).norm());
+            assert!(
+                (truth - c.pixel).norm() < 0.4,
+                "dot {} off by {}",
+                c.index,
+                (truth - c.pixel).norm()
+            );
         }
         let corner = apply_homography(&h, Point2::new(0.0, 0.0)).unwrap();
         let est = apply_homography(&det.homography, Point2::new(0.0, 0.0)).unwrap();
@@ -1048,7 +1286,10 @@ mod tests {
     fn rejects_an_image_without_a_pattern() {
         let intr = intrinsics();
         let image = RgbImage::from_pixel(intr.width, intr.height, Rgb([40, 40, 40]));
-        assert!(matches!(detect(&Pattern::new(16.0 / 9.0), &image, &intr), Err(DetectFailure::NoDots { .. })));
+        assert!(matches!(
+            detect(&Pattern::new(16.0 / 9.0), &image, &intr),
+            Err(DetectFailure::NoDots { .. })
+        ));
     }
 
     #[test]
@@ -1067,7 +1308,8 @@ mod tests {
                 }
             }
         }
-        let victim = apply_homography(&h, Point2::new(pattern.dots()[50].u, pattern.dots()[50].v)).unwrap();
+        let victim =
+            apply_homography(&h, Point2::new(pattern.dots()[50].u, pattern.dots()[50].v)).unwrap();
         let victim = distort_pixel(&intr, victim);
         for dy in -12i32..=12 {
             for dx in -12i32..=12 {
@@ -1108,8 +1350,9 @@ mod tests {
     fn correction_removes_the_centroid_bias_of_noise_free_ellipses() {
         let pattern = Pattern::with_dot_scale(16.0 / 9.0, 1.4);
         let h = pose_homography(&pattern, 1.05, 0.3, 1.3);
-        let measured: Vec<(usize, Point2<f64>)> =
-            (0..pattern.dots().len()).map(|i| (i, outline_centroid(&pattern, i, &h))).collect();
+        let measured: Vec<(usize, Point2<f64>)> = (0..pattern.dots().len())
+            .map(|i| (i, outline_centroid(&pattern, i, &h)))
+            .collect();
         let corrected = corrected_centers(&pattern, &h, &measured).unwrap();
 
         let (mut raw_max, mut fixed_max) = (0.0f64, 0.0f64);
@@ -1119,8 +1362,14 @@ mod tests {
             raw_max = raw_max.max((centroid - truth).norm());
             fixed_max = fixed_max.max((fixed - truth).norm());
         }
-        assert!(raw_max > 0.3, "the case must have a visible bias, got {raw_max} px");
-        assert!(fixed_max < raw_max * 1e-4, "raw {raw_max} px, corrected {fixed_max} px");
+        assert!(
+            raw_max > 0.3,
+            "the case must have a visible bias, got {raw_max} px"
+        );
+        assert!(
+            fixed_max < raw_max * 1e-4,
+            "raw {raw_max} px, corrected {fixed_max} px"
+        );
     }
 
     #[test]
@@ -1130,8 +1379,13 @@ mod tests {
         let norm = |p: &Pattern, h: &Matrix3<f64>| center_bias(p, 60, h).unwrap().norm();
         let frontal = pose_homography(&pattern, 0.0, 0.0, 2.0);
         let steep = pose_homography(&pattern, 1.05, 0.0, 2.0);
-        assert!(norm(&pattern, &frontal) < 1e-9, "a fronto-parallel circle has no bias");
-        assert!(norm(&pattern, &steep) > norm(&pattern, &pose_homography(&pattern, 0.35, 0.0, 2.0)));
+        assert!(
+            norm(&pattern, &frontal) < 1e-9,
+            "a fronto-parallel circle has no bias"
+        );
+        assert!(
+            norm(&pattern, &steep) > norm(&pattern, &pose_homography(&pattern, 0.35, 0.0, 2.0))
+        );
         assert!(norm(&big, &steep) > 1.5 * norm(&pattern, &steep));
     }
 
@@ -1140,15 +1394,27 @@ mod tests {
         let pattern = Pattern::new(16.0 / 9.0);
         let h = pose_homography(&pattern, 0.8, 0.1, 2.0);
         let measured: Vec<(usize, Point2<f64>)> = (0..pattern.dots().len())
-            .map(|i| (i, apply_homography(&h, Point2::new(pattern.dots()[i].u, pattern.dots()[i].v)).unwrap()))
+            .map(|i| {
+                (
+                    i,
+                    apply_homography(&h, Point2::new(pattern.dots()[i].u, pattern.dots()[i].v))
+                        .unwrap(),
+                )
+            })
             .collect();
         let start = std::time::Instant::now();
         for _ in 0..100 {
             std::hint::black_box(corrected_centers(&pattern, &h, &measured).unwrap());
         }
         let per_call = start.elapsed() / 100;
-        eprintln!("corrected_centers for {} dots: {per_call:?}", measured.len());
-        assert!(per_call < std::time::Duration::from_millis(5), "{per_call:?}");
+        eprintln!(
+            "corrected_centers for {} dots: {per_call:?}",
+            measured.len()
+        );
+        assert!(
+            per_call < std::time::Duration::from_millis(5),
+            "{per_call:?}"
+        );
     }
 
     /// Mean distance of the detected dot centers from the true image of the
@@ -1172,7 +1438,9 @@ mod tests {
         let pattern = Pattern::with_dot_scale(16.0 / 9.0, 1.4);
         let h = pose_homography(&pattern, 1.05, 0.3, 1.3);
         let (fixed, raw, n) = detection_errors(&pattern, &h);
-        eprintln!("steep, large dots: {n} dots, mean error {raw:.3} px raw centroid, {fixed:.3} px corrected");
+        eprintln!(
+            "steep, large dots: {n} dots, mean error {raw:.3} px raw centroid, {fixed:.3} px corrected"
+        );
         assert!(n >= 100.0);
         assert!(fixed < 0.5 * raw, "corrected {fixed} px vs raw {raw} px");
     }
@@ -1183,14 +1451,25 @@ mod tests {
         let rects = pattern.frame_rects();
         assert_eq!(rects.len(), 12);
         for r in &rects {
-            assert!(r.x >= 0.0 && r.y >= 0.0 && r.x + r.width <= pattern.aspect() + 1e-12 && r.y + r.height <= 1.0 + 1e-12, "{r:?}");
+            assert!(
+                r.x >= 0.0
+                    && r.y >= 0.0
+                    && r.x + r.width <= pattern.aspect() + 1e-12
+                    && r.y + r.height <= 1.0 + 1e-12,
+                "{r:?}"
+            );
         }
         // No dot touches a rectangle, so the ring cannot merge with a dot blob.
         for d in pattern.dots() {
             let (cx, cy) = (d.u * pattern.aspect(), d.v);
             for r in &rects {
-                let nearest = ((cx.clamp(r.x, r.x + r.width) - cx).powi(2) + (cy.clamp(r.y, r.y + r.height) - cy).powi(2)).sqrt();
-                assert!(nearest > d.radius_h + 0.01, "dot at ({cx}, {cy}) is {nearest} from {r:?}");
+                let nearest = ((cx.clamp(r.x, r.x + r.width) - cx).powi(2)
+                    + (cy.clamp(r.y, r.y + r.height) - cy).powi(2))
+                .sqrt();
+                assert!(
+                    nearest > d.radius_h + 0.01,
+                    "dot at ({cx}, {cy}) is {nearest} from {r:?}"
+                );
             }
         }
     }
@@ -1199,7 +1478,10 @@ mod tests {
     fn ring_does_not_disturb_detection_and_reads_as_visible() {
         let pattern = Pattern::new(16.0 / 9.0);
         let intr = intrinsics();
-        for (h, steep) in [(tilted_homography(&pattern), false), (pose_homography(&pattern, 0.9, 0.2, 1.6), true)] {
+        for (h, steep) in [
+            (tilted_homography(&pattern), false),
+            (pose_homography(&pattern, 0.9, 0.2, 1.6), true),
+        ] {
             let image = render(&pattern, &intr, &h);
             let det = detect(&pattern, &image, &intr).expect("pattern found");
             assert_eq!(det.quality.matched, 144, "{:?}", det.quality);
@@ -1224,7 +1506,14 @@ mod tests {
         let det = detect(&pattern, &image, &intr).expect("pattern found");
         assert_eq!(
             check_edges(&pattern, &image, &intr, &det.homography),
-            EdgeCheck::Cropped { sides: SideSet { top: true, right: true, bottom: true, left: true } }
+            EdgeCheck::Cropped {
+                sides: SideSet {
+                    top: true,
+                    right: true,
+                    bottom: true,
+                    left: true
+                }
+            }
         );
     }
 
@@ -1238,7 +1527,10 @@ mod tests {
         let zoom = Matrix3::new(3.0, 0.0, -1.0, 0.0, 3.0, -1.0, 0.0, 0.0, 1.0);
         let zoomed_h = h * zoom;
         let zoomed = render(&pattern, &intr, &zoomed_h);
-        assert_eq!(check_edges(&pattern, &zoomed, &intr, &zoomed_h), EdgeCheck::Unknown);
+        assert_eq!(
+            check_edges(&pattern, &zoomed, &intr, &zoomed_h),
+            EdgeCheck::Unknown
+        );
         // A washed-out picture has no contrast to judge by.
         let faint = RgbImage::from_pixel(intr.width, intr.height, Rgb([30, 30, 30]));
         assert_eq!(check_edges(&pattern, &faint, &intr, &h), EdgeCheck::Unknown);

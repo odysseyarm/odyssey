@@ -11,9 +11,7 @@ use odyssey_protocol::control::device::{
 use odyssey_protocol::{PropKind, Props, SetDeviceNameResult};
 
 use crate::ble::peripheral;
-use crate::device_control;
-use crate::settings;
-use crate::transport_mode;
+use crate::{device_control, settings, transport_mode};
 
 /// Function pointer registered by each board to persist the transport mode to flash.
 /// Call `register_transport_mode_persist_fn` once during board init.
@@ -43,7 +41,7 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
     loop {
         // When pairing is in progress, listen for both commands and pairing completion/timeout.
         if let Some(deadline) = pairing_deadline {
-            use embassy_futures::select::{select3, Either3};
+            use embassy_futures::select::{Either3, select3};
             let cmd_fut = device_control::recv_cmd();
             let complete_fut = peripheral::wait_for_pairing_complete();
             let timeout_fut = embassy_time::Timer::at(deadline);
@@ -93,9 +91,9 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
                     info!("Pairing timed out");
                     pairing_deadline = None;
                     peripheral::cancel_pairing_mode();
-                    device_control::try_send_event(DeviceMsg::PairingResult(
-                        PairingOutcome::Err(PairingError::Timeout),
-                    ));
+                    device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Err(
+                        PairingError::Timeout,
+                    )));
                     continue;
                 }
             }
@@ -115,7 +113,9 @@ async fn handle_cmd(
     match cmd {
         DeviceMsg::ReadProp(kind) => {
             let prop = match kind {
-                PropKind::Version => Props::Version(odyssey_protocol::Version::new(firmware_version)),
+                PropKind::Version => {
+                    Props::Version(odyssey_protocol::Version::new(firmware_version))
+                }
                 PropKind::Uuid => {
                     let uuid: [u8; 6] = crate::utils::device_id()[..6].try_into().unwrap();
                     Props::Uuid(uuid)
@@ -129,7 +129,9 @@ async fn handle_cmd(
                     Props::Name(name.into())
                 }
                 PropKind::ProductId => return,
-                PropKind::NetCoreRelease => Props::NetCoreRelease(crate::ble::netcore::netcore_release()),
+                PropKind::NetCoreRelease => {
+                    Props::NetCoreRelease(crate::ble::netcore::netcore_release())
+                }
             };
             device_control::try_send_event(DeviceMsg::ReadPropResponse(prop));
         }
@@ -223,8 +225,12 @@ async fn handle_cmd(
                 ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
                 ConfigKind::AccelConfig => GeneralConfig::AccelConfig(g.accel_config.clone()),
                 ConfigKind::GyroConfig => GeneralConfig::GyroConfig(g.gyro_config.clone()),
-                ConfigKind::CameraModelNf => GeneralConfig::CameraModelNf(g.camera_model_nf.clone().into()),
-                ConfigKind::CameraModelWf => GeneralConfig::CameraModelWf(g.camera_model_wf.clone().into()),
+                ConfigKind::CameraModelNf => {
+                    GeneralConfig::CameraModelNf(g.camera_model_nf.clone().into())
+                }
+                ConfigKind::CameraModelWf => {
+                    GeneralConfig::CameraModelWf(g.camera_model_wf.clone().into())
+                }
                 ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone().into()),
             };
             device_control::try_send_event(DeviceMsg::ReadConfigResponse(config));

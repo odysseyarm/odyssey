@@ -1,8 +1,8 @@
 //! The wire <-> pod mapping is hand-written, so pin it against upstream's own
 //! constructor: a wrong row/column-major shuffle mis-calibrates a device.
 
-use opencv_ros_camera::{RosOpenCvIntrinsics, RosOpenCvIntrinsicsPod};
 use odyssey_protocol::wire::CameraCalibrationParams;
+use opencv_ros_camera::{RosOpenCvIntrinsics, RosOpenCvIntrinsicsPod};
 
 const FX: f32 = 1234.5;
 const SKEW: f32 = 0.25;

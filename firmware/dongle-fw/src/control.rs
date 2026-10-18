@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicPtr, Ordering};
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Channel};
+
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::channel::Channel;
 use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 use static_cell::StaticCell;
 

@@ -43,19 +43,13 @@ impl DrawPatternPoints {
                 Color::from_rgba(255, 0, 0, 255)
             };
 
-            draw_circle_lines(
-                transformed_point.x,
-                transformed_point.y,
-                6.0,
-                2.0,
-                color,
-            );
+            draw_circle_lines(transformed_point.x, transformed_point.y, 6.0, 2.0, color);
 
             // Draw the line between points
             if pattern_was_found && i > 0 {
                 let prev_point = vec2(
-                    points[i-1].x as f32 / (ox - 1.0) * (rx - 1.0) + 0.5,
-                    points[i-1].y as f32 / (oy - 1.0) * (ry - 1.0) + 0.5,
+                    points[i - 1].x as f32 / (ox - 1.0) * (rx - 1.0) + 0.5,
+                    points[i - 1].y as f32 / (oy - 1.0) * (ry - 1.0) + 0.5,
                 );
                 let prev_transformed_point = transform.transform_point2(prev_point);
                 draw_line(

@@ -2,9 +2,9 @@
 
 use std::process::ExitCode;
 
-use odyssey_usb::device::MuxDevice;
 use clap::{Parser, Subcommand};
 use nusb::MaybeFuture as _;
+use odyssey_usb::device::MuxDevice;
 
 #[derive(Parser)]
 #[command(name = "mux-cli")]
@@ -271,15 +271,16 @@ async fn cmd_clear(device: &MuxDevice) -> Result<(), String> {
 }
 
 async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
-    use nusb::transfer::{Bulk, Interrupt, In, Out};
+    use nusb::transfer::{Bulk, In, Interrupt, Out};
     let devices = list_dongles()?;
     if devices.is_empty() {
         return Err("No dongle found (VID:0x1915 PID:0x5212)".to_string());
     }
     let device_info = if let Some(idx) = device_index {
-        devices.get(idx).cloned().ok_or_else(|| format!(
-            "Device index {} not found. Use 'devices' to list.", idx
-        ))?
+        devices
+            .get(idx)
+            .cloned()
+            .ok_or_else(|| format!("Device index {} not found. Use 'devices' to list.", idx))?
     } else {
         if devices.len() > 1 {
             return Err(format!(

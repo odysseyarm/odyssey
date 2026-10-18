@@ -1,8 +1,6 @@
-use iui::{
-    controls::{Window, WindowType},
-    UI,
-};
-use leptos_reactive::{create_effect, RwSignal, SignalGet};
+use iui::UI;
+use iui::controls::{Window, WindowType};
+use leptos_reactive::{RwSignal, SignalGet, create_effect};
 
 fn main() {
     let ui = UI::init().expect("Couldn't initialize UI library");

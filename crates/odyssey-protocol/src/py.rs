@@ -2,10 +2,8 @@
 //! complex enum needs every variant field convertible, and the orphan rule
 //! blocks that for `heapless` types and `Result`.
 
-use pyo3::{
-    Borrowed, Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python,
-    types::{PyAnyMethods, PyList, PyString, PyStringMethods},
-};
+use pyo3::types::{PyAnyMethods, PyList, PyString, PyStringMethods};
+use pyo3::{Borrowed, Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python};
 
 use crate::{DeviceName, GeneralConfig, List};
 
@@ -87,4 +85,3 @@ impl<'a, 'py> FromPyObject<'a, 'py> for GeneralConfig {
         Ok(obj.extract::<crate::wire::GeneralConfig>()?.into())
     }
 }
-

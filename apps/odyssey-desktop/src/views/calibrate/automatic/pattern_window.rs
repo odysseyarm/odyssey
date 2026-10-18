@@ -9,21 +9,16 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use dioxus::{
-    desktop::{
-        tao::{
-            monitor::MonitorHandle,
-            window::{Fullscreen, Window},
-        },
-        Config, DesktopContext, WindowBuilder, WindowCloseBehaviour,
-    },
-    prelude::*,
-};
+use dioxus::desktop::tao::monitor::MonitorHandle;
+use dioxus::desktop::tao::window::{Fullscreen, Window};
+use dioxus::desktop::{Config, DesktopContext, WindowBuilder, WindowCloseBehaviour};
+use dioxus::prelude::*;
 use odyssey_autocalib::pattern::Pattern;
 use odyssey_hub_common::config::MonitorKey;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 
 use crate::components::screen_picker::monitor_key;
-use tokio::sync::{mpsc::UnboundedSender, watch};
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
@@ -91,7 +86,11 @@ pub fn open(
     lost: UnboundedSender<PatternLoss>,
 ) -> PatternDisplay {
     let (mode, receiver) = watch::channel(initial);
-    let link = Link(Arc::new(LinkInner { pattern, mode: receiver, lost: lost.clone() }));
+    let link = Link(Arc::new(LinkInner {
+        pattern,
+        mode: receiver,
+        lost: lost.clone(),
+    }));
     let dom = VirtualDom::new_with_props(PatternScreen, PatternScreenProps { link });
     let config = Config::default()
         .with_menu(None)
@@ -239,7 +238,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn of_monitor(key: &MonitorKey) -> Self {
-        Self { x: key.x.into(), y: key.y.into(), width: key.width.into(), height: key.height.into() }
+        Self {
+            x: key.x.into(),
+            y: key.y.into(),
+            width: key.width.into(),
+            height: key.height.into(),
+        }
     }
 
     /// Whether the two share any area; touching edges do not count.
@@ -254,7 +258,11 @@ impl Rect {
 /// Whether showing the pattern fullscreen on `target` would cover (part of)
 /// the window `host`. Falls back to "same monitor" where the platform does not
 /// report window geometry.
-pub fn covers_window(host: &DesktopContext, target: &MonitorKey, current_monitor: Option<MonitorKey>) -> bool {
+pub fn covers_window(
+    host: &DesktopContext,
+    target: &MonitorKey,
+    current_monitor: Option<MonitorKey>,
+) -> bool {
     match host.outer_position() {
         Ok(position) => {
             let size = host.outer_size();
@@ -275,7 +283,12 @@ mod tests {
     use super::*;
 
     fn rect(x: i64, y: i64, width: i64, height: i64) -> Rect {
-        Rect { x, y, width, height }
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[test]

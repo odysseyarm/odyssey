@@ -5,8 +5,9 @@
 
 #![no_std]
 
-pub use better_boot::{BootState, BootStateManager};
 use core::sync::atomic::{AtomicU8, Ordering};
+
+pub use better_boot::{BootState, BootStateManager};
 use embassy_nrf::nvmc::Nvmc;
 
 const PAGE_SIZE: u32 = 4096;

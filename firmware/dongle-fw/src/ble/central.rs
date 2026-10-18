@@ -1,21 +1,19 @@
 use core::cell::RefCell;
-use defmt::{error, info};
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use defmt::{error, info};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use odyssey_protocol::mux::{DevicePacket, MAX_DEVICES};
 use static_cell::StaticCell;
-
 use trouble_host::Stack;
 
 use crate::DEVICE_LIST_SUBSCRIBED;
 use crate::storage::Settings;
-use core::sync::atomic::AtomicU32;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 // Lightweight diagnostics
 pub static DROPPED_DATA_TO_HOST: AtomicU32 = AtomicU32::new(0);
@@ -90,7 +88,6 @@ pub fn update_device_name(addr: [u8; 6], name: heapless::String<32>) {
         }
     });
 }
-
 
 pub fn clear_device_names() {
     DEVICE_NAMES.lock(|m| m.borrow_mut().clear());

@@ -13,12 +13,10 @@ use cortex_m_rt::exception;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::ipc::{Ipc, IpcChannel};
-use embassy_nrf::nvmc::Nvmc;
-use embassy_nrf::nvmc::PAGE_SIZE;
-use embassy_nrf::{
-    Peri, peripherals,
-    usb::{Driver, vbus_detect::HardwareVbusDetect},
-};
+use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
+use embassy_nrf::usb::Driver;
+use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
+use embassy_nrf::{Peri, peripherals};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::{Builder, msos};
@@ -45,10 +43,13 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F
 
 /// This bootloader's release counter. Raise it whenever the image changes: the
 /// host replaces a bootloader only when the published counter is higher.
-macro_rules! release { () => { 4 }; }
+macro_rules! release {
+    () => {
+        4
+    };
+}
 
-const BOOTLOADER_BCD_DEVICE: u16 =
-    odyssey_protocol::BootloaderRelease::bcd_device(release!());
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_device(release!());
 
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;
@@ -921,7 +922,13 @@ fn persist_netcore_dfu_info(
     dfu_size: u32,
 ) -> Result<(), ()> {
     let (flag_word, state) = snapshot_state_words();
-    rewrite_state_page_with_netcore(flash, flag_word, state, Some((dfu_addr, dfu_size)), ERASED_WORD)
+    rewrite_state_page_with_netcore(
+        flash,
+        flag_word,
+        state,
+        Some((dfu_addr, dfu_size)),
+        ERASED_WORD,
+    )
 }
 
 /// Record how many times the copy has been started for the persisted command.
@@ -932,7 +939,13 @@ fn persist_netcore_copy_attempt(
     attempts: u32,
 ) -> Result<(), ()> {
     let (flag_word, state) = snapshot_state_words();
-    rewrite_state_page_with_netcore(flash, flag_word, state, Some((dfu_addr, dfu_size)), attempts)
+    rewrite_state_page_with_netcore(
+        flash,
+        flag_word,
+        state,
+        Some((dfu_addr, dfu_size)),
+        attempts,
+    )
 }
 
 // Write DFU requested (SWAP_MAGIC) to the state word.
@@ -1204,7 +1217,11 @@ async fn main(spawner: Spawner) -> ! {
         };
         match pcd::next_copy_attempt(stored_attempts) {
             Some(attempt) => {
-                defmt::info!("Net core copy attempt {}/{}", attempt, pcd::MAX_COPY_ATTEMPTS);
+                defmt::info!(
+                    "Net core copy attempt {}/{}",
+                    attempt,
+                    pcd::MAX_COPY_ATTEMPTS
+                );
                 if persist_netcore_copy_attempt(
                     &flash,
                     pcd.cmd.get_image_addr(),
@@ -1217,7 +1234,10 @@ async fn main(spawner: Spawner) -> ! {
                 }
             }
             None => {
-                defmt::error!("Net core copy abandoned after {} attempts", pcd::MAX_COPY_ATTEMPTS);
+                defmt::error!(
+                    "Net core copy abandoned after {} attempts",
+                    pcd::MAX_COPY_ATTEMPTS
+                );
                 if clear_netcore_dfu_info(&flash).is_err() {
                     defmt::warn!("Failed to clear persisted netcore DFU info");
                 }
@@ -1425,7 +1445,10 @@ async fn main(spawner: Spawner) -> ! {
                     .erase(page_start as u32, (page_start + PAGE_SIZE) as u32)
                     .map_err(|_| ())?;
                 flash
-                    .write(stage1_state_addr as u32, &better_boot::BOOT_MAGIC.to_le_bytes())
+                    .write(
+                        stage1_state_addr as u32,
+                        &better_boot::BOOT_MAGIC.to_le_bytes(),
+                    )
                     .map_err(|_| ())?;
                 cortex_m::asm::dsb();
                 cortex_m::asm::isb();
@@ -1434,7 +1457,8 @@ async fn main(spawner: Spawner) -> ! {
             if confirmed.is_err() {
                 defmt::error!("Failed to confirm the bootloader to stage1");
             }
-            if rewrite_state_page_with_netcore(&flash, flag_word, state, None, ERASED_WORD).is_err() {
+            if rewrite_state_page_with_netcore(&flash, flag_word, state, None, ERASED_WORD).is_err()
+            {
                 defmt::warn!("Failed to refresh the stage2 state page");
             }
         }

@@ -1,8 +1,8 @@
-use memory_spec::MemorySpec;
-use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::{env, fs};
+
+use memory_spec::MemorySpec;
 
 fn main() {
     println!("cargo:rerun-if-changed=../../../memory/memory-vm.kdl");

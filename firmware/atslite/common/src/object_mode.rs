@@ -5,23 +5,24 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+pub use donger_common::usb_device::{UsbConfigHandle, read_transfer, write_transfer};
 use embassy_futures::join::join5;
 use embassy_futures::select::{Either3, select3};
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Timer;
-use embassy_usb::driver::{EndpointError};
+use embassy_usb::driver::EndpointError;
 use nalgebra::Vector3;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_protocol::wire::GeneralConfig;
-use odyssey_protocol::{BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse};
+use odyssey_protocol::{
+    BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse,
+};
 
 use crate::ble::l2cap_bridge::{self, L2capChannels};
 use crate::settings::PagSettings;
 use crate::transport_mode;
-
-pub use donger_common::usb_device::{UsbConfigHandle, read_transfer, write_transfer};
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
@@ -307,7 +308,12 @@ where
         &stream_infos,
     );
 
-    let stream_task = stream_loop(pkt_channel.receiver(), &l2cap, &mut ctx.usb_snd, ctx.usb_configured);
+    let stream_task = stream_loop(
+        pkt_channel.receiver(),
+        &l2cap,
+        &mut ctx.usb_snd,
+        ctx.usb_configured,
+    );
 
     let battery_task = battery_loop(pkt_channel.sender(), &stream_infos);
 
@@ -462,8 +468,12 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                     PropKind::Uuid => Props::Uuid(device_id),
                     PropKind::ProductId => Props::ProductId(product_id),
                     PropKind::Name => Props::Name(settings.general.name.clone().into()),
-                    PropKind::Version => Props::Version(odyssey_protocol::Version::new(firmware_version)),
-                    PropKind::NetCoreRelease => Props::NetCoreRelease(crate::ble::netcore::netcore_release()),
+                    PropKind::Version => {
+                        Props::Version(odyssey_protocol::Version::new(firmware_version))
+                    }
+                    PropKind::NetCoreRelease => {
+                        Props::NetCoreRelease(crate::ble::netcore::netcore_release())
+                    }
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -473,7 +483,9 @@ async fn recv_loop<P: PagSensor, const N: usize>(
 
             PacketData::ReadVersion() => Some(Packet {
                 id: pkt.id,
-                data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(firmware_version)),
+                data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(
+                    firmware_version,
+                )),
             }),
 
             PacketData::WriteConfig(config) => {
@@ -667,23 +679,30 @@ async fn stream_loop<const N: usize>(
         if usb_active {
             // Send via USB bulk IN endpoint
             if matches!(pkt.data, PacketData::ReadRegisterResponse(_)) {
-                defmt::info!("[stream_loop] Sending ReadRegisterResponse id={=u8}", pkt.id);
+                defmt::info!(
+                    "[stream_loop] Sending ReadRegisterResponse id={=u8}",
+                    pkt.id
+                );
             }
             match postcard::to_slice(&pkt, &mut usb_snd_buf) {
-                Ok(payload) => {
-                    match write_transfer(usb_snd, payload, true).await {
-                        Ok(()) => {
-                            if matches!(pkt.data, PacketData::ReadRegisterResponse(_)) {
-                                defmt::info!("[stream_loop] ReadRegisterResponse sent ok");
-                            }
-                        }
-                        Err(e) => {
-                            defmt::error!("[stream_loop] USB write error: {:?}", defmt::Debug2Format(&e));
+                Ok(payload) => match write_transfer(usb_snd, payload, true).await {
+                    Ok(()) => {
+                        if matches!(pkt.data, PacketData::ReadRegisterResponse(_)) {
+                            defmt::info!("[stream_loop] ReadRegisterResponse sent ok");
                         }
                     }
-                }
+                    Err(e) => {
+                        defmt::error!(
+                            "[stream_loop] USB write error: {:?}",
+                            defmt::Debug2Format(&e)
+                        );
+                    }
+                },
                 Err(e) => {
-                    defmt::error!("[stream_loop] USB packet serialization failed: {:?}", defmt::Debug2Format(&e));
+                    defmt::error!(
+                        "[stream_loop] USB packet serialization failed: {:?}",
+                        defmt::Debug2Format(&e)
+                    );
                 }
             }
         } else if ble_active {

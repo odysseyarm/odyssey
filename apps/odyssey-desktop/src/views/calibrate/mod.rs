@@ -7,8 +7,8 @@ pub mod automatic;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::components::wizard::{Icon, IconView};
 use crate::Route;
+use crate::components::wizard::{Icon, IconView};
 
 /// A way to calibrate a screen.
 struct Method {

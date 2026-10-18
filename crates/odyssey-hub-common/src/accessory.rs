@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+use std::num::NonZeroU64;
+
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, num::NonZeroU64};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AccessoryType {

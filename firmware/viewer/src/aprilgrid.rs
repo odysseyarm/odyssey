@@ -1,15 +1,14 @@
-use aprilgrid::{detector::{TagDetector, DetectorParams}, TagFamily};
-use opencv::{
-    calib3d::{calibrate_camera, stereo_calibrate, CALIB_FIX_INTRINSIC},
-    core::{
-        no_array, FileStorage, FileStorage_READ, Mat, MatTraitConstManual, Point2f, Point3f, Size,
-        TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray, Vector,
-        _InputArrayTraitConst,
-    },
-    hub_prelude::{FileNodeTraitConst, FileStorageTraitConst, MatTraitConst},
-    imgproc::{resize, INTER_CUBIC},
-};
+use aprilgrid::TagFamily;
+use aprilgrid::detector::{DetectorParams, TagDetector};
 use image::{DynamicImage, GrayImage};
+use opencv::calib3d::{CALIB_FIX_INTRINSIC, calibrate_camera, stereo_calibrate};
+use opencv::core::{
+    _InputArrayTraitConst, FileStorage, FileStorage_READ, Mat, MatTraitConstManual, Point2f,
+    Point3f, Size, TermCriteria, TermCriteria_COUNT, TermCriteria_EPS, ToInputArray, Vector,
+    no_array,
+};
+use opencv::hub_prelude::{FileNodeTraitConst, FileStorageTraitConst, MatTraitConst};
+use opencv::imgproc::{INTER_CUBIC, resize};
 
 #[derive(Clone)]
 pub struct AprilGridConfig {
@@ -55,12 +54,8 @@ impl AprilGrid {
         resolution: (u16, u16),
         object_resolution: (u32, u32),
     ) -> Option<(Vector<Point2f>, Vector<Point3f>)> {
-        let im = Mat::new_rows_cols_with_data(
-            resolution.1.into(),
-            resolution.0.into(),
-            image,
-        )
-        .unwrap();
+        let im =
+            Mat::new_rows_cols_with_data(resolution.1.into(), resolution.0.into(), image).unwrap();
         self.get_corner_and_object_points_cv(&im, object_resolution)
     }
 
@@ -73,10 +68,26 @@ impl AprilGrid {
         let ss;
         if image.input_array().unwrap().size_def().unwrap() == (98, 98).into() {
             ss = 4.;
-            resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+            resize(
+                image,
+                &mut im_upscaled,
+                Size::new(0, 0),
+                ss,
+                ss,
+                INTER_CUBIC,
+            )
+            .unwrap();
         } else {
             ss = 2.;
-            resize(image, &mut im_upscaled, Size::new(0, 0), ss, ss, INTER_CUBIC).unwrap();
+            resize(
+                image,
+                &mut im_upscaled,
+                Size::new(0, 0),
+                ss,
+                ss,
+                INTER_CUBIC,
+            )
+            .unwrap();
             // im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
         }
 
@@ -95,10 +106,7 @@ impl AprilGrid {
             };
 
             let scaled_corners = corners.iter().map(|(x, y)| {
-                Point2f::new(
-                    (x + 0.5) / ss as f32 - 0.5,
-                    (y + 0.5) / ss as f32 - 0.5,
-                )
+                Point2f::new((x + 0.5) / ss as f32 - 0.5, (y + 0.5) / ss as f32 - 0.5)
             });
 
             image_points.extend(scaled_corners);
@@ -109,9 +117,11 @@ impl AprilGrid {
             return None;
         }
 
-        let mut image_points_object_points = std::iter::zip(image_points, object_points).collect::<Vec<_>>();
+        let mut image_points_object_points =
+            std::iter::zip(image_points, object_points).collect::<Vec<_>>();
         image_points_object_points.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        let (mut image_points, object_points): (Vec<_>, Vec<_>) = image_points_object_points.into_iter().unzip();
+        let (mut image_points, object_points): (Vec<_>, Vec<_>) =
+            image_points_object_points.into_iter().unzip();
 
         let size = image.input_array().unwrap().size(-1).unwrap();
         for p in image_points.as_mut_slice() {
@@ -135,7 +145,11 @@ impl AprilGrid {
         Some(vec![
             Point3f::new(col * (size + spacing), row * (size + spacing), 0.0),
             Point3f::new(col * (size + spacing) + size, row * (size + spacing), 0.0),
-            Point3f::new(col * (size + spacing) + size, row * (size + spacing) + size, 0.0),
+            Point3f::new(
+                col * (size + spacing) + size,
+                row * (size + spacing) + size,
+                0.0,
+            ),
             Point3f::new(col * (size + spacing), row * (size + spacing) + size, 0.0),
         ])
     }
@@ -155,7 +169,9 @@ pub fn calibrate_single(
     let mut object_points_arr = Vector::<Vector<Point3f>>::new();
 
     for image in images {
-        if let Some((corners, obj_points)) = grid.get_corner_and_object_points(image, resolution, object_resolution) {
+        if let Some((corners, obj_points)) =
+            grid.get_corner_and_object_points(image, resolution, object_resolution)
+        {
             corners_arr.push(corners);
             object_points_arr.push(obj_points);
         }
@@ -206,11 +222,15 @@ pub fn my_stereo_calibrate(
 ) {
     let grid = AprilGrid::new(config.clone());
 
-    let Some((nf_camera_matrix, nf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/nearfield.json")) else {
+    let Some((nf_camera_matrix, nf_dist_coeffs)) =
+        &mut read_camera_params(&format!("calibrations/{device_uuid}/nearfield.json"))
+    else {
         println!("Couldn't get nearfield intrinsics");
         return;
     };
-    let Some((wf_camera_matrix, wf_dist_coeffs)) = &mut read_camera_params(&format!("calibrations/{device_uuid}/widefield.json")) else {
+    let Some((wf_camera_matrix, wf_dist_coeffs)) =
+        &mut read_camera_params(&format!("calibrations/{device_uuid}/widefield.json"))
+    else {
         println!("Couldn't get widefield intrinsics");
         return;
     };
@@ -220,10 +240,14 @@ pub fn my_stereo_calibrate(
     let mut nf_corners_arr = Vector::<Vector<Point2f>>::new();
 
     for (wf_image, nf_image) in wf.iter().zip(nf) {
-        let Some((wf_corners, obj_pts)) = grid.get_corner_and_object_points(wf_image, resolution, object_resolution) else {
+        let Some((wf_corners, obj_pts)) =
+            grid.get_corner_and_object_points(wf_image, resolution, object_resolution)
+        else {
             continue;
         };
-        let Some((nf_corners, _)) = grid.get_corner_and_object_points(nf_image, resolution, object_resolution) else {
+        let Some((nf_corners, _)) =
+            grid.get_corner_and_object_points(nf_image, resolution, object_resolution)
+        else {
             continue;
         };
 

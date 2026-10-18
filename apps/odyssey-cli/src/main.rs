@@ -4,10 +4,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-mod mux;
-mod device;
-mod calibration;
 mod bond;
+mod calibration;
+mod device;
+mod mux;
 
 #[derive(Parser)]
 #[command(name = "odyssey-cli")]

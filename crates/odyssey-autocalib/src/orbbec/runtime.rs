@@ -19,7 +19,7 @@
 //! recorded in [`RuntimeStatus::NotFound`]; one that is present but broken is
 //! remembered and reported unless a later candidate loads.
 
-use std::ffi::{c_int, OsStr};
+use std::ffi::{OsStr, c_int};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -80,7 +80,10 @@ impl fmt::Display for SdkVersion {
 pub enum RuntimeStatus {
     /// The library loaded and its version is supported. `library_path` is
     /// `None` when the operating system's loader found it by name.
-    Available { version: SdkVersion, library_path: Option<PathBuf> },
+    Available {
+        version: SdkVersion,
+        library_path: Option<PathBuf>,
+    },
     /// No candidate holds the library. `tried` lists, in order, where it was
     /// looked for and what each lookup said.
     NotFound { tried: Vec<String> },
@@ -88,23 +91,42 @@ pub enum RuntimeStatus {
     /// functions. `library` is the path, or the name for a by-name load.
     LoadFailed { library: String, error: String },
     /// The library loaded and reports a version the backend does not accept.
-    UnsupportedVersion { found: SdkVersion, supported: &'static str },
+    UnsupportedVersion {
+        found: SdkVersion,
+        supported: &'static str,
+    },
 }
 
 impl fmt::Display for RuntimeStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Available { version, library_path: Some(path) } => {
+            Self::Available {
+                version,
+                library_path: Some(path),
+            } => {
                 write!(f, "Orbbec SDK {version} loaded from {}", path.display())
             }
-            Self::Available { version, library_path: None } => {
-                write!(f, "Orbbec SDK {version} loaded from the system library path")
+            Self::Available {
+                version,
+                library_path: None,
+            } => {
+                write!(
+                    f,
+                    "Orbbec SDK {version} loaded from the system library path"
+                )
             }
             Self::NotFound { tried } => {
-                write!(f, "the Orbbec SDK was not found (tried: {})", tried.join("; "))
+                write!(
+                    f,
+                    "the Orbbec SDK was not found (tried: {})",
+                    tried.join("; ")
+                )
             }
             Self::LoadFailed { library, error } => {
-                write!(f, "the Orbbec SDK at {library} could not be loaded: {error}")
+                write!(
+                    f,
+                    "the Orbbec SDK at {library} could not be loaded: {error}"
+                )
             }
             Self::UnsupportedVersion { found, supported } => {
                 write!(f, "Orbbec SDK {found} is not supported; use {supported}")
@@ -133,7 +155,10 @@ static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
 /// application runs gets noticed.
 pub fn runtime_status(extra_dir: Option<&Path>) -> RuntimeStatus {
     match load(extra_dir) {
-        Ok(loaded) => RuntimeStatus::Available { version: loaded.version, library_path: loaded.library_path },
+        Ok(loaded) => RuntimeStatus::Available {
+            version: loaded.version,
+            library_path: loaded.library_path,
+        },
         Err(status) => status,
     }
 }
@@ -146,9 +171,17 @@ pub(super) fn load(extra_dir: Option<&Path>) -> Result<Loaded, RuntimeStatus> {
     if let Some(loaded) = &*cache {
         return Ok(loaded.clone());
     }
-    let env_dir = std::env::var_os(SDK_DIR_ENV).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let env_dir = std::env::var_os(SDK_DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     let loaded = resolve(env_dir.as_deref(), extra_dir, OsStr::new(LIBRARY_NAME))?;
-    tracing::info!("{}", RuntimeStatus::Available { version: loaded.version, library_path: loaded.library_path.clone() });
+    tracing::info!(
+        "{}",
+        RuntimeStatus::Available {
+            version: loaded.version,
+            library_path: loaded.library_path.clone()
+        }
+    );
     *cache = Some(loaded.clone());
     Ok(loaded)
 }
@@ -164,7 +197,11 @@ enum Attempt {
 
 /// Walks the candidates in order. Separate from [`load`] so tests can pass
 /// directories and a library name instead of touching the environment.
-fn resolve(env_dir: Option<&Path>, extra_dir: Option<&Path>, name: &OsStr) -> Result<Loaded, RuntimeStatus> {
+fn resolve(
+    env_dir: Option<&Path>,
+    extra_dir: Option<&Path>,
+    name: &OsStr,
+) -> Result<Loaded, RuntimeStatus> {
     let mut tried = Vec::new();
     let mut broken: Option<RuntimeStatus> = None;
 
@@ -222,10 +259,14 @@ fn try_name(name: &OsStr) -> Attempt {
     // SAFETY: as in `try_dir`; the operating system's loader picks the file.
     match unsafe { Library::new(name) } {
         Ok(library) => bind(library, &shown, None),
-        Err(error) if is_not_found(&error, &shown) => {
-            Attempt::Absent(format!("{shown} through the system library search path: {}", describe(&error)))
-        }
-        Err(error) => Attempt::Failed(RuntimeStatus::LoadFailed { library: shown.into_owned(), error: describe(&error) }),
+        Err(error) if is_not_found(&error, &shown) => Attempt::Absent(format!(
+            "{shown} through the system library search path: {}",
+            describe(&error)
+        )),
+        Err(error) => Attempt::Failed(RuntimeStatus::LoadFailed {
+            library: shown.into_owned(),
+            error: describe(&error),
+        }),
     }
 }
 
@@ -239,7 +280,10 @@ unsafe fn open_path(path: &Path) -> Result<Library, libloading::Error> {
     {
         // SAFETY: forwarded to the caller.
         let library = unsafe {
-            libloading::os::windows::Library::load_with_flags(path, libloading::os::windows::LOAD_WITH_ALTERED_SEARCH_PATH)
+            libloading::os::windows::Library::load_with_flags(
+                path,
+                libloading::os::windows::LOAD_WITH_ALTERED_SEARCH_PATH,
+            )
         };
         library.map(Library::from)
     }
@@ -294,7 +338,10 @@ type VersionFn = unsafe extern "C" fn() -> c_int;
 /// Dropping `library` on a refusal unloads it; nothing has been created from it.
 fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attempt {
     let failed = |error: libloading::Error| {
-        Attempt::Failed(RuntimeStatus::LoadFailed { library: origin.to_string(), error: describe(&error) })
+        Attempt::Failed(RuntimeStatus::LoadFailed {
+            library: origin.to_string(),
+            error: describe(&error),
+        })
     };
     // Versions come first and through single lookups: the full table needs
     // every function this backend calls, which an unsupported release may lack.
@@ -303,12 +350,23 @@ fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attemp
         let f: libloading::Symbol<'_, VersionFn> = unsafe { library.get(symbol) }?;
         Ok(u32::try_from(unsafe { f() }).unwrap_or(0))
     };
-    let version = match (part(b"ob_get_major_version\0"), part(b"ob_get_minor_version\0"), part(b"ob_get_patch_version\0")) {
-        (Ok(major), Ok(minor), Ok(patch)) => SdkVersion { major, minor, patch },
+    let version = match (
+        part(b"ob_get_major_version\0"),
+        part(b"ob_get_minor_version\0"),
+        part(b"ob_get_patch_version\0"),
+    ) {
+        (Ok(major), Ok(minor), Ok(patch)) => SdkVersion {
+            major,
+            minor,
+            patch,
+        },
         (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return failed(e),
     };
     if !version.is_supported() {
-        return Attempt::Failed(RuntimeStatus::UnsupportedVersion { found: version, supported: SUPPORTED_VERSIONS });
+        return Attempt::Failed(RuntimeStatus::UnsupportedVersion {
+            found: version,
+            supported: SUPPORTED_VERSIONS,
+        });
     }
     // SAFETY: `from_library` only looks up symbols.
     let sdk = match unsafe { OrbbecSdk::from_library(library) } {
@@ -318,9 +376,17 @@ fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attemp
     // The SDK finds `extensions/` beside the library it was loaded from, but
     // only we know that library when it came from a directory. A by-name load
     // leaves the lookup to the SDK.
-    let extensions = library_path.as_deref().and_then(Path::parent).map(|dir| dir.join("extensions")).filter(|d| d.is_dir());
+    let extensions = library_path
+        .as_deref()
+        .and_then(Path::parent)
+        .map(|dir| dir.join("extensions"))
+        .filter(|d| d.is_dir());
     super::initialize(&sdk, extensions.as_deref());
-    Attempt::Loaded(Loaded { sdk, version, library_path })
+    Attempt::Loaded(Loaded {
+        sdk,
+        version,
+        library_path,
+    })
 }
 
 #[cfg(test)]
@@ -352,14 +418,23 @@ mod tests {
         };
         let tried = tried(status);
         assert_eq!(tried.len(), 3, "{tried:?}");
-        assert!(tried[0].starts_with(SDK_DIR_ENV) && tried[0].contains(&env.path().display().to_string()), "{tried:?}");
+        assert!(
+            tried[0].starts_with(SDK_DIR_ENV)
+                && tried[0].contains(&env.path().display().to_string()),
+            "{tried:?}"
+        );
         assert!(tried[1].starts_with(MISSING), "{tried:?}");
-        assert!(tried[2].contains(&extra.path().display().to_string()), "{tried:?}");
+        assert!(
+            tried[2].contains(&extra.path().display().to_string()),
+            "{tried:?}"
+        );
     }
 
     #[test]
     fn unset_candidates_are_recorded_not_skipped() {
-        let Err(status) = resolve(None, None, OsStr::new(MISSING)) else { panic!("no library exists") };
+        let Err(status) = resolve(None, None, OsStr::new(MISSING)) else {
+            panic!("no library exists")
+        };
         let tried = tried(status);
         assert_eq!(tried.len(), 3, "{tried:?}");
         assert_eq!(tried[0], format!("{SDK_DIR_ENV} is not set"));
@@ -386,7 +461,8 @@ mod tests {
     fn broken_library_in_the_extra_dir_beats_not_found() {
         let extra = tempfile::tempdir().unwrap();
         let broken = garbage_library(extra.path());
-        let Err(RuntimeStatus::LoadFailed { library, .. }) = resolve(None, Some(extra.path()), OsStr::new(MISSING))
+        let Err(RuntimeStatus::LoadFailed { library, .. }) =
+            resolve(None, Some(extra.path()), OsStr::new(MISSING))
         else {
             panic!("expected LoadFailed");
         };
@@ -399,14 +475,19 @@ mod tests {
         std::fs::write(dir.path().join("unrelated.so"), b"x").unwrap();
         // A directory named like the library is not a library either.
         std::fs::create_dir(dir.path().join(MISSING)).unwrap();
-        assert!(matches!(try_dir(dir.path(), OsStr::new(MISSING)), Attempt::Absent(_)));
+        assert!(matches!(
+            try_dir(dir.path(), OsStr::new(MISSING)),
+            Attempt::Absent(_)
+        ));
     }
 
     #[test]
     fn by_name_load_of_a_broken_file_is_a_load_failure_not_absence() {
         let dir = tempfile::tempdir().unwrap();
         let broken = garbage_library(dir.path());
-        let Attempt::Failed(RuntimeStatus::LoadFailed { library, error }) = try_name(broken.as_os_str()) else {
+        let Attempt::Failed(RuntimeStatus::LoadFailed { library, error }) =
+            try_name(broken.as_os_str())
+        else {
             panic!("a file the loader rejects is not 'absent'");
         };
         assert_eq!(library, broken.display().to_string());
@@ -417,7 +498,9 @@ mod tests {
     fn broken_by_name_library_is_reported_when_no_later_candidate_loads() {
         let dir = tempfile::tempdir().unwrap();
         let broken = garbage_library(dir.path());
-        let Err(RuntimeStatus::LoadFailed { library, .. }) = resolve(None, None, broken.as_os_str()) else {
+        let Err(RuntimeStatus::LoadFailed { library, .. }) =
+            resolve(None, None, broken.as_os_str())
+        else {
             panic!("the broken file must not be reported as missing");
         };
         assert_eq!(library, broken.display().to_string());
@@ -425,7 +508,11 @@ mod tests {
 
     #[test]
     fn version_policy_accepts_2_8_and_newer_2_x_only() {
-        let v = |major, minor| SdkVersion { major, minor, patch: 0 };
+        let v = |major, minor| SdkVersion {
+            major,
+            minor,
+            patch: 0,
+        };
         assert!(v(2, 8).is_supported());
         assert!(v(2, 10).is_supported());
         assert!(!v(2, 7).is_supported());
@@ -435,6 +522,14 @@ mod tests {
 
     #[test]
     fn version_prints_as_dotted_triple() {
-        assert_eq!(SdkVersion { major: 2, minor: 10, patch: 6 }.to_string(), "2.10.6");
+        assert_eq!(
+            SdkVersion {
+                major: 2,
+                minor: 10,
+                patch: 6
+            }
+            .to_string(),
+            "2.10.6"
+        );
     }
 }

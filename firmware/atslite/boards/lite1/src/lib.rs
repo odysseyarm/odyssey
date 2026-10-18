@@ -14,23 +14,13 @@ pub mod sensors;
 pub mod usb;
 
 // Re-export from atslite-common
-pub use atslite_common::ble;
-pub use atslite_common::device_control;
-pub use atslite_common::device_control_task;
-pub use atslite_common::nrf5340_init;
-pub use atslite_common::object_mode;
-pub use atslite_common::pmic_leds;
-pub use atslite_common::power;
-pub use atslite_common::power_button;
-pub use atslite_common::power_state;
-pub use atslite_common::settings;
-pub use atslite_common::transport_mode;
-pub use atslite_common::utils;
-
+pub use atslite_common::{
+    ble, device_control, device_control_task, nrf5340_init, object_mode, pmic_leds, power,
+    power_button, power_state, settings, transport_mode, utils,
+};
 // Re-export embassy for convenience
 pub use embassy_executor;
 pub use embassy_nrf;
-
 use embassy_nrf::{bind_interrupts, cryptocell_rng, peripherals, spim, twim};
 
 bind_interrupts!(pub struct Irqs {

@@ -5,7 +5,7 @@ use bt_hci::controller::ExternalController;
 use defmt::Debug2Format;
 use embassy_nrf::ipc::{self, Ipc, IpcChannel};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{with_timeout, Delay, Duration};
+use embassy_time::{Delay, Duration, with_timeout};
 use icmsg::{IcMsg, Notifier, WaitForNotify};
 use transport::MyTransport;
 

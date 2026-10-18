@@ -8,12 +8,11 @@
 #![no_main]
 
 use defmt_rtt as _;
-use panic_probe as _;
-
 use embassy_executor::Spawner;
 use embassy_nrf::{bind_interrupts, peripherals, usb};
 use embassy_time::Timer;
 use embassy_usb::msos;
+use panic_probe as _;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;

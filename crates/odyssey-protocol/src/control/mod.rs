@@ -1,5 +1,5 @@
-pub mod usb_mux;
 pub mod device;
+pub mod usb_mux;
 
 use odyssey_protocol_macros::protocol_type;
 

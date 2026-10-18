@@ -23,10 +23,10 @@ use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, Vector3};
 use odyssey_common::ScreenCalibration;
 
 use crate::camera::{CameraGeometry, Extrinsics, Frames, Intrinsics};
-use crate::pattern::{detect, DetectFailure, Pattern};
+use crate::pattern::{DetectFailure, Pattern, detect};
 use crate::plane::{
-    apply_homography, distort_pixel, fit_homography, pixel_ray, project, project_pinhole, ransac_homography,
-    ransac_plane, Plane, RansacParams,
+    Plane, RansacParams, apply_homography, distort_pixel, fit_homography, pixel_ray, project,
+    project_pinhole, ransac_homography, ransac_plane,
 };
 
 /// Color and depth frames merged per measurement. Nine frames is about a third
@@ -73,10 +73,18 @@ impl KnownSize {
                 let height = inches * 0.0254 / (aspect * aspect + 1.0).sqrt();
                 Ok([aspect * height, height])
             }
-            KnownSize::Dimensions { width_m, height_m } if width_m.is_finite() && height_m.is_finite() && width_m > 0.0 && height_m > 0.0 => {
+            KnownSize::Dimensions { width_m, height_m }
+                if width_m.is_finite()
+                    && height_m.is_finite()
+                    && width_m > 0.0
+                    && height_m > 0.0 =>
+            {
                 let known_aspect = width_m / height_m;
                 if (known_aspect / aspect - 1.0).abs() > KNOWN_ASPECT_TOLERANCE {
-                    return Err(SolveError::KnownSizeAspectMismatch { known_aspect, screen_aspect: aspect });
+                    return Err(SolveError::KnownSizeAspectMismatch {
+                        known_aspect,
+                        screen_aspect: aspect,
+                    });
                 }
                 Ok([width_m, height_m])
             }
@@ -121,13 +129,19 @@ pub struct SizeCheck {
 
 impl SizeCheck {
     pub fn new(measured_m: [f64; 2], known_m: [f64; 2]) -> Self {
-        Self { measured_m, known_m, ratio_w: measured_m[0] / known_m[0], ratio_h: measured_m[1] / known_m[1] }
+        Self {
+            measured_m,
+            known_m,
+            ratio_w: measured_m[0] / known_m[0],
+            ratio_h: measured_m[1] / known_m[1],
+        }
     }
 
     /// Whether either axis differs from the declared size by more than
     /// [`SIZE_DISAGREEMENT`].
     pub fn disagrees(&self) -> bool {
-        (self.ratio_w - 1.0).abs() > SIZE_DISAGREEMENT || (self.ratio_h - 1.0).abs() > SIZE_DISAGREEMENT
+        (self.ratio_w - 1.0).abs() > SIZE_DISAGREEMENT
+            || (self.ratio_h - 1.0).abs() > SIZE_DISAGREEMENT
     }
 }
 
@@ -145,7 +159,11 @@ pub struct SolveOptions {
 
 impl Default for SolveOptions {
     fn default() -> Self {
-        Self { known_size: None, seed: 0, perspective_correction: true }
+        Self {
+            known_size: None,
+            seed: 0,
+            perspective_correction: true,
+        }
     }
 }
 
@@ -168,8 +186,13 @@ pub enum SolveError {
     /// The declared width-to-height ratio differs from the displayed image's
     /// by more than [`KNOWN_ASPECT_TOLERANCE`]. Rectifying anyway would
     /// stretch the screen, so the measurement is refused.
-    #[error("the declared screen is {known_aspect:.3} wide per unit of height but the picture is {screen_aspect:.3}")]
-    KnownSizeAspectMismatch { known_aspect: f64, screen_aspect: f64 },
+    #[error(
+        "the declared screen is {known_aspect:.3} wide per unit of height but the picture is {screen_aspect:.3}"
+    )]
+    KnownSizeAspectMismatch {
+        known_aspect: f64,
+        screen_aspect: f64,
+    },
 }
 
 /// Everything measured about the screen.
@@ -229,14 +252,20 @@ impl ScreenFit {
     /// appears in the raw color image.
     pub fn screen_to_color_px(&self, xy: Point2<f64>) -> Option<Point2<f64>> {
         let measured = apply_homography(&self.rectification.try_inverse()?, xy)?;
-        let p = self.screen_from_color.inverse().apply(&Vector3::new(measured.x, measured.y, 0.0));
+        let p = self
+            .screen_from_color
+            .inverse()
+            .apply(&Vector3::new(measured.x, measured.y, 0.0));
         project(&self.camera_color, &p)
     }
 }
 
 /// `a` after `b`.
 pub fn compose(a: &Extrinsics, b: &Extrinsics) -> Extrinsics {
-    Extrinsics { rotation: a.rotation * b.rotation, translation: a.rotation * b.translation + a.translation }
+    Extrinsics {
+        rotation: a.rotation * b.rotation,
+        translation: a.rotation * b.translation + a.translation,
+    }
 }
 
 /// Measures the screen from a burst of frames.
@@ -251,19 +280,35 @@ pub fn solve_screen(
     options: &SolveOptions,
 ) -> Result<ScreenFit, SolveError> {
     // Refuse a declaration that contradicts the picture before spending time on the burst.
-    let known = options.known_size.map(|k| k.size_for_aspect(pattern.aspect()).map(|size| (k.source(), size))).transpose()?;
+    let known = options
+        .known_size
+        .map(|k| {
+            k.size_for_aspect(pattern.aspect())
+                .map(|size| (k.source(), size))
+        })
+        .transpose()?;
     let (dots, dots_h) = merged_dots(geometry, pattern, frames, options.perspective_correction)?;
 
     let color_from_depth = geometry.color_to_depth.inverse();
 
     let points = screen_depth_points(geometry, frames, &dots_h, &color_from_depth);
     if points.len() < MIN_PLANE_POINTS {
-        return Err(SolveError::TooFewDepthPoints { found: points.len() });
+        return Err(SolveError::TooFewDepthPoints {
+            found: points.len(),
+        });
     }
-    let fit = ransac_plane(&points, &RansacParams { seed: options.seed ^ 0x0D155EA, ..RansacParams::default() })
-        .ok_or(SolveError::NoPlane)?;
+    let fit = ransac_plane(
+        &points,
+        &RansacParams {
+            seed: options.seed ^ 0x0D155EA,
+            ..RansacParams::default()
+        },
+    )
+    .ok_or(SolveError::NoPlane)?;
     if fit.inliers.len() < MIN_PLANE_POINTS {
-        return Err(SolveError::TooFewDepthPoints { found: fit.inliers.len() });
+        return Err(SolveError::TooFewDepthPoints {
+            found: fit.inliers.len(),
+        });
     }
     let plane_depth = fit.plane;
     let plane_color = plane_depth.transformed(&color_from_depth);
@@ -297,7 +342,9 @@ pub fn solve_screen(
             (c.pixel.y - geometry.color.cy) / geometry.color.fy,
             1.0,
         );
-        let Some(p_color) = plane_color.intersect_ray(&Vector3::zeros(), &ray) else { continue };
+        let Some(p_color) = plane_color.intersect_ray(&Vector3::zeros(), &ray) else {
+            continue;
+        };
         let p = r_xy * (a * p_color - plane_aligned.point);
         unit.push(c.pattern);
         flat.push(Point2::new(p.x, p.y));
@@ -305,8 +352,8 @@ pub fn solve_screen(
     if unit.len() < MIN_DOTS {
         return Err(SolveError::DotsInconsistent);
     }
-    let dots_fit =
-        ransac_homography(&unit, &flat, DOT_INLIER_M, 300, options.seed ^ 0xD075).ok_or(SolveError::DotsInconsistent)?;
+    let dots_fit = ransac_homography(&unit, &flat, DOT_INLIER_M, 300, options.seed ^ 0xD075)
+        .ok_or(SolveError::DotsInconsistent)?;
     if dots_fit.inliers.len() < MIN_DOTS {
         return Err(SolveError::DotsInconsistent);
     }
@@ -314,7 +361,9 @@ pub fn solve_screen(
 
     // Orient the in-plane axes by the screen's own top edge and put the origin
     // at its top-left corner.
-    let corner = |u, v| apply_homography(&h_provisional, Point2::new(u, v)).ok_or(SolveError::DotsInconsistent);
+    let corner = |u, v| {
+        apply_homography(&h_provisional, Point2::new(u, v)).ok_or(SolveError::DotsInconsistent)
+    };
     let (tl, tr) = (corner(0.0, 0.0)?, corner(1.0, 0.0)?);
     let theta = (tr.y - tl.y).atan2(tr.x - tl.x);
     let (s, c) = theta.sin_cos();
@@ -330,7 +379,8 @@ pub fn solve_screen(
         translation: -(rot * plane_aligned.point) - t_shift,
     };
 
-    let measured_corners = unit_corners(&measured_unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
+    let measured_corners =
+        unit_corners(&measured_unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
     if measured_corners[1].x <= 0.0 || measured_corners[3].y <= 0.0 {
         return Err(SolveError::Mirrored);
     }
@@ -338,20 +388,45 @@ pub fn solve_screen(
 
     let (rectification, size_m, size_source, size_check) = match known {
         Some((source, [width, height])) => {
-            let target = [Point2::new(0.0, 0.0), Point2::new(width, 0.0), Point2::new(width, height), Point2::new(0.0, height)];
-            let rect = fit_homography(&measured_corners, &target).ok_or(SolveError::DotsInconsistent)?;
-            (rect, [width, height], source, Some(SizeCheck::new(measured_size_m, [width, height])))
+            let target = [
+                Point2::new(0.0, 0.0),
+                Point2::new(width, 0.0),
+                Point2::new(width, height),
+                Point2::new(0.0, height),
+            ];
+            let rect =
+                fit_homography(&measured_corners, &target).ok_or(SolveError::DotsInconsistent)?;
+            (
+                rect,
+                [width, height],
+                source,
+                Some(SizeCheck::new(measured_size_m, [width, height])),
+            )
         }
-        None => (Matrix3::identity(), measured_size_m, SizeSource::Measured, None),
+        None => (
+            Matrix3::identity(),
+            measured_size_m,
+            SizeSource::Measured,
+            None,
+        ),
     };
     let unit_to_screen = rectification * measured_unit_to_screen;
     let corners_m = unit_corners(&unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
 
-    let screen_from_color = compose(&screen_from_aligned, &Extrinsics { rotation: *a, translation: Vector3::zeros() });
+    let screen_from_color = compose(
+        &screen_from_aligned,
+        &Extrinsics {
+            rotation: *a,
+            translation: Vector3::zeros(),
+        },
+    );
     let screen_from_depth = compose(&screen_from_color, &color_from_depth);
 
     let mut quad_px = [Point2::origin(); 4];
-    for (slot, (u, v)) in quad_px.iter_mut().zip([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]) {
+    for (slot, (u, v)) in quad_px
+        .iter_mut()
+        .zip([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
+    {
         let p = apply_homography(&dots_h, Point2::new(u, v)).ok_or(SolveError::DotsInconsistent)?;
         *slot = distort_pixel(&geometry.color, p);
     }
@@ -359,7 +434,9 @@ pub fn solve_screen(
     let dot_sq: f64 = dots_fit
         .inliers
         .iter()
-        .map(|&i| (apply_homography(&h_provisional, unit[i]).unwrap_or(flat[i]) - flat[i]).norm_squared())
+        .map(|&i| {
+            (apply_homography(&h_provisional, unit[i]).unwrap_or(flat[i]) - flat[i]).norm_squared()
+        })
         .sum();
 
     Ok(ScreenFit {
@@ -394,7 +471,10 @@ fn unit_corners(h: &Matrix3<f64>) -> Option<[Point2<f64>; 4]> {
 }
 
 fn rect_size(c: &[Point2<f64>; 4]) -> [f64; 2] {
-    [((c[1] - c[0]).norm() + (c[2] - c[3]).norm()) / 2.0, ((c[3] - c[0]).norm() + (c[2] - c[1]).norm()) / 2.0]
+    [
+        ((c[1] - c[0]).norm() + (c[2] - c[3]).norm()) / 2.0,
+        ((c[3] - c[0]).norm() + (c[2] - c[1]).norm()) / 2.0,
+    ]
 }
 
 /// Detects the pattern in every frame and averages each dot's undistorted
@@ -428,7 +508,9 @@ fn merged_dots(
         }
     }
     if successes == 0 || successes * 2 < frames.len() {
-        return Err(SolveError::PatternNotFound(first_failure.unwrap_or(DetectFailure::NoDots { blobs: 0 })));
+        return Err(SolveError::PatternNotFound(
+            first_failure.unwrap_or(DetectFailure::NoDots { blobs: 0 }),
+        ));
     }
 
     let mut dots = Vec::new();
@@ -439,7 +521,11 @@ fn merged_dots(
         let dot = &pattern.dots()[index];
         let corrected = Point2::from(corrected / *count as f64);
         let centroid = Point2::from(measured / *count as f64);
-        let pixel = if perspective_correction { corrected } else { centroid };
+        let pixel = if perspective_correction {
+            corrected
+        } else {
+            centroid
+        };
         dots.push(crate::pattern::Correspondence {
             index,
             pattern: Point2::new(dot.u, dot.v),
@@ -449,11 +535,16 @@ fn merged_dots(
         });
     }
     if dots.len() < MIN_DOTS {
-        return Err(SolveError::PatternNotFound(DetectFailure::NoGrid { blobs: dots.len() }));
+        return Err(SolveError::PatternNotFound(DetectFailure::NoGrid {
+            blobs: dots.len(),
+        }));
     }
     let src: Vec<_> = dots.iter().map(|d| d.pattern).collect();
     let dst: Vec<_> = dots.iter().map(|d| d.pixel).collect();
-    let h = fit_homography(&src, &dst).ok_or(SolveError::PatternNotFound(DetectFailure::NoGrid { blobs: dots.len() }))?;
+    let h =
+        fit_homography(&src, &dst).ok_or(SolveError::PatternNotFound(DetectFailure::NoGrid {
+            blobs: dots.len(),
+        }))?;
     Ok((dots, h))
 }
 
@@ -467,8 +558,12 @@ pub(crate) fn screen_depth_points(
     unit_to_color_px: &Matrix3<f64>,
     color_from_depth: &Extrinsics,
 ) -> Vec<Vector3<f64>> {
-    let Some(first) = frames.first() else { return Vec::new() };
-    let Some(color_px_to_unit) = unit_to_color_px.try_inverse() else { return Vec::new() };
+    let Some(first) = frames.first() else {
+        return Vec::new();
+    };
+    let Some(color_px_to_unit) = unit_to_color_px.try_inverse() else {
+        return Vec::new();
+    };
     let (w, h) = first.depth.dimensions();
     let stride = ((w / 320).max(1)) as usize;
     let needed = frames.len().div_ceil(2);
@@ -486,11 +581,20 @@ pub(crate) fn screen_depth_points(
             if d < DEPTH_RANGE_M.0 || d > DEPTH_RANGE_M.1 {
                 continue;
             }
-            let Some(ray) = pixel_ray(&geometry.depth, Point2::new(x as f64, y as f64)) else { continue };
+            let Some(ray) = pixel_ray(&geometry.depth, Point2::new(x as f64, y as f64)) else {
+                continue;
+            };
             let p_depth = ray * d;
-            let Some(px) = project_pinhole(&geometry.color, &color_from_depth.apply(&p_depth)) else { continue };
-            let Some(uv) = apply_homography(&color_px_to_unit, px) else { continue };
-            if (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.x) && (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.y) {
+            let Some(px) = project_pinhole(&geometry.color, &color_from_depth.apply(&p_depth))
+            else {
+                continue;
+            };
+            let Some(uv) = apply_homography(&color_px_to_unit, px) else {
+                continue;
+            };
+            if (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.x)
+                && (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.y)
+            {
                 points.push(p_depth);
             }
         }
@@ -501,11 +605,16 @@ pub(crate) fn screen_depth_points(
 /// Builds the hub's calibration from the screen fit and the six marker
 /// positions, in the screen frame (meters, `z = 0`).
 pub fn build_calibration(fit: &ScreenFit, markers: &[Point2<f64>; 6]) -> ScreenCalibration<f32> {
-    let mut h = fit.unit_to_screen.try_inverse().unwrap_or_else(Matrix3::identity);
+    let mut h = fit
+        .unit_to_screen
+        .try_inverse()
+        .unwrap_or_else(Matrix3::identity);
     if h[(2, 2)].abs() > 1e-12 {
         h /= h[(2, 2)];
     }
-    let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(fit.screen_from_aligned.rotation));
+    let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
+        fit.screen_from_aligned.rotation,
+    ));
     ScreenCalibration {
         rotation: rotation.cast(),
         homography: h.cast(),

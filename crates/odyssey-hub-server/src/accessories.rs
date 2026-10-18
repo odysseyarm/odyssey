@@ -1,14 +1,15 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
 use btleplug::platform::{Manager, Peripheral};
 use futures::stream::StreamExt;
 use futures_concurrency::prelude::*;
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryMap, AccessoryType};
-use std::sync::Arc;
-use std::{collections::HashMap, time::Duration};
-use tokio::{
-    sync::{broadcast::Sender, watch::Receiver},
-    time,
-};
+use tokio::sync::broadcast::Sender;
+use tokio::sync::watch::Receiver;
+use tokio::time;
 use tokio_stream::wrappers::{IntervalStream, WatchStream};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -119,50 +120,73 @@ pub async fn accessory_manager(
                     info_map.iter().map(|(id, info)| (*id, info.ty)).collect();
 
                 for (id, ty) in snapshot {
-                    match by_mac.get(&id).cloned() { Some(p) => {
-                        periph_cache.entry(id).or_insert_with(|| p.clone());
+                    match by_mac.get(&id).cloned() {
+                        Some(p) => {
+                            periph_cache.entry(id).or_insert_with(|| p.clone());
 
-                        let mut connected = p.is_connected().await.unwrap_or(false);
-                        if !connected {
-                            match p.connect().await { Err(e) => {
-                                warn!("Failed to connect to {id:?}: {e}");
-                            } _ => {
-                                match p.discover_services().await { Err(e) => {
-                                    warn!("Failed to discover services for {id:?}: {e}");
-                                } _ => {
-                                    // pick characteristic by accessory type
-                                    let target_char_uuid = match ty {
-                                        AccessoryType::DryFireMag => NUS_TX_UUID,
-                                        AccessoryType::MantisX => MANTIS_SHOT_CHAR_UUID,
-                                    };
+                            let mut connected = p.is_connected().await.unwrap_or(false);
+                            if !connected {
+                                match p.connect().await {
+                                    Err(e) => {
+                                        warn!("Failed to connect to {id:?}: {e}");
+                                    }
+                                    _ => {
+                                        match p.discover_services().await {
+                                            Err(e) => {
+                                                warn!(
+                                                    "Failed to discover services for {id:?}: {e}"
+                                                );
+                                            }
+                                            _ => {
+                                                // pick characteristic by accessory type
+                                                let target_char_uuid = match ty {
+                                                    AccessoryType::DryFireMag => NUS_TX_UUID,
+                                                    AccessoryType::MantisX => MANTIS_SHOT_CHAR_UUID,
+                                                };
 
-                                    if let Some(ch) = p
-                                        .characteristics()
-                                        .into_iter()
-                                        .find(|c| c.uuid == target_char_uuid)
-                                    {
-                                        match p.subscribe(&ch).await { Err(e) => {
-                                            warn!("Subscribe failed for {id:?}: {e}");
-                                        } _ => {
-                                            info!("Subscribed to {:?} notifications on {id:?}", ty);
-                                            let notif_stream = match p.notifications().await {
-                                                Ok(s) => s,
-                                                Err(e) => {
-                                                    warn!("Failed to get notifications stream for {id:?}: {e}");
-                                                    continue;
-                                                }
-                                            };
-                                            let dl = dl.clone();
-                                            let event_tx = event_tx.clone();
-                                            let info_watch = info_watch.clone();
-                                            tokio::spawn(async move {
-                                                let mut notif_stream = notif_stream;
-                                                while let Some(ValueNotification { uuid, value }) =
-                                                    notif_stream.next().await
+                                                if let Some(ch) = p
+                                                    .characteristics()
+                                                    .into_iter()
+                                                    .find(|c| c.uuid == target_char_uuid)
                                                 {
-                                                    if uuid == target_char_uuid {
-                                                        let mut shot = false;
-                                                        match ty {
+                                                    match p.subscribe(&ch).await {
+                                                        Err(e) => {
+                                                            warn!(
+                                                                "Subscribe failed for {id:?}: {e}"
+                                                            );
+                                                        }
+                                                        _ => {
+                                                            info!(
+                                                                "Subscribed to {:?} notifications on {id:?}",
+                                                                ty
+                                                            );
+                                                            let notif_stream = match p
+                                                                .notifications()
+                                                                .await
+                                                            {
+                                                                Ok(s) => s,
+                                                                Err(e) => {
+                                                                    warn!(
+                                                                        "Failed to get notifications stream for {id:?}: {e}"
+                                                                    );
+                                                                    continue;
+                                                                }
+                                                            };
+                                                            let dl = dl.clone();
+                                                            let event_tx = event_tx.clone();
+                                                            let info_watch = info_watch.clone();
+                                                            tokio::spawn(async move {
+                                                                let mut notif_stream = notif_stream;
+                                                                while let Some(
+                                                                    ValueNotification {
+                                                                        uuid,
+                                                                        value,
+                                                                    },
+                                                                ) = notif_stream.next().await
+                                                                {
+                                                                    if uuid == target_char_uuid {
+                                                                        let mut shot = false;
+                                                                        match ty {
                                                             AccessoryType::DryFireMag => {
                                                                 shot = true;
                                                             }
@@ -175,36 +199,42 @@ pub async fn accessory_manager(
                                                             }
                                                         }
 
-                                                        if shot {
-                                                            debug!("shotted");
-                                                            let assignment_opt = info_watch
+                                                                        if shot {
+                                                                            debug!("shotted");
+                                                                            let assignment_opt = info_watch
                                                                 .borrow()
                                                                 .get(&id)
                                                                 .and_then(|i| i.assignment);
-                                                            if let Some(assignment) = assignment_opt
-                                                            {
-                                                                let maybe_device = {
-                                                                    let dl_guard = dl.lock();
-                                                                    let assignment_uuid: [u8; 6] =
+                                                                            if let Some(
+                                                                                assignment,
+                                                                            ) = assignment_opt
+                                                                            {
+                                                                                let maybe_device = {
+                                                                                    let dl_guard =
+                                                                                        dl.lock();
+                                                                                    let assignment_uuid: [u8; 6] =
                                                                         assignment
                                                                             .get()
                                                                             .to_le_bytes()[..6]
                                                                             .try_into()
                                                                             .unwrap();
-                                                                    dl_guard
+                                                                                    dl_guard
                                                                         .iter()
                                                                         .find(|d| {
                                                                             d.0.uuid
                                                                                 == assignment_uuid
                                                                         })
                                                                         .map(|d| d.0.clone())
-                                                                };
-                                                                if let Some(device) = maybe_device {
-                                                                    tokio::spawn({
-                                                                        let event_tx =
+                                                                                };
+                                                                                if let Some(
+                                                                                    device,
+                                                                                ) = maybe_device
+                                                                                {
+                                                                                    tokio::spawn({
+                                                                                        let event_tx =
                                                                             event_tx.clone();
-                                                                        async move {
-                                                                            if let Err(e) = event_tx.send(
+                                                                                        async move {
+                                                                                            if let Err(e) = event_tx.send(
                                                                                     odyssey_hub_common::events::Event::DeviceEvent(
                                                                                         odyssey_hub_common::events::DeviceEvent(
                                                                                             device,
@@ -216,30 +246,38 @@ pub async fn accessory_manager(
                                                                             ) {
                                                                                 warn!("accessory_manager: failed to forward impact event: {e}");
                                                                             }
+                                                                                        }
+                                                                                    });
+                                                                                }
+                                                                            }
                                                                         }
-                                                                    });
+                                                                    }
                                                                 }
-                                                            }
+                                                                warn!(
+                                                                    "{:?} notifications ended for {:?}",
+                                                                    ty, id
+                                                                );
+                                                            });
                                                         }
                                                     }
+                                                } else {
+                                                    warn!(
+                                                        "No target characteristic ({:?}) found for {id:?}",
+                                                        ty
+                                                    );
                                                 }
-                                                warn!("{:?} notifications ended for {:?}", ty, id);
-                                            });
-                                        }}
-                                    } else {
-                                        warn!(
-                                            "No target characteristic ({:?}) found for {id:?}",
-                                            ty
-                                        );
+                                            }
+                                        }
                                     }
-                                }}
-                            }}
-                            connected = p.is_connected().await.unwrap_or(false);
+                                }
+                                connected = p.is_connected().await.unwrap_or(false);
+                            }
+                            *last_statuses.entry(id).or_insert(false) = connected;
                         }
-                        *last_statuses.entry(id).or_insert(false) = connected;
-                    } _ => {
-                        *last_statuses.entry(id).or_insert(false) = false;
-                    }}
+                        _ => {
+                            *last_statuses.entry(id).or_insert(false) = false;
+                        }
+                    }
                 }
 
                 send_if_changed(&info_map, &last_statuses, &map_tx);

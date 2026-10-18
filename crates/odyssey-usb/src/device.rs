@@ -1,32 +1,23 @@
-﻿use anyhow::{anyhow, Context, Result};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+use std::task::Poll;
+use std::time::Duration;
 
-use nusb::{
-    io::{EndpointRead, EndpointWrite},
-    transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient, TransferError},
-    DeviceInfo, Interface,
-};
-use odyssey_protocol::{
-    control::device::TransportMode,
-    control::usb_mux::{ClearBondsError, PairingError, UsbMuxCtrlMsg},
-    PocMarkersReport, VendorData,
-};
-
+use anyhow::{Context, Result, anyhow};
+use nalgebra::Isometry3;
+use nusb::io::{EndpointRead, EndpointWrite};
+use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient, TransferError};
+use nusb::{DeviceInfo, Interface};
 pub use odyssey_protocol::ProductId;
-
-use std::{
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex, Weak,
-    },
-    task::Poll,
-    time::Duration,
-};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::{mpsc, oneshot},
-};
-use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
+use odyssey_protocol::control::device::TransportMode;
+use odyssey_protocol::control::usb_mux::{ClearBondsError, PairingError, UsbMuxCtrlMsg};
+use odyssey_protocol::{PocMarkersReport, VendorData};
+use opencv_ros_camera::RosOpenCvIntrinsics;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{mpsc, oneshot};
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::{Stream, StreamExt};
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::packets::vm::{
@@ -34,13 +25,13 @@ use crate::packets::vm::{
     GyroConfig, ImpactReport, MotData, ObjectReport, Packet, PacketData, PacketType, Port, Props,
     Register, StreamUpdate, WriteRegister,
 };
-use nalgebra::Isometry3;
-use opencv_ros_camera::RosOpenCvIntrinsics;
 
 fn default_camera_intrinsics() -> RosOpenCvIntrinsics<f32> {
     // Create a default camera with identity-like parameters
     // Using a simple pinhole camera model with no distortion
-    use odyssey_common::ocv_types::{MinimalCameraCalibrationParams, OpenCVMatrix3, OpenCVMatrix5x1};
+    use odyssey_common::ocv_types::{
+        MinimalCameraCalibrationParams, OpenCVMatrix3, OpenCVMatrix5x1,
+    };
     MinimalCameraCalibrationParams {
         camera_matrix: OpenCVMatrix3 {
             data: [
@@ -55,7 +46,6 @@ fn default_camera_intrinsics() -> RosOpenCvIntrinsics<f32> {
     }
     .into()
 }
-
 
 pub const COBS_DELIMITER: u8 = 0x00;
 
@@ -319,8 +309,15 @@ impl PacketTransport {
         tokio::spawn(async move {
             debug!("mux writer task started [ID:{}]", transport_id_writer);
             while let Some(pkt) = writer_rx.recv().await {
-                trace!("mux writer: sending packet to device {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                    device_addr[0], device_addr[1], device_addr[2], device_addr[3], device_addr[4], device_addr[5]);
+                trace!(
+                    "mux writer: sending packet to device {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                    device_addr[0],
+                    device_addr[1],
+                    device_addr[2],
+                    device_addr[3],
+                    device_addr[4],
+                    device_addr[5]
+                );
                 if let Err(e) = mux.send_to(device_addr, pkt).await {
                     error!("mux send_to failed: {e}");
                     break;
@@ -561,8 +558,15 @@ impl VmDevice {
         Ok(device)
     }
     pub async fn connect_via_mux(mux: MuxDevice, device_addr: [u8; 6]) -> Result<Self> {
-        debug!("VmDevice::connect_via_mux() creating new device for {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-            device_addr[0], device_addr[1], device_addr[2], device_addr[3], device_addr[4], device_addr[5]);
+        debug!(
+            "VmDevice::connect_via_mux() creating new device for {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            device_addr[0],
+            device_addr[1],
+            device_addr[2],
+            device_addr[3],
+            device_addr[4],
+            device_addr[5]
+        );
         let transport = PacketTransport::mux(mux, device_addr);
 
         let device = Self::from_transport(transport, None);
@@ -625,49 +629,57 @@ impl VmDevice {
         timeout: Duration,
         limit: usize,
     ) -> anyhow::Result<PacketData> {
-        retry(async || self.request_unbounded(data.clone()).await, timeout, limit)
-            .await
-            .ok_or_else(|| anyhow!("no response after {limit} attempts of {timeout:?}"))?
+        retry(
+            async || self.request_unbounded(data.clone()).await,
+            timeout,
+            limit,
+        )
+        .await
+        .ok_or_else(|| anyhow!("no response after {limit} attempts of {timeout:?}"))?
     }
 
     fn get_oneshot_slot(&self) -> anyhow::Result<(ResponseSlot, oneshot::Receiver<PacketData>)> {
-        match self.thread_state.upgrade() { Some(thread_state) => {
-            let mut response_channels = thread_state.response_channels.lock();
-            // Slot reservation: IDs 0-207 for control, 208-255 for streaming
-            // Control requests (oneshot) use the low range
-            const CONTROL_ID_MAX: usize = 207;
+        match self.thread_state.upgrade() {
+            Some(thread_state) => {
+                let mut response_channels = thread_state.response_channels.lock();
+                // Slot reservation: IDs 0-207 for control, 208-255 for streaming
+                // Control requests (oneshot) use the low range
+                const CONTROL_ID_MAX: usize = 207;
 
-            let now = tokio::time::Instant::now();
-            let available = response_channels
-                .iter()
-                .take(CONTROL_ID_MAX + 1)
-                .filter(|c| c.is_free(now))
-                .count();
-            debug!("get_oneshot_slot: {} slots available", available);
-            for (i, c) in response_channels
-                .iter_mut()
-                .enumerate()
-                .take(CONTROL_ID_MAX + 1)
-            {
-                if c.is_free(now) {
-                    let (send, receiver) = oneshot::channel();
-                    let generation = thread_state.next_generation.fetch_add(1, Ordering::Relaxed);
-                    *c = ResponseChannel::Oneshot(generation, send);
-                    return Ok((
-                        ResponseSlot {
-                            thread_state: self.thread_state.clone(),
-                            id: i as u8,
-                            finished: false,
-                            sent: false,
-                            generation,
-                        },
-                        receiver,
-                    ));
+                let now = tokio::time::Instant::now();
+                let available = response_channels
+                    .iter()
+                    .take(CONTROL_ID_MAX + 1)
+                    .filter(|c| c.is_free(now))
+                    .count();
+                debug!("get_oneshot_slot: {} slots available", available);
+                for (i, c) in response_channels
+                    .iter_mut()
+                    .enumerate()
+                    .take(CONTROL_ID_MAX + 1)
+                {
+                    if c.is_free(now) {
+                        let (send, receiver) = oneshot::channel();
+                        let generation =
+                            thread_state.next_generation.fetch_add(1, Ordering::Relaxed);
+                        *c = ResponseChannel::Oneshot(generation, send);
+                        return Ok((
+                            ResponseSlot {
+                                thread_state: self.thread_state.clone(),
+                                id: i as u8,
+                                finished: false,
+                                sent: false,
+                                generation,
+                            },
+                            receiver,
+                        ));
+                    }
                 }
             }
-        } _ => {
-            debug!("ERROR: thread_state upgrade failed - State was dropped!");
-        }}
+            _ => {
+                debug!("ERROR: thread_state upgrade failed - State was dropped!");
+            }
+        }
         Err(anyhow::anyhow!("Failed to allocate request id"))
     }
 
@@ -810,11 +822,13 @@ impl VmDevice {
                 _ => anyhow::bail!("Unexpected config variant for GyroConfig"),
             },
             camera_model_nf: match camera_model_nf {
-                GeneralConfig::CameraModelNf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
+                GeneralConfig::CameraModelNf(val) => RosOpenCvIntrinsics::try_from(val)
+                    .map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelNf"),
             },
             camera_model_wf: match camera_model_wf {
-                GeneralConfig::CameraModelWf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
+                GeneralConfig::CameraModelWf(val) => RosOpenCvIntrinsics::try_from(val)
+                    .map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelWf"),
             },
             stereo_iso: match stereo_iso {
@@ -844,8 +858,7 @@ impl VmDevice {
             let (slot, receiver) = self.get_stream_slot(100)?;
             trace!(
                 "Requesting stream: type={:?}, slot_id={}",
-                stream_type,
-                slot.id
+                stream_type, slot.id
             );
             self.transport
                 .writer
@@ -867,7 +880,9 @@ impl VmDevice {
         Err(anyhow!("thread state dropped"))
     }
 
-    pub async fn stream_mot_data(&self) -> Result<impl Stream<Item = ObjectReport> + Send + Sync + use<>> {
+    pub async fn stream_mot_data(
+        &self,
+    ) -> Result<impl Stream<Item = ObjectReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::ObjectReport())
             .await?
@@ -892,21 +907,27 @@ impl VmDevice {
             .filter_map(|x| x.poc_markers_report()))
     }
 
-    pub async fn stream_accel(&self) -> Result<impl Stream<Item = AccelReport> + Send + Sync + use<>> {
+    pub async fn stream_accel(
+        &self,
+    ) -> Result<impl Stream<Item = AccelReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::AccelReport())
             .await?
             .filter_map(|x| x.accel_report()))
     }
 
-    pub async fn stream_impact(&self) -> Result<impl Stream<Item = ImpactReport> + Send + Sync + use<>> {
+    pub async fn stream_impact(
+        &self,
+    ) -> Result<impl Stream<Item = ImpactReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::ImpactReport())
             .await?
             .filter_map(|x| x.impact_report()))
     }
 
-    pub async fn stream_battery(&self) -> Result<impl Stream<Item = BatteryReport> + Send + Sync + use<>> {
+    pub async fn stream_battery(
+        &self,
+    ) -> Result<impl Stream<Item = BatteryReport> + Send + Sync + use<>> {
         Ok(self
             .stream(PacketType::BatteryReport())
             .await?
@@ -1128,9 +1149,11 @@ impl VmDevice {
 
 // mux Device for dongle-fw
 
-use crate::packets::mux::{MuxMsg, SendTo, MAX_DEVICES};
-use heapless::Vec as HVec;
 use std::collections::HashMap;
+
+use heapless::Vec as HVec;
+
+use crate::packets::mux::{MAX_DEVICES, MuxMsg, SendTo};
 
 pub struct MuxTransport {
     writer: mpsc::Sender<MuxMsg>,
@@ -1214,8 +1237,7 @@ impl MuxTransport {
                     Ok(MuxMsg::DevicePacket(dev_pkt)) => {
                         trace!(
                             "mux reader: routing DevicePacket for {:02X}:{:02X}...",
-                            dev_pkt.dev[0],
-                            dev_pkt.dev[1]
+                            dev_pkt.dev[0], dev_pkt.dev[1]
                         );
                         // Clone the sender to avoid holding the lock across await
                         let tx_opt = {
@@ -1227,8 +1249,7 @@ impl MuxTransport {
                         } else {
                             trace!(
                                 "mux reader: no receiver registered for device {:02X}:{:02X}...",
-                                dev_pkt.dev[0],
-                                dev_pkt.dev[1]
+                                dev_pkt.dev[0], dev_pkt.dev[1]
                             );
                         }
                     }
@@ -1558,7 +1579,9 @@ impl MuxDevice {
             .await?
         {
             UsbMuxCtrlMsg::StartPairingResponse() => Ok(()),
-            UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Ok(_addr)) => {
+            UsbMuxCtrlMsg::PairingResult(
+                odyssey_protocol::control::usb_mux::PairingOutcome::Ok(_addr),
+            ) => {
                 // Pairing finished immediately; treat as success so the caller can proceed
                 Ok(())
             }
@@ -1580,17 +1603,17 @@ impl MuxDevice {
                 })
                 .await?
             {
-                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Ok(device)) => {
-                    return Ok(PairingEvent::Result(device))
-                }
-                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Err(
-                    PairingError::Timeout,
-                )) => return Ok(PairingEvent::Timeout),
-                UsbMuxCtrlMsg::PairingResult(odyssey_protocol::control::usb_mux::PairingOutcome::Err(
-                    PairingError::Cancelled,
-                )) => {
-                    return Ok(PairingEvent::Cancelled)
-                }
+                UsbMuxCtrlMsg::PairingResult(
+                    odyssey_protocol::control::usb_mux::PairingOutcome::Ok(device),
+                ) => return Ok(PairingEvent::Result(device)),
+                UsbMuxCtrlMsg::PairingResult(
+                    odyssey_protocol::control::usb_mux::PairingOutcome::Err(PairingError::Timeout),
+                ) => return Ok(PairingEvent::Timeout),
+                UsbMuxCtrlMsg::PairingResult(
+                    odyssey_protocol::control::usb_mux::PairingOutcome::Err(
+                        PairingError::Cancelled,
+                    ),
+                ) => return Ok(PairingEvent::Cancelled),
                 _ => { /* filtered */ }
             }
         }
@@ -1610,14 +1633,14 @@ impl MuxDevice {
                 .await
             {
                 Ok(msg) => match msg {
-                    UsbMuxCtrlMsg::ClearBondsResponse(odyssey_protocol::control::usb_mux::ClearBondsResult::Ok()) => {
-                        return Ok(())
-                    }
-                    UsbMuxCtrlMsg::ClearBondsResponse(odyssey_protocol::control::usb_mux::ClearBondsResult::Err(
-                        ClearBondsError::Failed,
-                    )) => {
-                        return Err(anyhow!("Failed to clear bonds"))
-                    }
+                    UsbMuxCtrlMsg::ClearBondsResponse(
+                        odyssey_protocol::control::usb_mux::ClearBondsResult::Ok(),
+                    ) => return Ok(()),
+                    UsbMuxCtrlMsg::ClearBondsResponse(
+                        odyssey_protocol::control::usb_mux::ClearBondsResult::Err(
+                            ClearBondsError::Failed,
+                        ),
+                    ) => return Err(anyhow!("Failed to clear bonds")),
                     // Ignore unrelated ctrl messages (e.g., pairing result racing with clear)
                     _ if start.elapsed() < max_wait => continue,
                     // No explicit response but we've waited long enough; assume success because the
@@ -1661,7 +1684,7 @@ impl MuxDevice {
             uuid,
             name: name.into(),
         })
-            .await
+        .await
     }
 
     pub async fn add_bond(&self, entry: odyssey_protocol::control::BondEntry) -> Result<()> {
@@ -1672,7 +1695,9 @@ impl MuxDevice {
             })
             .await?
         {
-            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Ok()) => Ok(()),
+            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Ok()) => {
+                Ok(())
+            }
             UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Err(e)) => {
                 Err(anyhow!("AddBond failed: {e:?}"))
             }
@@ -1746,7 +1771,11 @@ impl VmDevice {
             .as_ref()
             .ok_or_else(|| anyhow!("No control interface available"))?;
         let data = postcard::to_allocvec(&msg).map_err(|e| anyhow!("ctrl encode failed: {e}"))?;
-        tracing::info!("send_ctrl_msg: control_out iface={} len={}", ctrl_if.interface_number(), data.len());
+        tracing::info!(
+            "send_ctrl_msg: control_out iface={} len={}",
+            ctrl_if.interface_number(),
+            data.len()
+        );
         let result = ctrl_if
             .control_out(
                 ControlOut {
@@ -1761,7 +1790,10 @@ impl VmDevice {
             )
             .await
             .map_err(|e| anyhow!("ctrl send failed: {e}"));
-        tracing::info!("send_ctrl_msg: control_out returned {:?}", result.as_ref().map(|_| "ok").map_err(|e| e.to_string()));
+        tracing::info!(
+            "send_ctrl_msg: control_out returned {:?}",
+            result.as_ref().map(|_| "ok").map_err(|e| e.to_string())
+        );
         result
     }
 
@@ -1799,8 +1831,10 @@ impl VmDevice {
                     if data.is_empty() {
                         continue;
                     }
-                    break postcard::from_bytes::<odyssey_protocol::control::device::DeviceMsg>(&data)
-                        .map_err(|e| anyhow!("ctrl decode failed: {e}"));
+                    break postcard::from_bytes::<odyssey_protocol::control::device::DeviceMsg>(
+                        &data,
+                    )
+                    .map_err(|e| anyhow!("ctrl decode failed: {e}"));
                 }
                 Err(TransferError::Cancelled) => continue, // poll-slice timeout, retry
                 Err(e) => return Err(anyhow!("recv_ctrl_msg control_in failed: {e:?}")),
@@ -1851,8 +1885,9 @@ impl VmDevice {
                 continue;
             }
 
-            let msg = match postcard::from_bytes::<odyssey_protocol::control::device::DeviceMsg>(&reply)
-            {
+            let msg = match postcard::from_bytes::<odyssey_protocol::control::device::DeviceMsg>(
+                &reply,
+            ) {
                 Ok(msg) => msg,
                 Err(e) => {
                     if start.elapsed() < timeout {
@@ -1871,7 +1906,8 @@ impl VmDevice {
     pub async fn read_version(&self) -> Result<odyssey_protocol::Version> {
         use odyssey_protocol::control::device::DeviceMsg;
         use odyssey_protocol::{PropKind, Props};
-        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::Version)).await?;
+        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::Version))
+            .await?;
         match self.recv_ctrl_msg(Duration::from_secs(2)).await? {
             DeviceMsg::ReadPropResponse(Props::Version(version)) => Ok(version),
             other => Err(anyhow!("unexpected response: {other:?}")),
@@ -1886,7 +1922,8 @@ impl VmDevice {
     pub async fn read_netcore_release(&self) -> Result<u16> {
         use odyssey_protocol::control::device::DeviceMsg;
         use odyssey_protocol::{PropKind, Props};
-        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::NetCoreRelease)).await?;
+        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::NetCoreRelease))
+            .await?;
         match self
             .recv_ctrl_msg_filtered(Duration::from_secs(2), |msg| {
                 matches!(msg, DeviceMsg::ReadPropResponse(Props::NetCoreRelease(_)))
@@ -1914,7 +1951,8 @@ impl VmDevice {
     pub async fn read_uuid(&self) -> Result<[u8; 6]> {
         use odyssey_protocol::control::device::DeviceMsg;
         use odyssey_protocol::{PropKind, Props};
-        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::Uuid)).await?;
+        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::Uuid))
+            .await?;
         match self.recv_ctrl_msg(Duration::from_secs(2)).await? {
             DeviceMsg::ReadPropResponse(Props::Uuid(uuid)) => Ok(uuid),
             other => Err(anyhow!("unexpected response: {other:?}")),
@@ -2009,7 +2047,7 @@ impl VmDevice {
                         Err(e) => return Err(anyhow!("ctrl decode failed: {e}")),
                     }
                 }
-                Ok(_) => continue,                          // Empty response, retry
+                Ok(_) => continue,                         // Empty response, retry
                 Err(TransferError::Cancelled) => continue, // poll-slice timeout, retry
                 Err(e) => return Err(anyhow!("get_transport_mode control_in failed: {e:?}")),
             }
@@ -2027,7 +2065,9 @@ impl VmDevice {
             .await?
         {
             DeviceMsg::StartPairingResponse() => Ok(()),
-            DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Ok(_addr)) => {
+            DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Ok(
+                _addr,
+            )) => {
                 // Pairing finished immediately; treat as success so the caller can proceed
                 Ok(())
             }
@@ -2039,17 +2079,15 @@ impl VmDevice {
         use odyssey_protocol::control::device::{DeviceMsg, PairingError};
         loop {
             match self.recv_ctrl_msg(Duration::from_secs(120)).await? {
-                DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Ok(device)) => {
-                    return Ok(device)
-                }
-                DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Err(
-                    PairingError::Timeout,
-                )) => return Err(anyhow!("Pairing timeout")),
-                DeviceMsg::PairingResult(odyssey_protocol::control::device::PairingOutcome::Err(
-                    PairingError::Cancelled,
-                )) => {
-                    return Err(anyhow!("Pairing cancelled"))
-                }
+                DeviceMsg::PairingResult(
+                    odyssey_protocol::control::device::PairingOutcome::Ok(device),
+                ) => return Ok(device),
+                DeviceMsg::PairingResult(
+                    odyssey_protocol::control::device::PairingOutcome::Err(PairingError::Timeout),
+                ) => return Err(anyhow!("Pairing timeout")),
+                DeviceMsg::PairingResult(
+                    odyssey_protocol::control::device::PairingOutcome::Err(PairingError::Cancelled),
+                ) => return Err(anyhow!("Pairing cancelled")),
                 _ => { /* ignore unrelated ctrl msgs */ }
             }
         }
@@ -2070,10 +2108,12 @@ impl VmDevice {
             })
             .await?
         {
-            DeviceMsg::ClearBondResponse(odyssey_protocol::control::device::ClearBondResult::Ok()) => Ok(()),
-            DeviceMsg::ClearBondResponse(odyssey_protocol::control::device::ClearBondResult::Err(_)) => {
-                Err(anyhow!("Failed to clear bond"))
-            }
+            DeviceMsg::ClearBondResponse(
+                odyssey_protocol::control::device::ClearBondResult::Ok(),
+            ) => Ok(()),
+            DeviceMsg::ClearBondResponse(
+                odyssey_protocol::control::device::ClearBondResult::Err(_),
+            ) => Err(anyhow!("Failed to clear bond")),
             other => Err(anyhow!("unexpected response: {other:?}")),
         }
     }
@@ -2184,11 +2224,13 @@ impl VmDevice {
                 _ => anyhow::bail!("Unexpected config variant for GyroConfig"),
             },
             camera_model_nf: match camera_model_nf {
-                GeneralConfig::CameraModelNf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
+                GeneralConfig::CameraModelNf(val) => RosOpenCvIntrinsics::try_from(val)
+                    .map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelNf"),
             },
             camera_model_wf: match camera_model_wf {
-                GeneralConfig::CameraModelWf(val) => RosOpenCvIntrinsics::try_from(val).map_err(|e| anyhow!("invalid camera model: {e}"))?,
+                GeneralConfig::CameraModelWf(val) => RosOpenCvIntrinsics::try_from(val)
+                    .map_err(|e| anyhow!("invalid camera model: {e}"))?,
                 _ => anyhow::bail!("Unexpected config variant for CameraModelWf"),
             },
             stereo_iso: match stereo_iso {
@@ -2199,7 +2241,8 @@ impl VmDevice {
     }
 
     pub async fn set_name(&self, name: &str) -> Result<()> {
-        use odyssey_protocol::{SetDeviceNameError, control::device::DeviceMsg};
+        use odyssey_protocol::SetDeviceNameError;
+        use odyssey_protocol::control::device::DeviceMsg;
         // Rejected here rather than truncated: silently renaming a device to a
         // prefix of what was asked for is worse than failing.
         let hname: heapless::String<32> = name
@@ -2231,9 +2274,16 @@ impl VmDevice {
         } else {
             TransportMode::Ble
         };
-        tracing::info!("set_transport_mode: ctrl_if present={}, sending {:?}", self.ctrl_if.is_some(), mode);
-        self.send_ctrl_msg(DeviceMsg::SetTransportMode(mode)).await?;
-        tracing::info!("set_transport_mode: send_ctrl_msg done, waiting for TransportModeStatus response");
+        tracing::info!(
+            "set_transport_mode: ctrl_if present={}, sending {:?}",
+            self.ctrl_if.is_some(),
+            mode
+        );
+        self.send_ctrl_msg(DeviceMsg::SetTransportMode(mode))
+            .await?;
+        tracing::info!(
+            "set_transport_mode: send_ctrl_msg done, waiting for TransportModeStatus response"
+        );
         match self
             .recv_ctrl_msg_filtered(Duration::from_secs(2), |msg| {
                 matches!(msg, DeviceMsg::TransportModeStatus(_))
@@ -2241,7 +2291,10 @@ impl VmDevice {
             .await?
         {
             DeviceMsg::TransportModeStatus(confirmed) => {
-                tracing::info!("set_transport_mode: got TransportModeStatus({:?})", confirmed);
+                tracing::info!(
+                    "set_transport_mode: got TransportModeStatus({:?})",
+                    confirmed
+                );
                 Ok(confirmed)
             }
             other => Err(anyhow!("unexpected response: {other:?}")),
@@ -2278,7 +2331,11 @@ mod request_tests {
 
     #[tokio::test]
     async fn pending_request_fails_fast_when_transport_closes() {
-        let Harness { device, mut sent, incoming_tx } = harness();
+        let Harness {
+            device,
+            mut sent,
+            incoming_tx,
+        } = harness();
         let pending = tokio::spawn({
             let device = device.clone();
             async move { device.request(PacketData::ReadVersion()).await }
@@ -2299,14 +2356,21 @@ mod request_tests {
 
     #[tokio::test(start_paused = true)]
     async fn retry_resends_once_per_silent_attempt_then_gives_up() {
-        let Harness { device, mut sent, incoming_tx: _keep_open } = harness();
+        let Harness {
+            device,
+            mut sent,
+            incoming_tx: _keep_open,
+        } = harness();
 
         let err = device
             .request_with_retry(PacketData::ReadVersion(), Duration::from_secs(2), 3)
             .await
             .unwrap_err();
 
-        assert!(err.to_string().contains("no response after 3 attempts"), "{err}");
+        assert!(
+            err.to_string().contains("no response after 3 attempts"),
+            "{err}"
+        );
         let mut writes = 0;
         while sent.try_recv().is_ok() {
             writes += 1;
@@ -2322,7 +2386,11 @@ mod request_tests {
 
     #[tokio::test]
     async fn stale_slot_does_not_clear_request_that_reused_its_id() {
-        let Harness { device, incoming_tx: _open, .. } = harness();
+        let Harness {
+            device,
+            incoming_tx: _open,
+            ..
+        } = harness();
         let (stale, stale_rx) = device.get_oneshot_slot().unwrap();
         let id = stale.id;
 
@@ -2342,7 +2410,11 @@ mod request_tests {
 
     #[tokio::test]
     async fn cancelled_request_releases_its_own_slot() {
-        let Harness { device, incoming_tx: _open, .. } = harness();
+        let Harness {
+            device,
+            incoming_tx: _open,
+            ..
+        } = harness();
         let (slot, _rx_still_alive) = device.get_oneshot_slot().unwrap();
         let id = slot.id;
 
@@ -2360,7 +2432,11 @@ mod request_tests {
 
     #[tokio::test]
     async fn late_reply_to_timed_out_request_never_reaches_a_newer_one() {
-        let Harness { device, incoming_tx, .. } = harness();
+        let Harness {
+            device,
+            incoming_tx,
+            ..
+        } = harness();
         let timed_out = time_out_request(&device);
 
         // The id is withheld, so the next request gets a different one...
@@ -2369,17 +2445,26 @@ mod request_tests {
 
         // ...and the old request's reply arriving now is dropped, not delivered.
         incoming_tx
-            .send(Packet { id: timed_out, data: PacketData::ReadVersion() })
+            .send(Packet {
+                id: timed_out,
+                data: PacketData::ReadVersion(),
+            })
             .await
             .unwrap();
         // Round-trip a second packet so the dispatcher has certainly handled the first.
         let (probe, probe_rx) = device.get_oneshot_slot().unwrap();
         incoming_tx
-            .send(Packet { id: probe.id, data: PacketData::ReadVersion() })
+            .send(Packet {
+                id: probe.id,
+                data: PacketData::ReadVersion(),
+            })
             .await
             .unwrap();
         probe_rx.await.expect("dispatcher delivers live replies");
-        assert!(newer_rx.try_recv().is_err(), "late reply leaked into a newer request");
+        assert!(
+            newer_rx.try_recv().is_err(),
+            "late reply leaked into a newer request"
+        );
 
         // Consuming the late reply released the id for reuse.
         drop(newer);
@@ -2389,7 +2474,11 @@ mod request_tests {
 
     #[tokio::test(start_paused = true)]
     async fn quarantined_id_is_reused_after_the_quarantine() {
-        let Harness { device, incoming_tx: _open, .. } = harness();
+        let Harness {
+            device,
+            incoming_tx: _open,
+            ..
+        } = harness();
         let timed_out = time_out_request(&device);
 
         let (during, _rx) = device.get_oneshot_slot().unwrap();

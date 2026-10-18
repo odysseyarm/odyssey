@@ -6,9 +6,8 @@
 //! meaningful size, and plenty of displays report a placeholder, which is why
 //! the parser grades what it finds instead of passing numbers through.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use crate::solve::KnownSize;
 
@@ -51,7 +50,11 @@ pub enum SizePrecision {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PhysicalSize {
-    Dimensions { width_mm: u32, height_mm: u32, precision: SizePrecision },
+    Dimensions {
+        width_mm: u32,
+        height_mm: u32,
+        precision: SizePrecision,
+    },
     /// Only the aspect ratio (width over height), which the base block encodes
     /// by zeroing exactly one of its two size bytes.
     AspectOnly(f64),
@@ -66,7 +69,10 @@ pub enum SuspectReason {
     /// The centimeter bytes hold an aspect ratio such as 16 by 9, not a size.
     AspectPlaceholder,
     /// The size's aspect ratio disagrees with the native resolution's.
-    AspectMismatch { size_aspect: f64, native_aspect: f64 },
+    AspectMismatch {
+        size_aspect: f64,
+        native_aspect: f64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -100,7 +106,11 @@ impl EdidInfo {
     /// Width over height of the physical panel, when the EDID gives one.
     pub fn physical_aspect(&self) -> Option<f64> {
         match self.physical_size {
-            PhysicalSize::Dimensions { width_mm, height_mm, .. } => Some(f64::from(width_mm) / f64::from(height_mm)),
+            PhysicalSize::Dimensions {
+                width_mm,
+                height_mm,
+                ..
+            } => Some(f64::from(width_mm) / f64::from(height_mm)),
             PhysicalSize::AspectOnly(a) => Some(a),
             PhysicalSize::Undefined => None,
         }
@@ -110,9 +120,17 @@ impl EdidInfo {
     /// reports dimensions and they pass every reliability check.
     pub fn known_size(&self) -> Option<KnownSize> {
         match (self.physical_size, self.reliability) {
-            (PhysicalSize::Dimensions { width_mm, height_mm, .. }, Reliability::Reliable) => {
-                Some(KnownSize::Dimensions { width_m: f64::from(width_mm) / 1000.0, height_m: f64::from(height_mm) / 1000.0 })
-            }
+            (
+                PhysicalSize::Dimensions {
+                    width_mm,
+                    height_mm,
+                    ..
+                },
+                Reliability::Reliable,
+            ) => Some(KnownSize::Dimensions {
+                width_m: f64::from(width_mm) / 1000.0,
+                height_m: f64::from(height_mm) / 1000.0,
+            }),
             _ => None,
         }
     }
@@ -122,7 +140,13 @@ fn decode_manufacturer(hi: u8, lo: u8) -> String {
     let v = u16::from_be_bytes([hi, lo]);
     [(v >> 10) & 0x1F, (v >> 5) & 0x1F, v & 0x1F]
         .into_iter()
-        .map(|n| if (1..=26).contains(&n) { char::from(b'A' - 1 + n as u8) } else { '?' })
+        .map(|n| {
+            if (1..=26).contains(&n) {
+                char::from(b'A' - 1 + n as u8)
+            } else {
+                '?'
+            }
+        })
         .collect()
 }
 
@@ -166,17 +190,30 @@ fn parse_name(descriptor: &[u8]) -> Option<String> {
     let text: String = descriptor[5..]
         .iter()
         .take_while(|&&b| b != 0x0A)
-        .map(|&b| if b.is_ascii_graphic() || b == b' ' { char::from(b) } else { '?' })
+        .map(|&b| {
+            if b.is_ascii_graphic() || b == b' ' {
+                char::from(b)
+            } else {
+                '?'
+            }
+        })
         .collect();
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_owned())
 }
 
 fn judge(size: PhysicalSize, native: Option<(u32, u32)>) -> Reliability {
-    let PhysicalSize::Dimensions { width_mm, height_mm, precision } = size else {
+    let PhysicalSize::Dimensions {
+        width_mm,
+        height_mm,
+        precision,
+    } = size
+    else {
         return Reliability::NoDimensions;
     };
-    if precision == SizePrecision::Centimeters && PLACEHOLDER_CM.contains(&(width_mm / 10, height_mm / 10)) {
+    if precision == SizePrecision::Centimeters
+        && PLACEHOLDER_CM.contains(&(width_mm / 10, height_mm / 10))
+    {
         return Reliability::Suspect(SuspectReason::AspectPlaceholder);
     }
     if width_mm < MIN_PLAUSIBLE_MM || height_mm < MIN_PLAUSIBLE_MM {
@@ -189,7 +226,10 @@ fn judge(size: PhysicalSize, native: Option<(u32, u32)>) -> Reliability {
         let size_aspect = f64::from(width_mm) / f64::from(height_mm);
         let native_aspect = f64::from(w) / f64::from(h);
         if (size_aspect / native_aspect - 1.0).abs() > MAX_ASPECT_DEVIATION {
-            return Reliability::Suspect(SuspectReason::AspectMismatch { size_aspect, native_aspect });
+            return Reliability::Suspect(SuspectReason::AspectMismatch {
+                size_aspect,
+                native_aspect,
+            });
         }
     }
     Reliability::Reliable
@@ -206,10 +246,19 @@ pub fn parse_edid(bytes: &[u8]) -> Result<EdidInfo, EdidError> {
 
     let declared_blocks = 1 + usize::from(bytes[126]);
     let checksums_valid = bytes.len() >= declared_blocks * BLOCK_LEN
-        && bytes.as_chunks::<BLOCK_LEN>().0.iter().take(declared_blocks).all(|block| block_sums_to_zero(block));
+        && bytes
+            .as_chunks::<BLOCK_LEN>()
+            .0
+            .iter()
+            .take(declared_blocks)
+            .all(|block| block_sums_to_zero(block));
 
-    let descriptors: Vec<&[u8]> =
-        (0..4).map(|i| &bytes[FIRST_DESCRIPTOR + i * DESCRIPTOR_LEN..FIRST_DESCRIPTOR + (i + 1) * DESCRIPTOR_LEN]).collect();
+    let descriptors: Vec<&[u8]> = (0..4)
+        .map(|i| {
+            &bytes
+                [FIRST_DESCRIPTOR + i * DESCRIPTOR_LEN..FIRST_DESCRIPTOR + (i + 1) * DESCRIPTOR_LEN]
+        })
+        .collect();
     let preferred = parse_timing(descriptors[0]);
     let monitor_name = descriptors.iter().find_map(|d| parse_name(d));
 
@@ -218,14 +267,20 @@ pub fn parse_edid(bytes: &[u8]) -> Result<EdidInfo, EdidError> {
         match preferred.as_ref().map(|t| t.image_mm) {
             // The timing's millimeters are the finer figure; the base block
             // rounds to centimeters.
-            Some((w, h)) if w > 0 && h > 0 => {
-                PhysicalSize::Dimensions { width_mm: w, height_mm: h, precision: SizePrecision::Millimeters }
-            }
+            Some((w, h)) if w > 0 && h > 0 => PhysicalSize::Dimensions {
+                width_mm: w,
+                height_mm: h,
+                precision: SizePrecision::Millimeters,
+            },
             _ => match (cm_w, cm_h) {
                 (0, 0) => PhysicalSize::Undefined,
                 (w, 0) => PhysicalSize::AspectOnly((f64::from(w) + 99.0) / 100.0),
                 (0, h) => PhysicalSize::AspectOnly(100.0 / (f64::from(h) + 99.0)),
-                (w, h) => PhysicalSize::Dimensions { width_mm: w * 10, height_mm: h * 10, precision: SizePrecision::Centimeters },
+                (w, h) => PhysicalSize::Dimensions {
+                    width_mm: w * 10,
+                    height_mm: h * 10,
+                    precision: SizePrecision::Centimeters,
+                },
             },
         }
     };
@@ -262,12 +317,17 @@ pub enum LookupNote {
     /// No connected display carries that name.
     NotFound,
     /// More than one display matches, so any pick would be a guess.
-    Ambiguous { candidates: usize },
+    Ambiguous {
+        candidates: usize,
+    },
     /// The EDID has no native resolution to check the monitor's size against.
     NoNativeResolution,
     /// The EDID's resolution and aspect do not fit the monitor's pixel size,
     /// which means the name matched a different display than the one shown.
-    ResolutionMismatch { native: (u32, u32), screen: (u32, u32) },
+    ResolutionMismatch {
+        native: (u32, u32),
+        screen: (u32, u32),
+    },
     Unreadable(io::ErrorKind),
     Invalid(EdidError),
 }
@@ -281,7 +341,11 @@ pub struct DisplayLookup {
 
 impl DisplayLookup {
     fn none(note: LookupNote) -> Self {
-        Self { edid: None, source: LookupSource::Unavailable, note: Some(note) }
+        Self {
+            edid: None,
+            source: LookupSource::Unavailable,
+            note: Some(note),
+        }
     }
 }
 
@@ -289,12 +353,19 @@ impl DisplayLookup {
 /// `size_px`. Desktops run displays at modes other than native and at scaled
 /// sizes, so the check accepts the native resolution, any listed mode and any
 /// size with the native aspect ratio (either orientation).
-fn check_consistency(edid: &EdidInfo, size_px: (u32, u32), modes: &[(u32, u32)]) -> Result<(), LookupNote> {
+fn check_consistency(
+    edid: &EdidInfo,
+    size_px: (u32, u32),
+    modes: &[(u32, u32)],
+) -> Result<(), LookupNote> {
     let Some(native) = edid.native_resolution.filter(|&(w, h)| w > 0 && h > 0) else {
         return Err(LookupNote::NoNativeResolution);
     };
     if size_px.0 == 0 || size_px.1 == 0 {
-        return Err(LookupNote::ResolutionMismatch { native, screen: size_px });
+        return Err(LookupNote::ResolutionMismatch {
+            native,
+            screen: size_px,
+        });
     }
     let swapped = |(w, h): (u32, u32)| (h, w);
     if modes.contains(&size_px) || modes.contains(&swapped(size_px)) {
@@ -306,14 +377,20 @@ fn check_consistency(edid: &EdidInfo, size_px: (u32, u32), modes: &[(u32, u32)])
     if close(screen_aspect, native_aspect) || close(1.0 / screen_aspect, native_aspect) {
         Ok(())
     } else {
-        Err(LookupNote::ResolutionMismatch { native, screen: size_px })
+        Err(LookupNote::ResolutionMismatch {
+            native,
+            screen: size_px,
+        })
     }
 }
 
 /// Kernel connector names carry the connector type's variant letter
 /// (`HDMI-A-1`) that X11 drivers drop (`HDMI-1`); compare without it.
 fn normalize_connector(name: &str) -> String {
-    name.trim().to_ascii_uppercase().replace("-A-", "-").replace("-B-", "-")
+    name.trim()
+        .to_ascii_uppercase()
+        .replace("-A-", "-")
+        .replace("-B-", "-")
 }
 
 /// `"1920x1080"`, `"1920x1080i"` and `"1920x1080_60.00"` all name 1920 by 1080.
@@ -335,20 +412,33 @@ fn read_sysfs_displays(root: &Path) -> Result<Vec<SysfsDisplay>, io::Error> {
     for entry in fs::read_dir(root)? {
         let Ok(entry) = entry else { continue };
         let file_name = entry.file_name();
-        let Some(file_name) = file_name.to_str() else { continue };
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
         // Entries are `card<N>-<connector>`; bare `card<N>` and `renderD*` are not connectors.
-        let Some((card, connector)) = file_name.split_once('-') else { continue };
+        let Some((card, connector)) = file_name.split_once('-') else {
+            continue;
+        };
         if !card.starts_with("card") {
             continue;
         }
         let edid_path = entry.path().join("edid");
-        let Ok(bytes) = fs::read(&edid_path) else { continue };
+        let Ok(bytes) = fs::read(&edid_path) else {
+            continue;
+        };
         // A disconnected connector exposes an empty file.
-        let Ok(edid) = parse_edid(&bytes) else { continue };
+        let Ok(edid) = parse_edid(&bytes) else {
+            continue;
+        };
         let modes = fs::read_to_string(entry.path().join("modes"))
             .map(|text| text.lines().filter_map(parse_mode).collect())
             .unwrap_or_default();
-        found.push(SysfsDisplay { connector: connector.to_owned(), path: edid_path, edid, modes });
+        found.push(SysfsDisplay {
+            connector: connector.to_owned(),
+            path: edid_path,
+            edid,
+            modes,
+        });
     }
     Ok(found)
 }
@@ -357,7 +447,11 @@ fn read_sysfs_displays(root: &Path) -> Result<Vec<SysfsDisplay>, io::Error> {
 /// directory such as `/sys/class/drm`. The name is first matched against
 /// connector names, then against the EDID's own monitor name. Anything but a
 /// single consistent match yields no EDID.
-pub fn lookup_in_sysfs(root: &Path, monitor_name: Option<&str>, size_px: (u32, u32)) -> DisplayLookup {
+pub fn lookup_in_sysfs(
+    root: &Path,
+    monitor_name: Option<&str>,
+    size_px: (u32, u32),
+) -> DisplayLookup {
     let Some(name) = monitor_name.map(str::trim).filter(|n| !n.is_empty()) else {
         return DisplayLookup::none(LookupNote::NoMonitorName);
     };
@@ -367,20 +461,34 @@ pub fn lookup_in_sysfs(root: &Path, monitor_name: Option<&str>, size_px: (u32, u
     };
 
     let wanted = normalize_connector(name);
-    let mut matches: Vec<&SysfsDisplay> = displays.iter().filter(|d| normalize_connector(&d.connector) == wanted).collect();
+    let mut matches: Vec<&SysfsDisplay> = displays
+        .iter()
+        .filter(|d| normalize_connector(&d.connector) == wanted)
+        .collect();
     if matches.is_empty() {
         matches = displays
             .iter()
-            .filter(|d| d.edid.monitor_name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+            .filter(|d| {
+                d.edid
+                    .monitor_name
+                    .as_deref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            })
             .collect();
     }
     match matches.as_slice() {
         [] => DisplayLookup::none(LookupNote::NotFound),
         [one] => match check_consistency(&one.edid, size_px, &one.modes) {
-            Ok(()) => DisplayLookup { edid: Some(one.edid.clone()), source: LookupSource::Sysfs(one.path.clone()), note: None },
+            Ok(()) => DisplayLookup {
+                edid: Some(one.edid.clone()),
+                source: LookupSource::Sysfs(one.path.clone()),
+                note: None,
+            },
             Err(note) => DisplayLookup::none(note),
         },
-        many => DisplayLookup::none(LookupNote::Ambiguous { candidates: many.len() }),
+        many => DisplayLookup::none(LookupNote::Ambiguous {
+            candidates: many.len(),
+        }),
     }
 }
 
@@ -400,9 +508,12 @@ mod windows_registry {
     use std::ptr::{null, null_mut};
 
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW, DISPLAY_DEVICE_ACTIVE};
+    use windows_sys::Win32::Graphics::Gdi::{
+        DISPLAY_DEVICE_ACTIVE, DISPLAY_DEVICEW, EnumDisplayDevicesW,
+    };
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_BINARY, REG_SZ,
+        HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_BINARY, REG_SZ, RegCloseKey, RegEnumKeyExW,
+        RegOpenKeyExW, RegQueryValueExW,
     };
 
     use super::*;
@@ -439,13 +550,35 @@ mod windows_registry {
             let mut kind = 0u32;
             let mut size = 0u32;
             // SAFETY: a null data pointer asks only for the type and size.
-            let status = unsafe { RegQueryValueExW(self.0, name.as_ptr(), null(), &mut kind, null_mut(), &mut size) };
-            if status != ERROR_SUCCESS || kind != expected_type || size == 0 || size > MAX_VALUE_BYTES {
+            let status = unsafe {
+                RegQueryValueExW(
+                    self.0,
+                    name.as_ptr(),
+                    null(),
+                    &mut kind,
+                    null_mut(),
+                    &mut size,
+                )
+            };
+            if status != ERROR_SUCCESS
+                || kind != expected_type
+                || size == 0
+                || size > MAX_VALUE_BYTES
+            {
                 return None;
             }
             let mut data = vec![0u8; size as usize];
             // SAFETY: `data` has `size` writable bytes, which `size` tells the call.
-            let status = unsafe { RegQueryValueExW(self.0, name.as_ptr(), null(), &mut kind, data.as_mut_ptr(), &mut size) };
+            let status = unsafe {
+                RegQueryValueExW(
+                    self.0,
+                    name.as_ptr(),
+                    null(),
+                    &mut kind,
+                    data.as_mut_ptr(),
+                    &mut size,
+                )
+            };
             (status == ERROR_SUCCESS).then(|| {
                 data.truncate(size as usize);
                 data
@@ -454,7 +587,12 @@ mod windows_registry {
 
         fn string(&self, name: &str) -> Option<String> {
             let bytes = self.value(name, REG_SZ)?;
-            let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
+            let units: Vec<u16> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
+                .collect();
             Some(from_wide(&units))
         }
 
@@ -464,8 +602,18 @@ mod windows_registry {
                 let mut buffer = [0u16; MAX_KEY_NAME];
                 let mut len = MAX_KEY_NAME as u32;
                 // SAFETY: `buffer` holds `len` units; the optional outputs are null.
-                let status =
-                    unsafe { RegEnumKeyExW(self.0, index, buffer.as_mut_ptr(), &mut len, null(), null_mut(), null_mut(), null_mut()) };
+                let status = unsafe {
+                    RegEnumKeyExW(
+                        self.0,
+                        index,
+                        buffer.as_mut_ptr(),
+                        &mut len,
+                        null(),
+                        null_mut(),
+                        null_mut(),
+                        null_mut(),
+                    )
+                };
                 if status != ERROR_SUCCESS {
                     break;
                 }
@@ -523,10 +671,18 @@ mod windows_registry {
 
     /// Reads the `EDID` value of the monitor instance whose `Driver` value is `driver`.
     fn read_edid(hardware_id: &str, driver: &str) -> Option<Vec<u8>> {
-        let display = Key::open(HKEY_LOCAL_MACHINE, &format!(r"SYSTEM\CurrentControlSet\Enum\DISPLAY\{hardware_id}"))?;
+        let display = Key::open(
+            HKEY_LOCAL_MACHINE,
+            &format!(r"SYSTEM\CurrentControlSet\Enum\DISPLAY\{hardware_id}"),
+        )?;
         for instance in display.subkeys() {
-            let Some(key) = Key::open(display.0, &instance) else { continue };
-            if !key.string("Driver").is_some_and(|d| d.eq_ignore_ascii_case(driver)) {
+            let Some(key) = Key::open(display.0, &instance) else {
+                continue;
+            };
+            if !key
+                .string("Driver")
+                .is_some_and(|d| d.eq_ignore_ascii_case(driver))
+            {
                 continue;
             }
             let parameters = Key::open(key.0, "Device Parameters")?;
@@ -539,24 +695,36 @@ mod windows_registry {
         let Some(name) = monitor_name.map(str::trim).filter(|n| !n.is_empty()) else {
             return DisplayLookup::none(LookupNote::NoMonitorName);
         };
-        let Some(adapter) = adapter_named(name) else { return DisplayLookup::none(LookupNote::NotFound) };
+        let Some(adapter) = adapter_named(name) else {
+            return DisplayLookup::none(LookupNote::NotFound);
+        };
         let ids = monitors_of(&adapter.DeviceName);
         let device_id = match ids.as_slice() {
             [] => return DisplayLookup::none(LookupNote::NotFound),
             [one] => one.clone(),
             // Mirrored displays share the adapter name; they may differ in size.
-            many => return DisplayLookup::none(LookupNote::Ambiguous { candidates: many.len() }),
+            many => {
+                return DisplayLookup::none(LookupNote::Ambiguous {
+                    candidates: many.len(),
+                });
+            }
         };
         let Some((hardware_id, driver)) = parse_monitor_device_id(&device_id) else {
             return DisplayLookup::none(LookupNote::NotFound);
         };
-        let Some(bytes) = read_edid(&hardware_id, &driver) else { return DisplayLookup::none(LookupNote::NotFound) };
+        let Some(bytes) = read_edid(&hardware_id, &driver) else {
+            return DisplayLookup::none(LookupNote::NotFound);
+        };
         let edid = match parse_edid(&bytes) {
             Ok(edid) => edid,
             Err(e) => return DisplayLookup::none(LookupNote::Invalid(e)),
         };
         match check_consistency(&edid, size_px, &[]) {
-            Ok(()) => DisplayLookup { edid: Some(edid), source: LookupSource::WindowsRegistry(device_id), note: None },
+            Ok(()) => DisplayLookup {
+                edid: Some(edid),
+                source: LookupSource::WindowsRegistry(device_id),
+                note: None,
+            },
             Err(note) => DisplayLookup::none(note),
         }
     }
@@ -597,7 +765,13 @@ mod tests {
 
     impl Default for Spec {
         fn default() -> Self {
-            Self { dtd_mm: (1210, 680), cm: (121, 68), res: (1920, 1080), name: Some("TEST TV"), extension_blocks: 0 }
+            Self {
+                dtd_mm: (1210, 680),
+                cm: (121, 68),
+                res: (1920, 1080),
+                name: Some("TEST TV"),
+                extension_blocks: 0,
+            }
         }
     }
 
@@ -651,49 +825,103 @@ mod tests {
         let info = parse_edid(&build(&Spec::default())).unwrap();
         assert_eq!(
             info.physical_size,
-            PhysicalSize::Dimensions { width_mm: 1210, height_mm: 680, precision: SizePrecision::Millimeters }
+            PhysicalSize::Dimensions {
+                width_mm: 1210,
+                height_mm: 680,
+                precision: SizePrecision::Millimeters
+            }
         );
         assert_eq!(info.reliability, Reliability::Reliable);
         assert_eq!(info.manufacturer, "SAM");
         assert_eq!(info.product_code, 0x0F1A);
         assert_eq!(info.monitor_name.as_deref(), Some("TEST TV"));
         assert_eq!(info.native_resolution, Some((1920, 1080)));
-        assert!((info.refresh_hz.unwrap() - 60.0).abs() < 0.1, "{:?}", info.refresh_hz);
+        assert!(
+            (info.refresh_hz.unwrap() - 60.0).abs() < 0.1,
+            "{:?}",
+            info.refresh_hz
+        );
         assert!(info.checksums_valid);
-        assert_eq!(info.known_size(), Some(KnownSize::Dimensions { width_m: 1.21, height_m: 0.68 }));
+        assert_eq!(
+            info.known_size(),
+            Some(KnownSize::Dimensions {
+                width_m: 1.21,
+                height_m: 0.68
+            })
+        );
     }
 
     #[test]
     fn twelve_bit_millimeter_fields_carry_sizes_above_255() {
-        let info = parse_edid(&build(&Spec { dtd_mm: (3640, 2050), cm: (255, 205), res: (3840, 2160), ..Spec::default() })).unwrap();
-        assert!(matches!(info.physical_size, PhysicalSize::Dimensions { width_mm: 3640, height_mm: 2050, .. }));
+        let info = parse_edid(&build(&Spec {
+            dtd_mm: (3640, 2050),
+            cm: (255, 205),
+            res: (3840, 2160),
+            ..Spec::default()
+        }))
+        .unwrap();
+        assert!(matches!(
+            info.physical_size,
+            PhysicalSize::Dimensions {
+                width_mm: 3640,
+                height_mm: 2050,
+                ..
+            }
+        ));
         assert_eq!(info.native_resolution, Some((3840, 2160)));
     }
 
     #[test]
     fn centimeter_bytes_are_the_fallback() {
-        let info = parse_edid(&build(&Spec { dtd_mm: (0, 0), ..Spec::default() })).unwrap();
+        let info = parse_edid(&build(&Spec {
+            dtd_mm: (0, 0),
+            ..Spec::default()
+        }))
+        .unwrap();
         assert_eq!(
             info.physical_size,
-            PhysicalSize::Dimensions { width_mm: 1210, height_mm: 680, precision: SizePrecision::Centimeters }
+            PhysicalSize::Dimensions {
+                width_mm: 1210,
+                height_mm: 680,
+                precision: SizePrecision::Centimeters
+            }
         );
         assert_eq!(info.reliability, Reliability::Reliable);
     }
 
     #[test]
     fn one_zero_size_byte_means_aspect_only() {
-        let landscape = parse_edid(&build(&Spec { dtd_mm: (0, 0), cm: (77, 0), ..Spec::default() })).unwrap();
-        assert!(matches!(landscape.physical_size, PhysicalSize::AspectOnly(a) if (a - 1.76).abs() < 1e-9));
+        let landscape = parse_edid(&build(&Spec {
+            dtd_mm: (0, 0),
+            cm: (77, 0),
+            ..Spec::default()
+        }))
+        .unwrap();
+        assert!(
+            matches!(landscape.physical_size, PhysicalSize::AspectOnly(a) if (a - 1.76).abs() < 1e-9)
+        );
         assert_eq!(landscape.reliability, Reliability::NoDimensions);
         assert_eq!(landscape.known_size(), None);
 
-        let portrait = parse_edid(&build(&Spec { dtd_mm: (0, 0), cm: (0, 77), ..Spec::default() })).unwrap();
-        assert!(matches!(portrait.physical_size, PhysicalSize::AspectOnly(a) if (a - 100.0 / 176.0).abs() < 1e-9));
+        let portrait = parse_edid(&build(&Spec {
+            dtd_mm: (0, 0),
+            cm: (0, 77),
+            ..Spec::default()
+        }))
+        .unwrap();
+        assert!(
+            matches!(portrait.physical_size, PhysicalSize::AspectOnly(a) if (a - 100.0 / 176.0).abs() < 1e-9)
+        );
     }
 
     #[test]
     fn both_zero_is_a_projector() {
-        let info = parse_edid(&build(&Spec { dtd_mm: (0, 0), cm: (0, 0), ..Spec::default() })).unwrap();
+        let info = parse_edid(&build(&Spec {
+            dtd_mm: (0, 0),
+            cm: (0, 0),
+            ..Spec::default()
+        }))
+        .unwrap();
         assert_eq!(info.physical_size, PhysicalSize::Undefined);
         assert_eq!(info.known_size(), None);
         assert_eq!(info.physical_aspect(), None);
@@ -702,26 +930,77 @@ mod tests {
     #[test]
     fn aspect_ratio_written_as_centimeters_is_a_placeholder() {
         for cm in [(16, 9), (16, 10), (4, 3)] {
-            let res = if cm == (4, 3) { (1024, 768) } else if cm == (16, 10) { (1920, 1200) } else { (1920, 1080) };
-            let info = parse_edid(&build(&Spec { dtd_mm: (0, 0), cm, res, ..Spec::default() })).unwrap();
-            assert_eq!(info.reliability, Reliability::Suspect(SuspectReason::AspectPlaceholder), "{cm:?}");
+            let res = if cm == (4, 3) {
+                (1024, 768)
+            } else if cm == (16, 10) {
+                (1920, 1200)
+            } else {
+                (1920, 1080)
+            };
+            let info = parse_edid(&build(&Spec {
+                dtd_mm: (0, 0),
+                cm,
+                res,
+                ..Spec::default()
+            }))
+            .unwrap();
+            assert_eq!(
+                info.reliability,
+                Reliability::Suspect(SuspectReason::AspectPlaceholder),
+                "{cm:?}"
+            );
             assert_eq!(info.known_size(), None);
         }
     }
 
     #[test]
     fn implausible_sizes_are_suspect() {
-        let tiny = parse_edid(&build(&Spec { dtd_mm: (80, 45), cm: (8, 5), ..Spec::default() })).unwrap();
-        assert_eq!(tiny.reliability, Reliability::Suspect(SuspectReason::TooSmall));
-        assert_eq!(judge(PhysicalSize::Dimensions { width_mm: 12_000, height_mm: 6_750, precision: SizePrecision::Millimeters }, None), Reliability::Suspect(SuspectReason::TooLarge));
+        let tiny = parse_edid(&build(&Spec {
+            dtd_mm: (80, 45),
+            cm: (8, 5),
+            ..Spec::default()
+        }))
+        .unwrap();
+        assert_eq!(
+            tiny.reliability,
+            Reliability::Suspect(SuspectReason::TooSmall)
+        );
+        assert_eq!(
+            judge(
+                PhysicalSize::Dimensions {
+                    width_mm: 12_000,
+                    height_mm: 6_750,
+                    precision: SizePrecision::Millimeters
+                },
+                None
+            ),
+            Reliability::Suspect(SuspectReason::TooLarge)
+        );
     }
 
     #[test]
     fn aspect_that_contradicts_the_native_resolution_is_suspect() {
-        let info = parse_edid(&build(&Spec { dtd_mm: (700, 680), cm: (70, 68), ..Spec::default() })).unwrap();
-        assert!(matches!(info.reliability, Reliability::Suspect(SuspectReason::AspectMismatch { .. })), "{:?}", info.reliability);
+        let info = parse_edid(&build(&Spec {
+            dtd_mm: (700, 680),
+            cm: (70, 68),
+            ..Spec::default()
+        }))
+        .unwrap();
+        assert!(
+            matches!(
+                info.reliability,
+                Reliability::Suspect(SuspectReason::AspectMismatch { .. })
+            ),
+            "{:?}",
+            info.reliability
+        );
         // 2% off is inside the tolerance.
-        let near = parse_edid(&build(&Spec { dtd_mm: (1234, 680), cm: (123, 68), ..Spec::default() })).unwrap();
+        let near = parse_edid(&build(&Spec {
+            dtd_mm: (1234, 680),
+            cm: (123, 68),
+            ..Spec::default()
+        }))
+        .unwrap();
         assert_eq!(near.reliability, Reliability::Reliable);
     }
 
@@ -730,7 +1009,10 @@ mod tests {
         let mut bad = build(&Spec::default());
         bad[1] = 0;
         assert_eq!(parse_edid(&bad), Err(EdidError::BadHeader));
-        assert_eq!(parse_edid(&bad[..100]), Err(EdidError::TooShort { len: 100 }));
+        assert_eq!(
+            parse_edid(&bad[..100]),
+            Err(EdidError::TooShort { len: 100 })
+        );
     }
 
     #[test]
@@ -744,18 +1026,28 @@ mod tests {
 
     #[test]
     fn extension_blocks_are_checksummed_too() {
-        let mut edid = build(&Spec { extension_blocks: 1, ..Spec::default() });
+        let mut edid = build(&Spec {
+            extension_blocks: 1,
+            ..Spec::default()
+        });
         assert!(parse_edid(&edid).unwrap().checksums_valid);
         edid[255] = edid[255].wrapping_add(1);
         assert!(!parse_edid(&edid).unwrap().checksums_valid);
         // A declared extension that is missing is a truncated EDID.
-        let truncated = &build(&Spec { extension_blocks: 1, ..Spec::default() })[..BLOCK_LEN];
+        let truncated = &build(&Spec {
+            extension_blocks: 1,
+            ..Spec::default()
+        })[..BLOCK_LEN];
         assert!(!parse_edid(truncated).unwrap().checksums_valid);
     }
 
     #[test]
     fn monitor_name_without_descriptor_is_none() {
-        let info = parse_edid(&build(&Spec { name: None, ..Spec::default() })).unwrap();
+        let info = parse_edid(&build(&Spec {
+            name: None,
+            ..Spec::default()
+        }))
+        .unwrap();
         assert_eq!(info.monitor_name, None);
     }
 
@@ -777,9 +1069,22 @@ mod tests {
     #[test]
     fn sysfs_lookup_matches_connector_names() {
         let spec = Spec::default();
-        let dir = sysfs(&[("card1-DP-1", &spec, "1920x1080\n1280x720\n"), ("card1-HDMI-A-1", &Spec { name: Some("OTHER"), ..Spec::default() }, "1920x1080\n")]);
+        let dir = sysfs(&[
+            ("card1-DP-1", &spec, "1920x1080\n1280x720\n"),
+            (
+                "card1-HDMI-A-1",
+                &Spec {
+                    name: Some("OTHER"),
+                    ..Spec::default()
+                },
+                "1920x1080\n",
+            ),
+        ]);
         let found = lookup_in_sysfs(dir.path(), Some("DP-1"), (1920, 1080));
-        assert_eq!(found.edid.as_ref().and_then(|e| e.monitor_name.as_deref()), Some("TEST TV"));
+        assert_eq!(
+            found.edid.as_ref().and_then(|e| e.monitor_name.as_deref()),
+            Some("TEST TV")
+        );
         assert!(matches!(&found.source, LookupSource::Sysfs(p) if p.ends_with("card1-DP-1/edid")));
         assert_eq!(found.note, None);
 
@@ -795,8 +1100,18 @@ mod tests {
     #[test]
     fn sysfs_lookup_accepts_other_listed_modes_and_scaled_sizes() {
         let dir = sysfs(&[("card1-DP-1", &Spec::default(), "1920x1080\n1280x1024\n")]);
-        assert!(lookup_in_sysfs(dir.path(), Some("DP-1"), (1280, 1024)).edid.is_some(), "listed mode");
-        assert!(lookup_in_sysfs(dir.path(), Some("DP-1"), (1536, 864)).edid.is_some(), "scaled, same aspect");
+        assert!(
+            lookup_in_sysfs(dir.path(), Some("DP-1"), (1280, 1024))
+                .edid
+                .is_some(),
+            "listed mode"
+        );
+        assert!(
+            lookup_in_sysfs(dir.path(), Some("DP-1"), (1536, 864))
+                .edid
+                .is_some(),
+            "scaled, same aspect"
+        );
     }
 
     #[test]
@@ -804,16 +1119,45 @@ mod tests {
         let dir = sysfs(&[("card1-DP-1", &Spec::default(), "1920x1080\n")]);
         let wrong_size = lookup_in_sysfs(dir.path(), Some("DP-1"), (1024, 768));
         assert_eq!(wrong_size.edid, None);
-        assert_eq!(wrong_size.note, Some(LookupNote::ResolutionMismatch { native: (1920, 1080), screen: (1024, 768) }));
-        assert_eq!(lookup_in_sysfs(dir.path(), Some("DP-9"), (1920, 1080)).note, Some(LookupNote::NotFound));
-        assert_eq!(lookup_in_sysfs(dir.path(), None, (1920, 1080)).note, Some(LookupNote::NoMonitorName));
-        assert_eq!(lookup_in_sysfs(dir.path(), Some("DP-2"), (1920, 1080)).note, Some(LookupNote::NotFound), "disconnected connector");
+        assert_eq!(
+            wrong_size.note,
+            Some(LookupNote::ResolutionMismatch {
+                native: (1920, 1080),
+                screen: (1024, 768)
+            })
+        );
+        assert_eq!(
+            lookup_in_sysfs(dir.path(), Some("DP-9"), (1920, 1080)).note,
+            Some(LookupNote::NotFound)
+        );
+        assert_eq!(
+            lookup_in_sysfs(dir.path(), None, (1920, 1080)).note,
+            Some(LookupNote::NoMonitorName)
+        );
+        assert_eq!(
+            lookup_in_sysfs(dir.path(), Some("DP-2"), (1920, 1080)).note,
+            Some(LookupNote::NotFound),
+            "disconnected connector"
+        );
 
-        let twins = sysfs(&[("card1-DP-1", &Spec::default(), "1920x1080\n"), ("card1-DP-3", &Spec::default(), "1920x1080\n")]);
-        assert_eq!(lookup_in_sysfs(twins.path(), Some("TEST TV"), (1920, 1080)).note, Some(LookupNote::Ambiguous { candidates: 2 }));
+        let twins = sysfs(&[
+            ("card1-DP-1", &Spec::default(), "1920x1080\n"),
+            ("card1-DP-3", &Spec::default(), "1920x1080\n"),
+        ]);
+        assert_eq!(
+            lookup_in_sysfs(twins.path(), Some("TEST TV"), (1920, 1080)).note,
+            Some(LookupNote::Ambiguous { candidates: 2 })
+        );
 
-        let missing = lookup_in_sysfs(Path::new("/nonexistent/odyssey"), Some("DP-1"), (1920, 1080));
-        assert_eq!(missing.note, Some(LookupNote::Unreadable(io::ErrorKind::NotFound)));
+        let missing = lookup_in_sysfs(
+            Path::new("/nonexistent/odyssey"),
+            Some("DP-1"),
+            (1920, 1080),
+        );
+        assert_eq!(
+            missing.note,
+            Some(LookupNote::Unreadable(io::ErrorKind::NotFound))
+        );
     }
 
     #[test]
@@ -828,7 +1172,10 @@ mod tests {
         let id = r"MONITOR\DELA0A1\{4d36e96e-e325-11ce-bfc1-08002be10318}\0004";
         assert_eq!(
             parse_monitor_device_id(id),
-            Some(("DELA0A1".to_owned(), r"{4d36e96e-e325-11ce-bfc1-08002be10318}\0004".to_owned()))
+            Some((
+                "DELA0A1".to_owned(),
+                r"{4d36e96e-e325-11ce-bfc1-08002be10318}\0004".to_owned()
+            ))
         );
         assert_eq!(parse_monitor_device_id(r"PCI\VEN_10DE"), None);
         assert_eq!(parse_monitor_device_id(r"MONITOR\\x"), None);

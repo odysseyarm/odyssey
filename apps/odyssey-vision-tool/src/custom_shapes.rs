@@ -1,5 +1,5 @@
 use iui::controls::{FontDescription, SlantStyle, StretchStyle};
-use iui::draw::{self, text, Brush, FillMode, Path, SolidBrush, StrokeParams};
+use iui::draw::{self, Brush, FillMode, Path, SolidBrush, StrokeParams, text};
 use nalgebra::{Point2, Rotation2, SMatrix, Transform2, Vector2};
 
 pub fn draw_crosshair(ctx: &draw::DrawContext, path: &Path, x: f64, y: f64, r: f64) {

@@ -1,6 +1,8 @@
-use crate::event::TrackingEvent;
-use odyssey_hub_client::tracking_history::TrackingHistory as TrackingHistoryInner;
 use std::sync::{Arc, Mutex};
+
+use odyssey_hub_client::tracking_history::TrackingHistory as TrackingHistoryInner;
+
+use crate::event::TrackingEvent;
 
 pub struct TrackingHistory {
     inner: Arc<Mutex<TrackingHistoryInner>>,
