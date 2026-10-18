@@ -50,6 +50,9 @@ jobs:
           tool: cross
       - name: Build (cross)
         working-directory: sdk/odyssey-hub-client-ffi
+        # See Cross.toml: cross has to mount the root Cargo.toml the crates inherit from.
+        env:
+          ODYSSEY_REPO: ${{ github.workspace }}
         run: cross build --release -p odyssey-hub-client-ffi --target ${{ matrix.target }}
       - name: Rename libs
         run: |
