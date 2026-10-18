@@ -27,7 +27,7 @@ use paj7025_nrf::Paj7025;
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
-#[link_section = ".ramtextload"]
+#[unsafe(link_section = ".ramtextload")]
 #[cortex_m_rt::pre_init]
 unsafe fn init_ramtext() {
     core::arch::asm!(

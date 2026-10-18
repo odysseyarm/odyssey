@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(never_type)]
 
 // VM board implementation modules
 pub mod imu;

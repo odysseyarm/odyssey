@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(never_type)]
 
 // ATSlite board implementation modules - board-specific
 pub mod battery_model;

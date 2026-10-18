@@ -23,7 +23,7 @@ pub use odyssey_protocol;
 /// Helper macro to create a static byte buffer
 #[macro_export]
 macro_rules! static_byte_buffer {
-    ($size:expr) => {{
+    ($size:expr_2021) => {{
         static BUFFER: static_cell::ConstStaticCell<[u8; $size]> =
             static_cell::ConstStaticCell::new([0u8; $size]);
         BUFFER.take()

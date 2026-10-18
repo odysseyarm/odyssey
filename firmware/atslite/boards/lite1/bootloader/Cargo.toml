@@ -1,5 +1,5 @@
 [package]
-edition = "2021"
+edition = "2024"
 name = "lite1-bootloader"
 version = "0.2.0"
 description = "Second-stage bootloader for lite1"

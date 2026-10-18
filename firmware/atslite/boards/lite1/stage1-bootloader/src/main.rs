@@ -48,7 +48,9 @@ unsafe extern "C" fn HardFault() {
 
 #[exception]
 unsafe fn DefaultHandler(_: i16) -> ! {
-    const SCB_ICSR: *const u32 = 0xE000_ED04 as *const u32;
-    let irqn = core::ptr::read_volatile(SCB_ICSR) as u8 as i16 - 16;
-    panic!("DefaultHandler #{:?}", irqn);
+    unsafe {
+        const SCB_ICSR: *const u32 = 0xE000_ED04 as *const u32;
+        let irqn = core::ptr::read_volatile(SCB_ICSR) as u8 as i16 - 16;
+        panic!("DefaultHandler #{:?}", irqn);
+    }
 }

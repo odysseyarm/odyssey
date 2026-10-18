@@ -13,7 +13,7 @@ static CACHED_ACTIVE_SLOT: AtomicU8 = AtomicU8::new(0);
 static CACHED_PENDING_SLOT: AtomicU8 = AtomicU8::new(0);
 
 fn bootloader_state_addr() -> u32 {
-    extern "C" {
+    unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
     unsafe { &__bootloader_state_start as *const u32 as u32 }

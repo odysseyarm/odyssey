@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(never_type)]
 
 // Platform abstraction - traits for board implementations
 pub mod platform;
