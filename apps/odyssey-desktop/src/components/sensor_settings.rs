@@ -1371,6 +1371,14 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
     }
 }
 
+/// What the settings load reads: the device as it is now and whether its sensors
+/// can be tuned, which depends on the events link being up.
+#[derive(Clone, PartialEq)]
+struct LoadTarget {
+    device: Device,
+    can_tune_sensors: bool,
+}
+
 // --- Main SensorSettings Component ---
 
 /// Summarise invalid input without repeating every message; the offending
@@ -1421,16 +1429,22 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let mut is_open = use_signal(|| false);
 
     // Coroutine: receives () each time settings should be loaded from device.
-    // Triggered on section expand and Reload button click.
-    let device_for_load = std::sync::Arc::new(device.clone());
-    let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| {
-        let device_for_load = device_for_load.clone();
-        async move {
+    // Triggered on section expand, the Reload button, and when the sensor panels
+    // first become available.
+    //
+    // The closure runs once, so it reads the device and the sensor capability
+    // through a signal rather than capturing them: both change while the
+    // component stays mounted, since a unit whose Bluetooth events link attaches
+    // after the first render only gains its sensor panels then.
+    let mut load_target =
+        use_signal(|| LoadTarget { device: device.clone(), can_tune_sensors });
+    let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| async move {
         while rx.next().await.is_some() {
             loading.set(true);
             status.set(OpStatus::Busy("Reading from device...".into()));
             let hub_ctx = hub.peek().clone();
-            let device = (*device_for_load).clone();
+            let load_target = load_target.peek().clone();
+            let device = load_target.device.clone();
             // Keep the first failure. A later read succeeding does not make the
             // form trustworthy, and reporting "Loaded" over a failed read is how
             // stale values end up being flashed back onto the device.
@@ -1458,7 +1472,7 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
                 }
             }
 
-            if can_tune_sensors {
+            if load_target.can_tune_sensors {
                 let result = if is_paj {
                     match (
                         paj_load_from_device(&hub_ctx, &device, 0).await,
@@ -1486,7 +1500,21 @@ pub fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
             status.set(failure.unwrap_or(OpStatus::Done("Loaded from device".into())));
             loading.set(false);
         }
-    }});
+    });
+
+    // Keep the load target current, and fill the sensor panels as soon as they
+    // appear: they render empty until something loads them, and a form that was
+    // loaded before the events link came up never asked for them.
+    {
+        let device = device.clone();
+        use_effect(use_reactive!(|(device, can_tune_sensors)| {
+            let panels_appeared = !load_target.peek().can_tune_sensors && can_tune_sensors;
+            load_target.set(LoadTarget { device, can_tune_sensors });
+            if panels_appeared && *is_open.peek() {
+                load_co.send(());
+            }
+        }));
+    }
 
     // Guards applied after all hooks have been called.
     if !should_render {
