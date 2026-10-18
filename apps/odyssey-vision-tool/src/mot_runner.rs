@@ -39,7 +39,7 @@ pub fn transform_aimpoint_to_identity(
 
 /// Given 4 points in the following shape
 ///
-/// ```
+/// ```text
 /// +--x
 /// |
 /// y                 top
@@ -72,7 +72,7 @@ pub fn sort_diamond<T: Scalar + PartialOrd>(a: &mut [Point2<T>]) {
 
 /// Given 4 points in the following shape
 ///
-/// ```
+/// ```text
 /// +--x
 /// |
 /// y        a              b
