@@ -34,11 +34,8 @@ use crate::icmsg_config::ALIGN;
 
 /// Release counter of this net-core image. Release tooling greps this exact line; keep it on one
 /// line. 0 is reserved for "unknown" on the host side.
-macro_rules! release {
-    () => {
-        1
-    };
-}
+#[rustfmt::skip]
+macro_rules! release { () => { 1 }; }
 
 const RELEASE: u16 = release!();
 const _: () = assert!(RELEASE != 0);
