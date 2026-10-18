@@ -1050,15 +1050,29 @@ where
         transfer_size
     );
 
-    // Download the firmware with progress callback
+    // Download the firmware with progress callback. The wrapper also records how
+    // much the library has read, which decides below whether an error at the end
+    // is the handshake or a real failure.
+    let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut progress_callback = progress_callback;
+    let progress_callback = {
+        let sent = sent.clone();
+        move |done: usize, total: usize| {
+            sent.store(done, std::sync::atomic::Ordering::Relaxed);
+            progress_callback(done, total);
+        }
+    };
     let cursor = ProgressReader::new(Cursor::new(firmware), total_size, Some(progress_callback));
 
-    // The download may return a "cancelled" error at the end if the device
-    // resets immediately after receiving all data (before the final status check).
-    // This is expected behavior for devices with WILL_DETACH or manifestation tolerant.
+    // A bootloader that resets itself once it has all the data (WILL_DETACH)
+    // can drop the final status poll, which surfaces as a cancelled transfer or
+    // a stall. That is only the expected end of the download once every byte has
+    // gone out; the same errors earlier mean the device refused the image.
     match dfu_async.download(cursor, total_size as u32).await {
         Ok(()) => {}
-        Err(dfu_nusb::Error::Transfer(nusb::transfer::TransferError::Cancelled)) => {
+        Err(dfu_nusb::Error::Transfer(
+            nusb::transfer::TransferError::Cancelled | nusb::transfer::TransferError::Stall,
+        )) if sent.load(std::sync::atomic::Ordering::Relaxed) >= total_size => {
             tracing::info!("Download completed (device reset during final handshake, as expected)");
         }
         Err(e) => return Err(e.into()),
