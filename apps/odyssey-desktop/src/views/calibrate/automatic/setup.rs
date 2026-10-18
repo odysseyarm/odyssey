@@ -391,6 +391,7 @@ fn FlatSize(wizard: Wizard) -> Element {
     // and behind "Not right?" when it could.
     let field_open = !finding.is_found() || *wizard.manual_size.read();
     let advice = finding.advice();
+    let prefer_camera = wizard.prefer_camera_size();
     let aside = finding.projector_aside();
     let lines = finding.detail_lines();
 
@@ -411,7 +412,13 @@ fn FlatSize(wizard: Wizard) -> Element {
                     class: "flex flex-col gap-1",
                     p {
                         class: "text-lg font-medium text-gray-900 dark:text-white",
-                        if typed && finding.is_found() { "Using the size you entered instead of the TV's." } else { "{finding.headline()}" }
+                        if typed && finding.is_found() {
+                            "Using the size you entered instead of the TV's."
+                        } else if prefer_camera && finding.is_found() {
+                            "The camera will measure the screen's size."
+                        } else {
+                            "{finding.headline()}"
+                        }
                     }
                     if let Some(advice) = advice {
                         p { class: "text-base text-gray-600 dark:text-gray-300", "{advice}" }
@@ -429,6 +436,26 @@ fn FlatSize(wizard: Wizard) -> Element {
                         r#type: "button",
                         onclick: move |_| *wizard.manual_size.write() = true,
                         "Not right? Enter the size yourself"
+                    }
+                }
+            }
+            if finding.is_found() && !field_open {
+                label {
+                    r#for: "prefer-camera-size",
+                    class: "flex w-fit items-start gap-3 text-base text-gray-900 dark:text-white",
+                    input {
+                        id: "prefer-camera-size",
+                        r#type: "checkbox",
+                        class: "mt-1 size-5",
+                        checked: prefer_camera,
+                        onchange: move |e| wizard.set_prefer_camera_size(e.checked()),
+                    }
+                    span {
+                        "Measure the size with the camera instead of using the TV's own"
+                        span {
+                            class: "block text-sm text-gray-600 dark:text-gray-300",
+                            "Remembered for every screen. A size you type still wins."
+                        }
                     }
                 }
             }
