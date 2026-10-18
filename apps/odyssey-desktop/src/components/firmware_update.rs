@@ -103,6 +103,9 @@ pub enum FirmwareUpdateState {
     FlashingNetCore { progress: usize, total: usize },
     /// Waiting for the net core to report the release that was just written
     VerifyingNetCore,
+    /// Waiting for the net core bootloader to copy the staged net core image and
+    /// the device to return to DFU mode
+    InstallingNetCore,
     /// Waiting for device to reboot after flash
     Rebooting,
     /// Verifying the new firmware version
@@ -450,6 +453,12 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
         FirmwareUpdateState::VerifyingNetCore => rsx! {
             span { class: "text-xs text-blue-500", "Checking radio firmware..." }
         },
+        FirmwareUpdateState::InstallingNetCore => rsx! {
+            span {
+                class: "text-xs text-blue-500",
+                "Installing radio firmware (this can take a couple of minutes)..."
+            }
+        },
         FirmwareUpdateState::Rebooting => rsx! {
             span { class: "text-xs text-blue-500", "Rebooting device..." }
         },
@@ -511,10 +520,15 @@ fn start_firmware_update(
 /// the device reconnects, so this has to outlast both.
 const NETCORE_REPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// How long a device gets to come back in application mode after a net core
-/// write. The net core bootloader copies the staged image into net flash
-/// before the application boots, which takes longer than an application reset.
-const NETCORE_REBOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+/// How long the net core bootloader and the stage2 bootloader get to finish a
+/// net core update and bring the device back into DFU mode. Stage2 itself gives
+/// the copy up to two minutes before it resets to retry, so this has to outlast
+/// that.
+const NETCORE_INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+
+/// How long the device may keep enumerating as a bootloader after the net core
+/// download completes before it counts as never having reset to start the copy.
+const NETCORE_RESET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 fn netcore_not_reported(published: u16) -> String {
     format!(
@@ -588,11 +602,11 @@ async fn enter_dfu(
     vid: u16,
     pid: u16,
 ) -> Result<(), String> {
-    // If it has no vendor interface (class 0xFF) it cannot accept a DFU detach request —
-    // it is already waiting for a download.
-    let already_in_dfu = firmware::find_device_by_uuid(&device_uuid, vid, pid)
-        .map(|info| !info.interfaces().any(|i| i.class() == 0xFF))
-        .unwrap_or(false);
+    // The application also exposes a DFU interface (for the runtime descriptor
+    // that takes the detach), so only the DFU-mode protocol means the bootloader
+    // is already running and waiting for a download. It enumerates under its own
+    // product id, which is why the application's id alone cannot find it.
+    let already_in_dfu = firmware::is_device_in_dfu_mode(&device_uuid, vid, pid);
 
     if already_in_dfu {
         tracing::info!("Device {:02x?} is already in DFU mode, skipping detach", device_uuid);
@@ -680,12 +694,33 @@ async fn flash_with_progress(
     Ok(())
 }
 
-/// Write the net core image and wait for the device to boot again.
+/// Poll until the device stops enumerating as a bootloader, `false` on timeout.
+async fn wait_for_bootloader_reset(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+    timeout: std::time::Duration,
+) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if !firmware::is_device_in_dfu_mode(uuid, vid, pid) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    false
+}
+
+/// Write the net core image and wait for the device to be back in DFU mode.
 ///
-/// Completing the download only means the bootloader has the image staged: the
-/// net core bootloader copies it into net flash on the reset that follows, and
-/// stage2 boots on whether or not that copy succeeded. Whether it took is for
-/// the caller to read back.
+/// Completing the download only means the bootloader has the image staged. The
+/// device resets, and the stage2 bootloader starts the net core bootloader,
+/// which copies the image into net flash; stage2 treats every outcome of that
+/// copy alike. The application's DFU request is still pending afterwards, so the
+/// device returns to DFU mode and stays there until an application is written:
+/// the caller continues in that same DFU session without detaching again. Nothing
+/// reports the net core while the device is in the bootloader, so whether the
+/// copy took is only readable once the new application runs.
 async fn flash_netcore(
     manager: &FirmwareUpdateManager,
     device_uuid: [u8; 6],
@@ -693,7 +728,6 @@ async fn flash_netcore(
     pid: u16,
     image: &[u8],
     release: u16,
-    started_in_bootloader: bool,
 ) -> Result<(), String> {
     enter_dfu(manager, device_uuid, vid, pid).await?;
 
@@ -713,23 +747,28 @@ async fn flash_netcore(
     )
     .await?;
 
-    manager.set_state(device_uuid, FirmwareUpdateState::Rebooting);
-    tracing::info!("Waiting for the device to copy the net core image and reboot...");
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    if wait_for_app_mode(&device_uuid, vid, pid, NETCORE_REBOOT_TIMEOUT).await {
-        tracing::info!("Device returned in application mode");
-    } else if started_in_bootloader {
-        // A device recovered from the bootloader may have no bootable
-        // application yet, in which case it stays in DFU mode and the
-        // application written next is what brings it back.
-        tracing::info!("Device is still in the bootloader after the net core write");
-    } else {
+    manager.set_state(device_uuid, FirmwareUpdateState::InstallingNetCore);
+    tracing::info!("Waiting for the device to copy the net core image and return to DFU mode...");
+    // The bootloader may still be enumerating for a moment after the download,
+    // and that stale enumeration would satisfy the wait below at once, sending
+    // the application image into a device that is about to reset.
+    if !wait_for_bootloader_reset(&device_uuid, vid, pid, NETCORE_RESET_TIMEOUT).await {
         return Err(format!(
-            "Device did not return within {}s after the net core update. It may still be \
-             in the bootloader — leave it connected and try again.",
-            NETCORE_REBOOT_TIMEOUT.as_secs()
+            "Device did not reset within {}s after the net core download. Leave it \
+             connected and run the update again.",
+            NETCORE_RESET_TIMEOUT.as_secs()
         ));
     }
+    firmware::wait_for_dfu_device(&device_uuid, vid, pid, NETCORE_INSTALL_TIMEOUT)
+        .await
+        .map_err(|e| {
+            format!(
+                "Device did not return to DFU mode within {}s after the net core update ({e}). \
+                 Leave it connected and run the update again.",
+                NETCORE_INSTALL_TIMEOUT.as_secs()
+            )
+        })?;
+    tracing::info!("Device is back in DFU mode");
     Ok(())
 }
 
@@ -761,23 +800,23 @@ async fn run_firmware_update(
 
     // The net core is released separately from the application, so the entry
     // only says which release it was tested with. Whether it has to be written
-    // is decided here, before anything is downloaded or detached, so a floor
-    // that cannot be met refuses the update while the device is untouched.
+    // is decided here, before anything is downloaded or detached, from the
+    // release the hub last read. A reading of 0 means unknown (an application
+    // too old to report one, a net core that does not answer, a device in the
+    // bootloader) and is replaced whenever a release is published.
     //
-    // A device whose application reports no net core release is either too old
-    // to report one or has a net core that does not answer; the hub reports 0
-    // for both. Only a reading above 0 proves the application can relay it, so
-    // anything else takes the path where the read-back waits for the new
-    // application. There the requirement can only be checked after the
-    // application is written, because no running component can report the net
-    // core earlier; a silently failed copy surfaces then, as an error telling
-    // the user to run the update again.
+    // With the current stage2 nothing reports the net core while the device is
+    // in the bootloader, and a net core update leaves the device there until an
+    // application is written. So the net core is written first and read back
+    // only after the new application runs. `requires_netcore` is judged here
+    // against what the update will install, and is confirmed by that read-back
+    // after the application is written: a silently failed copy is detected then,
+    // as an error telling the user to run the update again.
     let published_netcore = firmware_entry
         .files
         .get("net-core")
         .and_then(|entry| entry.release.map(|release| (entry, release)));
     let steps = firmware::plan_update_steps(
-        device.netcore_release != 0,
         device.netcore_release,
         published_netcore.map(|(_, release)| release),
         firmware_entry.requires_netcore,
@@ -857,8 +896,7 @@ async fn run_firmware_update(
                 let (image, release) = netcore_image
                     .as_ref()
                     .ok_or("The update plan flashes the net core but no image was downloaded")?;
-                flash_netcore(manager, device_uuid, vid, pid, image, *release, in_bootloader)
-                    .await?;
+                flash_netcore(manager, device_uuid, vid, pid, image, *release).await?;
             }
             firmware::UpdateStep::VerifyNetCore => {
                 let (_, release) = netcore_image
@@ -1072,6 +1110,9 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
             format!("Updating radio firmware... {}%", percent)
         }
         FirmwareUpdateState::VerifyingNetCore => "Checking radio firmware...".to_string(),
+        FirmwareUpdateState::InstallingNetCore => {
+            "Installing radio firmware (this can take a couple of minutes)...".to_string()
+        }
         FirmwareUpdateState::Rebooting => "Rebooting device...".to_string(),
         FirmwareUpdateState::Verifying => "Verifying update...".to_string(),
         FirmwareUpdateState::Complete => "Update complete!".to_string(),

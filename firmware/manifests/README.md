@@ -69,11 +69,13 @@ The net core (the nRF5340 BLE controller) is released on its own under
    `net-core.bin`, not a local build, and records `release` on the `net-core`
    file entry.
 
-The device reports the counter itself, so a host reads it back after an update
-to verify the copy; a net core that fails to install simply does not answer.
-Reading it needs device protocol 0.1.5 or newer; older firmware cannot decode
-the request, so a host must not ask it, and treats such a device's net core as
-unknown.
+The device reports the counter itself, so a host reads it back to verify the
+copy; a net core that fails to install simply does not answer. Nothing reports
+the net core while the device is in the stage2 bootloader, and a net core update
+leaves the device there until an application is written, so the read-back only
+happens once the new application is running. Reading it needs device protocol
+0.1.5 or newer; older firmware cannot decode the request, so a host must not ask
+it, and treats such a device's net core as unknown.
 
 Do not delete a published net-core release; manifest entries point at it.
 
@@ -91,9 +93,11 @@ just gen-release <requires_bootloader> <requires_netcore> <min_desktop>
   bootloader, after any update in the same session, reaches it. It must not be
   above the bootloader being published.
 - `requires_netcore`: the lowest net-core release this application can run on,
-  `0` for none. The host refuses to install the application unless the net
-  core, after any update in the same session, reports at least that release. It
-  must be an integer and not above the net core being published.
+  `0` for none. The host checks it against the net core the update installs
+  before touching the device, and confirms it by reading the release back once
+  the application is installed and running; if the net core does not report the
+  published release then, the update ends in an error and is run again. It must
+  be an integer and not above the net core being published.
 - `min_desktop`: the oldest Odyssey Desktop this firmware is required and tested
   with. It is not automatically the desktop shipping alongside; coupling a
   hotfix to a desktop upgrade it does not need strands users. Older desktops
