@@ -81,6 +81,97 @@ pub async fn firmware_channel_save_async(name: &str) -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/* -------------------------------- UI state --------------------------------- */
+
+/// Identifies a monitor across launches. Models repeat across a desk (two
+/// identical panels share a name), so the key also carries the monitor's slot
+/// in the virtual desktop. Rearranging the monitors changes the key, which is
+/// the right outcome: the remembered pick no longer names the same screen.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct MonitorKey {
+    pub name: Option<String>,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Desktop app state that is not a setting but should survive a restart.
+///
+/// Every field defaults when absent, so files written by older versions keep
+/// loading after new fields land.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct UiState {
+    /// The monitor the user last picked in the screen picker.
+    pub selected_monitor: Option<MonitorKey>,
+}
+
+fn ui_state_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?.join("ui_state.json"))
+}
+
+pub async fn ui_state_async() -> ConfigLoadResult<UiState> {
+    match ui_state_path() {
+        Ok(path) => load_ui_state_from(path).await,
+        Err(e) => {
+            tracing::error!("Failed to get UI state path: {}", e);
+            ConfigLoadResult::NotFoundUsingDefault
+        }
+    }
+}
+
+pub async fn ui_state_save_async(state: &UiState) -> Result<(), Box<dyn std::error::Error>> {
+    save_ui_state_to(&ui_state_path()?, state).await
+}
+
+async fn load_ui_state_from(path: PathBuf) -> ConfigLoadResult<UiState> {
+    let contents = match fs::read_to_string(&path).await {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!("UI state file not found, using default values");
+            return ConfigLoadResult::NotFoundUsingDefault;
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to read UI state file at {}: {}. Using defaults.",
+                path.display(),
+                e
+            );
+            return ConfigLoadResult::CorruptedUsingDefault {
+                path,
+                error: e.to_string(),
+            };
+        }
+    };
+
+    match json5::from_str::<UiState>(&contents) {
+        Ok(state) => ConfigLoadResult::Success(state),
+        Err(e) => {
+            tracing::error!(
+                "Corrupted UI state file at {}: {}. Using defaults.",
+                path.display(),
+                e
+            );
+            ConfigLoadResult::CorruptedUsingDefault {
+                path,
+                error: e.to_string(),
+            }
+        }
+    }
+}
+
+async fn save_ui_state_to(
+    path: &std::path::Path,
+    state: &UiState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    fs::write(path, serde_json::to_string_pretty(state)?).await?;
+    Ok(())
+}
+
 /* ------------------------------- Shot delays ------------------------------- */
 
 pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16>> {
@@ -375,4 +466,75 @@ pub async fn accessory_map_save_async(
     let contents = json5::to_string(&wrapped)?;
     fs::write(&path, contents).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    fn key() -> MonitorKey {
+        MonitorKey {
+            name: Some("DELL U2723QE".into()),
+            x: -2560,
+            y: 0,
+            width: 2560,
+            height: 1440,
+        }
+    }
+
+    #[test]
+    fn ui_state_round_trips_through_disk() {
+        let dir = std::env::temp_dir().join(format!("odyssey-ui-state-rt-{}", std::process::id()));
+        let path = dir.join("nested").join("ui_state.json");
+        let state = UiState {
+            selected_monitor: Some(key()),
+        };
+
+        block_on(async {
+            save_ui_state_to(&path, &state).await.unwrap();
+            match load_ui_state_from(path.clone()).await {
+                ConfigLoadResult::Success(loaded) => assert_eq!(loaded, state),
+                other => panic!("expected Success, got {other:?}"),
+            }
+        });
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ui_state_missing_file_uses_default() {
+        let path = std::env::temp_dir().join("odyssey-ui-state-missing/ui_state.json");
+        let result = block_on(load_ui_state_from(path));
+        assert!(matches!(result, ConfigLoadResult::NotFoundUsingDefault));
+        assert_eq!(result.into_value(), UiState::default());
+    }
+
+    #[test]
+    fn ui_state_corrupt_file_falls_back_to_default() {
+        let dir = std::env::temp_dir().join(format!("odyssey-ui-state-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ui_state.json");
+        std::fs::write(&path, "{ selected_monitor: [oops").unwrap();
+
+        let result = block_on(load_ui_state_from(path));
+        assert!(result.is_corrupted());
+        assert_eq!(result.into_value(), UiState::default());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ui_state_tolerates_missing_and_unknown_fields() {
+        assert_eq!(
+            json5::from_str::<UiState>("{}").unwrap(),
+            UiState::default()
+        );
+        let state: UiState = json5::from_str(r#"{ "from_a_newer_version": 3 }"#).unwrap();
+        assert_eq!(state, UiState::default());
+    }
 }
