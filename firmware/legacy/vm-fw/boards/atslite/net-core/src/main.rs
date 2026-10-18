@@ -34,6 +34,25 @@ use static_cell::StaticCell;
 
 use {defmt_rtt as _, panic_probe as _};
 
+/// Release counter of this net-core image. Release tooling greps this exact line; keep it on one
+/// line. 0 is reserved for "unknown" on the host side.
+macro_rules! release { () => { 1 }; }
+
+const RELEASE: u16 = release!();
+const _: () = assert!(RELEASE != 0);
+
+/// Vendor-specific HCI command (OGF 0x3F, OCF 0x3F0) that returns [`RELEASE`]. The net core answers
+/// it itself; the SoftDevice Controller never sees it.
+const OPCODE_READ_RELEASE: u16 = 0xFFF0;
+
+/// H4 Command Complete event for [`OPCODE_READ_RELEASE`]: indicator 0x04, event 0x0E, plen 6,
+/// one command credit, the opcode, status 0 and the release counter little-endian.
+const fn read_release_reply(release: u16) -> [u8; 9] {
+    let op = OPCODE_READ_RELEASE.to_le_bytes();
+    let rel = release.to_le_bytes();
+    [0x04, 0x0E, 0x06, 0x01, op[0], op[1], 0x00, rel[0], rel[1]]
+}
+
 embassy_nrf::bind_interrupts!(struct Irqs {
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
     RNG => rng::InterruptHandler<RNG>;
@@ -283,6 +302,12 @@ async fn exec_h4_to_sdc(
         bt_hci::PacketKind::Cmd => {
             let (opcode, payload) = parse_cmd_after_h4(rest)?;
             defmt::debug!("opcode {}", opcode);
+            if opcode.to_raw() == OPCODE_READ_RELEASE {
+                let reply = read_release_reply(RELEASE);
+                return send
+                    .lock(|x| x.borrow_mut().send(&reply))
+                    .map_err(|_| cmd::Error::Io(sdc::Error::EIO));
+            }
             exec_cmd_by_opcode::<sdc::Error>(send, sdc, opcode, payload).await
         }
         bt_hci::PacketKind::AclData => io!(sdc.hci_data_put(rest)),

@@ -129,6 +129,7 @@ async fn handle_cmd(
                     Props::Name(name.into())
                 }
                 PropKind::ProductId => return,
+                PropKind::NetCoreRelease => Props::NetCoreRelease(crate::ble::netcore::netcore_release()),
             };
             device_control::try_send_event(DeviceMsg::ReadPropResponse(prop));
         }

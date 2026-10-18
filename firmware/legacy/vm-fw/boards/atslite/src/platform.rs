@@ -37,4 +37,8 @@ impl common::platform::Platform for AtslitePlatform {
     fn device_id() -> [u8; 8] {
         crate::utils::device_id()
     }
+
+    fn netcore_release() -> u16 {
+        crate::ble::netcore::netcore_release()
+    }
 }

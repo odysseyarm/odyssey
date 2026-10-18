@@ -86,6 +86,7 @@ pub async fn object_mode<'d, P: Platform, C1: embassy_nrf::gpiote::Channel, C2: 
         P::device_id(),
         ctx.data_mode,
         ctx.version,
+        P::netcore_release,
         &impact_settings,
         P::round_accel_odr,
         P::set_ble_name,
@@ -145,6 +146,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     device_id: [u8; 8],
     data_mode: fn() -> TransportMode,
     version: [u16; 3],
+    netcore_release: fn() -> u16,
     impact_settings: &ImpactSettings,
     round_accel_odr: fn(u16) -> u16,
     set_ble_name: fn(&str),
@@ -319,6 +321,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     PropKind::ProductId => Props::ProductId(pid),
                     PropKind::Name => Props::Name(settings.general.name.clone().into()),
                     PropKind::Version => Props::Version(odyssey_protocol::Version::new(version)),
+                    PropKind::NetCoreRelease => Props::NetCoreRelease(netcore_release()),
                 };
                 Some(Packet {
                     id: pkt.id,
