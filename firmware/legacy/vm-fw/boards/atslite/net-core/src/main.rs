@@ -32,10 +32,13 @@ use static_cell::StaticCell;
 use crate::cmd_dispatch::exec_cmd_by_opcode;
 use crate::icmsg_config::ALIGN;
 
-/// Release counter of this net-core image. Release tooling greps this exact line; keep it on one
-/// line. 0 is reserved for "unknown" on the host side.
-#[rustfmt::skip]
-macro_rules! release { () => { 1 }; }
+/// Release counter of this net-core image. Release tooling reads the literal through
+/// firmware/release-counter, which ignores layout. 0 is reserved for "unknown" on the host side.
+macro_rules! release {
+    () => {
+        1
+    };
+}
 
 const RELEASE: u16 = release!();
 const _: () = assert!(RELEASE != 0);

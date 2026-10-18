@@ -1,0 +1,11 @@
+#!/bin/sh
+# Print the release counter a bootloader or net-core image declares with
+# `macro_rules! release { () => { N }; }`, or nothing when there is none.
+#
+# The source is read as tokens, with all whitespace dropped, so rustfmt may lay
+# the macro out however it likes. The Justfiles and the bootloader and
+# net-core release workflows all read the counter through here, so there is
+# one parser to keep right.
+set -eu
+tr -d ' \t\r\n' < "$1" |
+    sed -n 's/.*macro_rules!release{()=>{\([0-9][0-9]*\)};}.*/\1/p'

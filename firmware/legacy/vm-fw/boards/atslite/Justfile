@@ -1,5 +1,7 @@
 ﻿output_dir := "build"
 net_core := "net-core"
+# Reads the release counter out of a bootloader or net-core main.rs.
+release_counter := justfile_directory() / "../../../../release-counter"
 bootloader_dist := "dist-bootloader"
 netcore_dist := "dist-netcore"
 
@@ -56,7 +58,7 @@ dist-bootloader: build-bootloader
 release-bootloader: dist-bootloader
     #!/usr/bin/env bash
     set -euo pipefail
-    RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' bootloader/src/main.rs)
+    RELEASE=$({{release_counter}} bootloader/src/main.rs)
     if [ -z "$RELEASE" ]; then
         echo "Error: no release counter found in bootloader/src/main.rs"
         exit 1
@@ -115,7 +117,7 @@ dist-netcore: build-net
 release-netcore: dist-netcore
     #!/usr/bin/env bash
     set -euo pipefail
-    RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' {{net_core}}/src/main.rs)
+    RELEASE=$({{release_counter}} {{net_core}}/src/main.rs)
     if [ -z "$RELEASE" ]; then
         echo "Error: no release counter found in {{net_core}}/src/main.rs"
         exit 1
@@ -284,7 +286,7 @@ gen-release requires_bootloader requires_netcore min_desktop:
 
     # The net core is versioned on its own too, by the counter in its source,
     # and hashed from its published asset for the same reason as the bootloader.
-    NET_CORE_RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' net-core/src/main.rs)
+    NET_CORE_RELEASE=$({{release_counter}} net-core/src/main.rs)
     if [ -z "$NET_CORE_RELEASE" ]; then
         echo "Error: no release counter found in net-core/src/main.rs"
         exit 1
@@ -302,7 +304,7 @@ gen-release requires_bootloader requires_netcore min_desktop:
     # released on its own. Hash the published asset rather than a local build:
     # a release built elsewhere is not bit-identical, and the manifest has to
     # describe the bytes devices will actually download.
-    BOOTLOADER_RELEASE=$(sed -n 's/^macro_rules! release { () => { \([0-9][0-9]*\) }; }$/\1/p' bootloader/src/main.rs)
+    BOOTLOADER_RELEASE=$({{release_counter}} bootloader/src/main.rs)
     if [ -z "$BOOTLOADER_RELEASE" ]; then
         echo "Error: no release counter found in bootloader/src/main.rs"
         exit 1
