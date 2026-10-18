@@ -19,7 +19,7 @@ release pins the exact component releases it was tested with.
 
 | Component | Tag | Version is | Assets |
 |---|---|---|---|
-| Application | `<device>-v<semver>` | Cargo version | `app-a.bin`, `app-b.bin`, `net-core.bin` |
+| Application | `<device>-v<semver>` | Cargo version | `app-a.bin`, `app-b.bin` |
 | Stage2 bootloader | `<device>-bootloader-v<N>` | counter `N` in `bootloader/src/main.rs` | `stage2-bootloader.{bin,hex,elf}` |
 | Net core | `<device>-netcore-v<N>` | counter `N` in `net-core/src/main.rs` | `net-core.{bin,hex,elf}` |
 
@@ -91,10 +91,18 @@ To move to net core N+1:
 1. Release net core N+1 (above).
 2. Publish a bridge application entry carrying it, with `requires_netcore` set
    to the release currently deployed.
-3. Only later entries may set `requires_netcore` to N+1.
+3. Only a later entry may set `requires_netcore` to N+1, and only while the
+   bridge is still the newest entry: `gen-release` refuses a floor above the net
+   core carried by the current newest entry.
 
-Units reach those later entries in two hops: first the bridge, which installs
-N+1, then the later application once N+1 is reported as running.
+The last rule exists because hosts are greedy. A unit installs the newest entry
+it is allowed to, so a bridge that a newer entry overtakes (one that needs no
+net core) is never taken, the unit never receives N+1, and it is stranded below
+the entry that requires it. The host tests walk every starting point through
+both committed manifests and fail unless each unit reaches the newest entry.
+
+Units reach later entries in two hops: first the bridge, which installs N+1,
+then the later application once N+1 is reported as running.
 
 ## Releasing application firmware
 
