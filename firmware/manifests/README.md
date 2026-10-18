@@ -79,6 +79,23 @@ it, and treats such a device's net core as unknown.
 
 Do not delete a published net-core release; manifest entries point at it.
 
+### Bridge entries
+
+An entry's own `net-core` release never counts toward its own
+`requires_netcore`. A net-core bump therefore ships through a *bridge*: an
+application entry that carries the newer net core and whose `requires_netcore`
+is only what is deployed today (`0` for the first migration).
+
+To move to net core N+1:
+
+1. Release net core N+1 (above).
+2. Publish a bridge application entry carrying it, with `requires_netcore` set
+   to the release currently deployed.
+3. Only later entries may set `requires_netcore` to N+1.
+
+Units reach those later entries in two hops: first the bridge, which installs
+N+1, then the later application once N+1 is reported as running.
+
 ## Releasing application firmware
 
 From the board directory:
@@ -92,12 +109,14 @@ just gen-release <requires_bootloader> <requires_netcore> <min_desktop>
   on, `0` for none. The host refuses to install it unless the device's
   bootloader, after any update in the same session, reaches it. It must not be
   above the bootloader being published.
-- `requires_netcore`: the lowest net-core release this application can run on,
-  `0` for none. The host checks it against the net core the update installs
-  before touching the device, and confirms it by reading the release back once
-  the application is installed and running; if the net core does not report the
-  published release then, the update ends in an error and is run again. It must
-  be an integer and not above the net core being published.
+- `requires_netcore`: the net-core release the unit must already be **running**,
+  as it reports, before this entry may be installed; `0` for none. The host
+  checks it against the net core the unit runs now, never against the one this
+  update installs: nothing can verify a written net core until the new
+  application runs. A unit that cannot report its net core counts as unknown and
+  does not satisfy a floor above 0. It must be an integer and not above the
+  highest net-core release carried by an entry already published for the device;
+  `gen-release` refuses otherwise.
 - `min_desktop`: the oldest Odyssey Desktop this firmware is required and tested
   with. It is not automatically the desktop shipping alongside; coupling a
   hotfix to a desktop upgrade it does not need strands users. Older desktops
