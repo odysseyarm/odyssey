@@ -191,6 +191,18 @@ fn PatternScreen(link: Link) -> Element {
                         view_box: "0 0 {aspect} 1",
                         preserve_aspect_ratio: "none",
                         shape_rendering: "geometricPrecision",
+                        // The border ring and corner brackets, whose visibility
+                        // tells the camera whether the display crops the picture.
+                        for (i, rect) in pattern.frame_rects().iter().enumerate() {
+                            rect {
+                                key: "frame-{i}",
+                                x: "{rect.x}",
+                                y: "{rect.y}",
+                                width: "{rect.width}",
+                                height: "{rect.height}",
+                                fill: "white",
+                            }
+                        }
                         for (i, dot) in pattern.dots().iter().enumerate() {
                             circle {
                                 key: "{i}",

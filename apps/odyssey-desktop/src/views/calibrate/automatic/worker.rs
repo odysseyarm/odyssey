@@ -24,7 +24,7 @@ use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CaptureS
 use odyssey_autocalib::markers::MarkerError;
 use odyssey_autocalib::orbbec::{self, OrbbecBackend, RuntimeStatus};
 use odyssey_autocalib::session::{
-    Hint, MarkerHint, MarkerPreview, Preview, Session, SessionError, SessionOptions, Step,
+    Hint, KnownSize, MarkerHint, MarkerPreview, Preview, Session, SessionError, SessionOptions, Step,
 };
 use odyssey_autocalib::solve::SolveError;
 use odyssey_autocalib::synthetic::{SyntheticBackend, SyntheticScene};
@@ -86,7 +86,7 @@ impl Backend {
             Self::Demo => {
                 let scene = demo_scene(
                     request.aspect,
-                    request.options.screen_diagonal_in.unwrap_or(DEMO_DEFAULT_DIAGONAL_IN),
+                    demo_diagonal_in(request.options.known_size),
                     request.pattern_visible,
                 );
                 SyntheticBackend::new(scene).open(&request.camera, &request.settings)?
@@ -94,6 +94,15 @@ impl Backend {
             Self::Hardware => OrbbecBackend::new().open(&request.camera, &request.settings)?,
         };
         Ok(Session::start(stream, request.aspect, request.options.clone()))
+    }
+}
+
+/// The diagonal the demo camera simulates: the declared one when there is one.
+fn demo_diagonal_in(known: Option<KnownSize>) -> f64 {
+    match known {
+        Some(KnownSize::Diagonal { inches }) => inches,
+        Some(KnownSize::Dimensions { width_m, height_m }) => width_m.hypot(height_m) / 0.0254,
+        None => DEMO_DEFAULT_DIAGONAL_IN,
     }
 }
 
@@ -255,7 +264,11 @@ impl FailureKind {
         match error {
             SolveError::PatternNotFound(_) => Self::ScreenDots,
             SolveError::TooFewDepthPoints { .. } | SolveError::NoPlane => Self::ScreenDepth,
-            SolveError::DegeneratePose | SolveError::Mirrored | SolveError::DotsInconsistent => Self::ScreenGeometry,
+            SolveError::DegeneratePose
+            | SolveError::Mirrored
+            | SolveError::DotsInconsistent
+            | SolveError::KnownSizeInvalid
+            | SolveError::KnownSizeAspectMismatch { .. } => Self::ScreenGeometry,
         }
     }
 
@@ -264,6 +277,7 @@ impl FailureKind {
             SessionError::Camera(_) => Self::CameraLost,
             SessionError::Solve(e) => Self::of_solve(e),
             SessionError::Markers(MarkerError::TooFewBlobs { .. } | MarkerError::LayoutMismatch { .. }) => Self::Markers,
+            SessionError::EdgesCropped(_) => Self::ScreenGeometry,
             SessionError::ScreenNotMeasured | SessionError::MarkersNotMeasured => Self::Internal,
         }
     }

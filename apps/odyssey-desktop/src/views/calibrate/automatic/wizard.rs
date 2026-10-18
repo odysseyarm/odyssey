@@ -26,7 +26,7 @@ use dioxus::{logger::tracing, prelude::*};
 use odyssey_autocalib::camera::{CameraInfo, CaptureSettings};
 use odyssey_autocalib::orbbec::RuntimeStatus;
 use odyssey_autocalib::pattern::Pattern;
-use odyssey_autocalib::session::{SessionOptions, Step};
+use odyssey_autocalib::session::{KnownSize, SessionOptions, Step};
 use odyssey_hub_common::config::{self, MonitorKey, UiState};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
@@ -390,7 +390,7 @@ impl Wizard {
             aspect: self.aspect()?,
             options: SessionOptions {
                 ir_exposure_us: *self.ir_exposure.peek(),
-                screen_diagonal_in: self.diagonal().ok().flatten(),
+                known_size: self.diagonal().ok().flatten().map(|inches| KnownSize::Diagonal { inches }),
                 ..defaults
             },
             pattern_visible,

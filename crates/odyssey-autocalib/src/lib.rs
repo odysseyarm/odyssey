@@ -12,6 +12,7 @@
 //! being installed until a camera is actually needed.
 
 pub mod camera;
+pub mod display;
 pub mod imu;
 pub mod markers;
 pub mod orbbec;
