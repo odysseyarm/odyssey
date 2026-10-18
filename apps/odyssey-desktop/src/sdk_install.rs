@@ -133,7 +133,7 @@ pub fn has_managed_copy() -> bool {
 pub enum Delivery {
     /// The app downloads it after the user accepts the licence.
     Download,
-    /// This build never fetches software; the installer carries it as an option.
+    /// This build never downloads the camera SDK; the installer carries it as an option.
     Installer,
     /// Nothing is automated here: point at Orbbec's download page.
     Link,

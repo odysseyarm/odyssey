@@ -2,7 +2,7 @@
 # these run on the Windows box.
 #
 #   just bundle online   -> dist/online/*.msi   (the app downloads the Orbbec SDK)
-#   just bundle offline  -> dist/offline/*.msi  (carries the SDK; never downloads)
+#   just bundle offline  -> dist/offline/*.msi  (carries the SDK; the app never downloads it)
 #   just release         -> GitHub release odyssey-desktop-v<version> with what is in dist/
 #
 # version defaults to the one in Cargo.toml. token falls back to $env:GITHUB_TOKEN.
