@@ -28,6 +28,10 @@ minicbor = { git = "https://github.com/Abrahamh08/minicbor" }
 heapless = "0.9"
 futures = "0.3.31"
 rand = "0.8"
+parking_lot = "0.12"
 
 [features]
 pyo3 = ["odyssey-protocol/pyo3"]
+
+[dev-dependencies]
+tokio = { version = "1.32.0", features = ["test-util"] }
