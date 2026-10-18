@@ -1,5 +1,7 @@
 //! Firmware manifest fetching and DFU update support.
 
+pub mod pack;
+
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -11,6 +13,8 @@ use odyssey_protocol::BootloaderRelease;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::policy;
 
 /// Where firmware manifests are published. Promotion from alpha to stable is a
 /// deliberate copy of an entry between the two files.
@@ -188,8 +192,22 @@ pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
 /// act on a manifest they would misread.
 pub const SUPPORTED_MANIFEST_VERSION: u32 = 1;
 
-/// Fetch the firmware manifest for a channel from GitHub
+/// Fetch the firmware manifest for a channel from GitHub, or in offline mode read
+/// it from the firmware pack, offering only the releases the pack can complete.
 pub async fn fetch_manifest(channel: FirmwareChannel) -> anyhow::Result<FirmwareManifest> {
+    if policy::offline() {
+        let dir = policy::firmware_pack_dir();
+        let loaded = pack::load_manifest(&dir, channel)?;
+        for dropped in &loaded.dropped {
+            tracing::warn!(
+                "Firmware pack: not offering {} {}: {}",
+                dropped.device,
+                dropped.version,
+                dropped.problems.join("; ")
+            );
+        }
+        return Ok(loaded.manifest);
+    }
     let client = reqwest::Client::new();
     let manifest: FirmwareManifest = client
         .get(channel.manifest_url())
@@ -356,13 +374,39 @@ pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename
     )
 }
 
-/// Download a firmware file and verify its SHA256 hash
+/// Fails unless `data` hashes to `expected_sha256`.
+fn verify_sha256(data: &[u8], expected_sha256: &str) -> anyhow::Result<()> {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let hash_hex = hex::encode(hasher.finalize());
+
+    if hash_hex != expected_sha256 {
+        anyhow::bail!(
+            "SHA256 mismatch: expected {}, got {}",
+            expected_sha256,
+            hash_hex
+        );
+    }
+    Ok(())
+}
+
+/// Download a firmware file and verify its SHA256 hash. In offline mode the file
+/// comes from the firmware pack instead and nothing touches the network.
 pub async fn download_firmware(
     device_type: &str,
     source: ReleaseSource<'_>,
     filename: &str,
     expected_sha256: &str,
 ) -> anyhow::Result<Vec<u8>> {
+    if policy::offline() {
+        let dir = policy::firmware_pack_dir();
+        tracing::info!(
+            "Reading {filename} from the firmware pack in {}",
+            dir.display()
+        );
+        return pack::read_file(&dir, device_type, source, filename, expected_sha256);
+    }
+
     let url = build_download_url(device_type, source, filename);
     tracing::info!("Downloading firmware from {}", url);
 
@@ -380,19 +424,7 @@ pub async fn download_firmware(
     let data = response.bytes().await?.to_vec();
     tracing::debug!("Got {} bytes", data.len());
 
-    // Verify SHA256
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    let hash = hasher.finalize();
-    let hash_hex = hex::encode(hash);
-
-    if hash_hex != expected_sha256 {
-        anyhow::bail!(
-            "SHA256 mismatch: expected {}, got {}",
-            expected_sha256,
-            hash_hex
-        );
-    }
+    verify_sha256(&data, expected_sha256)?;
 
     tracing::info!("Downloaded {} bytes, SHA256 verified", data.len());
     Ok(data)
