@@ -45,7 +45,7 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F
 
 /// This bootloader's release counter. Raise it whenever the image changes: the
 /// host replaces a bootloader only when the published counter is higher.
-macro_rules! release { () => { 2 }; }
+macro_rules! release { () => { 3 }; }
 
 const BOOTLOADER_BCD_DEVICE: u16 =
     odyssey_protocol::BootloaderRelease::bcd_device(release!());
@@ -850,6 +850,7 @@ fn rewrite_state_page_with_netcore(
     flag_word: u32,
     state: BootState,
     netcore_info: Option<(u32, u32)>,
+    attempts: u32,
 ) -> Result<(), ()> {
     extern "C" {
         static __bootloader_state_start: u32;
@@ -899,6 +900,9 @@ fn rewrite_state_page_with_netcore(
         flash
             .write((state_addr + 20) as u32, &size.to_le_bytes())
             .map_err(|_| ())?;
+        flash
+            .write((state_addr + 24) as u32, &attempts.to_le_bytes())
+            .map_err(|_| ())?;
 
         Ok(())
     })
@@ -908,7 +912,7 @@ fn clear_netcore_dfu_info(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
 ) -> Result<(), ()> {
     let (flag_word, state) = snapshot_state_words();
-    rewrite_state_page_with_netcore(flash, flag_word, state, None)
+    rewrite_state_page_with_netcore(flash, flag_word, state, None, ERASED_WORD)
 }
 
 fn persist_netcore_dfu_info(
@@ -917,7 +921,18 @@ fn persist_netcore_dfu_info(
     dfu_size: u32,
 ) -> Result<(), ()> {
     let (flag_word, state) = snapshot_state_words();
-    rewrite_state_page_with_netcore(flash, flag_word, state, Some((dfu_addr, dfu_size)))
+    rewrite_state_page_with_netcore(flash, flag_word, state, Some((dfu_addr, dfu_size)), ERASED_WORD)
+}
+
+/// Record how many times the copy has been started for the persisted command.
+fn persist_netcore_copy_attempt(
+    flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
+    dfu_addr: u32,
+    dfu_size: u32,
+    attempts: u32,
+) -> Result<(), ()> {
+    let (flag_word, state) = snapshot_state_words();
+    rewrite_state_page_with_netcore(flash, flag_word, state, Some((dfu_addr, dfu_size)), attempts)
 }
 
 // Write DFU requested (SWAP_MAGIC) to the state word.
@@ -1175,6 +1190,45 @@ async fn main(spawner: Spawner) -> ! {
         defmt::info!("PCD command INVALID - skipping netcore DFU");
     }
 
+    // A copy that never reports back is retried a few times, then abandoned: the
+    // pending command survives power cycles, so an unbounded retry would trap the
+    // unit before DFU. Giving up enters DFU so the update can be run again.
+    let mut netcore_gave_up = false;
+    if netcore_dfu_pending {
+        let stored_attempts = unsafe {
+            extern "C" {
+                static __bootloader_state_start: u32;
+            }
+            let state_addr = &__bootloader_state_start as *const u32 as usize;
+            core::ptr::read_volatile((state_addr + 24) as *const u32)
+        };
+        match pcd::next_copy_attempt(stored_attempts) {
+            Some(attempt) => {
+                defmt::info!("Net core copy attempt {}/{}", attempt, pcd::MAX_COPY_ATTEMPTS);
+                if persist_netcore_copy_attempt(
+                    &flash,
+                    pcd.cmd.get_image_addr(),
+                    pcd.cmd.get_image_size(),
+                    attempt,
+                )
+                .is_err()
+                {
+                    defmt::warn!("Failed to persist the net core copy attempt count");
+                }
+            }
+            None => {
+                defmt::error!("Net core copy abandoned after {} attempts", pcd::MAX_COPY_ATTEMPTS);
+                if clear_netcore_dfu_info(&flash).is_err() {
+                    defmt::warn!("Failed to clear persisted netcore DFU info");
+                }
+                pcd.cmd.clear();
+                pcd.status.clear();
+                netcore_dfu_pending = false;
+                netcore_gave_up = true;
+            }
+        }
+    }
+
     // Start network core if there's a pending DFU update
     if netcore_dfu_pending {
         defmt::info!("Network core DFU pending, starting network core bootloader");
@@ -1260,7 +1314,14 @@ async fn main(spawner: Spawner) -> ! {
             let mut ticks: u32 = 0;
             const MAX_TICKS: u32 = 1200; // 2 minutes at 100ms per tick
             loop {
-                if let Some(status) = pcd.status.get_status() {
+                // The status word survives a reset while its magic does not, so a
+                // stale terminal code from an earlier update must not end the wait.
+                let status = if pcd.status.is_valid() {
+                    pcd.status.get_status()
+                } else {
+                    None
+                };
+                if let Some(status) = status {
                     defmt::info!("Netcore DFU status from net bootloader: {}", status as u32);
                     if matches!(
                         status,
@@ -1319,7 +1380,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // If netcore DFU is pending via PCD, do not enter app DFU even if SWAP_MAGIC is set.
-    let mut should_enter_dfu = ram_dfu_request || check_dfu_state(&flash);
+    let mut should_enter_dfu = ram_dfu_request || check_dfu_state(&flash) || netcore_gave_up;
     if netcore_dfu_pending && should_enter_dfu {
         defmt::info!("Clearing app DFU request because netcore DFU is pending");
         should_enter_dfu = false;
