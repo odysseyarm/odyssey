@@ -8,11 +8,13 @@ use super::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use super::illustrations::{ProjectorIllustration, TvIllustration};
 use super::kind::DisplayKind;
 use super::screens::screen_label;
+use super::sdk_download::{DownloadSdk, DownloadedSdkRow};
 use super::settings::{DIAGONAL_RANGE_IN, SizeError, SizeField, WIDTH_RANGE_CM};
 use super::ui::{CARD, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage};
 use super::wizard::{CameraList, Wizard};
 use crate::components::ScreenPicker;
 use crate::components::wizard::{Icon, IconView, Spinner};
+use crate::sdk_install::{self, Delivery};
 
 #[component]
 pub fn SetupStep(wizard: Wizard) -> Element {
@@ -65,6 +67,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                 class: "{CARD} flex flex-col gap-3",
                 h2 { class: "text-xl font-semibold text-gray-900 dark:text-white", "3. Which camera?" }
                 CameraPicker { wizard }
+                DownloadedSdkRow { wizard }
             }
 
             section {
@@ -246,7 +249,19 @@ fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
             div {
                 class: "flex flex-wrap items-center justify-center gap-3 pt-2",
                 if notice.offer_download {
-                    a { class: PRIMARY_BUTTON, href: SDK_DOWNLOAD_URL, "Get the Orbbec SDK" }
+                    match sdk_install::delivery() {
+                        Delivery::Link => rsx! {
+                            a { class: PRIMARY_BUTTON, href: SDK_DOWNLOAD_URL, "Get the Orbbec SDK" }
+                        },
+                        Delivery::Download => rsx! { DownloadSdk { wizard } },
+                        Delivery::Installer => rsx! {
+                            p {
+                                class: "max-w-xl text-sm text-gray-600 dark:text-gray-300",
+                                "This copy of Odyssey doesn't download software. To add Orbbec camera support, run the \
+                                 Odyssey installer again, choose Change, and tick \"Orbbec camera support\"."
+                            }
+                        },
+                    }
                 }
                 button {
                     r#type: "button",

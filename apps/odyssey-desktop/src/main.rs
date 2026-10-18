@@ -19,6 +19,7 @@ mod cli;
 mod components;
 mod hub;
 mod paths;
+mod sdk_install;
 mod tray;
 mod views;
 
@@ -62,6 +63,10 @@ fn main() {
             std::process::exit(2);
         }
     }
+
+    // A downloaded camera SDK the user removed while it was loaded goes now,
+    // before anything can load it again.
+    sdk_install::finish_pending_removal();
 
     if cfg!(target_os = "windows") {
         let user_data_dir = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
