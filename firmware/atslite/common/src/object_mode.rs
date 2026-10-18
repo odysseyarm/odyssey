@@ -463,6 +463,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                     PropKind::ProductId => Props::ProductId(product_id),
                     PropKind::Name => Props::Name(settings.general.name.clone().into()),
                     PropKind::Version => Props::Version(odyssey_protocol::Version::new(firmware_version)),
+                    PropKind::NetCoreRelease => Props::NetCoreRelease(crate::ble::netcore::netcore_release()),
                 };
                 Some(Packet {
                     id: pkt.id,

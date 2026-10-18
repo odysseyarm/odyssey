@@ -1,4 +1,4 @@
-use embassy_futures::join::join;
+use embassy_futures::join::join3;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -26,7 +26,7 @@ struct Server {}
 /// Run the BLE stack.
 pub async fn run<C>(controller: C, seed: [u8; 32], device_name: &'static str, prod_prefix: &'static [u8])
 where
-    C: Controller,
+    C: Controller + bt_hci::controller::ControllerCmdSync<super::netcore::ReadNetCoreRelease>,
 {
     defmt::info!("[adv] advertising task starting");
     // Initialize name from parameter only if not already set via set_device_name_initial()
@@ -85,7 +85,7 @@ where
     }))
     .unwrap();
 
-    let _ = join(ble_task(runner), async {
+    let _ = join3(ble_task(runner), super::netcore::query(&stack), async {
         loop {
             defmt::info!(
                 "[adv] advertising loop restarting (bond_stored={})",

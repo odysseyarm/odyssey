@@ -87,6 +87,11 @@ pub trait Platform {
 
     /// Update the BLE advertising name. No-op on platforms without BLE.
     fn set_ble_name(_name: &str) {}
+
+    /// Net-core release counter, 0 when unknown or when the platform has no net core.
+    fn netcore_release() -> u16 {
+        0
+    }
 }
 
 /// Context passed to object_mode containing platform-specific state
