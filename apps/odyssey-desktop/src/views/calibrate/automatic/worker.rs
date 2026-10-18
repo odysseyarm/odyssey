@@ -34,6 +34,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::kind::SizeOrigin;
 use super::quality::Measures;
+use crate::sdk_install;
 
 /// Widest picture sent to the UI while previewing. A webview paints this at
 /// roughly its natural size, and the JPEG stays small enough for ~15 frames a
@@ -69,8 +70,11 @@ pub enum ListError {
 }
 
 fn list_hardware() -> Result<Vec<CameraInfo>, ListError> {
-    match orbbec::runtime_status(None) {
-        RuntimeStatus::Available { .. } => OrbbecBackend::new()
+    // The installer's copy of the SDK, or one the user downloaded, is found here;
+    // a copy elsewhere on the machine is still found by the loader on its own.
+    let extra_dir = sdk_install::search_dir();
+    match orbbec::runtime_status(extra_dir.as_deref()) {
+        RuntimeStatus::Available { .. } => OrbbecBackend::with_extra_dir(extra_dir)
             .list()
             .map_err(|e| ListError::Camera(e.to_string())),
         unavailable => Err(ListError::Runtime(unavailable)),
@@ -98,7 +102,8 @@ impl Backend {
                 );
                 SyntheticBackend::new(scene).open(&request.camera, &request.settings)?
             }
-            Self::Hardware => OrbbecBackend::new().open(&request.camera, &request.settings)?,
+            Self::Hardware => OrbbecBackend::with_extra_dir(sdk_install::search_dir())
+                .open(&request.camera, &request.settings)?,
         };
         Ok(Session::start(
             stream,

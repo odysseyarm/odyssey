@@ -17,6 +17,7 @@ mod problem;
 pub mod quality;
 mod review;
 pub mod screens;
+mod sdk_download;
 pub mod settings;
 mod setup;
 mod ui;

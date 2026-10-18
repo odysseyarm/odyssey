@@ -1,0 +1,40 @@
+{
+  "_comment": "The Orbbec SDK this build is tested with. The desktop app (online build) and the Windows release workflow (offline build) both read this file; change the SDK here and nowhere else. `files` are paths inside the archive; a leading bin/ is dropped on install, so OrbbecSDK.dll lands beside its extensions/ folder, which is the layout runtime.rs expects.",
+  "version": "2.10.6",
+  "eula": {
+    "url": "https://raw.githubusercontent.com/orbbec/OrbbecSDK_v2/v2.10.6/End%20User%20License%20Agreement.txt",
+    "sha256": "b8a2adb514fcf3381d1219b9f9d24412fd08d90bb208213c45db533c30746a94"
+  },
+  "windows_x64": {
+    "url": "https://github.com/orbbec/OrbbecSDK_v2/releases/download/v2.10.6/OrbbecSDK_v2.10.6_202609291804_575347c_win_x64.zip",
+    "sha256": "61888798641df8cd2eccfe9df2a36c2b5417c0725dc88d19134877522c283975",
+    "size": 61288995,
+    "files": [
+      "bin/OrbbecSDK.dll",
+      "bin/OrbbecSDKConfig.xml",
+      "bin/extensions/depthengine/depthengine.dll",
+      "bin/extensions/filters/FilterProcessor.dll",
+      "bin/extensions/filters/ob_priv_filter.dll",
+      "bin/extensions/firmwareupdater/firmwareupdater.dll",
+      "bin/extensions/frameprocessor/ob_frame_processor.dll",
+      "bin/msvcp140.dll",
+      "bin/vcruntime140.dll",
+      "LICENSE.txt",
+      "licenses/THIRD_PARTY_LICENSES.md",
+      "licenses/cmrc/LICENSE.txt",
+      "licenses/dylib/LICENSE",
+      "licenses/googletest/LICENSE",
+      "licenses/jsoncpp/LICENSE",
+      "licenses/libjpeg/LICENSE.md",
+      "licenses/libusb/COPYING",
+      "licenses/libuvc/LICENSE.txt",
+      "licenses/libyuv/LICENSE",
+      "licenses/live555/COPYING",
+      "licenses/live555/COPYING.LESSER",
+      "licenses/mdns/LICENSE",
+      "licenses/rosbag/LICENSE",
+      "licenses/spdlog/LICENSE",
+      "licenses/tinyxml2/LICENSE.txt"
+    ]
+  }
+}

@@ -13,3 +13,8 @@ fn app_root() -> Option<PathBuf> {
 pub fn log_dir() -> Option<PathBuf> {
     app_root().map(|dir| dir.join("logs"))
 }
+
+/// Where a downloaded Orbbec SDK is kept (see `sdk_install`).
+pub fn orbbec_sdk_dir() -> Option<PathBuf> {
+    app_root().map(|dir| dir.join("orbbec-sdk"))
+}
