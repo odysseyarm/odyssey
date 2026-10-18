@@ -355,7 +355,7 @@ impl Session {
         }
         progress(Step::Solving);
         let alignment = self.gravity.camera_to_aligned();
-        let options = SolveOptions { screen_diagonal_in: self.options.screen_diagonal_in, seed: 0 };
+        let options = SolveOptions { screen_diagonal_in: self.options.screen_diagonal_in, ..SolveOptions::default() };
         let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)?;
         let summary = ScreenSummary {
             size_m: fit.size_m,

@@ -74,6 +74,8 @@ pub struct SyntheticScene {
     /// Whether the screen shows the dot pattern. Without it the color image
     /// shows a plain black screen.
     pub show_pattern: bool,
+    /// Multiplier on the pattern's dot radii; see [`Pattern::with_dot_scale`].
+    pub dot_scale: f64,
     /// Sleep one frame interval per frame, as a real camera would.
     pub realtime: bool,
     pub seed: u64,
@@ -131,6 +133,7 @@ impl Default for SyntheticScene {
             ir_clutter: Vec::new(),
             imu_enabled: true,
             show_pattern: true,
+            dot_scale: 1.0,
             realtime: false,
             seed: 1,
         }
@@ -186,7 +189,7 @@ impl SyntheticScene {
 
     /// The pattern the screen shows.
     pub fn pattern(&self) -> Pattern {
-        Pattern::new(self.aspect())
+        Pattern::with_dot_scale(self.aspect(), self.dot_scale)
     }
 
     fn pose(&self) -> Pose {

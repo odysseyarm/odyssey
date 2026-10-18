@@ -48,13 +48,22 @@ const DOT_INLIER_M: f64 = 0.006;
 const MIN_PLANE_POINTS: usize = 200;
 const MIN_DOTS: usize = 12;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolveOptions {
     /// Physical screen diagonal in inches. When set, the screen is rectified
     /// to this size and the pattern's aspect ratio.
     pub screen_diagonal_in: Option<f64>,
     /// Seed for the plane RANSAC; fixed so a measurement is reproducible.
     pub seed: u64,
+    /// Locate dots by the perspective-corrected center instead of the raw
+    /// centroid. Only turn this off to measure what the correction buys.
+    pub perspective_correction: bool,
+}
+
+impl Default for SolveOptions {
+    fn default() -> Self {
+        Self { screen_diagonal_in: None, seed: 0, perspective_correction: true }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -143,7 +152,7 @@ pub fn solve_screen(
     camera_to_aligned: &Matrix3<f64>,
     options: &SolveOptions,
 ) -> Result<ScreenFit, SolveError> {
-    let (dots, dots_h) = merged_dots(geometry, pattern, frames)?;
+    let (dots, dots_h) = merged_dots(geometry, pattern, frames, options.perspective_correction)?;
 
     let color_from_depth = geometry.color_to_depth.inverse();
 
@@ -295,9 +304,12 @@ fn merged_dots(
     geometry: &CameraGeometry,
     pattern: &Pattern,
     frames: &[Frames],
+    perspective_correction: bool,
 ) -> Result<(Vec<crate::pattern::Correspondence>, Matrix3<f64>), SolveError> {
-    // Per dot: summed undistorted centers and the number of frames that saw it.
-    let mut sums = vec![(nalgebra::Vector2::<f64>::zeros(), 0usize); pattern.dots().len()];
+    // Per dot: summed corrected and uncorrected undistorted centers, and the
+    // number of frames that saw it.
+    let zero = nalgebra::Vector2::<f64>::zeros();
+    let mut sums = vec![(zero, zero, 0usize); pattern.dots().len()];
     let mut successes = 0usize;
     let mut first_failure = None;
     for frame in frames {
@@ -306,7 +318,8 @@ fn merged_dots(
                 successes += 1;
                 for c in &d.correspondences {
                     sums[c.index].0 += c.pixel.coords;
-                    sums[c.index].1 += 1;
+                    sums[c.index].1 += c.centroid.coords;
+                    sums[c.index].2 += 1;
                 }
             }
             Err(e) => {
@@ -319,16 +332,19 @@ fn merged_dots(
     }
 
     let mut dots = Vec::new();
-    for (index, (sum, count)) in sums.iter().enumerate() {
+    for (index, (corrected, measured, count)) in sums.iter().enumerate() {
         if *count == 0 || *count * 2 < successes {
             continue;
         }
         let dot = &pattern.dots()[index];
-        let pixel = Point2::from(sum / *count as f64);
+        let corrected = Point2::from(corrected / *count as f64);
+        let centroid = Point2::from(measured / *count as f64);
+        let pixel = if perspective_correction { corrected } else { centroid };
         dots.push(crate::pattern::Correspondence {
             index,
             pattern: Point2::new(dot.u, dot.v),
             pixel,
+            centroid,
             raw: distort_pixel(&geometry.color, pixel),
         });
     }
