@@ -289,6 +289,14 @@ fn measuring_without_a_pattern_fails_cleanly() {
         matches!(err, SessionError::Solve(SolveError::PatternNotFound(_))),
         "{err}"
     );
+    // The message says what the search saw, and the frame it searched is kept.
+    assert!(err.to_string().contains("dot-like spots"), "{err}");
+    let frame = session.take_failed_color().expect("the failed frame");
+    assert_eq!(frame.width(), session.geometry().color.width);
+    assert!(
+        session.take_failed_color().is_none(),
+        "it is handed over once"
+    );
 }
 
 #[test]

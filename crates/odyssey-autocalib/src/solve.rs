@@ -169,7 +169,7 @@ impl Default for SolveOptions {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SolveError {
-    #[error("the dot pattern was not found in the color image")]
+    #[error("the dot pattern was not found in the color image ({0})")]
     PatternNotFound(DetectFailure),
     #[error("only {found} depth samples lie on the screen")]
     TooFewDepthPoints { found: usize },

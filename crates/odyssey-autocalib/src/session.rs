@@ -294,6 +294,7 @@ pub struct Session {
     screen: Option<ScreenMeasurement>,
     markers: Option<MarkerMeasurement>,
     marker_mode: bool,
+    failed_color: Option<RgbImage>,
 }
 
 fn pt32(p: Point2<f64>) -> Point2<f32> {
@@ -322,12 +323,19 @@ impl Session {
             screen: None,
             markers: None,
             marker_mode: false,
+            failed_color: None,
         }
     }
 
     /// The pattern the screen must display.
     pub fn pattern(&self) -> &Pattern {
         &self.pattern
+    }
+
+    /// The last color frame of the burst whose pattern search failed, if there was
+    /// one: a sample of what the search saw, kept so it can be saved and inspected.
+    pub fn take_failed_color(&mut self) -> Option<RgbImage> {
+        self.failed_color.take()
     }
 
     pub fn geometry(&self) -> &CameraGeometry {
@@ -500,7 +508,12 @@ impl Session {
             known_size: self.options.known_size,
             ..SolveOptions::default()
         };
-        let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)?;
+        let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)
+            .inspect_err(|error| {
+                if matches!(error, SolveError::PatternNotFound(_)) {
+                    self.failed_color = frames.last().map(|f| f.color.clone());
+                }
+            })?;
         let summary = ScreenSummary {
             size_m: fit.size_m,
             diagonal_in: fit.diagonal_in(),
