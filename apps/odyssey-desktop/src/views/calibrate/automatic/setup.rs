@@ -8,6 +8,7 @@ use super::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use super::illustrations::{ProjectorIllustration, TvIllustration};
 use super::kind::DisplayKind;
 use super::reference_helper::ReferenceHelper;
+use super::scale_board_info::ScaleBoardInfo;
 use super::screens::screen_label;
 use super::sdk_download::{DownloadSdk, DownloadedSdkRow, SdkVersionNote};
 use super::settings::{DIAGONAL_RANGE_IN, SizeError, SizeField, WIDTH_RANGE_CM};
@@ -83,6 +84,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                 }
                 SizeSection { wizard }
                 ReferenceHelper { wizard }
+                ScaleBoardInfo {}
             }
         }
     }

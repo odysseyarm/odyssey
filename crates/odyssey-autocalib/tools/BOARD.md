@@ -113,8 +113,8 @@ collect.
 
 ## What is not built
 
-- Any use of the board in the wizard, including an explanation window, a download
-  button and a Setup step. The artwork is here so prototypes can be printed and tested
-  first.
+- A Setup step that uses the board in the wizard. The app has an explanation window
+  (Setup, "About the scale board") that opens the four PDFs in the system's PDF viewer;
+  the PDFs it carries are the ones in `tools/artwork`, so regenerate and rebuild together.
 - A correction of the calibration from the board's result.
 - Any measurement of how accurate it really is. The detector's tests are synthetic.
