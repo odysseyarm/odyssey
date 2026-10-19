@@ -501,6 +501,45 @@ struct Matcher<'a> {
 }
 
 impl Matcher<'_> {
+    /// A cheap necessary condition for [`evaluate`](Self::evaluate) to find much:
+    /// a sparse sample of the dots, predicted with `h`, must mostly land on
+    /// blobs. It lets the seed search throw out the many wrong hypotheses
+    /// without predicting and matching all the dots for each.
+    fn plausible(&self, h: &Matrix3<f64>, gate: f64) -> bool {
+        const STRIDE: usize = 3;
+        let p = self.pattern;
+        let at = |c: usize, r: usize| {
+            let d = &p.dots[p.index(c, r)];
+            apply_homography(h, Point2::new(d.u, d.v))
+        };
+        let (mut tried, mut hit) = (0usize, 0usize);
+        for r in (0..p.rows).step_by(STRIDE) {
+            for c in (0..p.cols).step_by(STRIDE) {
+                let (c_next, r_next) = (
+                    if c + 1 < p.cols { c + 1 } else { c - 1 },
+                    if r + 1 < p.rows { r + 1 } else { r - 1 },
+                );
+                let (Some(here), Some(across), Some(down)) =
+                    (at(c, r), at(c_next, r), at(c, r_next))
+                else {
+                    return false;
+                };
+                let spacing = (across - here).norm().min((down - here).norm());
+                tried += 1;
+                if self
+                    .index
+                    .within(self.blobs, here, gate * spacing)
+                    .next()
+                    .is_some()
+                {
+                    hit += 1;
+                }
+            }
+        }
+        // A third is enough: a partly hidden screen still has to be tried.
+        hit * 10 >= tried * 3
+    }
+
     /// Predicts every dot with `h`, then matches each to the nearest blob
     /// within `gate` times the local dot spacing, one blob per dot.
     fn evaluate(&self, h: &Matrix3<f64>, gate: f64) -> Option<Evaluation> {
@@ -572,7 +611,7 @@ impl Matcher<'_> {
 
 const SEED_GATE: f64 = 0.3;
 const REFINE_GATE: f64 = 0.35;
-const MAX_ANCHOR_CANDIDATES: usize = 6;
+const MAX_ANCHOR_CANDIDATES: usize = 16;
 
 /// Blobs whose area clearly exceeds that of their nearest neighbors. Comparing
 /// against neighbors instead of the global median keeps perspective, which
@@ -603,6 +642,48 @@ fn anchor_candidates(blobs: &[Blob]) -> Vec<usize> {
         .take(MAX_ANCHOR_CANDIDATES)
         .map(|s| s.1)
         .collect()
+}
+
+/// Whether the three corner candidates `[tl, tr, bl]` have dots next to them along
+/// the grid's edges. This is the lattice test that separates a pattern's corners
+/// from a bright spot that happens to stand out: a spot has no dot in two
+/// perpendicular directions nearby. One corner direction may be missing.
+fn corner_neighbors_present(
+    index: &PointIndex,
+    blobs: &[Blob],
+    [a, b, c]: [Point2<f64>; 3],
+    pattern: &Pattern,
+) -> bool {
+    let across = (b - a) / (pattern.cols - 1) as f64;
+    let down = (c - a) / (pattern.rows - 1) as f64;
+    // Each corner and the two edge directions that leave it into the grid.
+    let edges = [
+        (a, across),
+        (a, down),
+        (b, -across),
+        (b, down),
+        (c, across),
+        (c, -down),
+    ];
+    edges
+        .iter()
+        .filter(|(corner, step)| dot_along(index, blobs, *corner, *step))
+        .count()
+        >= 5
+}
+
+/// Whether a dot lies roughly in direction `step` from `corner`, `step` being the
+/// grid spacing there. Perspective changes the spacing along an edge by a large
+/// factor and bends directions a little, so this accepts a dot at any plausible
+/// distance within a generous cone rather than at one predicted position.
+fn dot_along(index: &PointIndex, blobs: &[Blob], corner: Point2<f64>, step: Vector2<f64>) -> bool {
+    const NEAREST: f64 = 0.25;
+    const FARTHEST: f64 = 3.5;
+    const MIN_COS: f64 = 0.8;
+    let reach = step.norm();
+    index.within(blobs, corner, FARTHEST * reach).any(|(i, d)| {
+        d >= NEAREST * reach && (blobs[i].undistorted - corner).dot(&step) >= MIN_COS * d * reach
+    })
 }
 
 /// Finds the pattern in `image`, a raw (distorted) color frame taken with
@@ -639,52 +720,79 @@ pub fn detect(
     let expected_ratio = (pattern.cols - 1) as f64 / (pattern.rows - 1) as f64;
 
     let mut best: Option<(f64, Matrix3<f64>)> = None;
-    for &tl in &anchors {
-        for &tr in &anchors {
-            for &bl in &anchors {
-                if tl == tr || tl == bl || tr == bl {
+    // Triples are tried in order of their lowest-ranked member, so the best-ranked
+    // anchors are exhausted first and a clean view stops early.
+    'seed: for newest in 0..anchors.len() {
+        for (i, j, l) in (0..=newest)
+            .flat_map(|i| (0..=newest).flat_map(move |j| (0..=newest).map(move |l| (i, j, l))))
+        {
+            if i.max(j).max(l) != newest {
+                continue;
+            }
+            let (tl, tr, bl) = (anchors[i], anchors[j], anchors[l]);
+            if tl == tr || tl == bl || tr == bl {
+                continue;
+            }
+            let (a, b, c) = (
+                blobs[tl].undistorted,
+                blobs[tr].undistorted,
+                blobs[bl].undistorted,
+            );
+            let (across, down) = (b - a, c - a);
+            if across.perp(&down) <= 0.0 {
+                continue;
+            }
+            // Foreshortening at steep viewing angles squeezes one side of
+            // the grid, so this only rejects triples that cannot be corners.
+            let ratio = across.norm() / down.norm();
+            if ratio < expected_ratio / 6.0 || ratio > expected_ratio * 6.0 {
+                continue;
+            }
+            // A corner dot has dots beside it along both edges, at the spacing
+            // the triple implies. Clutter that merely looks like a corner has
+            // none, which keeps a wide anchor pool cheap.
+            if !corner_neighbors_present(&index, &blobs, [a, b, c], pattern) {
+                continue;
+            }
+            // The fourth corner is not where an affine guess puts it once
+            // perspective is strong, so any blob that keeps the quad convex
+            // is a candidate; the grid evaluation picks the real one.
+            for (br, blob) in blobs.iter().enumerate() {
+                if br == tl || br == tr || br == bl {
                     continue;
                 }
-                let (a, b, c) = (
-                    blobs[tl].undistorted,
-                    blobs[tr].undistorted,
-                    blobs[bl].undistorted,
-                );
-                let (across, down) = (b - a, c - a);
-                if across.perp(&down) <= 0.0 {
+                let d = blob.undistorted;
+                if (b - a).perp(&(d - b)) <= 0.0
+                    || (d - b).perp(&(c - d)) <= 0.0
+                    || (c - d).perp(&(a - c)) <= 0.0
+                {
                     continue;
                 }
-                // Foreshortening at steep viewing angles squeezes one side of
-                // the grid, so this only rejects triples that cannot be corners.
-                let ratio = across.norm() / down.norm();
-                if ratio < expected_ratio / 6.0 || ratio > expected_ratio * 6.0 {
+                // The fourth corner is a corner dot as well: dots lie along both of
+                // the edges that leave it, toward the other two corners.
+                let to_c = (c - d) / (pattern.cols - 1) as f64;
+                let to_b = (b - d) / (pattern.rows - 1) as f64;
+                if !dot_along(&index, &blobs, d, to_c) || !dot_along(&index, &blobs, d, to_b) {
                     continue;
                 }
-                // The fourth corner is not where an affine guess puts it once
-                // perspective is strong, so any blob that keeps the quad convex
-                // is a candidate; the grid evaluation picks the real one.
-                for (br, blob) in blobs.iter().enumerate() {
-                    if br == tl || br == tr || br == bl {
-                        continue;
-                    }
-                    let d = blob.undistorted;
-                    if (b - a).perp(&(d - b)) <= 0.0
-                        || (d - b).perp(&(c - d)) <= 0.0
-                        || (c - d).perp(&(a - c)) <= 0.0
-                    {
-                        continue;
-                    }
-                    let src = [tl_uv, tr_uv, bl_uv, br_uv];
-                    let dst = [a, b, c, blobs[br].undistorted];
-                    let Some(h) = fit_homography(&src, &dst) else {
-                        continue;
-                    };
-                    let Some(eval) = matcher.evaluate(&h, SEED_GATE) else {
-                        continue;
-                    };
-                    if best.as_ref().is_none_or(|(s, _)| eval.score > *s) {
-                        best = Some((eval.score, h));
-                    }
+                let src = [tl_uv, tr_uv, bl_uv, br_uv];
+                let dst = [a, b, c, blobs[br].undistorted];
+                let Some(h) = fit_homography(&src, &dst) else {
+                    continue;
+                };
+                if !matcher.plausible(&h, SEED_GATE) {
+                    continue;
+                }
+                let Some(eval) = matcher.evaluate(&h, SEED_GATE) else {
+                    continue;
+                };
+                if best.as_ref().is_none_or(|(s, _)| eval.score > *s) {
+                    best = Some((eval.score, h));
+                }
+                // Nearly every dot matched: no other seed can be meaningfully
+                // better, and searching on is most of the cost.
+                if eval.score >= 0.9 * total as f64 {
+                    break 'seed;
                 }
             }
         }
@@ -1546,5 +1654,65 @@ mod tests {
         // A washed-out picture has no contrast to judge by.
         let faint = RgbImage::from_pixel(intr.width, intr.height, Rgb([30, 30, 30]));
         assert_eq!(check_edges(&pattern, &faint, &intr, &h), EdgeCheck::Unknown);
+    }
+
+    /// A room of isolated bright spots, some bigger than the corner dots, must not
+    /// hide a pattern that is plainly in view: the corner dots are the ones with
+    /// dots beside them, not the ones that merely stand out.
+    #[test]
+    fn bright_clutter_around_the_screen_does_not_hide_the_pattern() {
+        let pattern = Pattern::new(16.0 / 9.0);
+        let intr = intrinsics();
+        let h = pose_homography(&pattern, 0.15, 0.0, 2.2);
+        let mut image = render(&pattern, &intr, &h);
+
+        // The screen's bounding box, so the clutter stays off the screen.
+        let (mut lo, mut hi) = (
+            Point2::new(f64::MAX, f64::MAX),
+            Point2::new(f64::MIN, f64::MIN),
+        );
+        for (u, v) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+            let p = distort_pixel(&intr, apply_homography(&h, Point2::new(u, v)).unwrap());
+            lo = Point2::new(lo.x.min(p.x), lo.y.min(p.y));
+            hi = Point2::new(hi.x.max(p.x), hi.y.max(p.y));
+        }
+        let margin = 25.0;
+
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut placed = 0;
+        while placed < 120 {
+            let (cx, cy) = (next() * 1280.0, next() * 720.0);
+            let radius = 3.0 + next() * 9.0;
+            let near_screen = cx > lo.x - margin - radius
+                && cx < hi.x + margin + radius
+                && cy > lo.y - margin - radius
+                && cy < hi.y + margin + radius;
+            if near_screen {
+                continue;
+            }
+            for y in (cy - radius).floor() as i32..=(cy + radius).ceil() as i32 {
+                for x in (cx - radius).floor() as i32..=(cx + radius).ceil() as i32 {
+                    let inside = (x as f64 - cx).hypot(y as f64 - cy) <= radius;
+                    if inside && (0..1280).contains(&x) && (0..720).contains(&y) {
+                        image.put_pixel(x as u32, y as u32, Rgb([235; 3]));
+                    }
+                }
+            }
+            placed += 1;
+        }
+
+        let found = detect(&pattern, &image, &intr).expect("the pattern is in view");
+        assert!(
+            found.correspondences.len() * 10 >= pattern.dots().len() * 9,
+            "{} of {} dots",
+            found.correspondences.len(),
+            pattern.dots().len()
+        );
     }
 }
