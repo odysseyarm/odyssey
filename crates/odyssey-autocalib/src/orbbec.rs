@@ -945,6 +945,123 @@ impl CameraBackend for OrbbecBackend {
     }
 }
 
+impl OrbbecBackend {
+    /// Every video profile the camera's pipeline offers right now, which depends on
+    /// the link it is plugged into, with the ones [`CameraBackend::open`] would
+    /// pick marked. Infrared is listed for the first imager that has a Y8 profile.
+    pub fn offered_profiles(
+        &self,
+        camera: &CameraInfo,
+    ) -> Result<Vec<OfferedProfile>, CameraError> {
+        let sdk = self.sdk()?;
+        let opened = Opened::open(&sdk, camera)?;
+        let color_formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
+        let mut out = Vec::new();
+        let mut list_stream =
+            |stream: &'static str, list: &ProfileList, formats: &[ffi::ob_format]| {
+                let chosen = list.best(formats)?;
+                for i in 0..list.len()? {
+                    let profile = list.get(i)?;
+                    let (width, height) = profile.size()?;
+                    let (format, fps) = (profile.format()?, profile.fps()?);
+                    out.push(OfferedProfile {
+                        stream,
+                        width,
+                        height,
+                        fps,
+                        format: format_name(format),
+                        chosen: chosen.as_ref().is_some_and(|c| {
+                            c.format == format && c.profile.size().ok() == Some((width, height))
+                        }) && fps == STREAM_FPS,
+                    });
+                }
+                Ok::<(), CameraError>(())
+            };
+        if let Ok(list) =
+            ProfileList::for_sensor_type(&opened.pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
+        {
+            list_stream("color", &list, &color_formats)?;
+        }
+        for source in IR_SOURCES {
+            let Ok(list) = ProfileList::for_sensor_type(&opened.pipeline, source.sensor) else {
+                continue;
+            };
+            if list.best(&[ffi::OBFormat_OB_FORMAT_Y8])?.is_some() {
+                list_stream("infrared", &list, &[ffi::OBFormat_OB_FORMAT_Y8])?;
+                break;
+            }
+        }
+        if let Ok(list) =
+            ProfileList::for_sensor_type(&opened.pipeline, ffi::OBSensorType_OB_SENSOR_DEPTH)
+        {
+            list_stream("depth", &list, &[ffi::OBFormat_OB_FORMAT_Y16])?;
+        }
+        Ok(out)
+    }
+}
+
+/// One video profile a camera offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfferedProfile {
+    pub stream: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub format: String,
+    /// The one streaming would use for this stream.
+    pub chosen: bool,
+}
+
+fn format_name(format: ffi::ob_format) -> String {
+    match format {
+        ffi::OBFormat_OB_FORMAT_RGB => "RGB".into(),
+        ffi::OBFormat_OB_FORMAT_MJPG => "MJPG".into(),
+        ffi::OBFormat_OB_FORMAT_YUYV => "YUYV".into(),
+        ffi::OBFormat_OB_FORMAT_UYVY => "UYVY".into(),
+        ffi::OBFormat_OB_FORMAT_NV12 => "NV12".into(),
+        ffi::OBFormat_OB_FORMAT_I420 => "I420".into(),
+        ffi::OBFormat_OB_FORMAT_Y8 => "Y8".into(),
+        ffi::OBFormat_OB_FORMAT_Y16 => "Y16".into(),
+        other => format!("format {other}"),
+    }
+}
+
+/// A device and the pipeline made from it. Fields drop in declaration order, so the
+/// pipeline goes before its device and the context goes last.
+struct Opened {
+    pipeline: Pipeline,
+    device: Device,
+    devices: DeviceList,
+    context: Context,
+}
+
+impl Opened {
+    fn open(sdk: &Sdk, camera: &CameraInfo) -> Result<Self, CameraError> {
+        let context = Context::create(sdk)?;
+        let devices = DeviceList::query(&context)?;
+        let uid = CString::new(camera.id.as_str()).map_err(|_| CameraError::NoDevice)?;
+        let raw = ob!(
+            sdk,
+            ob_device_list_get_device_by_uid(devices.as_ptr(), uid.as_ptr())
+        );
+        let device = match raw {
+            Ok(raw) => Device::new(sdk, raw, "ob_device_list_get_device_by_uid")?,
+            Err(_) => return Err(CameraError::NoDevice),
+        };
+        let pipeline = Pipeline::new(
+            sdk,
+            ob!(sdk, ob_create_pipeline_with_device(device.as_ptr()))?,
+            "ob_create_pipeline_with_device",
+        )?;
+        Ok(Self {
+            pipeline,
+            device,
+            devices,
+            context,
+        })
+    }
+}
+
 /// An open, streaming camera.
 ///
 /// Fields drop in declaration order after [`Drop::drop`]: sensors stop before
@@ -975,22 +1092,12 @@ impl OrbbecStream {
         camera: &CameraInfo,
         settings: &CaptureSettings,
     ) -> Result<Self, CameraError> {
-        let context = Context::create(&sdk)?;
-        let devices = DeviceList::query(&context)?;
-        let uid = CString::new(camera.id.as_str()).map_err(|_| CameraError::NoDevice)?;
-        let raw = ob!(
-            sdk,
-            ob_device_list_get_device_by_uid(devices.as_ptr(), uid.as_ptr())
-        );
-        let device = match raw {
-            Ok(raw) => Device::new(&sdk, raw, "ob_device_list_get_device_by_uid")?,
-            Err(_) => return Err(CameraError::NoDevice),
-        };
-        let pipeline = Pipeline::new(
-            &sdk,
-            ob!(sdk, ob_create_pipeline_with_device(device.as_ptr()))?,
-            "ob_create_pipeline_with_device",
-        )?;
+        let Opened {
+            context,
+            devices,
+            device,
+            pipeline,
+        } = Opened::open(&sdk, camera)?;
 
         device.apply_capture_settings(settings)?;
 
