@@ -17,7 +17,7 @@ screen and nobody lines anything up by eye.
 
 It is optional: calibration works without it.
 
-## Pick a board
+## Pick a board (start with the Letter paper one)
 
 The camera has to see each dot at least **12 pixels across** in its color image
 (8 to 12 is marginal, under 8 is too small, and around 4 or less is not found at
@@ -70,6 +70,23 @@ thicknesses and says it resists denting and bending.
 
 I have not ordered one, so their dimensional accuracy is unverified. Do not use plain
 foam core: it dents and bows.
+
+## Showing it on a screen instead (untested)
+
+A tablet or monitor can show the board instead of a print, which is rigid and flat for
+free. The generator makes a file for any screen from its resolution and nominal diagonal:
+
+    python3 tools/board_artwork.py --screen-px 3200x2400 --screen-diagonal-in 13.3
+
+It writes a PDF and SVG at the screen's physical size; render it to a PNG at exactly the
+screen's resolution (`pdftoppm -png -singlefile -scale-to-x W -scale-to-y H -gray file.pdf out`)
+and show it at 1:1, with no zoom, fit or stretch. The screen has to be at least about 266
+mm wide for this pitch; smaller ones are refused.
+
+Caveats, none of them tested: the screen's real size is only as exact as its nominal
+diagonal, so do the scale check below anyway. A reflective or no-backlight screen (e-ink)
+needs room light on it, so it will be hard to see in a dim room. Glare and lower contrast
+than a print may hurt detection; the probe will say.
 
 ## Check the scale (do this once per print)
 
