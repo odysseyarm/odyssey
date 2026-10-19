@@ -11,6 +11,7 @@
 //! [`orbbec`], which loads the Orbbec SDK at run time and works without it
 //! being installed until a camera is actually needed.
 
+pub mod board;
 pub mod camera;
 pub mod display;
 pub mod imu;
