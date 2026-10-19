@@ -40,7 +40,7 @@ use super::settings::{
 };
 use super::worker::{
     Backend, Command, DEMO_DIAGONAL_IN, Event, Failure, FailureKind, Finished, ListError,
-    MarkerFrame, Mode, OpenRequest, PreviewFrame, SessionEvent, Worker, demo_scene,
+    MarkerFrame, Mode, OpenRequest, PreviewFrame, SavedAttempt, SessionEvent, Worker, demo_scene,
 };
 use crate::cli::{self, CalibrateArgs};
 use crate::components::screen_picker::{MonitorSelection, monitor_key};
@@ -202,6 +202,9 @@ pub struct Wizard {
     pub confirm_replace: Signal<bool>,
     pub saving: Signal<bool>,
     pub save_error: Signal<Option<String>>,
+    /// The diagnostic bundle: whether one is being written, and how the last save went.
+    pub attempt_status: Signal<Option<Result<SavedAttempt, String>>>,
+    pub attempt_saving: Signal<bool>,
 
     // The pattern window and the wizard window stepping aside for it.
     pattern: Signal<Option<PatternDisplay>>,
@@ -281,6 +284,8 @@ pub fn use_wizard() -> Wizard {
         confirm_replace: use_signal(|| false),
         saving: use_signal(|| false),
         save_error: use_signal(|| None),
+        attempt_status: use_signal(|| None),
+        attempt_saving: use_signal(|| false),
         pattern: use_signal(|| None),
         pattern_loss: use_signal(|| losses.0.clone()),
         same_monitor: use_signal(|| false),
@@ -1069,6 +1074,29 @@ impl Wizard {
         }
     }
 
+    /// Asks where to save the latest attempt's diagnostic bundle, then has the
+    /// camera thread write it. Nothing is written unless the user picks a place.
+    pub fn save_attempt(mut self) {
+        spawn(async move {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let Some(target) = rfd::AsyncFileDialog::new()
+                .set_file_name(format!("odyssey-calibration-{stamp}.zip"))
+                .add_filter("Zip archive", &["zip"])
+                .save_file()
+                .await
+            else {
+                return;
+            };
+            *self.attempt_status.write() = None;
+            *self.attempt_saving.write() = true;
+            self.send(Command::SaveAttempt {
+                path: target.path().to_path_buf(),
+            });
+        });
+    }
+
     // ------------------------------------------------------------ Review --
 
     /// Saves unless that screen already holds a calibration and the tech has not
@@ -1183,12 +1211,22 @@ impl Wizard {
                 *self.saved_to.write() = None;
                 *self.confirm_replace.write() = false;
                 *self.save_error.write() = None;
+                *self.attempt_status.write() = None;
+                *self.attempt_saving.write() = false;
                 self.close_pattern();
                 self.restore_window();
                 self.set_stage(Stage::Review);
             }
-            SessionEvent::Failed(failure) => self.problem(failure),
+            SessionEvent::Failed(failure) => {
+                *self.attempt_status.write() = None;
+                *self.attempt_saving.write() = false;
+                self.problem(failure)
+            }
             SessionEvent::Closed => {}
+            SessionEvent::AttemptSaved(result) => {
+                *self.attempt_saving.write() = false;
+                *self.attempt_status.write() = Some(result);
+            }
         }
     }
 

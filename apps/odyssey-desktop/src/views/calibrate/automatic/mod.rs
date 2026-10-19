@@ -5,6 +5,8 @@
 //! [`CalibrateAutomatic`] is the route. It owns a [`wizard::Wizard`] and draws
 //! the step that matches its stage; see `wizard.rs` for the flow.
 
+mod attempt_bundle;
+mod attempt_button;
 mod camera_support;
 pub mod hints;
 mod illustrations;

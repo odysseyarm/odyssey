@@ -285,6 +285,18 @@ fn average_markers(
     ))
 }
 
+/// What an attempt looked at: the frames the solver and the marker search used.
+#[derive(Debug, Clone)]
+pub struct AttemptFrames {
+    pub geometry: CameraGeometry,
+    /// Color, depth and infrared of every frame in the screen burst.
+    pub screen_burst: Vec<Frames>,
+    /// The infrared frames of the latest marker measurement.
+    pub marker_burst_ir: Vec<GrayImage>,
+    /// The latest infrared frame shown while positioning for the markers.
+    pub marker_preview_ir: Option<GrayImage>,
+}
+
 pub struct Session {
     stream: Box<dyn CameraStream>,
     geometry: CameraGeometry,
@@ -294,7 +306,11 @@ pub struct Session {
     screen: Option<ScreenMeasurement>,
     markers: Option<MarkerMeasurement>,
     marker_mode: bool,
-    failed_color: Option<RgbImage>,
+    /// The burst the last failed screen measurement was made from.
+    failed_burst: Option<Vec<Frames>>,
+    /// The infrared frames of the latest marker measurement, and the latest preview.
+    marker_burst_ir: Vec<GrayImage>,
+    marker_preview_ir: Option<GrayImage>,
     marker_report_at: Option<std::time::Instant>,
 }
 
@@ -324,7 +340,9 @@ impl Session {
             screen: None,
             markers: None,
             marker_mode: false,
-            failed_color: None,
+            failed_burst: None,
+            marker_burst_ir: Vec::new(),
+            marker_preview_ir: None,
             marker_report_at: None,
         }
     }
@@ -334,10 +352,20 @@ impl Session {
         &self.pattern
     }
 
-    /// The last color frame of the burst whose pattern search failed, if there was
-    /// one: a sample of what the search saw, kept so it can be saved and inspected.
-    pub fn take_failed_color(&mut self) -> Option<RgbImage> {
-        self.failed_color.take()
+    /// Everything the attempt looked at, for a diagnostic bundle: the screen burst
+    /// (the one that failed, else the one the screen was measured from) and the
+    /// infrared frames of the latest marker measurement and preview.
+    pub fn attempt_frames(&self) -> AttemptFrames {
+        AttemptFrames {
+            geometry: self.geometry,
+            screen_burst: self
+                .failed_burst
+                .clone()
+                .or_else(|| self.screen.as_ref().map(|s| s.frames.clone()))
+                .unwrap_or_default(),
+            marker_burst_ir: self.marker_burst_ir.clone(),
+            marker_preview_ir: self.marker_preview_ir.clone(),
+        }
     }
 
     pub fn geometry(&self) -> &CameraGeometry {
@@ -501,6 +529,7 @@ impl Session {
                 check_edges(&self.pattern, &f.color, &self.geometry.color, &d.homography)
             });
         if let (true, EdgeCheck::Cropped { sides }) = (self.options.require_visible_edges, edges) {
+            self.failed_burst = Some(frames);
             return Err(SessionError::EdgesCropped(sides));
         }
 
@@ -511,11 +540,7 @@ impl Session {
             ..SolveOptions::default()
         };
         let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)
-            .inspect_err(|error| {
-                if matches!(error, SolveError::PatternNotFound(_)) {
-                    self.failed_color = frames.last().map(|f| f.color.clone());
-                }
-            })?;
+            .inspect_err(|_| self.failed_burst = Some(frames.clone()))?;
         let summary = ScreenSummary {
             size_m: fit.size_m,
             diagonal_in: fit.diagonal_in(),
@@ -531,6 +556,7 @@ impl Session {
             .last()
             .map(|f| f.color.clone())
             .unwrap_or_else(|| RgbImage::new(0, 0));
+        self.failed_burst = None;
         self.screen = Some(ScreenMeasurement {
             fit,
             color,
@@ -549,6 +575,7 @@ impl Session {
         self.enter_marker_mode()?;
         let frames = self.grab()?;
         let blobs = markers::detect_blobs(&frames.ir);
+        self.marker_preview_ir = Some(frames.ir.clone());
         let mut preview = MarkerPreview {
             blobs: blobs.iter().map(|b| pt32(b.center)).collect(),
             ir: frames.ir,
@@ -598,11 +625,15 @@ impl Session {
         self.enter_marker_mode()?;
         let total = MARKER_FRAMES;
         let mut bursts = Vec::with_capacity(total);
+        let mut ir_frames = Vec::with_capacity(total);
         for frame in 0..total {
             progress(Step::Capturing { frame, total });
             let frames = self.grab()?;
             bursts.push(markers::detect_blobs(&frames.ir));
+            ir_frames.push(frames.ir);
         }
+        // Kept even when the solve below fails: these are the frames it used.
+        self.marker_burst_ir = ir_frames;
         progress(Step::Solving);
         let screen = self
             .screen

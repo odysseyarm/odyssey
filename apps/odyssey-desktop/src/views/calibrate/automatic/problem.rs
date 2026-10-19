@@ -3,6 +3,7 @@
 
 use dioxus::prelude::*;
 
+use super::attempt_button::SaveAttempt;
 use super::hints::{failure_message, retry_label};
 use super::ui::{Details, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage};
 use super::wizard::Wizard;
@@ -36,6 +37,7 @@ pub fn ProblemStep(wizard: Wizard) -> Element {
             Details {
                 code { class: "break-all text-sm", "{failure.details}" }
             }
+            SaveAttempt { wizard }
         }
     }
 }

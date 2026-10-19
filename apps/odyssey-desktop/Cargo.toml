@@ -40,14 +40,14 @@ serde_json = { workspace = true }
 # The online build's SDK downloader (see the sdk-download feature).
 reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
-zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [features]
 default = ["sdk-download"]
 # Lets the app download the Orbbec camera SDK itself. The offline installer is built
 # without it (--no-default-features): it carries the SDK instead and never opens a
 # network connection for it, for customers who may only run offline software.
-sdk-download = ["dep:reqwest", "dep:sha2", "dep:zip"]
+sdk-download = ["dep:reqwest", "dep:sha2"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "0.3.6"
