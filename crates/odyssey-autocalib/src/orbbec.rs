@@ -977,11 +977,9 @@ impl OrbbecBackend {
                 }
                 Ok::<(), CameraError>(())
             };
-        if let Ok(list) =
-            ProfileList::for_sensor_type(&opened.pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
-        {
-            list_stream("color", &list, &color_formats)?;
-        }
+        let color =
+            ProfileList::for_sensor_type(&opened.pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)?;
+        list_stream("color", &color, &color_formats)?;
         for source in IR_SOURCES {
             let Ok(list) = ProfileList::for_sensor_type(&opened.pipeline, source.sensor) else {
                 continue;
@@ -991,11 +989,9 @@ impl OrbbecBackend {
                 break;
             }
         }
-        if let Ok(list) =
-            ProfileList::for_sensor_type(&opened.pipeline, ffi::OBSensorType_OB_SENSOR_DEPTH)
-        {
-            list_stream("depth", &list, &[ffi::OBFormat_OB_FORMAT_Y16])?;
-        }
+        let depth =
+            ProfileList::for_sensor_type(&opened.pipeline, ffi::OBSensorType_OB_SENSOR_DEPTH)?;
+        list_stream("depth", &depth, &[ffi::OBFormat_OB_FORMAT_Y16])?;
         Ok(out)
     }
 }
