@@ -80,11 +80,11 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
                     class: "flex flex-col gap-2",
                     p {
                         class: BODY,
-                        "A printed sheet of black dots, in a size that's known exactly. Stood next to the screen where the camera can see it, the camera can tell how far away the sheet is from how big it looks, and compare that with what its depth sensor says. If the two differ, the depth sensor's sense of scale is off."
+                        "A printed sheet of black dots, designed to a known size (you check your print against its scale bar, below). Stood next to the screen where the camera can see it, the camera can tell how far away the sheet is from how big it looks, and compare that with what its depth sensor says. If the two differ, the depth sensor's sense of scale is off."
                     }
                     p {
                         class: BODY,
-                        "It's optional, and the calibration doesn't use it yet. Odyssey support uses it with a test tool to check a camera's depth scale."
+                        "It's optional and it does not change your calibration: nothing in the wizard uses it yet. Odyssey support uses it with a separate test tool to check a camera's depth scale."
                     }
                 }
 
