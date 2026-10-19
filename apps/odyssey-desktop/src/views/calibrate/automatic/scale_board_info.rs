@@ -90,7 +90,7 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
                     }
                     p {
                         class: BODY,
-                        "It's optional and it does not change your calibration: nothing in the wizard uses it yet. Odyssey support uses it with a separate test tool to check a camera's depth scale."
+                        "It's optional and it does not change your calibration: nothing in the wizard uses it yet. Odyssey support uses it with a separate test tool to check a camera's depth scale. It is meant to become an independent scale for sizing the screen, but that step isn't built."
                     }
                 }
 
