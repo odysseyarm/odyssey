@@ -32,8 +32,9 @@ standard board are too small at your distance; otherwise the standard one is fin
 | `scale-board-rigid.pdf` | 12 × 8.5 in | 20 mm, 40 mm pitch | best: printed on rigid board |
 | `scale-board-rigid-large.pdf` | 24 × 17 in | 40 mm, **80 mm pitch** | alternate: only if the standard dots read too small. Always pass `--pitch-mm 80` (never 40) |
 
-All four are vector PDFs at exact size (the SVGs match). Regenerate them with
-`python3 tools/board_artwork.py --out-dir tools/artwork`; the geometry is in
+All four are vector PDFs at exact size (the SVGs match). With no arguments the generator
+writes only the Letter one; regenerate the whole set with
+`python3 tools/board_artwork.py --all --out-dir tools/artwork`. The geometry is in
 `board.json` and nothing else.
 
 ## Option A, quick: paper on foam board
@@ -71,22 +72,14 @@ thicknesses and says it resists denting and bending.
 I have not ordered one, so their dimensional accuracy is unverified. Do not use plain
 foam core: it dents and bows.
 
-## Showing it on a screen instead (untested)
+## Showing it on a screen instead
 
-A tablet or monitor can show the board instead of a print, which is rigid and flat for
-free. The generator makes a file for any screen from its resolution and nominal diagonal:
-
-    python3 tools/board_artwork.py --screen-px 3200x2400 --screen-diagonal-in 13.3
-
-It writes a PDF and SVG at the screen's physical size; render it to a PNG at exactly the
-screen's resolution (`pdftoppm -png -singlefile -scale-to-x W -scale-to-y H -gray file.pdf out`)
-and show it at 1:1, with no zoom, fit or stretch. The screen has to be at least about 266
-mm wide for this pitch; smaller ones are refused.
-
-Caveats, none of them tested: the screen's real size is only as exact as its nominal
-diagonal, so do the scale check below anyway. A reflective or no-backlight screen (e-ink)
-needs room light on it, so it will be hard to see in a dim room. Glare and lower contrast
-than a print may hurt detection; the probe will say.
+A tablet or monitor can show the board instead of a print, and is rigid and flat for
+free. Make a page the size of its screen, render it at the screen's exact resolution, and
+show it at 1:1 with no zoom, fit or stretch. The physical size of such a page comes from
+the screen's nominal diagonal, so it is only as accurate as that is: always do the scale
+check below. A reflective or no-backlight screen (e-ink) needs room light on it. This is
+not one of the official files; keep any particular screen's settings in a local script.
 
 ## Check the scale (do this once per print)
 
