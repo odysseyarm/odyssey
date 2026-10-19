@@ -168,6 +168,9 @@ pub struct Wizard {
     pub reference: Signal<Option<(MonitorKey, Reference)>>,
     /// The tape and card helper, while it is open.
     pub helper: Signal<Option<Helper>>,
+    /// Why the helper would not open, shown beside its buttons: the page-top
+    /// notes are out of sight by the time someone is down at the size section.
+    pub helper_problem: Signal<Option<String>>,
     /// Show the camera's own measurement on the review instead of the declared
     /// size.
     pub use_measured: Signal<bool>,
@@ -252,6 +255,7 @@ pub fn use_wizard() -> Wizard {
         manual_size: use_signal(|| args.diagonal_in.is_some()),
         reference: use_signal(|| None),
         helper: use_signal(|| None),
+        helper_problem: use_signal(|| None),
         use_measured: use_signal(|| false),
         notes: use_signal(Vec::new),
         list_pending: use_signal(|| false),
@@ -578,13 +582,16 @@ impl Wizard {
     /// the controls appear in Setup. The picture would cover the controls if
     /// it went up on the monitor this window is on, so that is refused.
     pub fn open_helper(mut self, method: Method) {
+        *self.helper_problem.write() = None;
         let Some(key) = self.selected_monitor() else {
+            *self.helper_problem.write() =
+                Some("Choose the screen you're measuring in step 2 first.".into());
             return;
         };
         let window = dioxus::desktop::window();
         let current = window.current_monitor().map(|m| monitor_key(&m));
         if pattern_window::covers_window(&window, &key, current) {
-            self.note(
+            *self.helper_problem.write() = Some(
                 "To measure by hand, move this window to a different screen than the one you're measuring, so the picture doesn't cover it. Then try again."
                     .into(),
             );
@@ -603,7 +610,8 @@ impl Wizard {
         };
         self.close_pattern();
         if !self.open_pattern(helper.mode(&key)) {
-            self.note("The screen you chose is no longer available.".into());
+            *self.helper_problem.write() =
+                Some("The screen you chose is no longer available.".into());
             return;
         }
         *self.helper.write() = Some(helper);
