@@ -44,9 +44,12 @@ fn probe() -> Result<(), CameraError> {
     }
     for camera in &cameras {
         println!(
-            "camera: {} (serial {}, id {})",
-            camera.name, camera.serial, camera.id
+            "camera: {} (serial {}, id {}, link {})",
+            camera.name, camera.serial, camera.id, camera.link
         );
+        if let Some(warning) = camera.link.warning() {
+            println!("WARNING: {warning}");
+        }
     }
 
     println!("offered profiles (* = what streaming uses):");

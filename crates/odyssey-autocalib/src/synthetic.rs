@@ -23,7 +23,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::camera::{
     CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings,
-    DepthImage, Extrinsics, Frames, ImuSample, Intrinsics,
+    DepthImage, Extrinsics, Frames, ImuSample, Intrinsics, Link,
 };
 use crate::markers::MARKER_LAYOUT;
 use crate::pattern::Pattern;
@@ -308,6 +308,7 @@ impl CameraBackend for SyntheticBackend {
             id: "synthetic".into(),
             name: "Synthetic depth camera".into(),
             serial: "SYNTHETIC-0".into(),
+            link: Link::Unknown,
         }])
     }
 

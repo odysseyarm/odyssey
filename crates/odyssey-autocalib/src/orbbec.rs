@@ -36,7 +36,7 @@ pub use self::runtime::{
 };
 use crate::camera::{
     CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings,
-    DepthImage, Extrinsics, Frames, ImuSample, Intrinsics,
+    DepthImage, Extrinsics, Frames, ImuSample, Intrinsics, Link,
 };
 
 /// Frame rate every video stream is requested at.
@@ -241,6 +241,15 @@ impl DeviceList {
         let p = ob!(
             self.sdk,
             ob_device_list_get_device_serial_number(self.as_ptr(), index)
+        )?;
+        // SAFETY: the string lives in the list, which `self` keeps alive; `c_str` copies it.
+        Ok(unsafe { c_str(p) })
+    }
+
+    fn connection(&self, index: u32) -> Result<String, CameraError> {
+        let p = ob!(
+            self.sdk,
+            ob_device_list_get_device_connection_type(self.as_ptr(), index)
         )?;
         // SAFETY: the string lives in the list, which `self` keeps alive; `c_str` copies it.
         Ok(unsafe { c_str(p) })
@@ -931,6 +940,9 @@ impl CameraBackend for OrbbecBackend {
                     id: devices.uid(i)?,
                     name: devices.name(i)?,
                     serial: devices.serial(i)?,
+                    link: devices
+                        .connection(i)
+                        .map_or(Link::Unknown, |text| Link::parse(&text)),
                 })
             })
             .collect()
@@ -1098,6 +1110,21 @@ impl OrbbecStream {
         device.apply_capture_settings(settings)?;
 
         // Profiles: color (preferring native RGB), left infrared Y8, depth Y16.
+        //
+        // FIXME(orbbec): the profile lists are per stream, so the largest 30 fps
+        // profile of each (`ProfileList::best`) is not always a combination the
+        // camera can stream. The SDK has no call that says whether a combination
+        // fits (checked the C headers). Seen on one Gemini 336 at USB 2 (480 Mbit/s,
+        // behind hubs), streaming through the SDK with this exact config for 4 s:
+        //   RGB 640x480 @ 30 + IR + depth 640x480 @ 30   no frames
+        //   RGB 640x480 @ 15 + IR + depth 640x480 @ 15   ~13 framesets/s
+        //   MJPG 640x480 @ 30 + IR + depth 640x480 @ 30  ~27 framesets/s
+        //   MJPG 1280x720 @ 10 + IR + depth 848x480 @ 10 ~8 framesets/s
+        // so there the native "RGB" color profile, preferred above, is what does
+        // not fit; the SDK's own default pipeline there is color 1280x720 MJPG and
+        // depth 848x480, both 10 fps, no infrared. Not checked: the lists on USB 3.
+        // `CameraInfo::link` lets the UI warn about a capped link; selection is
+        // unchanged.
         let color_formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
         let color_list = ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
             .map_err(|_| CameraError::Unsupported("a color stream"))?;
