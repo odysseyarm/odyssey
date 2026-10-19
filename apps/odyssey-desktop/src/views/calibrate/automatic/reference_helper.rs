@@ -284,9 +284,24 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
             class: "flex flex-col gap-3",
             ol {
                 class: "flex list-decimal flex-col gap-1 pl-6 text-base text-gray-800 dark:text-gray-100",
-                li { "Look at the screen: it shows a line with a tick at each end." }
-                li { "Lay the tape along the line and read the length from the middle of one tick to the middle of the other." }
+                if helper.covers {
+                    li { "Press \u{201c}Show the line\u{201d}. The screen shows a line with a tick at each end, over this window." }
+                    li { "Lay the tape along the line and read the length from the middle of one tick to the middle of the other. Then press Escape to come back." }
+                } else {
+                    li { "Look at the screen: it shows a line with a tick at each end." }
+                    li { "Lay the tape along the line and read the length from the middle of one tick to the middle of the other." }
+                }
                 li { "Type what you read." }
+            }
+            if helper.covers {
+                div {
+                    button {
+                        class: SECONDARY_BUTTON,
+                        r#type: "button",
+                        onclick: move |_| wizard.show_helper_picture(),
+                        "Show the line"
+                    }
+                }
             }
             div {
                 class: "flex flex-wrap items-center gap-3",
@@ -338,40 +353,58 @@ fn CardSteps(wizard: Wizard, helper: Helper) -> Element {
             ol {
                 class: "flex list-decimal flex-col gap-1 pl-6 text-base text-gray-800 dark:text-gray-100",
                 li { "Take any bank card, driver's licence or ID card." }
-                li { "Hold it flat against the glass inside the white frame on the screen, and look straight at it." }
-                li { "Nudge the frame until it hugs the card: no dark gap, and none of the frame covered." }
+                if helper.covers {
+                    li { "Press \u{201c}Show the frame\u{201d}. The screen shows a white frame, over this window." }
+                    li { "Hold the card flat against the glass inside the frame and look straight at it. Press the arrow keys until the frame hugs the card, with no dark gap and none of the frame covered (Page Up and Page Down move it faster), then press Enter to come back." }
+                } else {
+                    li { "Hold it flat against the glass inside the white frame on the screen, and look straight at it." }
+                    li { "Nudge the frame until it hugs the card: no dark gap, and none of the frame covered." }
+                }
             }
-            div {
-                class: "flex flex-wrap items-center gap-3",
-                button {
-                    class: SECONDARY_BUTTON,
-                    r#type: "button",
-                    aria_label: "Smaller frame",
-                    onclick: move |_| wizard.set_card_px(px - CARD_STEP_PX),
-                    "\u{2212}"
+            if helper.covers {
+                div {
+                    class: "flex flex-wrap items-center gap-3",
+                    button {
+                        class: SECONDARY_BUTTON,
+                        r#type: "button",
+                        onclick: move |_| wizard.show_helper_picture(),
+                        "Show the frame"
+                    }
+                    span { class: "text-sm text-gray-600 dark:text-gray-300", "{px:.2} pixels wide" }
                 }
-                input {
-                    r#type: "range",
-                    aria_label: "Frame size",
-                    class: "w-64 max-w-full",
-                    min: "{lo}",
-                    max: "{hi}",
-                    step: "{CARD_STEP_PX}",
-                    value: "{px}",
-                    oninput: move |e| {
-                        if let Ok(v) = e.value().parse::<f64>() {
-                            wizard.set_card_px(v);
-                        }
-                    },
+            } else {
+                div {
+                    class: "flex flex-wrap items-center gap-3",
+                    button {
+                        class: SECONDARY_BUTTON,
+                        r#type: "button",
+                        aria_label: "Smaller frame",
+                        onclick: move |_| wizard.set_card_px(px - CARD_STEP_PX),
+                        "\u{2212}"
+                    }
+                    input {
+                        r#type: "range",
+                        aria_label: "Frame size",
+                        class: "w-64 max-w-full",
+                        min: "{lo}",
+                        max: "{hi}",
+                        step: "{CARD_STEP_PX}",
+                        value: "{px}",
+                        oninput: move |e| {
+                            if let Ok(v) = e.value().parse::<f64>() {
+                                wizard.set_card_px(v);
+                            }
+                        },
+                    }
+                    button {
+                        class: SECONDARY_BUTTON,
+                        r#type: "button",
+                        aria_label: "Larger frame",
+                        onclick: move |_| wizard.set_card_px(px + CARD_STEP_PX),
+                        "+"
+                    }
+                    span { class: "text-sm text-gray-600 dark:text-gray-300", "{px:.2} pixels wide" }
                 }
-                button {
-                    class: SECONDARY_BUTTON,
-                    r#type: "button",
-                    aria_label: "Larger frame",
-                    onclick: move |_| wizard.set_card_px(px + CARD_STEP_PX),
-                    "+"
-                }
-                span { class: "text-sm text-gray-600 dark:text-gray-300", "{px:.2} pixels wide" }
             }
         }
     }

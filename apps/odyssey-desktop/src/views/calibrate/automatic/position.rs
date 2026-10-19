@@ -50,7 +50,7 @@ pub fn PositionStep(wizard: Wizard) -> Element {
         StepPage {
             title: "Point the camera at the screen",
             subtitle: if same_monitor {
-                "Aim the camera at the screen, then press Start. This window steps aside while the screen is measured."
+                "Aim the camera at the screen, then press Start. The screen counts down and then shows the pattern, over this window, while it is measured."
             } else {
                 "Hold the camera in front of the screen so the whole dot pattern is in view."
             },

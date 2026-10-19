@@ -38,10 +38,13 @@ pub enum PatternMode {
     Countdown(u32),
     /// A line `line_px` pixels long with a tick at each end, for a tape
     /// measure. Drawn in screen pixels, not in the pattern's unit space.
-    Ruler { line_px: u32 },
+    /// `covers_wizard` is set when this picture is covering the wizard's window, so it
+    /// also says how to come back.
+    Ruler { line_px: u32, covers_wizard: bool },
     /// A frame whose inside is a credit card `width_px` pixels wide, for
-    /// holding a real card against. Drawn in screen pixels.
-    Card { width_px: f64 },
+    /// holding a real card against. Drawn in screen pixels. `covers_wizard` as for
+    /// the ruler; it also says the arrow keys resize the frame.
+    Card { width_px: f64, covers_wizard: bool },
 }
 
 /// Why the pattern window can no longer do its job.
@@ -54,6 +57,19 @@ pub enum PatternLoss {
     WrongMonitor,
 }
 
+/// What the pattern window tells the wizard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatternEvent {
+    Lost(PatternLoss),
+    /// The card frame should grow (positive) or shrink by this many steps of
+    /// [`super::reference::CARD_STEP_PX`]. Sent from the keyboard, which is how
+    /// the frame is resized while this window hides the wizard's own.
+    Nudge(i32),
+}
+
+/// How many steps Page Up and Page Down move the card frame.
+const CARD_BIG_STEPS: i32 = 20;
+
 /// Everything the window component shares with the wizard. Compared by
 /// identity: the window is built once and never re-rendered from outside.
 #[derive(Clone)]
@@ -64,7 +80,7 @@ struct LinkInner {
     /// The monitor's resolution, which the ruler and card are drawn in.
     pixels: (u32, u32),
     mode: watch::Receiver<PatternMode>,
-    lost: UnboundedSender<PatternLoss>,
+    events: UnboundedSender<PatternEvent>,
 }
 
 impl PartialEq for Link {
@@ -84,15 +100,15 @@ impl PatternDisplay {
     }
 }
 
-/// Opens a borderless fullscreen window on `monitor`. `lost` hears about it if
+/// Opens a borderless fullscreen window on `monitor`. `events` hears about it if
 /// the window goes away or lands on the wrong monitor while the wizard still
-/// wants it.
+/// wants it, and about the card frame being resized from the keyboard.
 pub fn open(
     host: &DesktopContext,
     monitor: MonitorHandle,
     pattern: Pattern,
     initial: PatternMode,
-    lost: UnboundedSender<PatternLoss>,
+    events: UnboundedSender<PatternEvent>,
 ) -> PatternDisplay {
     let (mode, receiver) = watch::channel(initial);
     let size = monitor.size();
@@ -100,7 +116,7 @@ pub fn open(
         pattern,
         pixels: (size.width, size.height),
         mode: receiver,
-        lost: lost.clone(),
+        events: events.clone(),
     }));
     let dom = VirtualDom::new_with_props(PatternScreen, PatternScreenProps { link });
     let config = Config::default()
@@ -134,7 +150,7 @@ pub fn open(
         }
         let landed = tao.current_monitor().map(|m| monitor_key(&m));
         if landed.is_some_and(|landed| landed != monitor_key(&target)) {
-            let _ = lost.send(PatternLoss::WrongMonitor);
+            let _ = events.send(PatternEvent::Lost(PatternLoss::WrongMonitor));
         }
     });
     PatternDisplay { mode }
@@ -169,7 +185,7 @@ fn PatternScreen(link: Link) -> Element {
         let link = link.clone();
         move || {
             if !wizard_closed_it.get() {
-                let _ = link.0.lost.send(PatternLoss::Closed);
+                let _ = link.0.events.send(PatternEvent::Lost(PatternLoss::Closed));
             }
         }
     });
@@ -177,6 +193,7 @@ fn PatternScreen(link: Link) -> Element {
     let pattern = &link.0.pattern;
     let aspect = pattern.aspect();
     let (screen_w, screen_h) = (f64::from(link.0.pixels.0), f64::from(link.0.pixels.1));
+    let events = link.0.events.clone();
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -189,8 +206,26 @@ fn PatternScreen(link: Link) -> Element {
                 let _ = e.set_focus(true).await;
             },
             onkeydown: move |e| {
-                if e.key() == Key::Escape {
-                    dioxus::desktop::window().close();
+                let helper_picture = matches!(mode(), PatternMode::Ruler { .. } | PatternMode::Card { .. });
+                let card = matches!(mode(), PatternMode::Card { .. });
+                match e.key() {
+                    Key::Escape => dioxus::desktop::window().close(),
+                    // Coming back from a helper picture; on the calibration pattern
+                    // Enter must not end it.
+                    Key::Enter if helper_picture => dioxus::desktop::window().close(),
+                    Key::ArrowUp | Key::ArrowRight if card => {
+                        let _ = events.send(PatternEvent::Nudge(1));
+                    }
+                    Key::ArrowDown | Key::ArrowLeft if card => {
+                        let _ = events.send(PatternEvent::Nudge(-1));
+                    }
+                    Key::PageUp if card => {
+                        let _ = events.send(PatternEvent::Nudge(CARD_BIG_STEPS));
+                    }
+                    Key::PageDown if card => {
+                        let _ = events.send(PatternEvent::Nudge(-CARD_BIG_STEPS));
+                    }
+                    _ => {}
                 }
             },
             match mode() {
@@ -226,7 +261,7 @@ fn PatternScreen(link: Link) -> Element {
                     }
                 },
                 PatternMode::Black => rsx! {},
-                PatternMode::Ruler { line_px } => {
+                PatternMode::Ruler { line_px, covers_wizard } => {
                     let line = f64::from(line_px);
                     let x0 = ((screen_w - line) / 2.0).floor();
                     let y = (screen_h / 2.0).floor();
@@ -250,10 +285,21 @@ fn PatternScreen(link: Link) -> Element {
                                 font_family: "sans-serif",
                                 "Measure from the middle of one tick to the middle of the other"
                             }
+                            if covers_wizard {
+                                text {
+                                    x: "{screen_w / 2.0}",
+                                    y: "{y + 144.0}",
+                                    text_anchor: "middle",
+                                    fill: "#9ca3af",
+                                    font_size: "28",
+                                    font_family: "sans-serif",
+                                    "Press Escape or Enter to come back and type what you read"
+                                }
+                            }
                         }
                     }
                 }
-                PatternMode::Card { width_px } => {
+                PatternMode::Card { width_px, covers_wizard } => {
                     let height_px = width_px * reference::CARD_HEIGHT_MM / reference::CARD_WIDTH_MM;
                     let radius = width_px * reference::CARD_CORNER_OF_WIDTH;
                     let (left, top) = ((screen_w - width_px) / 2.0, (screen_h - height_px) / 2.0);
@@ -290,6 +336,17 @@ fn PatternScreen(link: Link) -> Element {
                                 font_size: "28",
                                 font_family: "sans-serif",
                                 "Hold a card flat against the glass, inside the frame"
+                            }
+                            if covers_wizard {
+                                text {
+                                    x: "{screen_w / 2.0}",
+                                    y: "{top + height_px + frame + 112.0}",
+                                    text_anchor: "middle",
+                                    fill: "#9ca3af",
+                                    font_size: "28",
+                                    font_family: "sans-serif",
+                                    "Arrow keys resize the frame (Page Up and Page Down in bigger steps). Press Enter when it fits."
+                                }
                             }
                         }
                     }
