@@ -295,6 +295,7 @@ pub struct Session {
     markers: Option<MarkerMeasurement>,
     marker_mode: bool,
     failed_color: Option<RgbImage>,
+    marker_report_at: Option<std::time::Instant>,
 }
 
 fn pt32(p: Point2<f64>) -> Point2<f32> {
@@ -324,6 +325,7 @@ impl Session {
             markers: None,
             marker_mode: false,
             failed_color: None,
+            marker_report_at: None,
         }
     }
 
@@ -561,7 +563,20 @@ impl Session {
             match markers::locate(&self.geometry, &screen.fit, &blobs) {
                 Ok(m) => preview.matched = Some(m.blob_for_marker),
                 Err(MarkerError::LayoutMismatch { matched }) => {
-                    preview.hint = MarkerHint::WrongPlace { matched }
+                    preview.hint = MarkerHint::WrongPlace { matched };
+                    // One account every few seconds is enough to see where the spots
+                    // land against the layout. It goes to the app's log (numbers only,
+                    // no images), which the desktop app also keeps as a file.
+                    let due = self
+                        .marker_report_at
+                        .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3));
+                    if due {
+                        self.marker_report_at = Some(std::time::Instant::now());
+                        tracing::info!(
+                            "marker layout mismatch ({matched} of 6):\n{}",
+                            markers::describe_layout(&self.geometry, &screen.fit, &blobs)
+                        );
+                    }
                 }
                 Err(MarkerError::TooFewBlobs { found }) => {
                     preview.hint = MarkerHint::TooFewMarkers { found }

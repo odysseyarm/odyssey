@@ -113,6 +113,98 @@ pub fn expected_positions(fit: &ScreenFit) -> [Point2<f64>; 6] {
     })
 }
 
+/// A plain-text account of where the bright spots landed on the screen against
+/// where the layout expects the markers, for diagnosing a mismatch: the camera's
+/// intrinsics, the screen's size and plane, every spot in the image and on the
+/// screen, and the nearest spot to each expected marker.
+pub fn describe_layout(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> String {
+    use std::fmt::Write;
+    let [w, h] = fit.size_m;
+    let ir = &geometry.ir;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "infrared camera {}x{} fx {:.2} fy {:.2} cx {:.2} cy {:.2}",
+        ir.width, ir.height, ir.fx, ir.fy, ir.cx, ir.cy
+    );
+    let _ = writeln!(
+        out,
+        "infrared to depth translation {:?}",
+        geometry.ir_to_depth.translation
+    );
+    let distance = fit.plane_depth.normal.dot(&fit.plane_depth.point).abs();
+    let _ = writeln!(
+        out,
+        "screen {w:.3} x {h:.3} m, plane distance {distance:.3} m"
+    );
+    let expected = expected_positions(fit);
+    let _ = writeln!(out, "expected markers (layout fraction -> screen meters):");
+    for (i, (layout, e)) in MARKER_LAYOUT.iter().zip(&expected).enumerate() {
+        let _ = writeln!(
+            out,
+            "  {}: ({:.2}, {:.2}) -> ({:.3}, {:.3})",
+            i + 1,
+            layout[0],
+            layout[1],
+            e.x,
+            e.y
+        );
+    }
+    let positions: Vec<Option<Point2<f64>>> = blobs
+        .iter()
+        .map(|b| blob_on_screen(geometry, fit, b))
+        .collect();
+    let _ = writeln!(
+        out,
+        "bright spots (infrared pixel, area -> screen meters -> fraction of the screen):"
+    );
+    for (i, (b, p)) in blobs.iter().zip(&positions).enumerate() {
+        match p {
+            Some(p) => {
+                let _ = writeln!(
+                    out,
+                    "  {i}: ({:.1}, {:.1}) area {} -> ({:.3}, {:.3}) -> ({:.2}, {:.2})",
+                    b.center.x,
+                    b.center.y,
+                    b.area,
+                    p.x,
+                    p.y,
+                    p.x / w,
+                    p.y / h
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    out,
+                    "  {i}: ({:.1}, {:.1}) area {} -> misses the screen plane",
+                    b.center.x, b.center.y, b.area
+                );
+            }
+        }
+    }
+    let gate = MATCH_GATE_FRACTION * w.hypot(h);
+    let _ = writeln!(
+        out,
+        "gate {gate:.3} m; nearest spot to each expected marker:"
+    );
+    for (i, e) in expected.iter().enumerate() {
+        let nearest = positions
+            .iter()
+            .enumerate()
+            .filter_map(|(j, p)| p.map(|p| (j, (p - e).norm())))
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        match nearest {
+            Some((j, d)) => {
+                let _ = writeln!(out, "  {}: spot {j}, {d:.3} m away", i + 1);
+            }
+            None => {
+                let _ = writeln!(out, "  {}: no spot", i + 1);
+            }
+        }
+    }
+    out
+}
+
 /// Result of matching blobs to the layout.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarkerFit {
