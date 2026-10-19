@@ -89,7 +89,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                     summary { class: "cursor-pointer select-none font-medium", "Advanced (experimental)" }
                     div {
                         class: "mt-2 flex flex-col gap-2",
-                        p { "Only use these if you know what you're doing. You don't need them to calibrate." }
+                        p { "Only if you have the printed scale board. You don't need it to calibrate." }
                         ScaleBoardInfo {}
                     }
                 }
