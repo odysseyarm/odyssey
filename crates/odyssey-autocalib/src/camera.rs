@@ -34,8 +34,8 @@ pub enum CameraError {
 pub enum Link {
     /// USB 3 or faster.
     FastUsb,
-    /// USB 2.x or older. A camera that streams color, depth and infrared together
-    /// at full rate needs more than this carries (see [`Link::is_capped`]).
+    /// USB 2.x or older. Some combinations of color, depth and infrared streams do
+    /// not fit on this link at full rate (see [`Link::warning`]).
     SlowUsb,
     /// A connection the backend names that is not USB, e.g. "Ethernet".
     Other(String),
@@ -57,19 +57,22 @@ impl Link {
         }
     }
 
-    /// True when the link is USB 2 or older, which cannot be relied on to carry
-    /// color, depth and infrared together at 30 frames per second.
+    /// True when the link is USB 2 or older. That does not make capture impossible
+    /// (see [`Link::warning`]); it makes some stream combinations too large to fit.
     pub fn is_capped(&self) -> bool {
         matches!(self, Self::SlowUsb)
     }
 
-    /// What to tell the user when the link is capped.
+    /// What to tell the user when the link is capped. Measured on one Gemini 336
+    /// at USB 2: uncompressed color with infrared and depth at 640x480 and 30 fps
+    /// delivered no frames, while the same streams with MJPG color did. The
+    /// wording says a slow link may limit capture, not that it prevents it.
     pub fn warning(&self) -> Option<&'static str> {
         self.is_capped().then_some(
-            "This camera is connected at USB 2 speed or slower. That link cannot carry its \
-             color, depth and infrared streams together at full rate, so frames may stall \
-             or never arrive. Plug it straight into a USB 3 port on the computer (no hub \
-             or dock), with the USB 3 cable it came with.",
+            "This camera is connected at USB 2 speed or slower, which can limit what it \
+             streams: frames may arrive slowly or not at all. For the best result plug it \
+             straight into a USB 3 port on the computer (no hub or dock), with the USB 3 \
+             cable it came with.",
         )
     }
 }

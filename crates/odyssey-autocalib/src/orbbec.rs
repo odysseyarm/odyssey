@@ -1114,8 +1114,10 @@ impl OrbbecStream {
         // FIXME(orbbec): the profile lists are per stream, so the largest 30 fps
         // profile of each (`ProfileList::best`) is not always a combination the
         // camera can stream. The SDK has no call that says whether a combination
-        // fits (checked the C headers). Seen on one Gemini 336 at USB 2 (480 Mbit/s,
-        // behind hubs), streaming through the SDK with this exact config for 4 s:
+        // fits (checked the C headers), and `ob_pipeline_start_with_config` returned
+        // success for the one that delivered nothing, so only frames arriving prove
+        // a combination. Seen on one Gemini 336 at USB 2 (480 Mbit/s, behind hubs),
+        // streaming through the SDK with this exact config for 4 s:
         //   RGB 640x480 @ 30 + IR + depth 640x480 @ 30   no frames
         //   RGB 640x480 @ 15 + IR + depth 640x480 @ 15   ~13 framesets/s
         //   MJPG 640x480 @ 30 + IR + depth 640x480 @ 30  ~27 framesets/s
