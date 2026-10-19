@@ -49,6 +49,19 @@ fn probe() -> Result<(), CameraError> {
         );
     }
 
+    println!("offered profiles (* = what streaming uses):");
+    for p in backend.offered_profiles(&cameras[0])? {
+        println!(
+            "  {} {:<8} {:>4}x{:<4} @ {:>2} fps  {}",
+            if p.chosen { '*' } else { ' ' },
+            p.stream,
+            p.width,
+            p.height,
+            p.fps,
+            p.format
+        );
+    }
+
     let mut stream = backend.open(&cameras[0], &CaptureSettings::default())?;
     let g = *stream.geometry();
     println!("geometry:");
