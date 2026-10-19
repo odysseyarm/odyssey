@@ -229,37 +229,44 @@ fn PatternScreen(link: Link) -> Element {
                 }
             },
             match mode() {
-                PatternMode::Pattern => rsx! {
-                    // The viewBox is the pattern's unit space, so stretching it
-                    // over a window with the monitor's aspect keeps dots round.
-                    svg {
-                        class: "size-full",
-                        view_box: "0 0 {aspect} 1",
-                        preserve_aspect_ratio: "none",
-                        shape_rendering: "geometricPrecision",
-                        // The border ring and corner brackets, whose visibility
-                        // tells the camera whether the display crops the picture.
-                        for (i, rect) in pattern.frame_rects().iter().enumerate() {
-                            rect {
-                                key: "frame-{i}",
-                                x: "{rect.x}",
-                                y: "{rect.y}",
-                                width: "{rect.width}",
-                                height: "{rect.height}",
-                                fill: "white",
+                PatternMode::Pattern => {
+                    // The viewBox is the monitor's own pixels, as for the ruler and the
+                    // card. It used to be the pattern's unit space (about 1.78 wide),
+                    // and WebKit then never painted the right-hand ring while the other
+                    // three sides were fine, so a display showing its whole picture
+                    // looked cropped. Pixel units keep dots round because the pattern's
+                    // aspect is the monitor's.
+                    let (sx, sy) = (screen_w / aspect, screen_h);
+                    rsx! {
+                        svg {
+                            class: "size-full",
+                            view_box: "0 0 {screen_w} {screen_h}",
+                            preserve_aspect_ratio: "none",
+                            shape_rendering: "geometricPrecision",
+                            // The border ring and corner brackets, whose visibility
+                            // tells the camera whether the display crops the picture.
+                            for (i, rect) in pattern.frame_rects().iter().enumerate() {
+                                rect {
+                                    key: "frame-{i}",
+                                    x: "{rect.x * sx}",
+                                    y: "{rect.y * sy}",
+                                    width: "{rect.width * sx}",
+                                    height: "{rect.height * sy}",
+                                    fill: "white",
+                                }
                             }
-                        }
-                        for (i, dot) in pattern.dots().iter().enumerate() {
-                            circle {
-                                key: "{i}",
-                                cx: "{dot.u * aspect}",
-                                cy: "{dot.v}",
-                                r: "{dot.radius_h}",
-                                fill: "white",
+                            for (i, dot) in pattern.dots().iter().enumerate() {
+                                circle {
+                                    key: "{i}",
+                                    cx: "{dot.u * screen_w}",
+                                    cy: "{dot.v * sy}",
+                                    r: "{dot.radius_h * sy}",
+                                    fill: "white",
+                                }
                             }
                         }
                     }
-                },
+                }
                 PatternMode::Black => rsx! {},
                 PatternMode::Ruler { line_px, covers_wizard } => {
                     let line = f64::from(line_px);
