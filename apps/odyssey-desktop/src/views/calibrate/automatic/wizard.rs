@@ -32,7 +32,7 @@ use odyssey_hub_common::config::{self, MonitorKey, UiState};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use super::kind::{self, DisplayKind, Finding, SizePlan};
-use super::pattern_window::{self, PatternDisplay, PatternLoss, PatternMode};
+use super::pattern_window::{self, PatternDisplay, PatternEvent, PatternLoss, PatternMode};
 use super::reference::{self, Method, Reference, ReferenceError, Unit};
 use super::screens::{SCREEN_COUNT, default_screen, saved_screens};
 use super::settings::{
@@ -52,7 +52,7 @@ use crate::{Route, ServerReady};
 pub const READY_HOLD: Duration = Duration::from_millis(400);
 /// How long all six markers must stay matched before measuring starts itself.
 pub const MARKERS_AUTO_MEASURE: Duration = Duration::from_millis(1000);
-/// Seconds counted down before the pattern appears when the wizard steps aside.
+/// Seconds counted down before the pattern appears when it covers the wizard.
 const COUNTDOWN_SECONDS: u32 = 5;
 /// How long the countdown flow waits for the camera to settle on the pattern
 /// before measuring anyway, so a bad view fails with advice instead of hanging.
@@ -106,7 +106,7 @@ pub struct SavedInfo {
 }
 
 /// The tape and card helper while it is open. The monitor shows its line or
-/// card; the controls are in Setup.
+/// card; the controls are in Setup, unless the picture would cover them.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Helper {
     /// The monitor showing the line or card.
@@ -119,6 +119,9 @@ pub struct Helper {
     /// The length typed from the tape, and the unit it was read in.
     pub tape_text: String,
     pub tape_unit: Unit,
+    /// The picture would cover the wizard's window (a single screen), so it
+    /// is shown on request, over the window.
+    pub covers: bool,
 }
 
 impl Helper {
@@ -126,9 +129,11 @@ impl Helper {
         match self.method {
             Method::Tape => PatternMode::Ruler {
                 line_px: reference::tape_line_px(monitor.width),
+                covers_wizard: self.covers,
             },
             Method::Card => PatternMode::Card {
                 width_px: self.card_px,
+                covers_wizard: self.covers,
             },
         }
     }
@@ -200,7 +205,7 @@ pub struct Wizard {
 
     // The pattern window and the wizard window stepping aside for it.
     pattern: Signal<Option<PatternDisplay>>,
-    pattern_loss: Signal<UnboundedSender<PatternLoss>>,
+    pattern_loss: Signal<UnboundedSender<PatternEvent>>,
     /// The pattern would cover the wizard, so the wizard hides while it shows.
     pub same_monitor: Signal<bool>,
     hidden: Signal<bool>,
@@ -220,7 +225,7 @@ pub fn use_wizard() -> Wizard {
         (tx, Rc::new(RefCell::new(Some(rx))))
     });
     let losses = use_hook(|| {
-        let (tx, rx) = unbounded_channel::<PatternLoss>();
+        let (tx, rx) = unbounded_channel::<PatternEvent>();
         (tx, Rc::new(RefCell::new(Some(rx))))
     });
     let backend = if demo {
@@ -369,11 +374,35 @@ pub fn use_wizard() -> Wizard {
             let receiver = receiver.borrow_mut().take();
             async move {
                 let Some(mut receiver) = receiver else { return };
-                while let Some(loss) = receiver.recv().await {
-                    if wizard.helper.peek().is_some() {
-                        wizard.cancel_helper();
-                        wizard.note("The measuring screen was closed.".into());
-                        continue;
+                while let Some(event) = receiver.recv().await {
+                    let loss = match event {
+                        PatternEvent::Nudge(steps) => {
+                            wizard.nudge_card(steps);
+                            continue;
+                        }
+                        PatternEvent::Lost(loss) => loss,
+                    };
+                    let helper_covers = wizard.helper.peek().as_ref().map(|h| h.covers);
+                    match helper_covers {
+                        // The picture hid this window, so closing it is how you come back.
+                        Some(true) => {
+                            wizard.close_pattern();
+                            dioxus::desktop::window().set_focus();
+                            if loss == PatternLoss::WrongMonitor {
+                                *wizard.helper_problem.write() = Some(
+                                    "The picture didn't appear on the screen you chose. Your window manager moved it; \
+                                     allow the \"Calibration pattern\" window to open fullscreen on the chosen display and try again."
+                                        .into(),
+                                );
+                            }
+                            continue;
+                        }
+                        Some(false) => {
+                            wizard.cancel_helper();
+                            wizard.note("The measuring screen was closed.".into());
+                            continue;
+                        }
+                        None => {}
                     }
                     if wizard.pattern.peek().is_none() {
                         continue;
@@ -578,9 +607,10 @@ impl Wizard {
         self.panel_size_m().map(|[width_m, _]| width_m * 1000.0)
     }
 
-    /// Opens the helper: its line or card goes up on the chosen monitor and
-    /// the controls appear in Setup. The picture would cover the controls if
-    /// it went up on the monitor this window is on, so that is refused.
+    /// Opens the helper. On a second screen its line or card goes up at once and
+    /// the controls stay in Setup. If the picture would cover this window, as on a
+    /// single screen, it is shown on request instead (`show_helper_picture`), over
+    /// this window.
     pub fn open_helper(mut self, method: Method) {
         *self.helper_problem.write() = None;
         let Some(key) = self.selected_monitor() else {
@@ -590,13 +620,7 @@ impl Wizard {
         };
         let window = dioxus::desktop::window();
         let current = window.current_monitor().map(|m| monitor_key(&m));
-        if pattern_window::covers_window(&window, &key, current) {
-            *self.helper_problem.write() = Some(
-                "To measure by hand, move this window to a different screen than the one you're measuring, so the picture doesn't cover it. Then try again."
-                    .into(),
-            );
-            return;
-        }
+        let covers = pattern_window::covers_window(&window, &key, current);
         let projected = self.kind() == DisplayKind::Projector;
         let start = reference::card_start_px(self.panel_width_mm(), key.width, projected);
         let card_bounds = reference::card_bounds_px(start, key.width, key.height);
@@ -607,14 +631,40 @@ impl Wizard {
             card_bounds,
             tape_text: String::new(),
             tape_unit: Unit::Inches,
+            covers,
         };
         self.close_pattern();
-        if !self.open_pattern(helper.mode(&key)) {
+        if !covers && !self.open_pattern(helper.mode(&key)) {
             *self.helper_problem.write() =
                 Some("The screen you chose is no longer available.".into());
             return;
         }
         *self.helper.write() = Some(helper);
+    }
+
+    /// Single screen: puts the helper's picture up over this window. The window
+    /// is not minimized: a minimized window's page stops running, and the keys
+    /// that resize the frame and the close that brings it back both arrive here.
+    /// Closing the picture (Escape or Enter) shows the window again.
+    pub fn show_helper_picture(mut self) {
+        let (Some(key), Some(helper)) = (self.selected_monitor(), self.helper.peek().clone())
+        else {
+            return;
+        };
+        *self.helper_problem.write() = None;
+        if !self.open_pattern(helper.mode(&key)) {
+            *self.helper_problem.write() =
+                Some("The screen you chose is no longer available.".into());
+        }
+    }
+
+    /// The card frame, resized from the keyboard on the picture itself.
+    fn nudge_card(self, steps: i32) {
+        let px = match self.helper.peek().as_ref() {
+            Some(helper) if helper.method == Method::Card => helper.card_px,
+            _ => return,
+        };
+        self.set_card_px(px + f64::from(steps) * reference::CARD_STEP_PX);
     }
 
     /// Switches the open helper between the tape and the card.
@@ -859,15 +909,15 @@ impl Wizard {
         self.send(Command::MeasureScreen);
     }
 
-    /// Same-monitor mode: step aside, count down, show the pattern, wait for
-    /// the camera to settle and measure, with the wizard window hidden until
-    /// the measurement is done.
+    /// Same-monitor mode: cover this window with the fullscreen picture, count
+    /// down, show the pattern, wait for the camera to settle and measure, with
+    /// the wizard behind the picture until the measurement is done. The window
+    /// is not minimized: a minimized window's page stops running, and this flow
+    /// runs in it.
     pub fn start_countdown(mut self) {
         self.cancel_flow();
         let task = spawn(async move {
-            let host = dioxus::desktop::window();
             *self.hidden.write() = true;
-            host.set_minimized(true);
             if !self.open_pattern(PatternMode::Countdown(COUNTDOWN_SECONDS)) {
                 self.restore_window();
                 return;
@@ -898,11 +948,10 @@ impl Wizard {
         }
     }
 
+    /// Brings the wizard back in front after the pattern covered it.
     fn restore_window(mut self) {
         if *self.hidden.peek() {
-            let window = dioxus::desktop::window();
-            window.set_minimized(false);
-            window.set_focus();
+            dioxus::desktop::window().set_focus();
             *self.hidden.write() = false;
         }
     }
