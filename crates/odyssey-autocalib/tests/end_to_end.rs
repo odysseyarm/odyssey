@@ -4,8 +4,8 @@
 use nalgebra::{Matrix3, Point2};
 use odyssey_autocalib::camera::{CameraBackend, CaptureSettings};
 use odyssey_autocalib::session::{
-    Calibration, EdgeCheck, Hint, KnownSize, MarkerHint, Session, SessionError, SessionOptions,
-    SizeSource, Step,
+    Calibration, EdgeCheck, Hint, KnownSize, MARKER_FRAMES, MarkerHint, Session, SessionError,
+    SessionOptions, SizeSource, Step,
 };
 use odyssey_autocalib::solve::SolveError;
 use odyssey_autocalib::synthetic::{SyntheticBackend, SyntheticScene, Truth};
@@ -289,14 +289,48 @@ fn measuring_without_a_pattern_fails_cleanly() {
         matches!(err, SessionError::Solve(SolveError::PatternNotFound(_))),
         "{err}"
     );
-    // The message says what the search saw, and the frame it searched is kept.
+    // The message says what the search saw, and the whole burst it searched is kept.
     assert!(err.to_string().contains("dot-like spots"), "{err}");
-    let frame = session.take_failed_color().expect("the failed frame");
-    assert_eq!(frame.width(), session.geometry().color.width);
-    assert!(
-        session.take_failed_color().is_none(),
-        "it is handed over once"
+    let attempt = session.attempt_frames();
+    assert_eq!(
+        attempt.screen_burst.len(),
+        SessionOptions::default().burst_frames
     );
+    for frame in &attempt.screen_burst {
+        assert_eq!(frame.color.width(), session.geometry().color.width);
+    }
+}
+
+#[test]
+fn an_attempt_keeps_every_frame_it_used() {
+    let scene = SyntheticScene::default();
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
+    session.measure_screen(&mut |_| {}).unwrap();
+    session.preview_markers().unwrap();
+    session.measure_markers(&mut |_| {}).unwrap();
+    let attempt = session.attempt_frames();
+    assert_eq!(
+        attempt.screen_burst.len(),
+        SessionOptions::default().burst_frames
+    );
+    assert_eq!(attempt.marker_burst_ir.len(), MARKER_FRAMES);
+    assert!(attempt.marker_preview_ir.is_some());
+    // A later failed measurement replaces the screen burst with the failed one.
+    let mut blank = open(
+        &SyntheticScene {
+            show_pattern: false,
+            ..scene
+        },
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
+    assert!(blank.attempt_frames().screen_burst.is_empty());
+    blank.measure_screen(&mut |_| {}).unwrap_err();
+    assert!(!blank.attempt_frames().screen_burst.is_empty());
 }
 
 #[test]

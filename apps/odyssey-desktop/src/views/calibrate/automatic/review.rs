@@ -5,6 +5,7 @@
 use dioxus::prelude::*;
 use odyssey_autocalib::session::{EdgeCheck, SizeSource};
 
+use super::attempt_button::SaveAttempt;
 use super::kind::{SizeOrigin, source_label};
 use super::quality::{Verdict, assess, disagreement_message};
 use super::screens::screen_label;
@@ -306,6 +307,7 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                     value: if outcome.gravity_aligned { "yes".to_string() } else { "no (camera has no motion sensor data)".to_string() },
                 }
             }
+            SaveAttempt { wizard }
         }
     }
 }

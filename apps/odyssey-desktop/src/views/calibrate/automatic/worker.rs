@@ -10,6 +10,7 @@
 //! the [`Worker`] is dropped. Nothing else keeps a stream alive.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -24,14 +25,15 @@ use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CaptureS
 use odyssey_autocalib::markers::MarkerError;
 use odyssey_autocalib::orbbec::{self, OrbbecBackend, RuntimeStatus};
 use odyssey_autocalib::session::{
-    EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, Session, SessionError, SessionOptions,
-    SideSet, SizeCheck, SizeSource, Step,
+    AttemptFrames, Calibration, EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, Session,
+    SessionError, SessionOptions, SideSet, SizeCheck, SizeSource, Step,
 };
 use odyssey_autocalib::solve::SolveError;
 use odyssey_autocalib::synthetic::{SyntheticBackend, SyntheticScene};
 use odyssey_common::ScreenCalibration;
 use tokio::sync::mpsc::UnboundedSender;
 
+use super::attempt_bundle::{self, Bundle};
 use super::kind::SizeOrigin;
 use super::quality::Measures;
 use crate::sdk_install;
@@ -182,6 +184,10 @@ pub enum Command {
     /// Computes the result, then closes the camera.
     Finish,
     Close,
+    /// Writes the latest attempt's frames, log lines and summary to `path`.
+    SaveAttempt {
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug)]
@@ -207,6 +213,23 @@ pub enum SessionEvent {
     Failed(Failure),
     /// The stream is stopped and the camera released.
     Closed,
+    /// A diagnostic bundle was written, or could not be.
+    AttemptSaved(Result<SavedAttempt, String>),
+}
+
+/// A saved diagnostic bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedAttempt {
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+/// What the camera thread remembers of the latest attempt.
+struct Attempt {
+    request: String,
+    outcome: String,
+    /// `None` when no camera was open, e.g. when it would not start.
+    frames: Option<AttemptFrames>,
 }
 
 /// One live color frame and what the detector found in it. Coordinates are
@@ -395,6 +418,8 @@ impl Worker {
             timeouts: 0,
             size_origin: None,
             require_edges: false,
+            attempt: None,
+            request_text: String::new(),
         };
         // The thread is detached: it ends when `commands` drops, and closing an
         // SDK pipeline can take a moment the UI thread must not wait for.
@@ -444,6 +469,10 @@ struct Engine {
     size_origin: Option<SizeOrigin>,
     /// Whether the open session requires the display's whole picture.
     require_edges: bool,
+    /// The latest attempt, kept after its camera closes so it can be saved.
+    attempt: Option<Attempt>,
+    /// The open request of the current session, as words.
+    request_text: String,
 }
 
 impl Engine {
@@ -501,6 +530,7 @@ impl Engine {
 
     fn fail(&mut self, kind: FailureKind, details: String, keep_camera: bool) {
         tracing::warn!("calibration failed ({kind:?}): {details}");
+        self.remember_attempt(format!("failed ({kind:?}): {details}"));
         self.mode = Mode::Hold;
         if !keep_camera {
             self.close_quietly();
@@ -531,6 +561,8 @@ impl Engine {
                 self.timeouts = 0;
                 self.size_origin = request.size_origin;
                 self.require_edges = request.options.require_visible_edges;
+                self.request_text = describe_request(&request);
+                self.attempt = None;
                 match self.backend.open(&request) {
                     Ok(opened) => {
                         tracing::info!(
@@ -564,6 +596,7 @@ impl Engine {
             Command::MeasureScreen => self.measure_screen(),
             Command::MeasureMarkers => self.measure_markers(),
             Command::Finish => self.finish(),
+            Command::SaveAttempt { path } => self.save_attempt(path),
             Command::Close => self.close(),
         }
     }
@@ -605,82 +638,55 @@ impl Engine {
         // A measurement that found nothing usable leaves the camera fine; a
         // camera error means the stream is gone.
         let keep = kind != FailureKind::CameraLost;
-        let mut details = error.to_string();
-        // The last frame of the burst is a sample of what the pattern search saw, and
-        // nothing else keeps it; it is the first thing to look at for "not found".
-        if kind == FailureKind::ScreenDots {
-            let frame = self
-                .live
-                .as_mut()
-                .and_then(|live| live.session.take_failed_color());
-            if let Some(frame) = frame {
-                match Self::save_failed_frame(&frame) {
-                    Ok(path) => details.push_str(&format!(
-                        ". The last frame it captured is saved as {}",
-                        path.display()
-                    )),
-                    Err(e) => tracing::warn!("could not save the failed frame: {e}"),
-                }
-            }
-        }
-        self.fail(kind, details, keep);
+        self.fail(kind, error.to_string(), keep);
     }
 
-    /// Writes the frame into a folder beside the app's saved screens, readable
-    /// only by the user (a camera frame can show a room), and returns where. Only
-    /// the newest few are kept.
-    fn save_failed_frame(frame: &RgbImage) -> Result<std::path::PathBuf, String> {
-        use std::io::Write;
-        const KEPT: usize = 5;
-        let dir = odyssey_hub_common::config::screens_dir()
-            .map_err(|e| e.to_string())?
-            .parent()
-            .ok_or("no config folder")?
-            .join("failed-measurements");
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(&dir).map_err(|e| e.to_string())?;
+    /// Keeps what the attempt looked at and how it ended, so the user can save it
+    /// after the camera is closed. Replaced by the next attempt.
+    fn remember_attempt(&mut self, outcome: String) {
+        let frames = self
+            .live
+            .as_ref()
+            .map(|live| live.session.attempt_frames())
+            .or_else(|| self.attempt.take().and_then(|attempt| attempt.frames));
+        self.attempt = Some(Attempt {
+            request: self.request_text.clone(),
+            outcome,
+            frames,
+        });
+    }
 
-        let mut png = Vec::new();
-        frame
-            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-            .map_err(|e| e.to_string())?;
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis());
-        let path = dir.join(format!("screen-dots-{stamp}.png"));
-        let mut file = std::fs::OpenOptions::new();
-        file.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            file.mode(0o600);
+    /// Writes the remembered attempt to `path`; here, not on the UI thread, because
+    /// encoding the frames takes a moment.
+    fn save_attempt(&mut self, path: PathBuf) {
+        let result = match &self.attempt {
+            None => Err("there is no calibration attempt to save yet".to_string()),
+            Some(attempt) => {
+                let log = crate::paths::log_dir()
+                    .map(|dir| dir.join("latest.log"))
+                    .and_then(|file| std::fs::read_to_string(file).ok())
+                    .unwrap_or_default();
+                let summary = attempt_summary(attempt);
+                attempt_bundle::write(
+                    &path,
+                    &Bundle {
+                        summary: &summary,
+                        frames: attempt.frames.as_ref(),
+                        log: &log,
+                    },
+                )
+                .map(|bytes| SavedAttempt { path, bytes })
+            }
+        };
+        match &result {
+            Ok(saved) => tracing::info!(
+                "calibration attempt saved to {} ({} bytes)",
+                saved.path.display(),
+                saved.bytes
+            ),
+            Err(e) => tracing::warn!("could not save the calibration attempt: {e}"),
         }
-        file.open(&path)
-            .and_then(|mut f| f.write_all(&png))
-            .map_err(|e| e.to_string())?;
-
-        // Names carry the time, so sorting them orders by age.
-        let mut saved: Vec<_> = std::fs::read_dir(&dir)
-            .map_err(|e| e.to_string())?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("screen-dots-"))
-            })
-            .collect();
-        saved.sort();
-        for old in saved.iter().take(saved.len().saturating_sub(KEPT)) {
-            let _ = std::fs::remove_file(old);
-        }
-        Ok(path)
+        self.emit(SessionEvent::AttemptSaved(result));
     }
 
     fn finish(&mut self) {
@@ -700,6 +706,8 @@ impl Engine {
             Ok((declared, measured)) => {
                 let (image, width, height) =
                     encode_rgb(&declared.review.color, u32::MAX, REVIEW_JPEG_QUALITY);
+                // Kept for the user to save after the camera closes just below.
+                self.remember_attempt(format!("finished\n{}", result_text(&declared)));
                 let finished = Finished {
                     image,
                     width,
@@ -770,6 +778,101 @@ impl Engine {
         }
         self.fail(FailureKind::of_session(&error), error.to_string(), false);
     }
+}
+
+/// The settings an attempt was opened with, as words for the bundle.
+fn describe_request(request: &OpenRequest) -> String {
+    use std::fmt::Write;
+    let camera = &request.camera;
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "camera: {} (serial {}, id {}, link {})",
+        camera.name, camera.serial, camera.id, camera.link
+    );
+    let _ = writeln!(s, "capture settings: {:?}", request.settings);
+    let _ = writeln!(s, "screen aspect: {:.4}", request.aspect);
+    let _ = writeln!(s, "options: {:?}", request.options);
+    let _ = writeln!(s, "declared size from: {:?}", request.size_origin);
+    s
+}
+
+/// What a finished calibration measured, as words for the bundle.
+fn result_text(c: &Calibration) -> String {
+    use std::fmt::Write;
+    let r = &c.review;
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "screen {:.3} x {:.3} m ({:.1} in diagonal), size from {:?}",
+        r.size_m[0], r.size_m[1], r.diagonal_in, r.size_source
+    );
+    let _ = writeln!(
+        s,
+        "plane rms {:.2} mm, max {:.2} mm, {} inliers",
+        r.plane_rmse_m * 1000.0,
+        r.plane_max_error_m * 1000.0,
+        r.plane_inliers
+    );
+    let _ = writeln!(s, "dots used {} of {}", r.dots_used, r.dots_expected);
+    let _ = writeln!(s, "edges: {:?}", r.edges);
+    let _ = writeln!(s, "size check: {:?}", r.size_check);
+    let _ = writeln!(s, "gravity aligned: {}", r.gravity_aligned);
+    let _ = writeln!(
+        s,
+        "markers' largest offset from the layout: {:.4} m",
+        r.marker_max_offset_m
+    );
+    for (i, p) in c.calibration.object_points.iter().enumerate() {
+        let _ = writeln!(s, "marker {}: ({:.4}, {:.4}) m", i + 1, p.x, p.y);
+    }
+    s
+}
+
+/// The text at the top of a bundle: what ran, with what, and how it ended.
+fn attempt_summary(attempt: &Attempt) -> String {
+    use std::fmt::Write;
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "Odyssey Desktop {} on {} {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let _ = writeln!(s, "\n== request ==\n{}", attempt.request);
+    let _ = writeln!(s, "== outcome ==\n{}", attempt.outcome);
+    if let Some(frames) = &attempt.frames {
+        let g = &frames.geometry;
+        let _ = writeln!(s, "== camera geometry ==");
+        let _ = writeln!(s, "color: {:?}", g.color);
+        let _ = writeln!(s, "depth: {:?}", g.depth);
+        let _ = writeln!(s, "infrared: {:?}", g.ir);
+        let _ = writeln!(s, "color to depth: {:?}", g.color_to_depth);
+        let _ = writeln!(s, "infrared to depth: {:?}", g.ir_to_depth);
+        let _ = writeln!(s, "\n== frames ==");
+        let _ = writeln!(s, "screen burst: {} frames", frames.screen_burst.len());
+        if let Some(first) = frames.screen_burst.first() {
+            let _ = writeln!(
+                s,
+                "  color {}x{}, depth {}x{} (16-bit, {} m per unit), infrared {}x{}",
+                first.color.width(),
+                first.color.height(),
+                first.depth.width(),
+                first.depth.height(),
+                first.depth_unit_m,
+                first.ir.width(),
+                first.ir.height()
+            );
+        }
+        let _ = writeln!(
+            s,
+            "marker burst: {} infrared frames; preview frame: {}",
+            frames.marker_burst_ir.len(),
+            frames.marker_preview_ir.is_some()
+        );
+    }
+    s
 }
 
 /// Downscales `image` to at most `max_width` and encodes it as a JPEG data
@@ -983,6 +1086,14 @@ mod tests {
         let mut measuring = false;
         let mut outcome = None;
         let mut closed = false;
+        let mut saved = None;
+        let bundle_path = std::env::temp_dir().join(format!(
+            "odyssey-worker-test-{}-{}.zip",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
         let deadline = Instant::now() + Duration::from_secs(120);
         while let Some(event) = rx.blocking_recv() {
             assert!(Instant::now() < deadline, "timed out");
@@ -1010,18 +1121,44 @@ mod tests {
                     }
                 }
                 SessionEvent::MarkersMeasured => worker.send(Command::Finish),
-                SessionEvent::Finished(f) => outcome = Some(Ended::Finished(f)),
+                SessionEvent::Finished(f) => {
+                    outcome = Some(Ended::Finished(f));
+                    worker.send(Command::SaveAttempt {
+                        path: bundle_path.clone(),
+                    });
+                }
                 SessionEvent::Failed(f) => {
                     outcome = Some(Ended::Failed(f));
+                    worker.send(Command::SaveAttempt {
+                        path: bundle_path.clone(),
+                    });
                     worker.send(Command::Close);
                 }
-                SessionEvent::Closed => {
-                    closed = true;
-                    break;
-                }
+                SessionEvent::Closed => closed = true,
+                SessionEvent::AttemptSaved(result) => saved = Some(result),
+            }
+            // The bundle is written after the camera closes, from what the thread kept.
+            if closed && saved.is_some() {
+                break;
             }
         }
         assert!(closed, "the camera must be released at the end");
+        let saved = saved
+            .expect("a save result")
+            .expect("the bundle is written");
+        assert_eq!(saved.path, bundle_path);
+        assert_eq!(saved.bytes, std::fs::metadata(&bundle_path).unwrap().len());
+        let zip = zip::ZipArchive::new(std::fs::File::open(&bundle_path).unwrap()).unwrap();
+        let names: Vec<_> = zip.file_names().map(str::to_owned).collect();
+        assert!(names.iter().any(|n| n == "summary.txt"), "{names:?}");
+        assert!(names.iter().any(|n| n == "calibration.log"), "{names:?}");
+        if matches!(outcome, Some(Ended::Finished(_))) {
+            // A finished attempt keeps every frame of its screen burst and the marker frames.
+            let color = names.iter().filter(|n| n.ends_with("-color.png")).count();
+            assert_eq!(color, SessionOptions::default().burst_frames, "{names:?}");
+            assert!(names.iter().any(|n| n.starts_with("markers/")), "{names:?}");
+        }
+        std::fs::remove_file(&bundle_path).unwrap();
         drop(worker);
         outcome.expect("a result")
     }
