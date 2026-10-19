@@ -84,7 +84,15 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                 }
                 SizeSection { wizard }
                 ReferenceHelper { wizard }
-                ScaleBoardInfo {}
+                details {
+                    class: "text-sm text-gray-600 dark:text-gray-300",
+                    summary { class: "cursor-pointer select-none font-medium", "Advanced (experimental)" }
+                    div {
+                        class: "mt-2 flex flex-col gap-2",
+                        p { "Only use these if you know what you're doing. You don't need them to calibrate." }
+                        ScaleBoardInfo {}
+                    }
+                }
             }
         }
     }
