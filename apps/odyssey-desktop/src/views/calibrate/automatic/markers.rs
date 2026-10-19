@@ -1,18 +1,17 @@
 //! Step 4: the screen is black and the tech turns on the tracker markers. The
-//! infrared view shows what the camera sees; when all six markers hold still
-//! for a moment the measurement starts by itself.
+//! infrared view shows what the camera sees. Measuring starts when the tech presses
+//! Measure, never by itself.
 
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use odyssey_autocalib::session::MarkerHint;
 
 use super::hints::{MARKER_RULES, marker_hint};
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
 use super::ui::{
     Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
 };
-use super::wizard::{MARKERS_AUTO_MEASURE, Wizard};
+use super::wizard::Wizard;
 use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
 
 /// How long the marker brightness slider rests before the camera follows it.
@@ -20,9 +19,17 @@ const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 #[component]
 pub fn MarkersStep(wizard: Wizard) -> Element {
-    let has_frame = use_memo(move || wizard.markers.read().is_some());
+    // Measuring starts only when the user presses Measure, which is live once all six
+    // markers are found.
+    let all_found = use_memo(move || {
+        wizard
+            .markers
+            .read()
+            .as_ref()
+            .is_some_and(|f| f.matched.is_some())
+    });
     use_effect(move || {
-        if has_frame() {
+        if all_found() {
             focus_primary();
         }
     });
@@ -32,7 +39,7 @@ pub fn MarkersStep(wizard: Wizard) -> Element {
     rsx! {
         StepPage {
             title: "Turn on the tracker markers",
-            subtitle: "The screen is dark now. Switch on all six markers and keep the camera where it is. Measuring starts by itself.",
+            subtitle: "The screen is dark now. Switch on all six markers and keep the camera where it is. Press Measure when you're ready.",
             footer: rsx! {
                 button {
                     class: SECONDARY_BUTTON,
@@ -44,9 +51,9 @@ pub fn MarkersStep(wizard: Wizard) -> Element {
                     id: PRIMARY_ID,
                     class: PRIMARY_BUTTON,
                     r#type: "button",
-                    disabled: !has_frame(),
+                    disabled: !all_found(),
                     onclick: move |_| wizard.measure_markers(),
-                    "Measure now"
+                    "Measure"
                 }
             },
 
@@ -99,25 +106,8 @@ fn MarkerBanner(wizard: Wizard) -> Element {
         };
     };
     let message = marker_hint(frame.hint);
-    // While the six are matched, count down to the automatic measurement.
-    let hold = if frame.hint == MarkerHint::Ready && frame.matched.is_some() {
-        let left = MARKERS_AUTO_MEASURE.saturating_sub(frame.stable_for);
-        Some(left.as_secs_f32())
-    } else {
-        None
-    };
     rsx! {
         StatusBanner { tone: message.tone, icon: message.icon, title: message.title, detail: message.detail }
-        if let Some(left) = hold {
-            div {
-                class: "h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-600",
-                aria_hidden: true,
-                div {
-                    class: "h-full rounded-full bg-emerald-500 transition-all duration-150",
-                    style: "width: {(1.0 - left / MARKERS_AUTO_MEASURE.as_secs_f32()).clamp(0.0, 1.0) * 100.0}%;",
-                }
-            }
-        }
     }
 }
 

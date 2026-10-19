@@ -50,8 +50,6 @@ use crate::{Route, ServerReady};
 /// How long the screen must read "ready" before Next lights up, so a hint that
 /// flickers at the edge of acceptable never enables a measurement.
 pub const READY_HOLD: Duration = Duration::from_millis(400);
-/// How long all six markers must stay matched before measuring starts itself.
-pub const MARKERS_AUTO_MEASURE: Duration = Duration::from_millis(1000);
 /// Seconds counted down before the pattern appears when it covers the wizard.
 const COUNTDOWN_SECONDS: u32 = 5;
 /// How long the countdown flow waits for the camera to settle on the pattern
@@ -1189,13 +1187,7 @@ impl Wizard {
                 *self.restarting.write() = false;
                 *self.preview.write() = Some(*frame);
             }
-            SessionEvent::Markers(frame) => {
-                let matched = frame.matched.is_some() && frame.stable_for >= MARKERS_AUTO_MEASURE;
-                *self.markers.write() = Some(*frame);
-                if matched && *self.stage.peek() == Stage::Markers {
-                    self.measure_markers();
-                }
-            }
+            SessionEvent::Markers(frame) => *self.markers.write() = Some(*frame),
             SessionEvent::Progress(step) => *self.progress.write() = Some(step),
             SessionEvent::ScreenMeasured => {
                 self.restore_window();

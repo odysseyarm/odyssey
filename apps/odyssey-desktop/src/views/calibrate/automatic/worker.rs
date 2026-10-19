@@ -263,8 +263,6 @@ pub struct MarkerFrame {
     /// Index into `blobs` for each of the six markers, when all were matched.
     pub matched: Option<[usize; 6]>,
     pub hint: MarkerHint,
-    /// How long all six markers have been matched without interruption.
-    pub stable_for: Duration,
 }
 
 /// One complete result: the calibration and what the review shows about it.
@@ -753,13 +751,8 @@ impl Engine {
             Mode::Markers => match live.session.preview_markers() {
                 Ok(preview) => {
                     self.timeouts = 0;
-                    let all_matched =
-                        preview.hint == MarkerHint::Ready && preview.matched.is_some();
-                    let stable_for = live.ready.observe(all_matched, now);
                     if self.claim_frame() {
-                        self.emit(SessionEvent::Markers(Box::new(marker_frame(
-                            preview, stable_for,
-                        ))));
+                        self.emit(SessionEvent::Markers(Box::new(marker_frame(preview))));
                     }
                 }
                 Err(e) => self.stream_error(e),
@@ -972,7 +965,7 @@ fn preview_frame(preview: Preview, ready_for: Duration, require_edges: bool) -> 
     }
 }
 
-fn marker_frame(preview: MarkerPreview, stable_for: Duration) -> MarkerFrame {
+fn marker_frame(preview: MarkerPreview) -> MarkerFrame {
     let (image, width, height) = encode_gray(&preview.ir, PREVIEW_JPEG_QUALITY);
     MarkerFrame {
         image,
@@ -981,7 +974,6 @@ fn marker_frame(preview: MarkerPreview, stable_for: Duration) -> MarkerFrame {
         blobs: preview.blobs.iter().copied().map(xy).collect(),
         matched: preview.matched,
         hint: preview.hint,
-        stable_for,
     }
 }
 
@@ -1131,7 +1123,7 @@ mod tests {
                 SessionEvent::ScreenMeasured => worker.send(Command::SetMode(Mode::Markers)),
                 SessionEvent::Markers(frame) => {
                     worker.frame_consumed();
-                    if frame.stable_for >= Duration::from_millis(300) {
+                    if frame.matched.is_some() {
                         worker.send(Command::MeasureMarkers);
                     }
                 }
