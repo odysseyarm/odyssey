@@ -18,9 +18,10 @@ use odyssey_common::{MAX_SCREEN_ID, ScreenCalibration};
 
 use crate::camera::{CameraError, CameraGeometry, CameraStream, Frames};
 use crate::imu::{GravityEstimator, Tilt};
-use crate::markers::{self, MarkerBlob, MarkerError};
+use crate::markers::{self, MarkerBlob, MarkerError, MarkerFit};
 use crate::pattern::{DetectFailure, Pattern, check_edges, detect};
 pub use crate::pattern::{EdgeCheck, SideSet};
+pub use crate::placement::Circle;
 use crate::plane::{RansacParams, apply_homography, project_pinhole, ransac_plane};
 use crate::solve::{
     self, BURST_FRAMES, ScreenFit, SolveError, SolveOptions, build_calibration, solve_screen,
@@ -165,10 +166,12 @@ pub enum MarkerHint {
     TooFewMarkers {
         found: usize,
     },
-    /// Spots were found but too few sit where the markers belong.
-    WrongPlace {
-        matched: usize,
+    /// Not six spots on or near the screen; the markers cannot be told from other lights.
+    WrongCount {
+        near_screen: usize,
     },
+    /// Six spots on the screen, but no three of them make the row the tracker needs.
+    NoRow,
 }
 
 #[derive(Debug, Clone)]
@@ -185,10 +188,11 @@ pub struct MarkerPreview {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerSummary {
-    /// Marker positions in meters in the screen frame.
+    /// Marker positions in meters in the screen frame, in the order of
+    /// `ScreenCalibration::object_points`.
     pub points_m: [Point2<f64>; 6],
-    /// Largest distance between a marker and its layout position, meters.
-    pub max_offset_m: f64,
+    /// See [`Review::seed_circle`].
+    pub seed_circle: Option<Circle>,
 }
 
 /// Data for the review screen.
@@ -213,7 +217,10 @@ pub struct Review {
     pub edges: EdgeCheck,
     pub dots_used: usize,
     pub dots_expected: usize,
-    pub marker_max_offset_m: f64,
+    /// The circle through the first three markers, where the tracker's seed solve is
+    /// ill-conditioned for a camera whose position, projected onto the screen's plane, is on
+    /// it. `None` when the three are collinear.
+    pub seed_circle: Option<Circle>,
     /// Whether IMU data aligned the result to gravity.
     pub gravity_aligned: bool,
 }
@@ -249,27 +256,36 @@ fn average_markers(
     fit: &ScreenFit,
     bursts: &[Vec<MarkerBlob>],
 ) -> Result<(MarkerSummary, [Point2<f32>; 6]), SessionError> {
+    let mut reference: Option<MarkerFit> = None;
     let mut sums = [nalgebra::Vector2::<f64>::zeros(); 6];
-    let mut max_offset = 0.0f64;
     let mut successes = 0usize;
     let mut last_error = None;
     for blobs in bursts {
         match markers::locate(geometry, fit, blobs) {
             Ok(m) => {
+                // Each frame is ordered on its own, and the markers do not move, so the
+                // later frames take the labels of the first one.
+                let points = match &reference {
+                    None => m.points_m,
+                    Some(first) => match markers::relabel(&first.points_m, &m.points_m) {
+                        Some(points) => points,
+                        None => continue,
+                    },
+                };
                 successes += 1;
-                max_offset = max_offset.max(m.max_offset_m);
-                for (sum, p) in sums.iter_mut().zip(m.points_m) {
+                for (sum, p) in sums.iter_mut().zip(points) {
                     *sum += p.coords;
                 }
+                reference.get_or_insert(m);
             }
             Err(e) => last_error = Some(e),
         }
     }
-    if successes == 0 || successes * 2 < bursts.len() {
+    let Some(first) = reference.filter(|_| successes * 2 >= bursts.len()) else {
         return Err(last_error
             .map(SessionError::Markers)
             .unwrap_or(SessionError::Markers(MarkerError::TooFewBlobs { found: 0 })));
-    }
+    };
     let points_m = sums.map(|s| Point2::from(s / successes as f64));
     let marker_px = points_m.map(|p| {
         fit.screen_to_color_px(p)
@@ -279,7 +295,7 @@ fn average_markers(
     Ok((
         MarkerSummary {
             points_m,
-            max_offset_m: max_offset,
+            seed_circle: first.seed_circle,
         },
         marker_px,
     ))
@@ -589,24 +605,27 @@ impl Session {
         } else if let Some(screen) = &self.screen {
             match markers::locate(&self.geometry, &screen.fit, &blobs) {
                 Ok(m) => preview.matched = Some(m.blob_for_marker),
-                Err(MarkerError::LayoutMismatch { matched }) => {
-                    preview.hint = MarkerHint::WrongPlace { matched };
+                Err(error) => {
+                    preview.hint = match error {
+                        MarkerError::TooFewBlobs { found } => MarkerHint::TooFewMarkers { found },
+                        MarkerError::WrongCount { near_screen } => {
+                            MarkerHint::WrongCount { near_screen }
+                        }
+                        MarkerError::Placement(_) => MarkerHint::NoRow,
+                    };
                     // One account every few seconds is enough to see where the spots
-                    // land against the layout. It goes to the app's log (numbers only,
-                    // no images), which the desktop app also keeps as a file.
+                    // land on the screen. It goes to the app's log (numbers only, no
+                    // images), which the desktop app also keeps as a file.
                     let due = self
                         .marker_report_at
                         .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3));
-                    if due {
+                    if due && !matches!(error, MarkerError::TooFewBlobs { .. }) {
                         self.marker_report_at = Some(std::time::Instant::now());
                         tracing::info!(
-                            "marker layout mismatch ({matched} of 6):\n{}",
-                            markers::describe_layout(&self.geometry, &screen.fit, &blobs)
+                            "marker search failed ({error}):\n{}",
+                            markers::describe_spots(&self.geometry, &screen.fit, &blobs)
                         );
                     }
-                }
-                Err(MarkerError::TooFewBlobs { found }) => {
-                    preview.hint = MarkerHint::TooFewMarkers { found }
                 }
             }
         }
@@ -713,7 +732,7 @@ impl Session {
             edges: screen.edges,
             dots_used: fit.dots_used,
             dots_expected: self.pattern.dots().len(),
-            marker_max_offset_m: markers.max_offset_m,
+            seed_circle: markers.seed_circle,
             gravity_aligned: screen.gravity_aligned,
         };
         Calibration {

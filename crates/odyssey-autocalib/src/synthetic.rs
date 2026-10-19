@@ -25,7 +25,6 @@ use crate::camera::{
     CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings,
     DepthImage, Extrinsics, Frames, ImuSample, Intrinsics, Link,
 };
-use crate::markers::MARKER_LAYOUT;
 use crate::pattern::Pattern;
 use crate::plane::{pixel_ray, project};
 
@@ -33,6 +32,18 @@ const GRAVITY: f64 = 9.81;
 const IMU_RATE_HZ: f64 = 200.0;
 const FRAME_RATE_HZ: f64 = 30.0;
 const DEPTH_UNIT_M: f32 = 0.001;
+
+/// Where the simulated markers sit, as fractions of the panel from its top-left corner: the
+/// original autocalib's pattern, three along the top edge and three along the bottom. It is
+/// also in the order the tracker needs (see `crate::placement`).
+pub const SIMULATED_MARKERS: [[f64; 2]; 6] = [
+    [0.2, 1.0],
+    [0.2, 0.0],
+    [0.8, 0.0],
+    [0.5, 0.0],
+    [0.5, 1.0],
+    [0.8, 1.0],
+];
 
 /// Everything that defines the synthetic scene. Fields are public: build one
 /// from [`Default`] and change what a scenario needs.
@@ -250,7 +261,7 @@ impl SyntheticScene {
             size_m: [iw, ih],
             panel_m: self.screen_size_m,
             // The markers sit on the panel; the frame starts at the image's corner.
-            markers_m: MARKER_LAYOUT
+            markers_m: SIMULATED_MARKERS
                 .map(|[u, v]| Point3::new(u * w - origin.x, v * h - origin.y, 0.0)),
         }
     }
@@ -633,7 +644,7 @@ impl SyntheticStream {
         let depth_from_color = self.geometry.color_to_depth;
         let ir_from_depth = self.geometry.ir_to_depth.inverse();
         let mut out = Vec::new();
-        for [u, v] in MARKER_LAYOUT {
+        for [u, v] in SIMULATED_MARKERS {
             // The standoff points toward the viewer, which is -z in the screen frame.
             let p_screen = Vector3::new(u * sw, v * sh, -self.scene.marker_standoff_m);
             let p_ir = ir_from_depth.apply(&depth_from_color.apply(&to_camera.apply(&p_screen)));

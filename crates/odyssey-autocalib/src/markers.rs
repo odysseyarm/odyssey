@@ -1,5 +1,6 @@
-//! Infrared tracker markers: blob detection in the infrared image, projection
-//! onto the screen plane and assignment to the expected marker layout.
+//! Infrared tracker markers: blob detection in the infrared image, projection onto the
+//! screen plane, and finding the six markers wherever they stand on or around the screen,
+//! ordered the way the hub's tracker needs them (see [`crate::placement`]).
 //!
 //! Detection runs with the camera at low exposure and the depth projector off,
 //! so the markers' LEDs are the only bright features. The image is normalized
@@ -11,20 +12,9 @@ use nalgebra::Point2;
 
 use crate::camera::CameraGeometry;
 use crate::pattern::components;
+use crate::placement::{Circle, PlacementError, tracker_order};
 use crate::plane::{apply_homography, pixel_ray};
 use crate::solve::ScreenFit;
-
-/// Marker positions as fractions of the screen's width and height, measured
-/// from the top-left corner. This is the layout the tracker hardware ships
-/// with; the order is the order of `ScreenCalibration::object_points`.
-pub const MARKER_LAYOUT: [[f64; 2]; 6] = [
-    [0.18, 0.29],
-    [0.15, 0.82],
-    [0.77, 0.80],
-    [0.51, 0.35],
-    [0.79, 0.25],
-    [0.49, 0.76],
-];
 
 /// Pixels brighter than this fraction of the normalized range count as marker.
 const RELATIVE_THRESHOLD: f64 = 150.0 / 255.0;
@@ -35,9 +25,9 @@ const MAX_AREA_PX: u32 = 2000;
 /// At most this many of the largest blobs take part in assignment, which keeps
 /// the exhaustive search small when the scene is cluttered with reflections.
 const MAX_BLOBS: usize = 24;
-/// A blob may sit this far from its expected position, as a fraction of the
-/// screen diagonal, and still be assigned to it.
-const MATCH_GATE_FRACTION: f64 = 0.10;
+/// A spot may lie this far beyond a screen edge, as a fraction of the screen's size on that
+/// axis, and still count as a marker.
+const NEAR_SCREEN_MARGIN: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerBlob {
@@ -50,8 +40,10 @@ pub struct MarkerBlob {
 pub enum MarkerError {
     #[error("found {found} bright spots, need at least 6")]
     TooFewBlobs { found: usize },
-    #[error("only {matched} of 6 bright spots sit where the markers should be")]
-    LayoutMismatch { matched: usize },
+    #[error("found {near_screen} bright spots on or near the screen, need exactly 6")]
+    WrongCount { near_screen: usize },
+    #[error("the six markers cannot be told apart for tracking: {0}")]
+    Placement(#[from] PlacementError),
 }
 
 /// Finds bright round spots in an infrared image, largest first.
@@ -106,18 +98,18 @@ pub fn blob_on_screen(
     apply_homography(&fit.rectification, Point2::new(screen.x, screen.y))
 }
 
-/// The six marker positions the layout predicts, in final screen coordinates.
-pub fn expected_positions(fit: &ScreenFit) -> [Point2<f64>; 6] {
-    MARKER_LAYOUT.map(|[u, v]| {
-        apply_homography(&fit.unit_to_screen, Point2::new(u, v)).unwrap_or_else(Point2::origin)
-    })
+/// Whether `v`, a position on an axis of extent `extent`, is on the screen or within
+/// [`NEAR_SCREEN_MARGIN`] of it. Markers sit on the bezel or behind the screen.
+fn within(v: f64, extent: f64) -> bool {
+    v.is_finite()
+        && (-NEAR_SCREEN_MARGIN * extent..=(1.0 + NEAR_SCREEN_MARGIN) * extent).contains(&v)
 }
 
-/// A plain-text account of where the bright spots landed on the screen against
-/// where the layout expects the markers, for diagnosing a mismatch: the camera's
-/// intrinsics, the screen's size and plane, every spot in the image and on the
-/// screen, and the nearest spot to each expected marker.
-pub fn describe_layout(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> String {
+/// A plain-text account of the bright spots against the screen, for diagnosing a failed
+/// marker search: the camera's intrinsics, the screen's size and plane, every spot in the
+/// image and on the screen (and whether it counts as on or near the screen), and the order
+/// the tracker needs when the markers are found.
+pub fn describe_spots(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> String {
     use std::fmt::Write;
     let [w, h] = fit.size_m;
     let ir = &geometry.ir;
@@ -137,40 +129,27 @@ pub fn describe_layout(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[Mark
         out,
         "screen {w:.3} x {h:.3} m, plane distance {distance:.3} m"
     );
-    let expected = expected_positions(fit);
-    let _ = writeln!(out, "expected markers (layout fraction -> screen meters):");
-    for (i, (layout, e)) in MARKER_LAYOUT.iter().zip(&expected).enumerate() {
-        let _ = writeln!(
-            out,
-            "  {}: ({:.2}, {:.2}) -> ({:.3}, {:.3})",
-            i + 1,
-            layout[0],
-            layout[1],
-            e.x,
-            e.y
-        );
-    }
-    let positions: Vec<Option<Point2<f64>>> = blobs
-        .iter()
-        .map(|b| blob_on_screen(geometry, fit, b))
-        .collect();
     let _ = writeln!(
         out,
         "bright spots (infrared pixel, area -> screen meters -> fraction of the screen):"
     );
-    for (i, (b, p)) in blobs.iter().zip(&positions).enumerate() {
-        match p {
+    let mut counted = 0;
+    for (i, b) in blobs.iter().enumerate() {
+        match blob_on_screen(geometry, fit, b) {
             Some(p) => {
+                let on = within(p.x, w) && within(p.y, h);
+                counted += usize::from(on);
                 let _ = writeln!(
                     out,
-                    "  {i}: ({:.1}, {:.1}) area {} -> ({:.3}, {:.3}) -> ({:.2}, {:.2})",
+                    "  {i}: ({:.1}, {:.1}) area {} -> ({:.3}, {:.3}) -> ({:.2}, {:.2}){}",
                     b.center.x,
                     b.center.y,
                     b.area,
                     p.x,
                     p.y,
                     p.x / w,
-                    p.y / h
+                    p.y / h,
+                    if on { " on or near the screen" } else { "" }
                 );
             }
             None => {
@@ -182,41 +161,43 @@ pub fn describe_layout(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[Mark
             }
         }
     }
-    let gate = MATCH_GATE_FRACTION * w.hypot(h);
-    let _ = writeln!(
-        out,
-        "gate {gate:.3} m; nearest spot to each expected marker:"
-    );
-    for (i, e) in expected.iter().enumerate() {
-        let nearest = positions
-            .iter()
-            .enumerate()
-            .filter_map(|(j, p)| p.map(|p| (j, (p - e).norm())))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        match nearest {
-            Some((j, d)) => {
-                let _ = writeln!(out, "  {}: spot {j}, {d:.3} m away", i + 1);
+    let _ = writeln!(out, "{counted} spots on or near the screen, need exactly 6");
+    match locate(geometry, fit, blobs) {
+        Ok(m) => {
+            let _ = writeln!(out, "tracker order (spot index, screen meters):");
+            for (n, (i, p)) in m.blob_for_marker.iter().zip(&m.points_m).enumerate() {
+                let _ = writeln!(out, "  {}: spot {i} ({:.3}, {:.3})", n + 1, p.x, p.y);
             }
-            None => {
-                let _ = writeln!(out, "  {}: no spot", i + 1);
+            if let Some(c) = m.seed_circle {
+                let _ = writeln!(
+                    out,
+                    "circle through markers 1, 2 and 3: centre ({:.3}, {:.3}) radius {:.3} m",
+                    c.center.x, c.center.y, c.radius
+                );
             }
+        }
+        Err(e) => {
+            let _ = writeln!(out, "no marker set: {e}");
         }
     }
     out
 }
 
-/// Result of matching blobs to the layout.
+/// The six markers, in the order the tracker needs them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarkerFit {
-    /// Marker positions in final screen coordinates, in layout order.
+    /// Marker positions in final screen coordinates, in the order of
+    /// `ScreenCalibration::object_points` (see [`crate::placement`]).
     pub points_m: [Point2<f64>; 6],
-    /// Index into the blob list for each layout position.
+    /// Index into the blob list for each marker.
     pub blob_for_marker: [usize; 6],
-    /// Largest distance between a marker and its layout position, meters.
-    pub max_offset_m: f64,
+    /// The circle through the first three markers, the seed of the tracker's pose solve.
+    pub seed_circle: Option<Circle>,
 }
 
-/// Matches `blobs` to the layout and measures the markers.
+/// Finds the six markers among `blobs` and orders them for the tracker. The markers may
+/// sit anywhere on or just around the screen: exactly six spots must be there, and three
+/// of them must make the row the tracker looks for (see [`crate::placement`]).
 pub fn locate(
     geometry: &CameraGeometry,
     fit: &ScreenFit,
@@ -225,98 +206,50 @@ pub fn locate(
     if blobs.len() < 6 {
         return Err(MarkerError::TooFewBlobs { found: blobs.len() });
     }
-    // Blobs whose ray misses the plane keep their slot so indices stay valid;
-    // the matcher never selects them because they sit infinitely far away.
-    let positions: Vec<Point2<f64>> = blobs
+    let [w, h] = fit.size_m;
+    let on_screen: Vec<(usize, Point2<f64>)> = blobs
         .iter()
-        .map(|b| {
-            blob_on_screen(geometry, fit, b).unwrap_or(Point2::new(f64::INFINITY, f64::INFINITY))
-        })
+        .enumerate()
+        .filter_map(|(i, b)| blob_on_screen(geometry, fit, b).map(|p| (i, p)))
+        .filter(|(_, p)| within(p.x, w) && within(p.y, h))
         .collect();
-    let expected = expected_positions(fit);
-    let gate = MATCH_GATE_FRACTION * fit.size_m[0].hypot(fit.size_m[1]);
-    let Some(blob_for_marker) = assign(&expected, &positions, gate) else {
-        let matched = expected
-            .iter()
-            .filter(|e| positions.iter().any(|p| (p - **e).norm() <= gate))
-            .count();
-        return Err(MarkerError::LayoutMismatch { matched });
-    };
-    let points_m = blob_for_marker.map(|i| positions[i]);
-    let max_offset_m = points_m
-        .iter()
-        .zip(&expected)
-        .map(|(p, e)| (p - e).norm())
-        .fold(0.0, f64::max);
+    let spots: [(usize, Point2<f64>); 6] =
+        on_screen
+            .try_into()
+            .map_err(|spots: Vec<_>| MarkerError::WrongCount {
+                near_screen: spots.len(),
+            })?;
+    let points = spots.map(|(_, p)| p);
+    let tracker = tracker_order(&points)?;
     Ok(MarkerFit {
-        points_m,
-        blob_for_marker,
-        max_offset_m,
+        points_m: tracker.order.map(|n| points[n]),
+        blob_for_marker: tracker.order.map(|n| spots[n].0),
+        seed_circle: tracker.seed_circle,
     })
 }
 
-/// Assigns each expected position a distinct observed position within `gate`
-/// so that the summed distance is minimal, or `None` if no complete
-/// assignment exists. The search is exhaustive over the candidates inside the
-/// gate, which are few: the layout's markers are far apart relative to the
-/// gate.
-pub fn assign(
-    expected: &[Point2<f64>; 6],
-    observed: &[Point2<f64>],
-    gate: f64,
-) -> Option<[usize; 6]> {
-    let candidates: Vec<Vec<(usize, f64)>> = expected
-        .iter()
-        .map(|e| {
-            let mut c: Vec<_> = observed
-                .iter()
-                .enumerate()
-                .map(|(i, o)| (i, (o - e).norm()))
-                .filter(|(_, d)| *d <= gate)
-                .collect();
-            c.sort_by(|a, b| a.1.total_cmp(&b.1));
-            c
-        })
-        .collect();
-    if candidates.iter().any(|c| c.is_empty()) {
-        return None;
-    }
-
-    struct Search<'a> {
-        candidates: &'a [Vec<(usize, f64)>],
-        used: Vec<bool>,
-        current: [usize; 6],
-        best: Option<(f64, [usize; 6])>,
-    }
-    impl Search<'_> {
-        fn run(&mut self, slot: usize, cost: f64) {
-            if self.best.as_ref().is_some_and(|(b, _)| cost >= *b) {
-                return;
-            }
-            if slot == 6 {
-                self.best = Some((cost, self.current));
-                return;
-            }
-            for k in 0..self.candidates[slot].len() {
-                let (i, d) = self.candidates[slot][k];
-                if self.used[i] {
-                    continue;
-                }
-                self.used[i] = true;
-                self.current[slot] = i;
-                self.run(slot + 1, cost + d);
-                self.used[i] = false;
-            }
+/// The six `points` of a later frame in the order of `reference`: each reference marker takes
+/// its nearest point. The markers do not move between frames, so this labels a frame the way
+/// the first one was labelled whatever order [`tracker_order`] put its own points in. `None`
+/// when two reference markers claim the same point.
+pub fn relabel(
+    reference: &[Point2<f64>; 6],
+    points: &[Point2<f64>; 6],
+) -> Option<[Point2<f64>; 6]> {
+    let mut taken = [false; 6];
+    let mut out = [Point2::origin(); 6];
+    for (slot, r) in out.iter_mut().zip(reference) {
+        let (n, _) = points
+            .iter()
+            .enumerate()
+            .map(|(n, p)| (n, (p - r).norm()))
+            .min_by(|a, b| a.1.total_cmp(&b.1))?;
+        if std::mem::replace(&mut taken[n], true) {
+            return None;
         }
+        *slot = points[n];
     }
-    let mut search = Search {
-        candidates: &candidates,
-        used: vec![false; observed.len()],
-        current: [0; 6],
-        best: None,
-    };
-    search.run(0, 0.0);
-    search.best.map(|(_, a)| a)
+    Some(out)
 }
 
 #[cfg(test)]
@@ -325,49 +258,52 @@ mod tests {
 
     use super::*;
 
-    fn layout_m(w: f64, h: f64) -> [Point2<f64>; 6] {
-        MARKER_LAYOUT.map(|[u, v]| Point2::new(u * w, v * h))
+    #[test]
+    fn a_later_frame_takes_the_first_frames_labels() {
+        let reference = [
+            [0.2, 0.9],
+            [0.2, 0.0],
+            [0.8, 0.0],
+            [0.5, 0.0],
+            [0.5, 0.9],
+            [0.8, 0.9],
+        ]
+        .map(|[x, y]| Point2::new(x, y));
+        // The same markers a few millimeters off, listed in a different order.
+        let later = [
+            reference[4],
+            reference[0],
+            reference[5],
+            reference[2],
+            reference[3],
+            reference[1],
+        ]
+        .map(|p| p + nalgebra::Vector2::new(0.003, -0.002));
+        let got = relabel(&reference, &later).unwrap();
+        for (g, r) in got.iter().zip(&reference) {
+            assert!((g - r).norm() < 0.005);
+        }
+        // Two reference markers closest to the same point are not a labelling.
+        let mut merged = later;
+        merged[0] = merged[1];
+        assert!(relabel(&reference, &merged).is_none());
+    }
+
+    fn near(p: Point2<f64>) -> bool {
+        within(p.x, 1.2) && within(p.y, 0.68)
     }
 
     #[test]
-    fn assignment_ignores_clutter_and_keeps_layout_order() {
-        let expected = layout_m(1.2, 0.68);
-        // Measured markers are a few millimeters off, listed in shuffled order,
-        // with two clutter blobs: one near a marker, one far from everything.
-        let mut observed: Vec<Point2<f64>> = expected
-            .iter()
-            .map(|p| Point2::new(p.x + 0.003, p.y - 0.002))
-            .collect();
-        observed.swap(0, 4);
-        observed.swap(1, 3);
-        observed.push(Point2::new(expected[2].x - 0.05, expected[2].y - 0.04));
-        observed.push(Point2::new(0.9, 0.05));
-        let got = assign(&expected, &observed, 0.14).expect("assignment");
-        let truth_order = [4usize, 3, 2, 1, 0, 5];
-        assert_eq!(got, truth_order);
-    }
-
-    #[test]
-    fn assignment_prefers_the_closest_marker_over_a_nearer_clutter_neighbor() {
-        let expected = layout_m(1.2, 0.68);
-        let mut observed: Vec<Point2<f64>> = expected.to_vec();
-        // Clutter close to marker 3's slot but farther than the real marker.
-        observed.push(Point2::new(expected[3].x + 0.02, expected[3].y));
-        observed[3].x += 0.004;
-        let got = assign(&expected, &observed, 0.14).unwrap();
-        assert_eq!(got[3], 3);
-    }
-
-    #[test]
-    fn assignment_rejects_when_a_marker_is_missing() {
-        let expected = layout_m(1.2, 0.68);
-        let observed: Vec<Point2<f64>> = expected.iter().take(5).copied().collect();
-        assert!(assign(&expected, &observed, 0.14).is_none());
-        // Two markers sharing one blob are not distinct inliers.
-        let mut shared = expected.to_vec();
-        shared[1] = shared[0];
-        shared[0] = Point2::new(5.0, 5.0);
-        assert!(assign(&expected, &shared, 0.14).is_none());
+    fn spots_on_the_bezel_or_behind_the_screen_count_but_a_lamp_beside_it_does_not() {
+        // Just outside an edge: the markers on a TV's bezel.
+        assert!(near(Point2::new(0.5, -0.03)));
+        assert!(near(Point2::new(1.21, 0.3)));
+        // Behind a projector screen.
+        assert!(near(Point2::new(0.6, 0.34)));
+        // A lamp well off to the side.
+        assert!(!near(Point2::new(1.2 + 0.4, 0.3)));
+        assert!(!near(Point2::new(0.6, -0.3)));
+        assert!(!near(Point2::new(f64::INFINITY, 0.3)));
     }
 
     fn spot(img: &mut GrayImage, cx: f64, cy: f64, radius: f64, peak: u8) {

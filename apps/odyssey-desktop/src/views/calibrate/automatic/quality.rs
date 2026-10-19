@@ -1,6 +1,6 @@
 //! The green/amber/red verdict on a finished measurement.
 //!
-//! Three independent checks each grade as good, fair or poor; the verdict is
+//! Independent checks each grade as good, fair or poor; the verdict is
 //! the worst of them. The thresholds are engineering judgment, not a
 //! specification: they sit inside what the solver itself accepts so that a
 //! result the solver produced is never flagged for something it cannot fix.
@@ -9,7 +9,6 @@
 //! |-----------------------|----------------|-----------------|-----------|
 //! | Plane fit RMSE        | up to 5 mm     | up to 10 mm     | above     |
 //! | Dots used             | 90 % and up    | 70 % and up     | below     |
-//! | Marker offset         | up to 3 % diag | up to 6 % diag  | above     |
 //! | Size agreement        | within 2 %     | any larger gap  | never     |
 //!
 //! - *Plane fit RMSE* is the depth noise left after fitting the screen plane.
@@ -18,11 +17,6 @@
 //! - *Dots used* is the share of the pattern's dots that agreed with a flat
 //!   screen. A few misses from glare are normal; a large loss means the
 //!   pattern was partly hidden.
-//! - *Marker offset* is the largest distance between a measured marker and
-//!   its place in the tracker layout, as a share of the screen diagonal. The
-//!   solver matches markers within 10 % of the diagonal; 3 % (about 4 cm on a
-//!   55 inch screen) is mounting tolerance, 6 % means a marker is probably on
-//!   the wrong spot or the screen is not the one the layout was made for.
 //! - *Size agreement* compares the depth camera's measurement with the size
 //!   the display or the tech declared. Depth scale error stays under 2 % at
 //!   room distances, so a bigger gap means the display crops its picture or
@@ -65,8 +59,6 @@ pub const RMSE_GOOD_M: f64 = 0.005;
 pub const RMSE_FAIR_M: f64 = 0.010;
 pub const DOTS_GOOD: f64 = 0.90;
 pub const DOTS_FAIR: f64 = 0.70;
-pub const OFFSET_GOOD_OF_DIAGONAL: f64 = 0.03;
-pub const OFFSET_FAIR_OF_DIAGONAL: f64 = 0.06;
 
 /// Ordered worst last, so `max` picks the overall verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -96,8 +88,6 @@ pub struct Measures {
     pub plane_rmse_m: f64,
     pub dots_used: usize,
     pub dots_expected: usize,
-    pub marker_max_offset_m: f64,
-    pub diagonal_m: f64,
     /// The larger relative gap between the depth measurement and the declared
     /// size along either axis; present only when a size was declared.
     pub size_disagreement: Option<f64>,
@@ -109,8 +99,6 @@ impl From<&Review> for Measures {
             plane_rmse_m: r.plane_rmse_m,
             dots_used: r.dots_used,
             dots_expected: r.dots_expected,
-            marker_max_offset_m: r.marker_max_offset_m,
-            diagonal_m: r.size_m[0].hypot(r.size_m[1]),
             size_disagreement: r
                 .size_check
                 .map(|c| (c.ratio_w - 1.0).abs().max((c.ratio_h - 1.0).abs())),
@@ -136,11 +124,6 @@ pub fn assess(m: &Measures) -> Quality {
     } else {
         m.dots_used as f64 / m.dots_expected as f64
     };
-    let offset_share = if m.diagonal_m > 0.0 {
-        m.marker_max_offset_m / m.diagonal_m
-    } else {
-        f64::INFINITY
-    };
 
     let mut checks = vec![
         Check {
@@ -153,15 +136,6 @@ pub fn assess(m: &Measures) -> Quality {
             value: format!("{} of {}", m.dots_used, m.dots_expected),
             // Higher is better, so grade the shortfall.
             verdict: grade_low(1.0 - dots_share, 1.0 - DOTS_GOOD, 1.0 - DOTS_FAIR),
-        },
-        Check {
-            label: "Marker placement",
-            value: format!("{:.1} cm off layout", m.marker_max_offset_m * 100.0),
-            verdict: grade_low(
-                offset_share,
-                OFFSET_GOOD_OF_DIAGONAL,
-                OFFSET_FAIR_OF_DIAGONAL,
-            ),
         },
     ];
     if let Some(gap) = m.size_disagreement {
@@ -216,9 +190,7 @@ impl Quality {
                 "Dots recognised" => {
                     "Usable. For a sharper result, redo it with the whole screen in view and less glare."
                 }
-                _ => {
-                    "Usable. If the markers were moved, check they sit where the layout shows, then redo."
-                }
+                _ => "Usable. Redo it if you can.",
             },
             Verdict::Poor => match self.weakest().label {
                 "Depth accuracy" => {
@@ -227,9 +199,7 @@ impl Quality {
                 "Dots recognised" => {
                     "Too many dots were hidden. Redo it with the whole screen in view and no glare on it."
                 }
-                _ => {
-                    "The markers are not where they should be on this screen. Check they are mounted on the right screen and switched on, then redo."
-                }
+                _ => "The measurement is not reliable. Redo it.",
             },
         }
     }
@@ -244,8 +214,6 @@ mod tests {
             plane_rmse_m: 0.003,
             dots_used: 54,
             dots_expected: 54,
-            marker_max_offset_m: 0.01,
-            diagonal_m: 1.4,
             size_disagreement: None,
         }
     }
@@ -307,40 +275,14 @@ mod tests {
     }
 
     #[test]
-    fn marker_offset_scales_with_the_screen() {
-        let m = Measures {
-            marker_max_offset_m: 0.04,
-            ..good()
-        };
-        // 4 cm is within tolerance on a 55 inch screen but not on a 20 inch one.
-        assert_eq!(
-            assess(&Measures {
-                diagonal_m: 1.4,
-                ..m
-            })
-            .verdict,
-            Verdict::Good
-        );
-        assert_eq!(
-            assess(&Measures {
-                diagonal_m: 0.5,
-                ..m
-            })
-            .verdict,
-            Verdict::Poor
-        );
-    }
-
-    #[test]
     fn the_worst_check_decides() {
         let q = assess(&Measures {
-            plane_rmse_m: 0.008,
-            marker_max_offset_m: 0.2,
+            plane_rmse_m: 0.02,
             ..good()
         });
         assert_eq!(q.verdict, Verdict::Poor);
-        assert_eq!(q.weakest().label, "Marker placement");
-        assert!(q.advice().contains("markers"));
+        assert_eq!(q.weakest().label, "Depth accuracy");
+        assert!(q.advice().contains("depth"));
     }
 
     #[test]
@@ -350,8 +292,8 @@ mod tests {
             ..good()
         });
         assert_eq!(q.verdict, Verdict::Good);
-        assert_eq!(q.checks.len(), 4);
-        assert_eq!(assess(&good()).checks.len(), 3);
+        assert_eq!(q.checks.len(), 3);
+        assert_eq!(assess(&good()).checks.len(), 2);
         assert_eq!(
             assess(&Measures {
                 size_disagreement: Some(SIZE_DISAGREEMENT),
@@ -404,14 +346,6 @@ mod tests {
         assert_eq!(
             assess(&Measures {
                 plane_rmse_m: f64::NAN,
-                ..good()
-            })
-            .verdict,
-            Verdict::Poor
-        );
-        assert_eq!(
-            assess(&Measures {
-                diagonal_m: 0.0,
                 ..good()
             })
             .verdict,

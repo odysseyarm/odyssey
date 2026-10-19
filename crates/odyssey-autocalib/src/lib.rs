@@ -18,6 +18,7 @@ pub mod imu;
 pub mod markers;
 pub mod orbbec;
 pub mod pattern;
+pub mod placement;
 pub mod plane;
 pub mod session;
 pub mod solve;

@@ -4,7 +4,7 @@
 //! Every `match` below is exhaustive on purpose: a new `Hint` or `MarkerHint`
 //! variant fails to compile here instead of reaching a tech as a blank banner.
 
-use odyssey_autocalib::session::{Hint, MarkerHint, SideSet, Step};
+use odyssey_autocalib::session::{Circle, Hint, MarkerHint, SideSet, Step};
 
 use super::kind::SizeOrigin;
 use super::worker::FailureKind;
@@ -123,11 +123,23 @@ pub fn marker_hint(hint: MarkerHint) -> Message {
             &format!("Only {found} of 6 markers visible"),
             "Make sure all six markers are on and in the camera's view.",
         ),
-        MarkerHint::WrongPlace { matched } => message(
+        MarkerHint::WrongCount { near_screen } if near_screen > 6 => message(
             Attention,
             Icon::Warning,
-            &format!("Only {matched} of 6 markers are where they should be"),
-            "Check that all six markers are on, that no other bright lights are in the camera's view, and that the markers are at their standard positions. \"Where the markers can go\" below has the rules.",
+            &format!("{near_screen} bright spots on or near the screen, need 6"),
+            "Something other than the markers is bright on or next to the screen. Cover it, or lower the marker brightness until only the six markers show.",
+        ),
+        MarkerHint::WrongCount { near_screen } => message(
+            Attention,
+            Icon::Warning,
+            &format!("Only {near_screen} bright spots on or near the screen, need 6"),
+            "Make sure all six markers are on and are on or just around the screen. Markers far from the screen's edge are not counted.",
+        ),
+        MarkerHint::NoRow => message(
+            Attention,
+            Icon::Warning,
+            "The markers can't be told apart",
+            "Three of the six must lie in a nearly straight row, with one clearly between the other two and another marker lower than the row's left end. \"Where the markers can go\" below has the rules.",
         ),
     }
 }
@@ -251,30 +263,46 @@ pub const OVERSCAN_HELP: [(&str, &str); 5] = [
     ),
 ];
 
-/// Where the tracker markers can go and what to avoid, for the markers step. Each item
-/// is something the tracking code or this wizard's own marker search relies on; see
-/// `crates/odyssey-autocalib/MARKERS.md` for where each comes from and what is still
-/// open. Rules that are not confirmed in code do not belong here.
-pub const MARKER_RULES: [(&str, &str); 5] = [
+/// The circle through markers 1, 2 and 3 in words: where its centre is from the screen's
+/// top-left corner, and how big it is. A controller standing straight in front of a point
+/// on it is at the weak spot of the tracker's first estimate.
+pub fn circle_text(circle: &Circle) -> String {
+    format!(
+        "centre {:.0} cm right and {:.0} cm down from the top-left corner, radius {:.0} cm",
+        circle.center.x * 100.0,
+        circle.center.y * 100.0,
+        circle.radius * 100.0
+    )
+}
+
+/// Where the tracker markers can go and what to avoid, for the markers step. Each item is
+/// what the wizard's marker search enforces or what the tracker was run to need; see
+/// `crates/odyssey-autocalib/MARKERS.md` and `crates/odyssey-hub-server/tests/marker_order.rs`
+/// for where each comes from.
+pub const MARKER_RULES: [(&str, &str); 6] = [
+    (
+        "Where they can go",
+        "On the screen, along its edge, or behind a projector screen. The wizard finds them wherever they are, as long as they are on or just around the screen.",
+    ),
     (
         "All six, all at once",
         "All six markers must be on and in the camera's view at the same time. Tracking does not start until it sees all six.",
     ),
     (
         "Nothing else bright",
-        "Reflections, lamps and windows show up as extra bright spots in the infrared picture and can be mistaken for markers. Cover them, or lower the marker brightness until only the six markers show.",
-    ),
-    (
-        "Keep them apart",
-        "Two markers close enough to look like one spot can't be told apart. Space them out.",
+        "Exactly six bright spots may be on or just around the screen. A lamp, a window or a reflection there counts as a seventh and the wizard can't tell it from a marker: cover it, or lower the marker brightness until only the six markers show. Lights far from the screen are ignored.",
     ),
     (
         "A straight row of three",
-        "Three of the six must lie along a nearly straight row, with one clearly between the other two, and the other three must stay well away from that line. The tracker uses that row to recognise the markers, and another marker near the row stops it.",
+        "Three of the six must lie in a nearly straight row, with one clearly between the other two, and no other marker near that line. At least one more marker must be lower than the row's left end. The tracker finds the markers by that row; the numbers on the picture follow from it.",
     ),
     (
-        "Standard positions, for now",
-        "This wizard currently looks for the markers at their standard positions on the screen. Markers mounted somewhere else are not recognised yet; the message above says how many of the six are where they should be.",
+        "Not too close together",
+        "Markers so close that they look like one spot in the camera are counted as one. Keep the first three markers (the row's two ends and the one below) well spread out: a small or nearly flat triangle makes the start of tracking unreliable.",
+    ),
+    (
+        "Where the controller stands",
+        "The tracker starts from markers 1, 2 and 3. A controller whose position, straight in front of the screen, falls on the circle through those three markers (a cylinder through that circle, pointing out from the screen) makes that first estimate ambiguous. It is a weak spot, not a limit: the tracker checks the estimate against all six markers, so it usually still locks on. The review lists the circle's centre and radius.",
     ),
 ];
 
@@ -355,7 +383,8 @@ mod tests {
             MarkerHint::Ready,
             MarkerHint::NoMarkers,
             MarkerHint::TooFewMarkers { found: 4 },
-            MarkerHint::WrongPlace { matched: 2 },
+            MarkerHint::WrongCount { near_screen: 7 },
+            MarkerHint::NoRow,
         ];
         for hint in all {
             let m = marker_hint(hint);
@@ -369,12 +398,30 @@ mod tests {
                 .title
                 .contains('4')
         );
-        assert!(
-            marker_hint(MarkerHint::WrongPlace { matched: 2 })
-                .title
-                .contains('2')
-        );
+        for near_screen in [3, 7] {
+            assert!(
+                marker_hint(MarkerHint::WrongCount { near_screen })
+                    .title
+                    .contains(&near_screen.to_string())
+            );
+        }
+        // More than six means something else is bright; fewer means a marker is out of view.
+        let extra = marker_hint(MarkerHint::WrongCount { near_screen: 7 }).detail;
+        let missing = marker_hint(MarkerHint::WrongCount { near_screen: 5 }).detail;
+        assert_ne!(extra, missing);
         assert_eq!(marker_hint(MarkerHint::Ready).tone, Tone::Good);
+    }
+
+    #[test]
+    fn the_circle_is_given_in_centimeters_from_the_top_left_corner() {
+        let circle = Circle {
+            center: nalgebra::Point2::new(0.6, 0.34),
+            radius: 0.495,
+        };
+        assert_eq!(
+            circle_text(&circle),
+            "centre 60 cm right and 34 cm down from the top-left corner, radius 50 cm"
+        );
     }
 
     #[test]

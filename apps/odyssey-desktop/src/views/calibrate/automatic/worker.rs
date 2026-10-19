@@ -22,7 +22,6 @@ use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{ExtendedColorType, GrayImage, RgbImage};
 use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CaptureSettings};
-use odyssey_autocalib::markers::MarkerError;
 use odyssey_autocalib::orbbec::{self, OrbbecBackend, RuntimeStatus};
 use odyssey_autocalib::session::{
     AttemptFrames, Calibration, EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, Session,
@@ -285,6 +284,8 @@ pub struct Outcome {
     /// Whether the display showed the whole picture. `Cropped` is only
     /// possible when the edges were not required, i.e. the camera sized it.
     pub edges: EdgeCheck,
+    /// The circle through markers 1, 2 and 3; see `Review::seed_circle`.
+    pub seed_circle: Option<odyssey_autocalib::session::Circle>,
 }
 
 /// What the review screen needs once the calibration is done.
@@ -365,9 +366,7 @@ impl FailureKind {
         match error {
             SessionError::Camera(_) => Self::CameraLost,
             SessionError::Solve(e) => Self::of_solve(e),
-            SessionError::Markers(
-                MarkerError::TooFewBlobs { .. } | MarkerError::LayoutMismatch { .. },
-            ) => Self::Markers,
+            SessionError::Markers(_) => Self::Markers,
             SessionError::EdgesCropped(sides) => Self::EdgesCropped(*sides),
             SessionError::ScreenNotMeasured | SessionError::MarkersNotMeasured => Self::Internal,
         }
@@ -825,13 +824,21 @@ fn result_text(c: &Calibration) -> String {
     let _ = writeln!(s, "edges: {:?}", r.edges);
     let _ = writeln!(s, "size check: {:?}", r.size_check);
     let _ = writeln!(s, "gravity aligned: {}", r.gravity_aligned);
-    let _ = writeln!(
-        s,
-        "markers' largest offset from the layout: {:.4} m",
-        r.marker_max_offset_m
-    );
     for (i, p) in c.calibration.object_points.iter().enumerate() {
-        let _ = writeln!(s, "marker {}: ({:.4}, {:.4}) m", i + 1, p.x, p.y);
+        let _ = writeln!(
+            s,
+            "marker {} (object_points[{i}]): ({:.4}, {:.4}) m",
+            i + 1,
+            p.x,
+            p.y
+        );
+    }
+    if let Some(circle) = r.seed_circle {
+        let _ = writeln!(
+            s,
+            "circle through markers 1, 2 and 3: centre ({:.3}, {:.3}) radius {:.3} m",
+            circle.center.x, circle.center.y, circle.radius
+        );
     }
     s
 }
@@ -933,6 +940,7 @@ fn outcome(done: odyssey_autocalib::session::Calibration) -> Outcome {
         measures: Measures::from(r),
         gravity_aligned: r.gravity_aligned,
         edges: r.edges,
+        seed_circle: r.seed_circle,
         calibration: done.calibration,
     }
 }

@@ -6,6 +6,7 @@ use dioxus::prelude::*;
 use odyssey_autocalib::session::{EdgeCheck, SizeSource};
 
 use super::attempt_button::SaveAttempt;
+use super::hints::circle_text;
 use super::kind::{SizeOrigin, source_label};
 use super::quality::{Verdict, assess, disagreement_message};
 use super::screens::screen_label;
@@ -305,6 +306,9 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                 Fact {
                     label: "Aligned to gravity",
                     value: if outcome.gravity_aligned { "yes".to_string() } else { "no (camera has no motion sensor data)".to_string() },
+                }
+                if let Some(circle) = outcome.seed_circle {
+                    Fact { label: "Circle through markers 1, 2 and 3", value: circle_text(&circle) }
                 }
             }
             SaveAttempt { wizard }

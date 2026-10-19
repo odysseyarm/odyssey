@@ -3,6 +3,7 @@
 
 use nalgebra::{Matrix3, Point2};
 use odyssey_autocalib::camera::{CameraBackend, CaptureSettings};
+use odyssey_autocalib::markers::MarkerError;
 use odyssey_autocalib::session::{
     Calibration, EdgeCheck, Hint, KnownSize, MARKER_FRAMES, MarkerHint, Session, SessionError,
     SessionOptions, SizeSource, Step,
@@ -161,14 +162,38 @@ fn works_without_an_imu() {
 }
 
 #[test]
-fn clutter_in_the_infrared_image_is_ignored() {
+fn clutter_away_from_the_screen_is_ignored() {
     let scene = SyntheticScene {
-        // A reflection near the first marker and one in a corner.
-        ir_clutter: vec![Point2::new(240.0, 120.0), Point2::new(40.0, 360.0)],
+        // A lamp up in a corner and a reflection down in another, both well off the screen.
+        ir_clutter: vec![Point2::new(100.0, 60.0), Point2::new(40.0, 360.0)],
         ..SyntheticScene::default()
     };
     let (cal, truth, alignment) = calibrate(&scene, SessionOptions::default());
     assert_matches_truth(&cal, &truth, &alignment, 0.003);
+}
+
+#[test]
+fn a_seventh_bright_spot_on_the_screen_is_refused_with_its_count() {
+    let scene = SyntheticScene {
+        // Between the markers, on the screen: it cannot be told from a marker.
+        ir_clutter: vec![Point2::new(300.0, 200.0)],
+        ..SyntheticScene::default()
+    };
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
+    session.measure_screen(&mut |_| {}).unwrap();
+    let preview = session.preview_markers().unwrap();
+    assert_eq!(preview.hint, MarkerHint::WrongCount { near_screen: 7 });
+    assert!(preview.matched.is_none());
+    assert!(matches!(
+        session.measure_markers(&mut |_| {}),
+        Err(SessionError::Markers(MarkerError::WrongCount {
+            near_screen: 7
+        }))
+    ));
 }
 
 #[test]
