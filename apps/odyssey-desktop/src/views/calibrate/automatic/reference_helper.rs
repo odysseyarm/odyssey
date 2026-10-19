@@ -21,10 +21,21 @@ const SEGMENT_OFF: &str = "bg-white text-gray-800 hover:bg-gray-100 dark:bg-gray
 #[component]
 pub fn ReferenceHelper(wizard: Wizard) -> Element {
     let helper = wizard.helper.read().clone();
-    match helper {
+    let problem = wizard.helper_problem.read().clone();
+    let body = match helper {
         Some(helper) => rsx! { OpenHelper { wizard, helper } },
         None if wizard.reference().is_some() => rsx! { Measured { wizard } },
         None => rsx! { Prompt { wizard } },
+    };
+    rsx! {
+        {body}
+        if let Some(problem) = problem {
+            div {
+                role: "alert",
+                class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
+                "{problem}"
+            }
+        }
     }
 }
 
