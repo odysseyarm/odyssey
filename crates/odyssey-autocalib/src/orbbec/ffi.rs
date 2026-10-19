@@ -298,6 +298,12 @@ pub struct OrbbecSdk {
             index: u32,
             error: *mut *mut ob_error,
         ) -> *const ::std::os::raw::c_char,
+    pub ob_device_list_get_device_connection_type:
+        unsafe extern "C" fn(
+            list: *const ob_device_list,
+            index: u32,
+            error: *mut *mut ob_error,
+        ) -> *const ::std::os::raw::c_char,
     pub ob_device_list_get_device_by_uid: unsafe extern "C" fn(
         list: *const ob_device_list,
         uid: *const ::std::os::raw::c_char,
@@ -526,6 +532,9 @@ impl OrbbecSdk {
             let ob_device_list_get_device_serial_number = __library
                 .get(b"ob_device_list_get_device_serial_number\0")
                 .map(|sym| *sym)?;
+            let ob_device_list_get_device_connection_type = __library
+                .get(b"ob_device_list_get_device_connection_type\0")
+                .map(|sym| *sym)?;
             let ob_device_list_get_device_by_uid = __library
                 .get(b"ob_device_list_get_device_by_uid\0")
                 .map(|sym| *sym)?;
@@ -671,6 +680,7 @@ impl OrbbecSdk {
                 ob_device_list_get_device_name,
                 ob_device_list_get_device_uid,
                 ob_device_list_get_device_serial_number,
+                ob_device_list_get_device_connection_type,
                 ob_device_list_get_device_by_uid,
                 ob_error_get_message,
                 ob_error_get_function,
@@ -855,6 +865,14 @@ impl OrbbecSdk {
         error: *mut *mut ob_error,
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_device_list_get_device_serial_number)(list, index, error) }
+    }
+    pub unsafe fn ob_device_list_get_device_connection_type(
+        &self,
+        list: *const ob_device_list,
+        index: u32,
+        error: *mut *mut ob_error,
+    ) -> *const ::std::os::raw::c_char {
+        unsafe { (self.ob_device_list_get_device_connection_type)(list, index, error) }
     }
     pub unsafe fn ob_device_list_get_device_by_uid(
         &self,

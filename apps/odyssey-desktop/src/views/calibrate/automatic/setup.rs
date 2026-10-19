@@ -209,6 +209,14 @@ fn CameraPicker(wizard: Wizard) -> Element {
                                     IconView { icon: Icon::Check, class: "ms-auto size-6 text-blue-600 dark:text-blue-400".to_string() }
                                 }
                             }
+                            if let Some(warning) = camera.link.warning() {
+                                div {
+                                    key: "{camera.id}-link",
+                                    role: "alert",
+                                    class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
+                                    "{warning}"
+                                }
+                            }
                         }
                     }
                 }
