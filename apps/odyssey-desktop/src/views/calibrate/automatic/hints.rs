@@ -127,7 +127,7 @@ pub fn marker_hint(hint: MarkerHint) -> Message {
             Attention,
             Icon::Warning,
             &format!("Only {matched} of 6 markers are where they should be"),
-            "Check the markers are mounted on this screen, and that no other bright lights are in the camera's view.",
+            "Check that all six markers are on, that no other bright lights are in the camera's view, and that the markers are at their standard positions. \"Where the markers can go\" below has the rules.",
         ),
     }
 }
@@ -248,6 +248,33 @@ pub const OVERSCAN_HELP: [(&str, &str); 5] = [
     (
         "The computer",
         "In the graphics driver's settings (NVIDIA, AMD or Intel) turn scaling off and set overscan to 0 %.",
+    ),
+];
+
+/// Where the tracker markers can go and what to avoid, for the markers step. Each item
+/// is something the tracking code or this wizard's own marker search relies on; see
+/// `crates/odyssey-autocalib/MARKERS.md` for where each comes from and what is still
+/// open. Rules that are not confirmed in code do not belong here.
+pub const MARKER_RULES: [(&str, &str); 5] = [
+    (
+        "All six, all at once",
+        "All six markers must be on and in the camera's view at the same time. Tracking does not start until it sees all six.",
+    ),
+    (
+        "Nothing else bright",
+        "Reflections, lamps and windows show up as extra bright spots in the infrared picture and can be mistaken for markers. Cover them, or lower the marker brightness until only the six markers show.",
+    ),
+    (
+        "Keep them apart",
+        "Two markers close enough to look like one spot can't be told apart. Space them out.",
+    ),
+    (
+        "A straight row of three",
+        "Three of the six must lie along a nearly straight row, with one clearly between the other two, and the other three must stay well away from that line. The tracker uses that row to recognise the markers, and another marker near the row stops it.",
+    ),
+    (
+        "Standard positions, for now",
+        "This wizard currently looks for the markers at their standard positions on the screen. Markers mounted somewhere else are not recognised yet; the message above says how many of the six are where they should be.",
     ),
 ];
 
