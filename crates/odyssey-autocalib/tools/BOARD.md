@@ -114,7 +114,9 @@ collect.
 ## What is not built
 
 - A Setup step that uses the board in the wizard. The app has an explanation window
-  (Setup, "About the scale board") that opens the four PDFs in the system's PDF viewer;
-  the PDFs it carries are the ones in `tools/artwork`, so regenerate and rebuild together.
+  (Setup, "About the scale board") with the four PDFs, each with "Open to print" (opens
+  it in the system's PDF viewer) and "Save a copy…" (a Save As dialog). It is information
+  only. The PDFs it carries are the ones in `tools/artwork`, so regenerate and rebuild
+  together. The tablet PNG is not in the app: it comes only from a local script.
 - A correction of the calibration from the board's result.
 - Any measurement of how accurate it really is. The detector's tests are synthetic.

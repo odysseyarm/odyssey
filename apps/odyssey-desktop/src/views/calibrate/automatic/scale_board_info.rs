@@ -22,6 +22,12 @@ fn board_label(board: Board) -> &'static str {
     }
 }
 
+/// What the last button press did.
+#[derive(Clone, PartialEq)]
+enum Done {
+    Opened(PathBuf),
+    Saved(PathBuf),
+}
 /// A small link under the size question that opens the explanation.
 #[component]
 pub fn ScaleBoardInfo() -> Element {
@@ -44,7 +50,7 @@ pub fn ScaleBoardInfo() -> Element {
 #[component]
 fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
     // What happened to the last PDF the tech asked for.
-    let mut status = use_signal(|| None::<Result<PathBuf, String>>);
+    let mut status = use_signal(|| None::<Result<Done, String>>);
     rsx! {
         div {
             class: "fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4",
@@ -96,20 +102,44 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
                         "Start with US Letter or A4: print it on paper and glue it flat on foam board. For the best result, have a print shop print the 12 \u{d7} 8.5 in file onto rigid board. The 24 \u{d7} 17 in one is only for when the test tool says the dots look too small at your distance."
                     }
                     div {
-                        class: "flex flex-wrap gap-3",
+                        class: "flex flex-col gap-2",
                         for board in Board::ALL {
-                            button {
+                            div {
                                 key: "{board.file_name()}",
-                                class: SECONDARY_BUTTON,
-                                r#type: "button",
-                                onclick: move |_| status.set(Some(scale_board::save_and_open(board))),
-                                "Open {board_label(board)}"
+                                class: "flex flex-wrap items-center gap-3",
+                                span { class: "min-w-64 {BODY}", "{board_label(board)}" }
+                                button {
+                                    class: SECONDARY_BUTTON,
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        status.set(Some(scale_board::save_and_open(board).map(Done::Opened)));
+                                    },
+                                    "Open to print"
+                                }
+                                button {
+                                    class: SECONDARY_BUTTON,
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        spawn(async move {
+                                            match scale_board::save_copy(board).await {
+                                                Ok(Some(path)) => status.set(Some(Ok(Done::Saved(path)))),
+                                                // Cancelled: leave whatever was shown.
+                                                Ok(None) => {}
+                                                Err(message) => status.set(Some(Err(message))),
+                                            }
+                                        });
+                                    },
+                                    "Save a copy\u{2026}"
+                                }
                             }
                         }
                     }
                     match status() {
-                        Some(Ok(path)) => rsx! {
+                        Some(Ok(Done::Opened(path))) => rsx! {
                             p { role: "status", class: "text-sm text-gray-600 dark:text-gray-300", "Opened {path.display()}. Print or save it from your PDF viewer." }
+                        },
+                        Some(Ok(Done::Saved(path))) => rsx! {
+                            p { role: "status", class: "text-sm text-gray-600 dark:text-gray-300", "Saved {path.display()}." }
                         },
                         Some(Err(message)) => rsx! {
                             p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", "{message}" }

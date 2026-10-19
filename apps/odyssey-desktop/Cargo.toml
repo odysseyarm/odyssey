@@ -32,6 +32,9 @@ btleplug = { workspace = true }
 uuid = { workspace = true }
 dfu-nusb = { workspace = true }
 parking_lot = { workspace = true }
+# The native Save As dialog for the scale board PDFs. Already in the build through
+# dioxus-desktop with exactly these features, so this adds no code.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = { workspace = true }
 # The online build's SDK downloader (see the sdk-download feature).
