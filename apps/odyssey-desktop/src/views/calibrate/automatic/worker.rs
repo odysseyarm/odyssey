@@ -707,7 +707,14 @@ impl Engine {
                 let (image, width, height) =
                     encode_rgb(&declared.review.color, u32::MAX, REVIEW_JPEG_QUALITY);
                 // Kept for the user to save after the camera closes just below.
-                self.remember_attempt(format!("finished\n{}", result_text(&declared)));
+                let mut summary = format!("finished\n{}", result_text(&declared));
+                if let Some(measured) = &measured {
+                    summary.push_str(&format!(
+                        "\nthe same frames solved with the declared size set aside (the camera's own size):\n{}",
+                        result_text(measured)
+                    ));
+                }
+                self.remember_attempt(summary);
                 let finished = Finished {
                     image,
                     width,

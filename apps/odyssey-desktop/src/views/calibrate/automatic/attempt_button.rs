@@ -30,7 +30,7 @@ pub fn SaveAttempt(wizard: Wizard) -> Element {
             }
             p {
                 class: "text-sm text-gray-600 dark:text-gray-300",
-                "A zip of what this attempt used: every camera frame (color, depth and infrared, which show the room), the calibration lines of the app's log, the camera's serial number and the settings. It is tens of megabytes. Nothing is sent anywhere; send it yourself if you want help."
+                "A zip of what this attempt used: the frames of the screen measurement (color, depth and infrared) and the infrared frames of the marker measurement. They show the room. It also holds the calibration lines of the app's log, the camera's serial number and the settings, and is tens of megabytes. Nothing is sent anywhere; send it yourself if you want help."
             }
             match status {
                 Some(Ok(saved)) => rsx! {

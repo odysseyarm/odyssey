@@ -7,7 +7,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use odyssey_autocalib::session::MarkerHint;
 
-use super::hints::marker_hint;
+use super::hints::{MARKER_RULES, marker_hint};
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
 use super::ui::{
     Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
@@ -80,6 +80,7 @@ pub fn MarkersStep(wizard: Wizard) -> Element {
             }
 
             MarkerDetails { wizard }
+            MarkerRules {}
         }
     }
 }
@@ -186,6 +187,23 @@ fn MarkerDetails(wizard: Wizard) -> Element {
                 Fact { label: "Picture size", value: format!("{} × {}", frame.width, frame.height) }
             }
             Fact { label: "Infrared exposure", value: format!("{} µs", *wizard.ir_exposure.read()) }
+        }
+    }
+}
+
+/// The rules for where markers can go, collapsed until asked for.
+#[component]
+fn MarkerRules() -> Element {
+    rsx! {
+        Details { summary: "Where the markers can go",
+            for (title, text) in MARKER_RULES {
+                div {
+                    key: "{title}",
+                    class: "flex flex-col gap-0.5",
+                    span { class: "font-medium", "{title}" }
+                    span { class: "text-gray-600 dark:text-gray-300", "{text}" }
+                }
+            }
         }
     }
 }
