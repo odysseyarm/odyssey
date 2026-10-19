@@ -18,6 +18,7 @@ pub mod quality;
 pub mod reference;
 mod reference_helper;
 mod review;
+mod scale_board_info;
 pub mod screens;
 mod sdk_download;
 pub mod settings;

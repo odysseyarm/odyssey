@@ -19,6 +19,7 @@ mod cli;
 mod components;
 mod hub;
 mod paths;
+mod scale_board;
 mod sdk_install;
 mod tray;
 mod views;
