@@ -29,9 +29,9 @@ use crate::plane::{
     project_pinhole, ransac_homography, ransac_plane,
 };
 
-/// Color and depth frames merged per measurement. Nine frames is about a third
-/// of a second at 30 fps: enough for a median to reject flicker and speckle
-/// without making the user hold still for long.
+/// Color and depth frames merged per measurement. Nine frames is about
+/// two-thirds of a second at the camera's 15 fps: enough for a median to reject
+/// flicker and speckle without making the user hold still for long.
 pub const BURST_FRAMES: usize = 9;
 
 /// Depth readings outside this range (meters) are discarded.
