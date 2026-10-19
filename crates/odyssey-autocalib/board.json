@@ -1,0 +1,10 @@
+{
+  "_comment": "Geometry of the printed scale board (black dots on white). Read by src/board.rs and by tools/board_artwork.py, which writes the print artwork. Change it here only; every length is millimeters in the board's own plane, x to the right and y down, origin at the board's top-left corner.",
+  "board_mm": [304.8, 215.9],
+  "cols": 7,
+  "rows": 5,
+  "pitch_mm": 40.0,
+  "dot_diameter_mm": 20.0,
+  "missing": [[6, 0]],
+  "scale_bar_mm": 200.0
+}
