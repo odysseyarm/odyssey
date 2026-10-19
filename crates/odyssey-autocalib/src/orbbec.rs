@@ -1136,7 +1136,9 @@ impl OrbbecStream {
         //   MJPG 1280x720 @ 10 + IR + depth 848x480 @ 10 ~8 framesets/s
         // so there the native "RGB" color profile, preferred above, is what does
         // not fit; the SDK's own default pipeline there is color 1280x720 MJPG and
-        // depth 848x480, both 10 fps, no infrared. Not checked: the lists on USB 3.
+        // depth 848x480, both 10 fps, no infrared. Directly on a USB 3 port (5000
+        // Mbit/s) the same camera offers 30 fps up to color 1920x1080 and depth and
+        // infrared 1280x800, and RGB color with both streams delivered about 30 fps.
         // `CameraInfo::link` lets the UI warn about a capped link, and a capped link
         // tries MJPG color first (`color_format_order`). Other combinations that fit
         // are not searched for, and nothing yet checks that frames arrive.
