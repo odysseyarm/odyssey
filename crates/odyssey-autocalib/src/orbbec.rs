@@ -603,6 +603,18 @@ const COLOR_FORMATS: [(ffi::ob_format, Option<ffi::ob_convert_format>); 6] = [
     ),
 ];
 
+/// The order to try color formats in. Native RGB first avoids a conversion, but it
+/// is uncompressed: on a USB 2 link it did not fit beside infrared and depth in
+/// testing (see the FIXME in `OrbbecStream::open`), so a capped link tries MJPG first.
+fn color_format_order(link: &Link) -> Vec<ffi::ob_format> {
+    let mut formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
+    if link.is_capped() {
+        // Stable: everything else keeps its order behind MJPG.
+        formats.sort_by_key(|f| *f != ffi::OBFormat_OB_FORMAT_MJPG);
+    }
+    formats
+}
+
 /// Which infrared imager feeds marker detection.
 #[derive(Clone, Copy)]
 struct IrSource {
@@ -967,7 +979,7 @@ impl OrbbecBackend {
     ) -> Result<Vec<OfferedProfile>, CameraError> {
         let sdk = self.sdk()?;
         let opened = Opened::open(&sdk, camera)?;
-        let color_formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
+        let color_formats = color_format_order(&camera.link);
         let mut out = Vec::new();
         let mut list_stream =
             |stream: &'static str, list: &ProfileList, formats: &[ffi::ob_format]| {
@@ -1125,9 +1137,10 @@ impl OrbbecStream {
         // so there the native "RGB" color profile, preferred above, is what does
         // not fit; the SDK's own default pipeline there is color 1280x720 MJPG and
         // depth 848x480, both 10 fps, no infrared. Not checked: the lists on USB 3.
-        // `CameraInfo::link` lets the UI warn about a capped link; selection is
-        // unchanged.
-        let color_formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
+        // `CameraInfo::link` lets the UI warn about a capped link, and a capped link
+        // tries MJPG color first (`color_format_order`). Other combinations that fit
+        // are not searched for, and nothing yet checks that frames arrive.
+        let color_formats = color_format_order(&camera.link);
         let color_list = ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
             .map_err(|_| CameraError::Unsupported("a color stream"))?;
         let color = color_list
@@ -1370,5 +1383,28 @@ impl CameraStream for OrbbecStream {
             Some(projector) => projector.set(&self.device, enabled).map(|()| true),
             None => Ok(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_capped_link_tries_mjpg_color_first_and_a_fast_one_native_rgb() {
+        let mjpg = ffi::OBFormat_OB_FORMAT_MJPG;
+        let rgb = ffi::OBFormat_OB_FORMAT_RGB;
+        let slow = color_format_order(&Link::SlowUsb);
+        assert_eq!(slow[0], mjpg);
+        assert!(slow.contains(&rgb), "RGB stays a fallback");
+        for link in [Link::FastUsb, Link::Unknown, Link::Other("Ethernet".into())] {
+            assert_eq!(color_format_order(&link)[0], rgb, "{link}");
+        }
+        // Nothing is dropped or duplicated.
+        let mut all = slow.clone();
+        all.sort_unstable();
+        let mut fast = color_format_order(&Link::FastUsb);
+        fast.sort_unstable();
+        assert_eq!(all, fast);
     }
 }
