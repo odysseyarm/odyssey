@@ -10,14 +10,12 @@ use dioxus_router::components::HistoryProvider;
 use dioxus_router::{Routable, Router};
 use odyssey_hub_server::Message;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, fmt};
 use views::{Accessories, Calibrate, CalibrateAutomatic, Home, Pairing, Settings};
 
 mod cli;
 mod components;
 mod hub;
+mod logging;
 mod paths;
 mod scale_board;
 mod sdk_install;
@@ -30,25 +28,8 @@ mod views;
 pub struct ServerReady(pub Signal<bool>);
 
 fn main() {
-    // Set up tracing to write to both stdout and a log file before Dioxus launches
-    if cfg!(target_os = "windows") {
-        // %LOCALAPPDATA%\Odyssey.Desktop\logs
-        let log_dir = paths::log_dir().expect("Failed to resolve app data directory");
-        std::fs::create_dir_all(&log_dir).expect("Failed to create log directory");
-
-        let log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(log_dir.join("latest.log"))
-            .expect("Failed to open log file");
-
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-            .with(fmt::layer().compact())
-            .with(fmt::layer().with_ansi(false).with_writer(log_file))
-            .init();
-    }
+    // Log to the terminal and a file before Dioxus launches.
+    logging::init();
 
     match cli::parse(std::env::args().skip(1)) {
         Ok(cli::Command::Run) => {}
