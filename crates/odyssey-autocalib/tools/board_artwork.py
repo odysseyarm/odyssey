@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Writes the print artwork for the scale board described by ../board.json.
 
-    python3 board_artwork.py [--out-dir DIR]
-    python3 board_artwork.py --screen-px 3200x2400 --screen-diagonal-in 13.3 [--out-dir DIR]
+    python3 board_artwork.py [--out-dir DIR]            # US Letter paper only (the default)
+    python3 board_artwork.py --all [--out-dir DIR]      # every layout below
+    python3 board_artwork.py --layout NAME [--out-dir DIR]
 
 Four files, each as a vector PDF and SVG at exactly its physical size (print
 at 100%, "actual size", never "fit to page"):
@@ -12,12 +13,6 @@ at 100%, "actual size", never "fit to page"):
   scale-board-paper-letter   US Letter landscape, for an office printer
   scale-board-paper-a4       A4 landscape, for an office printer
   scale-board-rigid-large    the rigid board at twice the size, 24 x 17 in
-
-With --screen-px and --screen-diagonal-in it instead writes one file, sized for
-showing the board on a screen of that resolution and nominal diagonal (its
-physical size follows from those two; it is only as exact as the diagonal is,
-so check the bar with a rule, as for any print). Render it to a PNG at exactly
-the screen's resolution and show it at 1:1.
 
 All of them carry the same dots: the grid in board.json, the same pitch and dot
 size, with the dots listed under "missing" left out (that breaks the grid's 180
@@ -29,7 +24,6 @@ standard library.
 
 import argparse
 import json
-import math
 import pathlib
 import sys
 
@@ -205,14 +199,27 @@ def pdf(spec, lay):
     return body
 
 
-def screen_layout(spec, px_w, px_h, diagonal_in):
-    """Layout for showing the board on a screen, whose size follows from its resolution and nominal diagonal."""
-    hyp = math.hypot(px_w, px_h)
-    page = (diagonal_in * MM_PER_INCH * px_w / hyp, diagonal_in * MM_PER_INCH * px_h / hyp)
-    top = 4.0
-    dots_bottom = top + (spec["rows"] - 1) * spec["pitch_mm"] + spec["dot_diameter_mm"]
-    bar_y = dots_bottom + BAR_CLEARANCE_MM + BAR_TICK_MM / 2.0 + 1.0
-    return {"page": page, "white": True, "margin": 3.0, "top": top, "bar_y": bar_y}
+# What is written when no layout is asked for: the quick paper board, the first
+# thing to print.
+DEFAULT_LAYOUT = "scale-board-paper-letter"
+
+
+def write_layout(base, name, out):
+    """Writes the SVG and PDF of `LAYOUTS[name]` into `out` and says what they are."""
+    spec = scaled(base, LAYOUTS[name].get("scale", 1.0))
+    lay = layout(spec, name)
+    try:
+        check(spec, name, lay)
+    except AssertionError as refusal:
+        sys.exit(f"cannot make {name}: {refusal}")
+    (out / f"{name}.svg").write_text(svg(spec, lay))
+    (out / f"{name}.pdf").write_bytes(pdf(spec, lay))
+    w, h = lay["page"]
+    print(
+        f"{name}: {len(lay['dots'])} dots of {spec['dot_diameter_mm']:g} mm at {spec['pitch_mm']:g} mm pitch, "
+        f"page {w:.1f} x {h:.1f} mm ({w / MM_PER_INCH:.2f} x {h / MM_PER_INCH:.2f} in), "
+        f"{spec['scale_bar_mm']:g} mm scale bar"
+    )
 
 
 def main():
@@ -220,39 +227,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--spec", default=here.parent / "board.json")
     parser.add_argument("--out-dir", default=".")
-    parser.add_argument("--screen-px", metavar="WxH", help="resolution of a screen to show the board on")
-    parser.add_argument("--screen-diagonal-in", type=float, help="that screen's nominal diagonal, inches")
+    parser.add_argument("--layout", action="append", choices=list(LAYOUTS), help="write this layout (repeatable)")
+    parser.add_argument("--all", action="store_true", help="write every layout")
     args = parser.parse_args()
-    if bool(args.screen_px) != bool(args.screen_diagonal_in):
-        parser.error("--screen-px and --screen-diagonal-in go together")
 
     base = load_spec(args.spec)
     out = pathlib.Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    names = list(LAYOUTS)
-    if args.screen_px:
-        try:
-            px_w, px_h = (int(v) for v in args.screen_px.lower().split("x"))
-        except ValueError:
-            parser.error("--screen-px takes a resolution like 3200x2400")
-        name = f"scale-board-screen-{px_w}x{px_h}"
-        LAYOUTS[name] = screen_layout(base, px_w, px_h, args.screen_diagonal_in)
-        names = [name]
-    for name in names:
-        spec = scaled(base, LAYOUTS[name].get("scale", 1.0))
-        lay = layout(spec, name)
-        try:
-            check(spec, name, lay)
-        except AssertionError as refusal:
-            sys.exit(f"cannot make {name}: {refusal}")
-        (out / f"{name}.svg").write_text(svg(spec, lay))
-        (out / f"{name}.pdf").write_bytes(pdf(spec, lay))
-        w, h = lay["page"]
-        print(
-            f"{name}: {len(lay['dots'])} dots of {spec['dot_diameter_mm']:g} mm at {spec['pitch_mm']:g} mm pitch, "
-            f"page {w:.1f} x {h:.1f} mm ({w / MM_PER_INCH:.2f} x {h / MM_PER_INCH:.2f} in), "
-            f"{spec['scale_bar_mm']:g} mm scale bar"
-        )
+    for name in list(LAYOUTS) if args.all else (args.layout or [DEFAULT_LAYOUT]):
+        write_layout(base, name, out)
 
 
 if __name__ == "__main__":
