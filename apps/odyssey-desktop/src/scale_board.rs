@@ -96,6 +96,24 @@ pub fn save_and_open(board: Board) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Asks where to save `board`'s PDF and writes it there. `Ok(None)` means the
+/// dialog was cancelled.
+pub async fn save_copy(board: Board) -> Result<Option<PathBuf>, String> {
+    let Some(target) = rfd::AsyncFileDialog::new()
+        .set_file_name(board.file_name())
+        .add_filter("PDF", &["pdf"])
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    target
+        .write(board.bytes())
+        .await
+        .map_err(|e| format!("Couldn't save the file: {e}."))?;
+    Ok(Some(target.path().to_path_buf()))
+}
+
 /// The system's own "open this file" command for `path`.
 fn opener(path: &Path) -> Command {
     #[cfg(target_os = "windows")]
