@@ -231,11 +231,18 @@ fn PatternScreen(link: Link) -> Element {
             match mode() {
                 PatternMode::Pattern => {
                     // The viewBox is the monitor's own pixels, as for the ruler and the
-                    // card. It used to be the pattern's unit space (about 1.78 wide),
-                    // and WebKit then never painted the right-hand ring while the other
-                    // three sides were fine, so a display showing its whole picture
-                    // looked cropped. Pixel units keep dots round because the pattern's
-                    // aspect is the monitor's.
+                    // card. Dots stay round because the pattern's aspect is the monitor's.
+                    //
+                    // FIXME(webkit): cause unknown. With the viewBox in the pattern's own
+                    // unit space (about 1.78 x 1) WebKit did not paint the right-hand
+                    // ring (left, top and bottom were fine), so a display showing its
+                    // whole picture was reported as cropped on the right. Seen in a bare
+                    // WebKitGTK page with the same SVG too, so it is not this app's
+                    // layout or window; resvg paints the ring. Observed at 1920 x 1080:
+                    // a 1.78 x 1 viewBox lost it; a 2 x 1, 17.8 x 10, 178 x 100,
+                    // 1778 x 1000 and 1920 x 1080 viewBox painted it. Why is not known;
+                    // pixel units are the variant that works and that the ruler and card
+                    // already use. Worth a look in WebKit if it shows up elsewhere.
                     let (sx, sy) = (screen_w / aspect, screen_h);
                     rsx! {
                         svg {
