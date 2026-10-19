@@ -122,4 +122,5 @@ collect.
   only. The PDFs it carries are the ones in `tools/artwork`, so regenerate and rebuild
   together. The tablet PNG is not in the app: it comes only from a local script.
 - A correction of the calibration from the board's result.
-- Any measurement of how accurate it really is. The detector's tests are synthetic.
+- A characterization of how accurate it is. So far the detector has run on one camera
+  at three distances against a tablet showing the board, with one tape-measured point.
