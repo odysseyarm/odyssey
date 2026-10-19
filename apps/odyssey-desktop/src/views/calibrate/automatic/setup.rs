@@ -86,10 +86,10 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                 ReferenceHelper { wizard }
                 details {
                     class: "text-sm text-gray-600 dark:text-gray-300",
-                    summary { class: "cursor-pointer select-none font-medium", "Advanced (experimental)" }
+                    summary { class: "cursor-pointer select-none font-medium", "Check the camera's depth scale (optional)" }
                     div {
                         class: "mt-2 flex flex-col gap-2",
-                        p { "Only if you have the printed scale board. You don't need it to calibrate." }
+                        p { "Needs a printed scale board. Nothing here changes your calibration." }
                         ScaleBoardInfo {}
                     }
                 }
