@@ -22,15 +22,15 @@ It is optional: calibration works without it.
 The camera has to see each dot at least **12 pixels across** in its color image
 (8 to 12 is marginal, under 8 is too small, and around 4 or less is not found at
 all, in the detector's synthetic tests). The probe prints the dot size it saw and
-says which of those it is. If the dots are too small, use the large board or move the
-camera closer.
+says which of those it is. Use the large board only if the probe says the dots on the
+standard board are too small at your distance; otherwise the standard one is fine.
 
 | File | Size | Dots | Use |
 | --- | --- | --- | --- |
 | `scale-board-paper-letter.pdf` | US Letter landscape | 20 mm, 40 mm pitch | quick: any office printer |
 | `scale-board-paper-a4.pdf` | A4 landscape | 20 mm, 40 mm pitch | quick: any office printer |
 | `scale-board-rigid.pdf` | 12 × 8.5 in | 20 mm, 40 mm pitch | best: printed on rigid board |
-| `scale-board-rigid-large.pdf` | 24 × 17 in | 40 mm, 80 mm pitch | best, for a camera farther away |
+| `scale-board-rigid-large.pdf` | 24 × 17 in | 40 mm, **80 mm pitch** | alternate: only if the standard dots read too small. Always pass `--pitch-mm 80` (never 40) |
 
 All four are vector PDFs at exact size (the SVGs match). Regenerate them with
 `python3 tools/board_artwork.py --out-dir tools/artwork`; the geometry is in
@@ -76,9 +76,16 @@ foam core: it dents and bows.
 Measure the printed bar from the middle of its left end tick to the middle of its right
 end tick with a steel rule or a tape. It should read **200 mm** (7.87 in), or **400 mm**
 (15.75 in) on the large board. Write down what you measure. If it is off, do not fix the
-printer; pass the corrected pitch to the probe: `40 × measured ÷ 200` mm (`80 × measured
-÷ 400` on the large board). The board's distance is proportional to the pitch, so a
-print that is 1% large would otherwise read 1% too far.
+printer. The probe's `--pitch-mm` takes the pitch between dots, not the bar length, so
+convert:
+
+    pitch_mm = 40 × measured_bar_mm ÷ 200        (standard and paper boards)
+    pitch_mm = 80 × measured_bar_mm ÷ 400        (large board)
+
+Worked example: the bar on a Letter print measures 201.4 mm, so the pitch is
+`40 × 201.4 ÷ 200 = 40.28` and you run `board_probe -- --pitch-mm 40.28`. The board's
+distance is proportional to the pitch, so passing 40 for that print would read the board
+0.7% too far.
 
 ## Try it
 
