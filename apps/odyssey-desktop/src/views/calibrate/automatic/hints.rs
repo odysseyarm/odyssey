@@ -109,7 +109,7 @@ pub fn marker_hint(hint: MarkerHint) -> Message {
             Good,
             Icon::Check,
             "All 6 markers found",
-            "Hold still. Measuring starts by itself.",
+            "Press Measure when you're ready.",
         ),
         MarkerHint::NoMarkers => message(
             Attention,
