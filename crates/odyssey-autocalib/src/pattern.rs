@@ -192,6 +192,18 @@ pub enum DetectFailure {
     NoGrid { blobs: usize },
 }
 
+impl std::fmt::Display for DetectFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoDots { blobs } => write!(f, "only {blobs} dot-like spots were found"),
+            Self::NoGrid { blobs } => write!(
+                f,
+                "{blobs} dot-like spots were found, too few of them on the pattern's grid"
+            ),
+        }
+    }
+}
+
 /// A detected dot paired with its place in the pattern.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Correspondence {

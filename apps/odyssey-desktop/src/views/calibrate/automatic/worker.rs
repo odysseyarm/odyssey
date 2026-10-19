@@ -605,7 +605,82 @@ impl Engine {
         // A measurement that found nothing usable leaves the camera fine; a
         // camera error means the stream is gone.
         let keep = kind != FailureKind::CameraLost;
-        self.fail(kind, error.to_string(), keep);
+        let mut details = error.to_string();
+        // The last frame of the burst is a sample of what the pattern search saw, and
+        // nothing else keeps it; it is the first thing to look at for "not found".
+        if kind == FailureKind::ScreenDots {
+            let frame = self
+                .live
+                .as_mut()
+                .and_then(|live| live.session.take_failed_color());
+            if let Some(frame) = frame {
+                match Self::save_failed_frame(&frame) {
+                    Ok(path) => details.push_str(&format!(
+                        ". The last frame it captured is saved as {}",
+                        path.display()
+                    )),
+                    Err(e) => tracing::warn!("could not save the failed frame: {e}"),
+                }
+            }
+        }
+        self.fail(kind, details, keep);
+    }
+
+    /// Writes the frame into a folder beside the app's saved screens, readable
+    /// only by the user (a camera frame can show a room), and returns where. Only
+    /// the newest few are kept.
+    fn save_failed_frame(frame: &RgbImage) -> Result<std::path::PathBuf, String> {
+        use std::io::Write;
+        const KEPT: usize = 5;
+        let dir = odyssey_hub_common::config::screens_dir()
+            .map_err(|e| e.to_string())?
+            .parent()
+            .ok_or("no config folder")?
+            .join("failed-measurements");
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&dir).map_err(|e| e.to_string())?;
+
+        let mut png = Vec::new();
+        frame
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let path = dir.join(format!("screen-dots-{stamp}.png"));
+        let mut file = std::fs::OpenOptions::new();
+        file.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            file.mode(0o600);
+        }
+        file.open(&path)
+            .and_then(|mut f| f.write_all(&png))
+            .map_err(|e| e.to_string())?;
+
+        // Names carry the time, so sorting them orders by age.
+        let mut saved: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("screen-dots-"))
+            })
+            .collect();
+        saved.sort();
+        for old in saved.iter().take(saved.len().saturating_sub(KEPT)) {
+            let _ = std::fs::remove_file(old);
+        }
+        Ok(path)
     }
 
     fn finish(&mut self) {
