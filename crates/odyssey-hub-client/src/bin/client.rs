@@ -1,4 +1,6 @@
-use anyhow::Ok;
+//! Prints the hub's device list and then every event it streams, for debugging.
+#![expect(clippy::print_stdout, reason = "this debugging tool prints to stdout")]
+
 use futures::stream::StreamExt as _;
 use odyssey_hub_client::client;
 
@@ -7,7 +9,7 @@ pub async fn main() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt();
     let mut client = client::Client::default();
     client.connect().await?;
-    let device_list = client.get_device_list().await.unwrap();
+    let device_list = client.get_device_list().await?;
     println!("{device_list:?}");
     let mut stream = client.subscribe_events().await?;
     while let Some(reply) = stream.next().await {
