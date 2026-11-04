@@ -2,6 +2,7 @@ use std::iter::zip;
 
 use ccalib::utils::{fill_circle, imshow_multi, stroke_circle};
 use ccalib::{Flags, make_extrinsics, make_extrinsics_from_mat4};
+use eros::Context as _;
 use nalgebra::{Dyn, Matrix3, OMatrix, Rotation3, Translation3, U2, matrix, stack, vector};
 use opencv::calib3d::{
     CALIB_CB_CLUSTERING, CALIB_CB_SYMMETRIC_GRID, CirclesGridFinderParameters, find_circles_grid,
@@ -13,10 +14,10 @@ use opencv::core::{
 use opencv::features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params};
 use opencv::imgproc::{INTER_LINEAR, warp_perspective};
 
-fn get_circle_centers(im: &impl ToInputArray) -> Vector<Point2f> {
+fn get_circle_centers(im: &impl ToInputArray) -> eros::Result<Vector<Point2f>> {
     let mut centers = Vector::<Point2f>::default();
 
-    let mut params = SimpleBlobDetector_Params::default().unwrap();
+    let mut params = SimpleBlobDetector_Params::default()?;
     params.min_threshold = 50.0;
     params.max_threshold = 150.0;
     params.min_area = 10.0;
@@ -29,10 +30,10 @@ fn get_circle_centers(im: &impl ToInputArray) -> Vector<Point2f> {
     params.min_inertia_ratio = 0.01;
     params.filter_by_inertia = true;
 
-    let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
+    let mut circle_grid_finder_params = CirclesGridFinderParameters::default()?;
     circle_grid_finder_params.grid_type =
         opencv::calib3d::CirclesGridFinderParameters_GridType::SYMMETRIC_GRID;
-    let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
+    let simple_blob_detector = SimpleBlobDetector::create(params)?;
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
 
     let pattern_was_found = find_circles_grid(
@@ -42,12 +43,11 @@ fn get_circle_centers(im: &impl ToInputArray) -> Vector<Point2f> {
         CALIB_CB_SYMMETRIC_GRID | CALIB_CB_CLUSTERING,
         Some(&feature2d_detector),
         circle_grid_finder_params,
-    )
-    .unwrap();
+    )?;
     if pattern_was_found {
-        centers
+        Ok(centers)
     } else {
-        panic!("failed to find circle grid");
+        eros::bail!("Failed to find circle grid");
     }
 }
 
@@ -56,17 +56,16 @@ fn generate_test_image(
     radius: i32,
     k: Matrix3<f64>,
     e: Matrix3<f64>,
-) -> Mat {
-    let mut im =
-        Mat::new_size_with_default((1000, 1000).into(), CV_8UC3, [255.0; 4].into()).unwrap();
+) -> opencv::Result<Mat> {
+    let mut im = Mat::new_size_with_default((1000, 1000).into(), CV_8UC3, [255.0; 4].into())?;
     for cc in circle_centers {
         let ccf = (cc.0 as f64, cc.1 as f64);
-        fill_circle(&mut im, ccf, radius as f64, [0.0; 4]).unwrap();
+        fill_circle(&mut im, ccf, radius as f64, [0.0; 4])?;
     }
 
     let mut cam = Mat::default();
     let mat = (k * e).transpose(); // nalgebra is column major
-    let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice()).unwrap();
+    let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice())?;
     warp_perspective(
         &im,
         &mut cam,
@@ -75,10 +74,9 @@ fn generate_test_image(
         INTER_LINEAR,
         BORDER_CONSTANT,
         [255.0; 4].into(),
-    )
-    .unwrap();
+    )?;
 
-    cam
+    Ok(cam)
 }
 
 fn overlay_circles(
@@ -87,19 +85,19 @@ fn overlay_circles(
     radius: i32,
     k: Matrix3<f64>,
     e: Matrix3<f64>,
-) {
-    let size = dst.size().unwrap();
+) -> opencv::Result<()> {
+    let size = dst.size()?;
     assert_eq!(size.width, 500);
     assert_eq!(size.height, 500);
-    let mut im = Mat::new_size_with_default((1000, 1000).into(), CV_8UC1, [0.; 4].into()).unwrap();
+    let mut im = Mat::new_size_with_default((1000, 1000).into(), CV_8UC1, [0.; 4].into())?;
     for cc in circle_centers {
         let ccf = (cc.0 as f64, cc.1 as f64);
-        stroke_circle(&mut im, ccf, radius as f64, [255.; 4], 6).unwrap();
+        stroke_circle(&mut im, ccf, radius as f64, [255.; 4], 6)?;
     }
 
     let mut cam = Mat::default();
     let mat = (k * e).transpose(); // nalgebra is column major
-    let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice()).unwrap();
+    let mat = Mat::new_rows_cols_with_data(3, 3, mat.as_slice())?;
     warp_perspective(
         &im,
         &mut cam,
@@ -108,20 +106,20 @@ fn overlay_circles(
         INTER_LINEAR,
         BORDER_CONSTANT,
         [0.; 4].into(),
-    )
-    .unwrap();
+    )?;
 
-    let cam_data = cam.data_bytes().unwrap();
-    let dst_data = dst.data_typed_mut::<Vec3b>().unwrap();
+    let cam_data = cam.data_bytes()?;
+    let dst_data = dst.data_typed_mut::<Vec3b>()?;
     for (cam_p, dst_p) in zip(cam_data, dst_data) {
         let c = *cam_p as f32 / 255.;
         dst_p.0[0] = (dst_p.0[0] as f32 * (1. - c)) as u8;
         dst_p.0[1] = (dst_p.0[1] as f32 * (1. - c)) as u8;
         dst_p.0[2] = (dst_p.0[2] as f32 * (1. - c)) as u8 + *cam_p;
     }
+    Ok(())
 }
 
-fn main() {
+fn main() -> eros::Result<()> {
     let circle_centers = [
         (140, 140),
         (500, 140),
@@ -154,15 +152,17 @@ fn main() {
     let mut imgs = vec![];
     let mut images_points: Vec<OMatrix<f64, U2, Dyn>> = vec![];
     for e in extrinsics {
-        let im = generate_test_image(&circle_centers, radius, k, e);
-        let cc = get_circle_centers(&im);
+        let im = generate_test_image(&circle_centers, radius, k, e)
+            .context("Failed to generate calibration image")?;
+        let cc = get_circle_centers(&im)
+            .context("Failed to detect calibration target in generated image")?;
         images_points.push(OMatrix::<f64, U2, Dyn>::from_iterator(
             cc.len(),
             cc.into_iter().flat_map(|p| [p.x as f64, p.y as f64]),
         ));
         imgs.push(im);
     }
-    imshow_multi(&imgs, "Generated");
+    imshow_multi(&imgs, "Generated").context("Failed to display generated images")?;
 
     let result = ccalib::calibrate(
         &circle_centers.map(|p| vector![p.0 as f64, p.1 as f64, 0.0]),
@@ -173,7 +173,8 @@ fn main() {
         250.0,
         [0., 0., 1000.].into(),
         Flags::RADIAL_DISTORTION,
-    );
+    )
+    .context("Failed to calibrate synthetic camera")?;
     for (i, c) in result.extrinsics.iter().enumerate() {
         println!("e{i}: {:.6?}", c);
     }
@@ -188,7 +189,9 @@ fn main() {
 
     for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
         let e = make_extrinsics(e.r, e.t);
-        overlay_circles(im, &circle_centers, radius, k, e);
+        overlay_circles(im, &circle_centers, radius, k, e)
+            .context("Failed to overlay calibration circles")?;
     }
-    imshow_multi(&imgs, "Estimates");
+    imshow_multi(&imgs, "Estimates").context("Failed to display calibration estimates")?;
+    Ok(())
 }

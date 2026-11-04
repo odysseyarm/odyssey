@@ -9,8 +9,8 @@ use opencv::objdetect::{
     draw_detected_markers, get_predefined_dictionary,
 };
 
-pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
-    let im = Mat::new_rows_cols_with_data(h as i32, w as i32, image).unwrap();
+pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) -> Result<(), crate::ViewerError> {
+    let im = Mat::new_rows_cols_with_data(h as i32, w as i32, image)?;
     let squares_x = 2;
     let squares_y = 2;
     let square_length = 1.0;
@@ -19,22 +19,19 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
         Size::new(squares_x, squares_y),
         square_length,
         marker_length,
-        &get_predefined_dictionary(opencv::objdetect::PredefinedDictionaryType::DICT_4X4_250)
-            .unwrap(),
+        &get_predefined_dictionary(opencv::objdetect::PredefinedDictionaryType::DICT_4X4_250)?,
         &no_array(),
-    )
-    .unwrap();
+    )?;
 
-    let detector_params = DetectorParameters::default().unwrap();
-    let mut charuco_params = CharucoParameters::default().unwrap();
+    let detector_params = DetectorParameters::default()?;
+    let mut charuco_params = CharucoParameters::default()?;
     charuco_params.set_try_refine_markers(true);
     let detector = CharucoDetector::new(
         &board,
         &charuco_params,
         &detector_params,
-        RefineParameters::new(10., 3., true).unwrap(),
-    )
-    .unwrap();
+        RefineParameters::new(10., 3., true)?,
+    )?;
 
     let mut charuco_corners = Vector::<Point2f>::default();
     let mut charuco_ids = Vector::<i32>::default();
@@ -42,15 +39,13 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
     let mut marker_ids = Vector::<i32>::default();
 
     let new_size = Size::new(98, 98);
-    detector
-        .detect_board(
-            &im,
-            &mut charuco_corners,
-            &mut charuco_ids,
-            &mut marker_corners,
-            &mut marker_ids,
-        )
-        .unwrap();
+    detector.detect_board(
+        &im,
+        &mut charuco_corners,
+        &mut charuco_ids,
+        &mut marker_corners,
+        &mut marker_ids,
+    )?;
     if charuco_corners.len() > 0 {
         corner_sub_pix(
             &im,
@@ -62,15 +57,14 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
                 max_count: 30,
                 epsilon: 0.001,
             },
-        )
-        .unwrap();
+        )?;
     }
 
     let mut im_copy = Mat::default();
-    cvt_color_def(&im, &mut im_copy, COLOR_GRAY2BGR).unwrap();
+    cvt_color_def(&im, &mut im_copy, COLOR_GRAY2BGR)?;
     let tmp = im_copy;
     let mut im_copy = Mat::default();
-    resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
+    resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC)?;
     charuco_corners
         .as_mut_slice()
         .iter_mut()
@@ -91,8 +85,7 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
             &marker_corners,
             &no_array(),
             (0, 255, 0).into(),
-        )
-        .unwrap();
+        )?;
     }
 
     if charuco_ids.len() > 0 {
@@ -101,10 +94,10 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
             &charuco_corners,
             &charuco_ids,
             Scalar::new(255., 0., 0., 0.),
-        )
-        .unwrap();
+        )?;
     }
 
-    imshow(name, &im_copy).unwrap();
-    poll_key().unwrap();
+    imshow(name, &im_copy)?;
+    poll_key()?;
+    Ok(())
 }

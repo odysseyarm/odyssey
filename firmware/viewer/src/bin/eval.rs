@@ -2,9 +2,20 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::{env, fs};
 
+use eros::Context as _;
 use serde_json::Value;
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    match run_application().context("Calibration evaluation export failed") {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error:#?}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_application() -> eros::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} <path>", args[0]);
@@ -13,66 +24,53 @@ fn main() {
 
     let path = PathBuf::from(&args[1]);
 
-    let nf_calib: Value = read_json(path.join("nearfield.json"));
-    let wf_calib: Value = read_json(path.join("widefield.json"));
-    let stereo_calib: Value = read_json(path.join("stereo.json"));
+    let nf_calib = read_json(path.join("nearfield.json"))?;
+    let wf_calib = read_json(path.join("widefield.json"))?;
+    let stereo_calib = read_json(path.join("stereo.json"))?;
 
     let outpath = path.join("eval.html");
     println!("Writing to {:?}", outpath);
 
-    let mut outfile = fs::File::create(&outpath).expect("Failed to create output file");
-    run(&nf_calib, &wf_calib, &stereo_calib, &mut outfile);
+    let mut outfile = fs::File::create(&outpath).context("Unable to create evaluation output")?;
+    run(&nf_calib, &wf_calib, &stereo_calib, &mut outfile)?;
 
-    println!("file://{}", outpath.canonicalize().unwrap().display());
+    println!("file://{}", outpath.canonicalize()?.display());
+    Ok(())
 }
 
-fn read_json(path: PathBuf) -> Value {
-    let data = fs::read_to_string(path).expect("Failed to read JSON file");
-    serde_json::from_str(&data).expect("Failed to parse JSON")
+fn read_json(path: PathBuf) -> eros::Result<Value> {
+    let data = fs::read_to_string(&path)
+        .with_context(|| format!("Unable to read calibration {}", path.display()))?;
+    Ok(serde_json::from_str(&data)
+        .with_context(|| format!("Unable to parse calibration {}", path.display()))?)
 }
 
-fn run(nf_calib: &Value, wf_calib: &Value, stereo_calib: &Value, outfile: &mut fs::File) {
-    let nf_calib_images: Vec<String> = nf_calib["image_files"]
+fn image_files(calibration: &Value, field: &str) -> eros::Result<Vec<String>> {
+    let files = calibration[field]
         .as_array()
-        .expect("Expected image_files to be an array")
+        .ok_or_else(|| eros::error!("Calibration field {field} must be an array"))?;
+    files
         .iter()
-        .map(|p| {
-            p.as_str()
-                .unwrap()
-                .split('/')
-                .skip(2)
-                .collect::<Vec<_>>()
-                .join("/")
+        .map(|path| {
+            let path = path
+                .as_str()
+                .ok_or_else(|| eros::error!("Calibration field {field} must contain file paths"))?;
+            Ok(path.split('/').skip(2).collect::<Vec<_>>().join("/"))
         })
-        .collect();
+        .collect()
+}
 
-    let wf_calib_images: Vec<String> = wf_calib["image_files"]
-        .as_array()
-        .expect("Expected image_files to be an array")
-        .iter()
-        .map(|p| {
-            p.as_str()
-                .unwrap()
-                .split('/')
-                .skip(2)
-                .collect::<Vec<_>>()
-                .join("/")
-        })
-        .collect();
-
+fn run(
+    nf_calib: &Value,
+    wf_calib: &Value,
+    stereo_calib: &Value,
+    outfile: &mut fs::File,
+) -> eros::Result<()> {
+    let nf_calib_images = image_files(nf_calib, "image_files")?;
+    let wf_calib_images = image_files(wf_calib, "image_files")?;
     let stereo_calib_images = serde_json::json!({
-        "wf": stereo_calib["wf_image_files"]
-            .as_array()
-            .expect("Expected wf_image_files to be an array")
-            .iter()
-            .map(|p| p.as_str().unwrap().split('/').skip(2).collect::<Vec<_>>().join("/"))
-            .collect::<Vec<_>>(),
-        "nf": stereo_calib["nf_image_files"]
-            .as_array()
-            .expect("Expected nf_image_files to be an array")
-            .iter()
-            .map(|p| p.as_str().unwrap().split('/').skip(2).collect::<Vec<_>>().join("/"))
-            .collect::<Vec<_>>()
+        "wf": image_files(stereo_calib, "wf_image_files")?,
+        "nf": image_files(stereo_calib, "nf_image_files")?,
     });
 
     let html_content = format!(
@@ -147,12 +145,13 @@ fn run(nf_calib: &Value, wf_calib: &Value, stereo_calib: &Value, outfile: &mut f
 </body>
 </html>
 "#,
-        nf_calib_images = serde_json::to_string(&nf_calib_images).unwrap(),
-        wf_calib_images = serde_json::to_string(&wf_calib_images).unwrap(),
-        stereo_calib_images = serde_json::to_string(&stereo_calib_images).unwrap()
+        nf_calib_images = serde_json::to_string(&nf_calib_images)?,
+        wf_calib_images = serde_json::to_string(&wf_calib_images)?,
+        stereo_calib_images = serde_json::to_string(&stereo_calib_images)?
     );
 
     outfile
         .write_all(html_content.as_bytes())
-        .expect("Failed to write HTML content");
+        .context("Unable to write evaluation HTML")?;
+    Ok(())
 }

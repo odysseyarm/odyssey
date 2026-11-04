@@ -1,8 +1,8 @@
 use clap::Parser;
+use eros::Context as _;
 use opencv::calib3d::{get_optimal_new_camera_matrix_def, undistort};
-use opencv::core::{FileStorage, FileStorage_READ, Mat, Size};
+use opencv::core::{Mat, Size};
 use opencv::highgui::{imshow, wait_key_def};
-use opencv::hub_prelude::{FileNodeTraitConst, FileStorageTraitConst};
 use opencv::imgcodecs::{IMREAD_COLOR, imread, imwrite_def};
 use opencv::imgproc::{INTER_CUBIC, resize};
 
@@ -15,15 +15,28 @@ struct Cli {
     out: Option<String>,
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    match run().context("Image undistortion failed") {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error:#?}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> eros::Result<()> {
     let cli = Cli::parse();
-    let (camera_matrix, dist_coeffs) = read_camara_params(&cli.camera_params);
-    let new_camera_matrix =
-        get_optimal_new_camera_matrix_def(&camera_matrix, &dist_coeffs, Size::new(4095, 4095), 1.0)
-            .unwrap();
-    let tmp = imread(&cli.image, IMREAD_COLOR).unwrap();
+    let (camera_matrix, dist_coeffs) = viewer::chessboard::read_camera_params(&cli.camera_params)?;
+    let new_camera_matrix = get_optimal_new_camera_matrix_def(
+        &camera_matrix,
+        &dist_coeffs,
+        Size::new(4095, 4095),
+        1.0,
+    )?;
+    let tmp = imread(&cli.image, IMREAD_COLOR)?;
     let mut im = Mat::default();
-    resize(&tmp, &mut im, Size::new(4095, 4095), 0.0, 0.0, INTER_CUBIC).unwrap();
+    resize(&tmp, &mut im, Size::new(4095, 4095), 0.0, 0.0, INTER_CUBIC)?;
     let mut unim = Mat::default();
     undistort(
         &im,
@@ -31,8 +44,7 @@ fn main() {
         &camera_matrix,
         &dist_coeffs,
         &new_camera_matrix,
-    )
-    .unwrap();
+    )?;
     let mut scaled_unim = Mat::default();
     let mut scaled_im = Mat::default();
     resize(
@@ -42,8 +54,7 @@ fn main() {
         0.0,
         0.0,
         INTER_CUBIC,
-    )
-    .unwrap();
+    )?;
     resize(
         &im,
         &mut scaled_im,
@@ -51,19 +62,14 @@ fn main() {
         0.0,
         0.0,
         INTER_CUBIC,
-    )
-    .unwrap();
-    imshow("distorted", &scaled_im).unwrap();
-    imshow("undistorted", &scaled_unim).unwrap();
-    wait_key_def().unwrap();
+    )?;
+    imshow("distorted", &scaled_im)?;
+    imshow("undistorted", &scaled_unim)?;
+    wait_key_def()?;
     if let Some(out) = cli.out {
-        imwrite_def(&out, &unim).unwrap();
+        if !imwrite_def(&out, &unim)? {
+            eros::bail!("Unable to write undistorted image {out}");
+        }
     }
-}
-
-fn read_camara_params(path: &str) -> (Mat, Mat) {
-    let fs = FileStorage::new_def(path, FileStorage_READ).unwrap();
-    let camera_matrix = fs.get("camera_matrix").unwrap().mat().unwrap();
-    let dist_coeffs = fs.get("dist_coeffs").unwrap().mat().unwrap();
-    (camera_matrix, dist_coeffs)
+    Ok(())
 }

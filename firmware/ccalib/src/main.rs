@@ -2,27 +2,31 @@ use std::iter::zip;
 
 use ccalib::utils::{distort_image, imshow_multi, stroke_circle};
 use ccalib::{CameraIntrinsics, Flags, make_extrinsics};
+use eros::Context as _;
 use nalgebra::{Dyn, Matrix3, OMatrix, U2, matrix, vector};
 use opencv::calib3d::{
     CALIB_CB_ASYMMETRIC_GRID, CALIB_CB_CLUSTERING, CirclesGridFinderParameters, find_circles_grid,
 };
 use opencv::core::{
-    _InputArrayTraitConst as _, CV_8UC1, KeyPointTraitConst as _, Mat, MatTraitConst,
-    MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size, ToInputArray, Vec3b, Vector,
+    CV_8UC1, Mat, MatTraitConst, MatTraitConstManual, MatTraitManual, Point2f, Ptr, Size,
+    ToInputArray, Vec3b, Vector,
 };
 use opencv::features2d::{Feature2D, SimpleBlobDetector, SimpleBlobDetector_Params};
 use opencv::imgcodecs::imread_def;
 use opencv::imgproc::{INTER_NEAREST, resize};
-use opencv::prelude::Feature2DTrait;
 
-fn get_circle_centers(im: &impl ToInputArray, rows: usize, cols: usize) -> Vector<Point2f> {
+fn get_circle_centers(
+    im: &impl ToInputArray,
+    rows: usize,
+    cols: usize,
+) -> eros::Result<Vector<Point2f>> {
     let mut centers = Vector::<Point2f>::default();
 
-    let params = SimpleBlobDetector_Params::default().unwrap();
-    let mut circle_grid_finder_params = CirclesGridFinderParameters::default().unwrap();
+    let params = SimpleBlobDetector_Params::default()?;
+    let mut circle_grid_finder_params = CirclesGridFinderParameters::default()?;
     circle_grid_finder_params.grid_type =
         opencv::calib3d::CirclesGridFinderParameters_GridType::ASYMMETRIC_GRID;
-    let simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
+    let simple_blob_detector = SimpleBlobDetector::create(params)?;
     let feature2d_detector: Ptr<Feature2D> = Ptr::from(simple_blob_detector);
 
     let pattern_was_found = find_circles_grid(
@@ -32,47 +36,14 @@ fn get_circle_centers(im: &impl ToInputArray, rows: usize, cols: usize) -> Vecto
         CALIB_CB_ASYMMETRIC_GRID | CALIB_CB_CLUSTERING,
         Some(&feature2d_detector),
         circle_grid_finder_params,
-    )
-    .unwrap();
+    )?;
     if pattern_was_found {
         for c in centers.as_mut_slice() {
             *c *= 4094.0 / 97.0;
         }
-        centers
+        Ok(centers)
     } else {
-        {
-            let mut simple_blob_detector = SimpleBlobDetector::create(params).unwrap();
-            let mut keypoints = Vector::default();
-            simple_blob_detector.detect_def(im, &mut keypoints).unwrap();
-            let new_im = im.input_array().unwrap().get_mat_def().unwrap().clone();
-            let mut new_im = {
-                let mut tmp = Mat::default();
-                resize(
-                    &new_im,
-                    &mut tmp,
-                    (500, 500).into(),
-                    0.0,
-                    0.0,
-                    INTER_NEAREST,
-                )
-                .unwrap();
-                tmp
-            };
-            keypoints.iter().for_each(|kp| {
-                let pt = (kp.pt() + (0.5, 0.5).into()) * 500.0 / 98.0 - (0.5, 0.5).into();
-                let size = (kp.size() * 500.0 / 98.0) as f64;
-                stroke_circle(
-                    &mut new_im,
-                    (pt.x as f64, pt.y as f64),
-                    size / 2.0,
-                    [0.0, 0.0, 255.0, 255.0],
-                    1,
-                )
-                .unwrap();
-            });
-            imshow_multi(&[&new_im], "fail");
-        }
-        panic!("failed to find circle grid");
+        eros::bail!("Failed to find circle grid");
     }
 }
 
@@ -82,16 +53,16 @@ fn overlay_circles(
     radius: f64,
     intrinsics: &CameraIntrinsics<f64>,
     e: Matrix3<f64>,
-) {
+) -> eros::Result<()> {
     let canvas_scale = 10_000.0;
     let output_size = Size::new(800, 800);
-    let og_size = dst.size().unwrap();
+    let og_size = dst.size()?;
     let output_scale_x = output_size.width as f64 / og_size.width as f64;
     let output_scale_y = output_size.height as f64 / og_size.height as f64;
-    let mut im = Mat::new_size_with_default((1000, 1000).into(), CV_8UC1, [0.; 4].into()).unwrap();
+    let mut im = Mat::new_size_with_default((1000, 1000).into(), CV_8UC1, [0.; 4].into())?;
     for cc in circle_centers {
         let cc = (cc.0 * canvas_scale, cc.1 * canvas_scale);
-        stroke_circle(&mut im, cc, radius * canvas_scale, [255.; 4], 2).unwrap();
+        stroke_circle(&mut im, cc, radius * canvas_scale, [255.; 4], 2)?;
     }
 
     let k = intrinsics.matrix();
@@ -121,21 +92,24 @@ fn overlay_circles(
         &(output_scale_mat * k),
         intrinsics.distortion.as_ref().unwrap_or(&[0.0; 5]),
         output_size,
-        &(e * canvas_scale_mat).try_inverse().unwrap(),
-    );
+        &(e * canvas_scale_mat)
+            .try_inverse()
+            .ok_or_else(|| eros::error!("Cannot overlay a singular target pose"))?,
+    )?;
 
-    resize(&dst.clone(), dst, output_size, 0.0, 0.0, INTER_NEAREST).unwrap();
-    let cam_data = cam.data_bytes().unwrap();
-    let dst_data = dst.data_typed_mut::<Vec3b>().unwrap();
+    resize(&dst.clone(), dst, output_size, 0.0, 0.0, INTER_NEAREST)?;
+    let cam_data = cam.data_bytes()?;
+    let dst_data = dst.data_typed_mut::<Vec3b>()?;
     for (cam_p, dst_p) in zip(cam_data, dst_data) {
         let c = *cam_p as f32 / 255.;
         dst_p.0[0] = (dst_p.0[0] as f32 * (1. - c)) as u8;
         dst_p.0[1] = (dst_p.0[1] as f32 * (1. - c)) as u8;
         dst_p.0[2] = (dst_p.0[2] as f32 * (1. - c)) as u8 + *cam_p;
     }
+    Ok(())
 }
 
-fn main() {
+fn main() -> eros::Result<()> {
     let mut circle_centers = vec![];
     let radius = 0.0045; // 9 mm diameter
     let diag_sp = 0.012; // 12 mm
@@ -155,20 +129,27 @@ fn main() {
     let mut images_points: Vec<OMatrix<f64, U2, Dyn>> = vec![];
     let args: Vec<_> = std::env::args().collect();
     let mut args = &args[1..];
-    let calib_distortion = args[0] == "-d";
+    let calib_distortion = args.first().is_some_and(|arg| arg == "-d");
     if calib_distortion {
         args = &args[1..];
     }
+    if args.is_empty() {
+        eros::bail!("Usage: ccalib [-d] IMAGE...");
+    }
     for arg in args {
-        let im = imread_def(&arg).unwrap();
-        let cc = get_circle_centers(&im, board_rows, board_cols);
+        let im = imread_def(arg).with_context(|| format!("Failed to read image {arg}"))?;
+        if im.empty() {
+            eros::bail!("Image {arg} is missing, unreadable, or empty");
+        }
+        let cc = get_circle_centers(&im, board_rows, board_cols)
+            .with_context(|| format!("Failed to detect calibration target in {arg}"))?;
         images_points.push(OMatrix::<f64, U2, Dyn>::from_iterator(
             cc.len(),
             cc.into_iter().flat_map(|p| [p.x as f64, p.y as f64]),
         ));
         imgs.push(im);
     }
-    imshow_multi(&imgs, "Input");
+    imshow_multi(&imgs, "Input").context("Failed to display input images")?;
 
     let mut flags = Flags::empty();
     if calib_distortion {
@@ -187,14 +168,17 @@ fn main() {
         2047.0,
         [0., 0., 0.50].into(),
         flags,
-    );
+    )
+    .context("Failed to calibrate camera")?;
     for (i, c) in result.extrinsics.iter().enumerate() {
         println!("e{i}: {:.6?}", c);
     }
 
     for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
         let e = make_extrinsics(e.r, e.t);
-        overlay_circles(im, &circle_centers, radius, &result.intrinsics, e);
+        overlay_circles(im, &circle_centers, radius, &result.intrinsics, e)
+            .context("Failed to overlay calibration circles")?;
     }
-    imshow_multi(&imgs, "Estimates");
+    imshow_multi(&imgs, "Estimates").context("Failed to display calibration estimates")?;
+    Ok(())
 }

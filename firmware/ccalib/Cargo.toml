@@ -5,12 +5,14 @@ edition = "2024"
 default-run = "ccalib"
 
 [dependencies]
-argmin = { git = "https://github.com/argmin-rs/argmin" }
-argmin-math = { git = "https://github.com/argmin-rs/argmin", features = ["nalgebra_v0_33"] }
-argmin-observer-slog = { git = "https://github.com/argmin-rs/argmin" }
+# Preserve the revision used by the calibration viewer when joining the host graph.
+argmin = { git = "https://github.com/argmin-rs/argmin", rev = "b35808a12abbf1e5ed4047a1e408cfae997a0063" }
+argmin-math = { git = "https://github.com/argmin-rs/argmin", rev = "b35808a12abbf1e5ed4047a1e408cfae997a0063", features = ["nalgebra_v0_33"] }
+argmin-observer-slog = { git = "https://github.com/argmin-rs/argmin", rev = "b35808a12abbf1e5ed4047a1e408cfae997a0063" }
 bitflags = "2.9.0"
-cam-geom = "0.15.2"
 nalgebra = "0.33.2"
 num-dual = "0.11.0"
 num-traits = "0.2.19"
 opencv = "0.94.2"
+thiserror = "1.0.69"
+eros = "0.8"

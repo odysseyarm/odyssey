@@ -2,21 +2,18 @@
 name = "viewer"
 version = "0.1.0"
 edition = "2024"
-default-run = "viewer"
 
 [dependencies]
-aprilgrid = { version = "0.5.3", git = "https://github.com/Abrahamh08/aprilgrid-rs.git" }
-atomic = { version = "0.6.0", default-features = false, features = ["std"] }
-bytemuck = { version = "1.16.0", features = ["derive"] }
+aprilgrid = { version = "0.5.3", git = "https://github.com/Abrahamh08/aprilgrid-rs.git", rev = "8459e7d245f5c672a3bc316e2205985fae068b25" }
 ccalib = { version = "0.1.0", path = "../ccalib" }
 clap = { version = "4.5.4", features = ["derive"] }
+eros = "0.8"
 image = { version = "0.25.5", default-features = false, features = ["png"] }
-macroquad = "0.4.11"
 nalgebra = "0.33.2"
 opencv = "0.94.3"
 serde_json = "1.0.133"
-serialport = { version = "4.3.0", features = ["usbportinfo-interface"] }
 simba = "0.9.0"
+thiserror = "2"
 
 [profile.dev.package."*"]
 opt-level = 3

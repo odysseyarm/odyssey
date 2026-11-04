@@ -8,8 +8,7 @@ use argmin_observer_slog::SlogLogger;
 use nalgebra::allocator::Allocator;
 use nalgebra::{
     Const, DVector, DefaultAllocator, Dim, Dyn, Matrix, Matrix3, Matrix4, OMatrix, OVector,
-    RealField, Rotation3, Scalar, Storage, U1, U3, Unit, Vector, Vector2, Vector3, dvector, matrix,
-    vector,
+    RealField, Rotation3, Scalar, Storage, U1, U3, Unit, Vector, Vector2, Vector3, matrix, vector,
 };
 use num_dual::{DualNum, DualVec};
 use num_traits::{One, Zero};
@@ -108,6 +107,51 @@ pub fn angular_reprojection_error<D: DualNum<f64> + RealField>(
     reproj.push(1.0.into()).normalize() - image_point.push(1.0).normalize().cast()
 }
 
+/// A rejected calibration input or failed optimization.
+#[derive(Debug, thiserror::Error)]
+pub enum CalibrationError {
+    #[error("calibration requires at least one object point")]
+    EmptyObjectPoints,
+    #[error("calibration requires at least one image")]
+    EmptyImages,
+    #[error("image {image} has {actual} points, expected {expected}")]
+    PointCountMismatch {
+        image: usize,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("{field} must contain only finite values")]
+    NonFiniteInput { field: &'static str },
+    #[error("{field} must be positive")]
+    NonPositiveInput { field: &'static str },
+    #[error("calibration residual count exceeds the supported size")]
+    TooManyPoints,
+    #[error("{stage} optimization failed")]
+    Optimization {
+        stage: &'static str,
+        #[source]
+        source: argmin::core::Error,
+    },
+    #[error("{stage} optimization returned no best parameters")]
+    MissingParameters { stage: &'static str },
+    #[error("optimization produced nonfinite parameters, residuals, or derivatives")]
+    NonFiniteEvaluation,
+    #[error("optimization returned an invalid calibration result")]
+    InvalidResult,
+}
+
+/// Fits camera intrinsics and one target pose per image using Steihaug, then Dogleg.
+///
+/// Every image must contain one finite observation per finite object point. Both
+/// point and image collections must be nonempty. The circle radius and initial
+/// focal length must be finite and positive, and all other initial values finite.
+/// Radial distortion, when requested, is fitted only in the second pass.
+///
+/// # Errors
+///
+/// Returns [`CalibrationError`] for invalid inputs, failed or nonfinite optimizer
+/// evaluations, missing best parameters, or a nonfinite final calibration. Solver
+/// failures preserve the underlying argmin error as their source.
 pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     object_points: &[Vector3<f64>],
     images_points: &[Matrix<f64, Const<2>, D, S>],
@@ -117,13 +161,70 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     initial_cy: f64,
     initial_target_pos: Vector3<f64>, // initial guess for the target's position in camera space
     flags: Flags,
-) -> CalibrationResult<f64> {
-    for img_p in images_points {
-        assert_eq!(object_points.len(), img_p.ncols());
+) -> Result<CalibrationResult<f64>, CalibrationError> {
+    if object_points.is_empty() {
+        return Err(CalibrationError::EmptyObjectPoints);
     }
+    if images_points.is_empty() {
+        return Err(CalibrationError::EmptyImages);
+    }
+    for (image, img_p) in images_points.iter().enumerate() {
+        if object_points.len() != img_p.ncols() {
+            return Err(CalibrationError::PointCountMismatch {
+                image,
+                expected: object_points.len(),
+                actual: img_p.ncols(),
+            });
+        }
+        if !img_p.iter().all(|value| value.is_finite()) {
+            return Err(CalibrationError::NonFiniteInput {
+                field: "image points",
+            });
+        }
+    }
+    if !object_points
+        .iter()
+        .flatten()
+        .all(|value| value.is_finite())
+    {
+        return Err(CalibrationError::NonFiniteInput {
+            field: "object points",
+        });
+    }
+    for (field, value) in [
+        ("circle radius", circle_radius),
+        ("initial focal length", initial_focal_length),
+        ("initial cx", initial_cx),
+        ("initial cy", initial_cy),
+    ] {
+        if !value.is_finite() {
+            return Err(CalibrationError::NonFiniteInput { field });
+        }
+    }
+    for (field, value) in [
+        ("circle radius", circle_radius),
+        ("initial focal length", initial_focal_length),
+    ] {
+        if value <= 0.0 {
+            return Err(CalibrationError::NonPositiveInput { field });
+        }
+    }
+    if !initial_target_pos.iter().all(|value| value.is_finite()) {
+        return Err(CalibrationError::NonFiniteInput {
+            field: "initial target position",
+        });
+    }
+    let point_count = object_points
+        .len()
+        .checked_mul(images_points.len())
+        .ok_or(CalibrationError::TooManyPoints)?;
+    let residual_count = point_count
+        .checked_mul(2)
+        .ok_or(CalibrationError::TooManyPoints)?;
 
     let cost = |v: CalibrationResult<DualVec<f64, f64, Dyn>>| {
-        let mut residuals = dvector![];
+        let mut residuals = DVector::zeros(residual_count);
+        let mut index = 0;
         for (image_points, e) in zip(images_points, &v.extrinsics) {
             for (obj_p, img_p) in zip(object_points, image_points.column_iter()) {
                 let [[x, y]] = reprojection_error(
@@ -136,8 +237,9 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
                 )
                 .data
                 .0;
-                residuals = residuals.push(x);
-                residuals = residuals.push(y);
+                residuals[index] = x;
+                residuals[index + 1] = y;
+                index += 2;
             }
         }
         residuals
@@ -174,11 +276,18 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         })
         .add_observer(SlogLogger::term(), ObserverMode::Every(200))
         .run()
-        .expect("optimization failed");
+        .map_err(|source| CalibrationError::Optimization {
+            stage: "Steihaug",
+            source,
+        })?;
 
     // Refine with Dogleg, which seems to converge faster. Radial distortion is only fitted in this pass.
     let mut best_param = CalibrationResult::decode(
-        result.state.best_param.as_ref().unwrap(),
+        result
+            .state
+            .best_param
+            .as_ref()
+            .ok_or(CalibrationError::MissingParameters { stage: "Steihaug" })?,
         flags - Flags::RADIAL_DISTORTION,
     );
     if flags.contains(Flags::RADIAL_DISTORTION) {
@@ -202,13 +311,23 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         })
         .add_observer(SlogLogger::term(), ObserverMode::Every(100))
         .run()
-        .expect("optimization failed");
+        .map_err(|source| CalibrationError::Optimization {
+            stage: "Dogleg",
+            source,
+        })?;
 
     let status = result.state.get_termination_status().clone();
-    let mut best_param =
-        CalibrationResult::decode(result.state.best_param.as_ref().unwrap(), flags);
+    let best_vector = result
+        .state
+        .best_param
+        .as_ref()
+        .ok_or(CalibrationError::MissingParameters { stage: "Dogleg" })?;
     let cost = result.state.best_cost;
-    let rmse = f64::sqrt(cost / (object_points.len() * images_points.len()) as f64);
+    let rmse = f64::sqrt(cost / point_count as f64);
+    if !best_vector.iter().all(|value| value.is_finite()) || !rmse.is_finite() {
+        return Err(CalibrationError::InvalidResult);
+    }
+    let mut best_param = CalibrationResult::decode(best_vector, flags);
     println!("Converged after {} iterations", result.state.iter);
     println!("Termination status: {status}");
     println!("fx: {}", best_param.intrinsics.fx);
@@ -220,7 +339,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     println!("RMSE: {}", rmse);
     println!();
     best_param.rmse = rmse;
-    best_param
+    Ok(best_param)
 }
 
 #[derive(Clone)]
@@ -252,22 +371,42 @@ where
         + Allocator<N, N>
         + Allocator<U1, N>,
 {
-    fn evaluate(&self, param: &OVector<f64, N>) {
+    fn evaluate(&self, param: &OVector<f64, N>) -> Result<(), argmin::core::Error> {
+        if !param.iter().all(|value| value.is_finite()) {
+            return Err(CalibrationError::NonFiniteEvaluation.into());
+        }
         let mut last_param = self.last_param.borrow_mut();
         if last_param.as_ref() != Some(param) {
             let (value, jacobian) = num_dual::jacobian(
                 |v| (self.f)(CalibrationResult::decode(&v, self.flags)),
                 param.clone(),
             );
+            if !value
+                .iter()
+                .chain(jacobian.iter())
+                .all(|value| value.is_finite())
+            {
+                return Err(CalibrationError::NonFiniteEvaluation.into());
+            }
 
             let jacobian_t = jacobian.transpose();
             let gradient = 2.0 * jacobian_t.clone() * value.clone();
             let hessian = 2.0 * jacobian_t * jacobian;
+            let cost = value.norm_squared();
+            if !cost.is_finite()
+                || !gradient
+                    .iter()
+                    .chain(hessian.iter())
+                    .all(|value| value.is_finite())
+            {
+                return Err(CalibrationError::NonFiniteEvaluation.into());
+            }
             *last_param = Some(param.clone());
-            *self.last_value.borrow_mut() = Some(value.norm_squared());
+            *self.last_value.borrow_mut() = Some(cost);
             *self.last_gradient.borrow_mut() = Some(gradient);
             *self.last_hessian.borrow_mut() = Some(hessian);
         }
+        Ok(())
     }
 }
 
@@ -287,7 +426,7 @@ where
     type Output = f64;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin_math::Error> {
-        self.evaluate(param);
+        self.evaluate(param)?;
         Ok(self.last_value.borrow().clone().unwrap())
     }
 }
@@ -308,7 +447,7 @@ where
     type Gradient = OVector<f64, N>;
 
     fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin_math::Error> {
-        self.evaluate(param);
+        self.evaluate(param)?;
         Ok(self.last_gradient.borrow().clone().unwrap())
     }
 }
@@ -329,7 +468,7 @@ where
     type Hessian = OMatrix<f64, N, N>;
 
     fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin_math::Error> {
-        self.evaluate(param);
+        self.evaluate(param)?;
         Ok(self.last_hessian.borrow().clone().unwrap())
     }
 }
@@ -469,5 +608,149 @@ bitflags::bitflags! {
     pub struct Flags: u8 {
         const RADIAL_DISTORTION = 0x1;
         // TODO: INTRINSICS = 0x2, to toggle fitting the intrinsics.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nalgebra::Matrix2xX;
+
+    use super::*;
+
+    fn calibrate_points(
+        object_points: &[Vector3<f64>],
+        image_points: &[Matrix2xX<f64>],
+    ) -> Result<CalibrationResult<f64>, CalibrationError> {
+        calibrate(
+            object_points,
+            image_points,
+            0.01,
+            500.0,
+            320.0,
+            240.0,
+            vector![0.0, 0.0, 1.0],
+            Flags::empty(),
+        )
+    }
+
+    #[test]
+    fn rejects_empty_and_mismatched_observations() {
+        let points = [Vector3::zeros()];
+        let images = [Matrix2xX::zeros(1)];
+        assert!(matches!(
+            calibrate_points(&[], &images),
+            Err(CalibrationError::EmptyObjectPoints)
+        ));
+        assert!(matches!(
+            calibrate_points(&points, &[]),
+            Err(CalibrationError::EmptyImages)
+        ));
+        for actual in [0, 2] {
+            let images = [Matrix2xX::zeros(1), Matrix2xX::zeros(actual)];
+            assert!(matches!(
+                calibrate_points(&points, &images),
+                Err(CalibrationError::PointCountMismatch {
+                    image: 1,
+                    expected: 1,
+                    actual: count,
+                }) if count == actual
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_nonfinite_observations() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let images = [Matrix2xX::zeros(1)];
+            assert!(matches!(
+                calibrate_points(&[vector![value, 0.0, 0.0]], &images),
+                Err(CalibrationError::NonFiniteInput {
+                    field: "object points"
+                })
+            ));
+            let images = [Matrix2xX::from_column_slice(&[0.0, value])];
+            assert!(matches!(
+                calibrate_points(&[Vector3::zeros()], &images),
+                Err(CalibrationError::NonFiniteInput {
+                    field: "image points"
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_initial_values() {
+        let points = [Vector3::zeros()];
+        let images = [Matrix2xX::zeros(1)];
+        let fields = [
+            "circle radius",
+            "initial focal length",
+            "initial cx",
+            "initial cy",
+            "initial target position",
+        ];
+        for (index, field) in fields.into_iter().enumerate() {
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let mut values = [0.01, 500.0, 320.0, 240.0, 1.0];
+                values[index] = value;
+                let result = calibrate(
+                    &points,
+                    &images,
+                    values[0],
+                    values[1],
+                    values[2],
+                    values[3],
+                    vector![0.0, 0.0, values[4]],
+                    Flags::empty(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(CalibrationError::NonFiniteInput { field: actual }) if actual == field
+                ));
+            }
+        }
+        for value in [0.0, -1.0] {
+            for (radius, focal, field) in [
+                (value, 500.0, "circle radius"),
+                (0.01, value, "initial focal length"),
+            ] {
+                assert!(matches!(
+                    calibrate(
+                        &points,
+                        &images,
+                        radius,
+                        focal,
+                        320.0,
+                        240.0,
+                        vector![0.0, 0.0, 1.0],
+                        Flags::empty(),
+                    ),
+                    Err(CalibrationError::NonPositiveInput { field: actual }) if actual == field
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn singular_initial_projection_preserves_optimizer_failure_source() {
+        let error = calibrate(
+            &[Vector3::zeros()],
+            &[Matrix2xX::zeros(1)],
+            0.01,
+            500.0,
+            320.0,
+            240.0,
+            Vector3::zeros(),
+            Flags::empty(),
+        )
+        .unwrap_err();
+        let CalibrationError::Optimization { stage, source } = error else {
+            panic!("expected an optimization failure, got {error:?}");
+        };
+        assert_eq!(stage, "Steihaug");
+        assert!(matches!(
+            source.downcast_ref::<CalibrationError>(),
+            Some(CalibrationError::NonFiniteEvaluation)
+        ));
     }
 }
