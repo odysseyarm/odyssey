@@ -24,6 +24,7 @@ mod usb_release;
 mod version;
 
 pub mod control;
+pub mod image;
 pub mod mux;
 pub mod wire;
 

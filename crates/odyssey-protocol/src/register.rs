@@ -46,7 +46,7 @@ pub struct ReadRegisterResponse {
 #[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Port {
     #[cfg_attr(feature = "minicbor", n(0))]
     Nf,

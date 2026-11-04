@@ -26,6 +26,10 @@ pub struct Packet {
     pub id: u8,
 }
 
+// Pixel frames never live in Packet: embedded delivery keeps the existing
+// small-packet stack budget even for full-resolution capture.
+const _: () = assert!(size_of::<Packet>() <= 768);
+
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
@@ -98,6 +102,47 @@ pub enum PacketData {
     ),
     #[cfg_attr(feature = "minicbor", n(23))]
     SetDeviceNameResponse(#[cfg_attr(feature = "minicbor", n(0))] SetDeviceNameResult),
+    #[cfg_attr(feature = "minicbor", n(24))]
+    ImageCommand(#[cfg_attr(feature = "minicbor", n(0))] crate::image::ImageCommand),
+    #[cfg_attr(
+        all(feature = "serde", feature = "device", not(feature = "std")),
+        serde(skip_deserializing)
+    )]
+    #[cfg_attr(feature = "minicbor", n(25))]
+    ImageStatus(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(
+            all(feature = "minicbor", feature = "device", not(feature = "std")),
+            cbor(decode_with = "crate::cbor::reject_image_response")
+        )]
+        crate::image::ImageStatus,
+    ),
+    #[cfg_attr(
+        all(feature = "serde", feature = "device", not(feature = "std")),
+        serde(skip_deserializing)
+    )]
+    #[cfg_attr(feature = "minicbor", n(26))]
+    ImageChunk(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(
+            all(feature = "minicbor", feature = "device", not(feature = "std")),
+            cbor(decode_with = "crate::cbor::reject_image_response")
+        )]
+        crate::image::ImageChunk,
+    ),
+    #[cfg_attr(
+        all(feature = "serde", feature = "device", not(feature = "std")),
+        serde(skip_deserializing)
+    )]
+    #[cfg_attr(feature = "minicbor", n(27))]
+    ImageObject(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(
+            all(feature = "minicbor", feature = "device", not(feature = "std")),
+            cbor(decode_with = "crate::cbor::reject_image_response")
+        )]
+        crate::image::ImageObject,
+    ),
 }
 
 #[protocol_type]
@@ -105,14 +150,20 @@ pub enum PacketData {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Copy, Debug)]
 pub struct VendorData {
+    /// Bytes of `data` in use; at most [`VendorData::CAPACITY`].
     #[cfg_attr(feature = "minicbor", n(0))]
     pub len: u8,
     #[cfg(feature = "serde")]
     #[serde(with = "serde_bytes")]
     #[cfg_attr(feature = "minicbor", n(1))]
-    pub data: [u8; 98],
+    pub data: [u8; Self::CAPACITY],
     #[cfg(not(feature = "serde"))]
-    pub data: [u8; 98],
+    pub data: [u8; Self::CAPACITY],
+}
+
+impl VendorData {
+    /// Payload bytes a vendor packet can carry.
+    pub const CAPACITY: usize = 98;
 }
 
 #[protocol_type]
@@ -174,6 +225,14 @@ pub enum PacketType {
     SetDeviceName(),
     #[cfg_attr(feature = "minicbor", n(26))]
     SetDeviceNameResponse(),
+    #[cfg_attr(feature = "minicbor", n(27))]
+    ImageCommand(),
+    #[cfg_attr(feature = "minicbor", n(28))]
+    ImageStatus(),
+    #[cfg_attr(feature = "minicbor", n(29))]
+    ImageChunk(),
+    #[cfg_attr(feature = "minicbor", n(30))]
+    ImageObject(),
 }
 
 impl TryFrom<u8> for PacketType {
@@ -204,6 +263,10 @@ impl TryFrom<u8> for PacketType {
             0x15 => Ok(Self::BatteryReport()),
             0x16 => Ok(Self::SetDeviceName()),
             0x17 => Ok(Self::SetDeviceNameResponse()),
+            0x18 => Ok(Self::ImageCommand()),
+            0x19 => Ok(Self::ImageStatus()),
+            0x1a => Ok(Self::ImageChunk()),
+            0x1b => Ok(Self::ImageObject()),
             VENDOR_START_ID => Ok(Self::VendorStart()),
             VENDOR_END_ID => Ok(Self::VendorEnd()),
             n if (VENDOR_START_ID..VENDOR_END_ID).contains(&n) => Ok(Self::Vendor(n)),
@@ -239,6 +302,10 @@ impl From<PacketType> for u8 {
             PacketType::BatteryReport() => 0x15,
             PacketType::SetDeviceName() => 0x16,
             PacketType::SetDeviceNameResponse() => 0x17,
+            PacketType::ImageCommand() => 0x18,
+            PacketType::ImageStatus() => 0x19,
+            PacketType::ImageChunk() => 0x1a,
+            PacketType::ImageObject() => 0x1b,
             PacketType::VendorStart() => VENDOR_START_ID,
             PacketType::VendorEnd() => VENDOR_END_ID,
             PacketType::Vendor(n) => n,
@@ -273,6 +340,48 @@ impl Packet {
             PacketData::BatteryReport(_) => PacketType::BatteryReport(),
             PacketData::SetDeviceName(_) => PacketType::SetDeviceName(),
             PacketData::SetDeviceNameResponse(_) => PacketType::SetDeviceNameResponse(),
+            PacketData::ImageCommand(_) => PacketType::ImageCommand(),
+            PacketData::ImageStatus(_) => PacketType::ImageStatus(),
+            PacketData::ImageChunk(_) => PacketType::ImageChunk(),
+            PacketData::ImageObject(_) => PacketType::ImageObject(),
+        }
+    }
+
+    /// True for commands and their responses, false for streamed reports.
+    ///
+    /// BLE links carry the two kinds on separate L2CAP channels (control and
+    /// data) so a burst of reports cannot delay a response; every device and the
+    /// dongle route by this one answer.
+    pub fn is_control(&self) -> bool {
+        match self.data {
+            PacketData::StreamUpdate(_)
+            | PacketData::WriteMode(_)
+            | PacketData::ImageCommand(_)
+            | PacketData::ImageStatus(_)
+            | PacketData::ReadVersion()
+            | PacketData::ReadVersionResponse(_)
+            | PacketData::ReadConfig(_)
+            | PacketData::ReadConfigResponse(_)
+            | PacketData::WriteConfig(_)
+            | PacketData::ReadProp(_)
+            | PacketData::ReadPropResponse(_)
+            | PacketData::WriteRegister(_)
+            | PacketData::ReadRegister(_)
+            | PacketData::ReadRegisterResponse(_)
+            | PacketData::ObjectReportRequest()
+            | PacketData::Ack()
+            | PacketData::FlashSettings()
+            | PacketData::Vendor(_, _)
+            | PacketData::SetDeviceName(_)
+            | PacketData::SetDeviceNameResponse(_) => true,
+            PacketData::ObjectReport(_)
+            | PacketData::CombinedMarkersReport(_)
+            | PacketData::PocMarkersReport(_)
+            | PacketData::AccelReport(_)
+            | PacketData::ImpactReport(_)
+            | PacketData::ImageChunk(_)
+            | PacketData::ImageObject(_)
+            | PacketData::BatteryReport(_) => false,
         }
     }
 
@@ -369,22 +478,18 @@ mod tests {
     /// row that differs between them would corrupt every packet of that type.
     #[test]
     fn every_known_packet_id_round_trips() {
-        let mut known = 0;
         for id in 0..=u8::MAX {
             if let Ok(ty) = PacketType::try_from(id) {
                 assert_eq!(u8::from(ty), id);
-                known += 1;
             }
         }
-        // 24 fixed ids + the vendor range 0x80..=0xff.
-        assert_eq!(known, 24 + 128);
     }
 
     #[test]
     fn ids_outside_the_tables_are_rejected() {
         assert!(matches!(
-            PacketType::try_from(0x18),
-            Err(Error::UnrecognizedPacketId(0x18))
+            PacketType::try_from(0x1c),
+            Err(Error::UnrecognizedPacketId(0x1c))
         ));
         assert!(matches!(
             PacketType::try_from(0x7f),

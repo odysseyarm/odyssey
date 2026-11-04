@@ -1,3 +1,14 @@
+/// Image status, pixels and features flow from firmware to the host, never back.
+#[cfg(all(feature = "device", not(feature = "std")))]
+pub(crate) fn reject_image_response<'b, C, T>(
+    _decoder: &mut minicbor::Decoder<'b>,
+    _context: &mut C,
+) -> Result<T, minicbor::decode::Error> {
+    Err(minicbor::decode::Error::message(
+        "image responses are device-to-host only",
+    ))
+}
+
 pub(crate) mod heapless_str32 {
     use minicbor::decode::Error;
     use minicbor::encode::{Error as EncodeError, Write};

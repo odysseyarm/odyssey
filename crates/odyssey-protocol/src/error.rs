@@ -1,5 +1,4 @@
-#[cfg(feature = "std")]
-use std::{error::Error as StdError, fmt::Display};
+use core::fmt;
 
 use odyssey_protocol_macros::protocol_type;
 
@@ -24,9 +23,8 @@ pub enum Error {
     InvalidBitPattern,
 }
 
-#[cfg(feature = "std")]
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnexpectedEof { packet_type: None } => write!(f, "unexpected eof"),
             Self::UnexpectedEof {
@@ -42,5 +40,4 @@ impl Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl StdError for Error {}
+impl core::error::Error for Error {}

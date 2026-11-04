@@ -10,12 +10,8 @@ use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccelConfig {
-    #[cfg(feature = "serde")]
-    #[serde(default = "default_accel_odr")]
+    #[cfg_attr(feature = "serde", serde(default = "default_accel_odr"))]
     #[cfg_attr(feature = "minicbor", n(0))]
-    pub accel_odr: u16,
-    #[cfg_attr(feature = "minicbor", n(1))]
-    #[cfg(not(feature = "serde"))]
     pub accel_odr: u16,
     #[cfg_attr(feature = "minicbor", n(2))]
     pub b_x: f32,
