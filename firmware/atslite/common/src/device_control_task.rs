@@ -1,7 +1,5 @@
 //! Handles device control commands from the host CLI over the USB control endpoint.
 
-use core::sync::atomic::{AtomicPtr, Ordering};
-
 use defmt::info;
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Timer};
@@ -12,28 +10,15 @@ use odyssey_protocol::control::device::{
 use odyssey_protocol::{PropKind, Props, SetDeviceNameResult};
 
 use crate::ble::peripheral;
-use crate::{device_control, settings, transport_mode};
+use crate::{device_control, settings};
 
-/// Board-specific function that writes the transport mode to flash. Null until
-/// `register_transport_mode_persist_fn` runs.
-static TRANSPORT_MODE_PERSIST_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Registers the function that writes the transport mode to flash. Call it during board init,
-/// before `device_control_task` starts; until then mode changes are not persisted.
-pub fn register_transport_mode_persist_fn(f: fn(TransportMode)) {
-    TRANSPORT_MODE_PERSIST_FN.store(f as *mut (), Ordering::Release);
-}
-
-fn persist_transport_mode(mode: TransportMode) {
-    let ptr = TRANSPORT_MODE_PERSIST_FN.load(Ordering::Acquire);
-    if !ptr.is_null() {
-        let f: fn(TransportMode) = unsafe { core::mem::transmute(ptr) };
-        f(mode);
-    }
-}
-
+/// Serves device control commands forever. `active_transport` names the transport currently
+/// carrying reports; `GetTransportMode` and `SetTransportMode` both answer with it.
 #[embassy_executor::task]
-pub async fn device_control_task(firmware_version: [u16; 3]) {
+pub async fn device_control_task(
+    firmware_version: [u16; 3],
+    active_transport: fn() -> TransportMode,
+) {
     info!("Device control task started");
 
     // Set while pairing runs, so the loop can keep serving commands until it completes or expires.
@@ -53,7 +38,13 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
         match select(device_control::recv_cmd(), pairing_end).await {
             Either::First(cmd) => {
                 info!("Received control command: {:?}", cmd);
-                handle_cmd(cmd, &mut pairing_deadline, firmware_version).await;
+                handle_cmd(
+                    cmd,
+                    &mut pairing_deadline,
+                    firmware_version,
+                    active_transport,
+                )
+                .await;
             }
             Either::Second(outcome) => end_pairing(&mut pairing_deadline, outcome),
         }
@@ -72,6 +63,7 @@ async fn handle_cmd(
     cmd: DeviceMsg,
     pairing_deadline: &mut Option<Instant>,
     firmware_version: [u16; 3],
+    active_transport: fn() -> TransportMode,
 ) {
     match cmd {
         DeviceMsg::ReadProp(kind) => {
@@ -110,14 +102,6 @@ async fn handle_cmd(
         }
 
         DeviceMsg::StartPairing(params) => {
-            if transport_mode::get() != TransportMode::Ble {
-                info!("StartPairing rejected: transport mode is not BLE");
-                device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Err(
-                    PairingError::NotBleMode,
-                )));
-                return;
-            }
-
             let deadline = Instant::now() + Duration::from_millis(params.timeout_ms.into());
             // A repeated StartPairing only restarts the timeout.
             if pairing_deadline.replace(deadline).is_some() {
@@ -136,23 +120,12 @@ async fn handle_cmd(
             );
         }
 
-        DeviceMsg::GetTransportMode() => {
-            let mode = transport_mode::get();
+        // The transport follows the USB state and cannot be chosen; a set request only
+        // learns the current one.
+        DeviceMsg::GetTransportMode() | DeviceMsg::SetTransportMode(_) => {
+            let mode = active_transport();
             info!("Reporting transport mode: {:?}", mode);
             device_control::try_send_event(DeviceMsg::TransportModeStatus(mode));
-        }
-
-        DeviceMsg::SetTransportMode(mode) => {
-            info!("Setting transport mode: {:?}", mode);
-            transport_mode::set(mode);
-            if matches!(mode, TransportMode::Usb) {
-                // USB and BLE are exclusive, so drop any BLE session.
-                peripheral::request_disconnect();
-            }
-            // Answer before persisting: the flash write blocks the executor, and the host's
-            // control_in poll must see the reply first.
-            device_control::try_send_event(DeviceMsg::TransportModeStatus(mode));
-            persist_transport_mode(mode);
         }
 
         DeviceMsg::Reboot() => {

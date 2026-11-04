@@ -53,7 +53,7 @@ pub struct ObjectModeContext<
     pub usb_configured: UsbConfigHandle,
     pub settings: &'d mut Settings,
     pub l2cap_channels: P::L2capChannels,
-    /// Current data transport (USB or BLE).
+    /// Transport that carries reports right now. Requests are accepted from every transport.
     pub data_mode: fn() -> TransportMode,
     /// Firmware version [major, minor, patch].
     pub version: [u16; 3],
@@ -98,7 +98,6 @@ pub async fn object_mode<
         ctx.settings,
         &ctx.l2cap_channels,
         P::device_id(),
-        ctx.data_mode,
         ctx.version,
         P::netcore_release,
         &impact_settings,
@@ -162,7 +161,6 @@ async fn usb_rcv_loop<L: L2capChannels>(
     settings: &mut Settings,
     l2cap_channels: &L,
     device_id: [u8; 8],
-    data_mode: fn() -> TransportMode,
     version: [u16; 3],
     netcore_release: fn() -> u16,
     impact_settings: &ImpactSettings,
@@ -170,51 +168,27 @@ async fn usb_rcv_loop<L: L2capChannels>(
     set_ble_name: fn(&str),
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
-        // USB control is always served; USB data only in USB mode.
-        let mode = data_mode();
-        let usb_enabled = usb_configured.is_configured();
-        let ble_enabled = matches!(mode, TransportMode::Ble);
+        // Requests are taken from every transport whichever one carries reports, so neither is
+        // parked on a transport choice that has gone stale.
         let (src, pkt) = match select3(
             async {
                 loop {
-                    if !usb_enabled {
-                        core::future::pending().await
-                    } else {
-                        match pkt_rcv.wait_for_packet().await {
-                            Ok(pkt) => break pkt,
-                            Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                                // Blocks until USB is configured again.
-                                defmt::debug!(
-                                    "USB endpoint disabled; waiting for reconfiguration..."
-                                );
-                                usb_configured.wait_for_event().await;
-                                defmt::debug!("USB reconfigured; resuming packet handling");
-                                continue;
-                            }
-                            Err(e) => {
-                                defmt::error!("Failed to read USB packet: {}", e);
-                                embassy_time::Timer::after_millis(100).await;
-                            }
+                    match pkt_rcv.wait_for_packet().await {
+                        Ok(pkt) => break pkt,
+                        Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
+                            defmt::debug!("USB endpoint disabled; waiting for a host...");
+                            usb_configured.wait_until_active().await;
+                            defmt::debug!("USB host attached; resuming packet handling");
+                        }
+                        Err(e) => {
+                            defmt::error!("Failed to read USB packet: {}", e);
+                            embassy_time::Timer::after_millis(100).await;
                         }
                     }
                 }
             },
-            async {
-                // BLE control, only in BLE mode.
-                if !ble_enabled {
-                    core::future::pending().await
-                } else {
-                    l2cap_channels.control_rx().receive().await
-                }
-            },
-            async {
-                // BLE data, only in BLE mode.
-                if !ble_enabled {
-                    core::future::pending().await
-                } else {
-                    l2cap_channels.data_rx().receive().await
-                }
-            },
+            l2cap_channels.control_rx().receive(),
+            l2cap_channels.data_rx().receive(),
         )
         .await
         {
@@ -222,15 +196,6 @@ async fn usb_rcv_loop<L: L2capChannels>(
             Either3::Second(pkt) => (PacketSource::Ble, pkt),
             Either3::Third(pkt) => (PacketSource::Ble, pkt),
         };
-
-        // In BLE mode, USB data packets are dropped; USB control packets are kept.
-        if matches!(mode, TransportMode::Ble)
-            && matches!(src, PacketSource::Usb)
-            && !is_control_packet(&pkt)
-        {
-            defmt::debug!("[app] ignoring USB data packet while in BLE mode");
-            continue;
-        }
 
         let response = match pkt.data {
             PacketData::WriteRegister(register) => {
@@ -437,6 +402,9 @@ async fn usb_rcv_loop<L: L2capChannels>(
     }
 }
 
+/// Sends queued packets over `data_mode()`: reports go over USB while a USB host uses the
+/// device and to the L2CAP queues otherwise. A USB write in progress is abandoned the moment
+/// USB goes away, so reports move to BLE without waiting for a stalled transfer.
 async fn usb_snd_loop<L: L2capChannels>(
     mut pkt_writer: PacketWriter<'_>,
     pkt_rcv: Receiver<'_, Packet, 64>,
@@ -449,21 +417,22 @@ async fn usb_snd_loop<L: L2capChannels>(
         let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
             break;
         };
-        let mode = data_mode();
-        let usb_enabled = usb_configured.is_configured() && matches!(mode, TransportMode::Usb);
-        let ble_enabled = matches!(mode, TransportMode::Ble);
-
-        // USB wins: with USB up, nothing goes to BLE.
-        if usb_enabled {
-            let _ = pkt_writer.write_packet(&pkt).await;
-        } else if ble_enabled {
-            if is_control_packet(&pkt) {
-                let _ = l2cap_channels.control_tx().try_send(pkt);
-            } else {
-                let _ = l2cap_channels.data_tx().try_send(pkt);
+        match data_mode() {
+            TransportMode::Usb => {
+                let write = pkt_writer.write_packet(&pkt);
+                if let Either::Second(()) =
+                    select(write, usb_configured.wait_until_inactive()).await
+                {
+                    defmt::debug!("[usb_snd_loop] USB went away mid-write, packet dropped");
+                }
             }
-        } else {
-            defmt::debug!("[usb_snd_loop] Dropping packet because no data mode active");
+            TransportMode::Ble => {
+                if is_control_packet(&pkt) {
+                    let _ = l2cap_channels.control_tx().try_send(pkt);
+                } else {
+                    let _ = l2cap_channels.data_tx().try_send(pkt);
+                }
+            }
         }
     }
     todo!()

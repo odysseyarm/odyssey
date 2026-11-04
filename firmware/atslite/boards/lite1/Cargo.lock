@@ -114,6 +114,7 @@ dependencies = [
 name = "atslite-common"
 version = "0.1.0"
 dependencies = [
+ "atslite-transport",
  "backon",
  "bt-hci 0.8.0",
  "bytemuck",
@@ -146,6 +147,13 @@ dependencies = [
  "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
+]
+
+[[package]]
+name = "atslite-transport"
+version = "0.1.0"
+dependencies = [
+ "odyssey-protocol",
 ]
 
 [[package]]
@@ -1619,6 +1627,7 @@ name = "lite1"
 version = "0.1.19"
 dependencies = [
  "atslite-common",
+ "atslite-transport",
  "better-dfu",
  "bt-hci 0.7.0",
  "bytemuck",

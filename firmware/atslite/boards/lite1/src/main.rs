@@ -1,6 +1,6 @@
 //! Application firmware for the lite1 board: the ATSlite with a PAG7665QN
-//! vision sensor, talking to the host over USB vendor endpoints or BLE
-//! depending on the transport mode.
+//! vision sensor, talking to the host over USB vendor endpoints while a USB
+//! host uses it and over BLE otherwise.
 
 #![no_std]
 #![no_main]
@@ -28,10 +28,10 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use lite1::pins::Board;
 use lite1::pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle};
 use lite1::{
-    Irqs, ble, imu, object_mode, power, power_button, power_state, sensors, split_board,
-    transport_mode, utils,
+    Irqs, ble, imu, object_mode, power, power_button, power_state, sensors, split_board, utils,
 };
 use npm1300_rs::NPM1300;
+use odyssey_protocol::control::device::TransportMode;
 use pag7665qn::{Pag7665Qn, mode};
 use panic_probe as _;
 use static_cell::StaticCell;
@@ -337,23 +337,15 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
 
-    // The persist hook has to be in place before the task can change the mode.
-    lite1::device_control_task::register_transport_mode_persist_fn(
-        lite1::settings::persist_transport_mode,
+    spawner.spawn(
+        lite1::device_control_task::device_control_task(FIRMWARE_VERSION, active_transport)
+            .unwrap(),
     );
-    spawner.spawn(lite1::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
-
-    let initial_transport_mode = settings.general.transport_mode;
-    transport_mode::set(initial_transport_mode);
 
     // BLE advertises the configured device name when one is set.
     if !settings.general.name.is_empty() {
         lite1::ble::peripheral::set_device_name_initial(settings.general.name.as_str());
     }
-    defmt::info!(
-        "Transport mode initialized from settings: {:?}",
-        initial_transport_mode
-    );
 
     // USB may draw 500 mA from VBUS only once the host has configured it.
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
@@ -483,13 +475,17 @@ async fn usb_pmic_config_task(
     configured: donger_common::usb_device::UsbConfigHandle,
     pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
 ) {
-    configured.wait_until_configured().await;
+    configured.wait_until_active().await;
     pmic.lock()
         .await
         .set_vbus_in_current_limit(npm1300_rs::sysreg::VbusInCurrentLimit::MA500)
         .await
         .unwrap();
     defmt::info!("USB configured, PMIC current limit set to 500mA");
+}
+
+fn active_transport() -> TransportMode {
+    atslite_transport::report_transport(usb::is_active())
 }
 
 #[embassy_executor::task]

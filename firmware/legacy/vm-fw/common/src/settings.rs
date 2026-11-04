@@ -91,14 +91,6 @@ pub unsafe fn get_settings() -> &'static mut Settings {
     unsafe { &mut *ptr }
 }
 
-/// Persists the transport mode through the vm-fw general settings node.
-/// Registered as `transport_mode_persist_fn` on legacy atslite.
-pub fn persist_transport_mode(mode: odyssey_protocol::control::device::TransportMode) {
-    let settings = unsafe { get_settings() };
-    settings.general.transport_mode = mode;
-    settings.write();
-}
-
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
 pub fn accel_odr() -> u16 {
@@ -717,6 +709,8 @@ pub struct GeneralSettings {
     pub camera_model_wf: CameraCalibrationParams,
     #[n(6)]
     pub stereo_iso: StereoCalibrationParams,
+    /// Ignored: the device picks USB or BLE from the USB state at run time. The field stays so
+    /// settings stored by earlier firmware keep decoding with the same CBOR indices.
     #[n(7)]
     pub transport_mode: odyssey_protocol::control::device::TransportMode,
     #[n(8)]

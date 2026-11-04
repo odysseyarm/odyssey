@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # Local crates
 donger-common = { path = "../../common", features = ["atslite"] }
+atslite-transport = { path = "../transport" }
 
 # Core
 defmt = "1.0.1"

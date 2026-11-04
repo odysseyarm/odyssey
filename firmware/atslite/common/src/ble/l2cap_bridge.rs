@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::channel::{Channel, TrySendError};
 use odyssey_protocol::Packet;
 use static_cell::StaticCell;
 
@@ -41,6 +41,19 @@ pub struct L2capChannels {
 }
 
 impl L2capChannels {
+    /// Queues `pkt` for the central on the control or the data channel, by packet kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns the packet when that queue is full.
+    pub fn try_send(&self, pkt: Packet) -> Result<(), TrySendError<Packet>> {
+        if is_control_packet(&pkt) {
+            self.control_tx.try_send(pkt)
+        } else {
+            self.data_tx.try_send(pkt)
+        }
+    }
+
     /// Empties all four queues. A new BLE session starts with this, so the central does not get
     /// replies and reports queued for an earlier session (or while no central was connected),
     /// and requests left from an earlier session are not answered on this one.

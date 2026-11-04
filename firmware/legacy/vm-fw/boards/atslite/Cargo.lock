@@ -122,6 +122,7 @@ version = "0.1.22"
 dependencies = [
  "atslite-boot-api",
  "atslite-common",
+ "atslite-transport",
  "better-boot",
  "better-dfu",
  "bt-hci 0.7.0",
@@ -176,6 +177,7 @@ dependencies = [
 name = "atslite-common"
 version = "0.1.0"
 dependencies = [
+ "atslite-transport",
  "backon",
  "bt-hci 0.8.0",
  "bytemuck",
@@ -208,6 +210,13 @@ dependencies = [
  "rand_core 0.6.4",
  "static_cell",
  "trouble-host",
+]
+
+[[package]]
+name = "atslite-transport"
+version = "0.1.0"
+dependencies = [
+ "odyssey-protocol",
 ]
 
 [[package]]

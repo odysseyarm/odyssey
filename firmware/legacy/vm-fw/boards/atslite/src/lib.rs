@@ -8,7 +8,7 @@ pub mod platform;
 
 pub use atslite_common::{
     ble, device_control, device_control_task, nrf5340_init, pmic_leds, power, power_button,
-    power_state, transport_mode, utils,
+    power_state, utils,
 };
 // vm-fw common: object mode, settings and the rest of the board-independent code.
 pub use common;

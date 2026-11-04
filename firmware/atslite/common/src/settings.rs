@@ -55,14 +55,6 @@ pub unsafe fn get_settings() -> &'static mut Settings {
     unsafe { &mut *ptr }
 }
 
-/// Writes the transport mode to the general settings node. lite1 registers this as its
-/// transport-mode persist function.
-pub fn persist_transport_mode(mode: odyssey_protocol::control::device::TransportMode) {
-    let settings = unsafe { get_settings() };
-    settings.general.transport_mode = mode;
-    settings.general_write();
-}
-
 pub fn is_initialized() -> bool {
     !SETTINGS_PTR
         .load(core::sync::atomic::Ordering::Acquire)
@@ -303,6 +295,8 @@ mod heapless_str32_cbor {
 
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct GeneralSettings {
+    /// Ignored: the device picks USB or BLE from the USB state at run time. The field stays so
+    /// settings stored by earlier firmware keep decoding with the same CBOR indices.
     #[n(0)]
     pub transport_mode: odyssey_protocol::control::device::TransportMode,
     #[n(1)]

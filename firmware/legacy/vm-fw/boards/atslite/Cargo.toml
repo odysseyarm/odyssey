@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 common = { path = "../../common" }
 atslite-common = { path = "../../../../atslite/common" }
+atslite-transport = { path = "../../../../atslite/transport" }
 atslite-boot-api = { path = "boot-api", features = ["defmt"] }
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "time-driver-rtc1", "gpiote", "defmt", "unstable-pac"] }

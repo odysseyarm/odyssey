@@ -4,12 +4,11 @@ use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use odyssey_protocol::control::device::TransportMode;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use trouble_host::prelude::*;
 
-use crate::{settings, transport_mode};
+use crate::settings;
 
 const CONNECTIONS_MAX: usize = 1;
 
@@ -466,15 +465,8 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     };
     defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
 
-    while transport_mode::get() != TransportMode::Ble {
-        let mode = transport_mode::get();
-        defmt::info!(
-            "[custom_task] transport mode {:?}, waiting to enable L2CAP bridge",
-            mode
-        );
-        transport_mode::wait_for_change().await;
-    }
-
+    // The pumps run whatever transport carries reports. While USB does, object mode queues only
+    // replies to requests that came over BLE, and the link otherwise idles until USB goes away.
     let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
     l2cap_channels.drain();
 

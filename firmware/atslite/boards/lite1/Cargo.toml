@@ -16,6 +16,7 @@ path = "src/bin/usb_test.rs"
 pag7665qn = { path = "../../../pag7665qn" }
 donger-common = { path = "../../../common", features = ["atslite"] }
 atslite-common = { path = "../../common" }
+atslite-transport = { path = "../../transport" }
 lite1-boot-api = { path = "boot-api", features = ["defmt"] }
 better-dfu = { path = "../../../better-dfu", features = ["application", "defmt", "cortex-m"] }
 

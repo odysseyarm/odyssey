@@ -11,7 +11,7 @@ pub mod usb;
 
 pub use atslite_common::{
     ble, device_control, device_control_task, nrf5340_init, object_mode, pmic_leds, power,
-    power_button, power_state, settings, transport_mode, utils,
+    power_button, power_state, settings, utils,
 };
 pub use embassy_executor;
 pub use embassy_nrf;

@@ -9,12 +9,13 @@ use atslite_board::platform::AtslitePlatform;
 use atslite_board::pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle};
 use atslite_board::{
     Irqs, ble, embassy_executor, embassy_nrf, imu, nrf5340_init, power, power_button, power_state,
-    split_board, transport_mode, utils,
+    split_board, utils,
 };
 use better_dfu::application::DfuMarker;
 use better_dfu::consts::DfuAttributes;
 use better_dfu::{Control, ResetImmediate, usb_dfu};
 use common::object_mode::{ObjectModeContext, object_mode};
+use common::odyssey_protocol::control::device::TransportMode;
 use common::{Paj, settings, usb};
 use defmt_rtt as _;
 use embassy_embedded_hal::adapter::BlockingAsync;
@@ -129,8 +130,8 @@ fn sync_and_write_general() {
     atslite_s.general.camera_model_wf = common_s.general.camera_model_wf.clone();
     atslite_s.general.stereo_iso = common_s.general.stereo_iso.clone();
     atslite_s.general.name = common_s.general.name.clone();
-    // transport_mode is not copied: it persists separately through
-    // persist_transport_mode / register_transport_mode_persist_fn.
+    // transport_mode is not copied: the device ignores it and picks its
+    // transport from the USB state.
     atslite_s.general_write();
 }
 
@@ -383,7 +384,6 @@ async fn main(spawner: Spawner) {
     // reads through its &mut common::Settings.
     {
         let ag = &atslite_settings.general;
-        settings_ref.general.transport_mode = ag.transport_mode;
         settings_ref.general.impact_threshold = ag.impact_threshold;
         settings_ref.general.suppress_ms = ag.suppress_ms;
         settings_ref.general.accel_config = ag.accel_config.clone();
@@ -403,25 +403,16 @@ async fn main(spawner: Spawner) {
     log_boot_state("after settings init");
     defmt::info!("Settings initialization complete");
 
-    let initial_transport_mode = settings_ref.general.transport_mode;
-    transport_mode::set(initial_transport_mode);
-    defmt::info!(
-        "Transport mode initialized from settings: {:?}",
-        initial_transport_mode
-    );
-
     // A BLE FlashSettings (bulk PacketData::FlashSettings ->
     // common::Settings::write()) persists general settings through
     // atslite-common's flash node.
     settings::register_general_write_fn(sync_and_write_general);
 
-    atslite_board::device_control_task::register_transport_mode_persist_fn(
-        atslite_common::settings::persist_transport_mode,
-    );
-
     // Its channels were registered before USB init.
-    spawner
-        .spawn(atslite_board::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
+    spawner.spawn(
+        atslite_board::device_control_task::device_control_task(FIRMWARE_VERSION, active_transport)
+            .unwrap(),
+    );
 
     // Raise the PMIC current limit once USB enumerates.
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
@@ -475,7 +466,7 @@ async fn main(spawner: Spawner) {
         usb_configured: usb_cfg,
         settings: settings_ref,
         l2cap_channels,
-        data_mode: transport_mode::get,
+        data_mode: active_transport,
         version: FIRMWARE_VERSION,
         battery_soc: &atslite_board::power_state::SOC_PERCENT,
         battery_charging: &atslite_board::power_state::VBUS_PRESENT,
@@ -581,13 +572,17 @@ async fn usb_pmic_config_task(
     configured: common::usb::UsbConfigHandle,
     pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
 ) {
-    configured.wait_until_configured().await;
+    configured.wait_until_active().await;
     pmic.lock()
         .await
         .set_vbus_in_current_limit(npm1300_rs::sysreg::VbusInCurrentLimit::MA500)
         .await
         .unwrap();
     defmt::info!("USB configured, PMIC current limit set to 500mA");
+}
+
+fn active_transport() -> TransportMode {
+    atslite_transport::report_transport(usb::is_active())
 }
 
 async fn handle_pending_ship(

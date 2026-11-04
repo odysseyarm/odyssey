@@ -1,7 +1,7 @@
 //! Code shared by the ATSlite boards (legacy and lite1): NPM1300 power management, power
-//! button, PMIC-driven status LEDs, the BLE stack (host, peripheral, L2CAP bridge), USB/BLE
-//! transport switching, the device control interface, nRF5340 bring-up, and object mode
-//! (odyssey-protocol packet handling).
+//! button, PMIC-driven status LEDs, the BLE stack (host, peripheral, L2CAP bridge), the device
+//! control interface, nRF5340 bring-up, and object mode (odyssey-protocol packet handling over
+//! USB and BLE).
 
 #![no_std]
 
@@ -15,7 +15,6 @@ pub mod power;
 pub mod power_button;
 pub mod power_state;
 pub mod settings;
-pub mod transport_mode;
 pub mod utils;
 
 pub use npm1300_rs;

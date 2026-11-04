@@ -4,14 +4,17 @@ use odyssey_protocol_macros::protocol_type;
 /// [`Props::Version`] and over the control endpoint. Bump it when the packets
 /// in this module change shape.
 ///
-/// This is a separate axis from the crate version in `Cargo.toml`, not a
-/// replacement for it. The crate version follows semver for the Rust API: a
-/// change that breaks callers (a new variant on an exhaustive enum, a removed
-/// item) bumps it even when no packet changed. This constant moves only when the
-/// bytes on the wire do, so a release that only refactors does not tell every
-/// device in the field that the protocol moved, and `semver_at_least` gates on
-/// the host read this.
-pub const DEVICE_PROTOCOL: [u16; 3] = [0, 1, 5];
+/// This is a separate axis from the crate version in `Cargo.toml`. The crate
+/// version follows semver for the Rust API: a change that breaks callers (a
+/// new variant on an exhaustive enum, a removed item) bumps it even when no
+/// packet changed. This constant moves only when the bytes on the wire do, so
+/// a refactor-only release does not tell every device in the field that the
+/// protocol moved. Host-side `semver_at_least` gates read this value.
+///
+/// 0.1.6: the device picks its transport itself (USB while a USB host is
+/// attached, BLE otherwise) and `SetTransportMode` no longer reboots or
+/// persists anything. The packets are unchanged; their meaning is not.
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 1, 6];
 
 #[protocol_type]
 #[repr(C)]

@@ -4,7 +4,6 @@
 //! carry postcard-encoded `DeviceMsg`s.
 
 use core::cmp::max;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt::info;
 use embassy_nrf::Peri;
@@ -12,8 +11,8 @@ use embassy_nrf::interrupt::typelevel::Binding;
 use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::signal::Signal;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::watch::Watch;
 use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
@@ -21,44 +20,53 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::static_byte_buffer;
 
+/// Most tasks that wait on the USB state at the same time. Each pending
+/// `wait_until_*` call holds one receiver slot of the watch.
+const USB_STATE_WAITERS: usize = 4;
+
+type UsbActiveWatch = Watch<CriticalSectionRawMutex, bool, USB_STATE_WAITERS>;
+
+/// Waits on whether a USB host is using the device (see [`is_active`]). Up to
+/// [`USB_STATE_WAITERS`] tasks can wait at once.
+#[derive(Clone, Copy)]
 pub struct UsbConfigHandle {
-    signal: &'static Signal<ThreadModeRawMutex, bool>,
-    flag: &'static AtomicBool,
+    watch: &'static UsbActiveWatch,
 }
 
-impl Copy for UsbConfigHandle {}
-impl Clone for UsbConfigHandle {
-    fn clone(&self) -> Self {
-        *self
-    }
+/// Whether a USB host is talking to the device: it has configured the device
+/// and the bus is not suspended. False until [`usb_device`] has been called
+/// and a host has enumerated the device.
+pub fn is_active() -> bool {
+    USB_ACTIVE.try_get().unwrap_or(false)
 }
 
 impl UsbConfigHandle {
-    fn new(signal: &'static Signal<ThreadModeRawMutex, bool>, flag: &'static AtomicBool) -> Self {
-        Self { signal, flag }
+    /// Returns once a host has configured the device and the bus is awake,
+    /// immediately if that is already the case.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than [`USB_STATE_WAITERS`] waits are pending at once.
+    pub async fn wait_until_active(&self) {
+        self.wait_for(true).await;
     }
 
-    pub fn is_configured(&self) -> bool {
-        self.flag.load(Ordering::Acquire)
+    /// Returns as soon as the device is unplugged, reset, deconfigured or
+    /// suspended, immediately if it already is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than [`USB_STATE_WAITERS`] waits are pending at once.
+    pub async fn wait_until_inactive(&self) {
+        self.wait_for(false).await;
     }
 
-    pub async fn wait_until_configured(&self) {
-        if self.is_configured() {
-            return;
-        }
-        loop {
-            let configured = self.signal.wait().await;
-            if configured {
-                return;
-            }
-        }
-    }
-
-    /// Waits for the next configured or unconfigured event. Unlike
-    /// [`Self::wait_until_configured`], it does not return early when the
-    /// device is already configured.
-    pub async fn wait_for_event(&self) {
-        self.signal.wait().await;
+    async fn wait_for(&self, active: bool) {
+        let mut receiver = self
+            .watch
+            .receiver()
+            .expect("no more than USB_STATE_WAITERS tasks wait on the USB state at once");
+        receiver.get_and(|state| *state == active).await;
     }
 }
 
@@ -72,7 +80,7 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
 }
 
-static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
+static USB_ACTIVE: UsbActiveWatch = Watch::new_with(false);
 
 /// Called with each `DeviceMsg` the host sends with vendor request 0x30.
 pub type DeviceControlSender = fn(odyssey_protocol::control::device::DeviceMsg);
@@ -80,7 +88,7 @@ pub type DeviceControlSender = fn(odyssey_protocol::control::device::DeviceMsg);
 pub type DeviceControlReceiver = fn() -> Option<odyssey_protocol::control::device::DeviceMsg>;
 
 /// Builds the composite USB device and returns it with the vendor interface's
-/// bulk IN and OUT endpoints and a handle that tracks configuration state.
+/// bulk IN and OUT endpoints and a handle that tracks whether a host is using it.
 ///
 /// The device uses IADs and Microsoft OS 2.0 descriptors so Windows installs
 /// WinUSB automatically. Vendor control requests 0x30 and 0x31 go to
@@ -90,8 +98,8 @@ pub type DeviceControlReceiver = fn() -> Option<odyssey_protocol::control::devic
 ///
 /// # Panics
 ///
-/// Panics if called more than once: the descriptor buffers, signal and handler
-/// are statics.
+/// Panics if called more than once: the descriptor buffers and handler are
+/// statics.
 pub fn usb_device<Irqs>(
     pid: u16,
     firmware_version: [u16; 3],
@@ -169,18 +177,14 @@ where
         msos::PropertyData::RegMultiSz(&[guid]),
     ));
 
-    static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> =
-        ConstStaticCell::new(Signal::new());
-    let signal = SIGNAL.take();
-    USB_CONFIGURED.store(false, Ordering::Release);
-
     static HANDLER: StaticCell<MyHandler> = StaticCell::new();
-    let handler = HANDLER.init(MyHandler::new(
-        signal,
-        &USB_CONFIGURED,
+    let handler = HANDLER.init(MyHandler {
+        active: &USB_ACTIVE,
+        configured: false,
+        suspended: false,
         device_control_send,
         device_control_recv,
-    ));
+    });
 
     builder.handler(&mut *handler);
 
@@ -202,38 +206,59 @@ where
     drop(function);
 
     let usb = builder.build();
-    let config_handle = UsbConfigHandle::new(signal, &USB_CONFIGURED);
+    let config_handle = UsbConfigHandle { watch: &USB_ACTIVE };
     (usb, ep_in, ep_out, config_handle)
 }
 
 struct MyHandler {
-    signal: &'static Signal<ThreadModeRawMutex, bool>,
-    flag: &'static AtomicBool,
+    active: &'static UsbActiveWatch,
+    configured: bool,
+    suspended: bool,
     device_control_send: DeviceControlSender,
     device_control_recv: DeviceControlReceiver,
 }
 
 impl MyHandler {
-    pub fn new(
-        signal: &'static Signal<ThreadModeRawMutex, bool>,
-        flag: &'static AtomicBool,
-        device_control_send: DeviceControlSender,
-        device_control_recv: DeviceControlReceiver,
-    ) -> Self {
-        Self {
-            signal,
-            flag,
-            device_control_send,
-            device_control_recv,
-        }
+    fn publish(&self) {
+        let active = self.configured && !self.suspended;
+        self.active.sender().send_if_modified(|state| {
+            let changed = *state != Some(active);
+            *state = Some(active);
+            changed
+        });
     }
 }
 
+// embassy-usb reports `configured(false)` only for SET_CONFIGURATION 0. A bus
+// reset and VBUS removal (unplug) arrive as `reset()` and `enabled(false)`, so
+// those clear the state too.
 impl embassy_usb::Handler for MyHandler {
+    fn enabled(&mut self, enabled: bool) {
+        if !enabled {
+            info!("USB disabled");
+            self.configured = false;
+            self.suspended = false;
+            self.publish();
+        }
+    }
+
+    fn reset(&mut self) {
+        info!("USB bus reset");
+        self.configured = false;
+        self.suspended = false;
+        self.publish();
+    }
+
     fn configured(&mut self, configured: bool) {
-        self.flag.store(configured, Ordering::Release);
         info!("USB configured event: {}", configured);
-        self.signal.signal(configured);
+        self.configured = configured;
+        self.publish();
+    }
+
+    fn suspended(&mut self, suspended: bool) {
+        info!("USB suspended: {}", suspended);
+        self.suspended = suspended;
+        self.publish();
     }
 
     fn control_out(
