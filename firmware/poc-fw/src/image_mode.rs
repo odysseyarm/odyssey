@@ -76,7 +76,7 @@ async fn serial_loop<'a>(
                 let [a, b] = 320u16.to_le_bytes(); // width
                 let [c, d] = 240u16.to_le_bytes(); // height
 
-                // object resolution
+                // object resolution, in 1/64-pixel units
                 let [e, f, g, h] = (320u32 * (1 << 6)).to_le_bytes();
                 let [i, j, k, l] = (240u32 * (1 << 6)).to_le_bytes();
 
@@ -107,7 +107,7 @@ async fn image_loop<'a>(
             break;
         };
         pag.wait_for_image(pag_int, buf).await.unwrap();
-        // x and image are both mirrored to be similar to paj
+        // Mirror x to match the PAJ sensor; object_mode mirrors object x the same way.
         buf.chunks_mut(320).for_each(|l| l.reverse());
         let Either::First(_) = select(image_buffers.send(buf), exit.receive()).await else {
             break;
@@ -118,13 +118,15 @@ async fn image_loop<'a>(
 
 const NUM_BUFFERS: usize = 2;
 
-/// Singleton to hold static resources.
+/// Statically allocated image buffers for image mode.
 pub struct Context {
     shared_image_buffers: &'static mut [[u8; 320 * 240]; NUM_BUFFERS],
 }
 
 impl Context {
-    /// Can only be called once
+    /// # Panics
+    ///
+    /// On a second call.
     pub fn take() -> Self {
         static SHARED_BUFFERS: ConstStaticCell<[[u8; 320 * 240]; NUM_BUFFERS]> =
             ConstStaticCell::new([[0; 320 * 240]; NUM_BUFFERS]);

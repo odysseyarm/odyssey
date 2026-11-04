@@ -71,21 +71,6 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap();
 
-    // let mut pag = pag.switch_mode(mode::Object).await.unwrap();
-    // let mut pag_int = pag_int;
-    // let mut objs = [pag7661qn::types::Object::DEFAULT; 16];
-    // let objcnt = pag.wait_for_objects(&mut pag_int, &mut objs).await.unwrap();
-    // defmt::info!("Got {=u8} objects", objcnt);
-    // for (i, obj) in objs[..objcnt as usize].iter().enumerate() {
-    //     defmt::info!("Object {=u8}:", i as u8);
-    //     defmt::info!("    id = {}", obj.id());
-    //     defmt::info!("    avg = {}", obj.avg());
-    //     defmt::info!("    x = {}", obj.x());
-    //     defmt::info!("    y = {}", obj.y());
-    //     defmt::info!("    area = {}", obj.area());
-    // }
-    // let mut pag = pag.switch_mode(mode::Idle).await.unwrap();
-
     let (imu, imu_int) = imu::init(
         p.SERIAL1,
         p.P0_15.into(),

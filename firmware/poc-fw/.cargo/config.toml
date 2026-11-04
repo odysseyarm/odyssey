@@ -1,12 +1,12 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-# replace nRF82840_xxAA with your chip as listed in `probe-rs chip list`
+# Chip name as listed by `probe-rs chip list`.
 runner = "cargo bin probe-rs run --chip nRF5340_xxAA"
 
 [build]
 target = "thumbv8m.main-none-eabihf"
 rustflags = "-C target-cpu=cortex-m33"
 
-# Uncomment to see flash/memory usage report
+# Uncomment to print the flash/memory usage report at link time.
 # [env]
 # RUSTC_LOG = "rustc_codegen_ssa::back::link=info"
 

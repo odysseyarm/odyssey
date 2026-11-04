@@ -35,7 +35,7 @@ where
     let clkin_ch =
         gpiote::OutputChannel::new(clkin_gpiote_ch, clkin, OutputChannelPolarity::Toggle);
 
-    // Generate a 32 kHz clock on CLKIN
+    // 32 kHz clock on CLKIN: an 8 MHz timer toggling the pin every 125 ticks.
     let timer = Timer::new(clkin_timer_instance);
     timer.set_frequency(timer::Frequency::F8MHz);
     let cc = timer.cc(0);
@@ -44,7 +44,7 @@ where
     let mut ppi_ch = Ppi::new_one_to_one(clkin_ppi_ch, cc.event_compare(), clkin_ch.task_out());
     ppi_ch.enable();
     timer.start();
-    // Let the timer run forever
+    // Keep the timer, PPI channel and GPIOTE output running after these handles drop.
     timer.persist();
     ppi_ch.persist();
     clkin_ch.persist();

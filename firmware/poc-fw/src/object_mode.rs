@@ -67,8 +67,6 @@ pub async fn object_mode(mut ctx: CommonContext) -> CommonContext {
     let r = join4(a, b, c, d).await;
 
     r.0
-    // ctx.pag = pag.into_inner().as_dynamic_mode();
-    // ctx
 }
 
 const MAJOR: u16 = match u16::from_str_radix(core::env!("CARGO_PKG_VERSION_MAJOR"), 10) {
@@ -116,10 +114,6 @@ async fn usb_rcv_loop(
                     .write(register.address, &[register.data])
                     .await
                     .unwrap();
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
             P::ReadRegister(register) => {
@@ -141,10 +135,6 @@ async fn usb_rcv_loop(
             }
             P::WriteConfig(config) => {
                 settings.general.set_general_config(&config.into());
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
             P::ReadConfig() => Some(Packet {
@@ -154,10 +144,6 @@ async fn usb_rcv_loop(
             P::FlashSettings() => {
                 settings.pag = PagSettings::read_from_pag(&mut *pag.lock().await).await;
                 settings.write(nvmc);
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
             P::ReadProps() => Some(Packet {
@@ -174,19 +160,11 @@ async fn usb_rcv_loop(
                     S::Disable => stream_infos.disable(s.packet_id),
                     S::DisableAll => stream_infos.disable_all(),
                 }
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
             P::WriteMode(mode) => {
                 settings.transient.mode = mode;
                 settings.transient_write(nvmc);
-                // Some(Packet {
-                //     id: pkt.id,
-                //     data: P::Ack(),
-                // })
                 None
             }
             P::ReadVersion() => Some(Packet {
@@ -260,8 +238,6 @@ async fn imu_loop(
         let (gx, gy, gz) = (-gy, gx, gz);
 
         if stream_infos.imu.enabled() {
-            // defmt::info!("IMU {=usize} fifo items, {}", items, pkt.fifo_header());
-            // defmt::info!("ax={} ay={} az={} gx={} gy={} gz={}", ax, ay, az, gx, gy, gz);
             let id = stream_infos.imu.req_id();
             let pkt = Packet {
                 id,
@@ -307,7 +283,8 @@ async fn obj_loop(
                 Ok(_) => {}
                 Err(embassy_time::TimeoutError) => {
                     defmt::debug!("obj timeout");
-                    // set the mode back to object mode in case it was set to Idle by usb_rcv_loop
+                    // Looping back re-selects object mode, in case usb_rcv_loop switched the
+                    // PAG to Idle.
                     continue;
                 }
             }
@@ -321,7 +298,7 @@ async fn obj_loop(
                 continue;
             };
 
-            // x and image are both mirrored to be similar to paj
+            // Mirror x to match the PAJ sensor, like the images in image_mode.
             for obj in objs[..n as usize].iter_mut() {
                 const RANGE: u16 = 319 * u16::pow(2, 6);
                 obj.set_x(RANGE - obj.x());
@@ -344,7 +321,7 @@ async fn obj_loop(
     }
 }
 
-/// Singleton to hold static resources.
+/// Statically allocated packet buffers for object mode.
 pub struct Context {
     pub packet_receive_buffer: &'static mut [u8; 1024],
     pub packet_serialize_buffer: &'static mut [u8; 1024],
@@ -352,7 +329,9 @@ pub struct Context {
 }
 
 impl Context {
-    /// Can only be called once
+    /// # Panics
+    ///
+    /// On a second call.
     pub fn take() -> Self {
         Self {
             packet_receive_buffer: static_byte_buffer!(1024),
@@ -370,7 +349,6 @@ pub struct PacketReader<'a> {
 }
 
 impl<'a> PacketReader<'a> {
-    /// Keep the same constructor signature
     pub fn new(
         rcv: &'a mut cdc_acm::Receiver<'static, UsbDriver>,
         buf: &'a mut [u8; 1024],
@@ -383,14 +361,15 @@ impl<'a> PacketReader<'a> {
         }
     }
 
-    /// Ensure at least `need` bytes are buffered contiguously at buf[start .. start+n]
+    /// Reads from USB until at least `need` bytes are buffered contiguously at
+    /// `buf[start..start + n]`.
     async fn fill_min(&mut self, need: usize) -> Result<(), WaitForPacketError> {
         while self.n < need {
             if self.start + self.n == self.buf.len() {
                 if self.n == 0 {
                     self.start = 0;
                 } else {
-                    // compact once when we run out of tail space
+                    // Out of tail space: move the buffered bytes to the front.
                     self.buf.copy_within(self.start..self.start + self.n, 0);
                     self.start = 0;
                 }
@@ -407,10 +386,9 @@ impl<'a> PacketReader<'a> {
     /// Read a single COBS-framed packet: COBS(payload) followed by a single 0x00 delimiter.
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
         loop {
-            // ensure at least one byte so we can search for the delimiter
+            // Need at least one byte to search for the delimiter.
             self.fill_min(1).await?;
 
-            // find the 0x00 delimiter in the current window
             let mut zero_pos = None;
             for i in 0..self.n {
                 if self.buf[self.start + i] == 0x00 {
@@ -430,16 +408,14 @@ impl<'a> PacketReader<'a> {
                     continue;
                 }
 
-                // decode COBS in-place within the window
                 let window = &mut self.buf[self.start..self.start + frame_len];
                 let decoded_len =
                     cobs::decode_in_place(window).map_err(WaitForPacketError::Cobs)?;
 
-                // parse the decoded payload
                 let mut slice = &window[..decoded_len];
                 let pkt = Packet::parse(&mut slice)?;
 
-                // consume this frame + its trailing 0x00 delimiter
+                // Consume the frame and its trailing 0x00 delimiter.
                 self.start += frame_len + 1;
                 self.n -= frame_len + 1;
                 if self.n == 0 {
@@ -449,7 +425,7 @@ impl<'a> PacketReader<'a> {
                 return Ok(pkt);
             }
 
-            // no delimiter found yet; pull at least one more byte
+            // No delimiter yet; pull at least one more byte.
             self.fill_min(self.n + 1).await?;
         }
     }
@@ -463,9 +439,9 @@ pub struct PacketWriter<'a> {
 
 impl PacketWriter<'_> {
     pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
-        // Serialize the payload into the serialize buffer (no copies/allocs)
         let ser_len = {
-            // serialize_raw writes into [MaybeUninit<u8>]
+            // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; serialize_raw takes
+            // `[MaybeUninit<u8>]`, and the buffer is already initialized.
             let ser = unsafe {
                 transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(self.packet_serialize_buffer)
             };
@@ -473,15 +449,13 @@ impl PacketWriter<'_> {
         };
         let payload = &self.packet_serialize_buffer[..ser_len];
 
-        // COBS-encode into the encode buffer
-        // Worst-case encoded_len <= input_len + input_len/254 + 1
+        // COBS worst case: input_len + input_len/254 + 1 bytes.
         let enc_len = cobs::encode(payload, self.packet_cobs_encode_buffer);
 
-        // Append the single 0x00 delimiter after encoded data
+        // Frame delimiter.
         self.packet_cobs_encode_buffer[enc_len] = 0x00;
         let frame = &self.packet_cobs_encode_buffer[..enc_len + 1];
 
-        // Send the frame
         write_serial(self.snd, frame).await;
 
         Ok(())

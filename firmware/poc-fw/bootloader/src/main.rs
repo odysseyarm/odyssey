@@ -24,8 +24,8 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 fn main() -> ! {
     let p = embassy_nrf::init(Default::default());
 
-    // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
-    // as it prevents a hard fault when accessing flash 'too early' after boot.
+    // With a debugger or RTT attached, touching flash this soon after boot can hard fault.
+    // Enable this delay when debugging the bootloader.
     // for _ in 0..10000000 {
     //     cortex_m::asm::nop();
     // }
@@ -41,7 +41,6 @@ fn main() -> ! {
     let state = boot.prepare_boot(aligned_buf.as_mut()).unwrap();
 
     if state == embassy_boot::State::DfuDetach {
-        // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
         let mut config = embassy_usb::Config::new(0x1915, 0x5211);
         config.manufacturer = Some("Nordic");
@@ -71,18 +70,15 @@ fn main() -> ! {
             &mut control_buf,
         );
 
-        // We add MSOS headers so that the device automatically gets assigned the WinUSB driver on Windows.
-        // Otherwise users need to do this manually using a tool like Zadig.
-        //
-        // It seems these always need to be at added at the device level for this to work and for
-        // composite devices they also need to be added on the function level (as shown later).
-        //
+        // MSOS descriptors make Windows bind the WinUSB driver automatically; without them users
+        // have to install it by hand with a tool such as Zadig. They are needed at the device
+        // level, and composite devices also need them at the function level (see below).
         builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
         builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
 
         usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state, |func| {
-            // You likely don't have to add these function level headers if your USB device is not composite
-            // (i.e. if your device does not expose another interface in addition to DFU)
+            // Function-level headers are only needed for a composite device, i.e. one that
+            // exposes another interface besides DFU.
             // func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
         });
 
@@ -100,12 +96,6 @@ fn main() -> ! {
         cortex_m::asm::bootload(active_offset as *const u32)
     }
 }
-
-// #[no_mangle]
-// #[cfg_attr(target_os = "none", link_section = ".HardFault.user")]
-// unsafe extern "C" fn HardFault() {
-//     cortex_m::peripheral::SCB::sys_reset();
-// }
 
 #[exception]
 unsafe fn DefaultHandler(_: i16) -> ! {

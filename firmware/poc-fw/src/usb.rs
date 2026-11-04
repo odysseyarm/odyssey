@@ -59,15 +59,18 @@ pub async fn run_usb(mut device: StaticUsbDevice) -> ! {
     device.run().await
 }
 
-/// Panics if called more than once.
+/// Builds the USB device with a CDC-ACM class and a DFU interface, and marks the running image
+/// as booted for embassy-boot.
+///
+/// # Panics
+///
+/// If called more than once, or if marking the image as booted fails.
 pub fn usb_device(
     p: Peri<'static, USBD>,
     flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc>>,
 ) -> (StaticCdcAcmClass, StaticUsbDevice) {
-    // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
-    // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(VID, PID);
     static SERIAL_NUMBER_BUFFER: ConstStaticCell<[u8; 16]> = ConstStaticCell::new([0; 16]);
     config.manufacturer = Some("Applied Math");
@@ -76,8 +79,6 @@ pub fn usb_device(
     config.max_power = 100;
     config.max_packet_size_0 = 64;
 
-    // Create embassy-usb DeviceBuilder using the driver and config.
-    // It needs some buffers for building the descriptors.
     static STATE: StaticCell<cdc_acm::State> = StaticCell::new();
     let state = STATE.init(cdc_acm::State::new());
 
@@ -95,7 +96,6 @@ pub fn usb_device(
         control_buf,
     );
 
-    // Create classes on the builder.
     let class = CdcAcmClass::new(&mut builder, state, 64);
 
     let config = FirmwareUpdaterConfig::from_linkerfile_blocking(flash, flash);
@@ -122,7 +122,6 @@ pub fn usb_device(
     });
     usb_dfu(&mut builder, state, Duration::from_millis(2500), |_| ());
 
-    // Build the builder.
     let usb = builder.build();
     (class, usb)
 }

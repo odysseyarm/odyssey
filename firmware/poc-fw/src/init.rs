@@ -32,8 +32,9 @@ fn start_network_core(delay: &mut cortex_m::delay::Delay) {
 
 pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     let mut config = Config::default();
-    // The BC40C has the hardware to support this, but I don't want to think about erratum 160
-    // Hopefully erratum 166 doesn't show up, the workaround increases power usage ;-;
+    // The BC40C has the hardware for the main and radio DC/DC converters below, but enabling
+    // them brings in erratum 160. REGH can still hit erratum 166; its workaround is not applied
+    // because it increases power usage.
     config.dcdc.regh = true;
     // config.dcdc.regmain = true;
     // config.dcdc.regradio = true;
@@ -41,12 +42,11 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     config.lfclk_source = LfclkSource::ExternalXtal;
     config.internal_capacitors.hfxo = Some(HfxoCapacitance::_15_5pF);
     config.internal_capacitors.lfxo = Some(LfxoCapacitance::_7pF);
-    // Configure VDD to 3.3V
+    // REGH supplies VDD.
     config.dcdc.regh_voltage = Some(ReghVoltage::_3V3);
 
-    // Enable instruction cache
     pac::CACHE.enable().write(|w| w.set_enable(true));
-    // Set clock to 128 MHz
+    // DIV1 runs the application core at 128 MHz.
     pac::CLOCK
         .hfclkctrl()
         .write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));

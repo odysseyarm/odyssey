@@ -1,7 +1,6 @@
 MEMORY
 {
-  /* NOTE 1 K = 1 KiBi = 1024 bytes */
-  /* The nRF5340 has 1M of flash */
+  /* K = 1024 bytes. The nRF5340 application core has 1 MiB of flash. */
   FLASH                             : ORIGIN = 0x00000000, LENGTH = 24K
   BOOTLOADER_STATE                  : ORIGIN = 0x00006000, LENGTH = 4K
   ACTIVE                            : ORIGIN = 0x00007000, LENGTH = 256K

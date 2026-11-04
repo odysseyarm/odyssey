@@ -1,7 +1,5 @@
-//! Settings
-//!
-//! The current implementation uses two flash pages to store settings. One for PAG settings, and
-//! one for other general settings like calibrations.
+//! Settings stored in three consecutive flash pages: PAG settings, general settings such as
+//! calibrations, and transient settings that are written separately.
 mod settings_region {
     unsafe extern "C" {
         static __settings_start: u32;
@@ -67,18 +65,19 @@ impl Settings {
         }
     }
 
-    /// Make the settings take effect. Only relevent for PAG atm.
+    /// Applies the settings to hardware. Only the PAG settings have a runtime effect.
     pub async fn apply(&self, pag: &mut Pag<mode::Idle>) {
         self.pag.apply(pag).await;
     }
 
-    /// Write the settings to flash
+    /// Writes the PAG and general settings pages. Transient settings go through
+    /// [`Self::transient_write`].
     pub fn write(&self, flash: &RefCell<impl NorFlash>) {
         self.pag.write(&flash, self.pag_start);
         self.general.write(&flash, self.general_start);
     }
 
-    /// Transient settings are written to flash independently of the others
+    /// Writes only the transient settings page.
     pub fn transient_write(&self, flash: &RefCell<impl NorFlash>) {
         self.transient.write(&flash, self.transient_start);
     }
