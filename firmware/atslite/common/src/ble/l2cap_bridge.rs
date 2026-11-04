@@ -40,6 +40,18 @@ pub struct L2capChannels {
     pub data_tx: &'static L2capDataTxChannel,
 }
 
+impl L2capChannels {
+    /// Empties all four queues. A new BLE session starts with this, so the central does not get
+    /// replies and reports queued for an earlier session (or while no central was connected),
+    /// and requests left from an earlier session are not answered on this one.
+    pub fn drain(&self) {
+        self.control_rx.clear();
+        self.data_rx.clear();
+        self.control_tx.clear();
+        self.data_tx.clear();
+    }
+}
+
 /// Returns the L2CAP bridge channels, creating them on the first call.
 pub fn get_or_init() -> L2capChannels {
     if !INITIALIZED.load(Ordering::Acquire) {

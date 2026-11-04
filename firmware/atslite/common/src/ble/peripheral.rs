@@ -1,6 +1,6 @@
 use backon::{ConstantBuilder, EmbassySleeper, Retryable};
 use embassy_futures::join::join3;
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
@@ -21,7 +21,8 @@ type Pool = DefaultPacketPool;
 #[gatt_server]
 struct Server {}
 
-/// Runs the BLE host: restores the stored bond, advertises, and serves one connection at a time.
+/// Runs the BLE host: loads the stored bond, advertises, and serves one connection at a time,
+/// advertising again whenever the connection ends. Never returns.
 pub async fn run<C>(
     controller: C,
     seed: [u8; 32],
@@ -50,32 +51,6 @@ pub async fn run<C>(
         .set_random_address(address)
         .set_random_generator_seed(&mut host_seed_rng);
 
-    // Restore any persisted bond into the host so reconnections encrypt without re-pairing.
-    let mut bond_stored = if settings::is_initialized() {
-        let settings = unsafe { settings::get_settings() };
-        if let Some(bond_info) = settings::ble_bond_to_bond_info(&settings.ble_bond) {
-            match stack.add_bond_information(bond_info) {
-                Ok(()) => {
-                    defmt::info!("[ble] Restored bond from settings into host");
-                    true
-                }
-                Err(e) => {
-                    defmt::warn!(
-                        "[ble] Failed to restore bond into host: {:?}",
-                        defmt::Debug2Format(&e)
-                    );
-                    false
-                }
-            }
-        } else {
-            defmt::info!("[ble] No bond stored in settings");
-            false
-        }
-    } else {
-        defmt::warn!("[ble] Settings not initialized, bond storage disabled");
-        false
-    };
-
     let Host {
         mut peripheral,
         runner,
@@ -89,108 +64,132 @@ pub async fn run<C>(
 
     let _ = join3(ble_task(runner), super::netcore::query(&stack), async {
         loop {
-            defmt::info!(
-                "[adv] advertising loop restarting (bond_stored={})",
-                bond_stored
-            );
-            // The restart signal must also interrupt advertising, not only a live connection.
-            let current_name = get_device_name();
-            let adv_fut = advertise(current_name.as_str(), prod_prefix, &mut peripheral, &server);
-            let restart_fut = ADV_RESTART_SIGNAL.wait();
+            // Each cycle rebuilds the bond table and the advertising data from current state, so
+            // a request raised before this point is already served.
+            DISCONNECT_REQUEST.reset();
+            ADVERTISING_STALE.reset();
+            let bond_stored = sync_bond(&stack);
+            defmt::info!("[adv] advertising (bond_stored={})", bond_stored);
 
-            match select(adv_fut, restart_fut).await {
-                Either::Second(_) => {
-                    defmt::info!(
-                        "[adv] pairing state changed while ADVERTISING (no connection), restarting"
-                    );
-                    Timer::after_millis(500).await;
+            let current_name = get_device_name();
+            let advertised = select3(
+                advertise(current_name.as_str(), prod_prefix, &mut peripheral, &server),
+                DISCONNECT_REQUEST.wait(),
+                ADVERTISING_STALE.wait(),
+            )
+            .await;
+            let conn = match advertised {
+                Either3::First(Ok(conn)) => conn,
+                Either3::First(Err(e)) => {
+                    let e = defmt::Debug2Format(&e);
+                    defmt::warn!("[adv] error (will retry): {:?}", e);
+                    Timer::after_millis(250).await;
                     continue;
                 }
-                Either::First(adv_result) => match adv_result {
-                    Ok(conn) => {
-                        defmt::info!("[adv] connection established, starting tasks");
-                        defmt::info!(
-                            "[adv] pairing_active={}, bond_stored={}",
-                            is_pairing_active(),
-                            bond_stored
-                        );
-                        // Bonding is allowed in pairing mode, to create a bond, and when a bond
-                        // is stored, so the link can encrypt with it.
-                        let bondable = is_pairing_active() || bond_stored;
-                        defmt::info!("[adv] setting bondable={}", bondable);
-                        conn.raw().set_bondable(bondable).unwrap();
-                        defmt::info!("[adv] starting connection tasks");
-                        let a = gatt_events_task(&server, &conn, &mut bond_stored);
-                        let b = custom_task(&server, &conn, &stack);
-                        let c = ADV_RESTART_SIGNAL.wait();
-                        match select3(a, b, c).await {
-                            Either3::First(result) => {
-                                let _ = result;
-                                defmt::info!(
-                                    "[adv] gatt_events_task completed (disconnect detected), restarting advertising"
-                                );
-                                ADV_RESTART_SIGNAL.signal(());
-                            }
-                            Either3::Second(_) => {
-                                defmt::info!("[adv] custom_task completed, waiting for disconnect event");
-                                let disconnect_wait = async {
-                                    loop {
-                                        match conn.next().await {
-                                            GattConnectionEvent::Disconnected { .. } => {
-                                                defmt::info!("[adv] disconnect event received after custom_task exit");
-                                                break;
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                };
-                                match embassy_time::with_timeout(embassy_time::Duration::from_secs(1), disconnect_wait).await {
-                                    Ok(_) => {
-                                        defmt::info!("[adv] disconnect confirmed, restarting advertising");
-                                    }
-                                    Err(_) => {
-                                        defmt::warn!("[adv] disconnect event timeout, forcing disconnect");
-                                        let _ = conn.raw().disconnect();
-                                    }
-                                }
-                                ADV_RESTART_SIGNAL.signal(());
-                            }
-                            Either3::Third(_) => {
-                                defmt::info!(
-                                    "[adv] pairing state changed while connected, disconnecting..."
-                                );
-                                let _ = conn.raw().disconnect();
-                                let disconnect_fut = async {
-                                    loop {
-                                        match conn.next().await {
-                                            GattConnectionEvent::Disconnected { .. } => break,
-                                            _ => {}
-                                        }
-                                    }
-                                };
-                                let timeout_fut = Timer::after_millis(1000);
-                                match select(disconnect_fut, timeout_fut).await {
-                                    Either::First(_) => {
-                                        defmt::info!("[adv] disconnected, restarting advertising");
-                                    }
-                                    Either::Second(_) => {
-                                        defmt::warn!("[adv] disconnect timeout, forcing restart");
-                                    }
-                                }
-                                ADV_RESTART_SIGNAL.signal(());
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let e = defmt::Debug2Format(&e);
-                        defmt::warn!("[adv] error (will retry): {:?}", e);
-                        Timer::after_millis(250).await;
-                    }
-                },
+                Either3::Second(()) | Either3::Third(()) => {
+                    defmt::info!("[adv] advertising restart requested");
+                    Timer::after(ADVERTISING_RESTART_DELAY).await;
+                    continue;
+                }
+            };
+
+            defmt::info!(
+                "[adv] connection established, pairing_active={}, bond_stored={}",
+                is_pairing_active(),
+                bond_stored
+            );
+            // Bonding is allowed in pairing mode, to create a bond, and when a bond
+            // is stored, so the link can encrypt with it.
+            let bondable = is_pairing_active() || bond_stored;
+            defmt::info!("[adv] setting bondable={}", bondable);
+            conn.raw().set_bondable(bondable).unwrap();
+            match select3(
+                gatt_events_task(&server, &conn),
+                custom_task(&server, &conn, &stack),
+                DISCONNECT_REQUEST.wait(),
+            )
+            .await
+            {
+                Either3::First(Ok(())) => defmt::info!("[adv] central disconnected"),
+                Either3::First(Err(e)) => {
+                    defmt::warn!(
+                        "[adv] GATT event handling failed: {:?}, dropping the link",
+                        defmt::Debug2Format(&e)
+                    );
+                    disconnect_and_wait(&conn).await;
+                }
+                Either3::Second(()) => {
+                    defmt::info!("[adv] L2CAP session ended, dropping the link");
+                    disconnect_and_wait(&conn).await;
+                }
+                Either3::Third(()) => {
+                    defmt::info!("[adv] disconnect requested");
+                    disconnect_and_wait(&conn).await;
+                }
             }
         }
     })
     .await;
+}
+
+/// Pause before advertising again after a request cut an advertising cycle short.
+const ADVERTISING_RESTART_DELAY: Duration = Duration::from_millis(500);
+
+/// How long the controller gets to confirm a local disconnect before advertising resumes.
+const DISCONNECT_GRACE: Duration = Duration::from_secs(1);
+
+/// Makes the host's bond table hold exactly the bond stored in settings, and returns whether
+/// there is one. Settings have a single bond slot, so any other bond in the table is stale.
+/// Running this before each advertising cycle is what makes an `AddBond` from device control
+/// usable on the next connection without a reboot.
+fn sync_bond<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> bool {
+    if !settings::is_initialized() {
+        defmt::warn!("[ble] Settings not initialized, bond storage disabled");
+        return false;
+    }
+    // SAFETY: settings are initialized (checked above). Other tasks hold references from
+    // get_settings too, but this one only reads `ble_bond` and does not yield in between, and
+    // the executor is single-threaded, so no write can interleave with the read.
+    let stored = settings::ble_bond_to_bond_info(&unsafe { settings::get_settings() }.ble_bond);
+    for bond in stack.get_bond_information() {
+        let keep = stored
+            .as_ref()
+            .is_some_and(|stored| stored.identity.match_identity(&bond.identity));
+        if !keep {
+            let _ = stack.remove_bond_information(bond.identity);
+        }
+    }
+    let Some(bond_info) = stored else {
+        defmt::info!("[ble] No bond stored in settings");
+        return false;
+    };
+    match stack.add_bond_information(bond_info) {
+        Ok(()) => true,
+        Err(e) => {
+            defmt::warn!(
+                "[ble] Failed to load bond into host: {:?}",
+                defmt::Debug2Format(&e)
+            );
+            false
+        }
+    }
+}
+
+async fn disconnect_and_wait<P: PacketPool>(conn: &GattConnection<'_, '_, P>) {
+    conn.raw().disconnect();
+    let disconnected = async {
+        loop {
+            if let GattConnectionEvent::Disconnected { .. } = conn.next().await {
+                break;
+            }
+        }
+    };
+    if embassy_time::with_timeout(DISCONNECT_GRACE, disconnected)
+        .await
+        .is_err()
+    {
+        defmt::warn!("[adv] no disconnect event within the grace period, advertising anyway");
+    }
 }
 
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
@@ -205,7 +204,6 @@ async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
 async fn gatt_events_task(
     _server: &Server<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
-    bond_stored: &mut bool,
 ) -> Result<(), Error> {
     defmt::info!("[gatt_events_task] started");
     let reason = loop {
@@ -215,8 +213,6 @@ async fn gatt_events_task(
                     "[peripheral] Disconnected: {:?}",
                     defmt::Debug2Format(&reason)
                 );
-                defmt::info!("[peripheral] signaling advertising restart after disconnect");
-                ADV_RESTART_SIGNAL.signal(());
                 break reason;
             }
             GattConnectionEvent::PairingComplete {
@@ -231,13 +227,11 @@ async fn gatt_events_task(
                         settings.ble_bond_write();
                         defmt::info!("[peripheral] Bond stored to flash");
                     }
-                    *bond_stored = true;
 
                     let addr = bond.identity.bd_addr.raw();
                     let mut addr_copy = [0u8; 6];
                     addr_copy.copy_from_slice(addr);
                     PAIRING_COMPLETE_SIGNAL.signal(addr_copy);
-                    PAIRING.store(false, core::sync::atomic::Ordering::Relaxed);
                 }
                 cancel_pairing_mode();
             }
@@ -416,7 +410,6 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     stack: &'a Stack<'a, C, P>,
 ) {
     defmt::info!("[custom_task] started");
-    let _ = take_disconnect_request();
 
     const L2CAP_PSM_CTRL: u16 = 0x0080;
     const L2CAP_PSM_DATA: u16 = 0x0081;
@@ -483,6 +476,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     }
 
     let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
+    l2cap_channels.drain();
 
     defmt::info!("[custom_task] L2CAP bridge ready, splitting channels");
 
@@ -557,7 +551,6 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             "[control_tx_task] L2CAP control send failed: {:?}",
                             defmt::Debug2Format(&e)
                         );
-                        ADV_RESTART_SIGNAL.signal(());
                         return;
                     }
                     Err(_) => {
@@ -571,7 +564,6 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             defmt::error!(
                                 "[control_tx_task] Too many consecutive timeouts, exiting"
                             );
-                            ADV_RESTART_SIGNAL.signal(());
                             return;
                         }
                     }
@@ -613,7 +605,6 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
                             defmt::Debug2Format(&e)
                         );
-                        ADV_RESTART_SIGNAL.signal(());
                         return;
                     }
                     Err(_) => {
@@ -627,7 +618,6 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                             defmt::error!(
                                 "[data_tx_task] Too many consecutive timeouts, connection appears dead"
                             );
-                            ADV_RESTART_SIGNAL.signal(());
                             return;
                         }
                     }
@@ -667,7 +657,6 @@ async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                     "[control_rx_task] L2CAP control receive error: {:?}",
                     defmt::Debug2Format(&e)
                 );
-                ADV_RESTART_SIGNAL.signal(());
                 return;
             }
         }
@@ -699,7 +688,6 @@ async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                     "[data_rx_task] L2CAP data receive error: {:?}",
                     defmt::Debug2Format(&e)
                 );
-                ADV_RESTART_SIGNAL.signal(());
                 return;
             }
         }
@@ -712,7 +700,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BmRaw;
 
-static ADV_RESTART_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Drop the current connection, or restart advertising when there is none. `run` reloads the
+/// bond and rebuilds the advertising data before it advertises again.
+static DISCONNECT_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// The advertising data no longer matches the pairing state. Only an advertising cycle in
+/// progress restarts on it; a connection stays up, and the next cycle builds fresh data anyway.
+static ADVERTISING_STALE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static PAIRING: AtomicBool = AtomicBool::new(false);
 static PAIRING_COMPLETE_SIGNAL: Signal<CriticalSectionRawMutex, [u8; 6]> = Signal::new();
@@ -735,40 +729,27 @@ pub fn set_device_name_initial(name: &str) {
     });
 }
 
-/// Sets the advertised name and restarts advertising, which drops any current connection.
-pub fn update_device_name_live(name: &str) {
-    CURRENT_NAME.lock(|n| {
-        let mut s = n.borrow_mut();
-        s.clear();
-        for c in name.chars().take(32) {
-            let _ = s.push(c);
-        }
-    });
-    ADV_RESTART_SIGNAL.signal(());
-}
-
 pub fn get_device_name() -> heapless::String<32> {
     CURRENT_NAME.lock(|n| n.borrow().clone())
 }
 
-static REQ_DISCONNECT: AtomicBool = AtomicBool::new(false);
-
 pub fn request_disconnect() {
-    REQ_DISCONNECT.store(true, Ordering::Relaxed);
-    ADV_RESTART_SIGNAL.signal(());
+    DISCONNECT_REQUEST.signal(());
 }
 
-pub fn take_disconnect_request() -> bool {
-    REQ_DISCONNECT.swap(false, Ordering::AcqRel)
-}
-
+/// Advertises the pairing data and makes the next connection bondable. Drops the current
+/// connection so the host pairs from scratch, and forgets a completion left over from an
+/// earlier pairing window.
 pub fn enter_pairing_mode() {
+    PAIRING_COMPLETE_SIGNAL.reset();
     PAIRING.store(true, Ordering::Relaxed);
-    ADV_RESTART_SIGNAL.signal(());
+    DISCONNECT_REQUEST.signal(());
 }
 
+/// Leaves pairing mode and drops the pairing data from advertising. A connection is kept.
 pub fn cancel_pairing_mode() {
     PAIRING.store(false, Ordering::Relaxed);
+    ADVERTISING_STALE.signal(());
 }
 
 pub fn is_pairing_active() -> bool {

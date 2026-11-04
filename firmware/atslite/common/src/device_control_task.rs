@@ -3,6 +3,8 @@
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use defmt::info;
+use embassy_futures::select::{Either, select};
+use embassy_time::{Duration, Instant, Timer};
 use odyssey_protocol::control::AddBondResult;
 use odyssey_protocol::control::device::{
     ClearBondResult, DeviceMsg, PairingError, PairingOutcome, TransportMode,
@@ -35,75 +37,40 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
     info!("Device control task started");
 
     // Set while pairing runs, so the loop can keep serving commands until it completes or expires.
-    let mut pairing_deadline: Option<embassy_time::Instant> = None;
+    let mut pairing_deadline: Option<Instant> = None;
 
     loop {
-        if let Some(deadline) = pairing_deadline {
-            use embassy_futures::select::{Either3, select3};
-            let cmd_fut = device_control::recv_cmd();
-            let complete_fut = peripheral::wait_for_pairing_complete();
-            let timeout_fut = embassy_time::Timer::at(deadline);
-
-            match select3(cmd_fut, complete_fut, timeout_fut).await {
-                Either3::First(cmd) => {
-                    info!("Received control command: {:?}", cmd);
-                    match cmd {
-                        DeviceMsg::CancelPairing() => {
-                            info!("Cancelling pairing mode");
-                            peripheral::cancel_pairing_mode();
-                            pairing_deadline = None;
-                            device_control::try_send_event(DeviceMsg::PairingResult(
-                                PairingOutcome::Err(PairingError::Cancelled),
-                            ));
-                            continue;
-                        }
-                        // A repeated StartPairing restarts the timeout.
-                        DeviceMsg::StartPairing(params) => {
-                            info!(
-                                "StartPairing received during active pairing, resetting timeout to {} ms",
-                                params.timeout_ms
-                            );
-                            pairing_deadline = Some(
-                                embassy_time::Instant::now()
-                                    + embassy_time::Duration::from_millis(params.timeout_ms as u64),
-                            );
-                            continue;
-                        }
-                        other => {
-                            handle_cmd(other, &mut pairing_deadline, firmware_version).await;
-                            continue;
-                        }
-                    }
-                }
-                Either3::Second(device) => {
-                    info!("Pairing completed successfully");
-                    pairing_deadline = None;
-                    device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Ok(
-                        device,
-                    )));
-                    continue;
-                }
-                Either3::Third(_) => {
-                    info!("Pairing timed out");
-                    pairing_deadline = None;
-                    peripheral::cancel_pairing_mode();
-                    device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Err(
-                        PairingError::Timeout,
-                    )));
-                    continue;
-                }
+        let deadline = pairing_deadline;
+        let pairing_end = async move {
+            let Some(deadline) = deadline else {
+                return core::future::pending().await;
+            };
+            match select(peripheral::wait_for_pairing_complete(), Timer::at(deadline)).await {
+                Either::First(device) => PairingOutcome::Ok(device),
+                Either::Second(()) => PairingOutcome::Err(PairingError::Timeout),
             }
+        };
+        match select(device_control::recv_cmd(), pairing_end).await {
+            Either::First(cmd) => {
+                info!("Received control command: {:?}", cmd);
+                handle_cmd(cmd, &mut pairing_deadline, firmware_version).await;
+            }
+            Either::Second(outcome) => end_pairing(&mut pairing_deadline, outcome),
         }
-
-        let cmd = device_control::recv_cmd().await;
-        info!("Received control command: {:?}", cmd);
-        handle_cmd(cmd, &mut pairing_deadline, firmware_version).await;
     }
+}
+
+/// Closes the pairing window and reports `outcome` to the host.
+fn end_pairing(pairing_deadline: &mut Option<Instant>, outcome: PairingOutcome) {
+    info!("Pairing ended: {:?}", outcome);
+    *pairing_deadline = None;
+    peripheral::cancel_pairing_mode();
+    device_control::try_send_event(DeviceMsg::PairingResult(outcome));
 }
 
 async fn handle_cmd(
     cmd: DeviceMsg,
-    pairing_deadline: &mut Option<embassy_time::Instant>,
+    pairing_deadline: &mut Option<Instant>,
     firmware_version: [u16; 3],
 ) {
     match cmd {
@@ -151,27 +118,22 @@ async fn handle_cmd(
                 return;
             }
 
+            let deadline = Instant::now() + Duration::from_millis(params.timeout_ms.into());
+            // A repeated StartPairing only restarts the timeout.
+            if pairing_deadline.replace(deadline).is_some() {
+                info!("Pairing timeout reset to {} ms", params.timeout_ms);
+                return;
+            }
             info!("Starting pairing mode for {} ms", params.timeout_ms);
             peripheral::enter_pairing_mode();
-
-            // Drop the current connection so the host pairs from scratch.
-            peripheral::request_disconnect();
-
             device_control::try_send_event(DeviceMsg::StartPairingResponse());
-
-            *pairing_deadline = Some(
-                embassy_time::Instant::now()
-                    + embassy_time::Duration::from_millis(params.timeout_ms as u64),
-            );
         }
 
         DeviceMsg::CancelPairing() => {
-            info!("Cancelling pairing mode");
-            peripheral::cancel_pairing_mode();
-            *pairing_deadline = None;
-            device_control::try_send_event(DeviceMsg::PairingResult(PairingOutcome::Err(
-                PairingError::Cancelled,
-            )));
+            end_pairing(
+                pairing_deadline,
+                PairingOutcome::Err(PairingError::Cancelled),
+            );
         }
 
         DeviceMsg::GetTransportMode() => {
@@ -260,7 +222,8 @@ async fn handle_cmd(
                 let s = unsafe { settings::get_settings() };
                 s.ble_bond = entry.into();
                 s.ble_bond_write();
-                // Reconnecting makes the peripheral restore the new bond.
+                // The BLE loop loads the bond from settings into the host before it advertises
+                // again, so the new bond is live from the next connection on.
                 peripheral::request_disconnect();
                 device_control::try_send_event(DeviceMsg::AddBondResponse(AddBondResult::Ok()));
             } else {
