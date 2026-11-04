@@ -28,7 +28,6 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
     let detector_params = DetectorParameters::default().unwrap();
     let mut charuco_params = CharucoParameters::default().unwrap();
     charuco_params.set_try_refine_markers(true);
-    // charuco_params.set_dist_coeffs([]);
     let detector = CharucoDetector::new(
         &board,
         &charuco_params,
@@ -66,18 +65,6 @@ pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) {
         )
         .unwrap();
     }
-    //
-    // if marker_corners.len() > 0 {
-    //     let mut marker_corners_flat = marker_corners.iter().flatten().collect::<Vector<Point2f>>();
-    //     corner_sub_pix(&resized, &mut marker_corners_flat, (2, 2).into(), (-1, -1).into(), opencv::core::TermCriteria {
-    //         typ: TermCriteria_EPS + TermCriteria_MAX_ITER,
-    //         max_count: 30,
-    //         epsilon: 0.001,
-    //     }).unwrap();
-    //     let mut sad: Vec<_> = marker_corners.iter().map(|v| v.to_vec()).collect();
-    //     sad.iter_mut().flatten().zip(&marker_corners_flat).for_each(|(a, b)| *a = b);
-    //     marker_corners = sad.into_iter().map(Vector::from_iter).collect();
-    // }
 
     let mut im_copy = Mat::default();
     cvt_color_def(&im, &mut im_copy, COLOR_GRAY2BGR).unwrap();

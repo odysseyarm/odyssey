@@ -256,7 +256,7 @@ pub fn my_stereo_calibrate(
         return;
     };
 
-    let square_length = 1.26; // For example, a 7x5 circles grid that was printed out.
+    let square_length = 1.26; // example value, from a printed 7x5 circles grid
     let object_points = board_points(board_rows, board_cols, square_length, asymmetric);
 
     let mut object_points_arr = Vector::<Vector<Point3f>>::new();

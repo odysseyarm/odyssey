@@ -266,48 +266,12 @@ pub fn get_chessboard_corners_cv(
             .unwrap();
         }
     }
-    // scale corners back down
+    // Back to input-image pixels; the ±0.5 shifts between pixel-centre and pixel-corner origins.
     corners.as_mut_slice().iter_mut().for_each(|x| {
         x.x = (x.x + 0.5) / ss as f32 - 0.5;
         x.y = (x.y + 0.5) / ss as f32 - 0.5;
     });
-    // let chessboard_found = find_chessboard_corners_sb_with_meta(
-    //     &im,
-    //     (board_cols, board_rows).into(),
-    //     &mut corners,
-    //     CALIB_CB_MARKER + CALIB_CB_LARGER,
-    //     &mut meta,
-    // )
-    // .unwrap();
 
-    // if show {
-    //     let mut im_copy = Mat::default();
-    //     cvt_color_def(image, &mut im_copy, COLOR_GRAY2BGR).unwrap();
-    //     let tmp = im_copy;
-    //     let mut im_copy = Mat::default();
-    //     resize(&tmp, &mut im_copy, Size::new(512, 512), 0., 0., INTER_CUBIC).unwrap();
-    //     corners.as_mut_slice().iter_mut().for_each(|x| {
-    //         x.x = (x.x + 0.5) * 512.0 / 98.0 - 0.5;
-    //         x.y = (x.y + 0.5) * 512.0 / 98.0 - 0.5;
-    //     });
-    //
-    //     if corners.len() > 0 {
-    //         draw_chessboard_corners(
-    //             &mut im_copy,
-    //             (board_cols, board_rows).into(),
-    //             &corners,
-    //             !corners.is_empty(),
-    //         )
-    //         .unwrap();
-    //     }
-    //
-    //     let name = match port {
-    //         Port::Wf => "wf",
-    //         Port::Nf => "nf",
-    //     };
-    //     imshow(name, &im_copy).unwrap();
-    //     poll_key().unwrap();
-    // }
     if corners.len() > 0 {
         let size = image.input_array().unwrap().size(-1).unwrap();
         for corner in corners.as_mut_slice() {

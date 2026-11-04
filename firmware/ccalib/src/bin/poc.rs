@@ -35,9 +35,6 @@ fn get_circle_centers(im: &impl ToInputArray, rows: usize, cols: usize) -> Vecto
     )
     .unwrap();
     if pattern_was_found {
-        // for c in centers.as_mut_slice() {
-        //     *c *= 4094.0 / 97.0;
-        // }
         centers
     } else {
         {
@@ -84,7 +81,6 @@ fn overlay_circles(
     e: Matrix3<f64>,
 ) {
     let canvas_scale = 10_000.0;
-    // let output_size = Size::new(800, 800);
     let output_size = Size::new(320 * 3, 240 * 3);
     let og_size = dst.size().unwrap();
     let output_scale_x = output_size.width as f64 / og_size.width as f64;
@@ -134,9 +130,8 @@ fn overlay_circles(
 }
 
 fn main() {
-    // ===== read images =====
     let mut circle_centers = vec![];
-    let radius = 0.0045; // 9 mm
+    let radius = 0.0045; // 9 mm diameter
     let diag_sp = 0.012; // 12 mm
     let board_rows = 3;
     let board_cols = 5;
@@ -164,7 +159,6 @@ fn main() {
     }
     imshow_multi(&imgs, "Input");
 
-    // ===== calibration =====
     let result = ccalib::calibrate(
         &circle_centers
             .iter()
@@ -183,7 +177,6 @@ fn main() {
         println!("e{i}: {:.6?}", c);
     }
 
-    // ===== draw estimated extrinsics =====
     for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
         let e = make_extrinsics(e.r, e.t);
         overlay_circles(im, &circle_centers, radius, &result.intrinsics, e);

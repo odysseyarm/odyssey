@@ -8,12 +8,11 @@ pub fn _find_circles_grid_special_old(
 ) -> Option<Vector<Point2f>> {
     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
 
-    // Ensure that we have enough points to form the outer boundary
+    // Fewer points than the grid perimeter cannot trace the outer boundary.
     if centers.len() < expected_num_outer_points {
         return None;
     }
 
-    // Find the top-left corner by minimizing x+y
     let mut top_left = Point2f::new(f32::MAX, f32::MAX);
     for point in centers.iter() {
         if point.x + point.y < top_left.x + top_left.y {

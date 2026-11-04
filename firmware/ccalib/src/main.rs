@@ -136,9 +136,8 @@ fn overlay_circles(
 }
 
 fn main() {
-    // ===== read images =====
     let mut circle_centers = vec![];
-    let radius = 0.0045; // 9 mm
+    let radius = 0.0045; // 9 mm diameter
     let diag_sp = 0.012; // 12 mm
     let board_rows = 3;
     let board_cols = 5;
@@ -171,7 +170,6 @@ fn main() {
     }
     imshow_multi(&imgs, "Input");
 
-    // ===== calibration =====
     let mut flags = Flags::empty();
     if calib_distortion {
         flags |= Flags::RADIAL_DISTORTION;
@@ -194,7 +192,6 @@ fn main() {
         println!("e{i}: {:.6?}", c);
     }
 
-    // ===== draw estimated extrinsics =====
     for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
         let e = make_extrinsics(e.r, e.t);
         overlay_circles(im, &circle_centers, radius, &result.intrinsics, e);

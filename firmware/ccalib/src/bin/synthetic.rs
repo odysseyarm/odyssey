@@ -62,8 +62,6 @@ fn generate_test_image(
     for cc in circle_centers {
         let ccf = (cc.0 as f64, cc.1 as f64);
         fill_circle(&mut im, ccf, radius as f64, [0.0; 4]).unwrap();
-        // opencv::imgproc::line(&mut im, (cc.0, 0).into(), (cc.0, 500).into(), [0., 0., 255., 0.].into(), 1, LINE_AA, 0).unwrap();
-        // opencv::imgproc::line(&mut im, (0, cc.1).into(), (500, cc.1).into(), [0., 0., 255., 0.].into(), 1, LINE_AA, 0).unwrap();
     }
 
     let mut cam = Mat::default();
@@ -124,7 +122,6 @@ fn overlay_circles(
 }
 
 fn main() {
-    // ===== generate test images =====
     let circle_centers = [
         (140, 140),
         (500, 140),
@@ -167,7 +164,6 @@ fn main() {
     }
     imshow_multi(&imgs, "Generated");
 
-    // ===== calibration =====
     let result = ccalib::calibrate(
         &circle_centers.map(|p| vector![p.0 as f64, p.1 as f64, 0.0]),
         &images_points,
@@ -190,7 +186,6 @@ fn main() {
         println!("e{i}: {:.6?}", ev.as_slice());
     }
 
-    // ===== draw estimated extrinsics =====
     for (e, im) in result.extrinsics.iter().zip(&mut imgs) {
         let e = make_extrinsics(e.r, e.t);
         overlay_circles(im, &circle_centers, radius, k, e);

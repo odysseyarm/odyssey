@@ -71,7 +71,6 @@ pub fn imshow_multi<T: ToInputArray>(imgs: &[T], title: &str) {
     set_window_title("imshow_multi", &current_title).unwrap();
     loop {
         let c = wait_key(100).unwrap();
-        // println!("{} {:?}", c, char::from_u32(c as u32));
         if c == i32::from(b'q')
             || c == 0x1b // esc
             || get_window_property(&"imshow_multi", WND_PROP_VISIBLE).unwrap() == 0.
@@ -80,7 +79,7 @@ pub fn imshow_multi<T: ToInputArray>(imgs: &[T], title: &str) {
         }
 
         'change_image: {
-            // left arrow
+            // 81 and 83 are the left and right arrow keys as returned by `wait_key`
             if c == 81 || c == i32::from(b'h') || c == i32::from(b',') {
                 i = (i + imgs.len() - 1) % imgs.len();
             } else if c == 83 || c == i32::from(b'l') || c == i32::from(b'.') {

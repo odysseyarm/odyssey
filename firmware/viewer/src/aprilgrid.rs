@@ -88,7 +88,6 @@ impl AprilGrid {
                 INTER_CUBIC,
             )
             .unwrap();
-            // im_upscaled = image.input_array().unwrap().get_mat_def().unwrap();
         }
 
         let (width, height) = (im_upscaled.cols(), im_upscaled.rows());

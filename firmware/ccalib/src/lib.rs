@@ -16,9 +16,12 @@ use num_traits::{One, Zero};
 
 pub mod utils;
 
-// k is the intrinsic matrix (fx, fy, cx, cy)
-// e is the extrinsic matrix [r_1, r_2, t]
-// q is the characteristic matrix of the ellipse
+/// Projects the centre of a circle on the target into the image, which is not the centre
+/// of the projected ellipse.
+///
+/// `e` is the extrinsic matrix `[r_1, r_2, t]` and `q_inv` the inverse of the circle's
+/// characteristic (conic) matrix in target coordinates. Only the radial terms k1, k2, k3 of
+/// `intrinsics.distortion` are applied.
 pub fn estimate_center<D: DualNum<f64> + RealField>(
     intrinsics: &CameraIntrinsics<D>,
     e: Matrix3<D>,
@@ -115,13 +118,6 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     initial_target_pos: Vector3<f64>, // initial guess for the target's position in camera space
     flags: Flags,
 ) -> CalibrationResult<f64> {
-    // dbg!(&object_points);
-    // dbg!(&images_points);
-    // dbg!(&circle_radius);
-    // dbg!(&initial_cx);
-    // dbg!(&initial_cy);
-    // dbg!(&initial_target_pos);
-    // dbg!(&flags);
     for img_p in images_points {
         assert_eq!(object_points.len(), img_p.ncols());
     }
@@ -166,8 +162,8 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
             t: initial_target_pos,
         });
     }
-    // Steihaug seems better at dealing with bad initial guesses
-    // TODO: do something to get a better initial guess
+    // Steihaug seems better at dealing with bad initial guesses.
+    // TODO: better initial guess; every image starts from zero rotation at `initial_target_pos`.
     let trust_region = TrustRegion::new(Steihaug::new().with_max_iters(20));
     let result = Executor::new(problem, trust_region)
         .configure(|state| {
@@ -180,7 +176,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         .run()
         .expect("optimization failed");
 
-    // Dogleg seems to converge faster
+    // Refine with Dogleg, which seems to converge faster. Radial distortion is only fitted in this pass.
     let mut best_param = CalibrationResult::decode(
         result.state.best_param.as_ref().unwrap(),
         flags - Flags::RADIAL_DISTORTION,
@@ -338,7 +334,8 @@ where
     }
 }
 
-/// Custom special case at 0
+/// Like `Rotation3::from_scaled_axis`, but at zero angle returns the first-order form
+/// `I + [axisangle]×` instead of the identity, so dual-number derivatives survive at 0.
 pub fn rotation_from_scaled_axis<T, SB>(axisangle: Vector<T, U3, SB>) -> Rotation3<T>
 where
     T: nalgebra::SimdRealField,
@@ -372,7 +369,7 @@ pub struct CameraIntrinsics<D: Scalar> {
     pub fy: D,
     pub cx: D,
     pub cy: D,
-    pub distortion: Option<[D; 5]>, // opencv distortion model (TODO)
+    pub distortion: Option<[D; 5]>, // OpenCV order (k1, k2, p1, p2, k3); p1, p2 are never fitted
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -471,7 +468,6 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, Debug)]
     pub struct Flags: u8 {
         const RADIAL_DISTORTION = 0x1;
-        // TODO
-        // const INTRINSICS = 0x2;
+        // TODO: INTRINSICS = 0x2, to toggle fitting the intrinsics.
     }
 }

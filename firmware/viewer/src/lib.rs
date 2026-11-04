@@ -198,7 +198,7 @@ impl MainState {
         };
 
         let detector_params = main_state.detector_params.clone();
-        // hack-ish
+        // Hack-ish: the reader thread is picked from the reported resolution, 98×98 meaning a PAJ sensor.
         if resolution == (98, 98) {
             std::thread::spawn(move || {
                 paj_reader_thread(
@@ -243,7 +243,6 @@ impl MainState {
         let wf_data = self.wf_data.lock().unwrap();
         let nf_data = self.nf_data.lock().unwrap();
 
-        // Image scale factor
         let image_scale = if self.resolution == (98, 98) {
             5.0
         } else {
@@ -261,7 +260,6 @@ impl MainState {
         let spacing = -10.0;
         let rotation_rad = self.orientation as u32 as f32 / 180.0 * std::f32::consts::PI;
 
-        // Draw images
         if !wf_data.image.is_empty() {
             draw_image(
                 &wf_data.image,
@@ -281,7 +279,6 @@ impl MainState {
             );
         }
 
-        // Draw FPS
         let fps = 1.0 / wf_data.avg_frame_period;
         draw_text(
             &format!("{:.1} fps", fps),
@@ -352,8 +349,7 @@ impl MainState {
                 * Mat3::from_angle((self.orientation as u32 as f32).to_radians())
                 * Mat3::from_translation(-res / 2.0);
 
-        // Draw circles
-        // fixme will look backwards for ats lite
+        // FIXME: will look backwards for ATS Lite.
         draw_mot_data_circles(
             &wf_data.mot_data,
             self.object_resolution,
@@ -367,7 +363,6 @@ impl MainState {
             false,
         );
 
-        // Draw pattern points if available
         if let Some(pattern_points) = &wf_data.pattern_points {
             self.draw_pattern_points.draw(
                 pattern_points.points.as_slice(),
@@ -413,7 +408,7 @@ fn draw_mot_data_circles(
     transform: Mat3,
     flip_x: bool,
 ) {
-    // The PAG doesn't seem to support getting both object info and image data simultaneously...?
+    // The PAG doesn't seem to deliver object info and image data at the same time.
     for data in mot_data {
         if data.area > 0 {
             let mut point = vec2(
@@ -440,7 +435,7 @@ pub async fn main() {
         eprintln!("drained {drained} bytes");
     }
 
-    // read device uuid
+    // `i` replies with the protocol version (u32 LE), then the 6-byte device UUID and the resolutions.
     port.write(b"i").unwrap();
     port.flush().unwrap();
     let mut version = [0; 4];
@@ -449,7 +444,7 @@ pub async fn main() {
     if version != PROTOCOL_VERSION {
         eprintln!("Protocol version mismatch!");
         if version > 100 {
-            // Probably not a version number and is just old firmware returning the device uuid.
+            // Likely old firmware, which replies to `i` with the device UUID instead of a version.
             eprintln!("Device did not respond with a valid protocol version");
             eprintln!("Please update the firmware");
         } else {
@@ -510,7 +505,6 @@ async fn handle_input(state: &mut MainState) {
         state.quit.store(true, Ordering::Relaxed);
     }
     if is_key_pressed(KeyCode::Space) {
-        // Capture and save image
         let wf_data = state.wf_data.lock().unwrap();
         if !wf_data.gray.is_empty() {
             let path = format!(
