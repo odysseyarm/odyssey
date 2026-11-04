@@ -8,18 +8,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // linker flags (e.g. -C linker-flavor=lld-link), which that host-mode
     // probe then applies against the host toolchain and fails. Header
     // generation never needs to link anything, so just drop them.
+    // SAFETY: The build script is still single-threaded, before cbindgen starts.
     unsafe {
         env::remove_var("CARGO_ENCODED_RUSTFLAGS");
+    }
+    // SAFETY: No threads have been started since the previous environment edit.
+    unsafe {
         env::remove_var("RUSTFLAGS");
     }
 
-    let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let crate_dir = env::var("CARGO_MANIFEST_DIR")?;
     build_c(&crate_dir)?;
 
     Ok(())
 }
 
-fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
+fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
     // C header
     let mut config: cbindgen::Config = Default::default();
     config.language = cbindgen::Language::C;
@@ -28,15 +32,14 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
     config.enumeration.rename_variants = cbindgen::RenameRule::ScreamingSnakeCase;
 
     cbindgen::Builder::new()
-        .with_crate(crate_dir.clone())
+        .with_crate(crate_dir)
         .with_config(config)
         .with_include_guard("OHC_H")
         .with_item_prefix("ohc_")
         .with_parse_deps(true)
         .with_parse_include(&["odyssey_hub_common"])
-        .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(crate_dir.to_string() + "/generated/include/ohc.h");
+        .generate()?
+        .write_to_file(Path::new(crate_dir).join("generated/include/ohc.h"));
 
     // C++ header
     let mut config: cbindgen::Config = Default::default();
@@ -63,15 +66,14 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
     config.export.exclude = vec![String::from("MaybeUninit")];
 
     cbindgen::Builder::new()
-        .with_crate(crate_dir.clone())
+        .with_crate(crate_dir)
         .with_config(config)
         .with_namespace("ohc")
         .with_include_guard("OHC_H")
         .with_parse_deps(true)
         .with_parse_include(&["odyssey_hub_common"])
-        .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(crate_dir.to_string() + "/generated/include/ohc.hpp");
+        .generate()?
+        .write_to_file(Path::new(crate_dir).join("generated/include/ohc.hpp"));
 
     let src_include = Path::new(crate_dir).join("include");
     let dst_include = Path::new(crate_dir).join("generated/include");
@@ -80,8 +82,7 @@ fn build_c(crate_dir: &String) -> Result<(), Box<dyn std::error::Error>> {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() {
-            let filename = path.file_name().unwrap();
-            let dest_path = dst_include.join(filename);
+            let dest_path = dst_include.join(entry.file_name());
             fs::copy(&path, &dest_path)?;
         }
     }
