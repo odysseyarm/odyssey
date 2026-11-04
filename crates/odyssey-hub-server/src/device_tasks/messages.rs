@@ -1,6 +1,6 @@
 use nalgebra::{Point2, Translation3};
 use odyssey_hub_common::device::Device;
-use odyssey_hub_common::events::{Event, TrackingEvent};
+use odyssey_hub_common::events::TrackingEvent;
 use odyssey_usb::device::VmDevice;
 use tokio::sync::{mpsc, oneshot};
 
@@ -121,6 +121,4 @@ pub(crate) enum Message {
     DongleConnect(DongleInfo, mpsc::Sender<DongleTaskMessage>),
     DongleUpdate(DongleInfo),
     DongleDisconnect(String), // dongle id
-    #[expect(dead_code, reason = "never constructed; lib.rs still matches on it")]
-    Event(Event),
 }

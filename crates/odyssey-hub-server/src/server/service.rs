@@ -10,7 +10,7 @@ use odyssey_hub_server_interface::{
     StartPairingRequest, SubscribeAccessoryMapRequest, SubscribeDeviceListRequest,
     SubscribeDongleListRequest, SubscribeEventsRequest, SubscribeShotDelayRequest,
     TransportModeReply, Vector2, WriteConfigRequest, WriteRegisterRequest, WriteVendorRequest,
-    ZeroRequest,
+    ZeroRequest, device_event,
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::StreamExt as _;
@@ -19,7 +19,52 @@ use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tonic::{Response, Status};
 
 use super::HubServer;
+use super::device_uuid::{requested_uuid, uuid_from_bytes};
+use super::hub_server::SUBSCRIPTION_BUFFER;
+use super::rpc_error::RpcError;
 use crate::device_tasks::{DeviceTaskMessage, DongleTaskMessage};
+
+/// Capacity of the event stream. Tracking events arrive fast, so it is deeper
+/// than the other subscriptions.
+const EVENT_SUBSCRIPTION_BUFFER: usize = 128;
+
+/// Shot delay a device falls back to when reset.
+const DEFAULT_SHOT_DELAY_MS: u16 = 0;
+
+#[expect(
+    clippy::result_large_err,
+    reason = "tonic service methods return Result<_, Status>"
+)]
+fn ok_empty() -> Result<Response<EmptyReply>, Status> {
+    Ok(Response::new(EmptyReply {}))
+}
+
+fn tracking_event_from_proto(
+    event: device_event::TrackingEvent,
+) -> Result<common::events::TrackingEvent, RpcError> {
+    let pose = event
+        .pose
+        .ok_or(RpcError::MissingField("tracking_event.pose"))?;
+    Ok(common::events::TrackingEvent {
+        timestamp: event.timestamp,
+        aimpoint: event
+            .aimpoint
+            .ok_or(RpcError::MissingField("tracking_event.aimpoint"))?
+            .into(),
+        pose: common::events::Pose {
+            rotation: pose
+                .rotation
+                .ok_or(RpcError::MissingField("tracking_event.pose.rotation"))?
+                .into(),
+            translation: pose
+                .translation
+                .ok_or(RpcError::MissingField("tracking_event.pose.translation"))?
+                .into(),
+        },
+        distance: event.distance,
+        screen_id: event.screen_id,
+    })
+}
 
 #[tonic::async_trait]
 impl Service for HubServer {
@@ -34,18 +79,14 @@ impl Service for HubServer {
         &self,
         _req: tonic::Request<DeviceListRequest>,
     ) -> Result<Response<DeviceListReply>, Status> {
-        let snap = self.device_snapshot();
-        Ok(Response::new(DeviceListReply {
-            device_list: snap.into_iter().map(Into::into).collect(),
-        }))
+        Ok(Response::new(self.device_list_reply()))
     }
 
     async fn subscribe_device_list(
         &self,
         _req: tonic::Request<SubscribeDeviceListRequest>,
     ) -> Result<Response<Self::SubscribeDeviceListStream>, Status> {
-        let (rx, _handle) = self.device_list_stream();
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(Response::new(self.device_list_updates()))
     }
 
     // -------------------- Accessories --------------------
@@ -66,9 +107,10 @@ impl Service for HubServer {
         let init = self.accessory_map_snapshot();
         let mut bcast = BroadcastStream::new(self.accessory_map_sender.subscribe());
 
-        let (tx, rx) = mpsc::channel::<Result<AccessoryMapReply, Status>>(16);
+        let (tx, rx) = mpsc::channel::<Result<AccessoryMapReply, Status>>(SUBSCRIPTION_BUFFER);
         let _ = tx.try_send(Ok(AccessoryMapReply::from(init)));
 
+        // Detached on purpose: ends by itself when the client goes away.
         tokio::spawn(async move {
             while let Some(item) = bcast.next().await {
                 match item {
@@ -98,11 +140,9 @@ impl Service for HubServer {
         let incoming: common::accessory::AccessoryInfoMap = req.into_inner().into();
 
         // Persist to disk using odyssey_hub_common::config
-        if let Err(e) = common::config::accessory_map_save_async(&incoming).await {
-            return Err(Status::internal(format!(
-                "failed to save accessory info map: {e}"
-            )));
-        }
+        common::config::accessory_map_save_async(&incoming)
+            .await
+            .map_err(|e| Status::internal(format!("failed to save accessory info map: {e}")))?;
 
         // Re-load (optional but keeps canonical formatting)
         let fresh_result = common::config::accessory_map_async().await;
@@ -116,19 +156,14 @@ impl Service for HubServer {
         // Notify watchers of info updates
         let _ = self.accessory_info_sender.send(fresh.clone());
 
-        // Merge into (info, connected) map; keep connection flags
-        if let Ok(mut g) = self.accessory_map.lock() {
-            for (k, info) in fresh {
-                let connected = g.get(&k).map(|(_, c)| *c).unwrap_or(false);
-                g.insert(k, (info, connected));
-            }
-        }
+        // Keep connection flags while taking the new info
+        self.merge_accessory_info(fresh);
         // Broadcast full status map so UI refreshes
         let _ = self
             .accessory_map_sender
             .send(self.accessory_map_snapshot());
 
-        Ok(Response::new(EmptyReply {}))
+        ok_empty()
     }
 
     // -------------------- Shot delay --------------------
@@ -136,42 +171,25 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<GetShotDelayReply>, Status> {
-        let mut uuid = [0u8; 6];
-        let uuid_vec = req.into_inner().uuid;
-        if uuid_vec.len() == 6 {
-            uuid.copy_from_slice(&uuid_vec);
-        } else if !uuid_vec.is_empty() {
-            let len = std::cmp::min(6, uuid_vec.len());
-            uuid[..len].copy_from_slice(&uuid_vec[..len]);
-        }
-        let cur = u32::from(self.get_or_default_shot_delay(uuid).await);
-        Ok(Response::new(GetShotDelayReply { delay_ms: cur }))
+        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let delay_ms = u32::from(self.shot_delay_or_default(uuid).await);
+        Ok(Response::new(GetShotDelayReply { delay_ms }))
     }
 
     async fn subscribe_shot_delay(
         &self,
         req: tonic::Request<SubscribeShotDelayRequest>,
     ) -> Result<Response<Self::SubscribeShotDelayStream>, Status> {
-        let uuid_vec = req
-            .into_inner()
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .uuid;
-        let mut uuid = [0u8; 6];
-        if uuid_vec.len() == 6 {
-            uuid.copy_from_slice(&uuid_vec);
-        } else if !uuid_vec.is_empty() {
-            let len = std::cmp::min(6, uuid_vec.len());
-            uuid[..len].copy_from_slice(&uuid_vec[..len]);
-        }
+        let uuid = requested_uuid(req.into_inner().device)?;
 
         let mut rx = self.subscribe_shot_delay_watch(uuid).await;
-        let (tx, out) = mpsc::channel::<Result<GetShotDelayReply, Status>>(16);
+        let (tx, out) = mpsc::channel::<Result<GetShotDelayReply, Status>>(SUBSCRIPTION_BUFFER);
 
         // initial
         let _ = tx.try_send(Ok(GetShotDelayReply {
             delay_ms: *rx.borrow(),
         }));
+        // Detached on purpose: ends by itself when the client goes away.
         tokio::spawn(async move {
             while rx.changed().await.is_ok() {
                 let delay_ms = *rx.borrow_and_update();
@@ -193,7 +211,7 @@ impl Service for HubServer {
             tracing::error!("Failed to send BringToFront message: {}", e);
             return Err(Status::internal("Failed to bring window to front"));
         }
-        Ok(Response::new(EmptyReply {}))
+        ok_empty()
     }
 
     async fn set_shot_delay(
@@ -201,66 +219,30 @@ impl Service for HubServer {
         req: tonic::Request<SetShotDelayRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let SetShotDelayRequest { device, delay_ms } = req.into_inner();
-        let uuid_vec = device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .uuid;
-        let mut uuid = [0u8; 6];
-        if uuid_vec.len() == 6 {
-            uuid.copy_from_slice(&uuid_vec);
-        } else if !uuid_vec.is_empty() {
-            let len = std::cmp::min(6, uuid_vec.len());
-            uuid[..len].copy_from_slice(&uuid_vec[..len]);
-        }
+        let uuid = requested_uuid(device)?;
         let ms: u16 = delay_ms as u16;
 
         // Apply live in-server state & notify watchers
         self.set_shot_delay_live(uuid, ms).await;
-
         // If a device task is running for this UUID, also send it a live update
-        if let Some(tx) = self.sender_for_uuid(uuid) {
-            match tx.try_send(DeviceTaskMessage::SetShotDelay(ms)) {
-                Ok(()) => {}
-                Err(_) => tracing::warn!(
-                    "Device task not available to receive shot delay for {:02x?}",
-                    uuid
-                ),
-            }
-        }
+        self.push_shot_delay_to_task(uuid, ms, "shot delay");
 
-        Ok(Response::new(EmptyReply {}))
+        ok_empty()
     }
 
     async fn reset_shot_delay(
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<ResetShotDelayReply>, Status> {
-        let uuid_vec = req.into_inner().uuid;
-        let mut uuid = [0u8; 6];
-        if uuid_vec.len() == 6 {
-            uuid.copy_from_slice(&uuid_vec);
-        } else if !uuid_vec.is_empty() {
-            let len = std::cmp::min(6, uuid_vec.len());
-            uuid[..len].copy_from_slice(&uuid_vec[..len]);
-        }
-        // Policy: default 0ms
-        let default_ms: u16 = 0;
+        let uuid = uuid_from_bytes(&req.into_inner().uuid);
 
         // Apply live reset in-server state & notify watchers
-        self.set_shot_delay_live(uuid, default_ms).await;
-
-        // If a device task is running for this UUID, send a live update to reset it as well
-        if let Some(tx) = self.sender_for_uuid(uuid) {
-            match tx.try_send(DeviceTaskMessage::SetShotDelay(default_ms)) {
-                Ok(()) => {}
-                Err(_) => tracing::warn!(
-                    "Device task not available to receive shot delay reset for {:02x?}",
-                    uuid
-                ),
-            }
-        }
+        self.set_shot_delay_live(uuid, DEFAULT_SHOT_DELAY_MS).await;
+        // If a device task is running for this UUID, reset it as well
+        self.push_shot_delay_to_task(uuid, DEFAULT_SHOT_DELAY_MS, "shot delay reset");
 
         Ok(Response::new(ResetShotDelayReply {
-            delay_ms: u32::from(default_ms),
+            delay_ms: u32::from(DEFAULT_SHOT_DELAY_MS),
         }))
     }
 
@@ -268,17 +250,12 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let uuid_vec = req.into_inner().uuid;
-        let mut uuid = [0u8; 6];
-        if uuid_vec.len() == 6 {
-            uuid.copy_from_slice(&uuid_vec);
-        } else if !uuid_vec.is_empty() {
-            let len = std::cmp::min(6, uuid_vec.len());
-            uuid[..len].copy_from_slice(&uuid_vec[..len]);
-        }
-        let cur = self.get_or_default_shot_delay(uuid).await;
-        self.persist_shot_delay(uuid, cur).await?;
-        Ok(Response::new(EmptyReply {}))
+        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let current = self.shot_delay_or_default(uuid).await;
+        common::config::device_shot_delay_save_async(uuid, current)
+            .await
+            .map_err(|e| Status::internal(format!("failed to save delay: {e}")))?;
+        ok_empty()
     }
 
     // -------------------- Screens --------------------
@@ -287,28 +264,21 @@ impl Service for HubServer {
         req: tonic::Request<ScreenInfoByIdRequest>,
     ) -> Result<Response<ScreenInfoReply>, Status> {
         let id = req.into_inner().id as u8;
-        let sc = self.screen_calibrations.load();
-        let mut reply: Option<ScreenInfoReply> = None;
-        for (sid, cal) in sc.iter() {
-            if *sid == id {
-                // convert bounds
-                let b = cal.bounds();
-                reply = Some(ScreenInfoReply {
-                    id: u32::from(id),
-                    bounds: Some(ScreenBounds {
-                        tl: Some(Vector2::from(b[0].coords)),
-                        tr: Some(Vector2::from(b[1].coords)),
-                        bl: Some(Vector2::from(b[2].coords)),
-                        br: Some(Vector2::from(b[3].coords)),
-                    }),
-                });
-                break;
-            }
-        }
-        match reply {
-            Some(r) => Ok(Response::new(r)),
-            None => Err(Status::not_found("screen id")),
-        }
+        let calibrations = self.screen_calibrations.load();
+        let (_, calibration) = calibrations
+            .iter()
+            .find(|(screen_id, _)| *screen_id == id)
+            .ok_or_else(|| Status::not_found("screen id"))?;
+        let bounds = calibration.bounds();
+        Ok(Response::new(ScreenInfoReply {
+            id: u32::from(id),
+            bounds: Some(ScreenBounds {
+                tl: Some(Vector2::from(bounds[0].coords)),
+                tr: Some(Vector2::from(bounds[1].coords)),
+                bl: Some(Vector2::from(bounds[2].coords)),
+                br: Some(Vector2::from(bounds[3].coords)),
+            }),
+        }))
     }
 
     // -------------------- Events passthrough --------------------
@@ -317,8 +287,9 @@ impl Service for HubServer {
         _req: tonic::Request<SubscribeEventsRequest>,
     ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
         let mut rx = self.event_sender.subscribe();
-        let (tx, out) = mpsc::channel::<Result<Event, Status>>(128);
+        let (tx, out) = mpsc::channel::<Result<Event, Status>>(EVENT_SUBSCRIPTION_BUFFER);
 
+        // Detached on purpose: ends by itself when the client goes away.
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -342,28 +313,16 @@ impl Service for HubServer {
         Ok(Response::new(ReceiverStream::new(out)))
     }
 
-    // -------------------- Vendor / zero stubs --------------------
+    // -------------------- Device commands --------------------
     async fn write_vendor(
         &self,
         req: tonic::Request<WriteVendorRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let WriteVendorRequest { device, tag, data } = req.into_inner();
-        let dev: common::device::Device = device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-
-        // Find the per-device sender and forward as DeviceTaskMessage::WriteVendor
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                // tag is u32 in proto; device tasks expect u8 vendor tag
-                let tag_u8 = tag as u8;
-                match tx.try_send(DeviceTaskMessage::WriteVendor(tag_u8, data)) {
-                    Ok(()) => Ok(Response::new(EmptyReply {})),
-                    Err(_) => Err(Status::unavailable("device task not available")),
-                }
-            }
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("write_vendor", requested_uuid(device)?)?;
+        // tag is u32 in proto; device tasks expect u8 vendor tag
+        task.send_now(DeviceTaskMessage::WriteVendor(tag as u8, data))?;
+        ok_empty()
     }
 
     async fn read_register(
@@ -371,31 +330,18 @@ impl Service for HubServer {
         req: tonic::Request<ReadRegisterRequest>,
     ) -> Result<Response<ReadRegisterReply>, Status> {
         let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::ReadRegister {
-                    port: inner.port as u8,
-                    bank: inner.bank as u8,
-                    address: inner.address as u8,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(data)) => Ok(Response::new(ReadRegisterReply {
-                        data: u32::from(data),
-                    })),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("read_register", requested_uuid(inner.device)?)?;
+        let data = task
+            .request(|reply| DeviceTaskMessage::ReadRegister {
+                port: inner.port as u8,
+                bank: inner.bank as u8,
+                address: inner.address as u8,
+                reply,
+            })
+            .await?;
+        Ok(Response::new(ReadRegisterReply {
+            data: u32::from(data),
+        }))
     }
 
     async fn write_register(
@@ -403,30 +349,16 @@ impl Service for HubServer {
         req: tonic::Request<WriteRegisterRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::WriteRegister {
-                    port: inner.port as u8,
-                    bank: inner.bank as u8,
-                    address: inner.address as u8,
-                    data: inner.data as u8,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("write_register", requested_uuid(inner.device)?)?;
+        task.request(|reply| DeviceTaskMessage::WriteRegister {
+            port: inner.port as u8,
+            bank: inner.bank as u8,
+            address: inner.address as u8,
+            data: inner.data as u8,
+            reply,
+        })
+        .await?;
+        ok_empty()
     }
 
     async fn read_config(
@@ -434,29 +366,16 @@ impl Service for HubServer {
         req: tonic::Request<ReadConfigRequest>,
     ) -> Result<Response<ReadConfigReply>, Status> {
         let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::ReadConfig {
-                    kind: inner.kind as u8,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(value)) => Ok(Response::new(ReadConfigReply {
-                        value: u32::from(value),
-                    })),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("read_config", requested_uuid(inner.device)?)?;
+        let value = task
+            .request(|reply| DeviceTaskMessage::ReadConfig {
+                kind: inner.kind as u8,
+                reply,
+            })
+            .await?;
+        Ok(Response::new(ReadConfigReply {
+            value: u32::from(value),
+        }))
     }
 
     async fn write_config(
@@ -464,53 +383,24 @@ impl Service for HubServer {
         req: tonic::Request<WriteConfigRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::WriteConfig {
-                    kind: inner.kind as u8,
-                    value: inner.value as u8,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("write_config", requested_uuid(inner.device)?)?;
+        task.request(|reply| DeviceTaskMessage::WriteConfig {
+            kind: inner.kind as u8,
+            value: inner.value as u8,
+            reply,
+        })
+        .await?;
+        ok_empty()
     }
 
     async fn flash_settings(
         &self,
         req: tonic::Request<FlashSettingsRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let dev: common::device::Device = req
-            .into_inner()
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::FlashSettings { reply: reply_tx })
-                    .await
-                    .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("flash_settings", requested_uuid(req.into_inner().device)?)?;
+        task.request(|reply| DeviceTaskMessage::FlashSettings { reply })
+            .await?;
+        ok_empty()
     }
 
     async fn start_pairing(
@@ -518,106 +408,39 @@ impl Service for HubServer {
         req: tonic::Request<StartPairingRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        tracing::info!("start_pairing RPC for device {:02x?}", dev.uuid);
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tracing::info!(
-                    "start_pairing: sending message to device handler for {:02x?}",
-                    dev.uuid
-                );
-                tx.send(DeviceTaskMessage::StartPairing {
-                    timeout_ms: inner.timeout_ms,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("device task not available"))?;
-                tracing::info!(
-                    "start_pairing: message sent, awaiting reply from {:02x?}",
-                    dev.uuid
-                );
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    "start_pairing: device {:02x?} not found in device list",
-                    dev.uuid
-                );
-                Err(Status::not_found("device"))
-            }
-        }
+        let uuid = requested_uuid(inner.device)?;
+        tracing::info!("start_pairing RPC for device {uuid:02x?}");
+        let task = self.device_task("start_pairing", uuid)?;
+        task.request(|reply| DeviceTaskMessage::StartPairing {
+            timeout_ms: inner.timeout_ms,
+            reply,
+        })
+        .await?;
+        ok_empty()
     }
 
     async fn cancel_pairing(
         &self,
         req: tonic::Request<CancelPairingRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let dev: common::device::Device = req
-            .into_inner()
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        tracing::info!("cancel_pairing RPC for device {:02x?}", dev.uuid);
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::CancelPairing { reply: reply_tx })
-                    .await
-                    .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    "cancel_pairing: device {:02x?} not found in device list",
-                    dev.uuid
-                );
-                Err(Status::not_found("device"))
-            }
-        }
+        let uuid = requested_uuid(req.into_inner().device)?;
+        tracing::info!("cancel_pairing RPC for device {uuid:02x?}");
+        let task = self.device_task("cancel_pairing", uuid)?;
+        task.request(|reply| DeviceTaskMessage::CancelPairing { reply })
+            .await?;
+        ok_empty()
     }
 
     async fn clear_bond(
         &self,
         req: tonic::Request<ClearBondRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let dev: common::device::Device = req
-            .into_inner()
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        tracing::info!("clear_bond RPC for device {:02x?}", dev.uuid);
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::ClearBond { reply: reply_tx })
-                    .await
-                    .map_err(|_| Status::unavailable("device task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    "clear_bond: device {:02x?} not found in device list",
-                    dev.uuid
-                );
-                Err(Status::not_found("device"))
-            }
-        }
+        let uuid = requested_uuid(req.into_inner().device)?;
+        tracing::info!("clear_bond RPC for device {uuid:02x?}");
+        let task = self.device_task("clear_bond", uuid)?;
+        task.request(|reply| DeviceTaskMessage::ClearBond { reply })
+            .await?;
+        ok_empty()
     }
 
     async fn set_transport_mode(
@@ -625,46 +448,21 @@ impl Service for HubServer {
         req: tonic::Request<SetTransportModeRequest>,
     ) -> Result<Response<TransportModeReply>, Status> {
         let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
+        let uuid = requested_uuid(inner.device)?;
         tracing::info!(
-            "set_transport_mode RPC for device {:02x?}, usb_mode={}",
-            dev.uuid,
+            "set_transport_mode RPC for device {uuid:02x?}, usb_mode={}",
             inner.usb_mode
         );
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                tracing::info!("set_transport_mode: device found, sending message to task");
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DeviceTaskMessage::SetTransportMode {
-                    usb_mode: inner.usb_mode,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("device task not available"))?;
-                tracing::info!("set_transport_mode: message sent, awaiting reply");
-                match reply_rx.await {
-                    Ok(Ok(usb_mode)) => {
-                        tracing::info!("set_transport_mode: reply ok usb_mode={usb_mode}");
-                        Ok(Response::new(TransportModeReply { usb_mode }))
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!("set_transport_mode: reply err: {e}");
-                        Err(Status::internal(e))
-                    }
-                    Err(_) => Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    "set_transport_mode: device {:02x?} not found in device list",
-                    dev.uuid
-                );
-                Err(Status::not_found("device"))
-            }
-        }
+        let task = self.device_task("set_transport_mode", uuid)?;
+        let usb_mode = task
+            .request(|reply| DeviceTaskMessage::SetTransportMode {
+                usb_mode: inner.usb_mode,
+                reply,
+            })
+            .await
+            .inspect_err(|error| tracing::warn!("set_transport_mode: {error}"))?;
+        tracing::info!("set_transport_mode: reply ok usb_mode={usb_mode}");
+        Ok(Response::new(TransportModeReply { usb_mode }))
     }
 
     // -------------------- Dongle RPCs --------------------
@@ -672,8 +470,7 @@ impl Service for HubServer {
         &self,
         _req: tonic::Request<SubscribeDongleListRequest>,
     ) -> Result<Response<Self::SubscribeDongleListStream>, Status> {
-        let (rx, _handle) = self.dongle_list_stream();
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(Response::new(self.dongle_list_updates()))
     }
 
     async fn start_dongle_pairing(
@@ -681,155 +478,80 @@ impl Service for HubServer {
         req: tonic::Request<StartDonglePairingRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
-        match self.dongle_sender_for_id(&inner.dongle_id) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DongleTaskMessage::StartPairing {
-                    timeout_ms: inner.timeout_ms,
-                    reply: reply_tx,
-                })
-                .await
-                .map_err(|_| Status::unavailable("dongle task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("dongle task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("dongle")),
-        }
+        let task = self.dongle_task(&inner.dongle_id)?;
+        task.request(|reply| DongleTaskMessage::StartPairing {
+            timeout_ms: inner.timeout_ms,
+            reply,
+        })
+        .await?;
+        ok_empty()
     }
 
     async fn cancel_dongle_pairing(
         &self,
         req: tonic::Request<CancelDonglePairingRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let id = req.into_inner().dongle_id;
-        match self.dongle_sender_for_id(&id) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DongleTaskMessage::CancelPairing { reply: reply_tx })
-                    .await
-                    .map_err(|_| Status::unavailable("dongle task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("dongle task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("dongle")),
-        }
+        let task = self.dongle_task(&req.into_inner().dongle_id)?;
+        task.request(|reply| DongleTaskMessage::CancelPairing { reply })
+            .await?;
+        ok_empty()
     }
 
     async fn clear_dongle_bonds(
         &self,
         req: tonic::Request<ClearDongleBondsRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let id = req.into_inner().dongle_id;
-        match self.dongle_sender_for_id(&id) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                tx.send(DongleTaskMessage::ClearBonds { reply: reply_tx })
-                    .await
-                    .map_err(|_| Status::unavailable("dongle task not available"))?;
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(Response::new(EmptyReply {})),
-                    Ok(Err(e)) => Err(Status::internal(e)),
-                    Err(_) => Err(Status::internal("dongle task dropped reply")),
-                }
-            }
-            _ => Err(Status::not_found("dongle")),
-        }
+        let task = self.dongle_task(&req.into_inner().dongle_id)?;
+        task.request(|reply| DongleTaskMessage::ClearBonds { reply })
+            .await?;
+        ok_empty()
     }
 
     async fn set_device_name(
         &self,
         req: tonic::Request<SetDeviceNameRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let inner = req.into_inner();
-        let dev: common::device::Device = inner
-            .device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
-            .into();
-        let name = inner.name;
+        let SetDeviceNameRequest { device, name } = req.into_inner();
+        let uuid = requested_uuid(device)?;
 
         // Persist name to device firmware, which stores it in flash and updates BLE advertising.
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => {
-                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-                let _ = tx
-                    .send(DeviceTaskMessage::SetDeviceName {
-                        name: name.clone(),
-                        reply: reply_tx,
-                    })
-                    .await;
-                match reply_rx.await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        tracing::warn!("set_device_name: device returned error: {e}");
-                        return Err(Status::internal(e));
-                    }
-                    Err(_) => return Err(Status::internal("device task dropped reply")),
-                }
-            }
-            _ => {
-                tracing::warn!("set_device_name: device {:02x?} not found", dev.uuid);
-                return Err(Status::not_found("device"));
-            }
-        }
+        let task = self.device_task("set_device_name", uuid)?;
+        task.request(|reply| DeviceTaskMessage::SetDeviceName {
+            name: name.clone(),
+            reply,
+        })
+        .await
+        .inspect_err(|error| tracing::warn!("set_device_name: {error}"))?;
 
         // Update device name in device list and notify subscribers
-        {
-            let mut dl = self.device_list.lock();
-            if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == dev.uuid) {
-                entry.0.name = odyssey_hub_common::device::Device::name_bytes(&name);
-            }
-        }
+        self.device_list.rename(uuid, &name);
         let _ = self.device_list_change_sender.send(());
 
-        Ok(Response::new(EmptyReply {}))
+        ok_empty()
     }
 
     async fn clear_zero(
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let dev: common::device::Device = req.into_inner().into();
-
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => match tx.try_send(DeviceTaskMessage::ClearZero) {
-                Ok(()) => Ok(Response::new(EmptyReply {})),
-                Err(_) => Err(Status::unavailable("device task not available")),
-            },
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("clear_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        task.send_now(DeviceTaskMessage::ClearZero)?;
+        ok_empty()
     }
 
     async fn reset_zero(
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let dev: common::device::Device = req.into_inner().into();
-
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => match tx.try_send(DeviceTaskMessage::ResetZero) {
-                Ok(()) => Ok(Response::new(EmptyReply {})),
-                Err(_) => Err(Status::unavailable("device task not available")),
-            },
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("reset_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        task.send_now(DeviceTaskMessage::ResetZero)?;
+        ok_empty()
     }
 
     async fn save_zero(&self, req: tonic::Request<Device>) -> Result<Response<EmptyReply>, Status> {
-        let dev: common::device::Device = req.into_inner().into();
-
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => match tx.try_send(DeviceTaskMessage::SaveZero) {
-                Ok(()) => Ok(Response::new(EmptyReply {})),
-                Err(_) => Err(Status::unavailable("device task not available")),
-            },
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("save_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        task.send_now(DeviceTaskMessage::SaveZero)?;
+        ok_empty()
     }
 
     async fn zero(&self, req: tonic::Request<ZeroRequest>) -> Result<Response<EmptyReply>, Status> {
@@ -840,58 +562,20 @@ impl Service for HubServer {
             tracking_event,
         } = req.into_inner();
 
-        let dev: common::device::Device = device
-            .ok_or_else(|| Status::invalid_argument("device missing"))?
+        let uuid = requested_uuid(device)?;
+
+        let translation: nalgebra::Vector3<f32> = translation
+            .ok_or(RpcError::MissingField("translation"))?
             .into();
+        let target: nalgebra::Vector2<f32> = target.ok_or(RpcError::MissingField("target"))?.into();
+        let tracking_event = tracking_event.map(tracking_event_from_proto).transpose()?;
 
-        let translation_vec: nalgebra::Vector3<f32> = translation
-            .ok_or_else(|| Status::invalid_argument("translation missing"))?
-            .into();
-        let target_vec: nalgebra::Vector2<f32> = target
-            .ok_or_else(|| Status::invalid_argument("target missing"))?
-            .into();
-
-        // Convert to types expected by device task
-        let trans = nalgebra::Translation3::from(translation_vec);
-        let point = nalgebra::Point2::from(target_vec);
-
-        let te = tracking_event
-            .map(|te| -> Result<common::events::TrackingEvent, Status> {
-                let pose = te
-                    .pose
-                    .ok_or_else(|| Status::invalid_argument("tracking_event.pose missing"))?;
-                Ok(common::events::TrackingEvent {
-                    timestamp: te.timestamp,
-                    aimpoint: te
-                        .aimpoint
-                        .ok_or_else(|| Status::invalid_argument("tracking_event.aimpoint missing"))?
-                        .into(),
-                    pose: common::events::Pose {
-                        rotation: pose
-                            .rotation
-                            .ok_or_else(|| {
-                                Status::invalid_argument("tracking_event.pose.rotation missing")
-                            })?
-                            .into(),
-                        translation: pose
-                            .translation
-                            .ok_or_else(|| {
-                                Status::invalid_argument("tracking_event.pose.translation missing")
-                            })?
-                            .into(),
-                    },
-                    distance: te.distance,
-                    screen_id: te.screen_id,
-                })
-            })
-            .transpose()?;
-
-        match self.sender_for_uuid(dev.uuid) {
-            Some(tx) => match tx.try_send(DeviceTaskMessage::Zero(trans, point, te)) {
-                Ok(()) => Ok(Response::new(EmptyReply {})),
-                Err(_) => Err(Status::unavailable("device task not available")),
-            },
-            _ => Err(Status::not_found("device")),
-        }
+        let task = self.device_task("zero", uuid)?;
+        task.send_now(DeviceTaskMessage::Zero(
+            nalgebra::Translation3::from(translation),
+            nalgebra::Point2::from(target),
+            tracking_event,
+        ))?;
+        ok_empty()
     }
 }

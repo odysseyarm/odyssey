@@ -154,11 +154,12 @@ pub fn load_manifest(dir: &Path, channel: FirmwareChannel) -> Result<Loaded> {
 
     if manifest.devices.is_empty() {
         // Name a few of the dropped releases so the user can see why nothing is left.
-        let details: String = dropped
+        let details = dropped
             .iter()
             .take(3)
             .map(|d| format!(" {} {}: {}.", d.device, d.version, d.problems.join("; ")))
-            .collect();
+            .collect::<Vec<_>>()
+            .concat();
         bail!(
             "The firmware pack in {} has no complete release.{details}",
             dir.display()

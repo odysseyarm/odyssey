@@ -43,13 +43,6 @@ pub(crate) async fn device_tasks(
     device_offsets: DeviceOffsets,
     device_shot_delays: ShotDelays,
     shot_delay_watch: ShotDelayWatchers,
-    _accessory_map: Arc<
-        std::sync::Mutex<HashMap<[u8; 6], (odyssey_hub_common::accessory::AccessoryInfo, bool)>>,
-    >,
-    _accessory_map_sender: broadcast::Sender<odyssey_hub_common::accessory::AccessoryMap>,
-    _accessory_info_receiver: tokio::sync::watch::Receiver<
-        odyssey_hub_common::accessory::AccessoryInfoMap,
-    >,
     event_sender: broadcast::Sender<Event>,
 ) -> Result<()> {
     tracing::info!("device_tasks starting");

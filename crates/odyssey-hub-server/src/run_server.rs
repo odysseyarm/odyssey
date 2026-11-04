@@ -1,197 +1,80 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::stream::{self, StreamExt as _};
-use futures_concurrency::prelude::*;
-use interprocess::local_socket::traits::tokio::Listener as _;
-use interprocess::local_socket::{
-    GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _, ToFsName as _,
-    ToNsName as _,
-};
-#[cfg(target_os = "windows")]
-use interprocess::os::windows::{
-    local_socket::ListenerOptionsExt,
-    security_descriptor::{AsSecurityDescriptorMutExt, SecurityDescriptor},
-};
+use futures_concurrency::stream::Merge as _;
 use odyssey_hub_server_interface::service_server::ServiceServer;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{RwLock, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::accessories::accessory_manager;
+use crate::bind_local_socket::bind_local_socket;
 use crate::device_tasks::{self, device_tasks};
-use crate::{LocalSocketStream, Message, ServerError, screen_watch, server};
+use crate::message_forwarder::MessageForwarder;
+use crate::server::HubServer;
+use crate::startup_config::StartupConfig;
+use crate::{Message, ServerError};
 
-/// Events from the run_server merged stream
+/// Capacity of the channel the device tasks report through.
+const DEVICE_MESSAGE_CAPACITY: usize = 12;
+
+/// Capacity of the low-level event broadcast. Tracking events arrive fast.
+const EVENT_BROADCAST_CAPACITY: usize = 256;
+
+const DEVICE_LIST_CHANGE_CAPACITY: usize = 12;
+const DONGLE_LIST_CHANGE_CAPACITY: usize = 16;
+const ACCESSORY_MAP_CAPACITY: usize = 12;
+
+/// Which of the hub's long-running parts ended, as seen by the supervising loop.
 #[derive(Debug)]
 enum ServerEvent {
     DeviceTasks,
     AccessoryManager,
-    EventForward,
+    /// A device task message was applied to the device and dongle lists.
+    MessageForwarded,
     TonicServer,
 }
 
+/// Runs the hub: the gRPC server on the local socket, the device tasks, the accessory
+/// manager and the forwarding of device task messages into the shared lists.
+///
+/// Returns once the gRPC server or the device tasks end, or `cancel_token` fires.
 pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
 ) -> Result<(), ServerError> {
-    let name = if GenericNamespaced::is_supported() {
-        "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
-    } else {
-        "/tmp/@odyhub.sock".to_fs_name::<GenericFilePath>()?
-    };
+    let (name, connections) = bind_local_socket(&sender).await?;
 
-    // Check if another instance is already running by trying to connect
-    use interprocess::local_socket::tokio::prelude::LocalSocketStream as ConnectStream;
-    use interprocess::local_socket::traits::tokio::Stream as _;
-    if let Ok(_) = ConnectStream::connect(name.clone()).await {
-        // Another instance is running
-        let _ = sender.send(Message::ServerInit(Err(std::io::Error::new(
-            std::io::ErrorKind::AddrInUse,
-            "Another instance is already running",
-        ))));
-        return Err(ServerError::SocketAlreadyInUse);
-    }
+    let (device_sender, device_messages) = mpsc::channel(DEVICE_MESSAGE_CAPACITY);
+    let (event_sender, _) = broadcast::channel(EVENT_BROADCAST_CAPACITY);
+    let (device_list_change_sender, _) = broadcast::channel::<()>(DEVICE_LIST_CHANGE_CAPACITY);
+    let (dongle_list_change_sender, _) = broadcast::channel::<()>(DONGLE_LIST_CHANGE_CAPACITY);
+    let (accessory_map_sender, _) = broadcast::channel(ACCESSORY_MAP_CAPACITY);
 
-    // Nobody answered, so the name is free as far as we're concerned. On Unix, though,
-    // bind() still fails with AddrInUse if a socket file is left over at that path from a
-    // previous run that didn't exit cleanly (crash, force-quit, kill) — nothing here ever
-    // unlinks it otherwise. try_overwrite makes the listener reclaim (delete + rebind) a
-    // stale name on AddrInUse instead of failing outright; max_spin_time bounds how long
-    // that retry loop can run under genuine contention.
-    let listener_opts = ListenerOptions::new()
-        .name(name.clone())
-        .try_overwrite(true)
-        .max_spin_time(std::time::Duration::from_millis(500));
-    #[cfg(target_os = "windows")]
-    let listener_opts = {
-        let mut sd = SecurityDescriptor::new()?;
-        unsafe {
-            sd.set_dacl(std::ptr::null_mut(), false)?;
-        }
-        listener_opts.security_descriptor(sd)
-    };
-    let listener = match listener_opts.create_tokio() {
-        Ok(l) => l,
-        Err(e) => {
-            // Send error message before returning
-            let error_kind = e.kind();
-            let _ = sender.send(Message::ServerInit(Err(e)));
-            return Err(ServerError::from(std::io::Error::from(error_kind)));
-        }
-    };
-    let listener = stream::unfold((), |()| async {
-        let conn = listener.accept().await;
-
-        Some((conn.map(LocalSocketStream::new), ()))
-    });
-
-    let (device_sender, receiver) = mpsc::channel(12);
-
-    let (event_sender, _) = broadcast::channel(256);
-
-    // Dedicated channel for device list changes (Connect/Disconnect)
-    let (device_list_change_sender, _) = broadcast::channel::<()>(12);
-
-    // Collect config corruption events to send via ServerInit message
-    let mut startup_corruptions = Vec::new();
-
-    // Load screen calibrations. The watcher snapshots the directory first so a write
-    // during the initial load is seen as a change afterwards.
-    let screen_watcher = match odyssey_hub_common::config::screens_dir() {
-        Ok(dir) => Some(screen_watch::ScreenCalibrationWatcher::new(dir).await),
-        Err(e) => {
-            tracing::warn!("Screen calibrations will not hot reload: {}", e);
-            None
-        }
-    };
-    let screen_result = odyssey_hub_common::config::screen_calibrations_async().await;
-    for (screen_id, path, error) in &screen_result.corrupted_screens {
-        tracing::error!("Screen {} calibration corrupted: {}", screen_id, error);
-        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
-            file_type: odyssey_hub_common::config::ConfigFileType::ScreenCalibration,
-            file_path: path.display().to_string(),
-            error_message: error.clone(),
-            using_default: true,
-        });
-    }
-    let screen_calibrations = Arc::new(arc_swap::ArcSwap::from(Arc::new(
-        screen_result.calibrations,
-    )));
-
-    println!("Screen calibrations loaded: {screen_calibrations:?}");
-
-    // Calibrations written while the hub runs (wizard, hand edits) apply without a
-    // restart. The guard stops the poller if run_server returns without a cancel.
+    // The guard stops the screen watcher if run_server returns without a cancel.
     let screen_watch_cancel = cancel_token.child_token();
     let _screen_watch_stop = screen_watch_cancel.clone().drop_guard();
-    if let Some(watcher) = screen_watcher {
-        tokio::spawn(watcher.run(screen_calibrations.clone(), screen_watch_cancel));
-    }
+    let config = StartupConfig::load(screen_watch_cancel).await;
 
-    // Load device offsets
-    let device_offsets_result = odyssey_hub_common::config::device_offsets_async().await;
-    if let Some((path, error)) = device_offsets_result.corruption_info() {
-        tracing::error!("Device offsets corrupted: {}", error);
-        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
-            file_type: odyssey_hub_common::config::ConfigFileType::DeviceOffsets,
-            file_path: path.display().to_string(),
-            error_message: error,
-            using_default: true,
-        });
-    }
-    let device_offsets = Arc::new(tokio::sync::Mutex::new(device_offsets_result.into_value()));
-
-    // Load device shot delays
-    let device_shot_delays_result = odyssey_hub_common::config::device_shot_delays_async().await;
-    if let Some((path, error)) = device_shot_delays_result.corruption_info() {
-        tracing::error!("Device shot delays corrupted: {}", error);
-        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
-            file_type: odyssey_hub_common::config::ConfigFileType::DeviceShotDelays,
-            file_path: path.display().to_string(),
-            error_message: error,
-            using_default: true,
-        });
-    }
-    let device_shot_delays = Arc::new(tokio::sync::RwLock::new(
-        device_shot_delays_result.into_value(),
-    ));
-
-    let shot_delay_watch = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
-
-    // Load accessory map
-    let accessory_map_result = odyssey_hub_common::config::accessory_map_async().await;
-    if let Some((path, error)) = accessory_map_result.corruption_info() {
-        tracing::error!("Accessory map corrupted: {}", error);
-        startup_corruptions.push(odyssey_hub_common::config::ConfigCorruptionEvent {
-            file_type: odyssey_hub_common::config::ConfigFileType::AccessoryMap,
-            file_path: path.display().to_string(),
-            error_message: error,
-            using_default: true,
-        });
-    }
-    let accessory_info_map = accessory_map_result.into_value();
-
+    let shot_delay_watch = Arc::new(RwLock::new(HashMap::new()));
     let (accessory_info_sender, accessory_info_receiver) =
-        tokio::sync::watch::channel(accessory_info_map.clone());
-
+        watch::channel(config.accessory_info.clone());
     let accessory_map = Arc::new(std::sync::Mutex::new(
-        accessory_info_map
+        config
+            .accessory_info
             .into_iter()
-            .map(|(k, v)| (k, (v, false)))
+            .map(|(id, info)| (id, (info, false)))
             .collect(),
     ));
 
-    let (accessory_map_sender, _) = broadcast::channel(12);
-    let (dongle_list_change_sender, _) = broadcast::channel::<()>(16);
-
-    let server = server::HubServer {
+    let server = HubServer {
         device_list: Default::default(),
         event_sender: event_sender.clone(),
         device_list_change_sender: device_list_change_sender.clone(),
-        screen_calibrations: screen_calibrations.clone(),
-        device_offsets: device_offsets.clone(),
-        device_shot_delays: device_shot_delays.clone(),
-        shot_delay_watch: shot_delay_watch.clone(),
-        accessory_map: accessory_map.clone(),
+        screen_calibrations: Arc::clone(&config.screen_calibrations),
+        device_shot_delays: Arc::clone(&config.device_shot_delays),
+        shot_delay_watch: Arc::clone(&shot_delay_watch),
+        accessory_map,
         accessory_map_sender: accessory_map_sender.clone(),
         dongle_list: Default::default(),
         dongle_list_change_sender: dongle_list_change_sender.clone(),
@@ -199,242 +82,71 @@ pub async fn run_server(
         accessory_info_sender,
     };
 
-    let dl = server.device_list.clone();
-    let dongle_list = server.dongle_list.clone();
+    // The message forwarder is the only writer of the lists the server reads.
+    let forwarder = MessageForwarder {
+        device_list: server.device_list.clone(),
+        dongle_list: server.dongle_list.clone(),
+        device_list_changed: device_list_change_sender,
+        dongle_list_changed: dongle_list_change_sender,
+    };
+    let device_list = server.device_list.clone();
 
-    // Send server init message with corruption info
-    if let Err(e) = sender.send(Message::ServerInit(Ok(startup_corruptions))) {
+    if let Err(e) = sender.send(Message::ServerInit(Ok(config.corruptions))) {
         tracing::warn!("Failed to send server init message: {}", e);
     }
-    println!("Server running at {name:?}");
+    tracing::info!("Server running at {name:?}");
 
-    // Clone values before moving into streams
-    let device_sender_clone = device_sender.clone();
-    let screen_calibrations_clone = screen_calibrations.clone();
-    let device_offsets_clone = device_offsets.clone();
-    let device_shot_delays_clone = device_shot_delays.clone();
-    let shot_delay_watch_clone = shot_delay_watch.clone();
-    let accessory_map_clone = accessory_map.clone();
-    let accessory_map_sender_clone1 = accessory_map_sender.clone();
-    let accessory_map_sender_clone2 = accessory_map_sender.clone();
-    let accessory_info_receiver_clone = accessory_info_receiver.clone();
-    let event_sender_clone1 = event_sender.clone();
-    let event_sender_clone2 = event_sender.clone();
-    let event_sender_clone3 = event_sender.clone();
-    let dl_clone1 = dl.clone();
-    let dl_clone2 = dl.clone();
-
-    // Convert device_tasks to stream
+    // Each of the hub's parts is a stream that yields one tagged event when it ends (the
+    let device_task_events = event_sender.clone();
+    // message forwarder: one per message), so one loop supervises all of them.
     let device_tasks_stream = stream::once(async move {
         tracing::info!("device_tasks_stream: starting");
         let result = device_tasks(
-            device_sender_clone,
-            screen_calibrations_clone,
-            device_offsets_clone,
-            device_shot_delays_clone,
-            shot_delay_watch_clone,
-            accessory_map_clone,
-            accessory_map_sender_clone1,
-            accessory_info_receiver_clone,
-            event_sender_clone1,
+            device_sender,
+            config.screen_calibrations,
+            config.device_offsets,
+            config.device_shot_delays,
+            shot_delay_watch,
+            device_task_events,
         )
         .await;
         tracing::error!("device_tasks_stream: device_tasks returned {:?}", result);
         ServerEvent::DeviceTasks
     });
 
-    // Convert accessory_manager to stream
     let accessory_stream = stream::once(async move {
-        let () = accessory_manager(
-            event_sender_clone2,
+        accessory_manager(
+            event_sender,
             accessory_info_receiver,
-            accessory_map_sender_clone2,
-            dl_clone1,
+            accessory_map_sender,
+            device_list,
         )
         .await;
         ServerEvent::AccessoryManager
     });
 
-    // Convert event forwarding to stream
-    let device_list_change_clone = device_list_change_sender.clone();
-    let dongle_list_change_clone = dongle_list_change_sender.clone();
-    let dongle_list_clone = dongle_list.clone();
-    let event_fwd_stream = stream::unfold(
-        (
-            receiver,
-            dl_clone2,
-            event_sender_clone3,
-            device_list_change_clone,
-            dongle_list_clone,
-            dongle_list_change_clone,
-        ),
-        |(mut recv, dl, event_sender, list_change_sender, dongle_list, dongle_change_sender)| async move {
-            match recv.recv().await {
-                Some(message) => {
-                    match message {
-                        device_tasks::Message::Connect(d1, channels) => {
-                            tracing::info!("Processing connect for device {:02x?}", d1.uuid);
-                            let mut dl_guard = dl.lock();
-
-                            // Check if device already exists (by UUID only)
-                            if let Some(existing_idx) =
-                                dl_guard.iter().position(|(d, _)| d.uuid == d1.uuid)
-                            {
-                                // Update existing device
-                                tracing::info!("Device {:02x?} already exists, updating", d1.uuid);
-                                if let Some(commands_tx) = channels.commands {
-                                    dl_guard[existing_idx] = (d1.clone(), commands_tx);
-                                } else {
-                                    // Keep existing channel
-                                    dl_guard[existing_idx].0 = d1.clone();
-                                }
-                            } else {
-                                // Add new device
-                                if let Some(commands_tx) = channels.commands {
-                                    dl_guard.push((d1.clone(), commands_tx));
-                                } else {
-                                    // Device has no commands channel (control only), still add to list but with a dummy channel
-                                    let (dummy_tx, _dummy_rx) = mpsc::channel(1);
-                                    dl_guard.push((d1.clone(), dummy_tx));
-                                }
-                            }
-                            drop(dl_guard);
-                            tracing::info!(
-                                "Added/updated device {:02x?} in device list, sending list_change notification",
-                                d1.uuid
-                            );
-                            let _ = list_change_sender.send(());
-                        }
-                        device_tasks::Message::Disconnect(d) => {
-                            tracing::info!("Processing disconnect for device {:02x?}", d.uuid);
-                            let mut dl = dl.lock();
-                            // Match by UUID only (transport is just a property now)
-                            let i = dl.iter().position(|a| a.0.uuid == d.uuid);
-                            if let Some(i) = i {
-                                tracing::info!(
-                                    "Removing device {:02x?} from device list (index {})",
-                                    d.uuid,
-                                    i
-                                );
-                                dl.remove(i);
-                            } else {
-                                tracing::warn!(
-                                    "Device {:02x?} not found in device list for disconnect",
-                                    d.uuid
-                                );
-                            }
-                            drop(dl);
-                            tracing::info!(
-                                "Sending list_change notification for disconnect of {:02x?}",
-                                d.uuid
-                            );
-                            let _ = list_change_sender.send(());
-                        }
-                        device_tasks::Message::UpdateDevice(updated_device) => {
-                            let uuid = updated_device.uuid;
-                            tracing::info!("Processing device update for {:02x?}", uuid);
-                            let mut dl = dl.lock();
-                            // Find the device by UUID only
-                            if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == uuid) {
-                                tracing::info!(
-                                    "Updating device {:02x?} capabilities from {:?} to {:?}",
-                                    uuid,
-                                    entry.0.capabilities,
-                                    updated_device.capabilities
-                                );
-                                entry.0 = updated_device;
-                            } else {
-                                tracing::warn!(
-                                    "Device {:02x?} not found in device list for update",
-                                    uuid
-                                );
-                            }
-                            drop(dl);
-                            tracing::info!(
-                                "Sending list_change notification for update of {:02x?}",
-                                uuid
-                            );
-                            let _ = list_change_sender.send(());
-                        }
-                        device_tasks::Message::UpdateName(uuid, name) => {
-                            let mut dl = dl.lock();
-                            if let Some(entry) = dl.iter_mut().find(|(d, _)| d.uuid == uuid) {
-                                entry.0.name =
-                                    odyssey_hub_common::device::Device::name_bytes(&name);
-                            }
-                            drop(dl);
-                            let _ = list_change_sender.send(());
-                        }
-                        device_tasks::Message::DongleConnect(info, cmd_tx) => {
-                            tracing::info!("Processing dongle connect: {}", info.id);
-                            let mut guard = dongle_list.lock();
-                            // Replace if already present
-                            if let Some(idx) = guard.iter().position(|(d, _)| d.id == info.id) {
-                                guard[idx] = (info, cmd_tx);
-                            } else {
-                                guard.push((info, cmd_tx));
-                            }
-                            drop(guard);
-                            let _ = dongle_change_sender.send(());
-                        }
-                        device_tasks::Message::DongleUpdate(info) => {
-                            tracing::debug!(
-                                "Processing dongle update: {} ({} connected devices)",
-                                info.id,
-                                info.connected_devices.len()
-                            );
-                            let mut guard = dongle_list.lock();
-                            if let Some(idx) = guard.iter().position(|(d, _)| d.id == info.id) {
-                                guard[idx].0 = info;
-                            }
-                            drop(guard);
-                            let _ = dongle_change_sender.send(());
-                        }
-                        device_tasks::Message::DongleDisconnect(id) => {
-                            tracing::info!("Processing dongle disconnect: {}", id);
-                            let mut guard = dongle_list.lock();
-                            if let Some(idx) = guard.iter().position(|(d, _)| d.id == id) {
-                                guard.remove(idx);
-                            }
-                            drop(guard);
-                            let _ = dongle_change_sender.send(());
-                        }
-                        device_tasks::Message::Event(e) => {
-                            let _ = event_sender.send(e);
-                        }
-                    }
-                    Some((
-                        ServerEvent::EventForward,
-                        (
-                            recv,
-                            dl,
-                            event_sender,
-                            list_change_sender,
-                            dongle_list,
-                            dongle_change_sender,
-                        ),
-                    ))
-                }
-                None => None,
-            }
+    let message_stream = stream::unfold(
+        (device_messages, forwarder),
+        |(mut messages, forwarder): (mpsc::Receiver<device_tasks::Message>, _)| async move {
+            let message = messages.recv().await?;
+            forwarder.forward(message);
+            Some((ServerEvent::MessageForwarded, (messages, forwarder)))
         },
     );
 
-    // Convert tonic server to stream
     let tonic_stream = stream::once(async move {
         let _ = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))
-            .serve_with_incoming_shutdown(listener, cancel_token.cancelled())
+            .serve_with_incoming_shutdown(connections, cancel_token.cancelled())
             .await;
         ServerEvent::TonicServer
     });
 
-    // Merge all streams
     tracing::info!("run_server: merging streams");
     let merged = (
         device_tasks_stream,
         accessory_stream,
-        event_fwd_stream,
+        message_stream,
         tonic_stream,
     )
         .merge();
@@ -452,10 +164,7 @@ pub async fn run_server(
             ServerEvent::AccessoryManager => {
                 tracing::warn!("Accessory manager exited (Bluetooth unavailable?)");
             }
-            ServerEvent::EventForward => {
-                // Event forwarding continues, don't break
-                tracing::trace!("Event forwarded");
-            }
+            ServerEvent::MessageForwarded => tracing::trace!("Event forwarded"),
             ServerEvent::TonicServer => {
                 tracing::info!("Tonic server exited");
                 break;
