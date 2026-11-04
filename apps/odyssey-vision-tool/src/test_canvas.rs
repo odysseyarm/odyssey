@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, Key, Rect, Stroke};
-use nalgebra::{Isometry3, Point2, Translation3};
+use nalgebra::{Isometry3, Matrix3, Point2, Translation3};
 use parking_lot::Mutex;
 
 use crate::custom_shapes::{draw_crosshair, draw_grid, draw_text};
@@ -90,28 +90,16 @@ fn draw(painter: &egui::Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>) {
     );
     draw_text(painter, at(20.0, 40.0), &format!("screen_id = {screen_id}"));
 
-    // todo lol... i know
-    let transform = odyssey_cv::get_perspective_transform(
-        Point2::new(width / 2.0, height), // bottom
-        Point2::new(0.0, height / 2.0),   // left
-        Point2::new(width / 2.0, 0.0),    // top
-        Point2::new(width, height / 2.0), // right
-        Point2::new(0.5, 1.),             // bottom
-        Point2::new(0., 0.5),             // left
-        Point2::new(0.5, 0.),             // top
-        Point2::new(1., 0.5),             // right
+    // The grid spans the unit square; its inverse screen mapping is simply
+    // pixel scaling, not a perspective solve.
+    draw_grid(
+        &painter.with_clip_rect(rect),
+        10,
+        10,
+        Matrix3::new(width, 0.0, 0.0, 0.0, height, 0.0, 0.0, 0.0, 1.0),
+        origin.to_vec2(),
+        Stroke::new(1., Color32::from_rgb(200, 60, 60)),
     );
-    if let Some(transform) = transform.and_then(nalgebra::Matrix::try_inverse) {
-        // The grid maths is in canvas-local pixels; the helper shifts it into screen space.
-        draw_grid(
-            &painter.with_clip_rect(rect),
-            10,
-            10,
-            transform,
-            origin.to_vec2(),
-            Stroke::new(1., Color32::from_rgb(200, 60, 60)),
-        );
-    }
 
     let target = Stroke::new(1., Color32::from_rgb(80, 140, 255));
     let center = rect.center();

@@ -67,15 +67,16 @@ pub(crate) fn draw_grid(
 }
 
 pub(crate) fn draw_diamond(painter: &Painter, center: Pos2, w: f32, h: f32, stroke: Stroke) {
-    painter.add(Shape::closed_line(
-        vec![
+    draw_outline(
+        painter,
+        [
             Pos2::new(center.x, center.y - h / 2.),
             Pos2::new(center.x + w / 2., center.y),
             Pos2::new(center.x, center.y + h / 2.),
             Pos2::new(center.x - w / 2., center.y),
         ],
         stroke,
-    ));
+    );
 }
 
 /// Outlines a square spanning \[-0.5, 0.5\] on both axes, mapped through `transform`.
@@ -98,10 +99,20 @@ pub(crate) fn draw_rect(
         Point2::new(half_width, half_height),
         Point2::new(-half_width, half_height),
     ];
-    painter.add(Shape::closed_line(
-        corners.iter().map(|c| to_pos(transform * c)).collect(),
+    draw_outline(
+        painter,
+        corners.map(|corner| to_pos(transform * corner)),
         stroke,
-    ));
+    );
+}
+
+fn draw_outline(painter: &Painter, corners: [Pos2; 4], stroke: Stroke) {
+    for index in 0..corners.len() {
+        painter.line_segment(
+            [corners[index], corners[(index + 1) % corners.len()]],
+            stroke,
+        );
+    }
 }
 
 /// Draws a crosshair and associated text at a given position.
