@@ -42,6 +42,9 @@ fn bd_addr_from_serial(serial: &str) -> Result<[u8; 6], String> {
             "Serial number too short to derive BD address: {serial}"
         ));
     }
+    if !serial.is_ascii() {
+        return Err("USB serial number is not ASCII hexadecimal".to_string());
+    }
     let mut addr = [0u8; 6];
     for i in 0..6 {
         addr[i] = u8::from_str_radix(&serial[i * 2..i * 2 + 2], 16)
@@ -70,7 +73,7 @@ async fn pick_mux(index: Option<usize>) -> Result<(MuxDevice, [u8; 6]), String> 
             muxes
                 .into_iter()
                 .next()
-                .expect("muxes is non-empty: checked above")
+                .ok_or_else(|| "No dongle found".to_string())?
         }
     };
     let serial = info
@@ -84,7 +87,13 @@ async fn pick_mux(index: Option<usize>) -> Result<(MuxDevice, [u8; 6]), String> 
 }
 
 async fn pick_device(index: Option<usize>) -> Result<VmDevice, String> {
-    let devs = list_vm_devices().await?;
+    // Keep explicit indices aligned with `device list-devices`, even when an
+    // earlier device cannot be probed.
+    let devs = if index.is_some() {
+        list_vm_usb_devices()?
+    } else {
+        list_vm_devices().await?
+    };
     if devs.is_empty() {
         return Err("No device found.".to_string());
     }
@@ -102,7 +111,7 @@ async fn pick_device(index: Option<usize>) -> Result<VmDevice, String> {
             }
             devs.into_iter()
                 .next()
-                .expect("devs is non-empty: checked above")
+                .ok_or_else(|| "No device found".to_string())?
         }
     };
     VmDevice::connect_usb_any_mode(info)
@@ -171,4 +180,19 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
         format_bd_addr(&device_bd_addr)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bd_addr_from_serial;
+
+    #[test]
+    fn usb_serial_address_rejects_non_ascii_without_panicking() {
+        assert!(bd_addr_from_serial("0é00000000000").is_err());
+        assert!(bd_addr_from_serial("not-hex-serial").is_err());
+        assert_eq!(
+            bd_addr_from_serial("0123456789ABCDEF").ok(),
+            Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB])
+        );
+    }
 }

@@ -48,12 +48,12 @@ pub(crate) enum DeviceCommands {
 
 async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, String> {
     let mut devices = Vec::new();
-    let mut skipped = 0usize;
+    let mut non_usb_devices = 0usize;
     for info in list_vm_usb_devices()? {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(mode) => {
                 if require_usb_mode && !matches!(mode, TransportMode::Usb) {
-                    skipped += 1;
+                    non_usb_devices += 1;
                     continue;
                 }
                 if !matches!(mode, TransportMode::Usb) {
@@ -67,7 +67,6 @@ async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, S
                 devices.push(info);
             }
             Err(e) => {
-                skipped += 1;
                 eprintln!(
                     "Skipping device {:04X}:{:04X}: transport probe failed: {e}",
                     info.vendor_id(),
@@ -76,8 +75,10 @@ async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, S
             }
         }
     }
-    if require_usb_mode && devices.is_empty() && skipped > 0 {
-        eprintln!("Found {skipped} device(s) not in USB mode; no USB-mode devices available");
+    if require_usb_mode && devices.is_empty() && non_usb_devices > 0 {
+        eprintln!(
+            "Found {non_usb_devices} device(s) not in USB mode; no USB-mode devices available"
+        );
     }
     Ok(devices)
 }
@@ -86,14 +87,10 @@ async fn connect_to_device(
     device_index: Option<usize>,
     require_usb_mode: bool,
 ) -> Result<VmDevice, String> {
-    let devices = list_devices(require_usb_mode).await?;
-
-    if devices.is_empty() {
-        return Err("No device found. Please connect a device.".to_string());
-    }
-
+    // Explicit indices refer to the unfiltered enumeration printed by
+    // `list-devices`; probing/filtering first would silently renumber devices.
     let device_info = if let Some(idx) = device_index {
-        devices
+        list_vm_usb_devices()?
             .get(idx)
             .ok_or_else(|| {
                 format!(
@@ -102,6 +99,10 @@ async fn connect_to_device(
             })?
             .clone()
     } else {
+        let devices = list_devices(require_usb_mode).await?;
+        if devices.is_empty() {
+            return Err("No device found. Please connect a device.".to_string());
+        }
         if devices.len() > 1 {
             return Err(format!(
                 "Multiple devices found ({}). Please specify which one to use with --device <index>. Use 'device list-devices' to list them.",
@@ -264,10 +265,13 @@ pub(crate) async fn handle_command(
             gravity,
             output,
         } => {
+            crate::calibration::validate_sample_count(samples)?;
+            crate::calibration::validate_gravity(gravity)?;
             let mut device = connect_to_device(device_index, true).await?;
             crate::calibration::cmd_accel_calib(&mut device, samples, gravity, &output).await
         }
         DeviceCommands::GyroCalib { samples, output } => {
+            crate::calibration::validate_sample_count(samples)?;
             let mut device = connect_to_device(device_index, true).await?;
             crate::calibration::cmd_gyro_calib(&mut device, samples, &output).await
         }

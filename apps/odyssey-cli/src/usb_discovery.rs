@@ -34,9 +34,8 @@ pub(crate) fn list_nordic_devices() -> Result<Vec<DeviceInfo>, String> {
     list_usb_devices(|info| info.vendor_id() == NORDIC_VENDOR_ID)
 }
 
-pub(crate) fn product_name(info: &DeviceInfo) -> String {
-    info.product_string()
-        .map_or_else(|| "Unknown".to_string(), ToString::to_string)
+pub(crate) fn product_name(info: &DeviceInfo) -> &str {
+    info.product_string().unwrap_or("Unknown")
 }
 
 pub(crate) fn format_bd_addr(addr: &[u8; 6]) -> String {
