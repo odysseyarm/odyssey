@@ -51,8 +51,7 @@ pub(crate) fn Zero(
 
     let tracking_history = use_tracking_history(hub);
     use_zero_on_impact(hub, device_signals, tracking_history);
-    let connected: Vec<_> = devices.iter().map(|(_, device)| device.clone()).collect();
-    use_device_signal_sync(hub, device_signals, &connected);
+    use_device_signal_sync(hub, device_signals);
 
     rsx! {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
@@ -62,7 +61,7 @@ pub(crate) fn Zero(
             tabindex: "0",
             autofocus: true,
             onkeydown: move |e: KeyboardEvent| {
-                zero_on_key(hub, device_signals, tracking_history, e.key().to_string())
+                zero_on_key(hub, device_signals, tracking_history, e.key().to_string());
             },
 
             aside {

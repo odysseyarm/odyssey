@@ -23,6 +23,7 @@ pub(super) struct DeviceSignals {
     /// Zero on the next press of the Z key.
     pub(super) zeroing_on_key: Signal<bool>,
     pub(super) shot_delay: Signal<u16>,
+    shot_delay_revision: Signal<u64>,
     pub(super) save_zero_status: Signal<SaveStatus>,
 }
 
@@ -46,6 +47,12 @@ impl DeviceSignals {
 
     pub(super) fn set_shot_delay_ms(mut self, delay_ms: u16) {
         self.shot_delay.set(delay_ms);
+        let revision = self.shot_delay_revision();
+        self.shot_delay_revision.set(revision.wrapping_add(1));
+    }
+
+    pub(super) fn shot_delay_revision(self) -> u64 {
+        *self.shot_delay_revision.peek()
     }
 
     pub(super) fn set_save_status(mut self, status: SaveStatus) {

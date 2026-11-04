@@ -20,6 +20,18 @@ pub(super) fn SaveZeroButton(
     device: Device,
     signals: DeviceSignals,
 ) -> Element {
+    let mut saving = use_signal(|| false);
+    // Restart the timer whenever a new result replaces the previous one.
+    // Independent spawned timers could clear a newer result too early.
+    use_resource(move || async move {
+        let delay = match (signals.save_zero_status)() {
+            None => return,
+            Some(Ok(())) => SAVED_SHOWN_FOR,
+            Some(Err(_)) => ERROR_SHOWN_FOR,
+        };
+        tokio::time::sleep(delay).await;
+        signals.set_save_status(None);
+    });
     let (class, label) = match (signals.save_zero_status)() {
         None => ("btn-secondary", "Save Zero".to_string()),
         Some(Ok(())) => ("btn-secondary-success", "Saved".to_string()),
@@ -28,7 +40,18 @@ pub(super) fn SaveZeroButton(
     rsx! {
         button {
             class,
-            onclick: move |_| save_zero(hub, device.clone(), signals),
+            disabled: saving(),
+            onclick: move |_| {
+                if *saving.peek() {
+                    return;
+                }
+                saving.set(true);
+                let device = device.clone();
+                spawn(async move {
+                    save_zero(hub, device, signals).await;
+                    saving.set(false);
+                });
+            },
             {label}
         }
     }
@@ -40,20 +63,11 @@ async fn save_zero(hub: Signal<HubContext>, device: Device, signals: DeviceSigna
         Ok(()) => {
             tracing::info!("Saved zero for {:x?}", device.uuid);
             signals.set_save_status(Some(Ok(())));
-            reset_status_after(signals, SAVED_SHOWN_FOR);
         }
         Err(e) => {
             let message = e.to_string();
             tracing::error!("Failed to save zero {:x?}: {}", device.uuid, message);
             signals.set_save_status(Some(Err(message)));
-            reset_status_after(signals, ERROR_SHOWN_FOR);
         }
     }
-}
-
-fn reset_status_after(signals: DeviceSignals, delay: Duration) {
-    spawn(async move {
-        tokio::time::sleep(delay).await;
-        signals.set_save_status(None);
-    });
 }

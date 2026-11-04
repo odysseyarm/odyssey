@@ -42,7 +42,7 @@ pub(super) async fn zero_device(
 
 /// Handles a key press: Z zeroes every device that is waiting for it, Escape
 /// stops them waiting.
-pub(super) async fn zero_on_key(
+pub(super) fn zero_on_key(
     hub: Signal<HubContext>,
     device_signals: Signal<SignalsByDevice>,
     tracking_history: Signal<HistoryByDevice>,
@@ -72,7 +72,7 @@ pub(super) async fn zero_on_key(
             signals.shot_delay_ms(),
             None,
         );
-        zero_device(hub, device, sample).await;
+        spawn(zero_device(hub, device, sample));
     }
 }
 
@@ -95,8 +95,7 @@ pub(super) fn use_zero_on_impact(
                             tracking_history,
                             device,
                             impact.timestamp,
-                        )
-                        .await;
+                        );
                     }
                     Err(RecvError::Lagged(_)) => {}
                     Err(RecvError::Closed) => break,
@@ -106,7 +105,7 @@ pub(super) fn use_zero_on_impact(
     });
 }
 
-async fn zero_if_armed(
+fn zero_if_armed(
     hub: Signal<HubContext>,
     device_signals: Signal<SignalsByDevice>,
     tracking_history: Signal<HistoryByDevice>,
@@ -133,5 +132,5 @@ async fn zero_if_armed(
         Some(impact_timestamp),
     );
     signals.set_shooting(false);
-    zero_device(hub, device, sample).await;
+    spawn(zero_device(hub, device, sample));
 }

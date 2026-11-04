@@ -5,55 +5,65 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::device::Device;
 
-use super::device_signals::SignalsByDevice;
+use super::device_signals::{DeviceSignals, SignalsByDevice};
 use crate::hub::HubContext;
 
-/// When the set of connected devices changes, drops the state of the ones that
-/// left and loads the stored shot delay of every device.
+/// Drops state when devices leave and loads the stored shot delay only for
+/// newly connected devices. Late replies never recreate removed state or
+/// overwrite a delay the user has already edited.
 pub(super) fn use_device_signal_sync(
     hub: Signal<HubContext>,
     device_signals: Signal<SignalsByDevice>,
-    devices: &[Device],
 ) {
     let mut last_snapshot = use_signal(Vec::<[u8; 6]>::new);
-    let devices = devices.to_vec();
-    let snapshot: Vec<[u8; 6]> = devices.iter().map(|device| device.uuid).collect();
 
     use_effect(move || {
+        let devices = (hub().devices)();
+        let snapshot: Vec<_> = devices.iter().map(|(_, device)| device.uuid).collect();
         if last_snapshot.peek().as_slice() == snapshot.as_slice() {
             return;
         }
+        let previous = last_snapshot.peek().clone();
         last_snapshot.set(snapshot.clone());
+        let mut device_signals = device_signals;
+        device_signals
+            .write()
+            .retain(|uuid, _| snapshot.contains(uuid));
 
-        let devices = devices.clone();
-        let present = snapshot.clone();
-        spawn(async move {
-            let mut device_signals = device_signals;
-            device_signals
-                .write()
-                .retain(|uuid, _| present.contains(uuid));
-
-            for device in devices {
-                spawn(load_shot_delay(hub, device_signals, device));
+        for (_, device) in devices {
+            if previous.contains(&device.uuid) {
+                continue;
             }
-        });
+            let signals = *device_signals.write().entry(device.uuid).or_default();
+            let revision = signals.shot_delay_revision();
+            spawn(load_shot_delay(
+                hub,
+                device_signals,
+                device,
+                signals,
+                revision,
+            ));
+        }
     });
 }
 
 async fn load_shot_delay(
     hub: Signal<HubContext>,
-    mut device_signals: Signal<SignalsByDevice>,
+    device_signals: Signal<SignalsByDevice>,
     device: Device,
+    signals: DeviceSignals,
+    revision: u64,
 ) {
     let mut client = hub.peek().client.peek().clone();
     match client.get_shot_delay(device.clone()).await {
         Ok(delay) => {
-            device_signals
-                .write()
-                .entry(device.uuid)
-                .or_default()
-                .shot_delay
-                .set(delay);
+            let still_present = device_signals
+                .peek()
+                .get(&device.uuid)
+                .is_some_and(|current| *current == signals);
+            if still_present && signals.shot_delay_revision() == revision {
+                signals.set_shot_delay_ms(delay);
+            }
         }
         Err(e) => tracing::error!("Failed to get shot delay: {e}"),
     }

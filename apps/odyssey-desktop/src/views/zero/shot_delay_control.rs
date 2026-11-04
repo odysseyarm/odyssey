@@ -29,6 +29,7 @@ pub(super) fn ShotDelayControl(
     device: Device,
     signals: DeviceSignals,
 ) -> Element {
+    let pending = use_signal(|| false);
     rsx! {
         li {
             class: "flex items-center gap-2",
@@ -45,6 +46,7 @@ pub(super) fn ShotDelayControl(
                 button {
                     id: "decrement-button",
                     class: STEP_BUTTON_START,
+                    disabled: pending(),
                     onclick: move |_| {
                         let delay_ms = signals.shot_delay_ms();
                         if delay_ms > 0 {
@@ -71,6 +73,7 @@ pub(super) fn ShotDelayControl(
                     inputmode: "numeric",
                     pattern: "[0-9]*",
                     id: "shot-delay-input-{slot}",
+                    disabled: pending(),
                     value: "{signals.shot_delay}",
                     class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
                             focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
@@ -86,6 +89,7 @@ pub(super) fn ShotDelayControl(
                 button {
                     id: "increment-button",
                     class: STEP_BUTTON_END,
+                    disabled: pending(),
                     onclick: move |_| {
                         let delay_ms = signals.shot_delay_ms();
                         if delay_ms < MAX_SHOT_DELAY_MS {
@@ -111,9 +115,10 @@ pub(super) fn ShotDelayControl(
             // Set button
             button {
                 class: BUTTON,
+                disabled: pending(),
                 onclick: {
                     let device = device.clone();
-                    move |_| set_shot_delay(hub, device.clone(), signals.shot_delay_ms())
+                    move |_| run_command(pending, set_shot_delay(hub, device.clone(), signals.shot_delay_ms()))
                 },
                 "Set"
             }
@@ -121,9 +126,13 @@ pub(super) fn ShotDelayControl(
             // Reset button
             button {
                 class: BUTTON,
+                disabled: pending(),
                 onclick: {
                     let device = device.clone();
-                    move |_| reset_shot_delay(hub, device.clone(), signals)
+                    move |_| {
+                        let revision = signals.shot_delay_revision();
+                        run_command(pending, reset_shot_delay(hub, device.clone(), signals, revision));
+                    }
                 },
                 "Reset"
             }
@@ -131,11 +140,25 @@ pub(super) fn ShotDelayControl(
             // Save button (sets before saving)
             button {
                 class: BUTTON,
-                onclick: move |_| set_and_save_shot_delay(hub, device.clone(), signals.shot_delay_ms()),
+                disabled: pending(),
+                onclick: move |_| run_command(pending, set_and_save_shot_delay(hub, device.clone(), signals.shot_delay_ms())),
                 "Save"
             }
         }
     }
+}
+
+/// Set-and-save is one device operation: another Set must not replace its
+/// value between the two RPCs. Reserve the controls before spawning.
+fn run_command(mut pending: Signal<bool>, command: impl Future<Output = ()> + 'static) {
+    if *pending.peek() {
+        return;
+    }
+    pending.set(true);
+    spawn(async move {
+        command.await;
+        pending.set(false);
+    });
 }
 
 async fn set_shot_delay(hub: Signal<HubContext>, device: Device, delay_ms: u16) {
@@ -146,12 +169,19 @@ async fn set_shot_delay(hub: Signal<HubContext>, device: Device, delay_ms: u16) 
     }
 }
 
-async fn reset_shot_delay(hub: Signal<HubContext>, device: Device, signals: DeviceSignals) {
+async fn reset_shot_delay(
+    hub: Signal<HubContext>,
+    device: Device,
+    signals: DeviceSignals,
+    revision: u64,
+) {
     let mut client = hub.peek().client.peek().clone();
     match client.reset_shot_delay(device.clone()).await {
         Ok(delay_ms) => {
             tracing::info!("Reset shot delay for {:x?}", device.uuid);
-            signals.set_shot_delay_ms(delay_ms);
+            if signals.shot_delay_revision() == revision {
+                signals.set_shot_delay_ms(delay_ms);
+            }
         }
         Err(e) => tracing::error!("Failed to reset shot delay {:x?}: {}", device.uuid, e),
     }
