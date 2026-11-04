@@ -415,3 +415,45 @@ async fn pending_clear_fails_fast_when_transport_closes() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn report_with_an_id_from_another_link_reaches_the_stream_of_its_type() {
+    use tokio_stream::StreamExt as _;
+
+    use crate::packets::vm::{ImpactReport, PacketType};
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx,
+    } = harness();
+    let mut objects = Box::pin(device.stream(PacketType::ObjectReport()).await.unwrap());
+    let objects_id = sent.recv().await.unwrap().id;
+    let mut impacts = Box::pin(device.stream(PacketType::ImpactReport()).await.unwrap());
+    sent.recv().await.unwrap();
+
+    // The unit stamps reports with whatever id the last Enable carried, which may have
+    // come over the other link: here one that this link uses for a different stream,
+    // then one it never handed out.
+    for (id, timestamp) in [(objects_id, 1), (254, 2)] {
+        incoming_tx
+            .send(Packet {
+                id,
+                data: PacketData::ImpactReport(ImpactReport { timestamp }),
+            })
+            .await
+            .unwrap();
+        let delivered = tokio::time::timeout(Duration::from_secs(1), impacts.next())
+            .await
+            .expect("report reaches the impact stream");
+        assert!(matches!(
+            delivered,
+            Some(PacketData::ImpactReport(report)) if report.timestamp == timestamp
+        ));
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), objects.next())
+            .await
+            .is_err(),
+        "the object stream must not see impact reports"
+    );
+}

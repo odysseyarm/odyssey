@@ -13,6 +13,7 @@ use crate::device_tasks::context::{DeviceAddress, RunningDevice};
 use crate::device_tasks::handler::{DeviceConnections, DeviceHandler, DeviceHandlerInit};
 use crate::device_tasks::messages::{DeviceChannels, DeviceTaskMessage, Message};
 use crate::device_tasks::netcore_probe::{NetCoreLink, spawn_netcore_probe};
+use crate::device_tasks::transport_selection::TransportSelection;
 use crate::device_tasks::usb_probe::{
     read_events_protocol_version, read_firmware_version, read_transport_mode, read_uuid_with_retry,
 };
@@ -27,6 +28,7 @@ struct ProbedUsbDevice {
     firmware: Option<odyssey_protocol::Version>,
     events_protocol_version: [u16; 3],
     transport_mode: TransportMode,
+    transport_selection: TransportSelection,
     dfu: bool,
     vm_device: VmDevice,
 }
@@ -37,6 +39,13 @@ impl ProbedUsbDevice {
         self.firmware
             .as_ref()
             .map(|version| version.protocol_semver)
+    }
+
+    /// Firmware that picks its own transport streams over USB whenever a host has the
+    /// cable configured, which the probe itself proves.
+    fn streams_over_usb(&self) -> bool {
+        self.transport_selection == TransportSelection::Automatic
+            || self.transport_mode == TransportMode::Usb
     }
 }
 
@@ -108,9 +117,16 @@ impl UsbDeviceManager {
         // Control plane for AtsLite/AtsPro (control endpoint), packet protocol for AtsVm.
         let uuid = read_uuid_with_retry(&vm_device, product_id).await?;
         let firmware = read_firmware_version(&vm_device, uuid).await;
+        let transport_selection = firmware
+            .as_ref()
+            .map_or(TransportSelection::Manual, |version| {
+                TransportSelection::for_protocol(version.protocol_semver)
+            });
         let transport_mode = read_transport_mode(&vm_device, uuid).await;
         // Only available when the unit is in USB transport mode (direct events).
-        let events_protocol_version = if transport_mode == TransportMode::Usb {
+        let events_protocol_version = if transport_selection == TransportSelection::Automatic
+            || transport_mode == TransportMode::Usb
+        {
             read_events_protocol_version(&vm_device, uuid).await
         } else {
             [0, 0, 0]
@@ -120,6 +136,7 @@ impl UsbDeviceManager {
             firmware,
             events_protocol_version,
             transport_mode,
+            transport_selection,
             dfu: dev_info
                 .interfaces()
                 .any(|interface| interface.class() == DFU_CLASS),
@@ -159,6 +176,7 @@ impl UsbDeviceManager {
                         device: probed.vm_device.clone(),
                         dfu: probed.dfu,
                         events_protocol_version: probed.events_protocol_version,
+                        transport_selection: probed.transport_selection,
                     })
                     .await;
                 if result.is_ok() {
@@ -240,7 +258,7 @@ impl UsbDeviceManager {
 
         // A unit in USB transport mode streams events over the same connection it is
         // controlled over; in BLE mode only control comes over USB.
-        let connections = if probed.transport_mode == TransportMode::Usb {
+        let connections = if probed.streams_over_usb() {
             DeviceConnections {
                 control_device: Some(probed.vm_device.clone()),
                 events_device: Some(probed.vm_device),
@@ -350,13 +368,16 @@ impl UsbDeviceManager {
 
 /// The device-list entry for a unit that is plugged in over USB.
 fn direct_usb_device(dev_info: &nusb::DeviceInfo, probed: &ProbedUsbDevice) -> Device {
-    let in_usb_mode = probed.transport_mode == TransportMode::Usb;
+    let in_usb_mode = probed.streams_over_usb();
 
     // CONTROL always; EVENTS only in USB transport mode; DFU whenever the device exposes
     // a DFU interface (class 0xFE).
     let mut capabilities = DeviceCapabilities::new(DeviceCapabilities::CONTROL);
     if in_usb_mode {
         capabilities.insert(DeviceCapabilities::EVENTS);
+    }
+    if probed.transport_selection == TransportSelection::Automatic {
+        capabilities.insert(DeviceCapabilities::AUTO_TRANSPORT);
     }
     if dev_info
         .interfaces()

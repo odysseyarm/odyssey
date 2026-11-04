@@ -120,13 +120,7 @@ impl VmDevice {
     }
 
     pub async fn connect_via_mux(mux: MuxDevice, device_addr: [u8; 6]) -> Result<Self> {
-        debug!(
-            "VmDevice::connect_via_mux() creating new device for {}",
-            HexAddress(device_addr)
-        );
-        let transport = PacketTransport::mux(mux, device_addr);
-
-        let device = Self::from_transport(transport, None);
+        let device = Self::open_via_mux(mux, device_addr);
 
         // Stop any streams lingering from a previous session before the caller
         // starts loading settings.
@@ -135,6 +129,18 @@ impl VmDevice {
         debug!("Ready to proceed with settings loading (slot reservation prevents conflicts)");
 
         Ok(device)
+    }
+
+    /// Opens a link through `mux` without touching the unit's streams.
+    ///
+    /// For a unit whose stream subscriptions are shared by all its links: a
+    /// DisableAll sent while it streams over USB would stop those reports too.
+    pub fn open_via_mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
+        debug!(
+            "VmDevice::open_via_mux() creating new device for {}",
+            HexAddress(device_addr)
+        );
+        Self::from_transport(PacketTransport::mux(mux, device_addr), None)
     }
 
     /// Asks the device to stop every stream, re-sending until it acknowledges.
@@ -452,6 +458,16 @@ impl VmDevice {
         self.disable_all_streams().await?;
         state.clear_streams();
         Ok(())
+    }
+
+    /// Closes this link's subscriptions without telling the device, so dropping
+    /// them sends no Disable. For a device whose subscriptions are shared with
+    /// another link that keeps streaming: a Disable over this link would stop
+    /// that link's reports too.
+    pub fn forget_streams(&self) {
+        if let Some(state) = self.thread_state.upgrade() {
+            state.clear_streams();
+        }
     }
 }
 

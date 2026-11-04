@@ -7,6 +7,7 @@ mod netcore_probe;
 mod semver;
 mod sensor_streams;
 mod tracking;
+mod transport_selection;
 mod usb_probe;
 
 pub(crate) use manager::device_tasks;

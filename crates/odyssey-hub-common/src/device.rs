@@ -28,6 +28,10 @@ impl DeviceCapabilities {
     /// Without this flag a 0 can also mean "not answered yet", which a unit shows for a
     /// while after every boot, so such a 0 must not be judged as behind.
     pub const NETCORE_KNOWN: u8 = 0b1000;
+    /// The firmware picks its data link itself: USB while plugged into a computer,
+    /// Bluetooth otherwise. There is no transport mode to choose, and
+    /// `SetTransportMode` only reports the link in use.
+    pub const AUTO_TRANSPORT: u8 = 0b1_0000;
 
     pub const fn empty() -> Self {
         Self { bits: 0 }

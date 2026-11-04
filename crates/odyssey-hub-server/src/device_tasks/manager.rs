@@ -2,16 +2,19 @@ mod bootloader_devices;
 mod direct_usb;
 
 use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use bootloader_devices::BootloaderDevice;
+use futures::StreamExt as _;
+use nusb::hotplug::HotplugWatch;
 use odyssey_hub_common::events::Event;
 use odyssey_protocol::ProductId;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::sleep;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::context::{
     DeviceAddress, DeviceHandles, DeviceOffsets, DeviceTaskContext, ScreenCalibrations,
@@ -23,7 +26,7 @@ use super::messages::Message;
 /// Nordic Semiconductor's USB vendor id, which every Odyssey unit enumerates under.
 const ODYSSEY_USB_VENDOR_ID: u16 = 0x1915;
 
-/// Pause between USB scans.
+/// Pause between USB scans. A plug or unplug the OS reports starts a scan at once.
 const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Pause before retrying when the USB bus cannot be enumerated at all.
@@ -105,6 +108,16 @@ impl UsbDeviceManager {
     }
 
     async fn run(mut self) -> ! {
+        // A unit that picks its own transport switches its reports to USB the moment a
+        // host configures it and back to BLE when the cable goes, so the hub has to
+        // follow within milliseconds rather than at the next periodic scan.
+        let mut hotplug = match nusb::watch_devices() {
+            Ok(watch) => Some(Box::pin(watch)),
+            Err(e) => {
+                warn!("USB hotplug events unavailable, scanning every {SCAN_INTERVAL:?} only: {e}");
+                None
+            }
+        };
         loop {
             let devices = match nusb::list_devices().await {
                 Ok(devices) => devices.collect::<Vec<_>>(),
@@ -115,7 +128,7 @@ impl UsbDeviceManager {
                 }
             };
             self.scan(&devices).await;
-            sleep(SCAN_INTERVAL).await;
+            wait_for_next_scan(hotplug.as_mut()).await;
         }
     }
 
@@ -245,6 +258,19 @@ impl UsbDeviceManager {
             task,
             shutdown,
         });
+    }
+}
+
+/// Sleep until the next periodic scan, or less if the OS reports a USB device arriving or
+/// leaving.
+async fn wait_for_next_scan(hotplug: Option<&mut Pin<Box<HotplugWatch>>>) {
+    let Some(hotplug) = hotplug else {
+        sleep(SCAN_INTERVAL).await;
+        return;
+    };
+    tokio::select! {
+        () = sleep(SCAN_INTERVAL) => {}
+        event = hotplug.next() => debug!("USB hotplug: {event:?}"),
     }
 }
 

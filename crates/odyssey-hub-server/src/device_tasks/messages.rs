@@ -6,6 +6,8 @@ use odyssey_hub_common::events::TrackingEvent;
 use odyssey_usb::device::{MuxDevice, VmDevice};
 use tokio::sync::{mpsc, oneshot};
 
+use super::transport_selection::TransportSelection;
+
 /// Answer channel of a request: the value, or the reason it failed, as text for the RPC reply.
 pub(crate) type Reply<T> = oneshot::Sender<Result<T, String>>;
 
@@ -69,8 +71,9 @@ pub(crate) enum DeviceTaskMessage {
     ClearBond {
         reply: Reply<()>,
     },
-    /// Set the transport mode (USB or BLE). The device persists it and applies it after
-    /// a reboot.
+    /// Set the transport mode (USB or BLE). Firmware with a manual transport persists
+    /// it and applies it after a reboot; for automatic firmware the handler answers
+    /// with the link in use and sends nothing to the unit.
     SetTransportMode {
         usb_mode: bool,
         reply: Reply<bool>,
@@ -81,6 +84,7 @@ pub(crate) enum DeviceTaskMessage {
         reply: Reply<()>,
     },
     /// Attach an events device (BLE mux) to a handler, which enables its sensor streams.
+    /// For automatic firmware on USB it becomes the standby link.
     AddEventsDevice {
         device: VmDevice,
         protocol_version: [u16; 3],
@@ -93,6 +97,7 @@ pub(crate) enum DeviceTaskMessage {
         device: VmDevice,
         dfu: bool,
         events_protocol_version: [u16; 3],
+        transport_selection: TransportSelection,
     },
     /// The direct USB connection went away.
     RemoveControlDevice,

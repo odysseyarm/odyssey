@@ -35,6 +35,10 @@ service Service {
   rpc StartPairing(StartPairingRequest) returns (EmptyReply) {}
   rpc CancelPairing(CancelPairingRequest) returns (EmptyReply) {}
   rpc ClearBond(ClearBondRequest) returns (EmptyReply) {}
+  // Deprecated: only firmware without the AUTO_TRANSPORT capability (device protocol
+  // below 0.1.6) has a transport mode; it stores the mode and reboots. For a device with
+  // AUTO_TRANSPORT the request is ignored and the reply reports the link in use, without
+  // contacting the device.
   rpc SetTransportMode(SetTransportModeRequest) returns (TransportModeReply) {}
 
   rpc SubscribeDongleList(SubscribeDongleListRequest) returns (stream DongleListReply) {}
@@ -93,7 +97,7 @@ message Device {
   bytes uuid = 1;
   Transport transport = 2;
   FirmwareVersion firmware_version = 3; // May be unset; check presence before use.
-  uint32 capabilities = 4; // Bitfield: 0x01 = CONTROL, 0x02 = EVENTS
+  uint32 capabilities = 4; // Bitfield: 0x01 = CONTROL, 0x02 = EVENTS, 0x04 = DFU, 0x08 = NETCORE_KNOWN, 0x10 = AUTO_TRANSPORT
   EventsTransport events_transport = 5;
   bool events_connected = 6; // True while events are arriving.
   uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
@@ -308,7 +312,7 @@ message SetTransportModeRequest {
   bool usb_mode = 2; // true = USB, false = BLE
 }
 message TransportModeReply {
-  bool usb_mode = 1; // Mode the device confirmed.
+  bool usb_mode = 1; // Mode the device confirmed; for AUTO_TRANSPORT devices, whether USB carries its events now.
 }
 
 message Dongle {

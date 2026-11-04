@@ -4,15 +4,16 @@
 use std::ops::ControlFlow;
 use std::time::Duration;
 
-use odyssey_hub_common::device::Device;
+use odyssey_hub_common::device::{Device, EventsTransport};
 use odyssey_hub_common::events::DeviceEventKind;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::{ConfigKind, GeneralConfig, PacketData};
 use tracing::{debug, info, warn};
 
-use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT, call_with_timeout};
+use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT, call_over_links, call_with_timeout};
 use crate::device_tasks::messages::{Message, Reply};
+use crate::device_tasks::transport_selection::TransportSelection;
 
 /// Reboot is fire-and-forget: the unit disappears before it could acknowledge.
 const REBOOT_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
@@ -50,25 +51,34 @@ impl DeviceHandler {
             data.len(),
             self.device.uuid
         );
-        let Some(events_device) = self.connections.events_device.as_ref() else {
+        let links = self.packet_links();
+        if links.is_empty() {
             warn!("Cannot write vendor packet: no events device available");
             return;
-        };
-        if let Err(e) = events_device.write_vendor(tag, data).await {
+        }
+        let result = call_over_links(
+            &links,
+            CALL_TIMEOUT,
+            "write_vendor",
+            |device: VmDevice| async move { device.write_vendor(tag, data).await },
+        )
+        .await;
+        if let Err(e) = result {
             warn!("Failed to send vendor packet: {}", e);
         }
     }
 
-    /// The device register access goes through. Register access is a packet-protocol
+    /// The links register access can go over. Register access is a packet-protocol
     /// operation, so it needs a connected events device.
-    fn register_access_device(&self) -> Result<VmDevice, &'static str> {
+    fn register_access_links(&self) -> Result<Vec<VmDevice>, &'static str> {
         if !self.device.events_connected {
             return Err("events transport not connected");
         }
-        self.connections
-            .events_device
-            .clone()
-            .ok_or("events device not available")
+        let links = self.packet_links();
+        if links.is_empty() {
+            return Err("events device not available");
+        }
+        Ok(links)
     }
 
     pub(super) async fn on_read_register(
@@ -78,18 +88,21 @@ impl DeviceHandler {
         address: u8,
         reply: Reply<u8>,
     ) {
-        let device = match self.register_access_device() {
-            Ok(device) => device,
+        let links = match self.register_access_links() {
+            Ok(links) => links,
             Err(reason) => {
                 let _ = reply.send(Err(reason.into()));
                 return;
             }
         };
-        self.pause_sensor_streams(&device, "ReadRegister").await;
-        let result = call_with_timeout(
+        self.pause_sensor_streams(&links, "ReadRegister").await;
+        let result = call_over_links(
+            &links,
             CALL_TIMEOUT,
             "read_register",
-            device.read_register(sensor_port(port), bank, address),
+            |device: VmDevice| async move {
+                device.read_register(sensor_port(port), bank, address).await
+            },
         )
         .await;
         let _ = reply.send(result);
@@ -104,18 +117,23 @@ impl DeviceHandler {
         data: u8,
         reply: Reply<()>,
     ) {
-        let device = match self.register_access_device() {
-            Ok(device) => device,
+        let links = match self.register_access_links() {
+            Ok(links) => links,
             Err(reason) => {
                 let _ = reply.send(Err(reason.into()));
                 return;
             }
         };
-        self.pause_sensor_streams(&device, "WriteRegister").await;
-        let result = call_with_timeout(
+        self.pause_sensor_streams(&links, "WriteRegister").await;
+        let result = call_over_links(
+            &links,
             CALL_TIMEOUT,
             "write_register",
-            device.write_register(sensor_port(port), bank, address, data),
+            |device: VmDevice| async move {
+                device
+                    .write_register(sensor_port(port), bank, address, data)
+                    .await
+            },
         )
         .await;
         let _ = reply.send(result);
@@ -129,12 +147,17 @@ impl DeviceHandler {
         };
         // read_config is a packet-protocol call and works over BLE and USB alike; only
         // read_all_config (bulk camera data) needs USB transport mode.
-        if let Some(device) = self.connections.events_device.clone() {
-            self.pause_sensor_streams(&device, "ReadConfig").await;
-            let result =
-                call_with_timeout(CALL_TIMEOUT, "read_config", device.read_config(config_kind))
-                    .await
-                    .map(config_value);
+        let links = self.packet_links();
+        if !links.is_empty() {
+            self.pause_sensor_streams(&links, "ReadConfig").await;
+            let result = call_over_links(
+                &links,
+                CALL_TIMEOUT,
+                "read_config",
+                |device: VmDevice| async move { device.read_config(config_kind).await },
+            )
+            .await
+            .map(config_value);
             let _ = reply.send(result);
             self.stream_timers.arm_resume();
         } else if let Some(device) = self.connections.control_device.as_ref() {
@@ -161,10 +184,15 @@ impl DeviceHandler {
             }
         };
         // write_config is a packet-protocol call and works over BLE and USB alike.
-        if let Some(device) = self.connections.events_device.clone() {
-            self.pause_sensor_streams(&device, "WriteConfig").await;
+        let links = self.packet_links();
+        if !links.is_empty() {
+            self.pause_sensor_streams(&links, "WriteConfig").await;
             let result =
-                call_with_timeout(CALL_TIMEOUT, "write_config", device.write_config(config)).await;
+                call_over_links(&links, CALL_TIMEOUT, "write_config", |device: VmDevice| {
+                    let config = config.clone();
+                    async move { device.write_config(config).await }
+                })
+                .await;
             let _ = reply.send(result);
             self.stream_timers.arm_resume();
         } else if let Some(device) = self.connections.control_device.as_ref() {
@@ -182,8 +210,15 @@ impl DeviceHandler {
 
     pub(super) async fn on_flash_settings(&mut self, reply: Reply<()>) {
         // flash_settings is a packet-protocol call and works over BLE and USB alike.
-        let result = if let Some(device) = self.connections.events_device.as_ref() {
-            call_with_timeout(CALL_TIMEOUT, "flash_settings", device.flash_settings()).await
+        let links = self.packet_links();
+        let result = if !links.is_empty() {
+            call_over_links(
+                &links,
+                CALL_TIMEOUT,
+                "flash_settings",
+                |device: VmDevice| async move { device.flash_settings().await },
+            )
+            .await
         } else if let Some(device) = self.connections.control_device.as_ref() {
             call_with_timeout(
                 SLOW_CALL_TIMEOUT,
@@ -268,14 +303,23 @@ impl DeviceHandler {
         let _ = reply.send(result);
     }
 
-    /// Ends the handler whether or not the switch worked: the unit is rebooted, and
-    /// reconnects through the USB scan.
+    /// With a manual transport, ends the handler whether or not the switch worked: the
+    /// unit is rebooted, and reconnects through the USB scan. Firmware that picks its
+    /// transport itself is not asked at all; the reply is the link in use.
     pub(super) async fn on_set_transport_mode(
         &mut self,
         usb_mode: bool,
         reply: Reply<bool>,
     ) -> ControlFlow<()> {
         let uuid = self.device.uuid;
+        if self.transport_selection() == TransportSelection::Automatic {
+            let usb_carries_events = self.device.events_transport == EventsTransport::Wired;
+            info!(
+                "SetTransportMode(usb_mode={usb_mode}) for {uuid:02x?} not sent: the firmware picks its transport, USB in use: {usb_carries_events}"
+            );
+            let _ = reply.send(Ok(usb_carries_events));
+            return ControlFlow::Continue(());
+        }
         let Some(device) = self.connections.control_device.clone() else {
             warn!("SetTransportMode: no control device for {uuid:02x?}");
             let _ = reply.send(Err("no control device available".into()));
@@ -336,19 +380,28 @@ impl DeviceHandler {
     async fn write_device_name(&mut self, name: &str) -> Result<(), String> {
         if let Some(device) = self.connections.control_device.as_ref() {
             // USB EP0 path
-            return call_with_timeout(SLOW_CALL_TIMEOUT, "set_device_name", device.set_name(name))
-                .await;
+            let result =
+                call_with_timeout(SLOW_CALL_TIMEOUT, "set_device_name", device.set_name(name))
+                    .await;
+            if result.is_ok() || self.standby.is_none() {
+                return result;
+            }
         }
-        let Some(device) = self.connections.events_device.as_ref() else {
+        let links = self.packet_links();
+        if links.is_empty() {
             warn!("SetDeviceName: no device for {:02x?}", self.device.uuid);
             return Err("no device available".into());
-        };
+        }
         // BLE mux path
         let packet_name = odyssey_protocol::DeviceName::from_str_lossy(name);
-        let response = call_with_timeout(
+        let response = call_over_links(
+            &links,
             SLOW_CALL_TIMEOUT,
             "set_device_name",
-            device.request(PacketData::SetDeviceName(packet_name)),
+            |device: VmDevice| {
+                let packet_name = packet_name.clone();
+                async move { device.request(PacketData::SetDeviceName(packet_name)).await }
+            },
         )
         .await?;
         match response {

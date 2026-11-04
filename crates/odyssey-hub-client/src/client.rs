@@ -296,6 +296,12 @@ impl Client {
         Ok(())
     }
 
+    /// Ask a device without [`DeviceCapabilities::AUTO_TRANSPORT`] to stream over USB
+    /// (`usb_mode`) or Bluetooth. It stores the choice and reboots; the reply is the mode
+    /// it confirmed. A device with `AUTO_TRANSPORT` picks its link itself, so the request
+    /// is ignored and the reply says whether USB carries its events now.
+    ///
+    /// [`DeviceCapabilities::AUTO_TRANSPORT`]: common::device::DeviceCapabilities::AUTO_TRANSPORT
     pub async fn set_transport_mode(
         &mut self,
         device: common::device::Device,

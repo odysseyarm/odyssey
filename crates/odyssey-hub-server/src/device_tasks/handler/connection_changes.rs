@@ -1,6 +1,11 @@
 //! A unit can be reachable over USB control, over a BLE mux for events, or both, and
 //! links come and go while the handler runs. These handle the control messages that
 //! attach or detach one, and keep the unit's capabilities and transport in step.
+//!
+//! Firmware with automatic transport selection streams over USB while plugged in and
+//! over BLE otherwise, keeping the BLE connection up the whole time. Its handler keeps
+//! that BLE link as a standby next to USB, so a cable change only moves where reports
+//! come from and never removes the device.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -11,11 +16,12 @@ use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::{MuxDevice, VmDevice};
 use tracing::{info, warn};
 
-use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT};
+use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT, StandbyLink};
 use crate::device_tasks::messages::Message;
 use crate::device_tasks::netcore_probe::spawn_packet_netcore_probe;
 use crate::device_tasks::sensor_streams::SensorStreams;
 use crate::device_tasks::tracking::CameraModels;
+use crate::device_tasks::transport_selection::TransportSelection;
 
 impl DeviceHandler {
     pub(super) async fn on_add_events_device(
@@ -28,6 +34,18 @@ impl DeviceHandler {
     ) {
         let uuid = self.device.uuid;
         self.hub_device = Some((hub, address));
+        if TransportSelection::for_protocol(events_protocol_version)
+            == TransportSelection::Automatic
+        {
+            self.set_transport_selection(TransportSelection::Automatic);
+        }
+        if self.transport_selection() == TransportSelection::Automatic
+            && self.connections.control_device.is_some()
+            && self.device.events_transport == EventsTransport::Wired
+        {
+            self.attach_standby(events_device, owner).await;
+            return;
+        }
         // Repeated snapshots must not restart active streams, but a different
         // dongle must replace the old BLE endpoint even if it is still draining.
         let same_owner = self
@@ -82,29 +100,66 @@ impl DeviceHandler {
         );
     }
 
+    /// Keep the BLE link of a unit that streams over USB, with its streams subscribed, for
+    /// when the cable comes out.
+    async fn attach_standby(&mut self, link: VmDevice, owner: Arc<()>) {
+        let uuid = self.device.uuid;
+        let same_owner = self
+            .events_owner
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &owner));
+        if same_owner && self.standby.is_some() {
+            info!("AddEventsDevice for {uuid:02x?}: standby BLE link already attached");
+            return;
+        }
+        if let Some(mut old) = self.standby.take() {
+            detach_streams(&old.device, &mut old.sensors);
+        }
+        info!("AddEventsDevice - keeping BLE link of {uuid:02x?} as standby next to USB");
+        self.events_owner = Some(owner);
+        let sensors = SensorStreams::start(&link, uuid, self.protocol_version).await;
+        self.standby = Some(StandbyLink {
+            device: link,
+            sensors,
+        });
+    }
+
     pub(super) async fn on_add_control_device(
         &mut self,
         control_device: VmDevice,
         dfu: bool,
         events_protocol_version: [u16; 3],
+        transport_selection: TransportSelection,
     ) {
         let uuid = self.device.uuid;
-        info!("AddControlDevice - adding USB control device for {uuid:02x?}");
+        info!(
+            "AddControlDevice - adding USB control device for {uuid:02x?} ({transport_selection:?} transport)"
+        );
 
         self.refresh_firmware_version(&control_device).await;
-        if let Some(mode) = read_control_transport_mode(&control_device, uuid).await {
-            self.apply_transport_mode(mode);
-            if mode == TransportMode::Usb {
-                // A reboot or DFU may have replaced the old wired endpoint, or this
-                // handler may have started over BLE; the USB link probed last is current.
-                self.sensors.stop();
-                self.protocol_version = events_protocol_version;
-                self.connections.events_device = Some(control_device.clone());
-                self.sensors =
-                    SensorStreams::start(&control_device, uuid, self.protocol_version).await;
+        self.set_transport_selection(transport_selection);
+        match transport_selection {
+            TransportSelection::Automatic => {
+                self.take_usb_events(&control_device, events_protocol_version)
+                    .await;
+            }
+            TransportSelection::Manual => {
+                if let Some(mode) = read_control_transport_mode(&control_device, uuid).await {
+                    self.apply_transport_mode(mode);
+                    if mode == TransportMode::Usb {
+                        // A reboot or DFU may have replaced the old wired endpoint, or this
+                        // handler may have started over BLE; the USB link probed last is
+                        // current.
+                        self.sensors.stop();
+                        self.protocol_version = events_protocol_version;
+                        self.connections.events_device = Some(control_device.clone());
+                        self.sensors =
+                            SensorStreams::start(&control_device, uuid, self.protocol_version)
+                                .await;
+                    }
+                }
             }
         }
-
         self.connections.control_device = Some(control_device);
         self.device.capabilities.insert(DeviceCapabilities::CONTROL);
         if dfu {
@@ -122,6 +177,62 @@ impl DeviceHandler {
             "USB control device added successfully for {uuid:02x?}, capabilities: {:?}",
             self.device.capabilities
         );
+    }
+
+    /// Make USB the events device of a unit that picks its own transport. A BLE events
+    /// device becomes the standby link with its streams left running, because the
+    /// firmware may already be sending over USB or may still send a last few reports
+    /// over BLE.
+    async fn take_usb_events(&mut self, usb: &VmDevice, events_protocol_version: [u16; 3]) {
+        let uuid = self.device.uuid;
+        let previous = self.connections.events_device.take();
+        let previous_sensors = std::mem::replace(&mut self.sensors, SensorStreams::stopped());
+        match previous {
+            Some(ble) if self.device.events_transport == EventsTransport::Bluetooth => {
+                if let Some(mut old) = self.standby.take() {
+                    detach_streams(&old.device, &mut old.sensors);
+                }
+                info!("Device {uuid:02x?} streams over USB, BLE link kept as standby");
+                self.standby = Some(StandbyLink {
+                    device: ble,
+                    sensors: previous_sensors,
+                });
+            }
+            // A wired events device from before a reboot or re-enumeration is dead.
+            Some(stale_usb) => {
+                let mut sensors = previous_sensors;
+                detach_streams(&stale_usb, &mut sensors);
+            }
+            None => {}
+        }
+        if events_protocol_version != [0, 0, 0] {
+            self.protocol_version = events_protocol_version;
+        }
+        self.connections.events_device = Some(usb.clone());
+        self.sensors = SensorStreams::start(usb, uuid, self.protocol_version).await;
+        self.device.events_transport = EventsTransport::Wired;
+        self.device.events_connected = true;
+        self.device.capabilities.insert(DeviceCapabilities::EVENTS);
+    }
+
+    /// The cable came out: the standby BLE link, if any, becomes the events device. Its
+    /// streams are already subscribed, so reports keep flowing without a round trip.
+    fn promote_standby(&mut self) {
+        let Some(standby) = self.standby.take() else {
+            return;
+        };
+        info!(
+            "Device {:02x?} lost USB, events continue over the standby BLE link",
+            self.device.uuid
+        );
+        if let Some(usb) = self.connections.events_device.take() {
+            detach_streams(&usb, &mut self.sensors);
+        }
+        self.connections.events_device = Some(standby.device);
+        self.sensors = standby.sensors;
+        self.device.events_transport = EventsTransport::Bluetooth;
+        self.device.events_connected = true;
+        self.device.capabilities.insert(DeviceCapabilities::EVENTS);
     }
 
     /// Re-read the firmware version over USB control whenever it is (re)attached: after
@@ -202,6 +313,7 @@ impl DeviceHandler {
         self.device.capabilities.remove(DeviceCapabilities::CONTROL);
         // The DFU interface is only reachable over USB.
         self.device.capabilities.remove(DeviceCapabilities::DFU);
+        self.promote_standby();
 
         // Events over an active BLE connection survive the cable going away. A purely
         // wired unit's events went with the control connection, so the handler ends.
@@ -252,6 +364,14 @@ impl DeviceHandler {
         }
         self.events_owner = None;
         self.hub_device = None;
+        if let Some(mut standby) = self.standby.take() {
+            info!(
+                "RemoveEventsDevice - dropping standby BLE link of {:02x?}",
+                self.device.uuid
+            );
+            detach_streams(&standby.device, &mut standby.sensors);
+            return ControlFlow::Continue(());
+        }
         // A mux may have reported a unit that was already streaming over USB. Its
         // AddEventsDevice was ignored, so losing that mux must not drop wired events.
         if self.device.events_transport != EventsTransport::Bluetooth {
@@ -314,4 +434,12 @@ async fn read_control_transport_mode(
             None
         }
     }
+}
+
+/// Stop a detached link's streams without the per-stream Disable their drop would send:
+/// a unit that picks its own transport shares one set of subscriptions between its links,
+/// and the link that stays still needs them.
+fn detach_streams(link: &VmDevice, sensors: &mut SensorStreams) {
+    link.forget_streams();
+    sensors.stop();
 }

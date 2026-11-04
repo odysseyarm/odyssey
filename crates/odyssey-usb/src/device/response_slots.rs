@@ -152,9 +152,29 @@ impl State {
     }
 
     /// Hands a reply to whatever is waiting on its id.
+    ///
+    /// A stream report whose id does not name a stream of its type goes to this
+    /// link's stream of that type instead. A unit reachable over USB and BLE at
+    /// once keeps one subscription per report type and stamps every report with
+    /// the id of the last Enable, whichever link that Enable came over, so a
+    /// report can arrive with an id this link never issued.
     pub(super) fn deliver(&self, reply: Packet) -> Delivery {
+        let report_type = u8::from(reply.ty());
         let mut channels = self.response_channels.lock();
-        let Some(slot) = channels.get_mut(usize::from(reply.id)) else {
+        let mut index = usize::from(reply.id);
+        let id_names_no_stream_of_this_type = match channels.get(index) {
+            None | Some(ResponseChannel::None) => true,
+            Some(ResponseChannel::Stream(_, stream_type, _)) => {
+                u8::from(*stream_type) != report_type
+            }
+            Some(ResponseChannel::Oneshot(..) | ResponseChannel::Abandoned(_)) => false,
+        };
+        if id_names_no_stream_of_this_type
+            && let Some(stream_index) = stream_index_for(&channels, report_type)
+        {
+            index = stream_index;
+        }
+        let Some(slot) = channels.get_mut(index) else {
             // 255 is the no-reply id, not an index into the response table.
             return Delivery::Unregistered;
         };
@@ -177,6 +197,21 @@ impl State {
             }
         }
     }
+}
+
+/// Index of the stream slot subscribed to `report_type`, if any. Streams only
+/// occupy ids from [`STREAMING_ID_MIN`] up.
+fn stream_index_for(channels: &[ResponseChannel; SLOT_COUNT], report_type: u8) -> Option<usize> {
+    channels
+        .iter()
+        .enumerate()
+        .skip(STREAMING_ID_MIN)
+        .find_map(|(index, channel)| match channel {
+            ResponseChannel::Stream(_, stream_type, _) if u8::from(*stream_type) == report_type => {
+                Some(index)
+            }
+            _ => None,
+        })
 }
 
 /// A reserved request id. Dropping it releases the id, so a cancelled request

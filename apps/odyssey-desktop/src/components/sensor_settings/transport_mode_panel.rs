@@ -54,11 +54,15 @@ async fn switch_transport_mode(
 
 /// Shows a transport mode selector (BLE / USB) for ATS Lite / Lite1 devices.
 /// Requires only CONTROL capability, so it is visible even when the device is
-/// in BLE mode and the EVENTS bulk endpoint is not available.
+/// in BLE mode and the EVENTS bulk endpoint is not available. Firmware with
+/// AUTO_TRANSPORT picks its link itself and gets no selector.
 #[component]
 pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
     let should_render = supports_transport_switching(device.product_id)
-        && device.capabilities.contains(DeviceCapabilities::CONTROL);
+        && device.capabilities.contains(DeviceCapabilities::CONTROL)
+        && !device
+            .capabilities
+            .contains(DeviceCapabilities::AUTO_TRANSPORT);
 
     let mut status = use_signal(OpStatus::default);
     // The mode the user asked for, `None` when there is no override. Cleared once

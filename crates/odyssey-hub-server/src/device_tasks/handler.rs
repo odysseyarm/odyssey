@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Fuse, StreamExt as _};
-use odyssey_hub_common::device::Device;
+use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_usb::device::{GeneralSettings, MuxDevice, VmDevice};
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::{ReceiverStream, WatchStream};
@@ -18,8 +18,9 @@ use tracing::{debug, info, warn};
 
 use super::context::DeviceTaskContext;
 use super::messages::{DeviceTaskMessage, Message};
-use super::sensor_streams::{SensorStreams, StreamRestartTimers};
+use super::sensor_streams::{DeviceStreamEvent, SensorStreams, StreamRestartTimers};
 use super::tracking::DeviceTracker;
+use super::transport_selection::TransportSelection;
 
 /// Default budget for one request/response round trip to a unit.
 const CALL_TIMEOUT: Duration = Duration::from_secs(3);
@@ -36,6 +37,14 @@ pub(super) struct DeviceConnections {
     pub(super) control_device: Option<VmDevice>,
     /// Event streams, over direct USB or the BLE mux.
     pub(super) events_device: Option<VmDevice>,
+}
+
+/// The BLE link of a unit whose firmware picks its own transport, held while USB carries
+/// the reports. Its streams stay subscribed, so when the cable is pulled the reports the
+/// firmware sends over BLE straight away are forwarded before the USB scan notices.
+struct StandbyLink {
+    device: VmDevice,
+    sensors: SensorStreams,
 }
 
 /// Everything a handler needs to start.
@@ -62,6 +71,8 @@ pub(super) struct DeviceHandler {
     context: DeviceTaskContext,
     device: Device,
     connections: DeviceConnections,
+    /// Only for automatic transport selection, and only while USB is the events device.
+    standby: Option<StandbyLink>,
     protocol_version: [u16; 3],
     hub_device: Option<(MuxDevice, [u8; 6])>,
     events_owner: Option<Arc<()>>,
@@ -131,6 +142,7 @@ impl DeviceHandler {
             context,
             device,
             connections,
+            standby: None,
             protocol_version,
             hub_device,
             events_owner: None,
@@ -173,14 +185,17 @@ impl DeviceHandler {
                     self.on_streams_resume_due().await;
                 }
                 () = &mut self.stream_timers.retry_sleep,
-                    if !self.sensors.is_running()
-                        && !self.stream_timers.paused
-                        && self.connections.events_device.is_some() =>
+                    if !self.stream_timers.paused && self.has_stopped_streams() =>
                 {
                     self.on_streams_retry_due().await;
                 }
                 maybe_event = self.sensors.next_event(), if self.sensors.is_running() => {
                     self.on_sensor_event(maybe_event).await;
+                }
+                maybe_event = next_standby_event(&mut self.standby),
+                    if self.standby.as_ref().is_some_and(|link| link.sensors.is_running()) =>
+                {
+                    self.on_standby_event(maybe_event).await;
                 }
                 else => {
                     warn!(
@@ -267,9 +282,15 @@ impl DeviceHandler {
                 device,
                 dfu,
                 events_protocol_version,
+                transport_selection,
             } => {
-                self.on_add_control_device(device, dfu, events_protocol_version)
-                    .await;
+                self.on_add_control_device(
+                    device,
+                    dfu,
+                    events_protocol_version,
+                    transport_selection,
+                )
+                .await;
             }
             DeviceTaskMessage::SetNetCoreRelease(release) => {
                 self.on_net_core_release(release).await;
@@ -306,6 +327,54 @@ impl DeviceHandler {
             sender.send_replace(u32::from(ms));
             watchers.insert(uuid, sender);
         }
+    }
+
+    /// The device entry's `AUTO_TRANSPORT` capability is the handler's record of it, so
+    /// clients and the handler cannot disagree.
+    fn transport_selection(&self) -> TransportSelection {
+        if self
+            .device
+            .capabilities
+            .contains(DeviceCapabilities::AUTO_TRANSPORT)
+        {
+            TransportSelection::Automatic
+        } else {
+            TransportSelection::Manual
+        }
+    }
+
+    fn set_transport_selection(&mut self, selection: TransportSelection) {
+        match selection {
+            TransportSelection::Automatic => self
+                .device
+                .capabilities
+                .insert(DeviceCapabilities::AUTO_TRANSPORT),
+            TransportSelection::Manual => self
+                .device
+                .capabilities
+                .remove(DeviceCapabilities::AUTO_TRANSPORT),
+        }
+    }
+
+    /// A link is attached whose sensor streams are not running.
+    fn has_stopped_streams(&self) -> bool {
+        let events_stopped = self.connections.events_device.is_some() && !self.sensors.is_running();
+        let standby_stopped = self
+            .standby
+            .as_ref()
+            .is_some_and(|link| !link.sensors.is_running());
+        events_stopped || standby_stopped
+    }
+
+    /// The links a packet-protocol request can take, in the order to try them: the events
+    /// device, then the standby link.
+    fn packet_links(&self) -> Vec<VmDevice> {
+        self.connections
+            .events_device
+            .iter()
+            .chain(self.standby.as_ref().map(|link| &link.device))
+            .cloned()
+            .collect()
     }
 }
 
@@ -386,5 +455,40 @@ async fn call_with_timeout<T, E: ToString>(
     match tokio::time::timeout(limit, call).await {
         Ok(result) => result.map_err(|e| e.to_string()),
         Err(_) => Err(format!("{call_name} timed out")),
+    }
+}
+
+/// [`call_with_timeout`] over each of `links` in turn until one succeeds; the error is the
+/// last link's. While the cable is in the first link is USB, and a request caught by the
+/// unplug fails there before the scan notices, while the unit already listens on BLE.
+async fn call_over_links<T, Call, Fut>(
+    links: &[VmDevice],
+    limit: Duration,
+    call_name: &str,
+    call: Call,
+) -> Result<T, String>
+where
+    Call: Fn(VmDevice) -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    let mut result = Err(format!("{call_name}: no device available"));
+    for (attempt, link) in links.iter().enumerate() {
+        if let Err(e) = &result
+            && attempt > 0
+        {
+            warn!("{call_name} failed ({e}), trying the next link");
+        }
+        result = call_with_timeout(limit, call_name, call(link.clone())).await;
+        if result.is_ok() {
+            break;
+        }
+    }
+    result
+}
+
+async fn next_standby_event(standby: &mut Option<StandbyLink>) -> Option<DeviceStreamEvent> {
+    match standby {
+        Some(link) => link.sensors.next_event().await,
+        None => std::future::pending().await,
     }
 }

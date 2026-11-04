@@ -2,9 +2,10 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
-use odyssey_protocol::{PropKind, Props};
+use odyssey_protocol::{PropKind, Props, Version};
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::PacketData;
 use tokio::sync::mpsc;
@@ -13,9 +14,15 @@ use super::{DeviceSnapshot, HubManager, MAX_HUB_CONNECT_ATTEMPTS, ManagedDevice}
 use crate::device_tasks::context::{DeviceAddress, RunningDevice};
 use crate::device_tasks::handler::{DeviceConnections, DeviceHandler, DeviceHandlerInit};
 use crate::device_tasks::messages::{DeviceChannels, DeviceTaskMessage, Message};
+use crate::device_tasks::transport_selection::TransportSelection;
 
 /// Capacity of a handler's control channel.
 const HANDLER_CHANNEL_CAPACITY: usize = 32;
+
+/// The version read is the first packet a fresh BLE link carries, and the first packet
+/// after a unit (re)boots is sometimes lost, so it is re-sent.
+const VERSION_READ_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
+const VERSION_READ_ATTEMPTS: usize = 3;
 
 /// What a unit reached over Bluetooth says about itself.
 struct BleDeviceIdentity {
@@ -96,17 +103,25 @@ impl HubManager {
     /// Connect to a newly reported unit and give it a handler, or attach the dongle's events
     /// to the handler a cable already created for it.
     async fn add_device(&mut self, address: DeviceAddress) {
-        let Some(vm_device) = self.connect_to_device(address).await else {
+        let Some((vm_device, version)) = self.connect_to_device(address).await else {
             return;
         };
-        let identity = self.read_device_identity(&vm_device, address).await;
+        let identity = self
+            .read_device_identity(&vm_device, address, version)
+            .await;
         let uuid = identity.uuid;
+        let transport_selection =
+            TransportSelection::for_protocol(identity.events_protocol_version);
+        let mut capabilities = DeviceCapabilities::empty();
+        if transport_selection == TransportSelection::Automatic {
+            capabilities.insert(DeviceCapabilities::AUTO_TRANSPORT);
+        }
         let device = Device {
             uuid,
             transport: Transport::UsbMux,
             // AddEventsDevice sets EVENTS and events_connected once the streams are
             // established.
-            capabilities: DeviceCapabilities::empty(),
+            capabilities,
             firmware_version: identity.firmware_version,
             events_transport: EventsTransport::Bluetooth,
             events_connected: false,
@@ -149,13 +164,29 @@ impl HubManager {
             .insert(address, ManagedDevice { uuid, commands });
     }
 
-    /// Open a VmDevice connection to the unit. A failure is counted so the
-    /// retry tick gives up after [`MAX_HUB_CONNECT_ATTEMPTS`].
-    async fn connect_to_device(&mut self, address: DeviceAddress) -> Option<VmDevice> {
-        match VmDevice::connect_via_mux(self.hub.clone(), address).await {
-            Ok(vm_device) => {
+    /// Open a link to the unit and read its version, which says whether its streams have
+    /// to be reset. A failure is counted so the retry tick gives up after
+    /// [`MAX_HUB_CONNECT_ATTEMPTS`].
+    ///
+    /// Old firmware keeps a separate set of streams per link, and the ones a previous
+    /// session left on this link are stopped before anything else is read. Firmware that
+    /// picks its own transport shares one set between USB and BLE, so a reset here would
+    /// cut off the reports a plugged-in unit is sending over USB.
+    async fn connect_to_device(&mut self, address: DeviceAddress) -> Option<(VmDevice, Version)> {
+        let vm_device = VmDevice::open_via_mux(self.hub.clone(), address);
+        let connected = async {
+            let version = read_version(&vm_device).await?;
+            if TransportSelection::for_protocol(version.protocol_semver)
+                == TransportSelection::Manual
+            {
+                vm_device.clear_all_streams().await?;
+            }
+            anyhow::Ok(version)
+        };
+        match connected.await {
+            Ok(version) => {
                 self.failed_adds.remove(&address);
-                Some(vm_device)
+                Some((vm_device, version))
             }
             Err(e) => {
                 let attempts = self.failed_adds.entry(address).or_insert(0);
@@ -172,6 +203,7 @@ impl HubManager {
         &self,
         vm_device: &VmDevice,
         address: DeviceAddress,
+        version: Version,
     ) -> BleDeviceIdentity {
         let uuid = match vm_device.read_prop(PropKind::Uuid).await {
             Ok(Props::Uuid(uuid_bytes)) => uuid_bytes,
@@ -184,36 +216,11 @@ impl HubManager {
                 address
             }
         };
-        tracing::info!("Device {address:02x?} has UUID {uuid:02x?}");
-
-        // The packet interface works over BLE.
-        let (firmware_version, events_protocol_version) = match vm_device
-            .request(PacketData::ReadVersion())
-            .await
-        {
-            Ok(PacketData::ReadVersionResponse(version)) => {
-                tracing::info!(
-                    "BLE device {uuid:02x?} firmware version: {}.{}.{}, events protocol: {}.{}.{}",
-                    version.firmware_semver[0],
-                    version.firmware_semver[1],
-                    version.firmware_semver[2],
-                    version.protocol_semver[0],
-                    version.protocol_semver[1],
-                    version.protocol_semver[2],
-                );
-                (version.firmware_semver, version.protocol_semver)
-            }
-            Ok(other) => {
-                tracing::warn!(
-                    "Unexpected response reading version from BLE device {uuid:02x?}: {other:?}"
-                );
-                ([0, 0, 0], [0, 0, 0])
-            }
-            Err(e) => {
-                tracing::warn!("Failed to read version from BLE device {uuid:02x?}: {e}");
-                ([0, 0, 0], [0, 0, 0])
-            }
-        };
+        tracing::info!(
+            "BLE device {address:02x?} has UUID {uuid:02x?}, firmware version: {:?}, events protocol: {:?}",
+            version.firmware_semver,
+            version.protocol_semver,
+        );
 
         let product_id = match vm_device.read_prop(PropKind::ProductId).await {
             Ok(Props::ProductId(id)) => id,
@@ -222,8 +229,8 @@ impl HubManager {
 
         BleDeviceIdentity {
             uuid,
-            firmware_version,
-            events_protocol_version,
+            firmware_version: version.firmware_semver,
+            events_protocol_version: version.protocol_semver,
             product_id,
             name: self.device_name(vm_device, address).await,
         }
@@ -398,5 +405,19 @@ impl HubManager {
                 )))
                 .await;
         }
+    }
+}
+
+async fn read_version(vm_device: &VmDevice) -> anyhow::Result<Version> {
+    match vm_device
+        .request_with_retry(
+            PacketData::ReadVersion(),
+            VERSION_READ_ATTEMPT_TIMEOUT,
+            VERSION_READ_ATTEMPTS,
+        )
+        .await?
+    {
+        PacketData::ReadVersionResponse(version) => Ok(version),
+        other => anyhow::bail!("unexpected reply to ReadVersion: {other:?}"),
     }
 }

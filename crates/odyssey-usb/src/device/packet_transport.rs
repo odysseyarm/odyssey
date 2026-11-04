@@ -82,6 +82,21 @@ impl PacketTransport {
         }
     }
 
+    /// A transport over in-process channels, for a simulated unit: what the host
+    /// sends comes out of the receiver paired with `writer`, and what is put into
+    /// the sender paired with `incoming_rx` arrives as if from the unit. Dropping
+    /// that sender closes the link.
+    pub fn from_channels(
+        writer: mpsc::Sender<Packet>,
+        incoming_rx: mpsc::Receiver<Packet>,
+    ) -> Self {
+        Self {
+            writer,
+            incoming_rx,
+            cancel: Arc::new(CancellationToken::new()),
+        }
+    }
+
     /// A transport whose packets are tunnelled through `mux` to and from the
     /// device at `device_addr`.
     pub fn mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
