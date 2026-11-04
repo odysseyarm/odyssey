@@ -56,7 +56,7 @@ impl FirmwareChannel {
             .map_or(Self::Stable, |name| Self::from_name(&name))
     }
 
-    pub async fn save(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn save(self) -> Result<(), odyssey_hub_common::config::ConfigError> {
         odyssey_hub_common::config::firmware_channel_save_async(self.name()).await
     }
 
@@ -197,9 +197,55 @@ pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
 /// act on a manifest they would misread.
 pub const SUPPORTED_MANIFEST_VERSION: u32 = 1;
 
-/// Fetch the firmware manifest for a channel from GitHub, or in offline mode read
-/// it from the firmware pack, offering only the releases the pack can complete.
-pub async fn fetch_manifest(channel: FirmwareChannel) -> anyhow::Result<FirmwareManifest> {
+/// Network and offline-pack failures retain their concrete source errors.
+/// Callers can distinguish an incompatible manifest from an incomplete pack
+/// without inspecting the user-facing message.
+#[derive(Debug, Error)]
+pub enum FirmwareSourceError {
+    #[error("firmware request failed")]
+    Network(#[from] reqwest::Error),
+    #[error(
+        "firmware manifest is version {0}, newer than the {SUPPORTED_MANIFEST_VERSION} this build understands; update Odyssey"
+    )]
+    ManifestVersion(u32),
+    #[error("SHA256 mismatch: expected {expected}, got {actual}")]
+    HashMismatch { expected: String, actual: String },
+    #[error("firmware size mismatch: expected {expected} bytes, received {actual}")]
+    ImageSize { expected: u64, actual: u64 },
+    #[error(
+        "There is no firmware pack in {dir}: {manifest} is missing. Unpack the Odyssey offline firmware pack into that folder."
+    )]
+    MissingPack {
+        dir: std::path::PathBuf,
+        manifest: String,
+    },
+    #[error("could not read firmware pack file {path}")]
+    Read {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{path} is not a firmware manifest")]
+    Manifest {
+        path: std::path::PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("The firmware pack in {dir} has no complete release.{details}")]
+    IncompletePack {
+        dir: std::path::PathBuf,
+        details: String,
+    },
+}
+
+/// Fetch the channel manifest from GitHub, or complete releases from the offline pack.
+///
+/// # Errors
+/// Returns [`FirmwareSourceError`] for failed requests, unreadable or invalid
+/// packs, unsupported manifest versions, or packs with no complete release.
+pub async fn fetch_manifest(
+    channel: FirmwareChannel,
+) -> Result<FirmwareManifest, FirmwareSourceError> {
     if policy::offline() {
         let dir = policy::firmware_pack_dir();
         let loaded = pack::load_manifest(&dir, channel)?;
@@ -222,11 +268,7 @@ pub async fn fetch_manifest(channel: FirmwareChannel) -> anyhow::Result<Firmware
         .json()
         .await?;
     if manifest.version > SUPPORTED_MANIFEST_VERSION {
-        anyhow::bail!(
-            "firmware manifest is version {}, newer than the {} this build understands; update the application",
-            manifest.version,
-            SUPPORTED_MANIFEST_VERSION
-        );
+        return Err(FirmwareSourceError::ManifestVersion(manifest.version));
     }
     Ok(manifest)
 }
@@ -380,13 +422,16 @@ pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename
 }
 
 /// Fails unless `data` hashes to `expected_sha256`.
-fn verify_sha256(data: &[u8], expected_sha256: &str) -> anyhow::Result<()> {
+fn verify_sha256(data: &[u8], expected_sha256: &str) -> Result<(), FirmwareSourceError> {
     let mut hasher = Sha256::new();
     hasher.update(data);
     let hash_hex = hex::encode(hasher.finalize());
 
     if hash_hex != expected_sha256 {
-        anyhow::bail!("SHA256 mismatch: expected {expected_sha256}, got {hash_hex}");
+        return Err(FirmwareSourceError::HashMismatch {
+            expected: expected_sha256.to_owned(),
+            actual: hash_hex,
+        });
     }
     Ok(())
 }
@@ -394,19 +439,28 @@ fn verify_sha256(data: &[u8], expected_sha256: &str) -> anyhow::Result<()> {
 /// Download a firmware file and verify its SHA256 hash. In offline mode the file
 /// comes from the firmware pack instead and nothing touches the network.
 /// Online transfers have a two-minute deadline covering headers and body.
+/// The manifest's declared size bounds accumulation before hash validation.
 pub async fn download_firmware(
     device_type: &str,
     source: ReleaseSource<'_>,
     filename: &str,
     expected_sha256: &str,
-) -> anyhow::Result<Vec<u8>> {
+    expected_size: u64,
+) -> Result<Vec<u8>, FirmwareSourceError> {
     if policy::offline() {
         let dir = policy::firmware_pack_dir();
         tracing::info!(
             "Reading {filename} from the firmware pack in {}",
             dir.display()
         );
-        return pack::read_file(&dir, device_type, source, filename, expected_sha256);
+        return pack::read_file(
+            &dir,
+            device_type,
+            source,
+            filename,
+            expected_sha256,
+            expected_size,
+        );
     }
 
     let url = build_download_url(device_type, source, filename);
@@ -420,12 +474,26 @@ pub async fn download_firmware(
     let response = client.get(&url).send().await?;
     tracing::debug!("Got response, status: {}", response.status());
 
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to download firmware: HTTP {}", response.status());
-    }
+    let mut response = response.error_for_status()?;
 
     tracing::debug!("Reading response bytes...");
-    let data = response.bytes().await?.to_vec();
+    let mut data = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        let actual = data.len() as u64 + chunk.len() as u64;
+        if actual > expected_size {
+            return Err(FirmwareSourceError::ImageSize {
+                expected: expected_size,
+                actual,
+            });
+        }
+        data.extend_from_slice(&chunk);
+    }
+    if data.len() as u64 != expected_size {
+        return Err(FirmwareSourceError::ImageSize {
+            expected: expected_size,
+            actual: data.len() as u64,
+        });
+    }
     tracing::debug!("Got {} bytes", data.len());
 
     verify_sha256(&data, expected_sha256)?;
@@ -759,6 +827,8 @@ impl std::fmt::Display for BootloaderTooOld {
     }
 }
 
+impl std::error::Error for BootloaderTooOld {}
+
 /// Decide what the bootloader needs before the application is written.
 ///
 /// Returns whether to flash `published`. Two rules, kept apart because they
@@ -812,6 +882,8 @@ impl std::fmt::Display for NetCoreTooOld {
         )
     }
 }
+
+impl std::error::Error for NetCoreTooOld {}
 
 /// Decide whether the net core has to be written, and whether the update is
 /// allowed at all.

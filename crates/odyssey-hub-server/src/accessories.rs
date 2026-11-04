@@ -165,9 +165,15 @@ impl AccessoryManager {
         let scan_stream = IntervalStream::new(time::interval(SCAN_INTERVAL)).then(move |_| {
             let adapter = adapter.clone();
             async move {
-                let _ = adapter.start_scan(ScanFilter { services: vec![] }).await;
+                // Debug, not warn: a scan restarts every few seconds, and an adapter
+                // that refuses one usually refuses them all.
+                if let Err(error) = adapter.start_scan(ScanFilter { services: vec![] }).await {
+                    debug!("accessory scan did not start: {error}");
+                }
                 time::sleep(SCAN_DURATION).await;
-                let _ = adapter.stop_scan().await;
+                if let Err(error) = adapter.stop_scan().await {
+                    debug!("accessory scan did not stop: {error}");
+                }
                 AccessoryEvent::ScanComplete
             }
         });

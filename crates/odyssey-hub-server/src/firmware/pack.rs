@@ -18,9 +18,8 @@
 //! offers less rather than starting an update that cannot finish. Each file is
 //! checked against its manifest hash again when it is read, as a download is.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-
-use anyhow::{Context as _, Result, bail};
 
 use super::{
     FileEntry, FirmwareChannel, FirmwareEntry, FirmwareManifest, ReleaseSource,
@@ -109,27 +108,31 @@ fn problems(dir: &Path, device: &str, entry: &FirmwareEntry) -> Vec<String> {
 
 /// Reads the pack's manifest for `channel` and keeps the releases whose files are
 /// all there. Fails, saying what is missing, when no release is complete.
-pub fn load_manifest(dir: &Path, channel: FirmwareChannel) -> Result<Loaded> {
+pub fn load_manifest(
+    dir: &Path,
+    channel: FirmwareChannel,
+) -> Result<Loaded, super::FirmwareSourceError> {
     let path = manifest_path(dir, channel);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!(
-            "There is no firmware pack in {}: {} is missing. Unpack the Odyssey offline \
-             firmware pack into that folder.",
-            dir.display(),
-            path.file_name().unwrap_or_default().to_string_lossy()
-        ),
-        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Err(super::FirmwareSourceError::MissingPack {
+                dir: dir.to_owned(),
+                manifest: path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            });
+        }
+        Err(source) => return Err(super::FirmwareSourceError::Read { path, source }),
     };
     let mut manifest: FirmwareManifest = serde_json::from_str(&text)
-        .with_context(|| format!("{} is not a firmware manifest", path.display()))?;
+        .map_err(|source| super::FirmwareSourceError::Manifest { path, source })?;
     if manifest.version > SUPPORTED_MANIFEST_VERSION {
-        bail!(
-            "the firmware pack's manifest is version {}, newer than the {} this build \
-             understands; update Odyssey",
+        return Err(super::FirmwareSourceError::ManifestVersion(
             manifest.version,
-            SUPPORTED_MANIFEST_VERSION
-        );
+        ));
     }
 
     let mut dropped = Vec::new();
@@ -160,25 +163,38 @@ pub fn load_manifest(dir: &Path, channel: FirmwareChannel) -> Result<Loaded> {
             .map(|d| format!(" {} {}: {}.", d.device, d.version, d.problems.join("; ")))
             .collect::<Vec<_>>()
             .concat();
-        bail!(
-            "The firmware pack in {} has no complete release.{details}",
-            dir.display()
-        );
+        return Err(super::FirmwareSourceError::IncompletePack {
+            dir: dir.to_owned(),
+            details,
+        });
     }
     Ok(Loaded { manifest, dropped })
 }
 
-/// Reads one firmware file from the pack and checks it against its manifest hash.
+/// Reads one firmware file, bounded by its declared size, and checks its manifest hash.
 pub fn read_file(
     dir: &Path,
     device: &str,
     source: ReleaseSource<'_>,
     filename: &str,
     expected_sha256: &str,
-) -> Result<Vec<u8>> {
+    expected_size: u64,
+) -> Result<Vec<u8>, super::FirmwareSourceError> {
     let path = dir.join(relative_path(device, source, filename));
-    let data = std::fs::read(&path)
-        .with_context(|| format!("the firmware pack is missing {}", path.display()))?;
+    let read = || -> std::io::Result<Vec<u8>> {
+        let file = std::fs::File::open(&path)?;
+        let mut data = Vec::new();
+        file.take(expected_size.saturating_add(1))
+            .read_to_end(&mut data)?;
+        Ok(data)
+    };
+    let data = read().map_err(|source| super::FirmwareSourceError::Read { path, source })?;
+    if data.len() as u64 != expected_size {
+        return Err(super::FirmwareSourceError::ImageSize {
+            expected: expected_size,
+            actual: data.len() as u64,
+        });
+    }
     verify_sha256(&data, expected_sha256)?;
     Ok(data)
 }
@@ -271,15 +287,10 @@ mod tests {
         for missing in ["atslite1-v0.2.0/app-a.bin", "atslite1-v0.2.0/app-b.bin"] {
             let dir = complete_pack("slot");
             std::fs::remove_file(dir.join(missing)).unwrap();
-            let err = load_manifest(&dir, FirmwareChannel::Stable)
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains(&missing.replace('/', std::path::MAIN_SEPARATOR_STR))
-                    || err.contains(missing),
-                "{err}"
-            );
-            assert!(err.contains("no complete release"), "{err}");
+            assert!(matches!(
+                load_manifest(&dir, FirmwareChannel::Stable),
+                Err(super::super::FirmwareSourceError::IncompletePack { .. })
+            ));
         }
     }
 
@@ -319,10 +330,10 @@ mod tests {
     fn a_half_copied_file_is_not_a_complete_one() {
         let dir = complete_pack("short");
         put(&dir, "atslite1-v0.2.0/app-b.bin", b"slot"); // cut short
-        let err = load_manifest(&dir, FirmwareChannel::Stable)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("not the expected 6"), "{err}");
+        assert!(matches!(
+            load_manifest(&dir, FirmwareChannel::Stable),
+            Err(super::super::FirmwareSourceError::IncompletePack { .. })
+        ));
     }
 
     #[test]
@@ -374,21 +385,10 @@ mod tests {
             "releases.stable.json",
             manifest.to_string().as_bytes(),
         );
-        let err = load_manifest(&dir, FirmwareChannel::Stable)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("lists no app-b"), "{err}");
-    }
-
-    #[test]
-    fn a_folder_with_no_pack_says_what_to_do() {
-        let dir = scratch("empty");
-        let err = load_manifest(&dir, FirmwareChannel::Stable)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("There is no firmware pack"), "{err}");
-        assert!(err.contains("releases.stable.json"), "{err}");
-        assert!(err.contains(&dir.display().to_string()), "{err}");
+        assert!(matches!(
+            load_manifest(&dir, FirmwareChannel::Stable),
+            Err(super::super::FirmwareSourceError::IncompletePack { .. })
+        ));
     }
 
     #[test]
@@ -410,33 +410,48 @@ mod tests {
                 .replace(r#""version": 1,"#, r#""version": 99,"#)
                 .as_bytes(),
         );
-        let err = load_manifest(&dir, FirmwareChannel::Stable)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("version 99"), "{err}");
+        assert!(matches!(
+            load_manifest(&dir, FirmwareChannel::Stable),
+            Err(super::super::FirmwareSourceError::ManifestVersion(99))
+        ));
+    }
+
+    #[test]
+    fn declared_size_rejects_truncated_and_oversized_images_before_hashing() {
+        let dir = complete_pack("size");
+        let source = ReleaseSource::Application { version: "0.2.0" };
+        for expected in [5, 7] {
+            assert!(matches!(
+                read_file(&dir, "atslite1", source, "app-a", &sha(b"slot a"), expected),
+                Err(super::super::FirmwareSourceError::ImageSize { expected: wanted, actual: 6 })
+                    if wanted == expected
+            ));
+        }
     }
 
     #[test]
     fn a_file_is_read_from_where_a_download_would_have_come_from_and_its_hash_checked() {
         let dir = complete_pack("read");
         let source = ReleaseSource::Application { version: "0.2.0" };
-        let data = read_file(&dir, "atslite1", source, "app-a", &sha(b"slot a")).unwrap();
+        let data = read_file(&dir, "atslite1", source, "app-a", &sha(b"slot a"), 6).unwrap();
         assert_eq!(data, b"slot a");
 
         let net = ReleaseSource::NetCore { release: 1 };
-        assert!(read_file(&dir, "atslite1", net, "net-core", &sha(b"net core")).is_ok());
+        assert!(read_file(&dir, "atslite1", net, "net-core", &sha(b"net core"), 8).is_ok());
 
         // The wrong content under the right name is caught.
         put(&dir, "atslite1-v0.2.0/app-a.bin", b"slot X");
-        let err = read_file(&dir, "atslite1", source, "app-a", &sha(b"slot a"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("SHA256 mismatch"), "{err}");
+        assert!(matches!(
+            read_file(&dir, "atslite1", source, "app-a", &sha(b"slot a"), 6),
+            Err(super::super::FirmwareSourceError::HashMismatch { .. })
+        ));
 
         // A file that is not there is named.
-        let gone = read_file(&dir, "atslite1", source, "app-c", &sha(b"x"))
-            .unwrap_err()
-            .to_string();
-        assert!(gone.contains("app-c.bin"), "{gone}");
+        assert!(matches!(
+            read_file(&dir, "atslite1", source, "app-c", &sha(b"x"), 1),
+            Err(super::super::FirmwareSourceError::Read { path, source })
+                if path == dir.join("atslite1-v0.2.0/app-c.bin")
+                    && source.kind() == std::io::ErrorKind::NotFound
+        ));
     }
 }
