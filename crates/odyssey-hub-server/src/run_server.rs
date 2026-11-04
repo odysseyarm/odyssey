@@ -28,17 +28,19 @@ const ACCESSORY_MAP_CAPACITY: usize = 12;
 /// Which of the hub's long-running parts ended, as seen by the supervising loop.
 #[derive(Debug)]
 enum ServerEvent {
-    DeviceTasks,
-    AccessoryManager,
+    DeviceTasks(anyhow::Result<()>),
     /// A device task message was applied to the device and dongle lists.
     MessageForwarded,
-    TonicServer,
+    TonicServer(Result<(), tonic::transport::Error>),
 }
 
 /// Runs the hub: the gRPC server on the local socket, the device tasks, the accessory
 /// manager and the forwarding of device task messages into the shared lists.
 ///
 /// Returns once the gRPC server or the device tasks end, or `cancel_token` fires.
+/// Critical task failures are returned rather than reported as a clean shutdown.
+/// Cancellation does not wait for clients to close their streaming RPCs; Bluetooth
+/// readers are stopped and the manager disconnects its accessories before returning.
 pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
@@ -51,10 +53,10 @@ pub async fn run_server(
     let (dongle_list_change_sender, _) = broadcast::channel::<()>(DONGLE_LIST_CHANGE_CAPACITY);
     let (accessory_map_sender, _) = broadcast::channel(ACCESSORY_MAP_CAPACITY);
 
-    // The guard stops the screen watcher if run_server returns without a cancel.
-    let screen_watch_cancel = cancel_token.child_token();
-    let _screen_watch_stop = screen_watch_cancel.clone().drop_guard();
-    let config = StartupConfig::load(screen_watch_cancel).await;
+    // Both background tasks also stop if the run_server future itself is dropped.
+    let background_cancel = cancel_token.child_token();
+    let _background_stop = background_cancel.clone().drop_guard();
+    let config = StartupConfig::load(background_cancel.clone()).await;
 
     let shot_delay_watch = Arc::new(RwLock::new(HashMap::new()));
     let (accessory_info_sender, accessory_info_receiver) =
@@ -74,7 +76,7 @@ pub async fn run_server(
         screen_calibrations: Arc::clone(&config.screen_calibrations),
         device_shot_delays: Arc::clone(&config.device_shot_delays),
         shot_delay_watch: Arc::clone(&shot_delay_watch),
-        accessory_map,
+        accessory_map: Arc::clone(&accessory_map),
         accessory_map_sender: accessory_map_sender.clone(),
         dongle_list: Default::default(),
         dongle_list_change_sender: dongle_list_change_sender.clone(),
@@ -96,9 +98,21 @@ pub async fn run_server(
     }
     tracing::info!("Server running at {name:?}");
 
-    // Each of the hub's parts is a stream that yields one tagged event when it ends (the
-    let device_task_events = event_sender.clone();
-    // message forwarder: one per message), so one loop supervises all of them.
+    // Critical parts are supervised together; the optional Bluetooth manager
+    // owns its connections and is given time to disconnect during shutdown.
+    let accessory_cancel = background_cancel.clone();
+    let accessory_task = tokio::spawn(async move {
+        accessory_manager(
+            event_sender,
+            accessory_info_receiver,
+            accessory_map_sender,
+            device_list,
+            accessory_map,
+            accessory_cancel,
+        )
+        .await;
+    });
+    let device_task_events = server.event_sender.clone();
     let device_tasks_stream = stream::once(async move {
         tracing::info!("device_tasks_stream: starting");
         let result = device_tasks(
@@ -110,19 +124,7 @@ pub async fn run_server(
             device_task_events,
         )
         .await;
-        tracing::error!("device_tasks_stream: device_tasks returned {:?}", result);
-        ServerEvent::DeviceTasks
-    });
-
-    let accessory_stream = stream::once(async move {
-        accessory_manager(
-            event_sender,
-            accessory_info_receiver,
-            accessory_map_sender,
-            device_list,
-        )
-        .await;
-        ServerEvent::AccessoryManager
+        ServerEvent::DeviceTasks(result)
     });
 
     let message_stream = stream::unfold(
@@ -134,47 +136,50 @@ pub async fn run_server(
         },
     );
 
+    let tonic_cancel = cancel_token.clone();
     let tonic_stream = stream::once(async move {
-        let _ = tonic::transport::Server::builder()
+        let result = tonic::transport::Server::builder()
             .add_service(ServiceServer::new(server))
-            .serve_with_incoming_shutdown(connections, cancel_token.cancelled())
+            .serve_with_incoming_shutdown(connections, tonic_cancel.cancelled())
             .await;
-        ServerEvent::TonicServer
+        ServerEvent::TonicServer(result)
     });
 
     tracing::info!("run_server: merging streams");
-    let merged = (
-        device_tasks_stream,
-        accessory_stream,
-        message_stream,
-        tonic_stream,
-    )
-        .merge();
+    let merged = (device_tasks_stream, message_stream, tonic_stream).merge();
     tokio::pin!(merged);
     tracing::info!("run_server: entering main loop");
 
-    // Wait for any stream to complete (which means a critical task exited)
-    while let Some(event) = merged.next().await {
+    let result = loop {
+        let event = tokio::select! {
+            () = cancel_token.cancelled() => break Ok(()),
+            event = merged.next() => match event {
+                Some(event) => event,
+                None => break Ok(()),
+            },
+        };
         tracing::debug!("Server loop event: {:?}", event);
         match event {
-            ServerEvent::DeviceTasks => {
-                tracing::error!("Device tasks exited unexpectedly");
-                break;
-            }
-            ServerEvent::AccessoryManager => {
-                tracing::warn!("Accessory manager exited (Bluetooth unavailable?)");
+            ServerEvent::DeviceTasks(result) => {
+                break Err(ServerError::Other(match result {
+                    Ok(()) => anyhow::anyhow!("Device tasks exited unexpectedly"),
+                    Err(error) => error.context("Device tasks exited"),
+                }));
             }
             ServerEvent::MessageForwarded => tracing::trace!("Event forwarded"),
-            ServerEvent::TonicServer => {
-                tracing::info!("Tonic server exited");
-                break;
+            ServerEvent::TonicServer(result) => {
+                break result.map_err(|error| ServerError::Other(error.into()));
             }
         }
+    };
+    background_cancel.cancel();
+    if let Err(error) = accessory_task.await {
+        tracing::warn!("Accessory manager task failed: {error}");
     }
 
     tracing::info!("Server main loop ended");
 
-    Ok(())
+    result
 }
 
 #[cfg(test)]

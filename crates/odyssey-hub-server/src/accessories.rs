@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ops::ControlFlow;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
@@ -9,8 +9,10 @@ use futures_concurrency::stream::Merge as _;
 use odyssey_hub_common::accessory::{AccessoryInfoMap, AccessoryMap, AccessoryType};
 use odyssey_hub_common::events::{DeviceEvent, DeviceEventKind, Event, ImpactEvent};
 use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
 use tokio::time;
 use tokio_stream::wrappers::{IntervalStream, WatchStream};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -44,33 +46,22 @@ enum AccessoryEvent {
 /// Watches for the user's accessories over Bluetooth, keeps them connected, and turns a
 /// shot notification into an impact event for the device the accessory is assigned to.
 ///
-/// Returns when Bluetooth is unavailable; otherwise runs until its streams end.
+/// Returns when Bluetooth is unavailable or `cancel` fires. Notification tasks and
+/// Bluetooth connections are owned by this manager and stopped during teardown.
 pub(crate) async fn accessory_manager(
     event_tx: broadcast::Sender<Event>,
     info_watch: watch::Receiver<AccessoryInfoMap>,
     map_tx: broadcast::Sender<AccessoryMap>,
     device_list: DeviceList,
+    shared_map: Arc<Mutex<AccessoryMap>>,
+    cancel: CancellationToken,
 ) {
-    let manager = match Manager::new().await {
-        Ok(manager) => manager,
-        Err(e) => {
-            warn!("accessory_manager: failed to init BT manager: {e}");
-            return;
-        }
-    };
-    let adapter = loop {
-        match manager.adapters().await {
-            Ok(adapters) => {
-                if let Some(adapter) = adapters.into_iter().next() {
-                    break adapter;
-                }
-            }
-            Err(e) => {
-                warn!("accessory_manager: failed to list BT adapters: {e}");
-                return;
-            }
-        }
-        time::sleep(ADAPTER_POLL_INTERVAL).await;
+    let adapter = tokio::select! {
+        () = cancel.cancelled() => return,
+        adapter = find_adapter() => match adapter {
+            Some(adapter) => adapter,
+            None => return,
+        },
     };
 
     let info_map: AccessoryInfoMap = info_watch.borrow().clone();
@@ -80,12 +71,44 @@ pub(crate) async fn accessory_manager(
         event_tx,
         map_tx,
         last_statuses: info_map.keys().map(|&id| (id, false)).collect(),
-        periph_cache: HashMap::new(),
+        connections: HashMap::new(),
+        shared_map,
         info_map,
         info_watch,
     };
     accessories.send_if_changed();
-    accessories.run().await;
+    tokio::select! {
+        () = cancel.cancelled() => {}
+        () = accessories.run() => {}
+    }
+    accessories.disconnect_all().await;
+    if let Err(error) = accessories.adapter.stop_scan().await {
+        warn!("Failed to stop accessory scan: {error}");
+    }
+}
+
+async fn find_adapter() -> Option<Adapter> {
+    let manager = match Manager::new().await {
+        Ok(manager) => manager,
+        Err(error) => {
+            warn!("accessory_manager: failed to init BT manager: {error}");
+            return None;
+        }
+    };
+    loop {
+        match manager.adapters().await {
+            Ok(adapters) => {
+                if let Some(adapter) = adapters.into_iter().next() {
+                    return Some(adapter);
+                }
+            }
+            Err(error) => {
+                warn!("accessory_manager: failed to list BT adapters: {error}");
+                return None;
+            }
+        }
+        time::sleep(ADAPTER_POLL_INTERVAL).await;
+    }
 }
 
 struct AccessoryManager {
@@ -98,7 +121,24 @@ struct AccessoryManager {
     info_map: AccessoryInfoMap,
     /// Whether each configured accessory was connected after the last scan.
     last_statuses: HashMap<[u8; 6], bool>,
-    periph_cache: HashMap<[u8; 6], Peripheral>,
+    shared_map: Arc<Mutex<AccessoryMap>>,
+    connections: HashMap<[u8; 6], AccessoryConnection>,
+}
+
+/// Dropping the manager (including cancellation of its future) must not leave
+/// notification readers holding the old device list and event channel alive.
+struct AccessoryConnection {
+    peripheral: Peripheral,
+    notifications: Option<JoinHandle<()>>,
+    ty: AccessoryType,
+}
+
+impl Drop for AccessoryConnection {
+    fn drop(&mut self) {
+        if let Some(notifications) = &self.notifications {
+            notifications.abort();
+        }
+    }
 }
 
 impl AccessoryManager {
@@ -121,21 +161,35 @@ impl AccessoryManager {
         tokio::pin!(merged);
         while let Some(event) = merged.next().await {
             match event {
-                AccessoryEvent::InfoChanged => self.on_info_changed(),
+                AccessoryEvent::InfoChanged => self.on_info_changed().await,
                 AccessoryEvent::ScanComplete => self.on_scan_complete().await,
             }
         }
     }
 
-    fn on_info_changed(&mut self) {
+    async fn on_info_changed(&mut self) {
         self.info_map = self.info_watch.borrow().clone();
         self.last_statuses
             .retain(|id, _| self.info_map.contains_key(id));
         for &id in self.info_map.keys() {
             self.last_statuses.entry(id).or_insert(false);
         }
-        self.periph_cache
-            .retain(|id, _| self.info_map.contains_key(id));
+        let removed: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(id, connection)| {
+                self.info_map
+                    .get(*id)
+                    .is_none_or(|info| info.ty != connection.ty)
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        for id in removed {
+            self.disconnect(id).await;
+            if let Some(connected) = self.last_statuses.get_mut(&id) {
+                *connected = false;
+            }
+        }
         self.send_if_changed();
     }
 
@@ -148,27 +202,30 @@ impl AccessoryManager {
             .collect();
 
         for (id, ty) in configured {
-            let Some(peripheral) = by_address.get(&id).cloned() else {
-                *self.last_statuses.entry(id).or_insert(false) = false;
+            // Connected accessories need not keep advertising. Keep using the
+            // owned peripheral even when discovery does not return it this scan.
+            let peripheral = by_address.get(&id).cloned().or_else(|| {
+                self.connections
+                    .get(&id)
+                    .map(|connection| connection.peripheral.clone())
+            });
+            let Some(peripheral) = peripheral else {
+                self.last_statuses.insert(id, false);
                 continue;
             };
-            self.periph_cache
-                .entry(id)
-                .or_insert_with(|| peripheral.clone());
-
-            let mut connected = peripheral.is_connected().await.unwrap_or(false);
-            if !connected {
-                if self
-                    .connect_and_subscribe(&peripheral, id, ty)
-                    .await
-                    .is_break()
-                {
-                    // No status update for an accessory whose notifications cannot be read.
-                    continue;
-                }
-                connected = peripheral.is_connected().await.unwrap_or(false);
+            let connected = peripheral.is_connected().await.unwrap_or(false);
+            let subscribed = self
+                .connections
+                .get(&id)
+                .and_then(|connection| connection.notifications.as_ref())
+                .is_some_and(|notifications| !notifications.is_finished());
+            if !connected || !subscribed {
+                self.disconnect(id).await;
+                let ready = self.connect_and_subscribe(&peripheral, id, ty).await;
+                self.last_statuses.insert(id, ready);
+            } else {
+                self.last_statuses.insert(id, true);
             }
-            *self.last_statuses.entry(id).or_insert(false) = connected;
         }
 
         self.send_if_changed();
@@ -187,22 +244,35 @@ impl AccessoryManager {
         by_address
     }
 
-    /// Connect to an accessory and start forwarding its shot notifications. `Break` only
-    /// when the notification stream could not be opened; every other failure is logged
-    /// and the next scan tries again.
+    /// A connection is ready only after its notification reader is running.
+    /// Failed setup disconnects so a later scan can retry the whole subscription.
     async fn connect_and_subscribe(
-        &self,
+        &mut self,
         peripheral: &Peripheral,
         id: [u8; 6],
         ty: AccessoryType,
-    ) -> ControlFlow<()> {
-        if let Err(e) = peripheral.connect().await {
+    ) -> bool {
+        // Register before the first await so cancellation during setup also
+        // disconnects a peripheral that has not acquired a notification reader.
+        self.connections.insert(
+            id,
+            AccessoryConnection {
+                peripheral: peripheral.clone(),
+                notifications: None,
+                ty,
+            },
+        );
+        if !peripheral.is_connected().await.unwrap_or(false)
+            && let Err(e) = peripheral.connect().await
+        {
             warn!("Failed to connect to {id:?}: {e}");
-            return ControlFlow::Continue(());
+            self.disconnect(id).await;
+            return false;
         }
         if let Err(e) = peripheral.discover_services().await {
             warn!("Failed to discover services for {id:?}: {e}");
-            return ControlFlow::Continue(());
+            self.disconnect(id).await;
+            return false;
         }
 
         // pick characteristic by accessory type
@@ -216,23 +286,25 @@ impl AccessoryManager {
             .find(|c| c.uuid == shot_characteristic)
         else {
             warn!("No target characteristic ({ty:?}) found for {id:?}");
-            return ControlFlow::Continue(());
+            self.disconnect(id).await;
+            return false;
         };
         if let Err(e) = peripheral.subscribe(&characteristic).await {
             warn!("Subscribe failed for {id:?}: {e}");
-            return ControlFlow::Continue(());
+            self.disconnect(id).await;
+            return false;
         }
         info!("Subscribed to {ty:?} notifications on {id:?}");
         let notifications = match peripheral.notifications().await {
             Ok(notifications) => notifications,
             Err(e) => {
                 warn!("Failed to get notifications stream for {id:?}: {e}");
-                return ControlFlow::Break(());
+                self.disconnect(id).await;
+                return false;
             }
         };
 
-        // Detached: it ends when the accessory's notification stream ends (the accessory
-        // disconnected), which it logs; the next scan then reconnects and starts another.
+        // One owned reader per accessory; reconnects and removal stop the old reader.
         let forwarder = ShotForwarder {
             device_list: self.device_list.clone(),
             event_tx: self.event_tx.clone(),
@@ -241,19 +313,59 @@ impl AccessoryManager {
             ty,
             shot_characteristic,
         };
-        tokio::spawn(forwarder.run(notifications));
-        ControlFlow::Continue(())
+        self.connections.insert(
+            id,
+            AccessoryConnection {
+                peripheral: peripheral.clone(),
+                notifications: Some(tokio::spawn(forwarder.run(notifications))),
+                ty,
+            },
+        );
+        true
+    }
+
+    async fn disconnect(&mut self, id: [u8; 6]) {
+        if let Some(connection) = self.connections.get(&id) {
+            if let Some(notifications) = &connection.notifications {
+                notifications.abort();
+            }
+            if let Err(error) = connection.peripheral.disconnect().await {
+                warn!("Failed to disconnect accessory {id:?}: {error}");
+            }
+        }
+        self.connections.remove(&id);
+    }
+
+    async fn disconnect_all(&mut self) {
+        for connection in self.connections.values() {
+            if let Some(notifications) = &connection.notifications {
+                notifications.abort();
+            }
+        }
+        let ids: Vec<_> = self.connections.keys().copied().collect();
+        for id in ids {
+            self.disconnect(id).await;
+        }
+        for connected in self.last_statuses.values_mut() {
+            *connected = false;
+        }
+        self.send_if_changed();
     }
 
     fn send_if_changed(&self) {
         let current: AccessoryMap = self
-            .info_map
+            .info_watch
+            .borrow()
             .iter()
             .map(|(&id, info)| {
                 let connected = *self.last_statuses.get(&id).unwrap_or(&false);
                 (id, (info.clone(), connected))
             })
             .collect();
+        *self
+            .shared_map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = current.clone();
         let _ = self.map_tx.send(current);
     }
 }
@@ -293,6 +405,7 @@ impl ShotForwarder {
             .info_watch
             .borrow()
             .get(&self.id)
+            .filter(|info| info.ty == self.ty)
             .and_then(|info| info.assignment);
         let Some(assignment) = assignment else {
             return;

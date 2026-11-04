@@ -1,10 +1,12 @@
+use std::process::ExitCode;
+
 use odyssey_hub_server::{self, Message};
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
@@ -15,28 +17,40 @@ async fn main() {
         .init();
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let cancel_token = CancellationToken::new();
-    tokio::spawn({
-        let cancel_token = cancel_token.clone();
-        async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to listen for ctrl-c");
-            cancel_token.cancel();
-        }
-    });
 
     // Spawn server in background
-    let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token));
+    let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token.clone()));
 
-    // Handle status messages
-    handle_server_status(receiver).await;
-
-    // Wait for server task to complete
+    let status = tokio::select! {
+        status = handle_server_status(receiver) => status,
+        signal = tokio::signal::ctrl_c() => {
+            cancel_token.cancel();
+            signal.map(|()| false).map_err(|e| format!("Failed to listen for Ctrl+C: {e}"))
+        }
+    };
+    cancel_token.cancel();
     let result = server_handle.await;
-    tracing::info!("Server exited with: {result:?}");
+    match (status, result) {
+        (Err(error), _) => {
+            tracing::error!("{error}");
+            ExitCode::FAILURE
+        }
+        (Ok(true), Ok(_)) | (Ok(false), Ok(Ok(()))) => ExitCode::SUCCESS,
+        (_, Ok(Err(error))) => {
+            tracing::error!("Server failed: {error}");
+            ExitCode::FAILURE
+        }
+        (_, Err(error)) => {
+            tracing::error!("Server task failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
-async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>) {
+/// `true` means an existing instance was successfully notified instead of starting.
+async fn handle_server_status(
+    mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>,
+) -> Result<bool, String> {
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(_))) => {
@@ -51,20 +65,18 @@ async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver
 
                     // Try to connect to the existing instance and call BringToFront
                     let mut client = odyssey_hub_client::client::Client::default();
-                    if let Ok(()) = client.connect().await {
-                        match client.bring_to_front().await {
-                            Ok(()) => {
-                                tracing::info!("Successfully notified existing instance");
-                            }
-                            _ => {
-                                tracing::warn!("Failed to notify existing instance");
-                            }
-                        }
-                    }
-                } else {
-                    tracing::error!("Server start error: {}", e);
+                    client
+                        .connect()
+                        .await
+                        .map_err(|e| format!("Failed to connect to existing instance: {e}"))?;
+                    client
+                        .bring_to_front()
+                        .await
+                        .map_err(|e| format!("Failed to notify existing instance: {e}"))?;
+                    tracing::info!("Successfully notified existing instance");
+                    return Ok(true);
                 }
-                break;
+                return Err(format!("Server start error: {e}"));
             }
             Some(Message::Stop) => {
                 tracing::info!("Server stopped");
@@ -79,4 +91,5 @@ async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver
             }
         }
     }
+    Ok(false)
 }

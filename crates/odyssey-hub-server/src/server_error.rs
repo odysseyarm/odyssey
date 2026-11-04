@@ -1,7 +1,10 @@
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ServerError {
+    #[error("the hub endpoint is already in use")]
     SocketAlreadyInUse,
-    IoError(std::io::Error),
+    #[error("hub I/O failed: {0}")]
+    IoError(#[source] std::io::Error),
+    #[error(transparent)]
     Other(anyhow::Error),
 }
 
