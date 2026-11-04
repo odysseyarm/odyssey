@@ -32,7 +32,7 @@ pip install odysseyhubclient
 
 The module is imported as `ohc_uniffi`.
 
-**C and C++**
+**C**
 
 With vcpkg: add `https://github.com/odysseyarm/vcpkg-registry` to your
 project's `vcpkg-configuration.json` as a registry for the `odyssey-hub-client`
@@ -47,7 +47,25 @@ find_package(odyssey_hub_client CONFIG REQUIRED)
 target_link_libraries(your_app PRIVATE ohc)
 ```
 
-Include `ohc.h` from C or `ohc.hpp` from C++.
+Include `ohc.h`.
+
+**C++**
+
+With vcpkg: add `https://github.com/odysseyarm/vcpkg-registry` to your
+project's `vcpkg-configuration.json` as a registry for the `odyssey-hub-client`
+port, and add `odyssey-hub-client` to your `vcpkg.json`. Without vcpkg:
+download `odyssey-hub-client.zip` from the latest
+[`odyssey-hub-client-ffi` release](https://github.com/odysseyarm/odyssey/releases?q=odyssey-hub-client-ffi).
+
+Either way the package provides a CMake config and an `ohc` target:
+
+```cmake
+find_package(odyssey_hub_client CONFIG REQUIRED)
+target_link_libraries(your_app PRIVATE ohc)
+```
+
+Include `ohc.hpp`, and `ohc_extras.hpp` for the `TrackingHistory`
+wrapper.
 
 **Rust**
 
@@ -57,6 +75,8 @@ The crates are not on crates.io yet. Depend on them from git:
 [dependencies]
 odyssey-hub-client = { git = "https://github.com/odysseyarm/odyssey" }
 odyssey-hub-common = { git = "https://github.com/odysseyarm/odyssey" }
+# Only for zeroing: the Vector2 and Vector3 that zero() takes.
+odyssey-hub-server-interface = { git = "https://github.com/odysseyarm/odyssey" }
 ```
 
 Building them needs the Protocol Buffers compiler, `protoc`, on your `PATH`.

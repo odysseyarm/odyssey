@@ -76,9 +76,56 @@ await client.Zero(
 await client.zero(device, ohc.Vector3f32(x=0.0, y=-0.0635, z=0.0), ohc.Vector2f32(x=0.5, y=0.5))
 ```
 
+**C**
+
+```c
+static void on_zero_sent(struct ohc_UserObj userdata, enum ohc_ClientError error) {
+    (void)userdata;
+    if (error != OHC_CLIENT_ERROR_NONE) {
+        puts("Could not send the zero request");
+    }
+}
+
+/* Zero against the center of the screen, with Odyssey Desktop's offset.
+   The outcome arrives as an OHC_DEVICE_EVENT_KIND_ZERO_RESULT event. */
+client_zero(handle, client, (struct ohc_UserObj){NULL}, device,
+            (struct ohc_Vector3f32){0.0f, -0.0635f, 0.0f},
+            (struct ohc_Vector2f32){0.5f, 0.5f},
+            on_zero_sent);
+```
+
+**C++**
+
+```cpp
+// Zero against the center of the screen, with Odyssey Desktop's offset.
+// The outcome arrives as a ZERO_RESULT device event.
+ohc::client_zero(handle, client, ohc::UserObj{nullptr}, device,
+                 ohc::Vector3f32{0.0f, -0.0635f, 0.0f},
+                 ohc::Vector2f32{0.5f, 0.5f},
+                 [](ohc::UserObj, ohc::ClientError error) {
+                     if (error != ohc::ClientError::NONE) {
+                         std::puts("Could not send the zero request");
+                     }
+                 });
+```
+
+**Rust**
+
+```rust
+use odyssey_hub_server_interface::{Vector2, Vector3};
+
+// Zero against the center of the screen, with Odyssey Desktop's offset.
+// None zeroes with the device's current tracking.
+client
+    .device(device.clone())
+    .zero(Vector3 { x: 0.0, y: -0.0635, z: 0.0 }, Vector2 { x: 0.5, y: 0.5 }, None)
+    .await?;
+```
+
 <!-- /tabs -->
 
 > [!NOTE]
-> A zero set from your app lasts until Odyssey Desktop restarts. To keep it, the
-> user saves it on Odyssey Desktop's Zero page: the C#, Python, and C bindings
-> cannot save a zero themselves.
+> A zero set from your app lasts until Odyssey Desktop restarts. To keep it,
+> the user saves it on Odyssey Desktop's Zero page. Rust apps can also save it
+> themselves with `save_zero`, which the hub answers with a `SaveZeroResult`
+> event; the C#, Python, C, and C++ bindings can't save a zero.

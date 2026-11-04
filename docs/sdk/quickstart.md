@@ -60,6 +60,77 @@ async def main():
 asyncio.run(main())
 ```
 
+**C**
+
+```c
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 199309L /* for nanosleep */
+#endif
+#include <ohc.h>
+
+#include <stdatomic.h>
+#include <stdio.h>
+#ifdef _WIN32
+#include <windows.h>
+static void sleep_ms(unsigned ms) { Sleep(ms); }
+#else
+#include <time.h>
+static void sleep_ms(unsigned ms) {
+    struct timespec ts = {ms / 1000, (ms % 1000) * 1000000L};
+    nanosleep(&ts, NULL);
+}
+#endif
+
+static atomic_bool done = false;
+
+struct State {
+    struct ohc_Handle *handle;
+    struct ohc_Client *client;
+};
+
+static void on_event(struct ohc_UserObj userdata, enum ohc_ClientError error, struct ohc_Event event) {
+    (void)userdata;
+    if (error != OHC_CLIENT_ERROR_NONE) {
+        atomic_store(&done, true);
+        return;
+    }
+    if (event.tag != OHC_EVENT_DEVICE_EVENT) {
+        return;
+    }
+    const struct ohc_DeviceEvent *device_event = &event.device_event;
+    if (device_event->kind.tag == OHC_DEVICE_EVENT_KIND_TRACKING_EVENT) {
+        const struct ohc_TrackingEvent *tracking = &device_event->kind.tracking_event;
+        printf("aimpoint (%.3f, %.3f)\n", tracking->aimpoint.x, tracking->aimpoint.y);
+    }
+}
+
+static void on_connect(struct ohc_UserObj userdata, enum ohc_ClientError error) {
+    const struct State *state = userdata.ptr;
+    if (error != OHC_CLIENT_ERROR_NONE) {
+        puts("Could not connect to Odyssey Desktop");
+        atomic_store(&done, true);
+        return;
+    }
+    client_start_stream(state->handle, state->client, (struct ohc_UserObj){NULL}, on_event);
+}
+
+int main(void) {
+    struct ohc_Handle *handle = rt_init();
+    struct ohc_Client *client = client_new();
+    struct State state = {handle, client};
+    client_connect(handle, client, (struct ohc_UserObj){&state}, on_connect);
+    while (!atomic_load(&done)) {
+        sleep_ms(10);
+    }
+    client_free(client);
+    rt_free(handle);
+    return 0;
+}
+```
+
+The SDK calls your callbacks on its own threads; hand data to your main thread
+yourself.
+
 **C++**
 
 ```cpp
