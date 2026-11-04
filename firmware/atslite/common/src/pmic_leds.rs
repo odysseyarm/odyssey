@@ -1,6 +1,4 @@
-//! PMIC LED control for ATSlite boards
-//!
-//! Uses the NPM1300's LED drivers for RGB status indication.
+//! Status LED driven by the NPM1300's three LED outputs, one per RGB channel.
 
 use core::pin::pin;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +14,6 @@ use npm1300_rs::leds::LedMode;
 static CMD_CH: Channel<CriticalSectionRawMutex, LedCmd, 4> = Channel::new();
 static BLE_CONNECTED: AtomicBool = AtomicBool::new(false);
 
-/// LED channel index
 #[derive(Copy, Clone, Debug)]
 pub enum LedIdx {
     Ch0,
@@ -24,25 +21,25 @@ pub enum LedIdx {
     Ch2,
 }
 
-/// LED state for status indication
+/// What the status LED shows.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum LedState {
-    // Immediate entry states
+    // Shown immediately.
     Off,
     TurningOff,
     TurningOn,
     ProgramError,
-    // Pairing mode: flash blue rapidly
+    // Fast blue blink.
     Pairing,
 
-    // On, battery status, BLE not connected
+    // Battery level, BLE disconnected.
     BattCharging,
     BattShutoff,
     BattLow,
     BattMed,
     BattHigh,
 
-    // On, battery status, BLE connected
+    // Battery level, BLE connected.
     BleBattCharging,
     BleBattShutoff,
     BleBattLow,
@@ -51,14 +48,12 @@ pub enum LedState {
 }
 
 impl LedState {
-    /// Get frame durations (on_ms, off_ms)
+    /// `(on_ms, off_ms)` of one blink cycle; `off_ms == 0` means solid.
     pub fn frames(self) -> (u64, u64) {
         match self {
-            // Fast blink
             LedState::TurningOff | LedState::TurningOn => (100, 150),
             LedState::Pairing => (200, 200),
 
-            // Slow blink
             LedState::BattLow
             | LedState::BattMed
             | LedState::BattHigh
@@ -67,14 +62,14 @@ impl LedState {
             | LedState::BleBattMed
             | LedState::BleBattHigh => (1000, 4000),
 
-            // "Solid"
+            // Solid: re-applied every 250 ms.
             LedState::Off | LedState::ProgramError | LedState::BattShutoff => (250, 0),
 
             LedState::BattCharging | LedState::BleBattCharging => (1000, 4000),
         }
     }
 
-    /// Compute the correct LED state based on battery status and BLE connection.
+    /// Picks the battery state for `soc` in percent: charging wins, then 0 / ≤25 / ≤65 / above.
     pub fn from_battery(charging: bool, soc: f32, ble_connected: bool) -> Self {
         if charging {
             if ble_connected {
@@ -110,7 +105,6 @@ impl LedState {
     }
 }
 
-// RGB color constants
 pub const RGB_OFF: (bool, bool, bool) = (false, false, false);
 pub const RGB_RED: (bool, bool, bool) = (true, false, false);
 pub const RGB_GRN: (bool, bool, bool) = (false, true, false);
@@ -124,7 +118,8 @@ enum LedCmd {
     SetSeamless(LedState),
 }
 
-/// Handle for controlling PMIC LEDs
+/// Sends commands to the LED animator. Once locked, the plain `set_state*` calls are ignored
+/// until `unlock_state`.
 #[derive(Debug)]
 pub struct PmicLedsHandle {
     locked: AtomicBool,
@@ -172,22 +167,20 @@ impl Default for PmicLedsHandle {
     }
 }
 
-/// Set LED state globally (does not respect handle lock)
+/// Sets the LED state even if a handle holds the lock.
 pub async fn set_state_global(s: LedState) {
     let _ = CMD_CH.send(LedCmd::Set(s)).await;
 }
 
-/// Set LED state globally with seamless transition
+/// Like [`set_state_global`], but keeps the current blink phase instead of restarting it.
 pub async fn set_state_seamless_global(s: LedState) {
     let _ = CMD_CH.send(LedCmd::SetSeamless(s)).await;
 }
 
-/// Set BLE connection state
 pub fn set_ble_connected(connected: bool) {
     BLE_CONNECTED.store(connected, Ordering::Relaxed);
 }
 
-/// Get current BLE connection state
 pub fn is_ble_connected() -> bool {
     BLE_CONNECTED.load(Ordering::Relaxed)
 }
@@ -282,7 +275,7 @@ fn frames_in_state(state: LedState) -> u8 {
     if off == 0 { 1 } else { 2 }
 }
 
-/// PMIC LED animator task
+/// Drives the PMIC LED outputs according to the current [`LedState`].
 pub struct PmicLedAnimator<'a, I2c, Del>
 where
     I2c: embedded_hal_async::i2c::I2c,

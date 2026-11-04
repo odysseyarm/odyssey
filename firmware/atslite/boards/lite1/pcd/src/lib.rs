@@ -1,26 +1,21 @@
 #![no_std]
 
-//! Peripheral CPU DFU (PCD) library for nRF5340 network core firmware updates
+//! Peripheral CPU DFU (PCD): how the nRF5340 application core tells the
+//! network core bootloader to install a network core image, through shared
+//! SRAM in the ICMSG region.
 //!
-//! This library provides a protocol for the application core to communicate
-//! network core firmware update instructions to the network core bootloader
-//! via shared SRAM (ICMSG region).
-//!
-//! Protocol flow:
-//! 1. App core writes netcore firmware to DFU partition (in app flash)
-//! 2. App core writes PcdCmd with update instruction to shared SRAM
-//! 3. App core resets network core
-//! 4. Netcore bootloader reads PcdCmd from shared SRAM
-//! 5. If update pending, netcore copies firmware and writes PcdStatus
-//! 6. Netcore boots application
-//! 7. Netcore app confirms boot by writing PcdStatus
+//! 1. The app core writes the netcore image to the DFU partition in app flash.
+//! 2. It writes a [`PcdCmd`] to shared SRAM and resets the network core.
+//! 3. The netcore bootloader reads the command, copies the image if one is
+//!    pending, and reports the outcome in [`PcdStatus`].
+//! 4. The netcore application boots and confirms itself through [`PcdStatus`].
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// Magic value to identify valid PCD command structure
+/// Marks a valid [`PcdCmd`].
 pub const PCD_CMD_MAGIC: u32 = 0x50434431; // "PCD1"
 
-/// Magic value to identify valid PCD status structure
+/// Marks a valid [`PcdStatus`].
 pub const PCD_STATUS_MAGIC: u32 = 0x50434453; // "PCDS"
 
 /// How many times the application core starts the network core bootloader for
@@ -35,115 +30,118 @@ pub fn next_copy_attempt(stored: u32) -> Option<u32> {
     (used < MAX_COPY_ATTEMPTS).then_some(used + 1)
 }
 
-/// PCD command written by application core
+/// Written by the application core.
 #[repr(C)]
 pub struct PcdCmd {
-    /// Magic number (PCD_CMD_MAGIC when valid)
+    /// [`PCD_CMD_MAGIC`] when the command is valid.
     pub magic: AtomicU32,
 
-    /// Address of firmware image in app core flash
+    /// Image address in app core flash.
     pub image_addr: AtomicU32,
 
     /// Size of firmware image in bytes
     pub image_size: AtomicU32,
 
-    /// SHA-256 hash of firmware image (optional, first 32 bytes)
+    /// SHA-256 of the image; optional.
     pub image_sha: [u8; 32],
 }
 
-/// PCD status written by network core
+/// Written by the network core.
 #[repr(C)]
 pub struct PcdStatus {
-    /// Magic number (PCD_STATUS_MAGIC when valid)
+    /// [`PCD_STATUS_MAGIC`] when the status is valid.
     pub magic: AtomicU32,
 
-    /// Status code
+    /// A [`PcdStatusCode`].
     pub status: AtomicU32,
 
-    /// Reserved for future use
     pub reserved: [u32; 2],
 }
 
-/// Status codes for PcdStatus
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcdStatusCode {
     /// No update performed
     Idle = 0,
 
-    /// Update in progress
+    /// Copy in progress.
     Updating = 1,
 
-    /// Update completed successfully
+    /// Copy finished and verified.
     Success = 2,
 
-    /// Update failed - copy error
     FailedCopy = 3,
 
-    /// Update failed - verification error
+    /// The copied image did not match the source.
     FailedVerify = 4,
 
-    /// Application booted and confirmed
+    /// The netcore application booted and confirmed itself.
     AppConfirmed = 5,
 }
 
 impl PcdCmd {
-    /// Initialize PCD command structure at given address
+    /// # Safety
+    ///
+    /// `addr` must point to a `PcdCmd` that stays mapped for `'static`.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
     }
 
-    /// Initialize mutable PCD command structure at given address
+    /// # Safety
+    ///
+    /// `addr` must point to a `PcdCmd` that stays mapped for `'static` and is
+    /// not otherwise borrowed.
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
         unsafe { &mut *(addr as *mut Self) }
     }
 
-    /// Check if command is valid
     pub fn is_valid(&self) -> bool {
         self.magic.load(Ordering::Acquire) == PCD_CMD_MAGIC
     }
 
-    /// Get image address
     pub fn get_image_addr(&self) -> u32 {
         self.image_addr.load(Ordering::Acquire)
     }
 
-    /// Get image size
     pub fn get_image_size(&self) -> u32 {
         self.image_size.load(Ordering::Acquire)
     }
 
-    /// Set update command (app core)
+    /// Called by the app core.
     pub fn set_update(&mut self, addr: u32, size: u32) {
         self.image_addr.store(addr, Ordering::Release);
         self.image_size.store(size, Ordering::Release);
-        // Write magic last to ensure command is fully written
+        // Magic goes last so the netcore never sees a valid but half-written command.
         self.magic.store(PCD_CMD_MAGIC, Ordering::Release);
     }
 
-    /// Clear command (netcore after processing)
+    /// Called by the netcore once the command is handled.
     pub fn clear(&mut self) {
         self.magic.store(0, Ordering::Release);
     }
 }
 
 impl PcdStatus {
-    /// Initialize PCD status structure at given address
+    /// # Safety
+    ///
+    /// `addr` must point to a `PcdStatus` that stays mapped for `'static`.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
     }
 
-    /// Initialize mutable PCD status structure at given address
+    /// # Safety
+    ///
+    /// `addr` must point to a `PcdStatus` that stays mapped for `'static` and
+    /// is not otherwise borrowed.
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
         unsafe { &mut *(addr as *mut Self) }
     }
 
-    /// Check if status is valid
     pub fn is_valid(&self) -> bool {
         self.magic.load(Ordering::Acquire) == PCD_STATUS_MAGIC
     }
 
-    /// Get status code
+    /// `None` for a value outside [`PcdStatusCode`].
     pub fn get_status(&self) -> Option<PcdStatusCode> {
         let val = self.status.load(Ordering::Acquire);
         match val {
@@ -157,20 +155,19 @@ impl PcdStatus {
         }
     }
 
-    /// Set status (netcore)
+    /// Called by the netcore.
     pub fn set_status(&mut self, status: PcdStatusCode) {
         self.status.store(status as u32, Ordering::Release);
-        // Write magic last to ensure status is fully written
+        // Magic goes last so the app core never sees a valid but half-written status.
         self.magic.store(PCD_STATUS_MAGIC, Ordering::Release);
     }
 
-    /// Clear status
     pub fn clear(&mut self) {
         self.magic.store(0, Ordering::Release);
     }
 }
 
-/// Memory layout of PCD region in shared SRAM
+/// Layout of the PCD region in shared SRAM.
 #[repr(C)]
 pub struct PcdRegion {
     pub cmd: PcdCmd,
@@ -178,12 +175,17 @@ pub struct PcdRegion {
 }
 
 impl PcdRegion {
-    /// Get PCD region at given address
+    /// # Safety
+    ///
+    /// `addr` must point to a `PcdRegion` that stays mapped for `'static`.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
     }
 
-    /// Get mutable PCD region at given address
+    /// # Safety
+    ///
+    /// `addr` must point to a `PcdRegion` that stays mapped for `'static` and
+    /// is not otherwise borrowed.
     pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
         unsafe { &mut *(addr as *mut Self) }
     }

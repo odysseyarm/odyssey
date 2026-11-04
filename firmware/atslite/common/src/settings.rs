@@ -1,8 +1,5 @@
-//! Settings backed by cfg-noodle for atslite boards.
-//!
-//! This module provides persistent storage for:
-//! - BLE bond information (for reconnection without re-pairing)
-//! - General device settings (future)
+//! Flash-backed settings for atslite boards, stored with cfg-noodle: the BLE bond, general
+//! device settings and PAG sensor settings.
 
 mod settings_region {
     unsafe extern "C" {
@@ -45,29 +42,27 @@ static SETTINGS_SETTLED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
-// Pointer to the settings for BLE access
+// Null until `init_nodes` runs. The BLE peripheral and the control handlers reach settings here.
 static SETTINGS_PTR: core::sync::atomic::AtomicPtr<Settings> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-/// Get a reference to settings. Only safe to call after init_settings has been called.
-/// This is primarily for BLE peripheral to access settings.
+/// Returns the shared settings.
 ///
 /// # Safety
-/// Must only be called after `init_settings` has completed.
+/// `init_nodes` must have completed, and the caller must not hold another reference.
 pub unsafe fn get_settings() -> &'static mut Settings {
     let ptr = SETTINGS_PTR.load(core::sync::atomic::Ordering::Acquire);
     unsafe { &mut *ptr }
 }
 
-/// Persist the transport mode to flash via the atslite-common general settings node.
-/// Intended to be registered as the `transport_mode_persist_fn` on lite1.
+/// Writes the transport mode to the general settings node. lite1 registers this as its
+/// transport-mode persist function.
 pub fn persist_transport_mode(mode: odyssey_protocol::control::device::TransportMode) {
     let settings = unsafe { get_settings() };
     settings.general.transport_mode = mode;
     settings.general_write();
 }
 
-/// Check if settings have been initialized
 pub fn is_initialized() -> bool {
     !SETTINGS_PTR
         .load(core::sync::atomic::Ordering::Acquire)
@@ -82,7 +77,6 @@ async fn settings_worker(
 ) {
     let mut flash = Flash::new(flash_dev, region, NoCache::new());
 
-    // Buffer for cfg-noodle operations
     let mut buffer = [0u8; 4080];
 
     loop {
@@ -114,18 +108,17 @@ async fn settings_worker(
                     }
                 }
             };
-            // Queued write OR explicit flush signal to wake
+            // Woken by queued writes or by an explicit flush.
             match select(wait_write, SETTINGS_FLUSH.wait()).await {
                 Either::First(_) => {}
                 Either::Second(_) => {}
             }
         };
 
-        // Periodic tick so data eventually flushes without signals
+        // Write anyway every `auto_interval`, so changes land even if nobody signals.
         let tick_fut = Timer::after(auto_interval);
 
         match embassy_futures::select::select(read_fut, select(write_fut, tick_fut)).await {
-            // Reads ready
             Either::First(_) => {
                 let start = Instant::now();
                 match LIST.process_reads(&mut flash, &mut buffer).await {
@@ -134,7 +127,6 @@ async fn settings_worker(
                 }
                 defmt::trace!("reads in {:?}", start.elapsed());
             }
-            // Writes or tick
             Either::Second(Either::First(_)) | Either::Second(Either::Second(_)) => {
                 let start = Instant::now();
                 match LIST.process_writes(&mut flash, &mut buffer).await {
@@ -143,7 +135,7 @@ async fn settings_worker(
                 }
                 defmt::trace!("writes in {:?}", start.elapsed());
 
-                // GC after writes
+                // Garbage-collect after every write pass.
                 let start = Instant::now();
                 match LIST.process_garbage(&mut flash, &mut buffer).await {
                     Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
@@ -174,8 +166,8 @@ pub async fn settings_wait_settled(timeout: Duration) {
     }
 }
 
-/// Start the settings I/O worker task. Must be called before `init_nodes()` or
-/// any `attach_with_default` on `LIST`. Does NOT attach any nodes or set `SETTINGS_PTR`.
+/// Spawns the settings I/O worker. Call before `init_nodes()` or any `attach_with_default` on
+/// `LIST`. Attaches no nodes and leaves `SETTINGS_PTR` null.
 pub async fn init_core(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
@@ -192,10 +184,8 @@ pub async fn init_core(
     spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
 }
 
-/// Attach the BLE bond node to `LIST`, construct the `Settings` struct,
-/// and store it in `SETTINGS_PTR`. Board-specific nodes (general, PAG, etc.)
-/// should be attached separately by each board before or after this call.
-/// Must be called after `init_core()`.
+/// Attaches the BLE bond node, builds `Settings` and publishes it through `SETTINGS_PTR`.
+/// Boards attach their own nodes (general, PAG, ...) separately. Call after `init_core()`.
 pub async fn init_nodes() -> &'static mut Settings {
     let h_ble_bond = NODE_BLE_BOND
         .attach_with_default(&LIST, ble_bond_default)
@@ -216,9 +206,8 @@ pub async fn init_nodes() -> &'static mut Settings {
     settings_ref
 }
 
-/// Attach the general and PAG nodes to `LIST` and update the Settings struct.
-/// Called by boards that use atslite-common's GeneralSettings/PagSettings
-/// (e.g. lite1). Must be called after `init_nodes()`.
+/// Attaches the general and PAG nodes and loads them into `settings`. For boards that use this
+/// crate's `GeneralSettings`/`PagSettings`, such as lite1. Call after `init_nodes()`.
 pub async fn init_board_nodes(settings: &mut Settings) {
     let h_general = NODE_GENERAL
         .attach_with_default(&LIST, GeneralSettings::default)
@@ -339,7 +328,7 @@ impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
             transport_mode: odyssey_protocol::control::device::TransportMode::Ble,
-            // 5g legacy equivalent in SI units.
+            // m/s²; SI equivalent of the legacy 5 g setting.
             impact_threshold: 25,
             suppress_ms: 100,
             accel_config: Default::default(),
@@ -428,7 +417,7 @@ pub fn ble_bond_to_bond_info(
     })
 }
 
-/// PAG7665QN sensor settings that persist across power cycles
+/// PAG7665QN register values kept across power cycles.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct PagSettings {
     /// Exposure register (0x67): bit[7]=LED_Always_ON, bits[6:0]=time (units of 100µs)
@@ -466,17 +455,17 @@ pub struct PagSettings {
 impl Default for PagSettings {
     fn default() -> Self {
         Self {
-            // Defaults from Xavier's recommendations and poc-fw
-            exposure: 0x80 | 20,  // 2000µs (20 * 100), LED always on
-            gain: 3,              // Xavier says do not go below 3
-            light_threshold: 120, // Light threshold
-            area_min: 10,         // Minimum area
-            area_max: 500,        // Maximum area
-            circle_r_min: 0x1A,   // R lower bound (datasheet default)
-            circle_r_max: 0x26,   // R upper bound (datasheet default)
-            circle_k_min: 0x17,   // K lower bound (datasheet default)
-            circle_k_max: 0x1D,   // K upper bound (datasheet default)
-            frame_rate: 180,      // 180 FPS
+            // From Xavier's recommendations and poc-fw.
+            exposure: 0x80 | 20,  // 2000 µs, LED always on
+            gain: 3,              // Xavier: never below 3
+            light_threshold: 120,
+            area_min: 10,
+            area_max: 500,
+            circle_r_min: 0x1A,   // datasheet default
+            circle_r_max: 0x26,   // datasheet default
+            circle_k_min: 0x17,   // datasheet default
+            circle_k_max: 0x1D,   // datasheet default
+            frame_rate: 180,      // FPS
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Power management for ATSlite boards using NPM1300 PMIC
+//! NPM1300 power management: charging, ship mode and power-off.
 
 use embassy_nrf::pac;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -7,31 +7,28 @@ use npm1300_rs::charger::DischargeCurrentLimit;
 use npm1300_rs::mainreg::Vbusin1EventMask;
 use npm1300_rs::sysreg::VbusInCurrentLimit;
 
-/// Signal for VBUS removal events
+/// Raised when VBUS goes away.
 pub static VBUS_REMOVED_SIG: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Magic value for pending ship mode flag
+/// GPREGRET value that marks a ship-mode entry pending across a reset.
 const GPREGRET_PENDING_SHIP: u8 = 0x42;
 
-/// Default charging current in mA
 pub const CHARGE_CURRENT_MA: u16 = 310;
 
-/// Default discharge current limit
 pub const DISCHARGE_CURRENT: DischargeCurrentLimit = DischargeCurrentLimit::Low;
 
-/// Notify that VBUS has been removed
 pub fn notify_vbus_removed() {
     VBUS_REMOVED_SIG.signal(());
 }
 
-/// Set the pending ship mode flag in GPREGRET
+/// Marks ship mode as pending in GPREGRET, which survives a reset.
 pub fn set_pending_ship_flag() {
     let p = pac::POWER;
     p.gpregret(0)
         .write(|w| w.set_gpregret(GPREGRET_PENDING_SHIP));
 }
 
-/// Take (read and clear) the pending ship mode flag
+/// Reads and clears the pending ship-mode flag.
 pub fn take_pending_ship_flag() -> bool {
     let p = pac::POWER;
     let v = p.gpregret(0).read().gpregret();
@@ -39,10 +36,8 @@ pub fn take_pending_ship_flag() -> bool {
     v == GPREGRET_PENDING_SHIP
 }
 
-/// Handle long press power off
-///
-/// If VBUS is not present, enters ship mode immediately.
-/// If VBUS is present, sets pending ship flag and resets.
+/// Powers off after a long press. Without VBUS the PMIC enters ship mode. With VBUS present
+/// this sets the pending ship flag and resets into faux-off instead.
 pub async fn handle_long_press_power_off<I2c, Delay>(
     pmic: &embassy_sync::mutex::Mutex<
         embassy_sync::blocking_mutex::raw::NoopRawMutex,
@@ -75,7 +70,6 @@ where
     SCB::sys_reset();
 }
 
-/// Initial PMIC setup
 pub async fn pmic_setup<I2c, Delay>(
     pmic: &mut npm1300_rs::NPM1300<I2c, Delay>,
 ) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>>

@@ -10,19 +10,17 @@ use trouble_host::prelude::*;
 
 use crate::{settings, transport_mode};
 
-/// Max number of connections
 const CONNECTIONS_MAX: usize = 1;
 
-/// Max number of L2CAP channels (need 2: control + data).
+/// One L2CAP channel for control packets, one for streaming data.
 const L2CAP_CHANNELS_MAX: usize = 2;
 
 type Pool = DefaultPacketPool;
 
-// GATT Server definition
 #[gatt_server]
 struct Server {}
 
-/// Run the BLE stack.
+/// Runs the BLE host: restores the stored bond, advertises, and serves one connection at a time.
 pub async fn run<C>(
     controller: C,
     seed: [u8; 32],
@@ -32,7 +30,7 @@ pub async fn run<C>(
     C: Controller + bt_hci::controller::ControllerCmdSync<super::netcore::ReadNetCoreRelease>,
 {
     defmt::info!("[adv] advertising task starting");
-    // Initialize name from parameter only if not already set via set_device_name_initial()
+    // A name set earlier through set_device_name_initial() wins over `device_name`.
     CURRENT_NAME.lock(|n| {
         let mut s = n.borrow_mut();
         if s.is_empty() {
@@ -94,14 +92,13 @@ pub async fn run<C>(
                 "[adv] advertising loop restarting (bond_stored={})",
                 bond_stored
             );
-            // Race advertise against restart signal to allow restart even when not connected
+            // The restart signal must also interrupt advertising, not only a live connection.
             let current_name = get_device_name();
             let adv_fut = advertise(current_name.as_str(), prod_prefix, &mut peripheral, &server);
             let restart_fut = ADV_RESTART_SIGNAL.wait();
 
             match select(adv_fut, restart_fut).await {
                 Either::Second(_) => {
-                    // Restart signal fired while advertising - restart loop
                     defmt::info!(
                         "[adv] pairing state changed while ADVERTISING (no connection), restarting"
                     );
@@ -116,7 +113,8 @@ pub async fn run<C>(
                             is_pairing_active(),
                             bond_stored
                         );
-                        // Allow bondable in pairing mode (to create new bonds) OR when bond exists (to use existing bond for encryption)
+                        // Bonding is allowed in pairing mode, to create a bond, and when a bond
+                        // is stored, so the link can encrypt with it.
                         let bondable = is_pairing_active() || bond_stored;
                         defmt::info!("[adv] setting bondable={}", bondable);
                         conn.raw().set_bondable(bondable).unwrap();
@@ -226,7 +224,6 @@ async fn gatt_events_task(
             } => {
                 defmt::info!("[peripheral] Pairing complete!");
                 if let Some(bond) = bond {
-                    // Store bond in settings if initialized
                     if settings::is_initialized() {
                         let settings = unsafe { settings::get_settings() };
                         settings.ble_bond = settings::ble_bond_from_bond_info(&bond);
@@ -235,7 +232,6 @@ async fn gatt_events_task(
                     }
                     *bond_stored = true;
 
-                    // Signal pairing completion with the bonded device address
                     let addr = bond.identity.bd_addr.raw();
                     let mut addr_copy = [0u8; 6];
                     addr_copy.copy_from_slice(addr);
@@ -711,8 +707,8 @@ static PAIRING_COMPLETE_SIGNAL: Signal<CriticalSectionRawMutex, [u8; 6]> = Signa
 static CURRENT_NAME: BlockingMutex<BmRaw, RefCell<heapless::String<32>>> =
     BlockingMutex::new(RefCell::new(heapless::String::new()));
 
-/// Called before `run()` to set the device name from persisted settings.
-/// Has no effect if `run()` has already started.
+/// Sets the advertised name without restarting advertising. Before `run()` this replaces its
+/// `device_name`; afterwards the name takes effect on the next advertising cycle.
 pub fn set_device_name_initial(name: &str) {
     if name.is_empty() {
         return;
@@ -726,7 +722,7 @@ pub fn set_device_name_initial(name: &str) {
     });
 }
 
-/// Update the device name live — persists through the next advertising restart.
+/// Sets the advertised name and restarts advertising, which drops any current connection.
 pub fn update_device_name_live(name: &str) {
     CURRENT_NAME.lock(|n| {
         let mut s = n.borrow_mut();

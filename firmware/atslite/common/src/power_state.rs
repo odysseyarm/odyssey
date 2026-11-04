@@ -10,8 +10,8 @@ use crate::power;
 pub static SOC_PERCENT: AtomicU8 = AtomicU8::new(0);
 pub static VBUS_PRESENT: AtomicBool = AtomicBool::new(false);
 
-/// Update LED state based on current battery and BLE connection status.
-/// Call this when BLE connection state changes for immediate LED feedback.
+/// Re-derives the LED state from the last battery reading and the BLE connection. Call it when
+/// the BLE connection changes so the LED reacts without waiting for the next battery tick.
 pub async fn update_led_for_ble_state() {
     let vbus_present = VBUS_PRESENT.load(Ordering::Relaxed);
     let soc = SOC_PERCENT.load(Ordering::Relaxed) as f32;
@@ -98,7 +98,6 @@ pub async fn power_state_task(
 
         defmt::trace!("[fg] soc={} %  vbus={}", soc, vbus_present);
 
-        // Use helper to get the correct LED state based on battery and BLE status
         let ble_connected = crate::pmic_leds::is_ble_connected();
         let led_state = crate::pmic_leds::LedState::from_battery(vbus_present, soc, ble_connected);
         leds.set_state_seamless(led_state).await;

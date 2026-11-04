@@ -1,6 +1,4 @@
-//! Sensor trait implementations for lite1 board
-//!
-//! Implements the object_mode traits for PAG7665QN and ICM-42688-P
+//! object_mode sensor traits for the lite1 PAG7665QN and ICM-42688-P.
 
 use bytemuck::{cast_slice, from_bytes};
 use defmt::Format;
@@ -15,7 +13,7 @@ use static_cell::ConstStaticCell;
 
 use crate::object_mode::{ImuData, ImuInterrupt, ImuSensor, PagInterrupt, PagSensor};
 
-/// PAG7665QN sensor type
+/// PAG7665QN driver on its own SPIM bus.
 pub type PagDriver<M> = Pag7665Qn<
     Pag7665QnSpi<
         ExclusiveDevice<
@@ -28,14 +26,14 @@ pub type PagDriver<M> = Pag7665Qn<
     M,
 >;
 
-/// Simple error wrapper for defmt formatting
+/// Sensor failure, kept field-less so defmt can print it.
 #[derive(Format)]
 pub enum SensorError {
     Spi,
     InvalidData,
 }
 
-/// PAG sensor wrapper implementing PagSensor trait
+/// The PAG7665QN as an object_mode [`PagSensor`].
 pub struct Pag7665QnSensor {
     pub driver: PagDriver<mode::Mode>,
 }
@@ -95,7 +93,7 @@ impl PagSensor for Pag7665QnSensor {
     }
 }
 
-/// PAG interrupt wrapper
+/// The PAG7665QN INT_O line as an object_mode [`PagInterrupt`]; waits for it to go high.
 pub struct Pag7665QnInterrupt {
     pub int_o: Input<'static>,
 }
@@ -106,13 +104,13 @@ impl PagInterrupt for Pag7665QnInterrupt {
     }
 }
 
-/// IMU driver type
+/// The ready ICM-42688-P on its own SPI bus.
 pub type ImuDriver = icm426xx::ICM42688<
     ExclusiveDevice<embassy_nrf::spim::Spim<'static>, embassy_nrf::gpio::Output<'static>, Delay>,
     icm426xx::Ready,
 >;
 
-/// IMU wrapper implementing ImuSensor trait
+/// The ICM-42688-P as an object_mode [`ImuSensor`], timestamped from its FIFO.
 pub struct Icm42688Sensor {
     pub driver: ImuDriver,
     buffer: &'static mut [u32; 521],
@@ -141,7 +139,7 @@ impl ImuSensor for Icm42688Sensor {
             .map_err(|_| SensorError::Spi)?;
         let pkt = from_bytes::<FifoPacket4>(&cast_slice(self.buffer)[4..24]);
 
-        // CLKIN ticks (32 kHz)
+        // FIFO timestamps count CLKIN ticks at 32 kHz.
         self.ts_micros = self
             .ts_micros
             .wrapping_add(1000 * (pkt.timestamp() as u32) / 32);
@@ -154,7 +152,7 @@ impl ImuSensor for Icm42688Sensor {
     }
 }
 
-/// IMU interrupt wrapper implementing ImuInterrupt trait
+/// The ICM-42688-P INT1 line as an object_mode [`ImuInterrupt`].
 pub struct Icm42688Interrupt {
     pub int1: Input<'static>,
 }

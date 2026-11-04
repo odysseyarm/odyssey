@@ -1,7 +1,6 @@
-//! Lite1 board main firmware
-//!
-//! ATSlite variant with PAG7665QN vision sensor.
-//! USB vendor endpoints and BLE with transport mode switching.
+//! Application firmware for the lite1 board: the ATSlite with a PAG7665QN
+//! vision sensor, talking to the host over USB vendor endpoints or BLE
+//! depending on the transport mode.
 
 #![no_std]
 #![no_main]
@@ -57,7 +56,7 @@ const FIRMWARE_VERSION: [u16; 3] = [
     parse_version_component(env!("CARGO_PKG_VERSION_PATCH")),
 ];
 
-// Default accelerometer ODR in Hz (matches legacy atslite)
+// Same accelerometer rate the legacy atslite firmware used.
 const DEFAULT_ACCEL_ODR: u16 = 100;
 
 struct AppDfuMarker<'a> {
@@ -90,7 +89,6 @@ async fn main(spawner: Spawner) {
     let board: Board = split_board!(p);
     defmt::info!("Board peripherals split");
 
-    // Initialize PMIC over TWIM
     defmt::info!("Initializing PMIC...");
     let mut twim_cfg = twim::Config::default();
     twim_cfg.frequency = twim::Frequency::K400;
@@ -123,11 +121,9 @@ async fn main(spawner: Spawner) {
     defmt::info!("PMIC configured");
     let pmic = PMIC.init(AsyncMutex::new(pmic_dev));
 
-    // Handle PMIC IRQ pin
     defmt::info!("Spawning pmic_irq_task...");
     spawner.spawn(pmic_irq_task(board.pmic.int.into(), pmic).unwrap());
 
-    // Initialize PMIC LED animator
     defmt::info!("Creating PmicLedAnimator...");
     let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
         .await
@@ -137,17 +133,16 @@ async fn main(spawner: Spawner) {
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
-    // Initialize watchdog (started by stage2 bootloader, we just need to pet it)
+    // The stage2 bootloader already started the watchdog; all we can do is feed it.
     defmt::info!("Initializing watchdog...");
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
     let mut wdt_config = WdtConfig::default();
-    wdt_config.timeout_ticks = 32768 * 60; // 60 second timeout (must match bootloader)
+    wdt_config.timeout_ticks = 32768 * 60; // 60 s; has to match the bootloader's value
     wdt_config.action_during_sleep = SleepConfig::RUN;
     wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
     let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
     spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
 
-    // Power button handling
     defmt::info!("Power button handling...");
     let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
     defmt::info!("handle_boot_vbus_policy...");
@@ -163,13 +158,13 @@ async fn main(spawner: Spawner) {
     spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
     defmt::info!("Power tasks spawned");
 
-    // Initialize NVMC in a shared mutex so it can be used by both DFU and settings
+    // DFU and settings both write flash, so they share one NVMC behind a mutex.
     defmt::info!("Initializing NVMC...");
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     defmt::info!("NVMC initialized");
 
-    // Initialize settings storage (must be early so PAG settings can be restored)
+    // Settings come up before the PAG so its saved configuration can be applied.
     defmt::info!("Initializing settings...");
     let nvmc_async =
         nvmc.lock(|_| BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) }));
@@ -178,14 +173,13 @@ async fn main(spawner: Spawner) {
     lite1::settings::init_board_nodes(settings).await;
     defmt::info!("Settings initialized");
 
-    // Reset the PAG7665QN
     defmt::info!("Resetting PAG7665QN...");
     let mut vis_resetn = Output::new(board.pag7665qn.reset, Level::Low, OutputDrive::Standard);
     Timer::after_micros(500).await;
     vis_resetn.set_high();
     Timer::after_millis(30).await;
 
-    // Initialize PAG7665QN via SPIM4 (high-speed dedicated SPI)
+    // The PAG7665QN gets SPIM4, the only high-speed SPI instance.
     defmt::info!("Initializing PAG7665QN...");
     // Erratum 135 workaround
     unsafe {
@@ -213,12 +207,12 @@ async fn main(spawner: Spawner) {
         .unwrap();
     defmt::info!("PAG7665QN initialized");
 
-    // Apply saved PAG settings (or defaults if first boot)
+    // First boot has no saved settings, so these are the defaults.
     defmt::info!("Applying PAG7665QN settings from flash...");
     let pag_settings = &settings.pag;
     pag.set_sensor_fps(pag_settings.frame_rate).await.unwrap();
     pag.set_sensor_gain(pag_settings.gain).await.unwrap();
-    // Exposure register: bit[7]=LED_Always_ON, bits[6:0]=time (units of 100µs)
+    // Exposure byte: bit 7 is LED_Always_ON, bits 6:0 are the time in 100 µs units.
     let led_always_on = pag_settings.exposure & 0x80 != 0;
     let exposure_us = u16::from(pag_settings.exposure & 0x7F) * 100;
     pag.set_sensor_exposure_us(led_always_on, exposure_us)
@@ -251,7 +245,6 @@ async fn main(spawner: Spawner) {
         pag_settings.light_threshold
     );
 
-    // Wrap PAG in sensor wrapper for object_mode
     let pag_sensor = sensors::Pag7665QnSensor::new(pag.as_dynamic_mode());
     static PAG_MUTEX: StaticCell<AsyncMutex<NoopRawMutex, sensors::Pag7665QnSensor>> =
         StaticCell::new();
@@ -260,7 +253,6 @@ async fn main(spawner: Spawner) {
         int_o: pag_int_wrapper.int_o,
     };
 
-    // Initialize IMU (icm42688)
     defmt::info!("Initializing IMU...");
     let (imu_driver, imu_int_input) = imu::init(
         p.SERIAL0,
@@ -278,20 +270,18 @@ async fn main(spawner: Spawner) {
     .await;
     defmt::info!("IMU initialized");
 
-    // Wrap IMU in sensor wrapper for object_mode
     let imu_sensor = sensors::Icm42688Sensor::new(imu_driver);
     let imu_int = sensors::Icm42688Interrupt {
         int1: imu_int_input.int1,
     };
 
-    // Confirm boot using boot-api (caches state for DFU requests)
+    // boot-api caches the boot state here so later DFU requests can read it.
     nvmc.lock(|flash_cell| {
         let mut flash = flash_cell.borrow_mut();
         lite1_boot_api::BootConfirmation::mark_booted(&mut *flash).expect("Failed to mark boot");
     });
     defmt::info!("Boot confirmed");
 
-    // USB initialization with DFU runtime interface
     static DFU_STATE: StaticCell<Control<AppDfuMarker<'static>, ResetImmediate>> =
         StaticCell::new();
     let dfu_state = DFU_STATE.init(Control::new(
@@ -300,7 +290,7 @@ async fn main(spawner: Spawner) {
         ResetImmediate,
     ));
 
-    // Determine USB product name from settings (falls back to "ATS USB" if unset)
+    // The configured device name doubles as the USB product string.
     static USB_PRODUCT_NAME_BUF: StaticCell<[u8; 32]> = StaticCell::new();
     let usb_product_name: &'static str = if !settings.general.name.is_empty() {
         let buf = USB_PRODUCT_NAME_BUF.init([0u8; 32]);
@@ -347,17 +337,16 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
 
-    // Register the board-specific persist function for transport mode before spawning the task
+    // The persist hook has to be in place before the task can change the mode.
     lite1::device_control_task::register_transport_mode_persist_fn(
         lite1::settings::persist_transport_mode,
     );
     spawner.spawn(lite1::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
 
-    // Load transport mode from persisted settings
     let initial_transport_mode = settings.general.transport_mode;
     transport_mode::set(initial_transport_mode);
 
-    // Set device name from settings (if non-empty) for BLE advertisements
+    // BLE advertises the configured device name when one is set.
     if !settings.general.name.is_empty() {
         lite1::ble::peripheral::set_device_name_initial(settings.general.name.as_str());
     }
@@ -366,10 +355,9 @@ async fn main(spawner: Spawner) {
         initial_transport_mode
     );
 
-    // Adjust PMIC limit after USB enumerates
+    // USB may draw 500 mA from VBUS only once the host has configured it.
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
 
-    // Generate BLE seed from CryptoCell
     defmt::info!("Generating BLE seed from CryptoCell...");
     let ble_seed = {
         use embassy_nrf::cryptocell_rng::CcRng;
@@ -383,7 +371,7 @@ async fn main(spawner: Spawner) {
         seed
     };
 
-    // BLE controller and tasks (settings must be initialized first for bond restoration)
+    // Bonds are restored from settings, so settings must already be up.
     let controller = ble::host::init(embassy_nrf::ipc::Ipc::new(p.IPC, Irqs)).await;
     spawner.spawn(ble_task(controller, ble_seed).unwrap());
 
@@ -396,10 +384,8 @@ async fn main(spawner: Spawner) {
     pmic_leds.set_state(LedState::BattHigh).await;
     defmt::info!("Initialization complete, starting object mode");
 
-    // Get device ID for object mode
     let device_id: [u8; 6] = utils::device_id()[..6].try_into().unwrap();
 
-    // Run object mode
     let ctx = object_mode::ObjectModeContext {
         pag: pag_mutex,
         pag_int,

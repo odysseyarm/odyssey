@@ -1,15 +1,15 @@
-// Memory layout for nRF5340 (lite1)
-// Dual-bank DFU for app core (direct XIP), swap-based DFU for network core
+// lite1 nRF5340 memory map. The app core updates by switching between two
+// directly executed banks; the network core updates by swapping through the DFU area.
 
 vars {
     page_size "4K"
-    stage1_bootloader_size "8K"   // First-stage bootloader (swap orchestrator)
-    stage2_bootloader_size "44K"  // Second-stage bootloader (DFU handler)
-    stage1_state_size "page_size" // State for stage1 bootloader (stage2 swap)
-    stage2_state_size "page_size" // State for stage2 bootloader (app bank switching)
-    app_bank_size "376K"          // Each app bank (A and B) - app uses ~368KB
-    dfu_size "176K"               // Shared DFU staging area (netcore ~167KB + 4K scratch page)
-    settings_size "8K"            // Minimum 8KB required by settings module
+    stage1_bootloader_size "8K"   // stage1 only orchestrates stage2 swaps
+    stage2_bootloader_size "44K"  // stage2 is the DFU handler
+    stage1_state_size "page_size" // stage1's record of a pending stage2 swap
+    stage2_state_size "page_size" // stage2's record of the active app bank
+    app_bank_size "376K"          // per bank; the app is about 368 KB
+    dfu_size "176K"               // shared staging; holds the ~167 KB net core plus a 4K scratch page
+    settings_size "8K"            // the settings module needs at least 8 KB
 }
 
 regions {
@@ -19,17 +19,17 @@ regions {
         app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
         app_bank_b        origin=0x0006_B000 length="app_bank_size" align="page_size"
         dfu               origin=0x000C_9000 length="dfu_size" align="page_size"
-        // Boot states far from settings to avoid corruption bug
+        // Boot state sits far from settings because settings writes have corrupted neighbouring pages.
         stage1_state      origin=0x000F_9000 length="stage1_state_size" align="page_size"
         stage2_state      origin=0x000F_A000 length="stage2_state_size" align="page_size"
-        // Guard pages at 0xFB000, 0xFC000, 0xFD000 - protect boot state from settings corruption
+        // 0xFB000, 0xFC000 and 0xFD000 are left empty as guard pages between boot state and settings.
         settings          origin=0x000F_E000 length="settings_size" align="page_size"
     }
 
     ram origin=0x2000_0000 length="512K" {
         low_ram  origin=0x2000_0000 length="256K"
         high_ram origin=0x2004_0000 length="256K" {
-            locked_ram origin=0x2006_FF00 length=0x100  // 256 bytes for bootloader communication
+            locked_ram origin=0x2006_FF00 length=0x100  // app to bootloader mailbox
             icmsg_rx origin=0x2007_0000 length=0x2000
             icmsg_tx origin=0x2007_8000 length=0x2000
         }
@@ -50,17 +50,16 @@ symbols {
     __stage2_state_start      "flash.stage2_state.origin"
     __stage2_state_end        "flash.stage2_state.end"
 
-    // Backward compatibility: __bootloader_state points to stage2_state
+    // __bootloader_state is the older name for stage2_state.
     __bootloader_state_start  "flash.stage2_state.origin"
     __bootloader_state_end    "flash.stage2_state.end"
 
-    // Direct bank access symbols
     __bootloader_app_a_start  "flash.app_bank_a.origin"
     __bootloader_app_a_end    "flash.app_bank_a.end"
     __bootloader_app_b_start  "flash.app_bank_b.origin"
     __bootloader_app_b_end    "flash.app_bank_b.end"
 
-    // Shared DFU staging area (for bootloader/netcore updates)
+    // Staging for bootloader and net-core updates.
     __bootloader_dfu_start "flash.dfu.origin"
     __bootloader_dfu_end   "flash.dfu.end"
     __settings_start          "flash.settings.origin"

@@ -1,12 +1,10 @@
 [unstable]
-#build-std = ["core"]
-#build-std-features = ["panic_immediate_abort"]
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 runner = "probe-rs run --chip nrf5340_xxAA"
 
 rustflags = [
-  # Code-size optimizations.
+  # Code-size flags, off:
   #"-Z", "trap-unreachable=no",
   #"-C", "no-vectorize-loops",
   "-C", "force-frame-pointers=yes",

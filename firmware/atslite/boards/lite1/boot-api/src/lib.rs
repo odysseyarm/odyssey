@@ -1,7 +1,4 @@
-//! Boot API for lite1 board
-//!
-//! Provides boot state management for the bootloader system.
-//! This is shared between the application and bootloader.
+//! Boot state shared between the lite1 application and its bootloader.
 
 #![no_std]
 
@@ -12,8 +9,8 @@ use embassy_nrf::nvmc::Nvmc;
 
 const PAGE_SIZE: u32 = 4096;
 
-// Cache the confirmed boot state in RAM so we don't have to re-read from flash
-// This avoids issues where flash might be corrupted between confirm and DFU request
+// Slots as of the last confirm, cached so `request_dfu_with` does not re-read
+// flash: the state page can be corrupted between confirm and the DFU request.
 static CACHED_ACTIVE_SLOT: AtomicU8 = AtomicU8::new(0);
 static CACHED_PENDING_SLOT: AtomicU8 = AtomicU8::new(0);
 
@@ -27,8 +24,9 @@ fn bootloader_state_addr() -> u32 {
 pub struct BootConfirmation;
 
 impl BootConfirmation {
-    /// Mark boot as successful - should be called by app after successful boot
-    /// This updates the cached state for DFU requests
+    /// Marks the current boot as successful in flash and caches the resulting
+    /// slots for [`Self::request_dfu_with`]. The application calls this once it
+    /// has booted.
     pub fn mark_booted(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 
@@ -43,10 +41,8 @@ impl BootConfirmation {
             );
         }
 
-        // Call mark_booted to update flash
         manager.mark_booted(nvmc, PAGE_SIZE).map_err(|_| ())?;
 
-        // Read back and cache the updated state
         let state = manager.read();
         CACHED_ACTIVE_SLOT.store(state.active_slot, Ordering::Release);
         CACHED_PENDING_SLOT.store(state.pending_slot, Ordering::Release);
@@ -62,8 +58,9 @@ impl BootConfirmation {
         Ok(())
     }
 
-    /// Confirm boot - marks the current boot as successful
-    /// This sets boot_counter to 0 and updates active_slot to pending_slot
+    /// Confirms the current boot: sets `boot_counter` to 0, makes
+    /// `pending_slot` the active slot, and caches the slots for
+    /// [`Self::request_dfu_with`].
     pub fn confirm_boot_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
         let mut state = manager.read();
@@ -89,7 +86,6 @@ impl BootConfirmation {
             state.boot_counter
         );
 
-        // Cache the confirmed state in RAM for later use by request_dfu_with
         CACHED_ACTIVE_SLOT.store(state.active_slot, Ordering::Release);
         CACHED_PENDING_SLOT.store(state.pending_slot, Ordering::Release);
 
@@ -97,7 +93,6 @@ impl BootConfirmation {
             .write_boot_state(nvmc, &state, PAGE_SIZE)
             .map_err(|_| ());
 
-        // Verify what was actually written
         #[cfg(feature = "defmt")]
         {
             let verify = manager.read();
@@ -114,18 +109,16 @@ impl BootConfirmation {
         result
     }
 
-    /// Request DFU by writing SWAP_MAGIC to flash state
-    /// This preserves the boot state (active/pending slots)
+    /// Requests DFU by writing SWAP_MAGIC to the flash state page, keeping the
+    /// active and pending slots cached at the last confirm.
     pub fn request_dfu_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 
-        // Use cached state from RAM instead of re-reading flash
-        // Flash might be corrupted between boot confirmation and DFU request
         let active_slot = CACHED_ACTIVE_SLOT.load(Ordering::Acquire);
         let pending_slot = CACHED_PENDING_SLOT.load(Ordering::Acquire);
 
         let state = BootState {
-            magic: 0xB00710AD, // STATE_MAGIC
+            magic: 0xB00710AD, // better_boot STATE_MAGIC
             active_slot,
             pending_slot,
             boot_counter: 0,
@@ -142,7 +135,6 @@ impl BootConfirmation {
 
         let result = manager.request_dfu(nvmc, &state, PAGE_SIZE).map_err(|_| ());
 
-        // Verify what was written
         #[cfg(feature = "defmt")]
         {
             let verification = manager.read();

@@ -28,7 +28,7 @@ macro_rules! dispatch_cmd {
         }
     }};
 
-    // async -> ignore sender; return None
+    // Async commands: the controller reports them through its own events, so the sender is unused.
     (@arm $ctrl:expr, $payload:expr, {async}, $ty:path, $_sender:expr) => {{
         let params =
             <<$ty as bt_hci::cmd::Cmd>::Params as bt_hci::FromHciBytes>
@@ -38,7 +38,8 @@ macro_rules! dispatch_cmd {
         bt_hci::cmd::AsyncCmd::exec(&cmd_val, $ctrl).await
     }};
 
-    // sync -> build CommandComplete event and send it via $sender; return None
+    // Sync commands: the SDC hands back the return parameters, and we wrap them in a
+    // Command Complete event ourselves.
     (@arm $ctrl:expr, $payload:expr, {}, $ty:path, $sender:expr) => {{
         let params =
             <<$ty as bt_hci::cmd::Cmd>::Params as bt_hci::FromHciBytes>
@@ -46,29 +47,24 @@ macro_rules! dispatch_cmd {
             .map_err(|_| bt_hci::cmd::Error::Hci(bt_hci::param::Error::INVALID_HCI_PARAMETERS))?;
         let cmd_val = <$ty as From<<$ty as bt_hci::cmd::Cmd>::Params>>::from(params);
 
-        // Execute sync command and get the parsed Return (POD / byte-backed).
         let ret = bt_hci::cmd::SyncCmd::exec(&cmd_val, $ctrl).await;
 
-        // Sizes/constants
         const RLEN: usize = < $ty as bt_hci::cmd::SyncCmd >::ReturnBuf::LEN;
-        const HEAD: usize = 7; // 1 pkt + 1 event + 1 len + 1 num + 2 opcode + 1 status
+        const HEAD: usize = 7; // H4 indicator, event code, plen, credits, opcode (2), status
         let param_len: u8 = (1 + 2 + 1 + RLEN) as u8;
 
-        // Allocate full controller->host event buffer on the stack.
         let mut buf = [0u8; HEAD + RLEN];
 
-        // PacketKind::Event (0x04)
         buf[0] = bt_hci::PacketKind::Event as u8;
 
         buf[1] = CommandComplete::EVENT_CODE;
 
-        // Parameter length
         buf[2] = param_len;
 
-        // Num HCI command packets = 1
+        // One command credit.
         buf[3] = 1;
 
-        // Opcode (little-endian)
+        // Opcode, little-endian.
         let op16 = < $ty as bt_hci::cmd::Cmd >::OPCODE.into_inner();
         buf[4] = (op16 & 0xFF) as u8;
         buf[5] = (op16 >> 8) as u8;
@@ -77,10 +73,10 @@ macro_rules! dispatch_cmd {
             Ok(ret) => {
                 buf[6] = bt_hci::param::Status::SUCCESS.into_inner();
 
-                // Return parameters RLEN bytes: copy from the parsed Return value.
                 unsafe {
-                    // TODO this is a sketchy hack around the lack of WriteHci for command
-                    // responses
+                    // Copies the Return value's in-memory bytes as its wire encoding, because
+                    // bt-hci has no WriteHci for command returns. Only sound while every
+                    // Return is plain bytes with no padding.
                     let src = core::slice::from_raw_parts((&ret as *const _ as *const u8), RLEN);
                     buf[HEAD .. HEAD + RLEN].copy_from_slice(src);
                 }
@@ -116,11 +112,11 @@ where
     E: core::fmt::Debug,
 {
     dispatch_cmd!(send, ctrl, opcode, payload, [
-        // ┬º7.1 Link Control
+        // §7.1 Link Control
         Disconnect,
         @async ReadRemoteVersionInformation,
 
-        // ┬º7.3 Controller & Baseband
+        // §7.3 Controller & Baseband
         Reset,
         SetEventMask,
         ReadTransmitPowerLevel,
@@ -131,16 +127,16 @@ where
         WriteAuthenticatedPayloadTimeout,
         HostNumberOfCompletedPackets,
 
-        // ┬º7.4 Informational params
+        // §7.4 Informational parameters
         ReadLocalVersionInformation,
         ReadLocalSupportedCmds,
         ReadLocalSupportedFeatures,
         ReadBdAddr,
 
-        // ┬º7.5 Status params
+        // §7.5 Status parameters
         ReadRssi,
 
-        // ┬º7.8 LE Controller (legacy + extended)
+        // §7.8 LE Controller (legacy and extended)
         LeSetAdvParams,
         LeReadAdvPhysicalChannelTxPower,
         LeSetAdvData,
@@ -189,7 +185,6 @@ where
         LeLongTermKeyRequestReply,
         LeLongTermKeyRequestNegativeReply,
         LeReadSupportedStates,
-        // LeTestEnd,
         LeSetDataLength,
         LeReadSuggestedDefaultDataLength,
         LeWriteSuggestedDefaultDataLength,
@@ -224,21 +219,7 @@ where
         LeSetHostFeature,
         LeSetHostFeatureV2,
 
-        // Extra LE impls in the fragment:
-        // LeSetExtAdvData,
-        // LeSetExtScanResponseData,
-        // LeSetExtAdvEnable,
-        // LeSetPeriodicAdvData,
-        // LeSetExtScanParams,
-        // @async LeExtCreateConn,
-        // LeSetConnectionlessCteTransmitParams,
-        // LeSetConnCteTransmitParams,
-        // @async LeExtCreateConnV2,
-        // LeSetPeriodicAdvSubeventData,
-        // LeSetPeriodicAdvResponseData,
-        // LeSetPeriodicSyncSubevent,
-
-        // Vendor-specific (Zephyr/Nordic)
+        // Zephyr and Nordic vendor commands
         ZephyrReadVersionInfo,
         ZephyrReadSupportedCommands,
         ZephyrWriteBdAddr,

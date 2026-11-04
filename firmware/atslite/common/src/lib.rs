@@ -1,14 +1,7 @@
-//! ATSlite common library
-//!
-//! This crate provides shared functionality for ATSlite boards (legacy and lite1):
-//! - Power management (NPM1300 PMIC)
-//! - Power button handling
-//! - LED state management via PMIC
-//! - BLE stack (host, peripheral, L2CAP bridge)
-//! - Transport mode switching (USB vs BLE)
-//! - Device control interface
-//! - nRF5340 initialization
-//! - Object mode (odyssey-protocol packet handling)
+//! Code shared by the ATSlite boards (legacy and lite1): NPM1300 power management, power
+//! button, PMIC-driven status LEDs, the BLE stack (host, peripheral, L2CAP bridge), USB/BLE
+//! transport switching, the device control interface, nRF5340 bring-up, and object mode
+//! (odyssey-protocol packet handling).
 
 #![no_std]
 
@@ -25,6 +18,5 @@ pub mod settings;
 pub mod transport_mode;
 pub mod utils;
 
-// Re-exports
 pub use npm1300_rs;
 pub use odyssey_protocol;

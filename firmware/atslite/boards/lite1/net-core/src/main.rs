@@ -92,13 +92,13 @@ mod icmsg_config {
     }
 }
 
-/// How many outgoing L2CAP buffers per link
+/// Outgoing L2CAP buffers per link.
 const L2CAP_TXQ: u8 = 6;
 
-/// How many incoming L2CAP buffers per link
+/// Incoming L2CAP buffers per link.
 const L2CAP_RXQ: u8 = 6;
 
-/// Size of L2CAP packets
+/// L2CAP packet size in bytes.
 const L2CAP_MTU: usize = 251;
 
 fn build_sdc<'d, const N: usize>(
@@ -112,7 +112,7 @@ fn build_sdc<'d, const N: usize>(
         .support_peripheral()?
         .support_phy_update_peripheral()?
         .support_le_2m_phy()?
-        .peripheral_count(2)? // Allow peripheral conn + transition overlap
+        .peripheral_count(2)? // the old link may still be up while the next one connects
         .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
         .build(p, rng, mpsl, mem)
 }
@@ -195,7 +195,7 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    // sdc nonsense
+    // MPSL and the SoftDevice Controller.
     let mpsl_p = mpsl::Peripherals::new(
         p.RTC0, p.TIMER0, p.TIMER1, p.TEMP, p.PPI_CH0, p.PPI_CH1, p.PPI_CH2,
     );

@@ -18,7 +18,7 @@ use pcd::{PcdRegion, PcdStatusCode};
 const FLASH_BASE: u32 = 0x0100_0000;
 const FLASH_SIZE: u32 = 256 * 1024;
 
-// PCD region in ICMSG shared SRAM (netcore view: app RX)
+// The PCD region sits in the app core's ICMSG RX buffer, which is the netcore's TX side.
 fn pcd_region_addr() -> usize {
     unsafe extern "C" {
         static __pcd_region_start: u32;
@@ -30,8 +30,8 @@ fn pcd_region_addr() -> usize {
 async fn main(_spawner: embassy_executor::Spawner) {
     let p = embassy_nrf::init(Default::default());
 
-    // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
-    // as it prevents a hard fault when accessing flash 'too early' after boot.
+    // With a debugger or RTT attached, touching flash this soon after boot
+    // hard-faults; enable this delay when debugging.
     // for _ in 0..10000000 {
     //     cortex_m::asm::nop();
     // }
@@ -41,7 +41,6 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     let flash: Mutex<NoopRawMutex, RefCell<Nvmc<'_>>> = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
-    // Access PCD region in shared SRAM
     let pcd = unsafe { PcdRegion::at_mut(pcd_region_addr()) };
 
     if pcd.cmd.is_valid() {
@@ -70,7 +69,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 #[cfg(feature = "defmt")]
                 defmt::info!("Update copy/verify complete");
                 pcd.status.set_status(PcdStatusCode::Success);
-                // Ensure status is visible to app core before any further actions.
+                // The app core must see the status before the state page is erased.
                 cortex_m::asm::dsb();
                 cortex_m::asm::isb();
                 clear_state_flag(&flash);
@@ -93,7 +92,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     boot_app()
 }
 
-/// Boot the network core application
+/// Jumps to the network core application at `__bootloader_active_start`.
 fn boot_app() -> ! {
     unsafe extern "C" {
         static __bootloader_active_start: u32;
@@ -105,14 +104,11 @@ fn boot_app() -> ! {
         cortex_m::interrupt::disable();
         cortex_m::interrupt::enable();
 
-        // Invalidate instruction cache
         p.SCB.invalidate_icache();
 
-        // Set vector table offset
         let active = &__bootloader_active_start as *const u32 as u32;
         p.SCB.vtor.write(active);
 
-        // Jump to application
         cortex_m::asm::bootload(active as *const u32)
     }
 }
@@ -131,7 +127,7 @@ fn clear_state_flag(flash: &Mutex<NoopRawMutex, RefCell<Nvmc<'_>>>) {
     });
 }
 
-/// Copy firmware image from app flash (dfu slot) into netcore active slot.
+/// Copies the image from the DFU slot in app flash into the netcore active slot.
 fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), ()> {
     unsafe extern "C" {
         static __bootloader_active_start: u32;
@@ -175,7 +171,6 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         return Err(());
     }
 
-    // Erase destination range page-by-page.
     let end = dst_addr + size;
     let page_aligned_end = (end + PAGE_SIZE as u32 - 1) & !(PAGE_SIZE as u32 - 1);
     #[cfg(feature = "defmt")]
@@ -198,14 +193,14 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         defmt::warn!("NVMC write error");
         return Err(());
     }
-    // Ensure flash write completes before verify.
+    // Flash writes must complete before reading the copy back.
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
     verify_copy(dst_addr, src)
 }
 
 fn verify_copy(dst_addr: u32, src: &[u8]) -> Result<(), ()> {
-    // Compare the first 16 bytes to catch obvious failures.
+    // Only the first 16 bytes are compared; enough to catch a copy that did not happen.
     let mut buf = [0u8; 16];
     let len = core::cmp::min(buf.len(), src.len());
     unsafe {

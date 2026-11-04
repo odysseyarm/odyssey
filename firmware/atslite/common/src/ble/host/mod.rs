@@ -36,10 +36,11 @@ mod icmsg_config {
     }
 }
 
-/// Configure SPU so the network core can access the ICMSG {RX,TX} regions.
-/// - `extdomain_idx`: which EXTDOMAIN slot to configure (often 0 for the net core).
+/// Opens the ICMSG RX/TX RAM regions to the network core and, if `extdomain_idx` is given,
+/// maps that EXTDOMAIN slot non-secure (slot 0 is the net core).
 ///
-/// Safety: touches SPU_S registers and trusts linker-provided symbol layout.
+/// # Safety
+/// Writes SPU_S registers and trusts the linker-provided ICMSG symbol layout.
 pub unsafe fn grant_spu(extdomain_idx: Option<usize>) {
     use embassy_nrf::pac::spu::vals;
 
@@ -53,7 +54,7 @@ pub unsafe fn grant_spu(extdomain_idx: Option<usize>) {
     }
 
     const RAM_BASE: u32 = 0x2000_0000;
-    const REGION_SIZE: u32 = 8 * 1024; // 8 KiB per SPU RAM region (nRF53)
+    const REGION_SIZE: u32 = 8 * 1024; // SPU RAM region size on nRF53
     #[inline]
     fn to_region_index(addr: u32) -> u32 {
         (addr.saturating_sub(RAM_BASE)) / REGION_SIZE
@@ -99,7 +100,7 @@ pub async fn init(mut ipc: Ipc<'static>) -> BleController {
         grant_spu(Some(0));
     }
 
-    // Start the net core only after SPU grants are in place.
+    // The net core must not start before the SPU grants are written.
     crate::nrf5340_init::start_network_core_after_spu();
 
     ipc.event0.configure_trigger([IpcChannel::Channel1]);

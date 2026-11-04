@@ -1,6 +1,4 @@
-//! Pin definitions for lite1 board (POC2 schematic)
-//!
-//! Based on Radiosity_POC2.PDF schematic (ATS POC2 Lite1, Rev A)
+//! lite1 pin map, from the Radiosity_POC2.PDF schematic (ATS POC2 Lite1, Rev A).
 
 use embassy_nrf::Peri;
 use embassy_nrf::gpio::AnyPin;

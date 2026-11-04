@@ -1,6 +1,4 @@
-//! IMU initialization and handling for lite1 board
-//!
-//! Uses ICM-42688-P via SPI on SERIAL0
+//! ICM-42688-P on SERIAL0 (SPI), with its CLKIN driven at 32 kHz from a timer.
 
 use embassy_nrf::Peri;
 use embassy_nrf::gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull};
@@ -15,10 +13,10 @@ use icm426xx::{ICM42688, Ready};
 
 use crate::Irqs;
 
-/// IMU driver type
+/// The ready ICM-42688-P on its own SPI bus.
 pub type Imu = ICM42688<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, Ready>;
 
-/// IMU interrupt wrapper
+/// The IMU's INT1 line.
 pub struct ImuInterrupt {
     pub int1: Input<'static>,
 }
@@ -66,12 +64,12 @@ fn round_odr_icm42688(hz: u16) -> icm426xx::config::AccelOdr {
     VALID_ODRS_ICM42688[nearest_odr_index(hz)].1
 }
 
-/// Round accelerometer ODR to nearest valid value
+/// Rounds `hz` to the nearest accelerometer ODR the ICM-42688-P supports.
 pub fn round_accel_odr_hz(hz: u16) -> u16 {
     VALID_ODRS_ICM42688[nearest_odr_index(hz)].0
 }
 
-/// Initialize the ICM-42688-P IMU on SERIAL0
+/// Brings up the ICM-42688-P on SERIAL0 and starts its 32 kHz CLKIN.
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     spim_instance: Peri<'static, SERIAL0>,
@@ -96,7 +94,7 @@ pub async fn init<T: timer::Instance, C: gpiote::Channel>(
         OutputChannelPolarity::Toggle,
     );
 
-    // Generate a 32 kHz clock on CLKIN
+    // 8 MHz / 125 = 64 kHz toggles on CLKIN, a 32 kHz square wave.
     let timer = Timer::new(clkin_timer_instance);
     timer.set_frequency(timer::Frequency::F8MHz);
     let cc = timer.cc(0);
@@ -105,7 +103,7 @@ pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     let mut ppi_ch = Ppi::new_one_to_one(clkin_ppi_ch, cc.event_compare(), clkin_ch.task_out());
     ppi_ch.enable();
     timer.start();
-    // Let the timer run forever
+    // Persist both so the clock keeps running after these handles drop.
     timer.persist();
     ppi_ch.persist();
     clkin_ch.persist();

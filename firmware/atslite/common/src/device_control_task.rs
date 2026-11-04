@@ -1,5 +1,4 @@
-//! Device control task - handles USB control endpoint commands
-//! Replaces triple-press bond clearing with CLI-based control
+//! Handles device control commands from the host CLI over the USB control endpoint.
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -13,12 +12,12 @@ use odyssey_protocol::{PropKind, Props, SetDeviceNameResult};
 use crate::ble::peripheral;
 use crate::{device_control, settings, transport_mode};
 
-/// Function pointer registered by each board to persist the transport mode to flash.
-/// Call `register_transport_mode_persist_fn` once during board init.
+/// Board-specific function that writes the transport mode to flash. Null until
+/// `register_transport_mode_persist_fn` runs.
 static TRANSPORT_MODE_PERSIST_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
-/// Register a board-specific function that persists the transport mode to flash.
-/// Must be called before `device_control_task` starts.
+/// Registers the function that writes the transport mode to flash. Call it during board init,
+/// before `device_control_task` starts; until then mode changes are not persisted.
 pub fn register_transport_mode_persist_fn(f: fn(TransportMode)) {
     TRANSPORT_MODE_PERSIST_FN.store(f as *mut (), Ordering::Release);
 }
@@ -35,11 +34,10 @@ fn persist_transport_mode(mode: TransportMode) {
 pub async fn device_control_task(firmware_version: [u16; 3]) {
     info!("Device control task started");
 
-    // If pairing is active, we multiplex between incoming commands and the pairing wait/timeout
+    // Set while pairing runs, so the loop can keep serving commands until it completes or expires.
     let mut pairing_deadline: Option<embassy_time::Instant> = None;
 
     loop {
-        // When pairing is in progress, listen for both commands and pairing completion/timeout.
         if let Some(deadline) = pairing_deadline {
             use embassy_futures::select::{Either3, select3};
             let cmd_fut = device_control::recv_cmd();
@@ -49,7 +47,6 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
             match select3(cmd_fut, complete_fut, timeout_fut).await {
                 Either3::First(cmd) => {
                     info!("Received control command: {:?}", cmd);
-                    // Handle commands below (falls through)
                     match cmd {
                         DeviceMsg::CancelPairing() => {
                             info!("Cancelling pairing mode");
@@ -60,7 +57,7 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
                             ));
                             continue;
                         }
-                        // Allow repeated StartPairing to reset the timer
+                        // A repeated StartPairing restarts the timeout.
                         DeviceMsg::StartPairing(params) => {
                             info!(
                                 "StartPairing received during active pairing, resetting timeout to {} ms",
@@ -73,7 +70,6 @@ pub async fn device_control_task(firmware_version: [u16; 3]) {
                             continue;
                         }
                         other => {
-                            // Process other commands normally
                             handle_cmd(other, &mut pairing_deadline, firmware_version).await;
                             continue;
                         }
@@ -138,10 +134,8 @@ async fn handle_cmd(
 
         DeviceMsg::ClearBond() => {
             info!("Clearing bond...");
-            // Clear the bond - caller must provide settings access
-            // unsafe { crate::settings::get_settings() }.ble_bond_clear();
+            // The bond itself is not cleared here; this only drops the current connection.
 
-            // Request disconnect if currently connected
             peripheral::request_disconnect();
 
             info!("Bond cleared successfully");
@@ -158,16 +152,13 @@ async fn handle_cmd(
             }
 
             info!("Starting pairing mode for {} ms", params.timeout_ms);
-            // Enter pairing mode
             peripheral::enter_pairing_mode();
 
-            // Clear any existing bond so pairing is fresh
-            // unsafe { crate::settings::get_settings() }.ble_bond_clear();
+            // Drop the current connection so the host pairs from scratch.
             peripheral::request_disconnect();
 
             device_control::try_send_event(DeviceMsg::StartPairingResponse());
 
-            // Track deadline so the main loop can keep serving commands while pairing runs
             *pairing_deadline = Some(
                 embassy_time::Instant::now()
                     + embassy_time::Duration::from_millis(params.timeout_ms as u64),
@@ -193,20 +184,19 @@ async fn handle_cmd(
             info!("Setting transport mode: {:?}", mode);
             transport_mode::set(mode);
             if matches!(mode, TransportMode::Usb) {
-                // Drop any active BLE data sessions to keep transports exclusive
+                // USB and BLE are exclusive, so drop any BLE session.
                 peripheral::request_disconnect();
             }
-            // Respond to the host BEFORE persisting so the USB control_in poll is
-            // answered before the blocking flash write stalls the executor.
+            // Answer before persisting: the flash write blocks the executor, and the host's
+            // control_in poll must see the reply first.
             device_control::try_send_event(DeviceMsg::TransportModeStatus(mode));
-            // Persist mode to flash so it survives reboot
             persist_transport_mode(mode);
         }
 
         DeviceMsg::Reboot() => {
             info!("Reboot requested, sending ack then resetting");
             device_control::try_send_event(DeviceMsg::RebootAck());
-            // Small delay to allow the RebootAck to be polled by the host before reset
+            // Give the host time to poll the RebootAck.
             embassy_time::Timer::after_millis(50).await;
             // The host reboots straight after changing a setting, and the
             // settings worker writes asynchronously. Resetting through a page
@@ -256,8 +246,7 @@ async fn handle_cmd(
                 s.general.name = name.clone().into();
                 s.general_write();
             }
-            // Use set_device_name_initial (no ADV_RESTART_SIGNAL) — the device may have
-            // an active BLE connection to the dongle; a restart signal would disconnect it.
+            // No ADV_RESTART_SIGNAL: the dongle may be connected, and a restart would drop it.
             peripheral::set_device_name_initial(name.as_str());
             device_control::try_send_event(DeviceMsg::SetDeviceNameResponse(
                 SetDeviceNameResult::Ok(),
@@ -271,7 +260,7 @@ async fn handle_cmd(
                 let s = unsafe { settings::get_settings() };
                 s.ble_bond = entry.into();
                 s.ble_bond_write();
-                // Disconnect so the peripheral restores the new bond on reconnect
+                // Reconnecting makes the peripheral restore the new bond.
                 peripheral::request_disconnect();
                 device_control::try_send_event(DeviceMsg::AddBondResponse(AddBondResult::Ok()));
             } else {
@@ -281,7 +270,7 @@ async fn handle_cmd(
             }
         }
         _ => {
-            // Ignore response messages received as commands
+            // Responses sent to us as commands are ignored.
         }
     }
 }

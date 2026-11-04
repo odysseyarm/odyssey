@@ -29,10 +29,8 @@ fn main() {
     let dfu = &regions["flash"]["dfu"];
     let low_ram = &regions["ram"]["low_ram"];
 
-    // embassy-boot expects:
-    // - ACTIVE: primary stage2 bootloader slot
-    // - DFU: secondary slot for bootloader updates
-    // - STATE: swap state partition
+    // embassy-boot's partitions: ACTIVE is the stage2 bootloader, DFU holds a
+    // stage2 update, STATE tracks the swap.
     let memory_x = format!(
         "\
 MEMORY

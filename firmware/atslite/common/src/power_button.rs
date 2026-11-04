@@ -1,21 +1,16 @@
-//! Power button handling for ATSlite boards
+//! Power button: a long press powers the device off.
 
 use embassy_nrf::gpio::Input;
 use embassy_time::{Duration, Instant, Timer};
 
-/// Duration for a long press (power off)
 const LONG_PRESS: Duration = Duration::from_millis(500);
 
-/// Debounce time in ms
 const DEBOUNCE_MS: u64 = 30;
 
-/// Poll interval in ms
 const POLL_MS: u64 = 20;
 
-/// Main power button handling loop
-///
-/// Monitors the power button and handles long press for power off.
-/// Short presses are ignored.
+/// Watches the power button forever. A press held for [`LONG_PRESS`] shows the turning-off
+/// animation and powers off once the button is released; shorter presses are ignored.
 pub async fn power_button_loop<I2c, Delay>(
     mut btn: Input<'_>,
     pmic: &embassy_sync::mutex::Mutex<
@@ -29,14 +24,12 @@ where
     Delay: embedded_hal_async::delay::DelayNs,
 {
     loop {
-        // Wait for button press
         btn.wait_for_low().await;
         Timer::after_millis(DEBOUNCE_MS).await;
         if btn.is_high() {
             continue;
         }
 
-        // Measure hold duration
         let t0 = Instant::now();
         loop {
             if btn.is_high() {
@@ -50,22 +43,20 @@ where
         let held = Instant::now() - t0;
 
         if held >= LONG_PRESS {
-            // Long press -> power off
             defmt::info!("Long press detected - powering off");
             leds.lock_and_set_state(crate::pmic_leds::LedState::TurningOff)
                 .await;
-            // Show the turning off animation for a moment so user sees feedback
+            // Let the user see the turning-off animation.
             Timer::after_millis(1000).await;
-            // Ensure release before powering off
+            // Power off only after release.
             btn.wait_for_high().await;
             let _ = crate::power::handle_long_press_power_off(pmic).await;
             loop {}
         }
-        // Short presses are ignored
     }
 }
 
-/// Wait for a full power button press of specified duration
+/// Returns once the button has been held for `hold_time`; shorter presses are ignored.
 pub async fn wait_for_power_button_full_press(btn: &mut Input<'_>, hold_time: Duration) {
     loop {
         defmt::trace!("Waiting for power button down...");

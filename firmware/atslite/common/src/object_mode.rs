@@ -1,7 +1,5 @@
-//! Object mode - handles odyssey-protocol packets for vision sensor streaming
-//!
-//! This module processes incoming control packets (via BLE L2CAP or USB) and
-//! manages streaming of object/marker data, IMU data, and impact events.
+//! Object mode: answers odyssey-protocol control packets from BLE L2CAP or USB and streams
+//! marker, IMU, impact and battery reports back over the active transport.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -28,12 +26,11 @@ type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 
-/// Determines if a packet is a control packet (vs streaming data)
 pub fn is_control_packet(pkt: &Packet) -> bool {
     l2cap_bridge::is_control_packet(pkt)
 }
 
-/// Stream info tracking for each stream type
+/// Request id and enable flag of one report stream.
 #[derive(Default)]
 struct StreamInfo {
     req_id: AtomicU8,
@@ -58,7 +55,6 @@ impl StreamInfo {
     }
 }
 
-/// Stream infos for all stream types
 #[derive(Default)]
 struct StreamInfos {
     imu: StreamInfo,
@@ -104,7 +100,7 @@ impl StreamInfos {
     }
 }
 
-/// Impact detection settings (atomically updatable)
+/// Impact threshold and suppression time, shared between the receive loop and the IMU loop.
 #[allow(dead_code)]
 struct ImpactSettings {
     threshold: AtomicU8,
@@ -137,60 +133,52 @@ impl ImpactSettings {
     }
 }
 
-/// Trait for PAG sensor interface (PAG7665QN)
+/// PAG7665QN vision sensor as seen by object mode.
 #[allow(async_fn_in_trait)]
 pub trait PagSensor {
     type Error: defmt::Format;
 
-    /// Read a register from the sensor
     async fn read_register(&mut self, bank: u8, address: u8) -> Result<u8, Self::Error>;
 
-    /// Write a register to the sensor
     async fn write_register(&mut self, bank: u8, address: u8, data: u8) -> Result<(), Self::Error>;
 
-    /// Switch to object mode and get objects
+    /// Puts the sensor in object mode and reads the detected objects into `objs`.
     async fn get_objects(
         &mut self,
         objs: &mut [pag7665qn::types::Object; 16],
     ) -> Result<Option<u8>, Self::Error>;
 
-    /// Switch to idle mode
     async fn switch_to_idle(&mut self) -> Result<(), Self::Error>;
 }
 
-/// Trait for IMU sensor interface
 #[allow(async_fn_in_trait)]
 pub trait ImuSensor {
     type Error: defmt::Format;
 
-    /// Read IMU data (returns accel, gyro, timestamp)
+    /// Reads one accel/gyro sample with its timestamp.
     async fn read_data(&mut self) -> Result<ImuData, Self::Error>;
 }
 
-/// IMU data structure
 pub struct ImuData {
     pub accel: [i32; 3],
     pub gyro: [i32; 3],
     pub timestamp_micros: u32,
 }
 
-/// Trait for IMU interrupt
 #[allow(async_fn_in_trait)]
 pub trait ImuInterrupt {
-    /// Wait for data ready interrupt
+    /// Waits for the IMU data-ready interrupt.
     async fn wait(&mut self);
 }
 
-/// Trait for PAG interrupt
 #[allow(async_fn_in_trait)]
 pub trait PagInterrupt {
-    /// Wait for data ready interrupt
+    /// Waits for the PAG data-ready interrupt.
     async fn wait(&mut self);
 }
 
-/// Read current PAG sensor settings from registers
+/// Reads the persisted PAG settings back from the sensor's bank 0 registers.
 async fn read_pag_settings<P: PagSensor>(pag: &mut P) -> Result<PagSettings, P::Error> {
-    // Read all relevant registers from bank 0
     let exposure = pag.read_register(0, 0x67).await?;
     let gain = pag.read_register(0, 0x68).await?;
     let light_threshold = pag.read_register(0, 0x6D).await?;
@@ -218,7 +206,7 @@ async fn read_pag_settings<P: PagSensor>(pag: &mut P) -> Result<PagSettings, P::
     })
 }
 
-/// Context for object mode
+/// Hardware and settings handed to [`run`].
 pub struct ObjectModeContext<'a, P, I, PI, II>
 where
     P: PagSensor,
@@ -226,36 +214,25 @@ where
     PI: PagInterrupt,
     II: ImuInterrupt,
 {
-    /// PAG sensor (mutex protected)
     pub pag: &'a AsyncMutex<NoopRawMutex, P>,
-    /// PAG interrupt
     pub pag_int: PI,
-    /// IMU sensor
     pub imu: I,
-    /// IMU interrupt
     pub imu_int: II,
-    /// Device ID (6 bytes)
     pub device_id: [u8; 6],
-    /// Product ID
     pub product_id: u16,
-    /// Firmware version [major, minor, patch]
+    /// `[major, minor, patch]`
     pub firmware_version: [u16; 3],
-    /// Settings reference for persisting config changes
+    /// Config writes from the host land here and are flushed to flash on request.
     pub settings: &'a mut crate::settings::Settings,
-    /// USB bulk IN endpoint for streaming data to host
+    /// USB bulk IN: reports and responses to the host.
     pub usb_snd: Endpoint<'static, In>,
-    /// USB bulk OUT endpoint for receiving commands from host
+    /// USB bulk OUT: commands from the host.
     pub usb_rcv: Endpoint<'static, Out>,
-    /// USB configuration state handle
     pub usb_configured: UsbConfigHandle,
 }
 
-/// Run object mode - the main entry point
-///
-/// This function runs the object mode loop, handling:
-/// - Incoming control packets from BLE L2CAP or USB bulk endpoint
-/// - Outgoing streaming data (markers, IMU, impact) via USB or BLE based on transport mode
-/// - Protocol handling (ReadConfig, WriteConfig, StreamUpdate, etc.)
+/// Runs object mode forever: the receive, IMU, marker, battery and send loops run concurrently,
+/// and packets go out over USB or BLE according to the current transport mode.
 pub async fn run<P, I, PI, II>(mut ctx: ObjectModeContext<'_, P, I, PI, II>)
 where
     P: PagSensor,
@@ -274,11 +251,6 @@ where
 
     let l2cap = l2cap_bridge::get_or_init();
 
-    // Run four concurrent tasks:
-    // 1. Receive and process control packets (USB or BLE based on transport mode)
-    // 2. Stream IMU data
-    // 3. Stream marker data
-    // 4. Send streaming data (USB or BLE based on transport mode)
     let recv_task = recv_loop(
         ctx.pag,
         &stream_infos,
@@ -317,11 +289,9 @@ where
 
     let battery_task = battery_loop(pkt_channel.sender(), &stream_infos);
 
-    // Join all tasks - they run forever
     join5(recv_task, imu_task, obj_task, stream_task, battery_task).await;
 }
 
-/// Receive loop - handles incoming packets from BLE L2CAP or USB bulk endpoint
 async fn recv_loop<P: PagSensor, const N: usize>(
     pag: &AsyncMutex<NoopRawMutex, P>,
     stream_infos: &StreamInfos,
@@ -347,16 +317,16 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                 loop {
                     if !usb_enabled {
                         if matches!(mode, TransportMode::Usb) {
-                            // USB transport mode but not yet configured — poll until configured.
-                            // We use a short timer rather than the signal to avoid racing with
-                            // other waiters (Signal is single-consumer).
+                            // USB mode but the host has not configured the device yet. Poll
+                            // instead of waiting on the config signal: Signal has a single
+                            // consumer, and other tasks wait on it too.
                             embassy_time::Timer::after_millis(10).await;
-                            // Re-check: if now configured, fall through to read_transfer
+                            // Once configured, go on to read_transfer.
                             if !usb_configured.is_configured() {
                                 continue;
                             }
                         } else {
-                            // Not USB transport mode — wait forever
+                            // BLE mode: USB never delivers a packet.
                             core::future::pending::<()>().await;
                         }
                     }
@@ -494,13 +464,13 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                     defmt::Debug2Format(&config)
                 );
                 let wire_config: GeneralConfig = config.into();
-                // Update atomic impact settings for imu_loop
+                // imu_loop reads impact settings from the atomics, not from `settings`.
                 match &wire_config {
                     GeneralConfig::ImpactThreshold(v) => impact_settings.set_threshold(*v),
                     GeneralConfig::SuppressMs(v) => impact_settings.set_suppress_ms(*v),
                     _ => {}
                 }
-                // Store into settings struct for persistence
+                // Persisted on the next FlashSettings.
                 settings.general.set_general_config(&wire_config);
                 Some(Packet {
                     id: pkt.id,
@@ -541,7 +511,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                     settings.general.suppress_ms,
                 );
 
-                // Read current PAG sensor settings (NF only)
+                // Snapshot the PAG registers (NF sensor only) so they persist too.
                 let pag_settings = {
                     let mut pag = pag.lock().await;
                     read_pag_settings(&mut *pag).await
@@ -553,7 +523,6 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                     defmt::error!("[object_mode] Failed to read PAG settings, saving general only");
                 }
 
-                // Save general + PAG settings to flash
                 settings.general_write();
                 settings.pag_write();
                 defmt::info!("[object_mode] Settings saved to flash");
@@ -566,7 +535,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
 
             PacketData::WriteMode(mode) => {
                 defmt::info!("[object_mode] WriteMode: {:?}", mode);
-                // TODO: Handle mode switching (object/image mode)
+                // Object/image mode switching is not implemented; the request is just acked.
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::Ack(),
@@ -575,9 +544,9 @@ async fn recv_loop<P: PagSensor, const N: usize>(
 
             PacketData::SetDeviceName(name) => {
                 defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
-                // Use set_device_name_initial (no ADV_RESTART_SIGNAL) — we are inside an
-                // active BLE connection and signalling a restart would disconnect the dongle.
-                // CURRENT_NAME is updated so the new name is used on the next advertising cycle.
+                // No ADV_RESTART_SIGNAL: this may be running inside the dongle's BLE
+                // connection, and a restart would drop it. The new name is advertised on the
+                // next advertising cycle.
                 crate::ble::peripheral::set_device_name_initial(name.as_str());
                 settings.general.name = name.into();
                 settings.general_write();
@@ -589,7 +558,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
                 })
             }
 
-            // Ignore response packets and streaming data
+            // Responses and streaming reports are not commands.
             PacketData::ObjectReportRequest() => None,
             PacketData::Ack() => None,
             PacketData::ReadConfigResponse(_) => None,
@@ -606,13 +575,12 @@ async fn recv_loop<P: PagSensor, const N: usize>(
             PacketData::SetDeviceNameResponse(_) => None,
         };
 
-        // Send response back via the same transport the command came from
+        // Reply on the transport the command came in on. Id 255 asks for no reply.
         if let Some(r) = response {
             if r.id != 255 {
                 if from_usb {
-                    // Route through the stream_loop which handles USB write.
-                    // Use async send (not try_send) to ensure responses are never dropped
-                    // when the channel is momentarily full due to streaming data.
+                    // stream_loop owns the USB IN endpoint. Await the send so a channel full
+                    // of streaming data delays the response instead of dropping it.
                     resp_snd.send(r).await;
                 } else {
                     if is_control_packet(&r) {
@@ -630,7 +598,7 @@ async fn recv_loop<P: PagSensor, const N: usize>(
     }
 }
 
-/// Battery loop - periodically sends battery state when the battery stream is enabled
+/// Sends a battery report once a second while the battery stream is enabled.
 async fn battery_loop<const N: usize>(
     pkt_snd: Sender<'_, Packet, N>,
     stream_infos: &StreamInfos,
@@ -652,7 +620,8 @@ async fn battery_loop<const N: usize>(
     }
 }
 
-/// Stream loop - sends streaming/response packets to USB or BLE based on transport mode
+/// Owns the outgoing side: writes queued packets to USB bulk IN, or to the matching L2CAP
+/// channel in BLE mode. Packets are dropped when neither transport is active.
 async fn stream_loop<const N: usize>(
     pkt_rcv: Receiver<'_, Packet, N>,
     l2cap: &L2capChannels,
@@ -667,7 +636,6 @@ async fn stream_loop<const N: usize>(
         let pkt = pkt_rcv.receive().await;
         pkt_count = pkt_count.wrapping_add(1);
 
-        // Log every 100th packet to avoid spam
         if pkt_count % 100 == 0 {
             defmt::debug!("[stream_loop] Processed {} packets", pkt_count);
         }
@@ -677,7 +645,6 @@ async fn stream_loop<const N: usize>(
         let ble_active = matches!(mode, TransportMode::Ble);
 
         if usb_active {
-            // Send via USB bulk IN endpoint
             if matches!(pkt.data, PacketData::ReadRegisterResponse(_)) {
                 defmt::info!(
                     "[stream_loop] Sending ReadRegisterResponse id={=u8}",
@@ -706,7 +673,6 @@ async fn stream_loop<const N: usize>(
                 }
             }
         } else if ble_active {
-            // Route to correct L2CAP channel based on packet type
             if is_control_packet(&pkt) {
                 if l2cap.control_tx.try_send(pkt).is_err() {
                     defmt::warn!("[stream_loop] Dropped control packet - channel full");
@@ -722,7 +688,7 @@ async fn stream_loop<const N: usize>(
     }
 }
 
-/// IMU loop - streams accelerometer and gyro data, detects impacts
+/// Streams accel/gyro reports and raises impact reports when acceleration crosses the threshold.
 async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
     imu: &mut I,
     imu_int: &mut II,
@@ -732,9 +698,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
 ) {
     const G: f32 = 9.806_65;
 
-    // ICM-42688 scales:
-    // Accel: 32768 LSB/g at default FS
-    // Gyro: 262.144 LSB/(°/s) at default FS
+    // ICM-42688 sensitivity at the default full-scale ranges.
     const ACC_LSB_PER_G: f32 = 32768.0;
     const GYRO_LSB_PER_DPS: f32 = 262.144;
 
@@ -755,15 +719,13 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
         let gyr = imu_data.gyro;
         let ts_micros = imu_data.timestamp_micros;
 
-        // Apply axis transforms (POC2/lite1 specific)
-        // ICM on lite1 is rotated 90° CW vs legacy atslite (POC1).
-        // Legacy transform: [raw[0], -raw[1], -raw[2]]
-        // Rotation mapping: legacy_x = new_y, legacy_y = -new_x
-        // Combined: [raw[1], raw[0], -raw[2]]
+        // The ICM on lite1 (POC2) is rotated 90° CW relative to legacy atslite (POC1). Legacy maps
+        // raw axes as [raw[0], -raw[1], -raw[2]]; with legacy_x = new_y and legacy_y = -new_x
+        // that becomes [raw[1], raw[0], -raw[2]].
         let (ax, ay, az) = (acc[1], acc[0], -acc[2]);
         let (gx, gy, gz) = (gyr[1], gyr[0], -gyr[2]);
 
-        // Convert to SI units
+        // m/s² and rad/s.
         let accel = Vector3::new(
             ax as f32 / ACC_LSB_PER_G * G,
             ay as f32 / ACC_LSB_PER_G * G,
@@ -775,7 +737,6 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
             (gz as f32 / GYRO_LSB_PER_DPS).to_radians(),
         );
 
-        // Send accel report if stream enabled
         if stream_infos.imu.enabled() {
             let id = stream_infos.imu.req_id();
             let pkt = Packet {
@@ -791,7 +752,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
             }
         }
 
-        // Impact detection (threshold is in m/s^2)
+        // The threshold is in m/s²; impacts closer together than suppress_ms are dropped.
         if stream_infos.impact.enabled() {
             let accel_magnitude_ms2 = accel.magnitude();
             let threshold_ms2 = impact_settings.threshold() as f32;
@@ -821,7 +782,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
     }
 }
 
-/// Object loop - streams marker data from PAG sensor
+/// Streams PAG marker reports while the marker stream is enabled.
 async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
     pag: &AsyncMutex<NoopRawMutex, P>,
     pag_int: &mut PI,
@@ -834,7 +795,6 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
     loop {
         let enabled = stream_infos.marker.enabled();
 
-        // Log state changes
         if enabled != last_enabled_log {
             if enabled {
                 defmt::info!("[obj_loop] Marker stream ENABLED, starting to read objects");
@@ -847,7 +807,7 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
         if enabled {
             let mut objs = [pag7665qn::types::Object::DEFAULT; 16];
 
-            // Wait for interrupt with timeout
+            // On timeout, loop around and re-check whether the stream is still enabled.
             match embassy_time::with_timeout(
                 embassy_time::Duration::from_millis(100),
                 pag_int.wait(),

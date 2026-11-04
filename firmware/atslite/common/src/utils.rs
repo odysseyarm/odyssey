@@ -47,7 +47,7 @@ macro_rules! battery_model_inc {
         mod __battery_model_generated {
             use nrfxlib_sys as sys;
 
-            // Fixed sizes from the C struct
+            // Array lengths are fixed by the nrf_fuel_gauge C `battery_model` struct.
             pub static PARAM_1:  [f32; 201] = [ $($p1),* ];
             pub static TEMPS:    [f32;   3] = [ $($temps),* ];
             pub static PARAM_2:  [f32; 122] = [ $($p2),* ];

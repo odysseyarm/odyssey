@@ -5,7 +5,7 @@ net_core := "net-core"
 # Reads the release counter out of a bootloader or net-core main.rs.
 release_counter := justfile_directory() / "../../../release-counter"
 
-# Default recipe - show available commands
+# List the recipes.
 default:
     @just --list
 
@@ -202,7 +202,7 @@ flash: build
     nrfjprog --program {{output_dir}}/stage2-bootloader.hex --sectorerase --verify
     nrfjprog --program {{output_dir}}/app-a.hex --sectorerase --verify
     nrfjprog --program {{output_dir}}/app-b.hex --sectorerase --verify
-    # Clear bootloader state pages so boot state starts erased (0xFFFFFFFF)
+    # Erase the stage1 and stage2 boot state pages so the bootloaders start from 0xFFFFFFFF.
     nrfjprog --erasepage 0xF9000
     nrfjprog --erasepage 0xFA000
     nrfjprog --reset
@@ -320,7 +320,6 @@ gen-release requires_bootloader requires_netcore min_desktop:
         fi
     done
 
-    # Compute sha256 and size for each file
     APP_A_SHA=$(sha256sum "$BUILD_DIR/app-a.bin" | cut -d' ' -f1)
     APP_A_SIZE=$(stat -c%s "$BUILD_DIR/app-a.bin" 2>/dev/null || stat -f%z "$BUILD_DIR/app-a.bin")
 
@@ -433,7 +432,6 @@ gen-release requires_bootloader requires_netcore min_desktop:
 
     TODAY=$(date +%Y-%m-%d)
 
-    # Create the new firmware entry JSON
     NEW_ENTRY=$(cat <<EOF
     {
       "version": "$VERSION",
@@ -465,7 +463,7 @@ gen-release requires_bootloader requires_netcore min_desktop:
     EOF
     )
 
-    # Use jq to prepend the new entry to the firmwares array
+    # The manifest lists newest first; the requires_netcore check above reads firmwares[0].
     jq --argjson entry "$NEW_ENTRY" '.devices.atslite1.firmwares = [$entry] + .devices.atslite1.firmwares' "$MANIFEST" > "$MANIFEST.tmp"
     mv "$MANIFEST.tmp" "$MANIFEST"
 

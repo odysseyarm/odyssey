@@ -1,7 +1,7 @@
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource, LfxoCapacitance};
 use embassy_nrf::{Peripherals, pac};
 
-/// Configure SPU so the network core can access the ICMSG {RX,TX} regions.
+/// Opens every flash region, EXTDOMAIN[0] and the ICMSG RX/TX RAM regions to the network core.
 unsafe fn configure_spu_for_network_core() {
     use embassy_nrf::pac::spu::vals;
 
@@ -14,9 +14,9 @@ unsafe fn configure_spu_for_network_core() {
 
     const RAM_BASE: u32 = 0x2000_0000;
     const RAM_REGION_SIZE: u32 = 8 * 1024; // 8 KiB per SPU RAM region (nRF53)
-    // Engineering A revision has 32 regions of 32KB, later revisions have 64 regions of 16KB
-    // Configure for both to be safe
-    const NUM_FLASH_REGIONS: usize = 64; // Maximum number of flash regions
+    // Engineering A silicon has 32 flash regions of 32 KiB, later revisions 64 of 16 KiB.
+    // Writing 64 covers both.
+    const NUM_FLASH_REGIONS: usize = 64;
 
     #[inline]
     fn to_ram_region_index(addr: u32) -> u32 {
@@ -25,25 +25,24 @@ unsafe fn configure_spu_for_network_core() {
 
     let spu = embassy_nrf::pac::SPU_S;
 
-    // Configure all flash regions to be non-secure and accessible by network core
-    // This includes both app flash (0x00000000+) and network core flash (0x01000000+)
+    // Make all flash non-secure so the network core can reach it: app flash at 0x0000_0000
+    // and network core flash at 0x0100_0000.
     for i in 0..NUM_FLASH_REGIONS {
         spu.flashregion(i).perm().write(|w| {
             w.set_read(true);
             w.set_write(true);
             w.set_execute(true);
-            w.set_secattr(false); // Non-secure
-            w.set_lock(false); // Unlock to allow netcore access
+            w.set_secattr(false);
+            w.set_lock(false);
         });
     }
 
-    // Explicitly configure EXTDOMAIN[0] for network core flash access FIRST
+    // EXTDOMAIN[0] is the network core; map it non-secure.
     spu.extdomain(0).perm().write(|w| {
         w.set_securemapping(vals::ExtdomainPermSecuremapping::NON_SECURE);
         w.set_lock(false);
     });
 
-    // Configure RAM regions for ICMSG
     let tx_start = (&raw const __icmsg_tx_start) as u32;
     let tx_end = (&raw const __icmsg_tx_end) as u32;
     let rx_start = (&raw const __icmsg_rx_start) as u32;
@@ -73,31 +72,29 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     let mut config = Config::default();
 
     config.dcdc.regh = true;
-    // Erratum 160 workaround is not implemented
+    // REGMAIN and REGRADIO DC/DC stay off: the erratum 160 workaround is not implemented.
     config.dcdc.regmain = false;
     config.dcdc.regradio = false;
-    config.hfclk_source = HfclkSource::ExternalXtal; // HFXO is required for radio
+    config.hfclk_source = HfclkSource::ExternalXtal; // the radio needs HFXO
     config.lfclk_source = LfclkSource::ExternalXtal;
 
-    // Adjust as needed
     config.internal_capacitors.hfxo = None;
     config.internal_capacitors.lfxo = Some(LfxoCapacitance::_7pF);
 
-    // Configure SPU BEFORE any other initialization to allow network core access
+    // SPU permissions must be in place before anything else touches the network core.
     unsafe {
         configure_spu_for_network_core();
     }
 
-    // Enable instruction cache
     pac::CACHE.enable().write(|w| w.set_enable(true));
-    // Set clock to 128 MHz (avoid erratum 166)
+    // HCLK at 128 MHz (DIV1) avoids erratum 166.
     pac::CLOCK
         .hfclkctrl()
         .write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));
 
     let peripherals = embassy_nrf::init(config);
 
-    // probe-rs complains if network core is locked or off
+    // probe-rs fails to attach while the network core is locked or held off:
     // https://github.com/probe-rs/probe-rs/issues/3053
     let mut core_peripherals = cortex_m::Peripherals::take().unwrap();
     let systick_delay = cortex_m::delay::Delay::new(core_peripherals.SYST, 128_000_000);
@@ -106,10 +103,10 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     (core_peripherals, peripherals)
 }
 
-/// Release the network core once SPU/ICMSG regions are configured.
+/// Releases the network core from FORCEOFF. Call only after the SPU grants are written.
 pub fn start_network_core_after_spu() {
     use embassy_nrf::pac::reset::vals::Forceoff;
-    // Erratum 161
+    // Erratum 161: hold 0x50005618 at 1 while toggling FORCEOFF.
     unsafe {
         (0x50005618 as *mut u32).write_volatile(1);
     }
@@ -117,7 +114,7 @@ pub fn start_network_core_after_spu() {
         .network()
         .forceoff()
         .write(|w| w.set_forceoff(Forceoff::RELEASE));
-    // Small delay via a few nops; the net core clock is separate.
+    // The net core runs from its own clock, so a short busy-wait is enough between toggles.
     cortex_m::asm::delay(512);
     embassy_nrf::pac::RESET
         .network()

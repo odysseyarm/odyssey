@@ -1,8 +1,5 @@
-//! Minimal USB enumeration test for lite1
-//!
-//! This firmware only initializes USB to verify the USB hardware works.
-//! If this enumerates on the host, USB is working and the issue is
-//! with other peripheral initialization.
+//! Bring-up image that starts only USB. If this enumerates but the full
+//! firmware does not, the fault is in some other peripheral's init.
 
 #![no_std]
 #![no_main]
@@ -25,7 +22,7 @@ const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 async fn main(spawner: Spawner) {
     defmt::info!("USB test starting...");
 
-    // Minimal init - just enough for USB
+    // Only the clocks and the REGH DC/DC that USB needs.
     let mut config = embassy_nrf::config::Config::default();
     config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
     config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
@@ -34,23 +31,21 @@ async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(config);
     defmt::info!("Embassy init complete");
 
-    // Create USB driver
     let vbus = usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let driver = usb::Driver::new(p.USBD, Irqs, vbus);
 
-    // USB config - match the common::usb setup exactly
+    // Must match the common::usb configuration exactly.
     let mut usb_config = embassy_usb::Config::new(0x1915, 0x5211);
     usb_config.manufacturer = Some("Odyssey Arm");
     usb_config.product = Some("ATS USB");
     usb_config.max_power = 310;
     usb_config.max_packet_size_0 = 64;
-    // Composite device settings (needed for MSOS)
+    // MS OS descriptors need the IAD composite device class.
     usb_config.composite_with_iads = true;
     usb_config.device_class = 0xEF;
     usb_config.device_sub_class = 0x02;
     usb_config.device_protocol = 0x01;
 
-    // Allocate buffers
     static CONFIG_DESC: static_cell::StaticCell<[u8; 256]> = static_cell::StaticCell::new();
     static BOS_DESC: static_cell::StaticCell<[u8; 256]> = static_cell::StaticCell::new();
     static MSOS_DESC: static_cell::StaticCell<[u8; 512]> = static_cell::StaticCell::new();
@@ -70,10 +65,9 @@ async fn main(spawner: Spawner) {
         control_buf,
     );
 
-    // Add MSOS descriptor for Windows (this is critical for WinUSB)
+    // Without the MS OS descriptor Windows will not bind WinUSB.
     builder.msos_descriptor(msos::windows_version::WIN8_1, 0);
 
-    // Add a vendor-specific function with WINUSB compatible ID
     let mut function = builder.function(0xFF, 0, 0);
     function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -91,7 +85,6 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(blink_task().unwrap());
 
-    // Run USB forever
     usb.run().await;
 }
 
