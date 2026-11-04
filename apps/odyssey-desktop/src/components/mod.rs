@@ -4,6 +4,9 @@
               flags at the user's span; they cannot be shortened in the markup"
 )]
 
+mod config_corruption_modal;
+pub(crate) use config_corruption_modal::ConfigCorruptionModal;
+
 mod navbar;
 pub(crate) use navbar::Navbar;
 
