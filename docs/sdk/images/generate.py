@@ -28,11 +28,13 @@ EMBLEM = None
 LIGHT = dict(fg="#1f2328", muted="#59636e", line="#d1d9e0", faint="#eef1f4", surface="#f6f8fa",
              panel="#ffffff", x="#cf222e", y="#1a7f37", z="#0969da", accent="#bc4c00",
              accentsoft="#fff4ea", dev="#57606a", devtop="#8c959f", devside="#424a53",
-             trk="#d97a1e", trktop="#f0a25a", trkside="#a85a12")
+             trk="#d97a1e", trktop="#f0a25a", trkside="#a85a12",
+             hand="#e4e8ec", handline="#424a53", handshade="#c4ccd4")
 DARK = dict(fg="#e6edf3", muted="#9198a1", line="#3d444d", faint="#1c2128", surface="#161b22",
             panel="#0d1117", x="#ff7b72", y="#3fb950", z="#58a6ff", accent="#ffa657",
             accentsoft="#2b1d10", dev="#8b949e", devtop="#b1bac4", devside="#6e7681",
-            trk="#e8893a", trktop="#ffb877", trkside="#b8661c")
+            trk="#e8893a", trktop="#ffb877", trkside="#b8661c",
+            hand="#59616b", handline="#d4dae0", handshade="#454c55")
 
 
 def style():
@@ -410,41 +412,121 @@ def gizmo(s, c, axes, L=60):
     circle(s, c, 4.5, fill="var(--fg)")
 
 
+def capsule(s, a, b, width, fill, outline="var(--handline)", ow=3):
+    """A rounded bar from a to b: drawn as an outline stroke under a fill stroke."""
+    d = f"M{f(a[0])} {f(a[1])}L{f(b[0])} {f(b[1])}"
+    s.add(f'<path d="{d}" fill="none" style="stroke:{outline}" stroke-width="{f(width + 2 * ow)}" stroke-linecap="round"/>')
+    s.add(f'<path d="{d}" fill="none" style="stroke:{fill}" stroke-width="{f(width)}" stroke-linecap="round"/>')
+
+
+def hand(s, cx, cy, side, k=1.0):
+    """A hand making the axis sign: thumb +X to the right, index +Y up, middle
+    finger +Z. side="right" shows a right hand's palm, its middle finger
+    pointing at the viewer; side="left" shows a left hand's back, its middle
+    finger pointing away. Both have the same outline, so only Z differs.
+    Drawn around (0, 0), the middle of the palm, then moved and scaled."""
+    H, L, SH = "var(--hand)", "var(--handline)", "var(--handshade)"
+    X, Y, Z = "var(--x)", "var(--y)", "var(--z)"
+    s.add(f'<g transform="translate({f(cx)} {f(cy)}) scale({k:.3f})">')
+
+    def bar(a, b, w, color):
+        s.add(f'<path d="M{f(a[0])} {f(a[1])}L{f(b[0])} {f(b[1])}" fill="none" '
+              f'style="stroke:{color}" stroke-width="{f(w)}" stroke-linecap="round"/>')
+
+    # Every part: outline stroke first, then the fills, so parts merge into one shape.
+    parts = [((-2, 44), (-3, 62), 46, H),            # wrist
+             ((22, 14), (70, 2), 24, X),             # thumb, +X
+             ((12, -26), (13, -82), 24, Y)]          # index, +Y
+    if side == "left":
+        parts += [((-12, -28), (-12, -40), 23, Z),   # middle, going away: only its base shows
+                  ((-30, -24), (-30, -30), 20, H)]   # ring and little finger knuckles
+    for a, b, w, _ in parts:
+        bar(a, b, w + 6, L)
+    palm = "M-38 -14Q-40 -36 -20 -36L18 -36Q38 -36 38 -14L36 22Q32 50 0 50Q-34 50 -38 22Z"
+    s.add(f'<path d="{palm}" style="fill:{H};stroke:{L}" stroke-width="3" stroke-linejoin="round"/>')
+    for a, b, w, color in parts:
+        bar(a, b, w, color)
+    bar((22, 14), (40, 9), 24, X)                    # thumb fill over the palm's edge
+    bar((12, -26), (12, -40), 24, Y)                 # index fill over the palm's edge
+    for jy in (-52, -68):                            # finger joints, faint creases
+        s.add(f'<path d="M5 {jy}Q12 {jy + 3} 19 {jy}" fill="none" style="stroke:{L}" '
+              f'stroke-width="2" stroke-linecap="round" opacity="0.35"/>')
+    s.add(f'<path d="M51 -1Q54 6 53 13" fill="none" style="stroke:{L}" '
+          f'stroke-width="2" stroke-linecap="round" opacity="0.35"/>')
+    if side == "right":
+        # Palm side: ring and little finger curled across the palm, a crease,
+        # and the middle finger pointing straight at the viewer: its tip.
+        for y0 in (-6, 14):
+            bar((-28, y0), (-2, y0 + 4), 21, L)
+            bar((-28, y0), (-2, y0 + 4), 15, H)
+        bar((-22, 36), (16, 30), 3, SH)
+        circle(s, (-10, -32), 17, fill=Z, stroke=L, width=3)
+        circle(s, (-10, -32), 7.5, fill="var(--panel)")
+        circle(s, (-10, -32), 3.5, fill=Z)
+    else:
+        # Back of the hand: knuckle lines, a nail on the index finger, and
+        # the middle finger's base marked as pointing into the page.
+        for kx in (-30, -12, 12):
+            bar((kx - 6, -14), (kx + 6, -14), 3, SH)
+        rect(s, 6, -96, 13, 14, rx=5, fill="var(--panel)", stroke=L, width=2)
+        into_page(s, (-12, -40), Z, r=10)
+    s.add("</g>")
+
+
+def up_glyph(s, c, up, color):
+    """Row label: a small axis tripod with its up axis colored."""
+    for dx, dy in ((-0.85, 0.5), (0.85, 0.5)):
+        line(s, c, (c[0] + dx * 26, c[1] + dy * 26), "var(--muted)", 3)
+    arrow(s, c, (c[0], c[1] - 44), color, 4, head=14)
+    circle(s, c, 4, fill="var(--fg)")
+    text(s, c[0], c[1] + 46, f"{up} up", "l b", anchor="middle", color=color)
+
+
 def engines():
-    s = Svg(760, 560, "Axis conventions in common engines",
-            "A two-by-two chart. Columns: Y up, Z up. Rows: right-handed, left-handed. "
-            "Odyssey is right-handed with Y up and forward along -Z, like Bevy, Godot, three.js, "
-            "and OpenGL. Unity is left-handed with Y up and forward along +Z. Blender is "
+    s = Svg(760, 650, "Axis conventions in common engines",
+            "Two hands make the axis sign: thumb +X pointing right, index finger +Y up, "
+            "middle finger +Z. On the right hand, palm toward you, the middle finger points at "
+            "you; on the left hand, back toward you, it points away. Below them, a two-by-two "
+            "chart. Rows: Y up, Z up. Columns: right-handed, left-handed. Odyssey is "
+            "right-handed with Y up and forward along -Z, like Bevy, Godot, three.js, and "
+            "OpenGL. Unity is left-handed with Y up and forward along +Z. Blender is "
             "right-handed with Z up and forward along -Y. Unreal Engine is left-handed with Z "
             "up and forward along +X.")
-    X0, Y0, CW, CH, G = 120, 60, 312, 222, 14
-    text(s, X0 + CW / 2, 36, "Y up", "l b", anchor="middle")
-    text(s, X0 + CW + G + CW / 2, 36, "Z up", "l b", anchor="middle")
-    text(s, 70, Y0 + CH / 2, "Right-handed", "l b", anchor="middle", rotate=-90)
-    text(s, 70, Y0 + CH + G + CH / 2, "Left-handed", "l b", anchor="middle", rotate=-90)
-    X, Y, Z = "var(--x)", "var(--y)", "var(--z)"
+    X0, Y0, CW, CH, G = 136, 272, 297, 156, 14
+    heads = [("Right-handed", "right", "toward you"), ("Left-handed", "left", "away from you")]
+    for i, (title, side, ztext) in enumerate(heads):
+        mx = X0 + i * (CW + G) + CW / 2
+        text(s, mx, 30, title, "l b", anchor="middle")
+        hx, hy, k = mx - 10, 158, 1.12
+        hand(s, hx, hy, side, k)
+        text(s, hx + 92 * k, hy + 10 * k, "X", "l b", color="var(--x)")
+        text(s, hx + 34 * k, hy - 86 * k, "Y", "l b", color="var(--y)")
+        s.add(f'<text x="{f(hx - 52 * k)}" y="{f(hy - 26 * k)}" text-anchor="end">'
+              f'<tspan class="l b" style="fill:var(--z)">Z</tspan>'
+              f'<tspan class="s m" dx="6">{ztext}</tspan></text>')
+    up_glyph(s, (64, Y0 + 92), "Y", "var(--y)")
+    up_glyph(s, (64, Y0 + CH + G + 92), "Z", "var(--z)")
     cells = [
-        (0, 0, True, [("X", "right", X), ("Y", "up", Y), ("Z", "toward", Z)], "forward: −Z",
+        (0, 0, True, "forward: −Z",
          [("odyssey", "Odyssey"), ("bevy", "Bevy"), ("godotengine", "Godot"), ("threedotjs", "three.js"), (None, "OpenGL")]),
-        (1, 0, False, [("X", "right", X), ("Z", "up", Z), ("Y", "away", Y)], "forward: −Y",
-         [("blender", "Blender")]),
-        (0, 1, False, [("X", "right", X), ("Y", "up", Y), ("Z", "away", Z)], "forward: +Z",
-         [("unity", "Unity")]),
-        (1, 1, False, [("Y", "right", Y), ("Z", "up", Z), ("X", "away", X)], "forward: +X",
-         [("unrealengine", "Unreal Engine")]),
+        (0, 1, False, "forward: −Y", [("blender", "Blender")]),
+        (1, 0, False, "forward: +Z", [("unity", "Unity")]),
+        (1, 1, False, "forward: +X", [("unrealengine", "Unreal Engine")]),
     ]
-    for col, row, ours, axes, fwd, tools in cells:
+    for col, row, ours, fwd, tools in cells:
         x = X0 + col * (CW + G)
         y = Y0 + row * (CH + G)
         if ours:
             rect(s, x, y, CW, CH, rx=14, fill="var(--accentsoft)", stroke="var(--accent)", width=2)
         else:
             rect(s, x, y, CW, CH, rx=14, fill="var(--surface)", stroke="var(--line)", width=1.5)
-        gizmo(s, (x + 70, y + 122), axes, L=52)
-        text(s, x + 22, y + CH - 18, fwd, "s m")
-        ty = y + 46 if len(tools) > 1 else y + CH / 2 + 6
-        for slug, name in tools:
-            lx = x + 160
+        text(s, x + CW - 18, y + CH - 16, fwd, "s m", anchor="end")
+        if len(tools) == 1:
+            slots = [(x + CW / 2 - 70, y + CH / 2 + 2)]
+        else:
+            slots = [(x + 22, y + 40), (x + 22, y + 74), (x + 22, y + 108),
+                     (x + 160, y + 40), (x + 160, y + 74)]
+        for (slug, name), (lx, ty) in zip(tools, slots):
             if slug == "odyssey":
                 emblem(s, lx - 3, ty - 20, 27)
                 text(s, lx + 30, ty, name, "b", color="var(--accent)")
@@ -453,9 +535,8 @@ def engines():
                 text(s, lx + 30, ty, name)
             else:
                 text(s, lx + 30, ty, name)
-            ty += 34
-    text(s, X0 + CW + G / 2, Y0 + 2 * CH + G + 34,
-         "Arrows drawn down and to the left point toward you; up and to the right, away from you.",
+    text(s, X0 + CW + G / 2, Y0 + 2 * CH + G + 40,
+         "Same thumb and index finger, mirrored hand: only the middle finger, Z, changes direction.",
          "s m", anchor="middle")
     s.save("engine-axes.svg")
 

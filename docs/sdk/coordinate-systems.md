@@ -25,7 +25,11 @@ its origin at the **top-left corner of the screen**:
 It is the same convention as Bevy, Godot, three.js, and OpenGL. Unity flips the
 Z axis; Unreal Engine and Blender put Z up.
 
-![A two by two chart of axis conventions. Right-handed with Y up: Odyssey, Bevy, Godot, three.js, and OpenGL, forward is −Z. Right-handed with Z up: Blender, forward is −Y. Left-handed with Y up: Unity, forward is +Z. Left-handed with Z up: Unreal Engine, forward is +X.](./images/engine-axes.svg "Logos are trademarks of their owners and identify each engine. Godot logo by Andrea Calabró, CC BY 4.0.")
+To check a convention, make the sign with your hand: thumb along +X, index
+finger along +Y, middle finger along +Z. Odyssey's axes fit your right hand,
+with the middle finger pointing at you; Unity's fit your left hand.
+
+![Two hands make the axis sign: thumb is +X, pointing right; index finger is +Y, pointing up; middle finger is +Z. On the right hand it points toward you, on the left hand away. Below, a two-by-two chart of axis conventions. Right-handed with Y up: Odyssey, Bevy, Godot, three.js, and OpenGL, forward is −Z. Right-handed with Z up: Blender, forward is −Y. Left-handed with Y up: Unity, forward is +Z. Left-handed with Z up: Unreal Engine, forward is +X.](./images/engine-axes.svg "Logos are trademarks of their owners and identify each engine. Godot logo by Andrea Calabró, CC BY 4.0.")
 
 What this means in practice:
 
