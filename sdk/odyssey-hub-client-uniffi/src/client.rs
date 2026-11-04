@@ -82,7 +82,7 @@ impl From<RpcError> for ClientError {
     }
 }
 
-#[derive(uniffi::Object)]
+#[derive(uniffi::Object, Default)]
 pub struct Client {
     inner: Arc<RwLock<Option<odyssey_hub_client::client::Client>>>,
     closed: CancellationToken,
@@ -132,48 +132,30 @@ async fn next_until_closed<T>(
     }
 }
 
+/// A hub subscription shared between the foreign handle and its pending `next()` calls.
+pub type SharedStream<T> = Arc<Mutex<futures::stream::BoxStream<'static, Result<T, RpcError>>>>;
+
 #[derive(uniffi::Object)]
 pub struct EventStream {
-    pub inner: Arc<
-        Mutex<
-            futures::stream::BoxStream<
-                'static,
-                Result<odyssey_hub_common::events::Event, RpcError>,
-            >,
-        >,
-    >,
+    pub inner: SharedStream<odyssey_hub_common::events::Event>,
     closed: CancellationToken,
 }
 
 #[derive(uniffi::Object)]
 pub struct DeviceListStream {
-    pub inner: Arc<
-        Mutex<
-            futures::stream::BoxStream<
-                'static,
-                Result<Vec<odyssey_hub_common::device::Device>, RpcError>,
-            >,
-        >,
-    >,
+    pub inner: SharedStream<Vec<odyssey_hub_common::device::Device>>,
     closed: CancellationToken,
 }
 
 #[derive(uniffi::Object)]
 pub struct ShotDelayStream {
-    pub inner: Arc<Mutex<futures::stream::BoxStream<'static, Result<u16, RpcError>>>>,
+    pub inner: SharedStream<u16>,
     closed: CancellationToken,
 }
 
 #[derive(uniffi::Object)]
 pub struct AccessoryMapStream {
-    pub inner: Arc<
-        Mutex<
-            futures::stream::BoxStream<
-                'static,
-                Result<odyssey_hub_common::accessory::AccessoryMap, RpcError>,
-            >,
-        >,
-    >,
+    pub inner: SharedStream<odyssey_hub_common::accessory::AccessoryMap>,
     closed: CancellationToken,
 }
 
@@ -195,10 +177,7 @@ impl DeviceListStream {
     pub async fn next(&self) -> Result<Vec<Device>, ClientError> {
         match next_until_closed(&self.closed, &self.inner).await {
             Some(msg) => match msg {
-                Ok(device_list) => Ok(device_list
-                    .into_iter()
-                    .map(|d| odyssey_hub_common::device::Device::from(d).into())
-                    .collect()),
+                Ok(device_list) => Ok(device_list.into_iter().map(Into::into).collect()),
                 Err(error) => Err(error.into()),
             },
             _ => Err(ClientError::StreamEnd),
@@ -255,10 +234,7 @@ impl AccessoryMapStream {
 impl Client {
     #[uniffi::constructor]
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(None)),
-            closed: CancellationToken::new(),
-        }
+        Self::default()
     }
 
     /// Ends every stream created by this client with `StreamEnd` and makes every pending and

@@ -23,7 +23,7 @@ pub struct Matrix3x1f32 {
 
 impl From<Matrix3x1f32> for nalgebra::Vector3<f32> {
     fn from(m: Matrix3x1f32) -> Self {
-        return Self::new(m.x, m.y, m.z);
+        Self::new(m.x, m.y, m.z)
     }
 }
 

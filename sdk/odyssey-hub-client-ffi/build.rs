@@ -24,11 +24,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut config: cbindgen::Config = Default::default();
-    config.language = cbindgen::Language::C;
-    config.cpp_compat = true;
-    config.enumeration.prefix_with_name = true;
-    config.enumeration.rename_variants = cbindgen::RenameRule::ScreamingSnakeCase;
+    let config = cbindgen::Config {
+        language: cbindgen::Language::C,
+        cpp_compat: true,
+        enumeration: cbindgen::EnumConfig {
+            prefix_with_name: true,
+            rename_variants: cbindgen::RenameRule::ScreamingSnakeCase,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     cbindgen::Builder::new()
         .with_crate(crate_dir)
@@ -40,28 +45,36 @@ fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         .generate()?
         .write_to_file(Path::new(crate_dir).join("generated/include/ohc.h"));
 
-    let mut config: cbindgen::Config = Default::default();
-    config.language = cbindgen::Language::Cxx;
-    config.cpp_compat = true;
-    config.enumeration.rename_variants = cbindgen::RenameRule::ScreamingSnakeCase;
-    config.header = Some(
-        indoc::indoc! {"
-            #if 0
-            ''' '
-            #endif
+    let config = cbindgen::Config {
+        language: cbindgen::Language::Cxx,
+        cpp_compat: true,
+        enumeration: cbindgen::EnumConfig {
+            rename_variants: cbindgen::RenameRule::ScreamingSnakeCase,
+            ..Default::default()
+        },
+        header: Some(
+            indoc::indoc! {"
+                #if 0
+                ''' '
+                #endif
 
-            #ifdef __cplusplus
-            template <typename T>
-            using MaybeUninit = T;
-            #endif
+                #ifdef __cplusplus
+                template <typename T>
+                using MaybeUninit = T;
+                #endif
 
-            #if 0
-            ' '''
-            #endif
-        "}
-        .to_string(),
-    );
-    config.export.exclude = vec![String::from("MaybeUninit")];
+                #if 0
+                ' '''
+                #endif
+            "}
+            .to_string(),
+        ),
+        export: cbindgen::ExportConfig {
+            exclude: vec![String::from("MaybeUninit")],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     cbindgen::Builder::new()
         .with_crate(crate_dir)

@@ -237,7 +237,11 @@ pub unsafe extern "C" fn client_read_register(
         let Some(client) = client else {
             return callback(userdata, ClientError::NotConnected, 0);
         };
-        match client.device(device).read_register(port, bank, address).await {
+        match client
+            .device(device)
+            .read_register(port, bank, address)
+            .await
+        {
             Ok(data) => callback(userdata, ClientError::None, data),
             Err(error) => callback(userdata, error.into(), 0),
         }
@@ -477,7 +481,6 @@ pub unsafe extern "C" fn client_get_screen_info_by_id(
         let result = client.get_screen_info_by_id(screen_id).await;
         match result {
             Ok(info) => {
-                let info: common::ScreenInfo = info.into();
                 callback(userdata, ClientError::None, info.into());
             }
             Err(error) => {

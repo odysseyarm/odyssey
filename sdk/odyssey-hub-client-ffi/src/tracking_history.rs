@@ -26,9 +26,7 @@ pub unsafe extern "C" fn tracking_history_push(
     event: TrackingEvent,
 ) {
     if let Some(history) = unsafe { history.as_ref() } {
-        let mut lock = history.inner.lock();
-        let common_event: odyssey_hub_common::events::TrackingEvent = event.into();
-        lock.push(common_event.into());
+        history.inner.lock().push(event.into());
     }
 }
 
@@ -46,9 +44,8 @@ pub unsafe extern "C" fn tracking_history_latest(
     if let Some(history) = unsafe { history.as_ref() } {
         let lock = history.inner.lock();
         if let Some(e) = lock.latest() {
-            let common_event: odyssey_hub_common::events::TrackingEvent = e.into();
             unsafe {
-                *out_event = common_event.into();
+                *out_event = e.into();
             }
             return true;
         }
@@ -71,9 +68,8 @@ pub unsafe extern "C" fn tracking_history_get_closest(
     if let Some(history) = unsafe { history.as_ref() } {
         let lock = history.inner.lock();
         if let Some(e) = lock.get_closest(timestamp) {
-            let common_event: odyssey_hub_common::events::TrackingEvent = e.into();
             unsafe {
-                *out_event = common_event.into();
+                *out_event = e.into();
             }
             return true;
         }
