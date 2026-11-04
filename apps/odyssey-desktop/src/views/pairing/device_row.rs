@@ -4,14 +4,15 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::{DeviceEvent, DeviceEventKind, Event};
+use tokio::sync::broadcast::error::RecvError;
 
 use super::pair_buttons::PairButtons;
 use super::pairing_state::{PAIRING_TIMEOUT_MS, PairingState, result_status};
 use crate::hub::HubContext;
 use crate::views::device_label::device_type;
 
-/// The device's product, name and address.
-fn device_label(device: &Device) -> String {
+/// Pairing labels use the same uppercase address as the dongle's bond list.
+pub(super) fn device_label(device: &Device) -> String {
     let addr = crate::views::device_label::format_address(&device.uuid);
     let ty = device_type(device);
     let name = device.name();
@@ -46,7 +47,11 @@ async fn clear(hub: Signal<HubContext>, device: Device, state: PairingState) {
     let mut client = hub.peek().client.peek().clone();
     // Cancel pairing first if in progress
     if state.is_pairing() {
-        let _ = client.cancel_pairing(device.clone()).await;
+        if let Err(e) = client.cancel_pairing(device.clone()).await {
+            tracing::error!("Failed to cancel pairing before clearing bond: {e}");
+            state.error(e);
+            return;
+        }
         state.stopped();
     }
     match client.clear_bond(device).await {
@@ -63,7 +68,12 @@ fn use_pairing_results(hub: Signal<HubContext>, device_uuid: [u8; 6], state: Pai
     use_future(move || {
         let mut results = hub.peek().subscribe_pairing();
         async move {
-            while let Ok(event) = results.recv().await {
+            loop {
+                let event = match results.recv().await {
+                    Ok(event) => event,
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break,
+                };
                 let Event::DeviceEvent(DeviceEvent(
                     device,
                     DeviceEventKind::PairingResult {
@@ -110,16 +120,17 @@ pub(super) fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                 class: "flex items-center gap-1",
                 PairButtons {
                     pairing: *state.pairing.read(),
+                    command_pending: (state.command_pending)(),
                     clear_label: "Clear Bond",
                     on_pair: {
                         let device = device.clone();
-                        move |()| { spawn(start(hub, device.clone(), state)); }
+                        move |()| state.run_command(start(hub, device.clone(), state))
                     },
                     on_cancel: {
                         let device = device.clone();
-                        move |()| { spawn(cancel(hub, device.clone(), state)); }
+                        move |()| state.run_command(cancel(hub, device.clone(), state))
                     },
-                    on_clear: move |()| { spawn(clear(hub, device.clone(), state)); },
+                    on_clear: move |()| state.run_command(clear(hub, device.clone(), state)),
                 }
             }
         }

@@ -4,11 +4,13 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_client::client::DongleInfo;
 use odyssey_hub_common::events::Event;
+use tokio::sync::broadcast::error::RecvError;
 
+use super::device_row::device_label;
 use super::pair_buttons::PairButtons;
 use super::pairing_state::{PAIRING_TIMEOUT_MS, PairingState, result_status};
 use crate::hub::HubContext;
-use crate::views::device_label::{device_label, format_address};
+use crate::views::device_label::format_address;
 
 /// The dongle control protocol that can list its bonds.
 const BONDS_PROTOCOL_VERSION: [u16; 3] = [0, 1, 1];
@@ -45,7 +47,11 @@ async fn clear(hub: Signal<HubContext>, dongle_id: String, state: PairingState) 
     let mut client = hub.peek().client.peek().clone();
     // Cancel pairing first if in progress
     if state.is_pairing() {
-        let _ = client.cancel_dongle_pairing(dongle_id.clone()).await;
+        if let Err(e) = client.cancel_dongle_pairing(dongle_id.clone()).await {
+            tracing::error!("Failed to cancel dongle pairing before clearing bonds: {e}");
+            state.error(e);
+            return;
+        }
         state.stopped();
     }
     match client.clear_dongle_bonds(dongle_id).await {
@@ -64,7 +70,12 @@ fn use_pairing_results(hub: Signal<HubContext>, dongle_id: String, state: Pairin
         let mut results = hub.peek().subscribe_pairing();
         let dongle_id = dongle_id.clone();
         async move {
-            while let Ok(event) = results.recv().await {
+            loop {
+                let event = match results.recv().await {
+                    Ok(event) => event,
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break,
+                };
                 let Event::DonglePairingResult {
                     dongle_id: event_id,
                     success,
@@ -131,18 +142,19 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
                     class: "flex items-center gap-1",
                     PairButtons {
                         pairing: *state.pairing.read(),
+                        command_pending: (state.command_pending)(),
                         clear_label: "Clear Bonds",
                         on_pair: {
                             let id = dongle.id.clone();
-                            move |()| { spawn(start(hub, id.clone(), state)); }
+                            move |()| state.run_command(start(hub, id.clone(), state))
                         },
                         on_cancel: {
                             let id = dongle.id.clone();
-                            move |()| { spawn(cancel(hub, id.clone(), state)); }
+                            move |()| state.run_command(cancel(hub, id.clone(), state))
                         },
                         on_clear: {
                             let id = dongle.id.clone();
-                            move |()| { spawn(clear(hub, id.clone(), state)); }
+                            move |()| state.run_command(clear(hub, id.clone(), state))
                         },
                     }
                 }

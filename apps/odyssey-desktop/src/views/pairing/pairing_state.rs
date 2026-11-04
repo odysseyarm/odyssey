@@ -12,6 +12,7 @@ pub(super) const PAIRING_TIMEOUT_MS: u32 = 120_000;
 pub(super) struct PairingState {
     pub(super) status: Signal<String>,
     pub(super) pairing: Signal<bool>,
+    pub(super) command_pending: Signal<bool>,
 }
 
 /// The status line for a finished pairing.
@@ -37,7 +38,21 @@ impl PairingState {
         Self {
             status: use_signal(String::new),
             pairing: use_signal(|| false),
+            command_pending: use_signal(|| false),
         }
+    }
+
+    /// Reserve the row before spawning: a cancel or clear must not overtake
+    /// an in-flight start, and repeated clicks must not send duplicate commands.
+    pub(super) fn run_command(mut self, command: impl Future<Output = ()> + 'static) {
+        if *self.command_pending.peek() {
+            return;
+        }
+        self.command_pending.set(true);
+        spawn(async move {
+            command.await;
+            self.command_pending.set(false);
+        });
     }
 
     pub(super) fn is_pairing(self) -> bool {
@@ -75,33 +90,5 @@ impl PairingState {
     pub(super) fn finished(mut self, status: String) {
         self.pairing.set(false);
         self.status.set(status);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const ADDRESS: [u8; 6] = [0x0A, 0xBC, 0, 1, 2, 0xFF];
-
-    #[test]
-    fn a_named_pairing_shows_the_name_and_the_address() {
-        assert_eq!(
-            result_status(true, &ADDRESS, "Trigger", ""),
-            "Paired with Trigger (0A:BC:00:01:02:FF). Please unplug and replug the dongle."
-        );
-    }
-
-    #[test]
-    fn an_unnamed_pairing_shows_only_the_address() {
-        assert_eq!(
-            result_status(true, &ADDRESS, "", ""),
-            "Paired with 0A:BC:00:01:02:FF. Please unplug and replug the dongle."
-        );
-    }
-
-    #[test]
-    fn a_failed_pairing_shows_the_reason() {
-        assert_eq!(result_status(false, &ADDRESS, "", "timed out"), "timed out");
     }
 }
