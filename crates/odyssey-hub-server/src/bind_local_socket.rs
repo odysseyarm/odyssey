@@ -33,9 +33,13 @@ pub(crate) async fn bind_local_socket(
     ServerError,
 > {
     let name = if GenericNamespaced::is_supported() {
-        "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
+        "@odyhub.sock"
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|error| report_error(error, app_sender))?
     } else {
-        "/tmp/@odyhub.sock".to_fs_name::<GenericFilePath>()?
+        "/tmp/odyhub.sock"
+            .to_fs_name::<GenericFilePath>()
+            .map_err(|error| report_error(error, app_sender))?
     };
 
     // Check if another instance is already running by trying to connect
@@ -59,23 +63,28 @@ pub(crate) async fn bind_local_socket(
         .max_spin_time(RECLAIM_MAX_SPIN_TIME);
     #[cfg(target_os = "windows")]
     let listener_opts = {
-        let mut sd = SecurityDescriptor::new()?;
+        let mut sd = SecurityDescriptor::new().map_err(|error| report_error(error, app_sender))?;
         unsafe {
-            sd.set_dacl(std::ptr::null_mut(), false)?;
+            sd.set_dacl(std::ptr::null_mut(), false)
+                .map_err(|error| report_error(error, app_sender))?;
         }
         listener_opts.security_descriptor(sd)
     };
     let listener = match listener_opts.create_tokio() {
         Ok(listener) => listener,
-        Err(e) => {
-            let error_kind = e.kind();
-            let _ = app_sender.send(Message::ServerInit(Err(e)));
-            return Err(ServerError::from(std::io::Error::from(error_kind)));
-        }
+        Err(error) => return Err(report_error(error, app_sender)),
     };
     let connections = stream::unfold(listener, |listener| async {
         let connection = listener.accept().await;
         Some((connection.map(LocalSocketStream::new), listener))
     });
     Ok((name, connections))
+}
+
+fn report_error(error: std::io::Error, app_sender: &mpsc::UnboundedSender<Message>) -> ServerError {
+    let _ = app_sender.send(Message::ServerInit(Err(std::io::Error::new(
+        error.kind(),
+        error.to_string(),
+    ))));
+    ServerError::from(error)
 }
