@@ -8,6 +8,9 @@ description = "Odyssey Hub common structures and impls"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lints]
+workspace = true
+
 [dependencies]
 arrayvec = { workspace = true }
 odyssey-common = { path = "../odyssey-common" }

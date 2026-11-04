@@ -6,6 +6,9 @@ repository = "https://github.com/odysseyarm/odyssey"
 license = "MIT OR Apache-2.0"
 description = "Common structures for Odyssey ATS tracking"
 
+[lints]
+workspace = true
+
 [features]
 default = ["std"]
 std = ["serde", "serde_json", "simba/std"]

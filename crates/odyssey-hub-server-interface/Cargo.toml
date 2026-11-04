@@ -8,6 +8,9 @@ description = "Protobuf interface and From impl's for Odyssey Hub server"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lints]
+workspace = true
+
 [dependencies]
 nalgebra = "0.35"
 odyssey-hub-common = { workspace = true }

@@ -6,6 +6,9 @@ repository = "https://github.com/odysseyarm/odyssey"
 license = "MIT OR Apache-2.0"
 description = "Automatic screen calibration from a depth camera, in pure Rust"
 
+[lints]
+workspace = true
+
 [dependencies]
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 odyssey-common = { path = "../odyssey-common", features = ["serde_json"] }

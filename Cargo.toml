@@ -38,6 +38,114 @@ exclude = [
     "firmware",
 ]
 
+# One lint policy for every first-party crate. Each member opts in with
+# `[lints] workspace = true` (cargo warns, via missing_lints_inheritance, when
+# one forgets). Cargo cannot override an inherited lint inside one crate, so a
+# crate that has a real reason to differ does it in source, with
+# `#![expect(lint, reason = "...")]`, which also tells you when the reason stops
+# being true. sdk/* and firmware/ are separate workspace roots with their own
+# lockfiles and do not inherit these.
+#
+# No clippy group is switched on: pedantic, restriction and nursery are
+# cherry-picked below, the way jj and bevy do it, because every project that
+# enables `pedantic` wholesale then has to switch off 15-20 of its lints again.
+# Nothing here needs a `priority`, since nothing is a group. See
+# ~/.omp/agent/docs/rust-style-triage.md (section D) for the reasoning per lint.
+[workspace.lints.rust]
+# Denied, not forbidden: `forbid` cannot be overridden even by `#[expect]`, and
+# the FFI crates have to opt in with `#![expect(unsafe_code, reason = "...")]`.
+# That attribute is also a greppable inventory of every crate that has unsafe.
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+redundant_lifetimes = "warn"
+redundant_imports = "warn"
+trivial_numeric_casts = "warn"
+ambiguous_negative_literals = "warn"
+# Not enabled: `let_underscore_drop`. It fires on `let _ = tx.send(..)`, which is
+# the deliberate way to ignore a closed channel in the actor pattern (142 hits
+# when this was tried), and it does not tell a deliberate ignore from a
+# swallowed error. Swallowed errors are a review matter; see WATCHDOG.md.
+elided_lifetimes_in_paths = "warn"
+# Finds unused `pub` items in binary crates, which rustc cannot see on its own.
+dead_code_pub_in_binary = "warn"
+
+[workspace.lints.clippy]
+# Readability and modernisation (pedantic, low noise).
+manual_let_else = "warn"
+semicolon_if_nothing_returned = "warn"
+redundant_closure_for_method_calls = "warn"
+redundant_else = "warn"
+unnested_or_patterns = "warn"
+uninlined_format_args = "warn"
+explicit_iter_loop = "warn"
+explicit_into_iter_loop = "warn"
+needless_for_each = "warn"
+implicit_clone = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+format_collect = "warn"
+format_push_string = "warn"
+single_char_pattern = "warn"
+stable_sort_primitive = "warn"
+unnecessary_semicolon = "warn"
+ref_option = "warn"
+ignored_unit_patterns = "warn"
+inconsistent_struct_constructor = "warn"
+match_wildcard_for_single_variants = "warn"
+wildcard_imports = "warn"
+enum_glob_use = "warn"
+used_underscore_binding = "warn"
+cast_lossless = "warn"
+fn_params_excessive_bools = "warn"
+use_self = "warn"
+unused_trait_names = "warn"
+
+# Async.
+unused_async = "warn"
+large_futures = "warn"
+
+# Unsafe and FFI hygiene.
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+ptr_as_ptr = "warn"
+ref_as_ptr = "warn"
+borrow_as_ptr = "warn"
+ptr_cast_constness = "warn"
+fn_to_numeric_cast_any = "warn"
+
+# Leftovers and panics in production code. Tests are exempt via clippy.toml.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+unwrap_used = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+
+# Shared ownership and API shape.
+clone_on_ref_ptr = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+map_err_ignore = "warn"
+if_then_some_else_none = "warn"
+get_unwrap = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+
+[workspace.lints.cargo]
+# Everything else (unused_dependencies, unused_workspace_dependencies,
+# missing_lints_inheritance, ...) is already warn by default. These stay on
+# the default; this only adds the one guardrail that costs nothing today.
+non_kebab_case_packages = "warn"
+
 [workspace.dependencies]
 ahrs = { git = "https://github.com/jmagnuson/ahrs-rs", rev = "0b04dfe5e23fd0af9dbea1d24116e4c5b69d3ed9" }
 anyhow = "1.0.81"

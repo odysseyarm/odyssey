@@ -3,6 +3,9 @@ name = "odyssey-protocol"
 version = "0.2.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 pyo3 = { version = "0.27.1", optional = true }
 odyssey-common = { path = "../odyssey-common", default-features = false }

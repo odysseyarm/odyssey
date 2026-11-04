@@ -30,6 +30,13 @@ keywords = ["windows", "gtk", "gui", "user_interface", "macos"]
 categories = ["gui", "os::macos-apis", "os::unix-apis", "os::windows-apis"]
 license = "MIT"
 
+# Vendored upstream subtree: it does not inherit the workspace lint policy, and
+# clippy is silenced outright because its generated bindings trip default-deny
+# lints (approx_constant on uiPi). Declaring a [lints] table at all is also what
+# keeps cargo's missing_lints_inheritance quiet.
+[lints.clippy]
+all = "allow"
+
 [badges]
 travis-ci = { repository = "rust-native-ui/libui-rs", branch = "trunk" }
 appveyor = { repository = "rust-native-ui/libui-rs", branch = "trunk" }
