@@ -64,6 +64,31 @@ fn event_stream(
     )
 }
 
+/// Image frames whose device lease is renewed from `poll_next`, so renewals stop
+/// when the consumer stops polling, not merely when the process exits.
+struct LeasedImages<S> {
+    frames: S,
+    renewals: futures::channel::mpsc::Sender<proto::StreamImagesRequest>,
+    interval: tokio::time::Interval,
+}
+
+impl<S: futures::Stream + Unpin> futures::Stream for LeasedImages<S> {
+    type Item = S::Item;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<S::Item>> {
+        while self.interval.poll_tick(cx).is_ready() {
+            // Full means a renewal is already queued.
+            let _ = self
+                .renewals
+                .try_send(proto::StreamImagesRequest::default());
+        }
+        self.frames.poll_next_unpin(cx)
+    }
+}
+
 impl Client {
     pub async fn connect(&mut self) -> Result<(), ClientError> {
         let name = if GenericNamespaced::is_supported() {
@@ -169,6 +194,73 @@ impl Client {
             .into_inner();
 
         Ok(event_stream(stream, self.end_token.clone()))
+    }
+
+    /// Stream one USB camera in native image coordinates.
+    ///
+    /// Acquisition and backpressure can lower the requested FPS. Image-only firmware
+    /// supplies no object samples and pauses optical tracking. Only one consumer may
+    /// own a physical unit; dropping this stream (or cancelling `end_token`) ends capture.
+    /// Polling the stream renews the device's capture lease; a consumer that stops
+    /// polling for [`IMAGE_LEASE_TIMEOUT_MS`](odyssey_protocol::image::IMAGE_LEASE_TIMEOUT_MS)
+    /// loses the session, and modern devices restore tracking on their own.
+    /// Modern devices restore tracking; legacy devices require reboot/reconnect.
+    /// Frames never enter the general event stream.
+    pub async fn stream_images(
+        &mut self,
+        device: common::device::Device,
+        config: odyssey_protocol::image::ImageStreamConfig,
+    ) -> Result<
+        impl futures::Stream<Item = Result<odyssey_protocol::image::ImageFrame, RpcError>>
+        + Unpin
+        + Send
+        + use<>,
+        ClientError,
+    > {
+        let (mut renewals, requests) = futures::channel::mpsc::channel(1);
+        renewals
+            .try_send(proto::StreamImagesRequest {
+                device: Some(device.into()),
+                camera: match config.camera {
+                    odyssey_protocol::Port::Nf => 0,
+                    odyssey_protocol::Port::Wf => 1,
+                },
+                fps: config.fps.into(),
+            })
+            .expect("a new channel has room for its first message");
+        let stream = self
+            .connected()?
+            .stream_images(requests)
+            .await?
+            .into_inner();
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+            odyssey_protocol::image::IMAGE_LEASE_RENEW_INTERVAL_MS,
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Ok(LeasedImages {
+            frames: Box::pin(
+                stream
+                    .take_until(self.end_token.clone().cancelled_owned())
+                    .map(|item| {
+                        item.map_err(RpcError::from)
+                            .and_then(|frame| frame.try_into().map_err(invalid_reply))
+                    }),
+            ),
+            renewals,
+            interval,
+        })
+    }
+
+    /// Request reset over the current USB control endpoint. An acknowledgement
+    /// does not confirm recovery: wait for a new connection and tracking reports.
+    pub async fn reboot_device(
+        &mut self,
+        device: common::device::Device,
+    ) -> Result<(), ClientError> {
+        self.connected()?
+            .reboot_device(proto::Device::from(device))
+            .await?;
+        Ok(())
     }
 
     pub async fn write_vendor(

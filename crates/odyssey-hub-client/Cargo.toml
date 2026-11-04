@@ -1,19 +1,20 @@
 [package]
 name = "odyssey-hub-client"
-version = "0.1.0"
-edition = "2024"
-license-file = "../LICENSE"
-repository = "https://github.com/odysseyarm/odyssey"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Client library for Odyssey Desktop"
 
 [lints]
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+eros = { workspace = true }
 odyssey-hub-server-interface = { workspace = true }
 odyssey-hub-common = { workspace = true }
-tokio = { workspace = true, features = ["macros", "net", "signal", "rt-multi-thread"] }
+odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "net", "signal", "rt-multi-thread", "time"] }
 tokio-util = { workspace = true }
 tonic = { workspace = true }
 tower = "0.4.13"

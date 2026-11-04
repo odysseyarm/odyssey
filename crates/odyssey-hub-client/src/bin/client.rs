@@ -5,7 +5,7 @@ use futures::stream::StreamExt as _;
 use odyssey_hub_client::client;
 
 #[tokio::main]
-pub async fn main() -> anyhow::Result<()> {
+pub async fn main() -> eros::Result<()> {
     let _ = tracing_subscriber::fmt();
     let mut client = client::Client::default();
     client.connect().await?;
