@@ -1,9 +1,11 @@
-use anyhow::Result;
 use nalgebra::{Point2, Translation3};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::{Event, TrackingEvent};
 use odyssey_usb::device::VmDevice;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+
+/// Answer channel of a request: the value, or the reason it failed, as text for the RPC reply.
+pub(crate) type Reply<T> = oneshot::Sender<Result<T, String>>;
 
 /// Control messages sent into per-device task
 #[derive(Debug)]
@@ -22,7 +24,7 @@ pub(crate) enum DeviceTaskMessage {
         port: u8,
         bank: u8,
         address: u8,
-        reply: tokio::sync::oneshot::Sender<Result<u8, String>>,
+        reply: Reply<u8>,
     },
     /// Write a sensor register. Reply channel returns success or an error.
     WriteRegister {
@@ -30,32 +32,32 @@ pub(crate) enum DeviceTaskMessage {
         bank: u8,
         address: u8,
         data: u8,
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// Read a device config value (impact threshold, suppress ms, etc.)
     ReadConfig {
         kind: u8,
-        reply: tokio::sync::oneshot::Sender<Result<u8, String>>,
+        reply: Reply<u8>,
     },
     /// Write a device config value.
     WriteConfig {
         kind: u8,
         value: u8,
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// Persist current settings to device flash. Reply channel returns success or an error.
     FlashSettings {
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// Start BLE pairing mode. Reply returns Ok(()) when pairing mode is entered.
     /// The actual pairing result arrives as a PairingResult event.
     StartPairing {
         timeout_ms: u32,
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// Cancel an in-progress pairing operation.
     CancelPairing {
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// The net core release counter read back from the application. Sent by the
     /// probe that starts when the control endpoint attaches, because the
@@ -64,17 +66,17 @@ pub(crate) enum DeviceTaskMessage {
     SetNetCoreRelease(u16),
     /// Clear bond(s) on the device. For ATS: clears single bond. For dongle: clears all bonds.
     ClearBond {
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// Set the transport mode (USB or BLE). The device will persist this and apply after reboot.
     SetTransportMode {
         usb_mode: bool,
-        reply: tokio::sync::oneshot::Sender<Result<bool, String>>,
+        reply: Reply<bool>,
     },
     /// Set the device name. The device firmware will persist it to flash and update BLE advertising.
     SetDeviceName {
         name: String,
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+        reply: Reply<()>,
     },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
     AddEventsDevice(VmDevice, [u16; 3]),
@@ -94,16 +96,9 @@ pub(crate) struct DeviceChannels {
 
 /// Commands that can be sent to a dongle (hub manager task).
 pub(crate) enum DongleTaskMessage {
-    StartPairing {
-        timeout_ms: u32,
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
-    },
-    CancelPairing {
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
-    },
-    ClearBonds {
-        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
-    },
+    StartPairing { timeout_ms: u32, reply: Reply<()> },
+    CancelPairing { reply: Reply<()> },
+    ClearBonds { reply: Reply<()> },
 }
 
 /// Dongle metadata (for dongle list).
@@ -126,6 +121,6 @@ pub(crate) enum Message {
     DongleConnect(DongleInfo, mpsc::Sender<DongleTaskMessage>),
     DongleUpdate(DongleInfo),
     DongleDisconnect(String), // dongle id
-    #[expect(dead_code)]
+    #[expect(dead_code, reason = "never constructed; lib.rs still matches on it")]
     Event(Event),
 }
