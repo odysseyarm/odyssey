@@ -1,8 +1,5 @@
-//! Better Boot - Dual-bank boot state management without fixed linker symbols
-//!
-//! This crate provides a clean API for managing dual-bank firmware boot state,
-//! allowing you to specify partition addresses at runtime instead of relying on
-//! fixed linker symbols like embassy-boot does.
+//! Dual-bank boot state kept at a flash address chosen at runtime, instead of
+//! the fixed linker symbols embassy-boot requires.
 
 #![no_std]
 
@@ -10,32 +7,35 @@ use core::ptr;
 
 use embedded_storage::nor_flash::NorFlash;
 
-// Magic constants matching embassy-boot
-// BOOT_MAGIC: 0xD0 repeated 4 times = 0xD0D0D0D0
-// SWAP_MAGIC: 0xF0 repeated 4 times = 0xF0F0F0F0
-pub const STATE_MAGIC: u32 = 0xB00710AD; // Keep our own state magic
-pub const BOOT_MAGIC: u32 = 0xD0D0D0D0; // Match embassy-boot
-pub const SWAP_MAGIC: u32 = 0xF0F0F0F0; // Match embassy-boot
+/// Value of [`BootState::magic`] once the state has been written. Specific to
+/// this crate; embassy-boot has no equivalent.
+pub const STATE_MAGIC: u32 = 0xB00710AD;
+/// Partition magic word for a normal boot. Same value as embassy-boot.
+pub const BOOT_MAGIC: u32 = 0xD0D0D0D0;
+/// Partition magic word that requests DFU mode. Same value as embassy-boot's
+/// swap magic.
+pub const SWAP_MAGIC: u32 = 0xF0F0F0F0;
 
-/// Boot state stored in flash
+/// Boot state stored in flash right after the 4-byte partition magic word.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BootState {
-    /// Magic number to identify valid state
+    /// [`STATE_MAGIC`] if the state was written by this crate; anything else
+    /// means erased or corrupt flash.
     pub magic: u32,
     /// Currently active slot (0 = Bank A, 1 = Bank B)
     pub active_slot: u8,
     /// Pending slot to boot next (if different from active)
     pub pending_slot: u8,
-    /// Boot attempt counter (incremented on each boot of pending slot)
+    /// Incremented by the bootloader each time it boots the pending slot.
     pub boot_counter: u8,
-    /// Reserved for future use
+    /// Unused; always written as 0.
     pub reserved: u8,
 }
 
 impl BootState {
-    /// Create a new boot state with both slots pointing to Bank A
+    /// Both slots on Bank A, boot counter at zero.
     pub fn new() -> Self {
         Self {
             magic: STATE_MAGIC,
@@ -46,7 +46,8 @@ impl BootState {
         }
     }
 
-    /// Check if the state magic is valid
+    /// True if the magic matches [`STATE_MAGIC`] rather than erased flash or
+    /// garbage.
     pub fn is_valid(&self) -> bool {
         self.magic == STATE_MAGIC
     }
@@ -58,18 +59,21 @@ impl Default for BootState {
     }
 }
 
-/// Boot state manager that operates on a specific flash address
+/// Reads and writes the boot state partition at `state_addr`: a 4-byte magic
+/// word ([`BOOT_MAGIC`] or [`SWAP_MAGIC`]) followed by a [`BootState`].
 pub struct BootStateManager {
     state_addr: u32,
 }
 
 impl BootStateManager {
-    /// Create a new boot state manager for the given flash address
+    /// `state_addr` must be memory-mapped flash: [`Self::read`] and
+    /// [`Self::read_magic`] dereference it directly.
     pub const fn new(state_addr: u32) -> Self {
         Self { state_addr }
     }
 
-    /// Read the current boot state from flash
+    /// Reads the state stored after the magic word, or [`BootState::new`] if
+    /// its magic is not [`STATE_MAGIC`].
     pub fn read(&self) -> BootState {
         unsafe {
             let state_ptr =
@@ -84,12 +88,17 @@ impl BootStateManager {
         }
     }
 
-    /// Read the magic word (first 4 bytes) from the state partition
+    /// Reads the magic word at the start of the state partition.
     pub fn read_magic(&self) -> u32 {
         unsafe { ptr::read_volatile(self.state_addr as *const u32) }
     }
 
-    /// Write boot state to flash with BOOT_MAGIC (normal boot)
+    /// Erases the flash page holding the state, then writes [`BOOT_MAGIC`] and
+    /// `state`. `page_size` must be a power of two.
+    ///
+    /// # Errors
+    ///
+    /// Returns the flash driver's error if the erase or a write fails.
     pub fn write_boot_state<F: NorFlash>(
         &self,
         flash: &mut F,
@@ -103,6 +112,8 @@ impl BootStateManager {
         flash.erase(page_start, page_end)?;
         flash.write(base, &BOOT_MAGIC.to_le_bytes())?;
 
+        // SAFETY: BootState is repr(C) with only integer fields and no padding,
+        // so all of its bytes are initialised.
         let bytes = unsafe {
             core::slice::from_raw_parts(
                 state as *const BootState as *const u8,
@@ -115,7 +126,12 @@ impl BootStateManager {
         Ok(())
     }
 
-    /// Write DFU request to flash with SWAP_MAGIC (request DFU mode)
+    /// Like [`Self::write_boot_state`], but writes [`SWAP_MAGIC`] so the next
+    /// boot enters DFU mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns the flash driver's error if the erase or a write fails.
     pub fn request_dfu<F: NorFlash>(
         &self,
         flash: &mut F,
@@ -129,6 +145,8 @@ impl BootStateManager {
         flash.erase(page_start, page_end)?;
         flash.write(base, &SWAP_MAGIC.to_le_bytes())?;
 
+        // SAFETY: BootState is repr(C) with only integer fields and no padding,
+        // so all of its bytes are initialised.
         let bytes = unsafe {
             core::slice::from_raw_parts(
                 state as *const BootState as *const u8,
@@ -141,14 +159,14 @@ impl BootStateManager {
         Ok(())
     }
 
-    /// Check if DFU mode is requested (SWAP_MAGIC is set)
+    /// True if the partition magic word is [`SWAP_MAGIC`].
     pub fn is_dfu_requested(&self) -> bool {
         self.read_magic() == SWAP_MAGIC
     }
 
-    /// Mark boot as successful - sets boot_counter to 0 and updates active_slot to pending_slot
-    /// This should be called by the application after successful boot
-    /// This is equivalent to embassy-boot's mark_booted()
+    /// Clears the boot counter and promotes the pending slot to active. The
+    /// application calls this once it has booted successfully; equivalent to
+    /// embassy-boot's `mark_booted()`.
     pub fn mark_booted<F: NorFlash>(&self, flash: &mut F, page_size: u32) -> Result<(), F::Error> {
         let mut state = self.read();
         state.boot_counter = 0;
@@ -158,7 +176,8 @@ impl BootStateManager {
         self.write_boot_state(flash, &state, page_size)
     }
 
-    /// Mark bank as updated - sets pending_slot and prepares for boot on next reset
+    /// Makes `bank_slot` the pending slot booted on the next reset and clears
+    /// the boot counter.
     pub fn mark_bank_updated<F: NorFlash>(
         &self,
         flash: &mut F,
@@ -171,7 +190,8 @@ impl BootStateManager {
         self.write_boot_state(flash, &state, page_size)
     }
 
-    /// Increment boot counter (called by bootloader when booting pending slot)
+    /// Called by the bootloader each time it boots the pending slot. Saturates
+    /// at 255.
     pub fn increment_boot_counter<F: NorFlash>(
         &self,
         flash: &mut F,
@@ -182,13 +202,15 @@ impl BootStateManager {
         self.write_boot_state(flash, &state, page_size)
     }
 
-    /// Check if rollback is needed (boot_counter exceeded threshold)
+    /// True if a pending slot has been booted `max_attempts` times without a
+    /// [`Self::mark_booted`].
     pub fn needs_rollback(&self, max_attempts: u8) -> bool {
         let state = self.read();
         state.pending_slot != state.active_slot && state.boot_counter >= max_attempts
     }
 
-    /// Perform rollback - reset pending_slot to active_slot
+    /// Abandons the pending slot by setting it back to the active slot and
+    /// clears the boot counter.
     pub fn rollback<F: NorFlash>(&self, flash: &mut F, page_size: u32) -> Result<(), F::Error> {
         let mut state = self.read();
         state.pending_slot = state.active_slot;

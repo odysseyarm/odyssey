@@ -1,4 +1,4 @@
-//! Stream info management for data streams (IMU, markers, etc.)
+//! Per-stream enable flag and request ID for the IMU, impact and marker streams.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -19,28 +19,25 @@ impl StreamInfo {
         }
     }
 
-    /// Check if the stream is enabled
     pub fn enabled(&self) -> bool {
         self.enable.load(Ordering::Relaxed)
     }
 
-    /// Get the request ID for this stream
+    /// ID of the request that enabled the stream.
     pub fn req_id(&self) -> u8 {
         self.req_id.load(Ordering::Relaxed)
     }
 
-    /// Set the request ID
     pub fn set_req_id(&self, req_id: u8) {
         self.req_id.store(req_id, Ordering::Relaxed);
     }
 
-    /// Enable or disable the stream
     pub fn set_enable(&self, enable: bool) {
         self.enable.store(enable, Ordering::Relaxed);
     }
 }
 
-/// Collection of stream infos for common data types
+/// Enable state for each streamed packet type.
 #[derive(Default)]
 pub struct StreamInfos {
     pub imu: StreamInfo,
@@ -57,14 +54,14 @@ impl StreamInfos {
         }
     }
 
-    /// Disable all streams
     pub fn disable_all(&self) {
         self.imu.enable.store(false, Ordering::Relaxed);
         self.impact.enable.store(false, Ordering::Relaxed);
         self.marker.enable.store(false, Ordering::Relaxed);
     }
 
-    /// Enable a stream by packet type
+    /// Enables the stream for `ty` and records `req_id`. Packet types without a
+    /// stream are ignored.
     pub fn enable(&self, req_id: u8, ty: PacketType) {
         defmt::info!(
             "Enable stream {:?}, id = {=u8}",
@@ -81,7 +78,7 @@ impl StreamInfos {
         si.set_enable(true);
     }
 
-    /// Disable a stream by packet type
+    /// Disables the stream for `ty`. Packet types without a stream are ignored.
     pub fn disable(&self, ty: PacketType) {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,

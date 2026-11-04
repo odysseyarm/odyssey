@@ -1,9 +1,7 @@
-//! COBS framing utilities for packet handling
-//!
-//! This module provides low-level COBS encoding/decoding utilities.
-//! The actual packet parsing is done by the board-specific code using odyssey-protocol.
+//! COBS framing for packets. Parsing the decoded bytes is left to the board
+//! code, which uses odyssey-protocol.
 
-/// COBS decode error
+/// The frame is not valid COBS.
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeError;
 
@@ -14,16 +12,17 @@ pub fn decode_in_place(buf: &mut [u8]) -> Result<usize, DecodeError> {
     cobs::decode_in_place(buf).map_err(|_| DecodeError)
 }
 
-/// Encode data with COBS framing.
+/// COBS-encodes `src` into `dst` and returns the encoded length. No 0x00
+/// delimiter is appended.
 ///
-/// Returns the encoded length.
+/// # Panics
+///
+/// Panics if `dst` is shorter than `cobs::max_encoding_length(src.len())`.
 pub fn encode(src: &[u8], dst: &mut [u8]) -> usize {
     cobs::encode(src, dst)
 }
 
-/// Helper to find the next COBS frame delimiter (0x00) in a buffer.
-///
-/// Returns the position of the delimiter if found.
+/// Position of the first 0x00 frame delimiter in `buf`, if any.
 pub fn find_delimiter(buf: &[u8]) -> Option<usize> {
     buf.iter().position(|&b| b == 0x00)
 }

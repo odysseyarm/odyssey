@@ -16,7 +16,9 @@ use mode::{Mode, ModeT};
 use spi::Pag7661QnSpi;
 use types::IntOStatus;
 
-/// PAG7661QN driver
+/// PAG7661QN driver. `M` tracks the sensor mode, either at the type level ([`mode::Idle`],
+/// [`mode::Image`], [`mode::Object`]) or at runtime ([`Mode`]). The selected register bank is
+/// cached so repeated accesses to the same bank skip the bank-select write.
 pub struct Pag7661Qn<I, D, M> {
     bus: I,
     timer: D,
@@ -24,15 +26,22 @@ pub struct Pag7661Qn<I, D, M> {
     bank: u8,
 }
 
-/// PAG7661QN interrupt pin
+/// The PAG7661QN INT_O pin, returned next to the driver by [`Pag7661Qn::init_spi`].
 pub struct Pag7661QnInterrupt<O> {
     pub int_o: O,
 }
 
 impl<S: SpiDevice, D: DelayNs, M: ModeT> Pag7661Qn<Pag7661QnSpi<S>, D, M> {
-    /// Creates a new PAG7661QN driver using SPI and perform initialization.
+    /// Checks the part ID, starts the sensor CPU in `initial_mode` and returns the driver with its
+    /// INT_O pin.
     ///
-    /// Make sure `spi` is configured in mode 3 with MSB first bit order, max 20 MHz.
+    /// `spi` must be configured for SPI mode 3, MSB first, at most 20 MHz.
+    ///
+    /// # Errors
+    ///
+    /// [`InitError::FailedPartIdCheck`] if the part ID is not 0x7660 after one retry,
+    /// [`InitError::FailedBootLoader`] if power-on ready is not set 250 ms after the CPU is
+    /// enabled.
     pub async fn init_spi<O: digital::Wait>(
         spi: S,
         mut timer: D,
@@ -70,7 +79,6 @@ async fn initialize<I: Interface, D: DelayNs>(
             part_id[1],
             part_id[0]
         );
-        // Try again
         timer.delay_ms(30).await;
         bus.read(0x00, &mut part_id).await?;
         if part_id != [0x60, 0x76] {
@@ -105,20 +113,20 @@ async fn initialize<I: Interface, D: DelayNs>(
 }
 
 impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
-    /// Get the low level driver
+    /// Returns the register interface for direct access.
     ///
-    /// WARNING: using the low level driver can cause the device to become inconsistent with the
-    /// high level driver's state such as mode and bank.
+    /// Writes through it bypass the cached mode and bank, so the driver's state can disagree with
+    /// the device afterwards.
     pub fn bus_unchecked(&mut self) -> &mut I {
         &mut self.bus
     }
 
-    /// Set the bank in the driver state without sending any commands to the underlying device.
+    /// Overwrites the cached bank without writing the bank select register (0x7F).
     pub fn set_bank_unchecked(&mut self, bank: u8) {
         self.bank = bank
     }
 
-    /// Set the mode in the driver state without sending any commands to the underlying device.
+    /// Changes the mode type without writing the mode register (0x10).
     pub fn set_mode_unchecked<N: ModeT>(self, mode: N) -> Pag7661Qn<I, D, N> {
         Pag7661Qn {
             bus: self.bus,
@@ -128,7 +136,6 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
         }
     }
 
-    /// Wrapper to convert errors.
     async fn read<EO, EM>(
         &mut self,
         address: u8,
@@ -140,7 +147,6 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Wrapper to convert errors.
     async fn write<EO, EM>(
         &mut self,
         address: u8,
@@ -152,7 +158,6 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Wrapper to convert errors.
     async fn read_byte<EO, EM>(&mut self, address: u8) -> Result<u8, Error<I::Error, EO, EM>> {
         self.bus
             .read_byte(address)
@@ -160,7 +165,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Wrapper to convert errors.
+    /// Skips the bank select write when the cached bank already matches.
     async fn _set_bank<EO, EM>(&mut self, bank: u8) -> Result<(), Error<I::Error, EO, EM>> {
         if self.bank == bank {
             return Ok(());
@@ -170,7 +175,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the bank
+    /// Selects the register bank (0x7F); a no-op when the cached bank already matches.
     pub fn set_bank(
         &mut self,
         bank: u8,
@@ -191,7 +196,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
             defmt::debug!("Switching mode to {}", new_mode.mode());
             self._set_bank(0x00).await?;
             if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
-                // switch to idle first
+                // Go through idle when changing between image and object mode.
                 self.write(0x10, &[Mode::Idle as u8]).await?;
                 loop {
                     let mut current_mode = [0];
@@ -245,7 +250,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Get the sensor FPS.
+    /// Reads the frame rate register (0x13).
     pub async fn sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         let mut value = [0];
@@ -253,7 +258,8 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
         Ok(value[0])
     }
 
-    /// Get the sensor's exposure time and led mode.
+    /// Returns `(led_always_on, exposure_us)` from register 0x66: bit 7 is the LED-always-on
+    /// flag, bits 6:0 the exposure time in 100 µs steps.
     pub async fn sensor_exposure_us(
         &mut self,
     ) -> Result<(bool, u16), Error<I::Error, Infallible, Infallible>> {
@@ -264,13 +270,13 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
         Ok((led_always_on, exposure_us))
     }
 
-    /// Set the sensor gain.
+    /// Reads the sensor gain register (0x67).
     pub async fn sensor_gain(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         self.read_byte(0x67).await
     }
 
-    /// Set the area lower bound
+    /// Reads the object area lower bound (0x68-0x69, little-endian).
     pub async fn area_lower_bound(
         &mut self,
     ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
@@ -280,7 +286,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
         Ok(value)
     }
 
-    /// Set the area upper bound
+    /// Reads the object area upper bound (0x6A-0x6B, little-endian).
     pub async fn area_upper_bound(
         &mut self,
     ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
@@ -290,7 +296,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
         Ok(value)
     }
 
-    /// Set the light threshold
+    /// Reads the object light threshold (0x6C).
     pub async fn light_threshold(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         self.read_byte(0x6C).await
@@ -298,7 +304,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7661Qn<I, D, M> {
 }
 
 impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
-    /// Set the sensor FPS.
+    /// Writes the frame rate register (0x13). The sensor must be idle.
     pub async fn set_sensor_fps(
         &mut self,
         value: u8,
@@ -309,9 +315,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the sensor's exposure time and led mode.
+    /// Writes exposure time and LED mode to register 0x66. The sensor must be idle.
     ///
-    /// `exposure_us` must be a multiple of 100 and cannot exceed 12700 µs.
+    /// # Panics
+    ///
+    /// If `exposure_us` is not a multiple of 100 or exceeds 12700 µs.
     pub async fn set_sensor_exposure_us(
         &mut self,
         led_always_on: bool,
@@ -326,7 +334,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the sensor gain.
+    /// Writes the sensor gain register (0x67). The sensor must be idle.
     pub async fn set_sensor_gain(
         &mut self,
         x: u8,
@@ -337,7 +345,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the area lower bound
+    /// Writes the object area lower bound (0x68-0x69, little-endian). The sensor must be idle.
     pub async fn set_area_lower_bound(
         &mut self,
         x: u16,
@@ -348,7 +356,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the area upper bound
+    /// Writes the object area upper bound (0x6A-0x6B, little-endian). The sensor must be idle.
     pub async fn set_area_upper_bound(
         &mut self,
         x: u16,
@@ -359,7 +367,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the light threshold
+    /// Writes the object light threshold (0x6C). The sensor must be idle.
     pub async fn set_light_threshold(
         &mut self,
         x: u8,
@@ -372,7 +380,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7661Qn<I, D, M> {
 }
 
 impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7661Qn<I, D, M> {
-    /// Wait for and get a frame of image data.
+    /// Waits on INT_O until a frame is ready, then reads the 320×240 image into `image`.
     pub async fn wait_for_image<O: digital::Wait>(
         &mut self,
         interrupt: &mut Pag7661QnInterrupt<O>,
@@ -387,7 +395,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7661Qn<I, D, M> {
             if status.frame_ready() {
                 // Lock frame buffer
                 self.write(0x0E, &[1]).await?;
-                // Read-back check
+                // Spin until the lock reads back as set.
                 while self.read_byte(0x0E).await? == 0 {}
 
                 // Read image
@@ -405,7 +413,8 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7661Qn<I, D, M> {
 }
 
 impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
-    /// Wait for and get a frame of object data. Returns the number of objects that were detected.
+    /// Waits on INT_O until a frame of object data is ready, fills `obj` and returns the number
+    /// of objects detected.
     pub async fn wait_for_objects<O: digital::Wait>(
         &mut self,
         interrupt: &mut Pag7661QnInterrupt<O>,
@@ -440,7 +449,8 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7661Qn<I, D, M> {
                 // Read object count
                 let count = self.read_byte(0x25).await?;
 
-                // Read object output
+                // At most 8 objects (8 bytes each) are read per report; above 8, the rest
+                // arrive in a second report.
                 if count > 8 {
                     total_count = count;
                     self.read(0x26, &mut obj_bytes[..8 * 8]).await?;
@@ -480,7 +490,7 @@ impl<I: Interface, D: DelayNs> Pag7661Qn<I, D, Mode> {
             defmt::debug!("Switching mode to {}", new_mode.mode());
             self._set_bank(0x00).await?;
             if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
-                // switch to idle first
+                // Go through idle when changing between image and object mode.
                 self.write(0x10, &[Mode::Idle as u8]).await?;
                 loop {
                     let mut current_mode = [0];
@@ -524,7 +534,7 @@ pub trait Interface {
         Ok(value[0])
     }
 
-    /// Get the value of the INTO_Status register. Make sure the bank is set to 0x00.
+    /// Reads INTO_Status (0x04) and logs its error bit. The caller must have selected bank 0x00.
     async fn int_o_status(&mut self) -> Result<IntOStatus, Self::Error> {
         let value = self.read_byte(0x04).await?;
         let status = IntOStatus::new_with_raw_value(value);
@@ -534,7 +544,7 @@ pub trait Interface {
         Ok(status)
     }
 
-    /// Set the value of the INTO_Status register. Make sure the bank is set to 0x00.
+    /// Writes INTO_Status (0x04). The caller must have selected bank 0x00.
     async fn set_int_o_status(&mut self, value: IntOStatus) -> Result<(), Self::Error> {
         self.write(0x04, &[value.raw_value()]).await?;
         Ok(())

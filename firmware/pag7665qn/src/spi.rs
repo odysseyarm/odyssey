@@ -3,7 +3,7 @@ use embedded_hal_async::spi::SpiDevice;
 
 use crate::Interface;
 
-/// PAG7665QN low level SPI driver
+/// Register access over SPI: one address byte, then data. Reads set bit 7 of the address.
 pub struct Pag7665QnSpi<S> {
     spi: S,
 }

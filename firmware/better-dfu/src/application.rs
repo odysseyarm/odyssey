@@ -1,4 +1,4 @@
-//! Application part of DFU logic
+//! DFU runtime interface exposed by the application firmware.
 use embassy_boot::BlockingFirmwareState;
 use embassy_time::{Duration, Instant};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, RequestType};
@@ -13,11 +13,10 @@ use crate::consts::{
     Status, USB_CLASS_APPN_SPEC,
 };
 
-/// Generic interface for a system that can signal to the bootloader that USB DFU mode is needed on the next boot.
+/// Tells the bootloader to enter USB DFU mode on the next boot.
 ///
-/// By default this trait is implemented for `BlockingFirmwareState<'d, STATE>` but you could also implement this generic
-/// interface yourself instead in more complex situations. This could for instance be when you cannot hand ownership of a
-/// `BlockingFirmwareState` instance over directly to the DFU `Control` instance and need to use a more complex mechanism.
+/// Implemented for `BlockingFirmwareState<'d, STATE>`. Implement it directly when the DFU `Control` cannot own a
+/// `BlockingFirmwareState`, for example when other code also needs it.
 pub trait DfuMarker {
     /// Signal to the bootloader that DFU mode should be used on the next boot.
     fn mark_dfu(&mut self);
@@ -30,7 +29,7 @@ impl<'d, STATE: NorFlash> DfuMarker for BlockingFirmwareState<'d, STATE> {
     }
 }
 
-/// Internal state for the DFU class
+/// DFU runtime state and USB control handler; [`usb_dfu`] registers it.
 pub struct Control<MARK: DfuMarker, RST: Reset> {
     dfu_marker: MARK,
     attrs: DfuAttributes,
@@ -45,7 +44,7 @@ pub struct Control<MARK: DfuMarker, RST: Reset> {
 }
 
 impl<MARK: DfuMarker, RST: Reset> Control<MARK, RST> {
-    /// Create a new DFU instance to expose a DFU interface.
+    /// Starts in appIDLE. Pass it to [`usb_dfu`] to add the interface.
     pub fn new(dfu_marker: MARK, attrs: DfuAttributes, reset: RST) -> Self {
         Control {
             dfu_marker,
@@ -145,15 +144,14 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
     }
 }
 
-/// An implementation of the USB DFU 1.1 runtime protocol
+/// Adds a USB DFU 1.1 runtime interface to `builder` and registers `handler` for it. The builder can be used as
+/// normal afterwards.
 ///
-/// This function will add a DFU interface descriptor to the provided Builder, and register the provided Control as a handler for the USB device. The USB builder can be used as normal once this is complete.
-/// The handler is responsive to DFU GetStatus and Detach commands.
+/// The handler answers DFU_GETSTATUS and DFU_DETACH. A USB reset that arrives within the DETACH request's wTimeout
+/// (immediately, if WILL_DETACH is set) calls [`DfuMarker::mark_dfu`] and resets the system. The bootloader must
+/// recognise that mark and expose a DFU-mode device to carry out the transfer with the host.
 ///
-/// Once a detach command, followed by a USB reset is received by the host, a magic number will be written into the bootloader state partition to indicate that
-/// it should expose a DFU device, and a software reset will be issued.
-///
-/// To apply USB DFU updates, the bootloader must be capable of recognizing the DFU magic and exposing a device to handle the full DFU transaction with the host.
+/// `timeout` is advertised as wDetachTimeOut in the functional descriptor, in milliseconds truncated to `u16`.
 pub fn usb_dfu<'d, D: Driver<'d>, MARK: DfuMarker, RST: Reset>(
     builder: &mut Builder<'d, D>,
     handler: &'d mut Control<MARK, RST>,
@@ -162,8 +160,7 @@ pub fn usb_dfu<'d, D: Driver<'d>, MARK: DfuMarker, RST: Reset>(
 ) {
     let mut func = builder.function(0x00, 0x00, 0x00);
 
-    // Here we give users the opportunity to add their own function level MSOS headers for instance.
-    // This is useful when DFU functionality is part of a composite USB device.
+    // Function-level descriptors such as MSOS headers, for when DFU is part of a composite USB device.
     func_modifier(&mut func);
 
     let mut iface = func.interface();

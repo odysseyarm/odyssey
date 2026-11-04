@@ -1,9 +1,7 @@
-//! USB device setup for nRF5340 with WinUSB support
-//!
-//! This module provides the USB device initialization with:
-//! - Vendor-specific bulk endpoints
-//! - Microsoft OS 2.0 descriptors for automatic WinUSB driver installation
-//! - Vendor control requests (0x30/0x31) for device communication
+//! USB device setup for the nRF5340: a vendor-specific interface with bulk
+//! endpoints, Microsoft OS 2.0 descriptors so Windows installs WinUSB without
+//! an INF, and vendor control requests 0x30 (send) and 0x31 (receive) that
+//! carry postcard-encoded `DeviceMsg`s.
 
 use core::cmp::max;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -56,8 +54,9 @@ impl UsbConfigHandle {
         }
     }
 
-    /// Wait for the next USB configuration event (configured or unconfigured)
-    /// This always waits for an actual event, unlike wait_until_configured which returns immediately if already configured
+    /// Waits for the next configured or unconfigured event. Unlike
+    /// [`Self::wait_until_configured`], it does not return early when the
+    /// device is already configured.
     pub async fn wait_for_event(&self) {
         self.signal.wait().await;
     }
@@ -75,20 +74,24 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
 
 static USB_CONFIGURED: AtomicBool = AtomicBool::new(false);
 
-/// Device control command sender function type
+/// Called with each `DeviceMsg` the host sends with vendor request 0x30.
 pub type DeviceControlSender = fn(odyssey_protocol::control::device::DeviceMsg);
-/// Device control event receiver function type
+/// Polled on vendor request 0x31; `None` answers with a zero-length response.
 pub type DeviceControlReceiver = fn() -> Option<odyssey_protocol::control::device::DeviceMsg>;
 
-/// Create a USB device with vendor-specific bulk endpoints and WinUSB support.
+/// Builds the composite USB device and returns it with the vendor interface's
+/// bulk IN and OUT endpoints and a handle that tracks configuration state.
 ///
-/// This sets up:
-/// - A composite USB device with IAD support
-/// - Microsoft OS 2.0 descriptors for automatic WinUSB driver installation on Windows
-/// - Vendor-specific interface with bulk IN/OUT endpoints
-/// - Control request handlers for device communication (0x30 send, 0x31 receive)
+/// The device uses IADs and Microsoft OS 2.0 descriptors so Windows installs
+/// WinUSB automatically. Vendor control requests 0x30 and 0x31 go to
+/// `device_control_send` and `device_control_recv`. `builder_callback` runs
+/// before the vendor function is added and can add more interfaces, such as
+/// DFU.
 ///
-/// The `builder_callback` allows adding additional interfaces (e.g., DFU).
+/// # Panics
+///
+/// Panics if called more than once: the descriptor buffers, signal and handler
+/// are statics.
 pub fn usb_device<Irqs>(
     pid: u16,
     firmware_version: [u16; 3],
@@ -157,8 +160,8 @@ where
         control_buf,
     );
 
-    // Add the Microsoft OS Descriptor (MSOS/MOD) descriptor.
-    // For composite devices, WINUSB features need to be added at BOTH device level AND function level.
+    // For a composite device Windows needs the WINUSB features at both device
+    // level and function level.
     builder.msos_descriptor(windows_version::WIN8_1, 0);
     builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -181,14 +184,11 @@ where
 
     builder.handler(&mut *handler);
 
-    // Call the builder callback to allow adding additional interfaces (e.g., DFU)
     builder_callback(&mut builder);
 
-    // Add a vendor-specific function (class 0xFF), and corresponding interface,
-    // that uses our custom handler.
-    // We tell Windows that this specific function is compatible with the "WINUSB" feature,
-    // which causes it to use the built-in WinUSB driver automatically, which in turn
-    // can be used by libusb/rusb software without needing a custom driver or INF file.
+    // The WINUSB compatible ID on this vendor function (class 0xFF) makes
+    // Windows bind its built-in WinUSB driver, which libusb/rusb can use
+    // without a custom driver or INF file.
     let mut function = builder.function(0xFF, 0, 0);
     function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(

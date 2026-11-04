@@ -1,4 +1,4 @@
-//! DFU bootloader part of DFU logic
+//! DFU-mode side of the protocol, run by the bootloader.
 use embassy_boot::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterError};
 use embassy_usb::control::{InResponse, OutResponse, Recipient, RequestType};
 use embassy_usb::driver::Driver;
@@ -12,7 +12,7 @@ use crate::consts::{
     Status, USB_CLASS_APPN_SPEC,
 };
 
-/// Target for DFU firmware update
+/// Image a DFU download is written to, selected by the interface alternate setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DfuTarget {
@@ -26,7 +26,7 @@ pub enum DfuTarget {
     Bootloader,
 }
 
-/// Trait for forwarding firmware chunks to alternate target (e.g., network core via IPC)
+/// Forwards firmware chunks to a target this core cannot flash directly, such as the network core over IPC.
 pub trait DfuForwarder {
     /// Called at the start of a firmware download to the alternate target
     fn start_forward(&mut self, total_size: usize) -> Result<(), ()>;
@@ -38,17 +38,17 @@ pub trait DfuForwarder {
     fn finish_forward(&mut self) -> Result<(), ()>;
 }
 
-/// Trait for handling dual-bank flash writes based on DFU target
+/// Writes downloaded firmware to the flash region of a [`DfuTarget`].
 pub trait DualBankWriter {
-    /// Write firmware data to the appropriate bank based on target
+    /// Writes `data` at byte `offset` within `target`'s region.
     fn write_for_target(&mut self, target: DfuTarget, offset: usize, data: &[u8])
     -> Result<(), ()>;
 
-    /// Mark the appropriate bank as updated based on target
+    /// Marks `target` as updated once the final block has been written.
     fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), ()>;
 }
 
-/// Dummy forwarder for single-target (app-only) DFU
+/// Forwarder for app-only DFU; every call fails.
 pub struct NullForwarder;
 
 impl DfuForwarder for NullForwarder {
@@ -65,7 +65,7 @@ impl DfuForwarder for NullForwarder {
     }
 }
 
-/// Null dual-bank writer for systems that don't need dual-bank support
+/// Writer for systems without dual-bank support; every call fails.
 pub struct NullDualBankWriter;
 
 impl DualBankWriter for NullDualBankWriter {
@@ -82,7 +82,7 @@ impl DualBankWriter for NullDualBankWriter {
         Err(())
     }
 }
-/// Internal state for USB DFU
+/// DFU-mode state machine and USB control handler; [`usb_dfu`] registers it.
 pub struct Control<
     'd,
     DFU: NorFlash,
@@ -100,7 +100,6 @@ pub struct Control<
     buf: AlignedBuffer<BLOCK_SIZE>,
     reset: RST,
 
-    // Dual-alt support
     target: DfuTarget,
     _forwarder: FWD,
     dual_bank_writer: DBW,
@@ -127,7 +126,7 @@ impl<
     const BLOCK_SIZE: usize,
 > Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
 {
-    /// Create a new DFU instance to handle DFU transfers.
+    /// The default download target is the app bank that is not running, per `active_bank_is_a`.
     pub fn new(
         updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
         attrs: DfuAttributes,
@@ -166,7 +165,8 @@ impl<
         }
     }
 
-    /// Provide string indices and labels for alternate settings.
+    /// Sets the string descriptors for alt settings 0 (labelled `app_label`), 1 (NET) and 2 (bootloader).
+    /// [`usb_dfu`] calls this.
     pub fn set_interface_strings(
         &mut self,
         app_string: StringIndex,
@@ -184,14 +184,14 @@ impl<
     /// e.g. `concat!("BOOTLOADER ", env!("CARGO_PKG_VERSION"))`.
     ///
     /// The host reads this to decide whether the installed bootloader predates
-    /// the one in the firmware manifest. A bootloader that leaves the default
-    /// in place reports no version, which the host treats as "older than
-    /// anything", since that is what every bootloader built before this did.
+    /// the one in the firmware manifest. A bootloader that keeps the default
+    /// label reports no version, and the host treats it as older than
+    /// anything: bootloaders built without this call report the same label.
     pub fn set_bootloader_label(&mut self, label: &'static str) {
         self.bootloader_label = label;
     }
 
-    /// Provide a callback used to flag DFU requested (e.g., write SWAP_MAGIC).
+    /// Callback run on DFU_DETACH before the reset, e.g. to write SWAP_MAGIC.
     pub fn set_state_flagger(&mut self, f: &'d mut dyn FnMut()) {
         self.state_flagger = Some(f);
     }
@@ -249,7 +249,7 @@ impl<
     fn set_alternate_setting(&mut self, _interface: InterfaceNumber, alternate: u8) {
         match alternate {
             0 => {
-                // Alt 0 = Inactive bank. Pick the opposite of the active bank directly.
+                // Alt 0 is whichever app bank is not running.
                 self.target = if self.active_bank_is_a {
                     info!("Alt setting 0 selected: Bank B (inactive, active=A)");
                     DfuTarget::AppBankB
@@ -389,11 +389,12 @@ impl<
                 if let Some(f) = self.state_flagger.as_mut() {
                     f();
                 }
-                // Send response then reset to honor WILL_DETACH semantics.
+                // Already in DFU mode, so DETACH only runs the state flagger and resets. ResetImmediate does
+                // not return, so the Accepted status stage is never sent.
                 let resp = Some(OutResponse::Accepted);
                 self.reset.sys_reset();
                 resp
-            } // Device is already in DFU mode
+            }
             Ok(Request::ClrStatus) => {
                 info!("Clear status requested");
                 self.reset_state();
@@ -428,7 +429,7 @@ impl<
                     _ => {}
                 }
 
-                //TODO: Configurable poll timeout, ability to add string for Vendor error
+                // bStatus, bwPollTimeout = 0x000032 (50 ms, fixed), bState, iString = 0 (no vendor error string).
                 buf[0..6].copy_from_slice(&[
                     self.status as u8,
                     0x32,
@@ -444,7 +445,7 @@ impl<
                 Some(InResponse::Accepted(&buf[0..1]))
             }
             Ok(Request::Upload) if self.attrs.contains(DfuAttributes::CAN_UPLOAD) => {
-                //TODO: FirmwareUpdater provides a way of reading the active partition so we could in theory add functionality to upload firmware.
+                // FirmwareUpdater can read the active partition, so upload could be supported; it is not.
                 Some(InResponse::Rejected)
             }
             _ => None,
@@ -460,13 +461,16 @@ impl<
     }
 }
 
-/// An implementation of the USB DFU 1.1 protocol
+/// Adds the USB DFU 1.1 DFU-mode interface to `builder` and registers `handler` for its control requests.
 ///
-/// This function will add a DFU interface descriptor to the provided Builder, and register the provided Control as a handler for the USB device
-/// The handler is responsive to DFU GetState, GetStatus, Abort, and ClrStatus commands, as well as Download if configured by the user.
+/// The interface has three alt settings: 0 is the inactive app bank, 1 the network core, 2 the bootloader.
+/// The handler answers DFU_GETSTATE, DFU_GETSTATUS, DFU_ABORT, DFU_CLRSTATUS and DFU_DETACH, and DFU_DNLOAD
+/// if the attributes include CAN_DOWNLOAD. Downloaded blocks go to the [`DualBankWriter`] for the selected
+/// target. After the final block, the manifestation-phase DFU_GETSTATUS resets the device if WILL_DETACH is
+/// set; otherwise the next USB bus reset does.
 ///
-/// Once the host has initiated a DFU download operation, the chunks sent by the host will be written to the DFU partition.
-/// Once the final sync in the manifestation phase has been received, the handler will trigger a system reset to swap the new firmware.
+/// `func_modifier` can add function-level descriptors such as MSOS headers, for when DFU is part of a
+/// composite USB device.
 pub fn usb_dfu<
     'd,
     D: Driver<'d>,
@@ -481,7 +485,7 @@ pub fn usb_dfu<
     handler: &'d mut Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>,
     func_modifier: impl Fn(&mut FunctionBuilder<'_, 'd, D>),
 ) {
-    // Allocate string indices up front to avoid borrowing builder twice.
+    // Allocated before builder.function(), whose FunctionBuilder borrows builder mutably until dropped.
     let inactive_str_idx = builder.string();
     let net_str_idx = builder.string();
     let bootloader_str_idx = builder.string();
@@ -492,11 +496,9 @@ pub fn usb_dfu<
         DFU_PROTOCOL_DFU,
     );
 
-    // Here we give users the opportunity to add their own function level MSOS headers for instance.
-    // This is useful when DFU functionality is part of a composite USB device.
+    // Function-level descriptors such as MSOS headers, for when DFU is part of a composite USB device.
     func_modifier(&mut func);
 
-    // Allocate string indices for alternate settings and attach readable names.
     // Alt 0: inactive app bank (APP_B when A is active, APP_A when B is active)
     // Alt 1: NET
     // Alt 2: BOOTLOADER
@@ -520,10 +522,6 @@ pub fn usb_dfu<
 
     let mut iface = func.interface();
 
-    // Only show the inactive bank based on which bank is active
-    // If Bank A is active, show "Bank B" (for uploading to inactive bank B)
-    // If Bank B is active, show "Bank A" (for uploading to inactive bank A)
-
     // alt=0: Inactive application bank (download goes here)
     let mut alt = iface.alt_setting(
         USB_CLASS_APPN_SPEC,
@@ -536,7 +534,7 @@ pub fn usb_dfu<
         &[
             handler.attrs.bits(),
             0xc4,
-            0x09, // 2500ms timeout
+            0x09, // wDetachTimeOut 0x09c4 = 2500 ms
             (BLOCK_SIZE & 0xff) as u8,
             ((BLOCK_SIZE & 0xff00) >> 8) as u8,
             0x10,

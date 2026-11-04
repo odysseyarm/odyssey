@@ -7,7 +7,7 @@ use bytemuck::{Pod, Zeroable};
 pub struct Object {
     #[bits(4..=7, rw)]
     pub id: u4,
-    /// Brightness
+    /// Average pixel value of the object.
     #[bits(8..=15, rw)]
     pub avg: u8,
     #[bits(16..=31, rw)]

@@ -1,12 +1,8 @@
-//! Common library for donger firmware projects.
-//!
-//! This crate provides shared utilities for:
-//! - USB CDC-ACM packet reading/writing with COBS framing
-//! - Protocol handling for odyssey-protocol messages
-//! - Stream info management for object/IMU data
-//! - USB device setup with WinUSB support (nrf5340 feature)
-//!
-//! This is designed to be used by atslite boards with PAG766x sensors.
+//! Code shared by the donger firmware for the atslite boards with PAG766x
+//! sensors: COBS framing (`packet`), CDC-ACM serial helpers (`usb`),
+//! per-stream enable state (`stream`), a re-export of odyssey-protocol and,
+//! with the `atslite` feature, nRF5340 USB device setup with WinUSB support
+//! (`usb_device`).
 
 #![no_std]
 
@@ -17,10 +13,10 @@ pub mod usb;
 #[cfg(feature = "atslite")]
 pub mod usb_device;
 
-// Re-exports
 pub use odyssey_protocol;
 
-/// Helper macro to create a static byte buffer
+/// Expands to a zeroed `&'static mut [u8; $size]` backed by a `ConstStaticCell`.
+/// Each expansion site owns one buffer and panics if evaluated a second time.
 #[macro_export]
 macro_rules! static_byte_buffer {
     ($size:expr_2021) => {{

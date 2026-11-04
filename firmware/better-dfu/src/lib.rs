@@ -15,12 +15,10 @@ pub mod application;
 #[cfg(all(feature = "application", not(feature = "dfu")))]
 pub use self::application::*;
 
-/// Provides a platform-agnostic interface for initiating a system reset.
+/// System reset issued after DETACH and after the manifestation phase.
 ///
-/// This crate exposes `ResetImmediate` when compiled with cortex-m or esp32c3 support, which immediately issues a
-/// reset request without interfacing with any other peripherals.
-///
-/// If alternate behaviour is desired, a custom implementation of Reset can be provided as an argument to the usb_dfu function.
+/// With the `cortex-m` or `esp32c3-hal` feature the crate provides `ResetImmediate`, which issues the reset
+/// without touching any other peripheral. For other behaviour, pass a custom implementation to `Control::new`.
 pub trait Reset {
     /// Reset the device.
     fn sys_reset(&self);

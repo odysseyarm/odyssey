@@ -2,11 +2,10 @@ use arbitrary_int::*;
 use bitbybit::bitfield;
 use bytemuck::{Pod, Zeroable};
 
-/// Object detection result from PAG7665QN.
+/// One detected object as reported by the sensor.
 ///
-/// The PAG7665QN supports up to 16 objects per frame with circle detection.
-/// Each object is 8 bytes with the following layout:
-/// - Byte 0: bits[7:4] = ID, bits[1] = IsCircle, bit[0] = Area[16]
+/// The sensor reports up to 16 objects per frame. Each object is 8 bytes:
+/// - Byte 0: bits[7:4] = ID, bit[1] = IsCircle, bit[0] = Area[16]
 /// - Byte 1: Avg (brightness)
 /// - Bytes 2-3: X coordinate (16-bit, 6-bit fractional)
 /// - Bytes 4-5: Y coordinate (16-bit, 6-bit fractional)
@@ -17,10 +16,11 @@ pub struct Object {
     /// Object ID (0-15)
     #[bits(4..=7, rw)]
     pub id: u4,
-    /// Circle detection flag - true if object shape is approximately circular
+    /// Set when the object's shape is approximately circular, judged by the [`CircleParams`]
+    /// bounds.
     #[bit(1, rw)]
     pub is_circle: bool,
-    /// Brightness (average pixel value of the object)
+    /// Average pixel value of the object.
     #[bits(8..=15, rw)]
     pub avg: u8,
     /// X coordinate with 6-bit fractional precision (divide by 64 for pixels)
@@ -34,24 +34,22 @@ pub struct Object {
     pub area: u17,
 }
 
-/// INTO_Status register (0x04 in Bank 0x00)
+/// INTO_Status register (0x04 in bank 0x00).
 #[bitfield(u8, default = 0)]
 pub struct IntOStatus {
-    /// Power-on ready flag
     #[bit(0, rw)]
     pub power_on_ready: bool,
     /// Frame ready flag (image mode) or object ready flag (object mode)
     #[bit(1, rw)]
     pub frame_ready: bool,
-    /// Error flag - check FW_Error_Type and FW_Error_Code registers
+    /// Firmware error; details are in FW_Error_Type (0x7A) and FW_Error_Code (0x7B).
     #[bit(7, rw)]
     pub error: bool,
 }
 
-/// ROI (Region of Interest) configuration
+/// Region of interest, stored in registers 0x72-0x76.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Roi {
-    /// Enable ROI
     pub enabled: bool,
     /// X coordinate of top-left corner (0-319)
     pub x0: u16,
@@ -63,7 +61,8 @@ pub struct Roi {
     pub y1: u8,
 }
 
-/// Circle detection parameters
+/// Ratio bounds the sensor uses to set [`Object::is_circle`]. Each value is fixed point in 1/32
+/// steps.
 #[derive(Debug, Clone, Copy)]
 pub struct CircleParams {
     /// R ratio lower bound (width/height ratio, default 0x1A = 0.8125)

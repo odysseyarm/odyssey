@@ -5,10 +5,10 @@ pub(crate) const USB_CLASS_APPN_SPEC: u8 = 0xFE;
 /// Device Firmware Upgrade subclass, App specific
 pub(crate) const APPN_SPEC_SUBCLASS_DFU: u8 = 0x01;
 #[allow(unused)]
-/// USB interface alternative setting
+/// Interface protocol for DFU mode.
 pub(crate) const DFU_PROTOCOL_DFU: u8 = 0x02;
 #[allow(unused)]
-/// DFU runtime class
+/// Interface protocol for runtime mode.
 pub(crate) const DFU_PROTOCOL_RT: u8 = 0x01;
 /// DFU functional descriptor
 pub(crate) const DESC_DFU_FUNCTIONAL: u8 = 0x21;
@@ -18,7 +18,8 @@ macro_rules! define_dfu_attributes {
         $macro! {
             /// Attributes supported by the DFU controller.
             pub struct DfuAttributes: u8 {
-                /// Generate WillDetache sequence on bus.
+                /// Device detaches and reattaches on its own after DFU_DETACH
+                /// instead of waiting for the host to issue a USB reset.
                 const WILL_DETACH = 0b0000_1000;
                 /// Device can communicate during manifestation phase.
                 const MANIFESTATION_TOLERANT = 0b0000_0100;

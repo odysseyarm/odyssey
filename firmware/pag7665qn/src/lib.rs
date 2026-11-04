@@ -17,7 +17,7 @@ use mode::{Mode, ModeT};
 use spi::Pag7665QnSpi;
 use types::{CircleParams, IntOStatus, Roi};
 
-// PAG7665QN Register addresses (Bank 0x00 unless noted)
+// PAG7665QN register addresses, bank 0x00 unless noted.
 mod regs {
     // Identification
     pub const PART_ID_LO: u8 = 0x00;
@@ -55,10 +55,10 @@ mod regs {
     pub const MANUAL_POWER_CTRL: u8 = 0x2F;
     pub const MANUAL_POWER_TRIG: u8 = 0x30;
 
-    // Sensor settings (PAG7665QN specific addresses)
-    pub const SENSOR_EXPO: u8 = 0x67; // Exposure: bit[7]=LED_Always_ON, bits[6:0]=time
+    // Sensor settings. These addresses differ from the PAG7661QN.
+    pub const SENSOR_EXPO: u8 = 0x67; // bit[7]=LED_Always_ON, bits[6:0]=time in 100 µs steps
     pub const SENSOR_GAIN: u8 = 0x68; // Analog gain
-    pub const OBJ_LIGHT_THRD: u8 = 0x6D; // Light threshold
+    pub const OBJ_LIGHT_THRD: u8 = 0x6D;
     pub const OBJ_AREA_LB_LO: u8 = 0x6E; // Area lower bound [7:0]
     pub const OBJ_AREA_LB_HI: u8 = 0x6F; // Area lower bound [15:8]
     pub const OBJ_AREA_UB_LO: u8 = 0x70; // Area upper bound [7:0]
@@ -75,7 +75,7 @@ mod regs {
     pub const FW_ERROR_TYPE: u8 = 0x7A;
     pub const FW_ERROR_CODE: u8 = 0x7B;
 
-    // Bank switching (non-bank register)
+    // Bank select, reachable from every bank.
     pub const BANK_NO: u8 = 0x7F;
 
     // Bank 0x06 registers
@@ -84,7 +84,9 @@ mod regs {
     }
 }
 
-/// PAG7665QN driver
+/// PAG7665QN driver. `M` tracks the sensor mode, either at the type level ([`mode::Idle`],
+/// [`mode::Image`], [`mode::Object`]) or at runtime ([`Mode`]). The selected register bank is
+/// cached so repeated accesses to the same bank skip the bank-select write.
 pub struct Pag7665Qn<I, D, M> {
     bus: I,
     timer: D,
@@ -92,15 +94,22 @@ pub struct Pag7665Qn<I, D, M> {
     bank: u8,
 }
 
-/// PAG7665QN interrupt pin
+/// The PAG7665QN INT_O pin, returned next to the driver by [`Pag7665Qn::init_spi`].
 pub struct Pag7665QnInterrupt<O> {
     pub int_o: O,
 }
 
 impl<S: SpiDevice, D: DelayNs, M: ModeT> Pag7665Qn<Pag7665QnSpi<S>, D, M> {
-    /// Creates a new PAG7665QN driver using SPI and perform initialization.
+    /// Checks the part ID, starts the sensor CPU in `initial_mode` and returns the driver with its
+    /// INT_O pin.
     ///
-    /// Make sure `spi` is configured in mode 3 with MSB first bit order, max 20 MHz.
+    /// `spi` must be configured for SPI mode 3, MSB first, at most 20 MHz.
+    ///
+    /// # Errors
+    ///
+    /// [`InitError::FailedPartIdCheck`] if the part ID is not 0x7660 after one retry,
+    /// [`InitError::FailedBootLoader`] if power-on ready is not set 250 ms after the CPU is
+    /// enabled.
     pub async fn init_spi<O: digital::Wait>(
         spi: S,
         mut timer: D,
@@ -131,7 +140,7 @@ async fn initialize<I: Interface, D: DelayNs>(
 ) -> Result<(), InitError<I::Error>> {
     timer.delay_ms(30).await;
 
-    // Read Part ID - PAG7665QN should return 0x7660
+    // The PAG7665QN reports part ID 0x7660.
     let mut part_id = [0; 2];
     bus.read(regs::PART_ID_LO, &mut part_id).await?;
     if part_id != [0x60, 0x76] {
@@ -140,7 +149,6 @@ async fn initialize<I: Interface, D: DelayNs>(
             part_id[1],
             part_id[0]
         );
-        // Try again
         timer.delay_ms(30).await;
         bus.read(regs::PART_ID_LO, &mut part_id).await?;
         if part_id != [0x60, 0x76] {
@@ -153,11 +161,11 @@ async fn initialize<I: Interface, D: DelayNs>(
         }
     }
 
-    // Set initial mode and enable CPU
+    // CPU_RESET_ENL=1 starts the sensor CPU in the mode written to OP_MODE_HOST.
     bus.write(regs::OP_MODE_HOST, &[initial_mode as u8]).await?;
     bus.write(regs::CPU_RESET_ENL, &[1]).await?;
 
-    // Wait for power-on ready (up to 300ms per datasheet)
+    // The datasheet allows up to 300 ms for power-on ready; this waits 250 ms.
     timer.delay_ms(250).await;
     let mut int_o_status = [0];
     bus.read(regs::INTO_STATUS, &mut int_o_status).await?;
@@ -165,10 +173,8 @@ async fn initialize<I: Interface, D: DelayNs>(
         return Err(InitError::FailedBootLoader);
     }
 
-    // Clear status
     bus.write(regs::INTO_STATUS, &[0]).await?;
 
-    // Read and log firmware version
     let mut fw_ver = [0; 4];
     bus.read(regs::FW_MAJOR_VERSION, &mut fw_ver[..1]).await?;
     bus.read(regs::FW_MINOR_VERSION, &mut fw_ver[1..]).await?;
@@ -184,20 +190,20 @@ async fn initialize<I: Interface, D: DelayNs>(
 }
 
 impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
-    /// Get the low level driver
+    /// Returns the register interface for direct access.
     ///
-    /// WARNING: using the low level driver can cause the device to become inconsistent with the
-    /// high level driver's state such as mode and bank.
+    /// Writes through it bypass the cached mode and bank, so the driver's state can disagree with
+    /// the device afterwards.
     pub fn bus_unchecked(&mut self) -> &mut I {
         &mut self.bus
     }
 
-    /// Set the bank in the driver state without sending any commands to the underlying device.
+    /// Overwrites the cached bank without writing BANK_NO (0x7F).
     pub fn set_bank_unchecked(&mut self, bank: u8) {
         self.bank = bank
     }
 
-    /// Set the mode in the driver state without sending any commands to the underlying device.
+    /// Changes the mode type without writing OP_MODE_HOST (0x10).
     pub fn set_mode_unchecked<N: ModeT>(self, mode: N) -> Pag7665Qn<I, D, N> {
         Pag7665Qn {
             bus: self.bus,
@@ -207,7 +213,6 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         }
     }
 
-    /// Wrapper to convert errors.
     async fn read<EO, EM>(
         &mut self,
         address: u8,
@@ -219,7 +224,6 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Wrapper to convert errors.
     async fn write<EO, EM>(
         &mut self,
         address: u8,
@@ -231,7 +235,6 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Wrapper to convert errors.
     async fn read_byte<EO, EM>(&mut self, address: u8) -> Result<u8, Error<I::Error, EO, EM>> {
         self.bus
             .read_byte(address)
@@ -239,7 +242,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Wrapper to convert errors.
+    /// Skips the BANK_NO write when the cached bank already matches.
     async fn _set_bank<EO, EM>(&mut self, bank: u8) -> Result<(), Error<I::Error, EO, EM>> {
         if self.bank == bank {
             return Ok(());
@@ -249,7 +252,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the bank
+    /// Selects the register bank (BANK_NO, 0x7F); a no-op when the cached bank already matches.
     pub fn set_bank(
         &mut self,
         bank: u8,
@@ -270,7 +273,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
             defmt::debug!("Switching mode to {}", new_mode.mode());
             self._set_bank(0x00).await?;
             if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
-                // switch to idle first
+                // Go through idle when changing between image and object mode.
                 self.write(regs::OP_MODE_HOST, &[Mode::Idle as u8]).await?;
                 loop {
                     let mut current_mode = [0];
@@ -325,7 +328,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
             .map_err(Error::InterfaceError)
     }
 
-    /// Get the sensor FPS.
+    /// Reads SENSOR_FRAME_RATE (0x13).
     pub async fn sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         let mut value = [0];
@@ -333,7 +336,8 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Ok(value[0])
     }
 
-    /// Get the sensor's exposure time and led mode.
+    /// Returns `(led_always_on, exposure_us)` from SENSOR_EXPO (0x67): bit 7 is the
+    /// LED-always-on flag, bits 6:0 the exposure time in 100 µs steps.
     pub async fn sensor_exposure_us(
         &mut self,
     ) -> Result<(bool, u16), Error<I::Error, Infallible, Infallible>> {
@@ -344,13 +348,13 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Ok((led_always_on, exposure_us))
     }
 
-    /// Get the sensor gain.
+    /// Reads the analog gain (SENSOR_GAIN, 0x68).
     pub async fn sensor_gain(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         self.read_byte(regs::SENSOR_GAIN).await
     }
 
-    /// Get the area lower bound
+    /// Reads the object area lower bound (0x6E-0x6F, little-endian).
     pub async fn area_lower_bound(
         &mut self,
     ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
@@ -361,7 +365,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Ok(value)
     }
 
-    /// Get the area upper bound
+    /// Reads the object area upper bound (0x70-0x71, little-endian).
     pub async fn area_upper_bound(
         &mut self,
     ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
@@ -372,13 +376,13 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Ok(value)
     }
 
-    /// Get the light threshold
+    /// Reads OBJ_LIGHT_THRD (0x6D).
     pub async fn light_threshold(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         self.read_byte(regs::OBJ_LIGHT_THRD).await
     }
 
-    /// Get circle detection parameters
+    /// Reads the circle detection ratio bounds (0x23, 0x24, 0x77, 0x78).
     pub async fn circle_params(
         &mut self,
     ) -> Result<CircleParams, Error<I::Error, Infallible, Infallible>> {
@@ -395,7 +399,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         })
     }
 
-    /// Get ROI configuration
+    /// Reads the ROI registers (0x72-0x76) and reassembles the 9-bit X coordinates.
     pub async fn roi(&mut self) -> Result<Roi, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         let ctrl = self.read_byte(regs::ROI_CTRL).await?;
@@ -417,18 +421,18 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         })
     }
 
-    /// Perform a software reset. All registers will be cleared.
+    /// Writes 0xFF to SW_RESET in bank 0x06 and waits 1 ms. All registers are cleared.
     pub async fn software_reset(&mut self) -> Result<(), Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x06).await?;
         self.write(regs::bank6::SW_RESET, &[0xFF]).await?;
         self.timer.delay_ms(1).await;
-        self.bank = 0; // Reset bank state
+        self.bank = 0; // The reset leaves the device in bank 0x00.
         Ok(())
     }
 }
 
 impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
-    /// Set the sensor FPS.
+    /// Writes SENSOR_FRAME_RATE (0x13). The sensor must be idle.
     pub async fn set_sensor_fps(
         &mut self,
         value: u8,
@@ -439,9 +443,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the sensor's exposure time and led mode.
+    /// Writes exposure time and LED mode to SENSOR_EXPO (0x67). The sensor must be idle.
     ///
-    /// `exposure_us` must be a multiple of 100 and cannot exceed 12700 µs.
+    /// # Panics
+    ///
+    /// If `exposure_us` is not a multiple of 100 or exceeds 12700 µs.
     pub async fn set_sensor_exposure_us(
         &mut self,
         led_always_on: bool,
@@ -456,7 +462,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the sensor gain.
+    /// Writes the analog gain (SENSOR_GAIN, 0x68). The sensor must be idle.
     pub async fn set_sensor_gain(
         &mut self,
         x: u8,
@@ -467,7 +473,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the area lower bound
+    /// Writes the object area lower bound (0x6E-0x6F, little-endian). The sensor must be idle.
     pub async fn set_area_lower_bound(
         &mut self,
         x: u16,
@@ -478,7 +484,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the area upper bound
+    /// Writes the object area upper bound (0x70-0x71, little-endian). The sensor must be idle.
     pub async fn set_area_upper_bound(
         &mut self,
         x: u16,
@@ -489,7 +495,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set the light threshold
+    /// Writes OBJ_LIGHT_THRD (0x6D). The sensor must be idle.
     pub async fn set_light_threshold(
         &mut self,
         x: u8,
@@ -500,7 +506,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set circle detection parameters
+    /// Writes the circle detection ratio bounds. The sensor must be idle.
     pub async fn set_circle_params(
         &mut self,
         params: CircleParams,
@@ -518,7 +524,8 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Set ROI configuration
+    /// Writes the ROI registers (0x72-0x76); bit 8 of each X coordinate goes into ROI_CTRL. The
+    /// sensor must be idle.
     pub async fn set_roi(&mut self, roi: Roi) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
         self._set_bank(0x00).await?;
@@ -539,7 +546,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
 }
 
 impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
-    /// Wait for and get a frame of image data.
+    /// Waits on INT_O until a frame is ready, then reads the 320×240 image into `image`.
     pub async fn wait_for_image<O: digital::Wait>(
         &mut self,
         interrupt: &mut Pag7665QnInterrupt<O>,
@@ -554,10 +561,9 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
             if status.frame_ready() {
                 // Lock frame buffer
                 self.write(regs::REPORT_BUF_SEL, &[1]).await?;
-                // Read-back check
+                // Spin until the lock reads back as set.
                 while self.read_byte(regs::REPORT_BUF_SEL).await? == 0 {}
 
-                // Read image
                 self.read(regs::RPT_SRAM_DATA, image).await?;
 
                 // Unlock frame buffer
@@ -572,7 +578,8 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
 }
 
 impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
-    /// Wait for and get a frame of object data. Returns the number of objects that were detected.
+    /// Waits on INT_O until a frame of object data is ready, fills `obj` and returns the number
+    /// of objects detected.
     pub async fn wait_for_objects<O: digital::Wait>(
         &mut self,
         interrupt: &mut Pag7665QnInterrupt<O>,
@@ -604,10 +611,10 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
         loop {
             let status = self.int_o_status().await?;
             if status.frame_ready() {
-                // Read object count
                 let count = self.read_byte(regs::OBJ_COUNT).await?;
 
-                // Read object output
+                // At most 8 objects are read per report; above 8, the rest arrive in a second
+                // report.
                 if count > 8 {
                     total_count = count;
                     self.read(regs::OBJ_DATA_START, &mut obj_bytes[..8 * 8])
@@ -651,7 +658,7 @@ impl<I: Interface, D: DelayNs> Pag7665Qn<I, D, Mode> {
             defmt::debug!("Switching mode to {}", new_mode.mode());
             self._set_bank(0x00).await?;
             if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
-                // switch to idle first
+                // Go through idle when changing between image and object mode.
                 self.write(regs::OP_MODE_HOST, &[Mode::Idle as u8]).await?;
                 loop {
                     let mut current_mode = [0];
@@ -696,7 +703,7 @@ pub trait Interface {
         Ok(value[0])
     }
 
-    /// Get the value of the INTO_Status register. Make sure the bank is set to 0x00.
+    /// Reads INTO_Status (0x04) and logs its error bit. The caller must have selected bank 0x00.
     async fn int_o_status(&mut self) -> Result<IntOStatus, Self::Error> {
         let value = self.read_byte(regs::INTO_STATUS).await?;
         let status = IntOStatus::new_with_raw_value(value);
@@ -706,7 +713,7 @@ pub trait Interface {
         Ok(status)
     }
 
-    /// Set the value of the INTO_Status register. Make sure the bank is set to 0x00.
+    /// Writes INTO_Status (0x04). The caller must have selected bank 0x00.
     async fn set_int_o_status(&mut self, value: IntOStatus) -> Result<(), Self::Error> {
         self.write(regs::INTO_STATUS, &[value.raw_value()]).await?;
         Ok(())
