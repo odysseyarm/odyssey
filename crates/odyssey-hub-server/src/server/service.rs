@@ -39,6 +39,15 @@ fn ok_empty() -> Result<Response<EmptyReply>, Status> {
     Ok(Response::new(EmptyReply {}))
 }
 
+/// Validate before narrowing: truncation could enqueue a command for a different
+/// sensor/register/config than the caller requested.
+fn request_byte(value: u32, maximum: u8, field: &'static str) -> Result<u8, RpcError> {
+    u8::try_from(value)
+        .ok()
+        .filter(|value| *value <= maximum)
+        .ok_or(RpcError::InvalidField(field))
+}
+
 fn tracking_event_from_proto(
     event: device_event::TrackingEvent,
 ) -> Result<common::events::TrackingEvent, RpcError> {
@@ -104,15 +113,20 @@ impl Service for HubServer {
         _req: tonic::Request<SubscribeAccessoryMapRequest>,
     ) -> Result<Response<Self::SubscribeAccessoryMapStream>, Status> {
         // Initial snapshot + broadcast stream that emits common::AccessoryMap
-        let init = self.accessory_map_snapshot();
         let mut bcast = BroadcastStream::new(self.accessory_map_sender.subscribe());
+        let init = self.accessory_map_snapshot();
 
         let (tx, rx) = mpsc::channel::<Result<AccessoryMapReply, Status>>(SUBSCRIPTION_BUFFER);
         let _ = tx.try_send(Ok(AccessoryMapReply::from(init)));
 
         // Detached on purpose: ends by itself when the client goes away.
         tokio::spawn(async move {
-            while let Some(item) = bcast.next().await {
+            loop {
+                let item = tokio::select! {
+                    () = tx.closed() => break,
+                    item = bcast.next() => item,
+                };
+                let Some(item) = item else { break };
                 match item {
                     Ok(map) => {
                         if tx.send(Ok(AccessoryMapReply::from(map))).await.is_err() {
@@ -137,7 +151,10 @@ impl Service for HubServer {
         req: tonic::Request<AccessoryInfoMap>,
     ) -> Result<Response<EmptyReply>, Status> {
         // Convert proto → common map
-        let incoming: common::accessory::AccessoryInfoMap = req.into_inner().into();
+        let incoming: common::accessory::AccessoryInfoMap = req
+            .into_inner()
+            .try_into()
+            .map_err(Status::invalid_argument)?;
 
         // Persist to disk using odyssey_hub_common::config
         common::config::accessory_map_save_async(&incoming)
@@ -153,11 +170,9 @@ impl Service for HubServer {
             fresh_result.into_value()
         };
 
-        // Notify watchers of info updates
-        let _ = self.accessory_info_sender.send(fresh.clone());
-
-        // Keep connection flags while taking the new info
-        self.merge_accessory_info(fresh);
+        // Publish canonical state before waking the accessory manager.
+        self.merge_accessory_info(fresh.clone());
+        self.accessory_info_sender.send_replace(fresh);
         // Broadcast full status map so UI refreshes
         let _ = self
             .accessory_map_sender
@@ -171,7 +186,7 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<GetShotDelayReply>, Status> {
-        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let uuid = uuid_from_bytes(&req.into_inner().uuid)?;
         let delay_ms = u32::from(self.shot_delay_or_default(uuid).await);
         Ok(Response::new(GetShotDelayReply { delay_ms }))
     }
@@ -187,11 +202,18 @@ impl Service for HubServer {
 
         // initial
         let _ = tx.try_send(Ok(GetShotDelayReply {
-            delay_ms: *rx.borrow(),
+            delay_ms: *rx.borrow_and_update(),
         }));
         // Detached on purpose: ends by itself when the client goes away.
         tokio::spawn(async move {
-            while rx.changed().await.is_ok() {
+            loop {
+                let changed = tokio::select! {
+                    () = tx.closed() => break,
+                    changed = rx.changed() => changed,
+                };
+                if changed.is_err() {
+                    break;
+                }
                 let delay_ms = *rx.borrow_and_update();
                 if tx.send(Ok(GetShotDelayReply { delay_ms })).await.is_err() {
                     break;
@@ -220,7 +242,8 @@ impl Service for HubServer {
     ) -> Result<Response<EmptyReply>, Status> {
         let SetShotDelayRequest { device, delay_ms } = req.into_inner();
         let uuid = requested_uuid(device)?;
-        let ms: u16 = delay_ms as u16;
+        let ms = u16::try_from(delay_ms)
+            .map_err(|_conversion_error| RpcError::InvalidField("delay_ms"))?;
 
         // Apply live in-server state & notify watchers
         self.set_shot_delay_live(uuid, ms).await;
@@ -234,7 +257,7 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<ResetShotDelayReply>, Status> {
-        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let uuid = uuid_from_bytes(&req.into_inner().uuid)?;
 
         // Apply live reset in-server state & notify watchers
         self.set_shot_delay_live(uuid, DEFAULT_SHOT_DELAY_MS).await;
@@ -250,7 +273,7 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let uuid = uuid_from_bytes(&req.into_inner().uuid)?;
         let current = self.shot_delay_or_default(uuid).await;
         common::config::device_shot_delay_save_async(uuid, current)
             .await
@@ -263,7 +286,11 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<ScreenInfoByIdRequest>,
     ) -> Result<Response<ScreenInfoReply>, Status> {
-        let id = req.into_inner().id as u8;
+        let id = request_byte(
+            req.into_inner().id,
+            odyssey_common::MAX_SCREEN_ID,
+            "screen id",
+        )?;
         let calibrations = self.screen_calibrations.load();
         let (_, calibration) = calibrations
             .iter()
@@ -294,10 +321,16 @@ impl Service for HubServer {
         // Detached on purpose: ends by itself when the client goes away.
         tokio::spawn(async move {
             loop {
-                match rx.recv().await {
+                let event = tokio::select! {
+                    () = tx.closed() => break,
+                    event = rx.recv() => event,
+                };
+                match event {
                     Ok(ev) => {
-                        let pb = Event::from(ev);
-                        if tx.send(Ok(pb)).await.is_err() {
+                        let encoded = Event::try_from(ev).map_err(|error| {
+                            Status::internal(format!("failed to encode hub event: {error}"))
+                        });
+                        if tx.send(encoded).await.is_err() {
                             break;
                         }
                     }
@@ -321,9 +354,15 @@ impl Service for HubServer {
         req: tonic::Request<WriteVendorRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let WriteVendorRequest { device, tag, data } = req.into_inner();
+        let tag = request_byte(tag, 0xfe, "vendor tag (expected 0x81..=0xfe)")?;
+        if tag < 0x81 {
+            return Err(RpcError::InvalidField("vendor tag (expected 0x81..=0xfe)").into());
+        }
+        if data.len() > 98 {
+            return Err(Status::invalid_argument("vendor payload exceeds 98 bytes"));
+        }
         let task = self.device_task("write_vendor", requested_uuid(device)?)?;
-        // tag is u32 in proto; device tasks expect u8 vendor tag
-        task.send_now(DeviceTaskMessage::WriteVendor(tag as u8, data))?;
+        task.send_now(DeviceTaskMessage::WriteVendor(tag, data))?;
         ok_empty()
     }
 
@@ -332,12 +371,15 @@ impl Service for HubServer {
         req: tonic::Request<ReadRegisterRequest>,
     ) -> Result<Response<ReadRegisterReply>, Status> {
         let inner = req.into_inner();
+        let port = request_byte(inner.port, 1, "port")?;
+        let bank = request_byte(inner.bank, u8::MAX, "bank")?;
+        let address = request_byte(inner.address, u8::MAX, "address")?;
         let task = self.device_task("read_register", requested_uuid(inner.device)?)?;
         let data = task
             .request(|reply| DeviceTaskMessage::ReadRegister {
-                port: inner.port as u8,
-                bank: inner.bank as u8,
-                address: inner.address as u8,
+                port,
+                bank,
+                address,
                 reply,
             })
             .await?;
@@ -351,12 +393,16 @@ impl Service for HubServer {
         req: tonic::Request<WriteRegisterRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
+        let port = request_byte(inner.port, 1, "port")?;
+        let bank = request_byte(inner.bank, u8::MAX, "bank")?;
+        let address = request_byte(inner.address, u8::MAX, "address")?;
+        let data = request_byte(inner.data, u8::MAX, "data")?;
         let task = self.device_task("write_register", requested_uuid(inner.device)?)?;
         task.request(|reply| DeviceTaskMessage::WriteRegister {
-            port: inner.port as u8,
-            bank: inner.bank as u8,
-            address: inner.address as u8,
-            data: inner.data as u8,
+            port,
+            bank,
+            address,
+            data,
             reply,
         })
         .await?;
@@ -368,12 +414,10 @@ impl Service for HubServer {
         req: tonic::Request<ReadConfigRequest>,
     ) -> Result<Response<ReadConfigReply>, Status> {
         let inner = req.into_inner();
+        let kind = request_byte(inner.kind, 1, "config kind")?;
         let task = self.device_task("read_config", requested_uuid(inner.device)?)?;
         let value = task
-            .request(|reply| DeviceTaskMessage::ReadConfig {
-                kind: inner.kind as u8,
-                reply,
-            })
+            .request(|reply| DeviceTaskMessage::ReadConfig { kind, reply })
             .await?;
         Ok(Response::new(ReadConfigReply {
             value: u32::from(value),
@@ -385,13 +429,11 @@ impl Service for HubServer {
         req: tonic::Request<WriteConfigRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
         let inner = req.into_inner();
+        let kind = request_byte(inner.kind, 1, "config kind")?;
+        let value = request_byte(inner.value, u8::MAX, "config value")?;
         let task = self.device_task("write_config", requested_uuid(inner.device)?)?;
-        task.request(|reply| DeviceTaskMessage::WriteConfig {
-            kind: inner.kind as u8,
-            value: inner.value as u8,
-            reply,
-        })
-        .await?;
+        task.request(|reply| DeviceTaskMessage::WriteConfig { kind, value, reply })
+            .await?;
         ok_empty()
     }
 
@@ -536,7 +578,7 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let task = self.device_task("clear_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        let task = self.device_task("clear_zero", uuid_from_bytes(&req.into_inner().uuid)?)?;
         task.send_now(DeviceTaskMessage::ClearZero)?;
         ok_empty()
     }
@@ -545,13 +587,13 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
-        let task = self.device_task("reset_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        let task = self.device_task("reset_zero", uuid_from_bytes(&req.into_inner().uuid)?)?;
         task.send_now(DeviceTaskMessage::ResetZero)?;
         ok_empty()
     }
 
     async fn save_zero(&self, req: tonic::Request<Device>) -> Result<Response<EmptyReply>, Status> {
-        let task = self.device_task("save_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        let task = self.device_task("save_zero", uuid_from_bytes(&req.into_inner().uuid)?)?;
         task.send_now(DeviceTaskMessage::SaveZero)?;
         ok_empty()
     }

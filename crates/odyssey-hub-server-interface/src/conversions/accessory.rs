@@ -53,29 +53,26 @@ impl From<common::accessory::AccessoryInfo> for AccessoryInfo {
         }
     }
 }
-impl From<AccessoryInfo> for common::accessory::AccessoryInfo {
-    fn from(v: AccessoryInfo) -> Self {
-        Self {
+impl TryFrom<AccessoryInfo> for common::accessory::AccessoryInfo {
+    type Error = &'static str;
+
+    fn try_from(v: AccessoryInfo) -> Result<Self, Self::Error> {
+        Ok(Self {
             name: v.name,
             ty: AccessoryType::try_from(v.ty)
-                .expect("accessory type is a defined AccessoryType value")
+                .map_err(|_conversion_error| "unknown accessory type")?
                 .into(),
-            assignment: if v.assignment != 0 {
-                NonZero::new(v.assignment)
-            } else {
-                None
-            },
+            assignment: NonZero::new(v.assignment),
             features: v
                 .features
                 .into_iter()
                 .map(|f| {
-                    common::accessory::AccessoryFeature::from(
-                        AccessoryFeature::try_from(f)
-                            .expect("accessory feature is a defined AccessoryFeature value"),
-                    )
+                    AccessoryFeature::try_from(f)
+                        .map(common::accessory::AccessoryFeature::from)
+                        .map_err(|_conversion_error| "unknown accessory feature")
                 })
-                .collect(),
-        }
+                .collect::<Result<_, _>>()?,
+        })
     }
 }
 
@@ -94,25 +91,29 @@ impl From<common::accessory::AccessoryMap> for AccessoryMapReply {
         Self { accessory_map }
     }
 }
-impl From<AccessoryMapReply> for common::accessory::AccessoryMap {
-    fn from(v: AccessoryMapReply) -> Self {
+impl TryFrom<AccessoryMapReply> for common::accessory::AccessoryMap {
+    type Error = &'static str;
+
+    fn try_from(v: AccessoryMapReply) -> Result<Self, Self::Error> {
         v.accessory_map
             .into_iter()
             .map(|(key, status)| {
                 let info = status
                     .accessory
-                    .expect("accessory status carries its accessory");
-                (address_from_key(key), (info.into(), status.connected))
+                    .ok_or("accessory status missing accessory")?;
+                Ok((address_from_key(key)?, (info.try_into()?, status.connected)))
             })
             .collect()
     }
 }
 
-impl From<AccessoryInfoMap> for common::accessory::AccessoryInfoMap {
-    fn from(v: AccessoryInfoMap) -> Self {
+impl TryFrom<AccessoryInfoMap> for common::accessory::AccessoryInfoMap {
+    type Error = &'static str;
+
+    fn try_from(v: AccessoryInfoMap) -> Result<Self, Self::Error> {
         v.accessory_info_map
             .into_iter()
-            .map(|(key, info)| (address_from_key(key), info.into()))
+            .map(|(key, info)| Ok((address_from_key(key)?, info.try_into()?)))
             .collect()
     }
 }
@@ -123,5 +124,47 @@ impl From<common::accessory::AccessoryInfoMap> for AccessoryInfoMap {
             accessory_info_map.insert(address_to_key(address), info.into());
         }
         Self { accessory_info_map }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_accessory_enums_reject_the_update() {
+        let map = AccessoryInfoMap {
+            accessory_info_map: [(
+                1,
+                AccessoryInfo {
+                    ty: i32::MAX,
+                    ..AccessoryInfo::default()
+                },
+            )]
+            .into(),
+        };
+        assert!(common::accessory::AccessoryInfoMap::try_from(map).is_err());
+        assert!(
+            common::accessory::AccessoryInfo::try_from(AccessoryInfo {
+                features: vec![i32::MAX],
+                ..AccessoryInfo::default()
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn accessory_status_requires_its_info() {
+        let reply = AccessoryMapReply {
+            accessory_map: [(
+                1,
+                AccessoryStatus {
+                    accessory: None,
+                    connected: true,
+                },
+            )]
+            .into(),
+        };
+        assert!(common::accessory::AccessoryMap::try_from(reply).is_err());
     }
 }

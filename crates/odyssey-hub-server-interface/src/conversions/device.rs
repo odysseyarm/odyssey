@@ -48,28 +48,69 @@ impl From<common::device::Device> for Device {
         }
     }
 }
-impl From<Device> for common::device::Device {
-    fn from(d: Device) -> Self {
-        Self {
-            uuid: address_from_bytes(&d.uuid),
+impl TryFrom<Device> for common::device::Device {
+    type Error = &'static str;
+
+    fn try_from(d: Device) -> Result<Self, Self::Error> {
+        let firmware_version = if let Some(version) = d.firmware_version {
+            [
+                u16::try_from(version.major)
+                    .map_err(|_conversion_error| "firmware major exceeds u16")?,
+                u16::try_from(version.minor)
+                    .map_err(|_conversion_error| "firmware minor exceeds u16")?,
+                u16::try_from(version.patch)
+                    .map_err(|_conversion_error| "firmware patch exceeds u16")?,
+            ]
+        } else {
+            [0; 3]
+        };
+        Ok(Self {
+            uuid: address_from_bytes(&d.uuid)?,
             transport: Transport::try_from(d.transport)
-                .expect("transport is a defined Transport value")
+                .map_err(|_conversion_error| "unknown device transport")?
                 .into(),
-            capabilities: common::device::DeviceCapabilities::new(d.capabilities as u8),
-            firmware_version: d
-                .firmware_version
-                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
-                .unwrap_or([0, 0, 0]),
+            capabilities: common::device::DeviceCapabilities::new(
+                u8::try_from(d.capabilities)
+                    .map_err(|_conversion_error| "device capabilities exceed u8")?,
+            ),
+            firmware_version,
             events_transport: match EventsTransport::try_from(d.events_transport)
-                .expect("events transport is a defined EventsTransport value")
+                .map_err(|_conversion_error| "unknown device events transport")?
             {
                 EventsTransport::Wired => common::device::EventsTransport::Wired,
                 EventsTransport::Bluetooth => common::device::EventsTransport::Bluetooth,
             },
             events_connected: d.events_connected,
-            product_id: d.product_id as u16,
+            product_id: u16::try_from(d.product_id)
+                .map_err(|_conversion_error| "product id exceeds u16")?,
             name: Self::name_bytes(&d.name),
-            netcore_release: u16::try_from(d.netcore_release).unwrap_or(0),
-        }
+            netcore_release: u16::try_from(d.netcore_release)
+                .map_err(|_conversion_error| "net core release exceeds u16")?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_wire_transports_are_errors() {
+        assert!(
+            common::device::Device::try_from(Device {
+                uuid: vec![0; 6],
+                transport: i32::MAX,
+                ..Device::default()
+            })
+            .is_err()
+        );
+        assert!(
+            common::device::Device::try_from(Device {
+                uuid: vec![0; 6],
+                events_transport: i32::MAX,
+                ..Device::default()
+            })
+            .is_err()
+        );
     }
 }

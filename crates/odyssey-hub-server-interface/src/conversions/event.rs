@@ -21,9 +21,13 @@ impl From<common::events::TrackingEvent> for device_event::TrackingEvent {
     }
 }
 
-impl From<common::events::Event> for Event {
-    fn from(value: common::events::Event) -> Self {
-        match value {
+/// Packet events carry a postcard payload, so encoding can fail and must not
+/// unwind the hub's event-forwarding task.
+impl TryFrom<common::events::Event> for Event {
+    type Error = postcard::Error;
+
+    fn try_from(value: common::events::Event) -> Result<Self, Self::Error> {
+        Ok(match value {
             common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind)) => {
                 let device_pb: Device = device.into();
                 let oneof = match kind {
@@ -47,7 +51,7 @@ impl From<common::events::Event> for Event {
                     }
                     common::events::DeviceEventKind::PacketEvent(pkt) => {
                         device_event::DeviceEventOneof::Packet(device_event::PacketEvent {
-                            bytes: postcard::to_allocvec(&pkt).expect("postcard serialize Packet"),
+                            bytes: postcard::to_allocvec(&pkt)?,
                         })
                     }
                     common::events::DeviceEventKind::ZeroResult(success) => {
@@ -109,7 +113,7 @@ impl From<common::events::Event> for Event {
                     },
                 )),
             },
-        }
+        })
     }
 }
 
@@ -121,23 +125,25 @@ impl TryFrom<Event> for common::events::Event {
             event::EventOneof::DonglePairingResult(e) => Ok(Self::DonglePairingResult {
                 dongle_id: e.dongle_id,
                 success: e.success,
-                paired_address: address_from_bytes(&e.paired_address),
+                paired_address: address_from_bytes(&e.paired_address)
+                    .map_err(|_conversion_error| ())?,
                 error: e.error,
                 paired_name: e.paired_name,
             }),
             event::EventOneof::Device(d) => {
-                let device: common::device::Device = match d.device {
-                    Some(dev) => dev.into(),
-                    None => return Err(()),
-                };
+                let device = d
+                    .device
+                    .ok_or(())?
+                    .try_into()
+                    .map_err(|_conversion_error| ())?;
                 let kind = match d.device_event_oneof.ok_or(())? {
                     device_event::DeviceEventOneof::Accelerometer(e) => {
                         common::events::DeviceEventKind::AccelerometerEvent(
                             common::events::AccelerometerEvent {
                                 timestamp: e.timestamp,
-                                accel: e.acceleration.expect("acceleration").into(),
-                                gyro: e.angular_velocity.expect("angular_velocity").into(),
-                                euler_angles: e.euler_angles.expect("euler_angles").into(),
+                                accel: e.acceleration.ok_or(())?.into(),
+                                gyro: e.angular_velocity.ok_or(())?.into(),
+                                euler_angles: e.euler_angles.ok_or(())?.into(),
                             },
                         )
                     }
@@ -145,12 +151,12 @@ impl TryFrom<Event> for common::events::Event {
                         common::events::DeviceEventKind::TrackingEvent(
                             common::events::TrackingEvent {
                                 timestamp: e.timestamp,
-                                aimpoint: e.aimpoint.expect("aimpoint").into(),
+                                aimpoint: e.aimpoint.ok_or(())?.into(),
                                 pose: {
-                                    let p = e.pose.expect("pose");
+                                    let p = e.pose.ok_or(())?;
                                     common::events::Pose {
-                                        rotation: p.rotation.expect("rotation").into(),
-                                        translation: p.translation.expect("translation").into(),
+                                        rotation: p.rotation.ok_or(())?.into(),
+                                        translation: p.translation.ok_or(())?.into(),
                                     }
                                 },
                                 distance: e.distance,
@@ -165,7 +171,7 @@ impl TryFrom<Event> for common::events::Event {
                     }
                     device_event::DeviceEventOneof::Packet(device_event::PacketEvent { bytes }) => {
                         let pkt: odyssey_usb::packets::vm::Packet =
-                            postcard::from_bytes(&bytes).expect("postcard deserialize Packet");
+                            postcard::from_bytes(&bytes).map_err(|_conversion_error| ())?;
                         common::events::DeviceEventKind::PacketEvent(pkt)
                     }
                     device_event::DeviceEventOneof::ZeroResult(e) => {
@@ -180,7 +186,8 @@ impl TryFrom<Event> for common::events::Event {
                     device_event::DeviceEventOneof::PairingResult(e) => {
                         common::events::DeviceEventKind::PairingResult {
                             success: e.success,
-                            paired_address: address_from_bytes(&e.paired_address),
+                            paired_address: address_from_bytes(&e.paired_address)
+                                .map_err(|_conversion_error| ())?,
                             error: e.error,
                             paired_name: e.paired_name,
                         }
@@ -188,7 +195,7 @@ impl TryFrom<Event> for common::events::Event {
                     device_event::DeviceEventOneof::Battery(e) => {
                         common::events::DeviceEventKind::BatteryEvent(
                             common::events::BatteryEvent {
-                                percent: e.percent as u8,
+                                percent: u8::try_from(e.percent).map_err(|_conversion_error| ())?,
                                 charging: e.charging,
                             },
                         )
@@ -197,5 +204,58 @@ impl TryFrom<Event> for common::events::Event {
                 Ok(Self::DeviceEvent(common::events::DeviceEvent(device, kind)))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wire_event(kind: device_event::DeviceEventOneof) -> Event {
+        Event {
+            event_oneof: Some(event::EventOneof::Device(DeviceEvent {
+                device: Some(Device {
+                    uuid: vec![0; 6],
+                    ..Device::default()
+                }),
+                device_event_oneof: Some(kind),
+            })),
+        }
+    }
+
+    #[test]
+    fn incomplete_tracking_pose_is_an_error() {
+        let event = wire_event(device_event::DeviceEventOneof::Tracking(
+            device_event::TrackingEvent {
+                aimpoint: Some(Vector2::default()),
+                pose: Some(Pose {
+                    rotation: Some(Matrix3x3::default()),
+                    translation: None,
+                }),
+                ..device_event::TrackingEvent::default()
+            },
+        ));
+        assert!(common::events::Event::try_from(event).is_err());
+    }
+
+    #[test]
+    fn incomplete_accelerometer_event_is_an_error() {
+        let event = wire_event(device_event::DeviceEventOneof::Accelerometer(
+            device_event::AccelerometerEvent {
+                acceleration: Some(Vector3::default()),
+                angular_velocity: None,
+                euler_angles: Some(Vector3::default()),
+                ..device_event::AccelerometerEvent::default()
+            },
+        ));
+        assert!(common::events::Event::try_from(event).is_err());
+    }
+
+    #[test]
+    fn malformed_packet_is_an_error() {
+        let event = wire_event(device_event::DeviceEventOneof::Packet(
+            device_event::PacketEvent { bytes: vec![] },
+        ));
+        assert!(common::events::Event::try_from(event).is_err());
     }
 }

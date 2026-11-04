@@ -110,23 +110,22 @@ impl HubServer {
     }
 
     pub(super) async fn set_shot_delay_live(&self, uuid: [u8; 6], ms: u16) {
-        self.device_shot_delays.write().await.insert(uuid, ms);
         let mut watchers = self.shot_delay_watch.write().await;
+        self.device_shot_delays.write().await.insert(uuid, ms);
         if let Some(tx) = watchers.get(&uuid) {
-            let _ = tx.send(u32::from(ms));
+            tx.send_replace(u32::from(ms));
         } else {
             let (tx, _rx) = watch::channel(u32::from(ms));
-            let _ = tx.send(u32::from(ms));
             watchers.insert(uuid, tx);
         }
     }
 
     pub(super) async fn subscribe_shot_delay_watch(&self, uuid: [u8; 6]) -> watch::Receiver<u32> {
-        let current = u32::from(self.shot_delay_or_default(uuid).await);
         let mut watchers = self.shot_delay_watch.write().await;
         if let Some(tx) = watchers.get(&uuid) {
             tx.subscribe()
         } else {
+            let current = u32::from(self.shot_delay_or_default(uuid).await);
             let (tx, rx) = watch::channel(current);
             watchers.insert(uuid, tx);
             rx
@@ -160,12 +159,15 @@ impl HubServer {
         self.lock_accessory_map().clone()
     }
 
-    /// Takes new accessory info into the shared map, keeping each accessory's
-    /// connection flag.
+    /// Takes new accessory info into the shared map. A changed accessory type
+    /// requires a new notification subscription and cannot retain a connected flag.
     pub(super) fn merge_accessory_info(&self, info: AccessoryInfoMap) {
         let mut map = self.lock_accessory_map();
+        map.retain(|id, _| info.contains_key(id));
         for (id, info) in info {
-            let connected = map.get(&id).is_some_and(|(_, connected)| *connected);
+            let connected = map
+                .get(&id)
+                .is_some_and(|(previous, connected)| previous.ty == info.ty && *connected);
             map.insert(id, (info, connected));
         }
     }
@@ -188,7 +190,11 @@ fn stream_replies<Reply: Send + 'static>(
 
     tokio::spawn(async move {
         loop {
-            match change_rx.recv().await {
+            let change = tokio::select! {
+                () = tx.closed() => break,
+                change = change_rx.recv() => change,
+            };
+            match change {
                 Ok(()) => {}
                 // Lagging only means notifications were dropped while this
                 // task was busy; the next reply is rebuilt from the live list
@@ -249,6 +255,181 @@ fn dongle_list_reply_from(dongles: &[DongleInfo]) -> DongleListReply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn server() -> HubServer {
+        HubServer {
+            device_list: Default::default(),
+            event_sender: broadcast::channel(1).0,
+            device_list_change_sender: broadcast::channel(1).0,
+            screen_calibrations: Arc::new(ArcSwap::from_pointee(Calibrations::default())),
+            device_shot_delays: Default::default(),
+            shot_delay_watch: Default::default(),
+            accessory_map: Default::default(),
+            accessory_map_sender: broadcast::channel(1).0,
+            dongle_list: Default::default(),
+            dongle_list_change_sender: broadcast::channel(1).0,
+            app_message_sender: mpsc::unbounded_channel().0,
+            accessory_info_sender: watch::channel(AccessoryInfoMap::new()).0,
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_arguments_are_rejected_before_narrowing_or_mutating_state() {
+        use odyssey_hub_server_interface::service_server::Service as _;
+        use odyssey_hub_server_interface::{
+            Device, ReadConfigRequest, ReadRegisterRequest, ScreenInfoByIdRequest,
+            SetShotDelayRequest, WriteConfigRequest, WriteRegisterRequest, WriteVendorRequest,
+        };
+        use tonic::{Code, Request};
+
+        let server = server();
+        let device = || {
+            Some(Device {
+                uuid: vec![1; 6],
+                ..Default::default()
+            })
+        };
+        let error = server
+            .set_shot_delay(Request::new(SetShotDelayRequest {
+                device: device(),
+                delay_ms: 65536,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+        assert!(server.device_shot_delays.read().await.is_empty());
+        server
+            .set_shot_delay(Request::new(SetShotDelayRequest {
+                device: device(),
+                delay_ms: u32::from(u16::MAX),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            server.device_shot_delays.read().await.get(&[1; 6]),
+            Some(&u16::MAX)
+        );
+
+        let error = server
+            .get_screen_info_by_id(Request::new(ScreenInfoByIdRequest { id: 256 }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+
+        let error = server
+            .read_register(Request::new(ReadRegisterRequest {
+                device: device(),
+                port: 0,
+                bank: 256,
+                address: 0,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+        let error = server
+            .write_register(Request::new(WriteRegisterRequest {
+                device: device(),
+                port: 2,
+                bank: 0,
+                address: 0,
+                data: 0,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+
+        let error = server
+            .read_config(Request::new(ReadConfigRequest {
+                device: device(),
+                kind: 256,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+        let error = server
+            .write_config(Request::new(WriteConfigRequest {
+                device: device(),
+                kind: 0,
+                value: 256,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+
+        let error = server
+            .write_vendor(Request::new(WriteVendorRequest {
+                device: device(),
+                tag: 0x181,
+                data: vec![],
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+        let error = server
+            .write_vendor(Request::new(WriteVendorRequest {
+                device: device(),
+                tag: 0x81,
+                data: vec![0; 99],
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+
+        let error = server
+            .reset_zero(Request::new(Device {
+                uuid: vec![1; 7],
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn shot_delay_retains_updates_between_subscribers() {
+        let server = server();
+        let uuid = [1; 6];
+        server.set_shot_delay_live(uuid, 10).await;
+        let subscription = server.subscribe_shot_delay_watch(uuid).await;
+        assert_eq!(*subscription.borrow(), 10);
+        drop(subscription);
+
+        server.set_shot_delay_live(uuid, 20).await;
+        let subscription = server.subscribe_shot_delay_watch(uuid).await;
+        assert_eq!(*subscription.borrow(), 20);
+    }
+
+    #[tokio::test]
+    async fn idle_list_subscription_releases_its_state_on_drop() {
+        let (changes, _) = broadcast::channel(1);
+        let (lifetime, mut released) = mpsc::unbounded_channel::<()>();
+        let stream = stream_replies(&changes, "test", move || {
+            let _ = &lifetime;
+        });
+        drop(stream);
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), released.recv())
+            .await
+            .expect("idle subscription must release its snapshot state");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn accessory_info_replacement_removes_absent_entries_and_keeps_connection_state() {
+        use common::accessory::{AccessoryInfo, AccessoryType};
+
+        let server = server();
+        let old = AccessoryInfo::with_defaults("old", AccessoryType::DryFireMag);
+        let updated = AccessoryInfo::with_defaults("updated", AccessoryType::MantisX);
+        *server.lock_accessory_map() =
+            [([1; 6], (old.clone(), true)), ([2; 6], (old, false))].into();
+
+        server.merge_accessory_info([([1; 6], updated.clone())].into());
+        assert_eq!(
+            server.accessory_map_snapshot(),
+            [([1; 6], (updated, false))].into()
+        );
+    }
 
     #[test]
     fn unreported_versions_are_left_out_of_the_dongle_reply() {

@@ -1,5 +1,7 @@
-//! `From`/`TryFrom` impls between the generated protobuf types and
-//! `odyssey-hub-common`. They are trait impls only, so nothing is re-exported.
+//! Conversions between generated protobuf types and `odyssey-hub-common`.
+//!
+//! Inbound messages with required fields or enums use `TryFrom` so malformed or
+//! newer wire data is reported to the caller rather than panicking.
 
 mod accessory;
 mod device;

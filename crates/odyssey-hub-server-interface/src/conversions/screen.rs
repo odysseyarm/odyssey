@@ -16,17 +16,47 @@ impl From<common::ScreenInfo> for ScreenInfoReply {
         }
     }
 }
-impl From<ScreenInfoReply> for common::ScreenInfo {
-    fn from(v: ScreenInfoReply) -> Self {
-        let bounds = v.bounds.expect("screen info carries its bounds");
-        Self {
-            id: v.id as u8,
+impl TryFrom<ScreenInfoReply> for common::ScreenInfo {
+    type Error = &'static str;
+
+    fn try_from(v: ScreenInfoReply) -> Result<Self, Self::Error> {
+        let bounds = v.bounds.ok_or("screen info missing bounds")?;
+        Ok(Self {
+            id: u8::try_from(v.id)
+                .ok()
+                .filter(|id| *id <= odyssey_common::MAX_SCREEN_ID)
+                .ok_or("screen id out of range")?,
             bounds: [
-                bounds.tl.expect("bounds carry top-left").into(),
-                bounds.tr.expect("bounds carry top-right").into(),
-                bounds.bl.expect("bounds carry bottom-left").into(),
-                bounds.br.expect("bounds carry bottom-right").into(),
+                bounds.tl.ok_or("screen bounds missing top-left")?.into(),
+                bounds.tr.ok_or("screen bounds missing top-right")?.into(),
+                bounds.bl.ok_or("screen bounds missing bottom-left")?.into(),
+                bounds
+                    .br
+                    .ok_or("screen bounds missing bottom-right")?
+                    .into(),
             ],
-        }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incomplete_screen_bounds_are_errors() {
+        assert!(common::ScreenInfo::try_from(ScreenInfoReply::default()).is_err());
+        assert!(
+            common::ScreenInfo::try_from(ScreenInfoReply {
+                id: 1,
+                bounds: Some(ScreenBounds {
+                    tl: Some(Vector2::default()),
+                    tr: Some(Vector2::default()),
+                    bl: Some(Vector2::default()),
+                    br: None,
+                }),
+            })
+            .is_err()
+        );
     }
 }

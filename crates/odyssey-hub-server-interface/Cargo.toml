@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 nalgebra = "0.35"
+odyssey-common = { path = "../odyssey-common" }
 odyssey-hub-common = { workspace = true }
 prost = "0.12.4"
 tonic = { workspace = true, features = ["prost"] }

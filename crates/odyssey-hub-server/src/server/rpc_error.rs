@@ -9,6 +9,9 @@ pub(super) enum RpcError {
     /// A required request field was not set; carries the field's path.
     #[error("{0} missing")]
     MissingField(&'static str),
+    /// A wire value cannot be represented by the device protocol.
+    #[error("{0} is out of range")]
+    InvalidField(&'static str),
     /// No listed device or dongle matches the request.
     #[error("{task}")]
     NotFound { task: &'static str },
@@ -27,7 +30,9 @@ impl From<RpcError> for Status {
     fn from(error: RpcError) -> Self {
         let message = error.to_string();
         match error {
-            RpcError::MissingField(_) => Self::invalid_argument(message),
+            RpcError::MissingField(_) | RpcError::InvalidField(_) => {
+                Self::invalid_argument(message)
+            }
             RpcError::NotFound { .. } => Self::not_found(message),
             RpcError::TaskUnavailable { .. } => Self::unavailable(message),
             RpcError::ReplyDropped { .. } | RpcError::TaskFailed(_) => Self::internal(message),
