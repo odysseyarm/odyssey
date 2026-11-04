@@ -5,16 +5,16 @@ use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use super::op_status::{OpStatus, StatusLine, rpc_failure};
 use super::product_ids::supports_transport_switching;
 use super::styles::{
-    DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS, HELP_TEXT_CLASS, LABEL_CLASS,
-    MODE_BUTTON_ACTIVE_CLASS, MODE_BUTTON_INACTIVE_CLASS,
+    ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS,
+    HELP_TEXT_CLASS, LABEL_CLASS,
 };
 use crate::hub::HubContext;
 
 fn mode_button_class(active: bool) -> &'static str {
     if active {
-        MODE_BUTTON_ACTIVE_CLASS
+        ACTION_PRIMARY_CLASS
     } else {
-        MODE_BUTTON_INACTIVE_CLASS
+        ACTION_SECONDARY_CLASS
     }
 }
 
@@ -26,7 +26,12 @@ async fn switch_transport_mode(
     usb_mode: bool,
     mut status: Signal<OpStatus>,
     mut user_pending_usb: Signal<Option<bool>>,
+    mut switching: Signal<bool>,
 ) {
+    if *switching.peek() {
+        return;
+    }
+    switching.set(true);
     status.set(OpStatus::Busy("Switching...".into()));
     let hub_ctx = hub.peek().clone();
     let mut client = hub_ctx.client.peek().clone();
@@ -40,9 +45,11 @@ async fn switch_transport_mode(
         }
         Err(e) => {
             tracing::error!("set_transport_mode failed: {e:#}");
+            user_pending_usb.set(None);
             status.set(rpc_failure("switch the transport mode", &e));
         }
     }
+    switching.set(false);
 }
 
 /// Shows a transport mode selector (BLE / USB) for ATS Lite / Lite1 devices.
@@ -50,32 +57,28 @@ async fn switch_transport_mode(
 /// in BLE mode and the EVENTS bulk endpoint is not available.
 #[component]
 pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
-    if !supports_transport_switching(device.product_id) {
-        return rsx! {};
-    }
-    if !device.capabilities.contains(DeviceCapabilities::CONTROL) {
-        return rsx! {};
-    }
+    let should_render = supports_transport_switching(device.product_id)
+        && device.capabilities.contains(DeviceCapabilities::CONTROL);
 
     let mut status = use_signal(OpStatus::default);
     // user_pending_usb tracks the mode the user explicitly requested (None = no override).
     // It is cleared when the device prop reflects the new mode (i.e. after reboot).
     let mut user_pending_usb = use_signal(|| Option::<bool>::None);
+    let switching = use_signal(|| false);
 
     // Derive the displayed mode: prefer the user override while waiting for reboot,
     // otherwise use the actual device state from the prop (updates on every render).
     let device_is_usb =
         device.events_transport == odyssey_hub_common::device::EventsTransport::Wired;
-    // Once the device reflects the user's requested mode, drop the override and clear the status.
-    // We schedule this via spawn so we don't write to signals during the render phase.
-    if let Some(u) = *user_pending_usb.read()
-        && u == device_is_usb
-    {
-        spawn(async move {
+    // Observe both the prop and pending request without spawning signal writes
+    // from render. Hooks stay mounted while CONTROL comes and goes.
+    use_effect(use_reactive!(|(device_is_usb)| {
+        let requested = *user_pending_usb.read();
+        if requested == Some(device_is_usb) {
             user_pending_usb.set(None);
             status.set(OpStatus::Idle);
-        });
-    }
+        }
+    }));
     let pending_usb = user_pending_usb.read().unwrap_or(device_is_usb);
 
     let set_mode = Callback::new(move |usb_mode: bool| {
@@ -85,8 +88,13 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
             usb_mode,
             status,
             user_pending_usb,
+            switching,
         ));
     });
+
+    if !should_render {
+        return rsx! {};
+    }
 
     rsx! {
         details {
@@ -104,11 +112,13 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
                         class: "flex gap-3",
                         button {
                             class: mode_button_class(!pending_usb),
+                            disabled: switching() || !pending_usb,
                             onclick: move |_| set_mode.call(false),
                             "Bluetooth"
                         }
                         button {
                             class: mode_button_class(pending_usb),
+                            disabled: switching() || pending_usb,
                             onclick: move |_| set_mode.call(true),
                             "USB"
                         }
@@ -117,9 +127,9 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
                 p {
                     class: HELP_TEXT_CLASS,
                     if pending_usb {
-                        "USB carries sensor data and tuning. Bluetooth leaves the device wireless but limits it to basic settings."
+                        "USB carries sensor data and tuning over the wired connection."
                     } else {
-                        "Bluetooth keeps the device wireless. Switch to USB to read or change sensor tuning."
+                        "Bluetooth carries sensor data and tuning through a paired Odyssey dongle."
                     }
                 }
                 StatusLine { status: status() }

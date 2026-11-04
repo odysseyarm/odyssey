@@ -4,9 +4,20 @@ pub(super) struct GainEntry {
     pub(super) b_ggh: u8,
 }
 
-pub(super) fn gain_index_from_reg(b_global: u8, mut b_ggh: u8) -> usize {
-    b_ggh = b_ggh.saturating_sub(1);
-    (b_ggh as usize) * 16 + (b_global as usize)
+/// Decode supported gain settings, including the equivalent 2x/4x boundary
+/// encodings with `b_global = 16`. Never turn an unknown register value into a
+/// different gain that would be silently written back on save.
+pub(super) fn gain_index_from_reg(b_global: u8, b_ggh: u8) -> Option<usize> {
+    let group = match b_ggh {
+        0 | 1 => 0,
+        2 => 1,
+        3 => 2,
+        _ => return None,
+    };
+    if b_global > 16 {
+        return None;
+    }
+    Some(group * 16 + usize::from(b_global))
 }
 
 pub(super) static GAIN_TABLE: &[GainEntry] = &[
@@ -259,3 +270,24 @@ pub(super) static GAIN_TABLE: &[GainEntry] = &[
         b_ggh: 3,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_gains_and_boundary_aliases_decode_without_clamping() {
+        for (index, entry) in GAIN_TABLE.iter().enumerate() {
+            assert_eq!(
+                gain_index_from_reg(entry.b_global, entry.b_ggh),
+                Some(index)
+            );
+        }
+        assert_eq!(gain_index_from_reg(16, 0), Some(16));
+        assert_eq!(gain_index_from_reg(16, 2), Some(32));
+        assert_eq!(gain_index_from_reg(17, 3), None);
+        assert_eq!(gain_index_from_reg(255, 0), None);
+        assert_eq!(gain_index_from_reg(0, 1), Some(0));
+        assert_eq!(gain_index_from_reg(0, 4), None);
+    }
+}

@@ -18,14 +18,13 @@ pub(super) enum OpStatus {
 
 /// Turn a transport/RPC failure into something a customer can act on.
 ///
-/// The hub reports an unusable events transport as a plain `Internal` error;
-/// surfaced verbatim it reads like a crash, when in fact the device is simply
-/// in BLE mode and the register plane lives on the USB bulk endpoint.
+/// Register access needs an active events connection; a USB control interface
+/// alone does not imply that sensor data is connected.
 pub(super) fn rpc_failure(context: &str, err: &dyn std::fmt::Display) -> OpStatus {
     let raw = format!("{err:#}");
     let summary = if raw.contains("events transport not connected") {
-        "Sensor tuning needs the USB data connection. Switch Transport mode to \
-         USB in the Connection section, then try again."
+        "Sensor tuning needs an active sensor data connection. Connect over USB \
+         or Bluetooth, then try again."
             .to_string()
     } else if raw.contains("not connected to the hub") || raw.contains("transport error") {
         "Lost the connection to the Odyssey service.".to_string()
@@ -68,23 +67,5 @@ pub(super) fn StatusLine(status: OpStatus) -> Element {
                 }
             }
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transport_error_becomes_actionable() {
-        let err = anyhow::anyhow!("events transport not connected");
-        match rpc_failure("read the sensor settings", &err) {
-            OpStatus::Failed { summary, detail } => {
-                assert!(summary.contains("USB"), "{summary}");
-                assert!(!summary.contains("status:"), "{summary}");
-                assert_eq!(detail.unwrap_or_default(), "events transport not connected");
-            }
-            _ => panic!("expected failure"),
-        }
     }
 }

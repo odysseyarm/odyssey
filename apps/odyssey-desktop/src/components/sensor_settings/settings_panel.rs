@@ -16,17 +16,22 @@ use super::styles::{
 };
 use crate::hub::HubContext;
 
+enum SettingsOperation {
+    Load,
+    LoadSensors,
+    Write(bool),
+    RestoreDefaults,
+}
+
 #[component]
 pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element {
     let family = SensorFamily::for_product(device.product_id);
     let has_control = device.capabilities.contains(DeviceCapabilities::CONTROL);
     let has_events = device.capabilities.contains(DeviceCapabilities::EVENTS);
-    // ReadConfig/WriteConfig/FlashSettings fall back to the control plane, so the
-    // general settings work in BLE mode too. Register access needs the events
-    // transport and the hub rejects it outright when that is missing, so the
-    // sensor panels stay hidden instead of failing on every read.
+    // General settings can use the control plane; register access needs a live
+    // events connection, whether it arrives over USB or Bluetooth.
     let should_render = family.is_some() && (has_control || has_events);
-    let can_tune_sensors = has_events;
+    let can_tune_sensors = has_events && device.events_connected;
     let tunable_sensors = family.filter(|_| can_tune_sensors);
 
     // All hooks must be called unconditionally before any early returns.
@@ -34,51 +39,52 @@ pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element
     // Tracks the open/closed state of the Device Settings section.
     let mut is_open = use_signal(|| false);
 
-    // Coroutine: receives () each time settings should be loaded from device.
-    // Triggered on section expand, the Reload button, and when the sensor panels
-    // first become available.
-    //
-    // The closure runs once, so it reads the device and the sensor capability
-    // through a signal rather than capturing them: both change while the
-    // component stays mounted, since a unit whose Bluetooth events link attaches
-    // after the first render only gains its sensor panels then.
+    // Serialize all form operations so a queued reload cannot race a save or
+    // overwrite defaults that the user filled after requesting that reload.
     let mut load_target = use_signal(|| LoadTarget {
         device: device.clone(),
         can_tune_sensors,
     });
-    let load_co = use_coroutine(move |mut rx: UnboundedReceiver<()>| async move {
-        while rx.next().await.is_some() {
-            let target = load_target.peek().clone();
-            form.load(hub, &target, family).await;
-        }
-    });
+    let load_co = use_coroutine(
+        move |mut rx: UnboundedReceiver<SettingsOperation>| async move {
+            while let Some(operation) = rx.next().await {
+                let target = load_target.peek().clone();
+                match operation {
+                    SettingsOperation::Load => form.load(hub, &target, false).await,
+                    SettingsOperation::LoadSensors => form.load(hub, &target, true).await,
+                    SettingsOperation::Write(persist) => {
+                        form.write_all(hub, &target, persist).await;
+                    }
+                    SettingsOperation::RestoreDefaults => {
+                        form.restore_defaults(target.tunable_sensors());
+                    }
+                }
+            }
+        },
+    );
 
     // Keep the load target current, and fill the sensor panels as soon as they
     // appear: they render empty until something loads them, and a form that was
     // loaded before the events link came up never asked for them.
+    // Only load the newly available sensors; preserve unsaved general edits.
     {
         let device = device.clone();
         use_effect(use_reactive!(|(device, can_tune_sensors)| {
-            let panels_appeared = !load_target.peek().can_tune_sensors && can_tune_sensors;
+            let panels_appeared = can_tune_sensors
+                && (!load_target.peek().can_tune_sensors
+                    || load_target.peek().device.product_id != device.product_id);
             load_target.set(LoadTarget {
                 device,
                 can_tune_sensors,
             });
             if panels_appeared && *is_open.peek() {
-                load_co.send(());
+                load_co.send(SettingsOperation::LoadSensors);
             }
         }));
     }
 
-    let write_all = use_callback({
-        let device = device.clone();
-        move |persist: bool| {
-            let target = LoadTarget {
-                device: device.clone(),
-                can_tune_sensors,
-            };
-            spawn(async move { form.write_all(hub, &target, family, persist).await });
-        }
+    let write_all = use_callback(move |persist| {
+        load_co.send(SettingsOperation::Write(persist));
     });
 
     // Guards applied after all hooks have been called.
@@ -103,7 +109,7 @@ pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element
                     let opening = !*is_open.peek();
                     is_open.set(opening);
                     if opening {
-                        load_co.send(());
+                        load_co.send(SettingsOperation::Load);
                     }
                 },
                 "Device Settings"
@@ -116,8 +122,8 @@ pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element
                     has_invalid,
                     status: (form.status)(),
                     on_write: write_all,
-                    on_reload: move |()| load_co.send(()),
-                    on_restore: move |()| form.restore_defaults(tunable_sensors),
+                    on_reload: move |()| load_co.send(SettingsOperation::Load),
+                    on_restore: move |()| load_co.send(SettingsOperation::RestoreDefaults),
                 }
                 ImpactDetectionSection {
                     impact_threshold: form.impact_threshold,
@@ -278,8 +284,8 @@ fn SensorTuning(form: SettingsForm, sensors: Option<SensorFamily>, show_issues: 
                 }
                 p {
                     class: HELP_TEXT_CLASS,
-                    "Available over USB only. Set Transport mode to USB in the \
-                     Connection section, then reopen this panel."
+                    "Sensor tuning needs an active sensor data connection. Connect \
+                     over USB or Bluetooth, then reload the settings."
                 }
             }
         },

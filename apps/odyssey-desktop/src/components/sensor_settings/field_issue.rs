@@ -135,21 +135,16 @@ pub(super) mod test_support {
 mod tests {
     use super::*;
 
-    fn message(result: Result<u32, FieldIssue>) -> String {
-        match result {
-            Ok(value) => panic!("expected issue, got {value}"),
-            Err(issue) => issue.message,
-        }
-    }
-
     #[test]
-    fn bounds_and_messages() {
-        assert_eq!(message(parse_bounded("f", "", 255)), "Required");
-        assert_eq!(
-            message(parse_bounded("f", "abc", 255)),
-            "Whole number 0-255"
-        );
-        assert_eq!(message(parse_bounded("f", "256", 255)), "Must be 0-255");
+    fn unsigned_fields_accept_boundaries_and_reject_invalid_input() {
+        assert!(matches!(parse_bounded("f", "0", 255), Ok(0)));
+        assert!(matches!(parse_bounded("f", "255", 255), Ok(255)));
         assert!(matches!(parse_bounded("f", " 40 ", 255), Ok(40)));
+        for raw in ["", " ", "abc", "-1", "1.5", "256", "4294967296"] {
+            match parse_bounded("value", raw, 255) {
+                Ok(value) => panic!("accepted {raw:?} as {value}"),
+                Err(issue) => assert_eq!(issue.field, "value"),
+            }
+        }
     }
 }

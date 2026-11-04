@@ -39,7 +39,7 @@ fn decode_exposure_us(raw: u8) -> u16 {
 /// Exposure register value for `exposure_us`, with the LED forced on.
 fn encode_exposure(exposure_us: u16) -> u8 {
     // Validation caps `exposure_us` at PAG_MAX_EXPOSURE_US, which fits the mask.
-    let units = u8::try_from(exposure_us / EXPOSURE_UNIT_US).unwrap_or(EXPOSURE_UNITS_MASK);
+    let units = (exposure_us / EXPOSURE_UNIT_US) as u8;
     units | LED_ALWAYS_ON_FLAG
 }
 
@@ -163,15 +163,22 @@ mod tests {
     use crate::components::sensor_settings::field_issue::test_support::{issues, ok};
 
     #[test]
-    fn pag_exposure_encoding() {
-        let v = ok(pag_validate(&pag_load_defaults()));
-        assert_eq!(v.exposure_us, 2000);
-        assert_eq!(encode_exposure(v.exposure_us), 0x94);
-        assert_eq!(decode_exposure_us(0x94), 2000);
-
-        let mut bad = pag_load_defaults();
-        bad.exposure_us = "13000".into();
-        assert_eq!(issues(pag_validate(&bad))[0].field, PAG_EXPOSURE);
+    fn pag_exposure_is_bounded_and_encoded_in_100us_units() {
+        let mut state = pag_load_defaults();
+        for (exposure_us, encoded, decoded_us) in [
+            (0, 0x80, 0),
+            (99, 0x80, 0),
+            (100, 0x81, 100),
+            (12_700, 0xFF, 12_700),
+        ] {
+            state.exposure_us = exposure_us.to_string();
+            let values = ok(pag_validate(&state));
+            assert_eq!(encode_exposure(values.exposure_us), encoded);
+            assert_eq!(decode_exposure_us(encoded), decoded_us);
+            assert_eq!(decode_exposure_us(encoded & 0x7F), decoded_us);
+        }
+        state.exposure_us = "12701".into();
+        assert_eq!(issues(pag_validate(&state))[0].field, PAG_EXPOSURE);
     }
 
     #[test]

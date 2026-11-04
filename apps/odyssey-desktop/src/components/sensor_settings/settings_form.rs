@@ -10,10 +10,10 @@ use super::general_config::{
 };
 use super::op_status::{OpStatus, rpc_failure};
 use super::pag_state::{
-    PagState, pag_apply_to_device, pag_load_defaults, pag_load_from_device, pag_validate,
+    PagState, PagValues, pag_apply_to_device, pag_load_defaults, pag_load_from_device, pag_validate,
 };
 use super::paj_state::{
-    PajState, paj_apply_to_device, paj_load_defaults, paj_load_from_device, paj_validate,
+    PajState, PajValues, paj_apply_to_device, paj_load_defaults, paj_load_from_device, paj_validate,
 };
 use super::product_ids::SensorFamily;
 use super::registers::{NEAR_FIELD_PORT, WIDE_FIELD_PORT};
@@ -33,8 +33,37 @@ pub(super) struct LoadTarget {
 
 impl LoadTarget {
     /// The sensor family to edit, if register access is available at all.
-    fn tunable_sensors(&self, family: Option<SensorFamily>) -> Option<SensorFamily> {
-        family.filter(|_| self.can_tune_sensors)
+    pub(super) fn tunable_sensors(&self) -> Option<SensorFamily> {
+        SensorFamily::for_product(self.device.product_id).filter(|_| self.can_tune_sensors)
+    }
+}
+
+/// A complete sensor snapshot, validated before the first device write. Reading
+/// signals between RPCs would mix later edits into an in-flight save, or apply
+/// general/near-field settings before discovering an invalid wide-field value.
+enum SensorValues {
+    Paj {
+        near_field: PajValues,
+        wide_field: PajValues,
+    },
+    Pag(PagValues),
+}
+
+impl SensorValues {
+    fn validate(
+        sensors: Option<SensorFamily>,
+        near_field: &PajState,
+        wide_field: &PajState,
+        pag: &PagState,
+    ) -> Result<Option<Self>, Vec<FieldIssue>> {
+        match sensors {
+            None => Ok(None),
+            Some(SensorFamily::Paj) => Ok(Some(Self::Paj {
+                near_field: paj_validate(near_field)?,
+                wide_field: paj_validate(wide_field)?,
+            })),
+            Some(SensorFamily::Pag) => Ok(Some(Self::Pag(pag_validate(pag)?))),
+        }
     }
 }
 
@@ -121,6 +150,9 @@ impl SettingsForm {
 
     /// Fills the form with factory values; nothing reaches the device.
     pub(super) fn restore_defaults(mut self, sensors: Option<SensorFamily>) {
+        if *self.loading.peek() {
+            return;
+        }
         self.impact_threshold.set(DEFAULT_GENERAL_VALUE.into());
         self.suppress_ms.set(DEFAULT_GENERAL_VALUE.into());
         match sensors {
@@ -131,8 +163,9 @@ impl SettingsForm {
             }
             Some(SensorFamily::Pag) => self.pag.set(pag_load_defaults()),
         }
+        self.hydrated.set(true);
         self.status.set(OpStatus::Done(
-            "Defaults filled in. Nothing reaches the device until you save.".into(),
+            "Defaults filled in. Nothing is written until you apply or save.".into(),
         ));
     }
 
@@ -141,8 +174,11 @@ impl SettingsForm {
         mut self,
         hub: Signal<HubContext>,
         target: &LoadTarget,
-        family: Option<SensorFamily>,
+        sensors_only: bool,
     ) {
+        if *self.loading.peek() {
+            return;
+        }
         self.loading.set(true);
         self.status
             .set(OpStatus::Busy("Reading from device...".into()));
@@ -150,10 +186,21 @@ impl SettingsForm {
         let device = target.device.clone();
         let mut failure: Option<OpStatus> = None;
 
-        self.load_general(&hub_ctx, &device, &mut failure).await;
-        if let Some(sensors) = target.tunable_sensors(family)
+        if !sensors_only {
+            self.load_general(&hub_ctx, &device, &mut failure).await;
+        }
+        if let Some(sensors) = target.tunable_sensors()
             && let Err(error) = self.load_sensors(&hub_ctx, &device, sensors).await
         {
+            // A failed reload must not leave an apparently valid stale sensor
+            // snapshot available for the next save.
+            match sensors {
+                SensorFamily::Paj => {
+                    self.paj_near_field.set(PajState::default());
+                    self.paj_wide_field.set(PajState::default());
+                }
+                SensorFamily::Pag => self.pag.set(PagState::default()),
+            }
             record_failure(
                 &mut failure,
                 "reading sensor settings",
@@ -182,12 +229,15 @@ impl SettingsForm {
             .await
         {
             Ok(value) => self.impact_threshold.set(value.to_string()),
-            Err(error) => record_failure(
-                failure,
-                "reading impact threshold",
-                "read the impact threshold",
-                &error,
-            ),
+            Err(error) => {
+                self.impact_threshold.set(String::new());
+                record_failure(
+                    failure,
+                    "reading impact threshold",
+                    "read the impact threshold",
+                    &error,
+                );
+            }
         }
         match hub_ctx
             .client
@@ -197,12 +247,15 @@ impl SettingsForm {
             .await
         {
             Ok(value) => self.suppress_ms.set(value.to_string()),
-            Err(error) => record_failure(
-                failure,
-                "reading suppress time",
-                "read the suppress time",
-                &error,
-            ),
+            Err(error) => {
+                self.suppress_ms.set(String::new());
+                record_failure(
+                    failure,
+                    "reading suppress time",
+                    "read the suppress time",
+                    &error,
+                );
+            }
         }
         match hub_ctx
             .client
@@ -213,6 +266,7 @@ impl SettingsForm {
         {
             Ok(value) => self.shot_delay.set(value.to_string()),
             Err(error) => {
+                self.shot_delay.set(String::new());
                 record_failure(failure, "reading shot delay", "read the shot delay", &error);
             }
         }
@@ -252,9 +306,11 @@ impl SettingsForm {
         mut self,
         hub: Signal<HubContext>,
         target: &LoadTarget,
-        family: Option<SensorFamily>,
         persist: bool,
     ) {
+        if *self.loading.peek() {
+            return;
+        }
         self.loading.set(true);
         self.status.set(OpStatus::Busy(
             if persist {
@@ -268,7 +324,7 @@ impl SettingsForm {
 
         // Both outcomes are a status for the user; the error side is just the
         // early-exit path.
-        let outcome = self.try_write_all(&hub_ctx, target, family, persist).await;
+        let outcome = self.try_write_all(&hub_ctx, target, persist).await;
         self.status.set(outcome.unwrap_or_else(|failed| failed));
         self.loading.set(false);
     }
@@ -277,7 +333,6 @@ impl SettingsForm {
         &self,
         hub_ctx: &HubContext,
         target: &LoadTarget,
-        family: Option<SensorFamily>,
         persist: bool,
     ) -> Result<OpStatus, OpStatus> {
         let device = &target.device;
@@ -285,6 +340,13 @@ impl SettingsForm {
             &self.impact_threshold.peek(),
             &self.suppress_ms.peek(),
             &self.shot_delay.peek(),
+        )
+        .map_err(|issues| invalid_status(&issues))?;
+        let sensors = SensorValues::validate(
+            target.tunable_sensors(),
+            &self.paj_near_field.peek(),
+            &self.paj_wide_field.peek(),
+            &self.pag.peek(),
         )
         .map_err(|issues| invalid_status(&issues))?;
         write_general_config(hub_ctx, device, general)
@@ -297,9 +359,7 @@ impl SettingsForm {
                 )
             })?;
 
-        if let Some(sensors) = target.tunable_sensors(family) {
-            self.write_sensors(hub_ctx, device, sensors).await?;
-        }
+        self.write_sensors(hub_ctx, device, sensors).await?;
 
         // Flash last: it persists whatever the device currently holds, so it
         // must only run once every write above has succeeded.
@@ -328,7 +388,7 @@ impl SettingsForm {
         &self,
         hub_ctx: &HubContext,
         device: &Device,
-        sensors: SensorFamily,
+        sensors: Option<SensorValues>,
     ) -> Result<(), OpStatus> {
         let sensor_failure = |error: anyhow::Error| {
             write_failure(
@@ -338,26 +398,82 @@ impl SettingsForm {
             )
         };
         match sensors {
-            SensorFamily::Paj => {
-                for (port, state) in [
-                    (NEAR_FIELD_PORT, self.paj_near_field),
-                    (WIDE_FIELD_PORT, self.paj_wide_field),
-                ] {
-                    let values =
-                        paj_validate(&state.peek()).map_err(|issues| invalid_status(&issues))?;
+            None => {}
+            Some(SensorValues::Paj {
+                near_field,
+                wide_field,
+            }) => {
+                for (port, values) in [(NEAR_FIELD_PORT, near_field), (WIDE_FIELD_PORT, wide_field)]
+                {
                     paj_apply_to_device(hub_ctx, device, port, &values)
                         .await
                         .map_err(sensor_failure)?;
                 }
             }
-            SensorFamily::Pag => {
-                let values =
-                    pag_validate(&self.pag.peek()).map_err(|issues| invalid_status(&issues))?;
+            Some(SensorValues::Pag(values)) => {
                 pag_apply_to_device(hub_ctx, device, &values)
                     .await
                     .map_err(sensor_failure)?;
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::field_issue::test_support::issues;
+    use super::super::paj_state::PAJ_EXPOSURE;
+    use super::*;
+
+    #[test]
+    fn invalid_wide_field_rejects_the_complete_sensor_snapshot() {
+        let near_field = paj_load_defaults(NEAR_FIELD_PORT);
+        let mut wide_field = paj_load_defaults(WIDE_FIELD_PORT);
+        wide_field.exposure_time = "65536".into();
+        let found = issues(SensorValues::validate(
+            Some(SensorFamily::Paj),
+            &near_field,
+            &wide_field,
+            &PagState::default(),
+        ));
+        assert_eq!(
+            found.iter().map(|issue| issue.field).collect::<Vec<_>>(),
+            [PAJ_EXPOSURE]
+        );
+    }
+
+    #[test]
+    fn only_active_sensor_family_is_validated() {
+        assert!(matches!(
+            SensorValues::validate(
+                None,
+                &PajState::default(),
+                &PajState::default(),
+                &PagState::default()
+            ),
+            Ok(None)
+        ));
+        let pag = pag_load_defaults();
+        assert!(matches!(
+            SensorValues::validate(
+                Some(SensorFamily::Pag),
+                &PajState::default(),
+                &PajState::default(),
+                &pag,
+            ),
+            Ok(Some(SensorValues::Pag(_)))
+        ));
+        let mut invalid_pag = pag;
+        invalid_pag.exposure_us = "12701".into();
+        assert!(
+            SensorValues::validate(
+                Some(SensorFamily::Pag),
+                &PajState::default(),
+                &PajState::default(),
+                &invalid_pag,
+            )
+            .is_err()
+        );
     }
 }

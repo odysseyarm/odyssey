@@ -84,6 +84,9 @@ pub(super) async fn paj_load_from_device(
     let frame_subtraction = registers.read(FRAME_SUBTRACTION).await?;
     let gain_global = registers.read(GAIN_GLOBAL_READ).await?;
     let gain_ggh = registers.read(GAIN_GGH_READ).await?;
+    let gain_index = gain_index_from_reg(gain_global, gain_ggh).ok_or_else(|| {
+        anyhow::anyhow!("Unsupported PAJ gain registers: global={gain_global}, ggh={gain_ggh}")
+    })?;
     let resolution_x = registers.read_u16(RESOLUTION_X).await?;
     let resolution_y = registers.read_u16(RESOLUTION_Y).await?;
 
@@ -97,7 +100,7 @@ pub(super) async fn paj_load_from_device(
         exposure_time: exposure_time.to_string(),
         frame_period: frame_period.to_string(),
         frame_subtraction: frame_subtraction.to_string(),
-        gain_index: gain_index_from_reg(gain_global, gain_ggh).to_string(),
+        gain_index: gain_index.to_string(),
         resolution_x: resolution_x.to_string(),
         resolution_y: resolution_y.to_string(),
     })
@@ -137,6 +140,10 @@ pub(super) fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue
         check.check_u16_up_to(PAJ_RESOLUTION_X, &state.resolution_x, RESOLUTION_LIMIT);
     let resolution_y =
         check.check_u16_up_to(PAJ_RESOLUTION_Y, &state.resolution_y, RESOLUTION_LIMIT);
+    let operation_mode = check.check_u8_up_to(PAJ_OPERATION_MODE, &state.operation_mode, 1);
+    let frame_subtraction =
+        check.check_u8_up_to(PAJ_FRAME_SUBTRACTION, &state.frame_subtraction, 1);
+    let gain_index = check.check(PAJ_GAIN, &state.gain_index, (GAIN_TABLE.len() - 1) as u32);
 
     let (
         Some(brightness_threshold),
@@ -148,6 +155,9 @@ pub(super) fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue
         Some(frame_period),
         Some(resolution_x),
         Some(resolution_y),
+        Some(operation_mode),
+        Some(frame_subtraction),
+        Some(gain_index),
     ) = (
         brightness,
         noise,
@@ -158,6 +168,9 @@ pub(super) fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue
         frame_period,
         resolution_x,
         resolution_y,
+        operation_mode,
+        frame_subtraction,
+        gain_index,
     )
     else {
         return Err(check.into_issues());
@@ -169,16 +182,11 @@ pub(super) fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue
         area_threshold_min,
         area_threshold_max,
         max_object_cnt,
-        // Dropdowns, so these cannot carry user typos.
-        operation_mode: state.operation_mode.parse().unwrap_or(0),
+        operation_mode,
         exposure_time,
         frame_period,
-        frame_subtraction: state.frame_subtraction.parse().unwrap_or(0),
-        gain_index: state
-            .gain_index
-            .parse::<usize>()
-            .unwrap_or(0)
-            .min(GAIN_TABLE.len() - 1),
+        frame_subtraction,
+        gain_index: gain_index as usize,
         resolution_x,
         resolution_y,
     })
@@ -272,11 +280,7 @@ pub(super) fn paj_load_defaults(port: u8) -> PajState {
         exposure_time: if is_nf { "8192".into() } else { "11365".into() },
         frame_period: "49780".into(),
         frame_subtraction: "0".into(),
-        gain_index: if is_nf {
-            gain_index_from_reg(16, 0).to_string()
-        } else {
-            gain_index_from_reg(8, 3).to_string()
-        },
+        gain_index: if is_nf { "16".into() } else { "40".into() },
         resolution_x: "4095".into(),
         resolution_y: "4095".into(),
     }
@@ -293,6 +297,9 @@ pub(super) const PAJ_EXPOSURE: &str = "Exposure time";
 pub(super) const PAJ_FRAME_PERIOD: &str = "Frame period";
 pub(super) const PAJ_RESOLUTION_X: &str = "Resolution X";
 pub(super) const PAJ_RESOLUTION_Y: &str = "Resolution Y";
+pub(super) const PAJ_OPERATION_MODE: &str = "Operation mode";
+pub(super) const PAJ_FRAME_SUBTRACTION: &str = "Frame subtraction";
+pub(super) const PAJ_GAIN: &str = "Gain";
 
 #[cfg(test)]
 mod tests {
@@ -300,23 +307,34 @@ mod tests {
     use crate::components::sensor_settings::field_issue::test_support::{issues, ok};
 
     #[test]
-    fn paj_defaults_round_trip() {
-        let v = ok(paj_validate(&paj_load_defaults(0)));
-        assert_eq!(v.brightness_threshold, 110);
-        assert_eq!(v.frame_period, 49780);
-        assert_eq!(v.resolution_x, 4095);
-        assert_eq!(v.gain_index, 16);
-        let entry = &GAIN_TABLE[v.gain_index];
-        assert_eq!(
-            gain_index_from_reg(entry.b_global, entry.b_ggh),
-            v.gain_index
-        );
-
+    fn paj_validation_rejects_out_of_range_fields() {
         let mut bad = paj_load_defaults(0);
         bad.brightness_threshold = "300".into();
         bad.resolution_y = "9000".into();
         let fields: Vec<_> = issues(paj_validate(&bad)).iter().map(|i| i.field).collect();
         assert_eq!(fields, vec![PAJ_BRIGHTNESS, PAJ_RESOLUTION_Y]);
+    }
+
+    #[test]
+    fn dropdown_values_are_validated_instead_of_defaulted_or_clamped() {
+        let mut state = paj_load_defaults(0);
+        state.operation_mode = "2".into();
+        state.frame_subtraction = "invalid".into();
+        state.gain_index = GAIN_TABLE.len().to_string();
+        let found = issues(paj_validate(&state));
+        let fields: Vec<_> = found.iter().map(|issue| issue.field).collect();
+        assert_eq!(
+            fields,
+            [PAJ_OPERATION_MODE, PAJ_FRAME_SUBTRACTION, PAJ_GAIN]
+        );
+
+        state.operation_mode = "1".into();
+        state.frame_subtraction = "1".into();
+        state.gain_index = (GAIN_TABLE.len() - 1).to_string();
+        let values = ok(paj_validate(&state));
+        assert_eq!(values.operation_mode, 1);
+        assert_eq!(values.frame_subtraction, 1);
+        assert_eq!(values.gain_index, GAIN_TABLE.len() - 1);
     }
 
     #[test]

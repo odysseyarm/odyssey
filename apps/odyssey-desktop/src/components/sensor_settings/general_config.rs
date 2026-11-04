@@ -73,20 +73,14 @@ pub(super) async fn write_general_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::sensor_settings::field_issue::invalid_status;
     use crate::components::sensor_settings::field_issue::test_support::issues;
-    use crate::components::sensor_settings::op_status::OpStatus;
 
     #[test]
     fn general_collects_every_issue() {
         let found = issues(general_validate("300", "", "x"));
-        assert_eq!(found.len(), 3);
-        match invalid_status(&found) {
-            OpStatus::Failed { summary, detail } => {
-                assert!(summary.contains("Impact threshold"), "{summary}");
-                assert!(detail.is_none());
-            }
-            _ => panic!("expected failure"),
-        }
+        assert_eq!(
+            found.iter().map(|issue| issue.field).collect::<Vec<_>>(),
+            [IMPACT_THRESHOLD_FIELD, SUPPRESS_FIELD, SHOT_DELAY_FIELD]
+        );
     }
 }

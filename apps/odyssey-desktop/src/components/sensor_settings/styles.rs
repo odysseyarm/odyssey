@@ -32,6 +32,3 @@ pub(super) const ACTION_PRIMARY_CLASS: &str =
 
 pub(super) const ACTION_SECONDARY_CLASS: &str =
     "btn-secondary text-xs px-2 py-1 disabled:opacity-50 disabled:cursor-not-allowed";
-
-pub(super) const MODE_BUTTON_ACTIVE_CLASS: &str = "btn-primary text-xs px-2 py-1";
-pub(super) const MODE_BUTTON_INACTIVE_CLASS: &str = "btn-secondary text-xs px-2 py-1";
