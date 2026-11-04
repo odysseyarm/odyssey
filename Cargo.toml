@@ -1,24 +1,11 @@
 [workspace]
 resolver = "2"
 
-members = [
-    "apps/odyssey-cli",
-    "apps/odyssey-desktop",
-    "apps/odyssey-hub",
-    "apps/odyssey-usb-cli",
-    "apps/odyssey-vision-tool",
-    "crates/odyssey-autocalib",
-    "crates/odyssey-common",
-    "crates/odyssey-hub-client",
-    "crates/odyssey-hub-common",
-    "crates/odyssey-hub-server",
-    "crates/odyssey-hub-server-interface",
-    "crates/odyssey-playback",
-    "crates/odyssey-protocol",
-    "crates/odyssey-protocol-macros",
-    "crates/odyssey-usb",
-    "tools/cargo-bin",
-]
+# Flat layout: every host crate lives directly under crates/, in a folder named
+# exactly like the crate. Internal crates are version 0.0.0 (never published);
+# odyssey-desktop keeps its real version because releases and the update check
+# read it.
+members = ["crates/*"]
 
 # sdk/* are excluded (not just left out of members) so they get their own
 # Cargo.lock: odyssey-hub-server depends on odyssey-cv over an SSH git URL that
@@ -34,7 +21,17 @@ exclude = [
     "sdk/odyssey-hub-client-ffi",
     "sdk/odyssey-hub-client-uniffi",
     "firmware",
+    # Excluded so it carries its own small lockfile: the firmware release
+    # workflows run it and cannot fetch odyssey-cv (see sdk/* above).
+    "crates/xtask",
 ]
+
+# One source for metadata every member shares. `license` names the repository's
+# LICENSE file (MIT); a crate that is licensed differently says so itself.
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/odysseyarm/odyssey"
 
 # One lint policy for every first-party crate. Each member opts in with
 # `[lints] workspace = true` (cargo warns, via missing_lints_inheritance, when
@@ -149,6 +146,9 @@ argmin = "0.11"
 argmin-math = "0.5"
 arrayvec = "0.7.4"
 backon = { version = "1.6", default-features = false, features = ["tokio-sleep"] }
+# Error type for the applications (libraries keep typed `thiserror` errors).
+# `anyhow` bridges third-party optimizer errors; first-party libraries stay typed.
+eros = { version = "0.8", features = ["anyhow"] }
 btleplug = "0.11.8"
 cam-geom = "0.17"
 clap = "4.5.11"
@@ -167,6 +167,7 @@ odyssey-hub-client = { path = "crates/odyssey-hub-client" }
 odyssey-hub-common = { path = "crates/odyssey-hub-common" }
 odyssey-hub-server = { path = "crates/odyssey-hub-server" }
 odyssey-hub-server-interface = { path = "crates/odyssey-hub-server-interface" }
+odyssey-protocol = { path = "crates/odyssey-protocol" }
 odyssey-usb = { path = "crates/odyssey-usb" }
 parking_lot = "0.12.1"
 pin-project = "1.1.5"
@@ -180,6 +181,7 @@ tokio-stream = "0.1.15"
 tokio-util = "0.7.15"
 tonic = "0.11.0"
 tracing = "0.1.41"
+thiserror = "2.0.17"
 tracing-subscriber = "0.3.19"
 uuid = "1.18.0"
 
@@ -207,3 +209,7 @@ inherits = "dev"
 
 [patch."https://github.com/odysseyarm/odyssey"]
 odyssey-common = { path = "crates/odyssey-common" }
+
+# Local tracker development: build against the sibling odyssey-cv checkout.
+[patch."ssh://git@github.com/odysseyarm/odyssey-cv.git"]
+odyssey-cv = { path = "../odyssey-cv/crates/odyssey-cv" }
