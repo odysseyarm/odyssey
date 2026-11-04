@@ -9,7 +9,7 @@ use anyhow::Result;
 use bootloader_devices::BootloaderDevice;
 use odyssey_hub_common::events::Event;
 use odyssey_protocol::ProductId;
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::sleep;
 use tracing::{info, trace, warn};
 
@@ -28,9 +28,6 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Pause before retrying when the USB bus cannot be enumerated at all.
 const SCAN_FAILURE_RETRY_DELAY: Duration = Duration::from_secs(5);
-
-/// How long an aborted hub manager gets to wind down before it is left alone.
-const HUB_MANAGER_EXIT_GRACE: Duration = Duration::from_secs(5);
 
 /// Top-level entry for the device manager tasks.
 ///
@@ -63,6 +60,7 @@ pub(crate) async fn device_tasks(
 struct RunningHub {
     info: nusb::DeviceInfo,
     task: tokio::task::JoinHandle<()>,
+    shutdown: oneshot::Sender<()>,
 }
 
 /// What one USB scan found, for deciding afterwards what disappeared.
@@ -152,8 +150,8 @@ impl UsbDeviceManager {
         self.reconcile_bootloader_disconnects(&present).await;
     }
 
-    /// Abort the hub manager of every hub that is no longer plugged in (compared by
-    /// `DeviceInfo::id()`).
+    /// Stop the hub manager of every hub that is no longer plugged in (compared by
+    /// `DeviceInfo::id()`), allowing it to unregister its dongle and BLE devices.
     fn stop_hub_managers_of_removed_hubs(&mut self, devices: &[nusb::DeviceInfo]) {
         let hubs = std::mem::take(&mut self.hubs);
         for hub in hubs {
@@ -166,13 +164,13 @@ impl UsbDeviceManager {
                 self.hubs.push(hub);
                 continue;
             }
-            // Detached on purpose: this only waits for the aborted task to wind down so the
-            // outcome can be logged; nothing depends on it.
+            // Do not abort: the manager must remove its dongle and detach its BLE events.
+            // It finishes the current bounded device operation before handling shutdown.
+            let _ = hub.shutdown.send(());
             tokio::spawn(async move {
-                hub.task.abort();
-                match tokio::time::timeout(HUB_MANAGER_EXIT_GRACE, hub.task).await {
-                    Ok(result) => info!("Hub manager task exited: {:?}", result),
-                    Err(_) => info!("Timed out waiting for hub manager to exit"),
+                match hub.task.await {
+                    Ok(()) => info!("Hub manager task exited"),
+                    Err(error) => warn!("Hub manager task failed during shutdown: {error}"),
                 }
             });
         }
@@ -238,15 +236,18 @@ impl UsbDeviceManager {
         tracing::info!("Subscribed to device list changes");
 
         // Runs until the hub disconnects; `hubs` owns the task and notices it finishing.
+        let (shutdown, shutdown_rx) = oneshot::channel();
         let task = HubManager::spawn(HubManagerInit {
             hub,
             hub_info: dev_info.clone(),
             context: self.context.clone(),
             device_handles: Arc::clone(&self.device_handles),
+            shutdown: shutdown_rx,
         });
         self.hubs.push(RunningHub {
             info: dev_info.clone(),
             task,
+            shutdown,
         });
     }
 }

@@ -35,9 +35,9 @@ pub(super) type ShotDelayWatchers = Arc<RwLock<HashMap<DeviceAddress, watch::Sen
 /// Updated on USB rename so BLE reconnects use the current name.
 pub(super) type BondNames = Arc<Mutex<HashMap<DeviceAddress, String>>>;
 
-/// UUIDs of handlers that were created for a direct-USB connection rather than as
-/// BLE-mux primary. Their control device is already embedded in the handler, so a USB
-/// scan pass must not send them `AddControlDevice`.
+/// UUIDs whose handlers already have a direct-USB control connection (including
+/// handlers that started over BLE). A scan must not repeatedly replace that endpoint.
+/// Removed when the cable or handler goes away.
 pub(super) type DirectUsbHandlerUuids = Arc<Mutex<HashSet<DeviceAddress>>>;
 
 /// State and outboxes every device-facing task needs. Cloning is cheap (all shared).
@@ -58,6 +58,14 @@ pub(super) struct DeviceTaskContext {
 pub(super) struct RunningDevice {
     pub(super) commands: mpsc::Sender<DeviceTaskMessage>,
     pub(super) task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for RunningDevice {
+    fn drop(&mut self) {
+        // A dropped manager or a replaced slot must not detach a handler that
+        // still owns USB streams and event broadcasters.
+        self.task.abort();
+    }
 }
 
 /// Handler tasks by device UUID; shared between the USB scan loop and every hub manager.

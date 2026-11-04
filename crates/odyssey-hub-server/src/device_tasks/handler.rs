@@ -6,6 +6,7 @@ mod tests;
 mod zero_offset;
 
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Fuse, StreamExt as _};
@@ -46,7 +47,7 @@ pub(super) struct DeviceHandlerInit {
     /// Events protocol version, which gates features such as the battery stream.
     pub(super) protocol_version: [u16; 3],
     /// The dongle the unit is reached through, if any, so renames can reach its bond cache.
-    pub(super) hub_device: Option<MuxDevice>,
+    pub(super) hub_device: Option<(MuxDevice, [u8; 6])>,
     /// Lets the handler start work that reports back to itself without keeping its own
     /// channel open after every other owner has dropped theirs.
     pub(super) self_tx: mpsc::WeakSender<DeviceTaskMessage>,
@@ -62,7 +63,8 @@ pub(super) struct DeviceHandler {
     device: Device,
     connections: DeviceConnections,
     protocol_version: [u16; 3],
-    hub_device: Option<MuxDevice>,
+    hub_device: Option<(MuxDevice, [u8; 6])>,
+    events_owner: Option<Arc<()>>,
     self_tx: mpsc::WeakSender<DeviceTaskMessage>,
     tracker: DeviceTracker,
     sensors: SensorStreams,
@@ -132,6 +134,7 @@ impl DeviceHandler {
             connections,
             protocol_version,
             hub_device,
+            events_owner: None,
             self_tx,
             tracker,
             sensors,
@@ -210,8 +213,8 @@ impl DeviceHandler {
             DeviceTaskMessage::RemoveControlDevice => {
                 return self.on_remove_control_device().await;
             }
-            DeviceTaskMessage::RemoveEventsDevice => {
-                return self.on_remove_events_device().await;
+            DeviceTaskMessage::RemoveEventsDevice(owner) => {
+                return self.on_remove_events_device(owner).await;
             }
             DeviceTaskMessage::ResetZero => self.on_reset_zero().await,
             DeviceTaskMessage::SaveZero => self.on_save_zero().await,
@@ -252,12 +255,23 @@ impl DeviceHandler {
             DeviceTaskMessage::SetDeviceName { name, reply } => {
                 self.on_set_device_name(name, reply).await;
             }
-            DeviceTaskMessage::AddEventsDevice(events_device, events_protocol_version) => {
-                self.on_add_events_device(events_device, events_protocol_version)
+            DeviceTaskMessage::AddEventsDevice {
+                device,
+                protocol_version,
+                hub,
+                address,
+                owner,
+            } => {
+                self.on_add_events_device(device, protocol_version, hub, address, owner)
                     .await;
             }
-            DeviceTaskMessage::AddControlDevice(control_device) => {
-                self.on_add_control_device(control_device).await;
+            DeviceTaskMessage::AddControlDevice {
+                device,
+                dfu,
+                events_protocol_version,
+            } => {
+                self.on_add_control_device(device, dfu, events_protocol_version)
+                    .await;
             }
             DeviceTaskMessage::SetNetCoreRelease(release) => {
                 self.on_net_core_release(release).await;
@@ -281,17 +295,17 @@ impl DeviceHandler {
     async fn on_set_shot_delay(&mut self, ms: u16) {
         let uuid = self.device.uuid;
         debug!("SetShotDelay requested for {uuid:02x?} = {ms} ms");
+        let mut watchers = self.context.shot_delay_watch.write().await;
         self.context
             .device_shot_delays
             .write()
             .await
             .insert(uuid, ms);
-        let mut watchers = self.context.shot_delay_watch.write().await;
         if let Some(sender) = watchers.get(&uuid) {
-            let _ = sender.send(u32::from(ms));
+            sender.send_replace(u32::from(ms));
         } else {
             let (sender, _receiver) = watch::channel(u32::from(ms));
-            let _ = sender.send(u32::from(ms));
+            sender.send_replace(u32::from(ms));
             watchers.insert(uuid, sender);
         }
     }
@@ -316,7 +330,6 @@ async fn subscribe_to_shot_delay(
             .unwrap_or(0),
     );
     let (sender, receiver) = watch::channel(current);
-    let _ = sender.send(current);
     watchers.insert(uuid, sender);
     receiver
 }

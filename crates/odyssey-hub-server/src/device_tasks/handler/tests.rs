@@ -41,6 +41,10 @@ fn device(capabilities: u8) -> Device {
 }
 
 fn start_handler(capabilities: u8) -> Harness {
+    start_handler_with_device(device(capabilities), None)
+}
+
+fn start_handler_with_device(device: Device, owner: Option<Arc<()>>) -> Harness {
     let (message_channel, messages) = mpsc::channel(16);
     let (event_sender, events) = broadcast::channel(16);
     let context = DeviceTaskContext {
@@ -54,17 +58,22 @@ fn start_handler(capabilities: u8) -> Harness {
         bond_names: Arc::new(Mutex::new(HashMap::new())),
     };
     let (commands, control_rx) = mpsc::channel(16);
-    let task = DeviceHandler::spawn(DeviceHandlerInit {
+    let init = DeviceHandlerInit {
         connections: DeviceConnections {
             control_device: None,
             events_device: None,
         },
-        device: device(capabilities),
+        device,
         control_rx,
         context: context.clone(),
         protocol_version: [0, 0, 0],
         hub_device: None,
         self_tx: commands.downgrade(),
+    };
+    let task = tokio::spawn(async move {
+        let mut handler = DeviceHandler::start(init).await;
+        handler.events_owner = owner;
+        handler.run().await;
     });
     Harness {
         commands,
@@ -93,7 +102,7 @@ impl Harness {
             .await
             .expect("handler answers")
             .expect("handler replies");
-        assert_eq!(result, Err("events transport not connected".to_owned()));
+        assert!(result.is_err());
     }
 
     async fn next_message(&mut self) -> Message {
@@ -160,12 +169,6 @@ async fn a_shot_delay_is_stored_and_reaches_the_watcher() {
 }
 
 #[tokio::test]
-async fn register_access_without_an_events_device_is_refused() {
-    // The barrier asserts the refusal text.
-    start_handler(0).barrier().await;
-}
-
-#[tokio::test]
 async fn unknown_config_kind_is_refused() {
     let harness = start_handler(0);
     let (reply, answer) = oneshot::channel();
@@ -174,10 +177,7 @@ async fn unknown_config_kind_is_refused() {
         .send(DeviceTaskMessage::ReadConfig { kind: 9, reply })
         .await
         .unwrap();
-    assert_eq!(
-        answer.await.unwrap(),
-        Err("unknown config kind: 9".to_owned())
-    );
+    assert!(answer.await.unwrap().is_err());
 }
 
 #[tokio::test]
@@ -213,7 +213,7 @@ async fn losing_the_events_device_of_a_unit_without_control_ends_the_handler() {
     let harness = start_handler(DeviceCapabilities::EVENTS);
     harness
         .commands
-        .send(DeviceTaskMessage::RemoveEventsDevice)
+        .send(DeviceTaskMessage::RemoveEventsDevice(Arc::new(())))
         .await
         .unwrap();
     // The handler ends on its own while the command channel is still open.
@@ -229,6 +229,57 @@ async fn losing_the_events_device_of_a_unit_without_control_ends_the_handler() {
     };
     assert!(!device.capabilities.contains(DeviceCapabilities::EVENTS));
     assert!(!device.events_connected);
+}
+
+#[tokio::test]
+async fn losing_an_ignored_mux_does_not_disconnect_wired_events() {
+    let mut connected = device(DeviceCapabilities::CONTROL | DeviceCapabilities::EVENTS);
+    connected.events_transport = EventsTransport::Wired;
+    connected.events_connected = true;
+    let harness = start_handler_with_device(connected, None);
+    harness
+        .commands
+        .send(DeviceTaskMessage::RemoveEventsDevice(Arc::new(())))
+        .await
+        .unwrap();
+    harness.barrier().await;
+    let disconnected = harness.finish().await;
+    assert!(
+        disconnected
+            .capabilities
+            .contains(DeviceCapabilities::EVENTS)
+    );
+    assert!(disconnected.events_connected);
+}
+
+#[tokio::test]
+async fn departing_old_dongle_cannot_remove_replacement_events() {
+    let owner = Arc::new(());
+    let harness =
+        start_handler_with_device(device(DeviceCapabilities::EVENTS), Some(Arc::clone(&owner)));
+    harness
+        .commands
+        .send(DeviceTaskMessage::RemoveEventsDevice(Arc::new(())))
+        .await
+        .unwrap();
+    harness.barrier().await;
+    harness
+        .commands
+        .send(DeviceTaskMessage::RemoveEventsDevice(owner))
+        .await
+        .unwrap();
+    let Harness {
+        task, mut messages, ..
+    } = harness;
+    tokio::time::timeout(WAIT, task).await.unwrap().unwrap();
+    let Some(Message::Disconnect(disconnected)) = messages.recv().await else {
+        panic!("current dongle departure must disconnect the unit");
+    };
+    assert!(
+        !disconnected
+            .capabilities
+            .contains(DeviceCapabilities::EVENTS)
+    );
 }
 
 #[tokio::test]

@@ -3,6 +3,7 @@ mod snapshot;
 
 use std::collections::HashMap;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -10,7 +11,7 @@ use futures::stream::{self, BoxStream, StreamExt as _};
 use futures_concurrency::stream::Merge as _;
 use odyssey_hub_common::events::Event;
 use odyssey_usb::device::{MuxDevice, PairingEvent};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, sleep};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, warn};
@@ -41,6 +42,7 @@ pub(super) struct HubManagerInit {
     pub(super) hub_info: nusb::DeviceInfo,
     pub(super) context: DeviceTaskContext,
     pub(super) device_handles: DeviceHandles,
+    pub(super) shutdown: oneshot::Receiver<()>,
 }
 
 /// Events from the hub manager's merged stream.
@@ -49,6 +51,11 @@ enum HubEvent {
     /// Timer tick; re-drives snapshot processing for devices that failed to connect.
     Retry,
     Command(DongleTaskMessage),
+}
+
+struct ManagedDevice {
+    uuid: DeviceAddress,
+    commands: mpsc::Sender<DeviceTaskMessage>,
 }
 
 /// Manages one dongle: tracks which units it reports over Bluetooth, gives each a
@@ -60,10 +67,12 @@ pub(super) struct HubManager {
     hub: MuxDevice,
     hub_info: nusb::DeviceInfo,
     dongle: DongleIdentity,
+    /// Unique to this manager incarnation, even when a dongle reconnects at the same address.
+    events_owner: Arc<()>,
     /// Devices managed by this hub, for cleanup on exit. Keyed by BLE address (not UUID) so
     /// snapshot diffs work even when a device's UUID differs from its BLE address; the
-    /// value is the device UUID used to find its handler in `device_handles`.
-    managed_devices: HashMap<DeviceAddress, DeviceAddress>,
+    /// value retains the original handler so cleanup cannot detach a newer connection.
+    managed_devices: HashMap<DeviceAddress, ManagedDevice>,
     last_snapshot: DeviceSnapshot,
     /// BLE address -> consecutive failed connect attempts.
     failed_adds: HashMap<DeviceAddress, u8>,
@@ -75,18 +84,25 @@ impl HubManager {
     pub(super) fn spawn(init: HubManagerInit) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             tracing::info!("Hub manager task started for hub {:?}", init.hub_info);
-            let (manager, commands) = Self::register(init).await;
-            manager.run(commands).await;
+            let (manager, commands, shutdown) = Self::register(init).await;
+            manager.run(commands, shutdown).await;
         })
     }
 
     /// Register the dongle in the dongle list and open its command channel.
-    async fn register(init: HubManagerInit) -> (Self, mpsc::Receiver<DongleTaskMessage>) {
+    async fn register(
+        init: HubManagerInit,
+    ) -> (
+        Self,
+        mpsc::Receiver<DongleTaskMessage>,
+        oneshot::Receiver<()>,
+    ) {
         let HubManagerInit {
             hub,
             hub_info,
             context,
             device_handles,
+            shutdown,
         } = init;
         let dongle = DongleIdentity::read(&hub, &hub_info).await;
         let manager = Self {
@@ -95,6 +111,7 @@ impl HubManager {
             hub,
             hub_info,
             dongle,
+            events_owner: Arc::new(()),
             managed_devices: HashMap::new(),
             last_snapshot: DeviceSnapshot::new(),
             failed_adds: HashMap::new(),
@@ -110,14 +127,26 @@ impl HubManager {
             ))
             .await;
         tracing::info!("Registered dongle '{}' in dongle list", manager.dongle.id);
-        (manager, commands_rx)
+        (manager, commands_rx, shutdown)
     }
 
-    async fn run(mut self, commands: mpsc::Receiver<DongleTaskMessage>) {
+    async fn run(
+        mut self,
+        commands: mpsc::Receiver<DongleTaskMessage>,
+        mut shutdown: oneshot::Receiver<()>,
+    ) {
         let initial_devices = self.request_initial_devices().await;
         let mut events = self.event_stream(initial_devices, commands);
 
-        while let Some(event) = events.next().await {
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = &mut shutdown => break,
+                event = events.next() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
             let flow = match event {
                 HubEvent::Snapshot(snapshot) => self.on_snapshot_received(snapshot).await,
                 HubEvent::Retry => {
@@ -328,36 +357,22 @@ impl HubManager {
             self.hub_info,
             self.managed_devices.len()
         );
-        for (address, uuid) in &self.managed_devices {
-            // The handler decides if it should exit (no control) or continue (has USB control).
-            let Some(commands) = self.handler_commands(*uuid).await else {
-                tracing::warn!(
-                    "Device addr {:02x?} (UUID {:02x?}) not found in device_handles during cleanup",
-                    address,
-                    uuid
-                );
-                continue;
-            };
+        for (address, device) in &self.managed_devices {
+            // Target the handler that accepted this hub's events, not a replacement
+            // that happens to have the same UUID after a reboot.
             tracing::info!(
                 "Sending RemoveEventsDevice for addr {:02x?} (UUID {:02x?})",
                 address,
-                uuid
+                device.uuid
             );
-            let _ = commands.send(DeviceTaskMessage::RemoveEventsDevice).await;
+            let _ = device
+                .commands
+                .send(DeviceTaskMessage::RemoveEventsDevice(Arc::clone(
+                    &self.events_owner,
+                )))
+                .await;
         }
         tracing::info!("Hub manager task ended for hub {:?}", self.hub_info);
-    }
-
-    /// The control channel of the handler for `uuid`, if it has one.
-    async fn handler_commands(
-        &self,
-        uuid: DeviceAddress,
-    ) -> Option<mpsc::Sender<DeviceTaskMessage>> {
-        self.device_handles
-            .lock()
-            .await
-            .get(&uuid)
-            .map(|device| device.commands.clone())
     }
 
     fn connected_addresses(&self) -> Vec<DeviceAddress> {

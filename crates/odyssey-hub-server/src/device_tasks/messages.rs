@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use nalgebra::{Point2, Translation3};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::TrackingEvent;
-use odyssey_usb::device::VmDevice;
+use odyssey_usb::device::{MuxDevice, VmDevice};
 use tokio::sync::{mpsc, oneshot};
 
 /// Answer channel of a request: the value, or the reason it failed, as text for the RPC reply.
@@ -12,7 +14,7 @@ pub(crate) type Reply<T> = oneshot::Sender<Result<T, String>>;
 pub(crate) enum DeviceTaskMessage {
     ResetZero,
     SaveZero,
-    /// Send a vendor packet to the device. The Vec bytes will be truncated to 98 bytes.
+    /// Send a vendor packet; the USB layer rejects invalid tags or payloads over 98 bytes.
     WriteVendor(u8, Vec<u8>),
     /// Set the shot delay (milliseconds) for this device. Server may send this
     /// to apply shot delay live to the running device task.
@@ -79,13 +81,23 @@ pub(crate) enum DeviceTaskMessage {
         reply: Reply<()>,
     },
     /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
-    AddEventsDevice(VmDevice, [u16; 3]),
+    AddEventsDevice {
+        device: VmDevice,
+        protocol_version: [u16; 3],
+        hub: MuxDevice,
+        address: [u8; 6],
+        owner: Arc<()>,
+    },
     /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
-    AddControlDevice(VmDevice),
+    AddControlDevice {
+        device: VmDevice,
+        dfu: bool,
+        events_protocol_version: [u16; 3],
+    },
     /// Remove control device when direct USB disconnects
     RemoveControlDevice,
     /// Remove events device when BLE mux disconnects
-    RemoveEventsDevice,
+    RemoveEventsDevice(Arc<()>),
 }
 
 /// Device connection channels

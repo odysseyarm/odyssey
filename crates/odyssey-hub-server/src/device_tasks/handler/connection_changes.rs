@@ -3,11 +3,12 @@
 //! attach or detach one, and keep the unit's capabilities and transport in step.
 
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use odyssey_hub_common::device::{DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_common::events::DeviceEventKind;
 use odyssey_protocol::control::device::TransportMode;
-use odyssey_usb::device::VmDevice;
+use odyssey_usb::device::{MuxDevice, VmDevice};
 use tracing::{info, warn};
 
 use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT};
@@ -21,25 +22,21 @@ impl DeviceHandler {
         &mut self,
         events_device: VmDevice,
         events_protocol_version: [u16; 3],
+        hub: MuxDevice,
+        address: [u8; 6],
+        owner: Arc<()>,
     ) {
         let uuid = self.device.uuid;
-        // Update protocol_version with the BLE device's version. This is necessary
-        // when the handler was created for a USB-in-BLE-mode device, which starts
-        // with protocol_version = [0,0,0] because events weren't readable over USB.
-        if events_protocol_version > self.protocol_version {
-            info!(
-                "AddEventsDevice: updating protocol_version for {uuid:02x?}: {:?} -> {:?}",
-                self.protocol_version, events_protocol_version
-            );
-            self.protocol_version = events_protocol_version;
-        }
-
-        // The BLE hub sends a new snapshot (and thus AddEventsDevice) every few
-        // seconds even while the device is already streaming.  Re-running
-        // start_sensor_streams + read_all_config blocks the select loop for
-        // 5-10 s on every snapshot, causing periodic BLE lag.  Skip if we are
-        // already streaming — the first invocation already set everything up.
-        if self.sensors.is_running() {
+        self.hub_device = Some((hub, address));
+        // Repeated snapshots must not restart active streams, but a different
+        // dongle must replace the old BLE endpoint even if it is still draining.
+        let same_owner = self
+            .events_owner
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &owner));
+        if self.sensors.is_running()
+            && (same_owner || self.device.events_transport == EventsTransport::Wired)
+        {
             info!(
                 "AddEventsDevice for {uuid:02x?}: already streaming, ignoring redundant snapshot"
             );
@@ -48,6 +45,10 @@ impl DeviceHandler {
 
         info!("AddEventsDevice - adding BLE mux events device for {uuid:02x?}");
         self.connections.events_device = Some(events_device.clone());
+        self.events_owner = Some(owner);
+        self.protocol_version = events_protocol_version;
+        self.stream_timers.paused = false;
+        self.stream_timers.resume_armed = false;
         self.sensors = SensorStreams::start(&events_device, uuid, self.protocol_version).await;
 
         // This is critical when a device starts in BLE mode (no config)
@@ -64,6 +65,7 @@ impl DeviceHandler {
         }
 
         // BLE mux streams are now active.
+        self.device.events_transport = EventsTransport::Bluetooth;
         self.device.capabilities.insert(DeviceCapabilities::EVENTS);
         self.device.events_connected = true;
 
@@ -82,17 +84,36 @@ impl DeviceHandler {
         );
     }
 
-    pub(super) async fn on_add_control_device(&mut self, control_device: VmDevice) {
+    pub(super) async fn on_add_control_device(
+        &mut self,
+        control_device: VmDevice,
+        dfu: bool,
+        events_protocol_version: [u16; 3],
+    ) {
         let uuid = self.device.uuid;
         info!("AddControlDevice - adding USB control device for {uuid:02x?}");
 
         self.refresh_firmware_version(&control_device).await;
         if let Some(mode) = read_control_transport_mode(&control_device, uuid).await {
             self.apply_transport_mode(mode);
+            if mode == TransportMode::Usb {
+                // A reboot/DFU may have replaced the old wired endpoint, or this
+                // handler may have started over BLE. Use the newly probed USB link.
+                self.sensors.stop();
+                self.protocol_version = events_protocol_version;
+                self.connections.events_device = Some(control_device.clone());
+                self.sensors =
+                    SensorStreams::start(&control_device, uuid, self.protocol_version).await;
+            }
         }
 
         self.connections.control_device = Some(control_device);
         self.device.capabilities.insert(DeviceCapabilities::CONTROL);
+        if dfu {
+            self.device.capabilities.insert(DeviceCapabilities::DFU);
+        } else {
+            self.device.capabilities.remove(DeviceCapabilities::DFU);
+        }
         // USB control is now primary.
         self.device.transport = Transport::Usb;
 
@@ -222,7 +243,23 @@ impl DeviceHandler {
     }
 
     /// Ends the handler unless USB control can carry on without the BLE events.
-    pub(super) async fn on_remove_events_device(&mut self) -> ControlFlow<()> {
+    pub(super) async fn on_remove_events_device(&mut self, owner: Arc<()>) -> ControlFlow<()> {
+        // A unit may already have moved to another dongle while the old manager
+        // finishes shutting down. Only that link's owner can detach its events.
+        if self
+            .events_owner
+            .as_ref()
+            .is_some_and(|current| !Arc::ptr_eq(current, &owner))
+        {
+            return ControlFlow::Continue(());
+        }
+        self.events_owner = None;
+        self.hub_device = None;
+        // A mux may have reported a unit that was already streaming over USB. Its
+        // AddEventsDevice was ignored, so losing that mux must not drop wired events.
+        if self.device.events_transport != EventsTransport::Bluetooth {
+            return ControlFlow::Continue(());
+        }
         let uuid = self.device.uuid;
         info!("RemoveEventsDevice - removing BLE mux events for {uuid:02x?}");
 

@@ -14,9 +14,6 @@ use tracing::{debug, info, warn};
 use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT, call_with_timeout};
 use crate::device_tasks::messages::{Message, Reply};
 
-/// Longest vendor payload the firmware accepts; the rest is dropped.
-const MAX_VENDOR_PAYLOAD_LEN: usize = 98;
-
 /// Reboot is fire-and-forget: the unit disappears before it could acknowledge.
 const REBOOT_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -53,12 +50,11 @@ impl DeviceHandler {
             data.len(),
             self.device.uuid
         );
-        let clipped_len = data.len().min(MAX_VENDOR_PAYLOAD_LEN);
         let Some(events_device) = self.connections.events_device.as_ref() else {
             warn!("Cannot write vendor packet: no events device available");
             return;
         };
-        if let Err(e) = events_device.write_vendor(tag, &data[..clipped_len]).await {
+        if let Err(e) = events_device.write_vendor(tag, data).await {
             warn!("Failed to send vendor packet: {}", e);
         }
     }
@@ -317,15 +313,19 @@ impl DeviceHandler {
         let result = self.write_device_name(&name).await;
         info!("SetDeviceName result for {uuid:02x?}: {result:?}");
         if result.is_ok() {
+            let bond_address = self
+                .hub_device
+                .as_ref()
+                .map_or(uuid, |(_, address)| *address);
             self.device.name = Device::name_bytes(&name);
             self.context
                 .bond_names
                 .lock()
                 .await
-                .insert(uuid, name.clone());
-            if let Some(hub) = &self.hub_device {
+                .insert(bond_address, name.clone());
+            if let Some((hub, address)) = &self.hub_device {
                 let bond_name = odyssey_protocol::DeviceName::from_str_lossy(&name);
-                if let Err(e) = hub.update_bond_name(uuid, bond_name.into()).await {
+                if let Err(e) = hub.update_bond_name(*address, bond_name.into()).await {
                     warn!("update_bond_name failed for {uuid:02x?}: {e}");
                 }
             }

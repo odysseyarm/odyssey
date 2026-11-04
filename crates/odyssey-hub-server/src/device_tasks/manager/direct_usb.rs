@@ -27,6 +27,7 @@ struct ProbedUsbDevice {
     firmware: Option<odyssey_protocol::Version>,
     events_protocol_version: [u16; 3],
     transport_mode: TransportMode,
+    dfu: bool,
     vm_device: VmDevice,
 }
 
@@ -43,7 +44,7 @@ impl ProbedUsbDevice {
 enum ExistingHandler {
     None,
     /// Created for a direct-USB connection; its control device is already embedded.
-    DirectUsb,
+    DirectUsb(mpsc::Sender<DeviceTaskMessage>),
     /// Created for a BLE-mux connection; it can take the USB control device.
     BleMux(mpsc::Sender<DeviceTaskMessage>),
 }
@@ -68,12 +69,16 @@ impl UsbDeviceManager {
         };
         let uuid = probed.uuid;
 
+        let replace_control = self.direct_usb_id_to_uuid.get(&direct_usb_id) != Some(&uuid);
         // Cache mapping from opaque nusb id() to UUID once we've successfully probed.
         self.direct_usb_id_to_uuid.insert(direct_usb_id, uuid);
         self.last_uuid_by_pid.insert(pid, uuid);
 
         // Now check if device is already connected BEFORE creating a new connection
-        if self.hand_to_existing_handler(&probed).await {
+        if self
+            .hand_to_existing_handler(&probed, replace_control)
+            .await
+        {
             // Dropping `probed` drops the connection we only made to find that out.
             return;
         }
@@ -117,20 +122,27 @@ impl UsbDeviceManager {
             firmware,
             events_protocol_version,
             transport_mode,
+            dfu: dev_info
+                .interfaces()
+                .any(|interface| interface.class() == DFU_CLASS),
             vm_device,
         })
     }
 
     /// Hand the USB control device to a handler that already exists for the unit, if it can
     /// use it. Returns `true` when a handler exists (so the caller must not create another).
-    async fn hand_to_existing_handler(&self, probed: &ProbedUsbDevice) -> bool {
+    async fn hand_to_existing_handler(
+        &self,
+        probed: &ProbedUsbDevice,
+        replace_control: bool,
+    ) -> bool {
         let uuid = probed.uuid;
         match self.existing_handler(uuid).await {
             ExistingHandler::None => {
                 info!("Device {uuid:02x?} not in handles, will connect");
                 false
             }
-            ExistingHandler::DirectUsb => {
+            ExistingHandler::DirectUsb(_) if !replace_control => {
                 // Already a fully-established direct-USB handler — no merge needed.
                 // Sending AddControlDevice every scan cycle would re-read transport
                 // mode on stale VmDevice instances and corrupt the handler's state.
@@ -139,16 +151,25 @@ impl UsbDeviceManager {
                 );
                 true
             }
-            ExistingHandler::BleMux(commands) => {
+            ExistingHandler::BleMux(commands) | ExistingHandler::DirectUsb(commands) => {
                 // BLE-mux primary handler — merge incoming USB control.
                 info!(
                     "Device {uuid:02x?} has BLE-mux handler, sending AddControlDevice to merge USB control"
                 );
                 let result = commands
-                    .send(DeviceTaskMessage::AddControlDevice(
-                        probed.vm_device.clone(),
-                    ))
+                    .send(DeviceTaskMessage::AddControlDevice {
+                        device: probed.vm_device.clone(),
+                        dfu: probed.dfu,
+                        events_protocol_version: probed.events_protocol_version,
+                    })
                     .await;
+                if result.is_ok() {
+                    self.context
+                        .direct_usb_handler_uuids
+                        .lock()
+                        .await
+                        .insert(uuid);
+                }
                 spawn_netcore_probe(
                     NetCoreLink::Control(probed.vm_device.clone()),
                     probed.control_protocol_version(),
@@ -196,13 +217,24 @@ impl UsbDeviceManager {
             .await
             .contains(&uuid)
         {
-            ExistingHandler::DirectUsb
+            ExistingHandler::DirectUsb(commands)
         } else {
             ExistingHandler::BleMux(commands)
         }
     }
 
     async fn spawn_direct_usb_handler(&self, dev_info: &nusb::DeviceInfo, probed: ProbedUsbDevice) {
+        // USB scans and dongle snapshots can discover the same UUID concurrently.
+        // Check and install under one lock so neither task replaces a live handler.
+        let mut handles = self.device_handles.lock().await;
+        if handles
+            .get(&probed.uuid)
+            .is_some_and(|device| !device.task.is_finished())
+        {
+            drop(handles);
+            self.hand_to_existing_handler(&probed, true).await;
+            return;
+        }
         let uuid = probed.uuid;
         let device = direct_usb_device(dev_info, &probed);
         let (commands, control_rx) = mpsc::channel(HANDLER_CHANNEL_CAPACITY);
@@ -232,21 +264,19 @@ impl UsbDeviceManager {
             self_tx: commands.downgrade(),
         });
 
-        {
-            let mut handles = self.device_handles.lock().await;
-            handles.insert(
-                uuid,
-                RunningDevice {
-                    commands: commands.clone(),
-                    task,
-                },
-            );
-            self.context
-                .direct_usb_handler_uuids
-                .lock()
-                .await
-                .insert(uuid);
-        }
+        handles.insert(
+            uuid,
+            RunningDevice {
+                commands: commands.clone(),
+                task,
+            },
+        );
+        self.context
+            .direct_usb_handler_uuids
+            .lock()
+            .await
+            .insert(uuid);
+        drop(handles);
         let netcore_probe_commands = commands.clone();
 
         // Always pass the commands channel so server.device_list gets a working sender.
