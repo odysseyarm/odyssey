@@ -209,6 +209,3 @@ inherits = "dev"
 [patch."https://github.com/odysseyarm/odyssey"]
 odyssey-common = { path = "crates/odyssey-common" }
 
-# Local tracker development: build against the sibling odyssey-cv checkout.
-[patch."ssh://git@github.com/odysseyarm/odyssey-cv.git"]
-odyssey-cv = { path = "../odyssey-cv/crates/odyssey-cv" }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aprilgrid = { version = "0.5.3", git = "https://github.com/Abrahamh08/aprilgrid-rs.git", rev = "8459e7d245f5c672a3bc316e2205985fae068b25" }
+aprilgrid = { version = "0.5.3", git = "https://github.com/Abrahamh08/aprilgrid-rs.git" }
 ccalib = { version = "0.1.0", path = "../ccalib" }
 clap = { version = "4.5.4", features = ["derive"] }
 eros = "0.8"
