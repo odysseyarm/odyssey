@@ -1,9 +1,9 @@
-use anyhow::{Result, anyhow, bail};
 use nalgebra::Isometry3;
 use odyssey_common::ocv_types::{MinimalCameraCalibrationParams, OpenCVMatrix3, OpenCVMatrix5x1};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
 use crate::packets::vm::{AccelConfig, ConfigKind, GeneralConfig, GyroConfig};
+use crate::{Error, Result};
 
 /// Default impact threshold of a device that has none stored.
 const DEFAULT_IMPACT_THRESHOLD: u8 = 100;
@@ -73,25 +73,25 @@ impl GeneralSettings {
         let stereo_iso = read_config(ConfigKind::StereoIso).await?;
 
         let GeneralConfig::ImpactThreshold(impact_threshold) = impact_threshold else {
-            bail!("Unexpected config variant for ImpactThreshold");
+            return Err(Error::unexpected(&impact_threshold));
         };
         let GeneralConfig::SuppressMs(suppress_ms) = suppress_ms else {
-            bail!("Unexpected config variant for SuppressMs");
+            return Err(Error::unexpected(&suppress_ms));
         };
         let GeneralConfig::AccelConfig(accel_config) = accel_config else {
-            bail!("Unexpected config variant for AccelConfig");
+            return Err(Error::unexpected(&accel_config));
         };
         let GeneralConfig::GyroConfig(gyro_config) = gyro_config else {
-            bail!("Unexpected config variant for GyroConfig");
+            return Err(Error::unexpected(&gyro_config));
         };
         let GeneralConfig::CameraModelNf(camera_model_nf) = camera_model_nf else {
-            bail!("Unexpected config variant for CameraModelNf");
+            return Err(Error::unexpected(&camera_model_nf));
         };
         let GeneralConfig::CameraModelWf(camera_model_wf) = camera_model_wf else {
-            bail!("Unexpected config variant for CameraModelWf");
+            return Err(Error::unexpected(&camera_model_wf));
         };
         let GeneralConfig::StereoIso(stereo_iso) = stereo_iso else {
-            bail!("Unexpected config variant for StereoIso");
+            return Err(Error::unexpected(&stereo_iso));
         };
 
         Ok(Self {
@@ -109,5 +109,5 @@ impl GeneralSettings {
 fn camera_intrinsics_from_wire(
     pod: opencv_ros_camera::RosOpenCvIntrinsicsPod<f32>,
 ) -> Result<RosOpenCvIntrinsics<f32>> {
-    RosOpenCvIntrinsics::try_from(pod).map_err(|e| anyhow!("invalid camera model: {e}"))
+    RosOpenCvIntrinsics::try_from(pod).map_err(|e| Error::InvalidCameraModel(e.to_string()))
 }

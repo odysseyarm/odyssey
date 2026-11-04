@@ -8,11 +8,85 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow};
 use nusb::Interface;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+use crate::{Error, Result};
+
+/// A physical control endpoint, or an opt-in typed simulator link.
+#[derive(Clone, Debug)]
+pub(super) enum ControlLink<M> {
+    Usb(Interface, std::marker::PhantomData<fn() -> M>),
+    #[cfg(feature = "sim")]
+    Sim(std::sync::Arc<SimControlLink<M>>),
+}
+
+#[cfg(feature = "sim")]
+#[derive(Debug)]
+pub(super) struct SimControlLink<M> {
+    outgoing: tokio::sync::mpsc::Sender<M>,
+    incoming: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<M>>,
+}
+
+impl<M: Serialize + DeserializeOwned + Clone> ControlLink<M> {
+    pub(super) fn usb(iface: Interface) -> Self {
+        Self::Usb(iface, std::marker::PhantomData)
+    }
+
+    #[cfg(feature = "sim")]
+    pub(super) fn simulated(
+        outgoing: tokio::sync::mpsc::Sender<M>,
+        incoming: tokio::sync::mpsc::Receiver<M>,
+    ) -> Self {
+        Self::Sim(std::sync::Arc::new(SimControlLink {
+            outgoing,
+            incoming: tokio::sync::Mutex::new(incoming),
+        }))
+    }
+
+    pub(super) async fn send(&self, msg: &M) -> Result<()> {
+        match self {
+            Self::Usb(iface, _) => send(iface, msg).await,
+            #[cfg(feature = "sim")]
+            Self::Sim(link) => tokio::time::timeout(SEND_TIMEOUT, link.outgoing.send(msg.clone()))
+                .await
+                .map_err(|_elapsed| Error::Timeout(SEND_TIMEOUT))?
+                .map_err(|_closed| Error::Closed),
+        }
+    }
+
+    pub(super) async fn recv_matching(
+        &self,
+        timeout: Duration,
+        undecodable: UndecodableReply,
+        accept: impl FnMut(&M) -> bool,
+    ) -> Result<M> {
+        match self {
+            Self::Usb(iface, _) => recv_matching(iface, timeout, undecodable, accept).await,
+            #[cfg(feature = "sim")]
+            Self::Sim(link) => {
+                let mut accept = accept;
+                tokio::time::timeout(timeout, async {
+                    let mut incoming = link.incoming.lock().await;
+                    loop {
+                        let msg = tokio::select! {
+                            biased;
+                            () = link.outgoing.closed() => return Err(Error::Closed),
+                            msg = incoming.recv() => msg.ok_or(Error::Closed)?,
+                        };
+                        if accept(&msg) {
+                            return Ok(msg);
+                        }
+                    }
+                })
+                .await
+                .map_err(|_elapsed| Error::Timeout(timeout))?
+            }
+        }
+    }
+}
 
 /// Vendor request that delivers a control message to the device.
 const REQUEST_SEND: u8 = 0x30;
@@ -31,19 +105,6 @@ pub(super) const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long to wait for a reply that follows a flash write.
 pub(super) const FLASH_WRITE_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A poll deadline, distinguished from USB failures by callers that tolerate
-/// missing acknowledgements from older firmware.
-#[derive(Debug)]
-pub(super) struct ReplyTimeout;
-
-impl std::fmt::Display for ReplyTimeout {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("timeout waiting for ctrl event")
-    }
-}
-
-impl std::error::Error for ReplyTimeout {}
-
 /// What to do with a reply that does not decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum UndecodableReply {
@@ -55,7 +116,7 @@ pub(super) enum UndecodableReply {
 }
 
 pub(super) async fn send<M: Serialize>(iface: &Interface, msg: &M) -> Result<()> {
-    let data = postcard::to_allocvec(msg).map_err(|e| anyhow!("ctrl encode failed: {e}"))?;
+    let data = postcard::to_allocvec(msg)?;
     iface
         .control_out(
             ControlOut {
@@ -68,11 +129,15 @@ pub(super) async fn send<M: Serialize>(iface: &Interface, msg: &M) -> Result<()>
             },
             SEND_TIMEOUT,
         )
-        .await
-        .map_err(|e| anyhow!("ctrl send failed: {e}"))
+        .await?;
+    Ok(())
 }
 
 /// Polls until a message satisfying `accept` arrives, discarding the others.
+///
+/// # Errors
+/// [`Error::Timeout`] when nothing acceptable arrives within `timeout`; callers
+/// that tolerate older firmware's missing acknowledgements match on it.
 pub(super) async fn recv_matching<M: DeserializeOwned>(
     iface: &Interface,
     timeout: Duration,
@@ -84,7 +149,7 @@ pub(super) async fn recv_matching<M: DeserializeOwned>(
     loop {
         let elapsed = start.elapsed();
         if elapsed >= timeout {
-            return Err(ReplyTimeout.into());
+            return Err(Error::Timeout(timeout));
         }
         let slice = (timeout - elapsed).min(POLL_SLICE);
         let reply = match iface
@@ -104,7 +169,7 @@ pub(super) async fn recv_matching<M: DeserializeOwned>(
             Ok(data) => data,
             // The poll slice ran out with nothing queued.
             Err(TransferError::Cancelled) => continue,
-            Err(e) => return Err(anyhow!("ctrl_recv control_in failed: {e:?}")),
+            Err(e) => return Err(e.into()),
         };
         if reply.is_empty() {
             continue;
@@ -118,7 +183,7 @@ pub(super) async fn recv_matching<M: DeserializeOwned>(
                     // events exhaust the polling time.
                     continue;
                 }
-                return Err(anyhow!("ctrl decode failed: {e}"));
+                return Err(e.into());
             }
         };
         if accept(&msg) {

@@ -18,6 +18,14 @@ const OUTGOING_CAPACITY: usize = 64;
 /// Packets queued from the device before the reader waits.
 const INCOMING_CAPACITY: usize = 128;
 
+/// Concrete construction path, never inferred from a USB product name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LinkKind {
+    Usb,
+    Multiplexed,
+    Simulated,
+}
+
 /// A link that carries vision-module packets, either straight over USB or
 /// tunnelled through a dongle.
 #[derive(Debug)]
@@ -25,6 +33,7 @@ pub struct PacketTransport {
     pub(super) writer: mpsc::Sender<Packet>,
     pub(super) incoming_rx: mpsc::Receiver<Packet>,
     pub(super) cancel: Arc<CancellationToken>,
+    pub(super) kind: LinkKind,
 }
 
 /// The sending half of a [`PacketTransport`].
@@ -79,6 +88,7 @@ impl PacketTransport {
             writer,
             incoming_rx,
             cancel: Arc::new(cancel),
+            kind: LinkKind::Usb,
         }
     }
 
@@ -94,6 +104,7 @@ impl PacketTransport {
             writer,
             incoming_rx,
             cancel: Arc::new(CancellationToken::new()),
+            kind: LinkKind::Simulated,
         }
     }
 
@@ -163,6 +174,7 @@ impl PacketTransport {
             writer,
             incoming_rx,
             cancel: Arc::new(cancel_token),
+            kind: LinkKind::Multiplexed,
         }
     }
 
@@ -185,6 +197,7 @@ impl PacketTransport {
             writer,
             incoming_rx,
             cancel,
+            kind: _,
         } = self;
         let tx_only = PacketTransportTx { writer };
         (tx_only, ReceiverStream::new(incoming_rx), cancel)

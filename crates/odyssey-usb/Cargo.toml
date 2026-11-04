@@ -1,13 +1,13 @@
 [package]
 name = "odyssey-usb"
-version = "0.1.0"
-edition = "2024"
+version = "0.0.0"
+edition.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 backon = { workspace = true }
 odyssey-common = { path = "../odyssey-common", features = ["std"] }
 enumn = { workspace = true }
@@ -30,6 +30,7 @@ rand = "0.8"
 parking_lot = { workspace = true }
 
 [features]
+sim = []
 pyo3 = ["odyssey-protocol/pyo3"]
 
 [dev-dependencies]

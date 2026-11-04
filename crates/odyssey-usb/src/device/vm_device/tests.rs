@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 
 use super::VmDevice;
+use crate::Error;
 use crate::device::packet_transport::PacketTransport;
 use crate::device::response_slots::{ABANDONED_ID_QUARANTINE, ResponseChannel};
 use crate::packets::vm::{Packet, PacketData};
@@ -19,16 +19,66 @@ struct Harness {
 fn harness() -> Harness {
     let (writer, sent) = mpsc::channel::<Packet>(64);
     let (incoming_tx, incoming_rx) = mpsc::channel::<Packet>(8);
-    let transport = PacketTransport {
-        writer,
-        incoming_rx,
-        cancel: Arc::new(tokio_util::sync::CancellationToken::new()),
-    };
+    let transport = PacketTransport::from_channels(writer, incoming_rx);
     Harness {
         device: VmDevice::from_transport(transport, None),
         sent,
         incoming_tx,
     }
+}
+
+#[cfg(feature = "sim")]
+#[tokio::test]
+async fn simulated_control_retains_pairing_events_and_closes_pending_requests() {
+    use odyssey_protocol::control::device::{
+        DeviceMsg, PairingError, PairingOutcome, TransportMode,
+    };
+
+    let (outgoing, _packets) = mpsc::channel(1);
+    let (_incoming, incoming_rx) = mpsc::channel(1);
+    let (control_outgoing, mut requests) = mpsc::channel(1);
+    let (replies, control_incoming) = mpsc::channel(1);
+    let device = VmDevice::from_simulated_channels(
+        outgoing,
+        incoming_rx,
+        control_outgoing,
+        control_incoming,
+    );
+    let request = tokio::spawn({
+        let device = device.clone();
+        async move { device.get_transport_mode().await }
+    });
+    assert!(matches!(
+        requests.recv().await,
+        Some(DeviceMsg::GetTransportMode())
+    ));
+    replies
+        .send(DeviceMsg::PairingResult(PairingOutcome::Err(
+            PairingError::Cancelled,
+        )))
+        .await
+        .unwrap();
+    replies
+        .send(DeviceMsg::TransportModeStatus(TransportMode::Usb))
+        .await
+        .unwrap();
+    assert_eq!(request.await.unwrap().unwrap(), TransportMode::Usb);
+    assert!(matches!(
+        device.wait_pairing_event().await,
+        Err(Error::Pairing(PairingError::Cancelled))
+    ));
+
+    let pending = tokio::spawn(async move { device.get_transport_mode().await });
+    assert!(matches!(
+        requests.recv().await,
+        Some(DeviceMsg::GetTransportMode())
+    ));
+    drop(replies);
+    let result = tokio::time::timeout(Duration::from_millis(100), pending)
+        .await
+        .expect("closed control link must not wait for the reply timeout")
+        .unwrap();
+    assert!(matches!(result, Err(Error::Closed)));
 }
 
 #[tokio::test]
@@ -53,7 +103,7 @@ async fn pending_request_fails_fast_when_transport_closes() {
         .expect("request hung after transport closed")
         .unwrap()
         .unwrap_err();
-    assert!(!err.to_string().contains("timed out"), "{err}");
+    assert!(matches!(err, Error::Closed), "{err:?}");
 }
 
 #[tokio::test(start_paused = true)]
@@ -70,8 +120,8 @@ async fn retry_resends_once_per_silent_attempt_then_gives_up() {
         .unwrap_err();
 
     assert!(
-        err.to_string().contains("no response after 3 attempts"),
-        "{err}"
+        matches!(err, Error::NoResponse { attempts: 3, .. }),
+        "{err:?}"
     );
     let mut writes = 0;
     while sent.try_recv().is_ok() {
@@ -203,10 +253,19 @@ async fn write_vendor_refuses_out_of_range_input_instead_of_panicking() {
 
     // The range markers themselves, and anything below the range.
     for tag in [0x00, 0x80, 0xff] {
-        assert!(device.write_vendor(tag, &[1]).await.is_err(), "tag {tag}");
+        assert!(
+            matches!(
+                device.write_vendor(tag, &[1]).await,
+                Err(Error::InvalidArgument(_))
+            ),
+            "tag {tag}"
+        );
     }
     // One byte past the 98-byte payload.
-    assert!(device.write_vendor(0x90, &[0; 99]).await.is_err());
+    assert!(matches!(
+        device.write_vendor(0x90, &[0; 99]).await,
+        Err(Error::InvalidArgument(_))
+    ));
     assert!(sent.try_recv().is_err(), "nothing was sent");
 
     device.write_vendor(0x90, &[7; 98]).await.unwrap();
@@ -230,7 +289,7 @@ async fn failed_stream_subscription_does_not_block_the_next_attempt() {
             .await
             .err()
             .expect("subscription fails without a transport");
-        assert!(!err.to_string().contains("more than one"), "{err}");
+        assert!(matches!(err, Error::Closed), "{err:?}");
     }
 }
 

@@ -108,42 +108,7 @@ impl MuxTransport {
                         None => break,
                     },
                 };
-                let route_message = async {
-                    match msg {
-                        MuxMsg::DevicesSnapshot(devices) => {
-                            debug!("mux reader: routing DevicesSnapshot");
-                            let _ = snapshots_tx.send(devices.0).await;
-                        }
-                        MuxMsg::DevicePacket(dev_pkt) => {
-                            trace!(
-                                "mux reader: routing DevicePacket for {}",
-                                HexAddress(dev_pkt.dev)
-                            );
-                            // Do not let a full replaced route pin the dongle's
-                            // reader or keep that transport's incoming stream open.
-                            let route = lock_routes(&routes)
-                                .get(&dev_pkt.dev)
-                                .map(|route| (route.sender.clone(), route.cancel.clone()));
-                            match route {
-                                Some((tx, route_cancel)) => {
-                                    tokio::select! {
-                                        biased;
-                                        () = route_cancel.cancelled() => {}
-                                        _ = tx.send(dev_pkt.pkt) => {}
-                                    }
-                                }
-                                None => trace!(
-                                    "mux reader: no receiver registered for device {}",
-                                    HexAddress(dev_pkt.dev)
-                                ),
-                            }
-                        }
-                        other => {
-                            debug!("mux reader: routing control message");
-                            let _ = msg_tx.send(other).await;
-                        }
-                    }
-                };
+                let route_message = route_message(msg, &snapshots_tx, &msg_tx, &routes);
                 tokio::select! {
                     () = cancel.cancelled() => break,
                     () = route_message => {}
@@ -156,6 +121,46 @@ impl MuxTransport {
             info!("mux usb reader exits");
         });
 
+        Self {
+            writer,
+            snapshots_rx,
+            msg_rx,
+            device_packets_tx,
+            lifetime,
+        }
+    }
+
+    /// Opens a typed in-process dongle link, using the same routing as USB.
+    #[cfg(feature = "sim")]
+    pub fn from_channels(
+        writer: mpsc::Sender<MuxMsg>,
+        mut incoming: mpsc::Receiver<MuxMsg>,
+    ) -> Self {
+        let (snapshots_tx, snapshots_rx) = mpsc::channel(INCOMING_CAPACITY);
+        let (msg_tx, msg_rx) = mpsc::channel(INCOMING_CAPACITY);
+        let device_packets_tx = Arc::new(DevicePacketRoutes::default());
+        let routes = Arc::clone(&device_packets_tx);
+        let cancel = CancellationToken::new();
+        let lifetime = Arc::new(cancel.clone().drop_guard());
+        tokio::spawn(async move {
+            loop {
+                let msg = tokio::select! {
+                    () = cancel.cancelled() => break,
+                    msg = incoming.recv() => match msg {
+                        Some(msg) => msg,
+                        None => break,
+                    },
+                };
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = route_message(msg, &snapshots_tx, &msg_tx, &routes) => {}
+                }
+            }
+            cancel.cancel();
+            for (_, route) in lock_routes(&routes).drain() {
+                route.cancel.cancel();
+            }
+        });
         Self {
             writer,
             snapshots_rx,
@@ -179,6 +184,48 @@ impl MuxTransport {
             control: ReceiverStream::new(msg_rx),
             device_packets_tx,
             lifetime,
+        }
+    }
+}
+
+async fn route_message(
+    msg: MuxMsg,
+    snapshots_tx: &mpsc::Sender<DeviceSnapshot>,
+    msg_tx: &mpsc::Sender<MuxMsg>,
+    routes: &DevicePacketRoutes,
+) {
+    match msg {
+        MuxMsg::DevicesSnapshot(devices) => {
+            debug!("mux reader: routing DevicesSnapshot");
+            let _ = snapshots_tx.send(devices.0).await;
+        }
+        MuxMsg::DevicePacket(dev_pkt) => {
+            trace!(
+                "mux reader: routing DevicePacket for {}",
+                HexAddress(dev_pkt.dev)
+            );
+            // A full replaced route must not pin the reader or keep the old
+            // transport's incoming stream open.
+            let route = lock_routes(routes)
+                .get(&dev_pkt.dev)
+                .map(|route| (route.sender.clone(), route.cancel.clone()));
+            match route {
+                Some((tx, route_cancel)) => {
+                    tokio::select! {
+                        biased;
+                        () = route_cancel.cancelled() => {}
+                        _ = tx.send(dev_pkt.pkt) => {}
+                    }
+                }
+                None => trace!(
+                    "mux reader: no receiver registered for device {}",
+                    HexAddress(dev_pkt.dev)
+                ),
+            }
+        }
+        other => {
+            debug!("mux reader: routing control message");
+            let _ = msg_tx.send(other).await;
         }
     }
 }

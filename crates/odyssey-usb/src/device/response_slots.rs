@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::packets::vm::{Packet, PacketData, PacketType};
+use crate::{Error, Result};
 
 /// Id of a request that wants no reply, so it never occupies a slot.
 pub(super) const NO_REPLY_ID: u8 = 255;
@@ -60,8 +61,19 @@ pub(super) enum Delivery {
     Unregistered,
     /// A late reply to a request that already timed out.
     LateReplyDropped,
-    /// The waiting side is gone or full; the reply was discarded.
-    Undeliverable(String),
+    /// The reply was discarded; see [`Undeliverable`].
+    Undeliverable(Undeliverable),
+}
+
+/// Why a reply that found its slot was still discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Undeliverable {
+    /// The request's receiver was dropped after the reply was matched to it.
+    RequestGone,
+    /// The stream's consumer has its whole buffer of reports queued.
+    StreamFull,
+    /// The stream's consumer was dropped.
+    StreamClosed,
 }
 
 pub(super) struct State {
@@ -87,23 +99,28 @@ impl State {
     }
 
     /// Reserves the lowest free control id for a request that expects one reply.
+    ///
+    /// # Errors
+    /// [`Error::Closed`] once the dispatcher has exited, [`Error::Busy`] while
+    /// every control id is in use or quarantined.
     pub(super) fn reserve_oneshot(
         self: &Arc<Self>,
-    ) -> Option<(ResponseSlot, oneshot::Receiver<PacketData>)> {
+    ) -> Result<(ResponseSlot, oneshot::Receiver<PacketData>)> {
         let mut channels = self.response_channels.lock();
         if self.closed.load(Ordering::Relaxed) {
-            return None;
+            return Err(Error::Closed);
         }
         let now = tokio::time::Instant::now();
         let (id, channel) = channels
             .iter_mut()
             .enumerate()
             .take(CONTROL_ID_MAX + 1)
-            .find(|(_, channel)| channel.is_free(now))?;
+            .find(|(_, channel)| channel.is_free(now))
+            .ok_or(Error::Busy)?;
         let (send, receiver) = oneshot::channel();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         *channel = ResponseChannel::Oneshot(generation, send);
-        Some((ResponseSlot::new(self, id, generation), receiver))
+        Ok((ResponseSlot::new(self, id, generation), receiver))
     }
 
     /// Reserves a stream id until its guard drops or a global reset closes it.
@@ -111,20 +128,21 @@ impl State {
         self: &Arc<Self>,
         buffer: usize,
         stream_type: PacketType,
-    ) -> Option<(ResponseSlot, mpsc::Receiver<PacketData>)> {
+    ) -> Result<(ResponseSlot, mpsc::Receiver<PacketData>)> {
         let mut channels = self.response_channels.lock();
         if self.closed.load(Ordering::Relaxed) {
-            return None;
+            return Err(Error::Closed);
         }
         let (id, channel) = channels
             .iter_mut()
             .enumerate()
             .skip(STREAMING_ID_MIN)
-            .find(|(_, channel)| matches!(channel, ResponseChannel::None))?;
+            .find(|(_, channel)| matches!(channel, ResponseChannel::None))
+            .ok_or(Error::Busy)?;
         let (send, receiver) = mpsc::channel(buffer);
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         *channel = ResponseChannel::Stream(generation, stream_type, send);
-        Some((ResponseSlot::new(self, id, generation), receiver))
+        Ok((ResponseSlot::new(self, id, generation), receiver))
     }
 
     /// Close subscriptions after DisableAll was acknowledged. Old guards keep
@@ -148,6 +166,23 @@ impl State {
                 self.streams_active[*stream_type].store(false, Ordering::Relaxed);
             }
             *channel = ResponseChannel::None;
+        }
+    }
+
+    /// Image chunks must not be dropped at arbitrary offsets when a USB burst
+    /// fills the bounded ingress queue. Their independent reassembly task drains
+    /// this sender regardless of how slowly the application consumes frames.
+    pub(super) fn image_sender(&self, reply: &Packet) -> Option<mpsc::Sender<PacketData>> {
+        if !matches!(
+            reply.data,
+            PacketData::ImageChunk(_) | PacketData::ImageObject(_) | PacketData::ImageStatus(_)
+        ) {
+            return None;
+        }
+        let channels = self.response_channels.lock();
+        match channels.get(usize::from(reply.id))? {
+            ResponseChannel::Stream(_, PacketType::ImageChunk(), sender) => Some(sender.clone()),
+            _ => None,
         }
     }
 
@@ -185,12 +220,17 @@ impl State {
             ResponseChannel::Abandoned(_) => Delivery::LateReplyDropped,
             ResponseChannel::Oneshot(_, tx) => match tx.send(data) {
                 Ok(()) => Delivery::Delivered,
-                Err(e) => Delivery::Undeliverable(format!("{e:?}")),
+                Err(_reply) => Delivery::Undeliverable(Undeliverable::RequestGone),
             },
             ResponseChannel::Stream(generation, stream_type, tx) => {
                 let outcome = match tx.try_send(data) {
                     Ok(()) => Delivery::Delivered,
-                    Err(e) => Delivery::Undeliverable(format!("{e:?}")),
+                    Err(mpsc::error::TrySendError::Full(_report)) => {
+                        Delivery::Undeliverable(Undeliverable::StreamFull)
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_report)) => {
+                        Delivery::Undeliverable(Undeliverable::StreamClosed)
+                    }
                 };
                 *slot = ResponseChannel::Stream(generation, stream_type, tx);
                 outcome

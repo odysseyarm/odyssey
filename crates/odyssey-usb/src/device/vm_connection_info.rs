@@ -1,9 +1,9 @@
-use anyhow::Result;
 use nusb::DeviceInfo;
 
 use super::hex_address::HexAddress;
 use super::mux_device::MuxDevice;
 use super::vm_device::VmDevice;
+use crate::Result;
 
 /// How to reach a vision module: directly over USB or through a dongle.
 #[derive(Clone, Debug)]

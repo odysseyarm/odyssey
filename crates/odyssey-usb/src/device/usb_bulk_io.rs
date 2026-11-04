@@ -3,7 +3,6 @@
 
 use std::io::ErrorKind;
 
-use anyhow::{Result, anyhow};
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
 use nusb::{DeviceInfo, Interface};
@@ -13,6 +12,8 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+
+use crate::{Error, Result};
 
 /// Bulk IN endpoint address (direction bit set).
 const BULK_IN_ENDPOINT: u8 = 0x81;
@@ -40,7 +41,7 @@ pub(super) fn find_vendor_interface(info: &DeviceInfo) -> Result<u8> {
     info.interfaces()
         .find(|iface| iface.class() == VENDOR_SPECIFIC_CLASS)
         .map(nusb::InterfaceInfo::interface_number)
-        .ok_or_else(|| anyhow!("No vendor interface (class 0xFF) found"))
+        .ok_or(Error::NoVendorInterface)
 }
 
 /// Opens the bulk IN and OUT endpoints of a claimed interface.
@@ -49,11 +50,17 @@ pub(super) fn open_bulk_endpoints(
 ) -> Result<(EndpointRead<Bulk>, EndpointWrite<Bulk>)> {
     let in_ep = iface
         .endpoint::<Bulk, In>(BULK_IN_ENDPOINT)
-        .map_err(|e| anyhow!("Failed to get IN endpoint {BULK_IN_ENDPOINT:#04x}: {e}"))?
+        .map_err(|source| Error::Endpoint {
+            address: BULK_IN_ENDPOINT,
+            source,
+        })?
         .reader(ENDPOINT_BUFFER_SIZE);
     let out_ep = iface
         .endpoint::<Bulk, Out>(BULK_OUT_ENDPOINT)
-        .map_err(|e| anyhow!("Failed to get OUT endpoint {BULK_OUT_ENDPOINT:#04x}: {e}"))?
+        .map_err(|source| Error::Endpoint {
+            address: BULK_OUT_ENDPOINT,
+            source,
+        })?
         .writer(ENDPOINT_BUFFER_SIZE);
     Ok((in_ep, out_ep))
 }

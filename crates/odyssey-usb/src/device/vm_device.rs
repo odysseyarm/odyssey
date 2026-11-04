@@ -2,7 +2,6 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow, bail};
 use backon::Retryable as _;
 use nusb::{DeviceInfo, Interface};
 use odyssey_protocol::control::device::TransportMode;
@@ -13,6 +12,7 @@ use tokio_stream::{Stream, StreamExt as _};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, trace, warn};
 
+use super::control_transfer::ControlLink;
 use super::general_settings::GeneralSettings;
 use super::hex_address::HexAddress;
 use super::mux_device::MuxDevice;
@@ -26,8 +26,10 @@ use crate::packets::vm::{
     MotData, ObjectReport, Packet, PacketData, PacketType, Port, PropKind, Props, Register,
     StreamUpdate, StreamUpdateAction, WriteRegister,
 };
+use crate::{Error, Result};
 
 mod control_endpoint;
+mod image_session;
 mod registers;
 #[cfg(test)]
 mod tests;
@@ -36,8 +38,6 @@ mod tests;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// Replies a stream may have queued for its consumer before new ones are dropped.
 const STREAM_REPLY_BUFFER: usize = 100;
-/// Capacity of the payload of a vendor packet, the size of `VendorData::data`.
-const VENDOR_PAYLOAD_CAPACITY: usize = 98;
 
 /// Whether a USB connection insists on the device being in USB data mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,15 +53,31 @@ pub struct VmDevice {
     transport: PacketTransportTx,
     thread_state: Weak<State>,
     // Arc drops the guards exactly once even when clones drop concurrently.
-    _cancel: Arc<(tokio_util::sync::DropGuard, tokio_util::sync::DropGuard)>,
-    ctrl_if: Option<Interface>,
+    keepalive: Arc<(tokio_util::sync::DropGuard, tokio_util::sync::DropGuard)>,
+    ctrl_if: Option<ControlLink<odyssey_protocol::control::device::DeviceMsg>>,
     // Serialize request/reply pairs; retain pairing events encountered while
     // waiting for a different reply.
     ctrl: Arc<tokio::sync::Mutex<Option<odyssey_protocol::control::device::PairingOutcome>>>,
+    image_requests: mpsc::Sender<image_session::ImageRequest>,
+    image_link: bool,
+    image_mode_check: bool,
 }
 
 impl VmDevice {
     pub fn from_transport(transport: PacketTransport, ctrl_if: Option<Interface>) -> Self {
+        Self::from_control_link(transport, ctrl_if.map(ControlLink::usb))
+    }
+
+    fn from_control_link(
+        transport: PacketTransport,
+        ctrl_if: Option<ControlLink<odyssey_protocol::control::device::DeviceMsg>>,
+    ) -> Self {
+        let image_link = matches!(
+            transport.kind,
+            super::packet_transport::LinkKind::Usb | super::packet_transport::LinkKind::Simulated
+        );
+        let image_mode_check =
+            transport.kind == super::packet_transport::LinkKind::Usb && ctrl_if.is_some();
         let (tx_only, incoming, transport_cancel) = transport.split();
 
         let state = Arc::new(State::new());
@@ -70,21 +86,57 @@ impl VmDevice {
         let cancel_token = CancellationToken::new();
         let dispatcher_transport_cancel = Arc::clone(&transport_cancel);
         let dispatcher_cancel = cancel_token.clone();
+        let (image_requests, image_receiver) = mpsc::channel(1);
+        let image_transport = tx_only.clone();
+        let image_state = Weak::clone(&thread_state);
+        let image_cancel = cancel_token.clone();
+        let supervisor_cancel = cancel_token.clone();
         tokio::spawn(async move {
-            run_dispatcher(state, incoming, dispatcher_cancel).await;
+            // One supervised lifetime: image cleanup is awaited, never spawned
+            // from Drop or detached from the owning transport dispatcher.
+            tokio::join!(
+                async {
+                    run_dispatcher(state, incoming, dispatcher_cancel).await;
+                    image_cancel.cancel();
+                },
+                image_session::supervise(
+                    image_transport,
+                    image_state,
+                    image_receiver,
+                    supervisor_cancel
+                ),
+            );
             dispatcher_transport_cancel.cancel();
         });
 
         Self {
             transport: tx_only,
             thread_state,
-            _cancel: Arc::new((
+            keepalive: Arc::new((
                 cancel_token.drop_guard(),
                 transport_cancel.as_ref().clone().drop_guard(),
             )),
             ctrl_if,
             ctrl: Arc::new(tokio::sync::Mutex::new(None)),
+            image_requests,
+            image_link,
+            image_mode_check,
         }
+    }
+
+    /// Opens an opt-in simulator link using bounded packet and control channels.
+    /// The peer receives host requests on `outgoing` and `control_outgoing`.
+    #[cfg(feature = "sim")]
+    pub fn from_simulated_channels(
+        outgoing: mpsc::Sender<Packet>,
+        incoming: mpsc::Receiver<Packet>,
+        control_outgoing: mpsc::Sender<odyssey_protocol::control::device::DeviceMsg>,
+        control_incoming: mpsc::Receiver<odyssey_protocol::control::device::DeviceMsg>,
+    ) -> Self {
+        Self::from_control_link(
+            PacketTransport::from_channels(outgoing, incoming),
+            Some(ControlLink::simulated(control_outgoing, control_incoming)),
+        )
     }
 
     pub async fn connect_usb(info: DeviceInfo) -> Result<Self> {
@@ -101,19 +153,25 @@ impl VmDevice {
         let dev = info.open().await?;
 
         let vendor_iface_num = find_vendor_interface(&info)?;
-        let iface = dev
-            .claim_interface(vendor_iface_num)
-            .await
-            .map_err(|e| anyhow!("Failed to claim interface {vendor_iface_num}: {e}"))?;
+        let iface = dev.claim_interface(vendor_iface_num).await?;
         let (in_ep, out_ep) = open_bulk_endpoints(&iface)?;
 
         let transport = PacketTransport::usb(in_ep, out_ep);
         let device = Self::from_transport(transport, Some(iface));
         if usb_mode == UsbModeRequirement::Required {
-            let _ = device.clear_all_streams().await;
+            // Ask over the control endpoint first: firmware with a manual
+            // transport mode (legacy vm-fw) answers bulk requests over BLE while
+            // in BLE mode, so clearing streams first would spend every DisableAll
+            // resend before reporting the wrong mode.
             let mode = device.get_transport_mode().await?;
-            if !matches!(mode, TransportMode::Usb) {
-                bail!("device transport mode is {mode:?}, expected Usb");
+            if mode != TransportMode::Usb {
+                return Err(Error::WrongTransportMode {
+                    expected: TransportMode::Usb,
+                    actual: mode,
+                });
+            }
+            if let Err(e) = device.clear_all_streams().await {
+                warn!("could not clear streams left from a previous session: {e:#}");
             }
         }
         Ok(device)
@@ -157,12 +215,13 @@ impl VmDevice {
         })
         .retry(resend_schedule(STREAM_CONTROL_ATTEMPTS))
         .await
-        .ok();
+        .map_err(|_elapsed| Error::NoResponse {
+            attempts: STREAM_CONTROL_ATTEMPTS,
+            per_attempt: STREAM_CONTROL_ATTEMPT_TIMEOUT,
+        })??;
         match acknowledged {
-            Some(Ok(PacketData::Ack())) => Ok(()),
-            Some(Ok(other)) => Err(anyhow!("unexpected DisableAll response: {other:?}")),
-            Some(Err(error)) => Err(error),
-            None => Err(anyhow!("Failed to disable all streams")),
+            PacketData::Ack() => Ok(()),
+            other => Err(Error::unexpected(&other)),
         }
     }
 
@@ -181,8 +240,8 @@ impl VmDevice {
                 id: NO_REPLY_ID,
                 data,
             })
-            .await?;
-        Ok(())
+            .await
+            .map_err(|_closed| Error::Closed)
     }
 
     /// Send a request and wait for its reply. A device that never answers (e.g. it
@@ -191,16 +250,18 @@ impl VmDevice {
     pub async fn request(&self, data: PacketData) -> Result<PacketData> {
         tokio::time::timeout(REQUEST_TIMEOUT, self.request_unbounded(data))
             .await
-            .map_err(|_elapsed| anyhow!("request timed out after {REQUEST_TIMEOUT:?}"))?
+            .map_err(|_elapsed| Error::Timeout(REQUEST_TIMEOUT))?
     }
 
     async fn request_unbounded(&self, data: PacketData) -> Result<PacketData> {
         let (mut slot, recv) = self.get_oneshot_slot()?;
-        self.send(Packet { id: slot.id, data }).await?;
+        self.send(Packet { id: slot.id, data })
+            .await
+            .map_err(|_closed| Error::Closed)?;
         slot.sent = true;
-        let r = recv.await?;
+        let reply = recv.await.map_err(|_dropped| Error::Closed)?;
         slot.finished = true;
-        Ok(r)
+        Ok(reply)
     }
 
     /// Like [`Self::request`], but re-sends when no reply arrives within `timeout`,
@@ -217,20 +278,20 @@ impl VmDevice {
         (async || tokio::time::timeout(timeout, self.request_unbounded(data.clone())).await)
             .retry(resend_schedule(limit))
             .await
-            .map_err(|_elapsed| anyhow!("no response after {limit} attempts of {timeout:?}"))?
+            .map_err(|_elapsed| Error::NoResponse {
+                attempts: limit,
+                per_attempt: timeout,
+            })?
     }
 
+    /// The shared request table, or [`Error::Closed`] once the dispatcher that
+    /// owns it has exited.
     fn live_state(&self) -> Result<Arc<State>> {
-        self.thread_state.upgrade().ok_or_else(|| {
-            debug!("ERROR: thread_state upgrade failed - State was dropped!");
-            anyhow!("Failed to allocate request id")
-        })
+        self.thread_state.upgrade().ok_or(Error::Closed)
     }
 
     fn get_oneshot_slot(&self) -> Result<(ResponseSlot, oneshot::Receiver<PacketData>)> {
-        self.live_state()?
-            .reserve_oneshot()
-            .ok_or_else(|| anyhow!("Failed to allocate request id"))
+        self.live_state()?.reserve_oneshot()
     }
 
     fn get_stream_slot(
@@ -238,29 +299,24 @@ impl VmDevice {
         buffer: usize,
         stream_type: PacketType,
     ) -> Result<(ResponseSlot, mpsc::Receiver<PacketData>)> {
-        self.live_state()?
-            .reserve_stream(buffer, stream_type)
-            .ok_or_else(|| anyhow!("Failed to allocate request id"))
+        self.live_state()?.reserve_stream(buffer, stream_type)
     }
 
     #[instrument(skip(self))]
     pub async fn read_register(&self, port: Port, bank: u8, address: u8) -> Result<u8> {
-        let r = self
+        let reply = self
             .request(PacketData::ReadRegister(Register {
                 port,
                 bank,
                 address,
             }))
-            .await?
-            .read_register_response()
-            .with_context(|| "unexpected response")?;
+            .await?;
+        let PacketData::ReadRegisterResponse(r) = reply else {
+            return Err(Error::unexpected(&reply));
+        };
         info!(data = r.data);
         if (r.bank, r.address) != (bank, address) {
-            bail!(
-                "register read answered for bank {} address {}, asked for bank {bank} address {address}",
-                r.bank,
-                r.address
-            );
+            return Err(Error::unexpected(&r));
         }
         Ok(r.data)
     }
@@ -280,20 +336,21 @@ impl VmDevice {
         // Both ends of the range are marker ids, not tags a payload may carry.
         let first_tag = u8::from(PacketType::VendorStart()) + 1;
         if !(first_tag..u8::from(PacketType::VendorEnd())).contains(&tag) {
-            bail!("vendor tag {tag:#04x} is outside the vendor range");
+            return Err(Error::InvalidArgument(
+                "vendor tag outside the vendor range",
+            ));
         }
-        if data.len() > VENDOR_PAYLOAD_CAPACITY {
-            bail!(
-                "vendor payload of {} bytes exceeds the {VENDOR_PAYLOAD_CAPACITY}-byte capacity",
-                data.len()
-            );
+        if data.len() > VendorData::CAPACITY {
+            return Err(Error::InvalidArgument(
+                "vendor payload larger than VendorData::CAPACITY",
+            ));
         }
-        let mut padded = [0; VENDOR_PAYLOAD_CAPACITY];
+        let mut padded = [0; VendorData::CAPACITY];
         padded[..data.len()].copy_from_slice(data);
         self.send_without_reply(PacketData::Vendor(
             tag,
             VendorData {
-                // At most `VENDOR_PAYLOAD_CAPACITY`, checked above.
+                // At most `VendorData::CAPACITY`, checked above.
                 len: data.len() as u8,
                 data: padded,
             },
@@ -302,11 +359,10 @@ impl VmDevice {
     }
 
     pub async fn read_config(&self, kind: ConfigKind) -> Result<GeneralConfig> {
-        let r = self
-            .request(PacketData::ReadConfig(kind))
-            .await?
-            .read_config_response()
-            .with_context(|| "unexpected response")?;
+        let reply = self.request(PacketData::ReadConfig(kind)).await?;
+        let PacketData::ReadConfigResponse(r) = reply else {
+            return Err(Error::unexpected(&reply));
+        };
         info!("config: {:?}", r);
         Ok(r)
     }
@@ -318,11 +374,10 @@ impl VmDevice {
     }
 
     pub async fn read_prop(&self, kind: PropKind) -> Result<Props> {
-        let r = self
-            .request(PacketData::ReadProp(kind))
-            .await?
-            .read_prop_response()
-            .with_context(|| "unexpected response")?;
+        let reply = self.request(PacketData::ReadProp(kind)).await?;
+        let PacketData::ReadPropResponse(r) = reply else {
+            return Err(Error::unexpected(&reply));
+        };
         info!("prop: {:?}", r);
         Ok(r)
     }
@@ -332,24 +387,60 @@ impl VmDevice {
     }
 
     pub async fn get_frame(&self) -> Result<([MotData; 16], [MotData; 16])> {
-        let r = self
-            .request(PacketData::ObjectReportRequest())
-            .await?
-            .object_report()
-            .with_context(|| "unexpected response")?;
+        let reply = self.request(PacketData::ObjectReportRequest()).await?;
+        let PacketData::ObjectReport(r) = reply else {
+            return Err(Error::unexpected(&reply));
+        };
         Ok((r.mot_data_nf, r.mot_data_wf))
+    }
+
+    /// Starts one USB-only image session. The owned stream is Send + 'static,
+    /// cancels on drop and keeps only the most recent complete frame. Its
+    /// supervised stop handshake completes before a replacement can start.
+    pub async fn stream_images(
+        &self,
+        config: odyssey_protocol::image::ImageStreamConfig,
+    ) -> Result<crate::image::ImageStream> {
+        if !self.image_link {
+            return Err(Error::ImageUsbRequired);
+        }
+        if !(1..=15).contains(&config.fps) {
+            return Err(Error::InvalidArgument("image FPS must be in 1..=15"));
+        }
+        // A direct handle opened for pairing may still have BLE data selected.
+        // Check the control endpoint before issuing any image data command.
+        if self.image_mode_check && self.get_transport_mode().await? != TransportMode::Usb {
+            return Err(Error::ImageUsbRequired);
+        }
+        let cancel = CancellationToken::new();
+        let guard = cancel.clone().drop_guard();
+        let (ready, response) = oneshot::channel();
+        self.image_requests
+            .try_send(image_session::ImageRequest {
+                config,
+                cancel,
+                ready,
+                _keepalive: Arc::clone(&self.keepalive),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    Error::ImageStatus(odyssey_protocol::image::ImageStatusCode::Busy)
+                }
+                mpsc::error::TrySendError::Closed(_) => Error::Closed,
+            })?;
+        let result = response.await.map_err(|_closed| Error::Closed)?;
+        guard.disarm();
+        result
     }
 
     pub async fn stream(
         &self,
         stream_type: PacketType,
     ) -> Result<impl Stream<Item = PacketData> + Send + Sync + use<>> {
-        let Some(thread_state) = self.thread_state.upgrade() else {
-            return Err(anyhow!("thread state dropped"));
-        };
+        let thread_state = self.live_state()?;
         let _control = thread_state.stream_control.lock().await;
         if thread_state.streams_active[stream_type].swap(true, Ordering::Relaxed) {
-            return Err(anyhow!("cannot have more than one {stream_type:?} stream"));
+            return Err(Error::StreamOpen(stream_type));
         }
         // A subscription that fails below must not leave the type marked busy.
         let release_stream_type = || {
@@ -381,7 +472,10 @@ impl VmDevice {
             sender: self.transport.writer.clone(),
             stream_type,
         };
-        self.transport.send(enable).await?;
+        self.transport
+            .send(enable)
+            .await
+            .map_err(|_closed| Error::Closed)?;
         Ok(stream)
     }
 
@@ -446,10 +540,6 @@ impl VmDevice {
         self.send_without_reply(PacketData::FlashSettings()).await
     }
 
-    pub async fn write_mode(&self, mode: odyssey_protocol::Mode) -> Result<()> {
-        self.send_without_reply(PacketData::WriteMode(mode)).await
-    }
-
     /// Stops firmware streaming and closes existing subscriptions. Generation
     /// checks keep old subscription guards from disabling their replacements.
     pub async fn clear_all_streams(&self) -> Result<()> {
@@ -494,6 +584,16 @@ async fn run_dispatcher(
                     debug!("Dispatcher: [ID:{dispatcher_id}] transport closed, exiting");
                     break;
                 };
+                if let Some(sender) = state.image_sender(&reply) {
+                    // Reassembly drains independently of the UI. Backpressure
+                    // this bounded queue instead of corrupting a pixel frame by
+                    // dropping one arbitrary chunk during a USB burst.
+                    tokio::select! {
+                        () = cancel.cancelled() => break,
+                        _ = sender.send(reply.data) => {},
+                    }
+                    continue;
+                }
                 let id = reply.id;
                 match state.deliver(reply) {
                     Delivery::Delivered => {
@@ -508,7 +608,7 @@ async fn run_dispatcher(
                         );
                     }
                     Delivery::Undeliverable(why) => {
-                        debug!("dispatcher failed to send reply: {why}");
+                        debug!("Dispatcher: [ID:{dispatcher_id}] dropped reply id={id}: {why:?}");
                     }
                 }
             }

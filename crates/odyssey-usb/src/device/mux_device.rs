@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow};
 use backon::{ConstantBuilder, Retryable as _};
 use heapless::Vec as HVec;
 use nusb::{DeviceInfo, Interface};
@@ -14,13 +13,16 @@ use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, warn};
 
-use super::control_transfer::{self, FLASH_WRITE_REPLY_TIMEOUT, REPLY_TIMEOUT, UndecodableReply};
+use super::control_transfer::{
+    ControlLink, FLASH_WRITE_REPLY_TIMEOUT, REPLY_TIMEOUT, UndecodableReply,
+};
 use super::mux_transport::{
     DevicePacketRoutes, DeviceSnapshot, MuxTransport, MuxTransportParts, lock_routes,
 };
 use super::usb_bulk_io::open_bulk_endpoints;
 use crate::packets::mux::{MAX_DEVICES, MuxMsg, SendTo};
 use crate::packets::vm::Packet;
+use crate::{Error, Result};
 
 /// How many times `request_devices` asks before giving up.
 const REQUEST_DEVICES_ATTEMPTS: usize = 3;
@@ -43,7 +45,7 @@ pub struct MuxDevice {
     snapshots_rx: Arc<tokio::sync::Mutex<ReceiverStream<DeviceSnapshot>>>,
     msg_rx: Arc<tokio::sync::Mutex<ReceiverStream<MuxMsg>>>,
     pub(super) device_packets_tx: Arc<DevicePacketRoutes>,
-    ctrl_if: Interface,
+    ctrl_if: ControlLink<UsbMuxCtrlMsg>,
     _lifetime: Arc<tokio_util::sync::DropGuard>,
     // Serialize control request/reply pairs and retain raced pairing events.
     ctrl: Arc<tokio::sync::Mutex<Option<PairingOutcome>>>,
@@ -63,23 +65,28 @@ impl MuxDevice {
         pending_pairing: &mut Option<PairingOutcome>,
         mut accept: impl FnMut(&UsbMuxCtrlMsg) -> bool,
     ) -> Result<UsbMuxCtrlMsg> {
-        control_transfer::recv_matching(&self.ctrl_if, timeout, UndecodableReply::Skip, |msg| {
-            if accept(msg) {
-                return true;
-            }
-            if let UsbMuxCtrlMsg::PairingResult(outcome) = msg {
-                *pending_pairing = Some(outcome.clone());
-            }
-            false
-        })
-        .await
+        self.ctrl_if
+            .recv_matching(timeout, UndecodableReply::Skip, |msg| {
+                if accept(msg) {
+                    return true;
+                }
+                if let UsbMuxCtrlMsg::PairingResult(outcome) = msg {
+                    *pending_pairing = Some(outcome.clone());
+                }
+                false
+            })
+            .await
     }
 
     async fn ctrl_send(&self, msg: UsbMuxCtrlMsg) -> Result<()> {
-        control_transfer::send(&self.ctrl_if, &msg).await
+        self.ctrl_if.send(&msg).await
     }
 
     pub fn from_transport(transport: MuxTransport, ctrl_if: Interface) -> Self {
+        Self::from_control_link(transport, ControlLink::usb(ctrl_if))
+    }
+
+    fn from_control_link(transport: MuxTransport, ctrl_if: ControlLink<UsbMuxCtrlMsg>) -> Self {
         let MuxTransportParts {
             writer,
             snapshots,
@@ -99,6 +106,20 @@ impl MuxDevice {
         }
     }
 
+    /// Opens an opt-in simulator link using bounded mux and control channels.
+    #[cfg(feature = "sim")]
+    pub fn from_simulated_channels(
+        outgoing: mpsc::Sender<MuxMsg>,
+        incoming: mpsc::Receiver<MuxMsg>,
+        control_outgoing: mpsc::Sender<UsbMuxCtrlMsg>,
+        control_incoming: mpsc::Receiver<UsbMuxCtrlMsg>,
+    ) -> Self {
+        Self::from_control_link(
+            MuxTransport::from_channels(outgoing, incoming),
+            ControlLink::simulated(control_outgoing, control_incoming),
+        )
+    }
+
     pub async fn connect_usb(info: DeviceInfo) -> Result<Self> {
         let dev = info.open().await?;
 
@@ -116,29 +137,23 @@ impl MuxDevice {
             let transport = MuxTransport::usb(in_ep, out_ep);
             return Ok(Self::from_transport(transport, iface));
         }
-        Err(anyhow!(
-            "failed to find mux interface with required endpoints"
-        ))
+        Err(Error::NoMuxInterface)
     }
 
     async fn send_msg(&self, msg: MuxMsg) -> Result<()> {
-        self.writer
-            .send(msg)
-            .await
-            .map_err(|e| anyhow!("send failed: {e}"))?;
-        Ok(())
+        self.writer.send(msg).await.map_err(|_closed| Error::Closed)
     }
 
     pub async fn receive_msg(&self) -> Result<MuxMsg> {
         let mut rx = self.msg_rx.lock().await;
-        let msg = rx.next().await.ok_or_else(|| anyhow!("channel closed"))?;
+        let msg = rx.next().await.ok_or(Error::Closed)?;
         debug!("MuxDevice::receive_msg got control message");
         Ok(msg)
     }
 
     pub async fn receive_snapshot(&self) -> Result<DeviceSnapshot> {
         let mut rx = self.snapshots_rx.lock().await;
-        let devices = rx.next().await.ok_or_else(|| anyhow!("channel closed"))?;
+        let devices = rx.next().await.ok_or(Error::Closed)?;
         debug!("MuxDevice::receive_snapshot got device snapshot");
         Ok(devices)
     }
@@ -158,7 +173,7 @@ impl MuxDevice {
             self.send_msg(MuxMsg::RequestDevices()).await?;
             tokio::time::timeout(SNAPSHOT_TIMEOUT, self.receive_snapshot())
                 .await
-                .map_err(|_elapsed| anyhow!("timeout waiting for DevicesSnapshot"))?
+                .map_err(|_elapsed| Error::Timeout(SNAPSHOT_TIMEOUT))?
         })
         .retry(
             ConstantBuilder::default()
@@ -196,21 +211,29 @@ impl MuxDevice {
             .writer
             .reserve()
             .await
-            .map_err(|e| anyhow!("send failed: {e}"))?;
+            .map_err(|_closed| Error::Closed)?;
         let _routes = lock_routes(&self.device_packets_tx);
         if cancel.is_cancelled() {
-            return Err(anyhow!("transport cancelled"));
+            return Err(Error::Closed);
         }
         permit.send(MuxMsg::SendTo(SendTo { dev, pkt }));
         Ok(())
     }
 
+    /// Asks the dongle for its mux protocol and firmware versions.
+    ///
+    /// # Errors
+    /// Fails when the request cannot be queued, the link closes, or no answer
+    /// arrives within `REPLY_TIMEOUT` (two seconds).
     pub async fn read_version(&self) -> Result<crate::packets::mux::Version> {
         self.send_msg(MuxMsg::ReadVersion()).await?;
 
-        match self.receive_msg().await? {
+        let reply = tokio::time::timeout(REPLY_TIMEOUT, self.receive_msg())
+            .await
+            .map_err(|_elapsed| Error::Timeout(REPLY_TIMEOUT))??;
+        match reply {
             MuxMsg::ReadVersionResponse(version) => Ok(version),
-            other => Err(anyhow!("unexpected response: {other:?}")),
+            other => Err(Error::unexpected(&other)),
         }
     }
 
@@ -224,7 +247,7 @@ impl MuxDevice {
             .await?
         {
             UsbMuxCtrlMsg::ReadVersionResponse(version) => Ok(version),
-            other => Err(anyhow!("unexpected ctrl response: {other:?}")),
+            other => Err(Error::unexpected(&other)),
         }
     }
 
@@ -249,7 +272,7 @@ impl MuxDevice {
                 *pending = Some(outcome);
                 Ok(())
             }
-            other => Err(anyhow!("unexpected ctrl response: {other:?}")),
+            other => Err(Error::unexpected(&other)),
         }
     }
 
@@ -269,7 +292,7 @@ impl MuxDevice {
                 .await?
             {
                 UsbMuxCtrlMsg::PairingResult(outcome) => outcome,
-                other => return Err(anyhow!("unexpected ctrl response: {other:?}")),
+                other => return Err(Error::unexpected(&other)),
             },
         };
         Ok(match outcome {
@@ -294,10 +317,10 @@ impl MuxDevice {
                     UsbMuxCtrlMsg::ClearBondsResponse(ClearBondsResult::Ok()) => return Ok(()),
                     UsbMuxCtrlMsg::ClearBondsResponse(ClearBondsResult::Err(
                         ClearBondsError::Failed,
-                    )) => return Err(anyhow!("Failed to clear bonds")),
-                    other => return Err(anyhow!("unexpected ctrl response: {other:?}")),
+                    )) => return Err(Error::Refused("clearing the bonds")),
+                    other => return Err(Error::unexpected(&other)),
                 },
-                Err(e) if e.is::<control_transfer::ReplyTimeout>() => {
+                Err(Error::Timeout(_)) => {
                     if start.elapsed() >= CLEAR_BONDS_PATIENCE {
                         warn!("ClearBonds timeout waiting for ctrl event; assuming success");
                         return Ok(());
@@ -318,7 +341,7 @@ impl MuxDevice {
             .await?
         {
             UsbMuxCtrlMsg::ListBondsResponse(bonds) => Ok(bonds.0),
-            other => Err(anyhow!("unexpected ctrl response: {other:?}")),
+            other => Err(Error::unexpected(&other)),
         }
     }
 
@@ -340,10 +363,8 @@ impl MuxDevice {
             .await?
         {
             UsbMuxCtrlMsg::AddBondResponse(AddBondResult::Ok()) => Ok(()),
-            UsbMuxCtrlMsg::AddBondResponse(AddBondResult::Err(e)) => {
-                Err(anyhow!("AddBond failed: {e:?}"))
-            }
-            other => Err(anyhow!("unexpected ctrl response: {other:?}")),
+            UsbMuxCtrlMsg::AddBondResponse(AddBondResult::Err(e)) => Err(Error::BondRejected(e)),
+            other => Err(Error::unexpected(&other)),
         }
     }
 }

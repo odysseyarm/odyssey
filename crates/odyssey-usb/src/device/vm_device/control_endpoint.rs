@@ -1,13 +1,12 @@
 //! `VmDevice` operations that go over the USB control endpoint instead of the
-//! packet stream. They need a direct USB connection (`ctrl_if`) and work in
-//! either transport mode, which is why pairing and mode switching live here.
+//! packet stream. They need a direct control link and work in either transport
+//! mode, which is why pairing and mode switching live here.
 
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
-use nusb::{DeviceInfo, Interface};
+use nusb::DeviceInfo;
 use odyssey_protocol::control::device::{
-    ClearBondResult, DeviceMsg, PairingError, PairingOutcome, StartPairing, TransportMode,
+    ClearBondResult, DeviceMsg, PairingOutcome, StartPairing, TransportMode,
 };
 use odyssey_protocol::control::{AddBondResult, BondEntry, BondedDevice};
 use odyssey_protocol::{PropKind, Props, SetDeviceNameError, SetDeviceNameResult, Version};
@@ -15,35 +14,31 @@ use tracing::info;
 
 use super::VmDevice;
 use crate::device::control_transfer::{
-    self, FLASH_WRITE_REPLY_TIMEOUT, REPLY_TIMEOUT, UndecodableReply,
+    self, ControlLink, FLASH_WRITE_REPLY_TIMEOUT, REPLY_TIMEOUT, UndecodableReply,
 };
 use crate::device::general_settings::GeneralSettings;
 use crate::device::usb_bulk_io::find_vendor_interface;
 use crate::packets::vm::{ConfigKind, GeneralConfig};
+use crate::{Error, Result};
 
 /// Longest a pairing session can run before the device reports a timeout.
 const PAIRING_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long to wait for the reply to a rename, which writes flash.
 const SET_NAME_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
-fn unexpected(msg: DeviceMsg) -> anyhow::Error {
-    anyhow!("unexpected response: {msg:?}")
+fn unexpected(msg: DeviceMsg) -> Error {
+    Error::unexpected(&msg)
 }
 
 impl VmDevice {
-    fn ctrl_iface(&self) -> Result<&Interface> {
-        self.ctrl_if
-            .as_ref()
-            .ok_or_else(|| anyhow!("No control interface available"))
+    fn ctrl_iface(&self) -> Result<&ControlLink<DeviceMsg>> {
+        self.ctrl_if.as_ref().ok_or(Error::NoControlInterface)
     }
 
     async fn send_ctrl_msg(&self, msg: DeviceMsg) -> Result<()> {
         let ctrl_if = self.ctrl_iface()?;
-        info!(
-            "send_ctrl_msg: control_out iface={}",
-            ctrl_if.interface_number()
-        );
-        let result = control_transfer::send(ctrl_if, &msg).await;
+        info!("send_ctrl_msg: control_out");
+        let result = ctrl_if.send(&msg).await;
         info!(
             "send_ctrl_msg: control_out returned {:?}",
             result.as_ref().map(|()| "ok").map_err(ToString::to_string)
@@ -59,11 +54,8 @@ impl VmDevice {
         pending_pairing: &mut Option<PairingOutcome>,
         mut accept: impl FnMut(&DeviceMsg) -> bool,
     ) -> Result<DeviceMsg> {
-        control_transfer::recv_matching(
-            self.ctrl_iface()?,
-            timeout,
-            UndecodableReply::Skip,
-            |msg| {
+        self.ctrl_iface()?
+            .recv_matching(timeout, UndecodableReply::Skip, |msg| {
                 if accept(msg) {
                     return true;
                 }
@@ -71,9 +63,8 @@ impl VmDevice {
                     *pending_pairing = Some(outcome.clone());
                 }
                 false
-            },
-        )
-        .await
+            })
+            .await
     }
 
     /// Sends `msg`, then waits for the first reply `accept` takes.
@@ -129,7 +120,7 @@ impl VmDevice {
     pub async fn read_netcore_release_over_packets(&self) -> Result<u16> {
         match self.read_prop(PropKind::NetCoreRelease).await? {
             Props::NetCoreRelease(release) => Ok(release),
-            other => Err(anyhow!("unexpected response: {other:?}")),
+            other => Err(Error::unexpected(&other)),
         }
     }
 
@@ -162,10 +153,7 @@ impl VmDevice {
     pub async fn probe_transport_mode(info: &DeviceInfo) -> Result<TransportMode> {
         let device = info.open().await?;
         let vendor_iface_num = find_vendor_interface(info)?;
-        let ctrl_if = device
-            .claim_interface(vendor_iface_num)
-            .await
-            .map_err(|e| anyhow!("Failed to claim control interface: {e}"))?;
+        let ctrl_if = device.claim_interface(vendor_iface_num).await?;
 
         control_transfer::send(&ctrl_if, &DeviceMsg::GetTransportMode()).await?;
 
@@ -224,11 +212,7 @@ impl VmDevice {
         };
         match outcome {
             PairingOutcome::Ok(device) => Ok(device),
-            PairingOutcome::Err(PairingError::Timeout) => Err(anyhow!("Pairing timeout")),
-            PairingOutcome::Err(PairingError::Cancelled) => Err(anyhow!("Pairing cancelled")),
-            PairingOutcome::Err(PairingError::NotBleMode) => {
-                Err(anyhow!("Pairing requires BLE mode"))
-            }
+            PairingOutcome::Err(error) => Err(Error::Pairing(error)),
         }
     }
 
@@ -245,7 +229,7 @@ impl VmDevice {
         {
             DeviceMsg::ClearBondResponse(ClearBondResult::Ok()) => Ok(()),
             DeviceMsg::ClearBondResponse(ClearBondResult::Err(_)) => {
-                Err(anyhow!("Failed to clear bond"))
+                Err(Error::Refused("clearing the bond"))
             }
             other => Err(unexpected(other)),
         }
@@ -261,9 +245,7 @@ impl VmDevice {
             .await?
         {
             DeviceMsg::AddBondResponse(AddBondResult::Ok()) => Ok(()),
-            DeviceMsg::AddBondResponse(AddBondResult::Err(e)) => {
-                Err(anyhow!("AddBond failed: {e:?}"))
-            }
+            DeviceMsg::AddBondResponse(AddBondResult::Err(e)) => Err(Error::BondRejected(e)),
             other => Err(unexpected(other)),
         }
     }
@@ -330,7 +312,7 @@ impl VmDevice {
         // prefix of what was asked for is worse than failing.
         let hname: heapless::String<32> = name
             .try_into()
-            .map_err(|_overlong| anyhow!("device name is longer than 32 bytes"))?;
+            .map_err(|_overlong| Error::InvalidArgument("device name longer than 32 bytes"))?;
         match self
             .ctrl_request(
                 DeviceMsg::SetDeviceName(hname.into()),
@@ -342,20 +324,16 @@ impl VmDevice {
             DeviceMsg::SetDeviceNameResponse(SetDeviceNameResult::Ok()) => Ok(()),
             DeviceMsg::SetDeviceNameResponse(SetDeviceNameResult::Err(
                 SetDeviceNameError::TooLong,
-            )) => Err(anyhow!("device rejected the name as too long")),
+            )) => Err(Error::Refused("the name is too long")),
             DeviceMsg::SetDeviceNameResponse(SetDeviceNameResult::Err(
                 SetDeviceNameError::Failed,
-            )) => Err(anyhow!("device failed to store the name")),
-            other => Err(anyhow!("unexpected ctrl response: {other:?}")),
+            )) => Err(Error::Refused("storing the name")),
+            other => Err(unexpected(other)),
         }
     }
 
-    pub async fn set_transport_mode(&self, usb_mode: bool) -> Result<TransportMode> {
-        let mode = if usb_mode {
-            TransportMode::Usb
-        } else {
-            TransportMode::Ble
-        };
+    /// Asks the device to switch to `mode` and returns the mode it reports back.
+    pub async fn set_transport_mode(&self, mode: TransportMode) -> Result<TransportMode> {
         info!(
             "set_transport_mode: ctrl_if present={}, sending {:?}",
             self.ctrl_if.is_some(),
