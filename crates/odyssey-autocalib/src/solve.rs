@@ -22,7 +22,7 @@
 use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, Vector2, Vector3};
 use odyssey_common::{ScreenCalibration, ScreenCalibrationError};
 
-use crate::camera::{CameraGeometry, Extrinsics, Frames, Intrinsics};
+use crate::camera::{CameraError, CameraGeometry, Extrinsics, Frames, Intrinsics, is_rotation};
 use crate::pattern::{Correspondence, DetectFailure, Pattern, detect};
 use crate::plane::{
     HOMOGENEOUS_EPSILON, HomographyFit, Plane, PlaneFit, RansacParams, apply_homography,
@@ -207,6 +207,8 @@ impl Default for SolveOptions {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SolveError {
+    #[error(transparent)]
+    Camera(#[from] CameraError),
     #[error("the dot pattern was not found in the color image ({0})")]
     PatternNotFound(DetectFailure),
     #[error("only {found} depth samples lie on the screen")]
@@ -318,6 +320,8 @@ pub(crate) fn is_at_least_half(count: usize, total: usize) -> bool {
 ///
 /// `camera_to_aligned` is the gravity alignment from [`crate::imu`]; pass the
 /// identity for a camera assumed upright.
+/// Every frame must match the geometry's image dimensions and use a positive,
+/// finite depth unit. Invalid camera data is returned before attempting a fit.
 pub fn solve_screen(
     geometry: &CameraGeometry,
     pattern: &Pattern,
@@ -325,6 +329,13 @@ pub fn solve_screen(
     camera_to_aligned: &Matrix3<f64>,
     options: &SolveOptions,
 ) -> Result<ScreenFit, SolveError> {
+    geometry.validate()?;
+    for frame in frames {
+        frame.validate(geometry)?;
+    }
+    if !is_rotation(camera_to_aligned) {
+        return Err(SolveError::DegeneratePose);
+    }
     // Refuse a declaration that contradicts the picture before spending time on the burst.
     let known = options
         .known_size
@@ -815,6 +826,9 @@ pub fn build_calibration(
     fit: &ScreenFit,
     markers: &[Point2<f64>; 6],
 ) -> Result<ScreenCalibration<f32>, SolveError> {
+    if !is_rotation(&fit.screen_from_aligned.rotation) {
+        return Err(SolveError::DegeneratePose);
+    }
     let mut h = fit
         .unit_to_screen
         .try_inverse()
@@ -826,6 +840,7 @@ pub fn build_calibration(
         fit.screen_from_aligned.rotation,
     ));
     let calibration = ScreenCalibration {
+        surface: None,
         rotation: rotation.cast(),
         homography: h.cast(),
         object_points: markers.map(|m| Point3::new(m.x as f32, m.y as f32, 0.0)),

@@ -75,7 +75,7 @@ fn straightness(a: Point2<f64>, b: Point2<f64>, c: Point2<f64>) -> f64 {
 }
 
 /// The circle through three points, or `None` if they are (nearly) collinear.
-fn circumcircle(a: Point2<f64>, b: Point2<f64>, c: Point2<f64>) -> Option<Circle> {
+pub(crate) fn circumcircle(a: Point2<f64>, b: Point2<f64>, c: Point2<f64>) -> Option<Circle> {
     let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
     if d.abs() < MIN_CIRCUMCIRCLE_DETERMINANT {
         return None;

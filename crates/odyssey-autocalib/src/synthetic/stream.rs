@@ -18,7 +18,7 @@ use crate::camera::{
 
 const GRAVITY: f64 = 9.81;
 const IMU_RATE_HZ: f64 = 200.0;
-const FRAME_RATE_HZ: f64 = 30.0;
+const FRAME_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
 const DEPTH_UNIT_M: f32 = 0.001;
 
 /// How long the camera is taken to have been streaming when it opens, so that
@@ -116,6 +116,8 @@ pub struct SyntheticStream {
     marker_px: Vec<Point2<f64>>,
     rng: StdRng,
     clock: Duration,
+    /// A short timeout consumes only part of the wait for the next realtime frame.
+    frame_wait_remaining: Duration,
     next_imu: Duration,
     imu: Vec<ImuSample>,
     ir_exposure_low: bool,
@@ -147,6 +149,7 @@ impl SyntheticStream {
             marker_px,
             rng,
             clock: Duration::ZERO,
+            frame_wait_remaining: FRAME_INTERVAL,
             next_imu: Duration::ZERO,
             imu: Vec::new(),
             ir_exposure_low: false,
@@ -265,12 +268,17 @@ impl CameraStream for SyntheticStream {
         &self.view.geometry
     }
 
-    fn next_frames(&mut self, _timeout: Duration) -> Result<Frames, CameraError> {
-        let interval = Duration::from_secs_f64(1.0 / FRAME_RATE_HZ);
+    fn next_frames(&mut self, timeout: Duration) -> Result<Frames, CameraError> {
         if self.view.scene.realtime {
-            std::thread::sleep(interval);
+            let wait = self.frame_wait_remaining.min(timeout);
+            std::thread::sleep(wait);
+            self.frame_wait_remaining -= wait;
+            if !self.frame_wait_remaining.is_zero() {
+                return Err(CameraError::Timeout);
+            }
+            self.frame_wait_remaining = FRAME_INTERVAL;
         }
-        self.advance_clock(interval);
+        self.advance_clock(FRAME_INTERVAL);
         let color = self.render_color_frame();
         let depth = self.render_depth();
         let ir = self.render_ir();
@@ -299,5 +307,36 @@ impl CameraStream for SyntheticStream {
     fn set_projector_enabled(&mut self, enabled: bool) -> Result<bool, CameraError> {
         self.projector_on = enabled;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn realtime_timeouts_preserve_the_wait_for_the_pending_frame() {
+        let scene = SyntheticScene {
+            realtime: true,
+            ..SyntheticScene::default()
+        };
+        let mut stream = SyntheticStream::new(scene, &CaptureSettings::default());
+        assert!(matches!(
+            stream.next_frames(Duration::ZERO),
+            Err(CameraError::Timeout)
+        ));
+        let half = FRAME_INTERVAL / 2;
+        assert!(matches!(
+            stream.next_frames(half),
+            Err(CameraError::Timeout)
+        ));
+        // A second partial wait completes the same frame instead of restarting
+        // the full interval after each timeout.
+        let frames = stream.next_frames(FRAME_INTERVAL - half).unwrap();
+        assert!(matches!(frames.depth_m(320, 200), Some(depth) if (1.9..2.1).contains(&depth)));
+        assert!(matches!(
+            stream.next_frames(Duration::ZERO),
+            Err(CameraError::Timeout)
+        ));
     }
 }

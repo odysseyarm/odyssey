@@ -378,7 +378,7 @@ fn frame(scene: &Scene, geometry: &CameraGeometry, bias: f64, seed: u64) -> Fram
         color: render(&scene),
         depth: render_depth(&scene, geometry, bias, seed),
         depth_unit_m: 0.001,
-        ir: GrayImage::new(1, 1),
+        ir: GrayImage::new(geometry.ir.width, geometry.ir.height),
     }
 }
 
@@ -827,7 +827,7 @@ fn board_scale_reports_missing_depth_and_missing_board() {
         color: RgbImage::from_pixel(1280, 720, Rgb([200, 200, 200])),
         depth: DepthImage::new(640, 400),
         depth_unit_m: 0.001,
-        ir: GrayImage::new(1, 1),
+        ir: GrayImage::new(geometry.ir.width, geometry.ir.height),
     };
     assert!(matches!(
         board_scale(&geometry, &[blank], 40.0),

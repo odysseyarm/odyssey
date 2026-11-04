@@ -9,7 +9,9 @@ use super::Hint;
 use crate::camera::{CameraGeometry, Frames};
 use crate::imu::Tilt;
 use crate::pattern::DetectFailure;
-use crate::plane::{RansacParams, apply_homography, pinhole_ray, project_pinhole, ransac_plane};
+use crate::plane::{
+    RansacParams, apply_homography, distort_pixel, pinhole_ray, project_pinhole, ransac_plane,
+};
 use crate::solve::{self, SCREEN_INSET};
 
 /// [`Hint::TooClose`] when the screen is nearer than this, meters.
@@ -132,10 +134,11 @@ pub(super) fn region_inside_images(geometry: &CameraGeometry, unit_to_px: &Matri
     }
     inset_corners().into_iter().all(|(u, v)| {
         apply_homography(unit_to_px, Point2::new(u, v)).is_some_and(|p| {
-            p.x >= 0.0
-                && p.y >= 0.0
-                && p.x <= f64::from(color.width - 1)
-                && p.y <= f64::from(color.height - 1)
+            let raw = distort_pixel(color, p);
+            raw.x >= 0.0
+                && raw.y >= 0.0
+                && raw.x <= f64::from(color.width - 1)
+                && raw.y <= f64::from(color.height - 1)
         })
     })
 }
@@ -383,5 +386,30 @@ mod tests {
             hint_without_pattern(&flat(128), DetectFailure::NoDots { blobs: 0 }),
             Hint::ScreenNotFound
         );
+    }
+
+    #[test]
+    fn visibility_checks_raw_boundaries_after_lens_distortion() {
+        let mut geometry = crate::synthetic::SyntheticScene::default().geometry;
+        geometry.color = crate::camera::Intrinsics {
+            width: 100,
+            height: 100,
+            fx: 50.0,
+            fy: 50.0,
+            cx: 50.0,
+            cy: 50.0,
+            k: [-0.2, 0.0, 0.0, 0.0, 0.0, 0.0],
+            p: [0.0; 2],
+        };
+        // Barrel distortion puts these pinhole corners, outside the pinhole
+        // rectangle, inside the actual sensor image.
+        let wide = Matrix3::new(120.0, 0.0, -10.0, 0.0, 120.0, -10.0, 0.0, 0.0, 1.0);
+        assert!(region_inside_images(&geometry, &wide));
+
+        // Pincushion distortion can conversely push pinhole corners that look
+        // safely inset beyond the actual image boundary.
+        geometry.color.k[0] = 0.5;
+        let inset = Matrix3::new(90.0, 0.0, 5.0, 0.0, 90.0, 5.0, 0.0, 0.0, 1.0);
+        assert!(!region_inside_images(&geometry, &inset));
     }
 }

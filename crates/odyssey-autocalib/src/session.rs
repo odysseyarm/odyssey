@@ -298,11 +298,11 @@ fn average_markers(
         }
         reference.get_or_insert(located);
     }
-    let Some(first) = reference.filter(|_| solve::is_at_least_half(successes, bursts.len())) else {
+    if reference.is_none() || !solve::is_at_least_half(successes, bursts.len()) {
         return Err(SessionError::Markers(
             last_error.unwrap_or(MarkerError::TooFewBlobs { found: 0 }),
         ));
-    };
+    }
     let points_m = sums.map(|s| Point2::from(s / successes as f64));
     let marker_px = points_m.map(|p| {
         fit.screen_to_color_px(p)
@@ -312,7 +312,7 @@ fn average_markers(
     Ok((
         MarkerSummary {
             points_m,
-            seed_circle: first.seed_circle,
+            seed_circle: crate::placement::circumcircle(points_m[0], points_m[1], points_m[2]),
         },
         marker_px,
     ))
@@ -333,12 +333,15 @@ pub struct AttemptFrames {
 pub struct Session {
     stream: Box<dyn CameraStream>,
     geometry: CameraGeometry,
+    geometry_checked: bool,
     pattern: Pattern,
     options: SessionOptions,
     gravity: GravityEstimator,
     screen: Option<ScreenMeasurement>,
     markers: Option<MarkerMeasurement>,
     marker_mode: bool,
+    /// Exposure transitions must finish discarding old frames even after a timeout.
+    settle_remaining: usize,
     /// The burst the last failed screen measurement was made from.
     failed_burst: Option<Vec<Frames>>,
     /// The infrared frames of the latest marker measurement, and the latest preview.
@@ -405,6 +408,15 @@ fn report_marker_failure(
     }
 }
 
+/// Logs a camera setting that could not be applied and carries on. A camera
+/// without the control answers `Unsupported`, which is expected and not logged.
+fn best_effort<T>(what: &str, result: Result<T, CameraError>) {
+    match result {
+        Ok(_) | Err(CameraError::Unsupported(_)) => {}
+        Err(error) => tracing::warn!("{what}: {error}"),
+    }
+}
+
 impl Session {
     /// Starts a session on an open camera. `aspect` is the screen's width over
     /// height, which fixes the pattern.
@@ -412,17 +424,19 @@ impl Session {
         let geometry = *stream.geometry();
         // Depth quality depends on the projector, and a previous session may
         // have left the infrared sensor on a short exposure.
-        let _ = stream.set_ir_auto_exposure();
-        let _ = stream.set_projector_enabled(true);
+        best_effort("infrared auto exposure", stream.set_ir_auto_exposure());
+        best_effort("projector on", stream.set_projector_enabled(true));
         Self {
             stream,
             geometry,
+            geometry_checked: false,
             pattern: Pattern::new(aspect),
             options,
             gravity: GravityEstimator::new(),
             screen: None,
             markers: None,
             marker_mode: false,
+            settle_remaining: 0,
             failed_burst: None,
             marker_burst_ir: Vec::new(),
             marker_preview_ir: None,
@@ -464,7 +478,12 @@ impl Session {
     }
 
     fn grab(&mut self) -> Result<Frames, SessionError> {
+        if !self.geometry_checked {
+            self.geometry.validate()?;
+            self.geometry_checked = true;
+        }
         let frames = self.stream.next_frames(self.options.frame_timeout)?;
+        frames.validate(&self.geometry)?;
         let imu = self.stream.drain_imu();
         self.gravity.extend(&imu);
         Ok(frames)
@@ -486,32 +505,52 @@ impl Session {
         Ok(kept)
     }
 
-    /// Discards frames so the sensor settles after an exposure change.
+    /// Finishes discarding frames after a mode or exposure change. A timeout
+    /// leaves the outstanding count intact for the next call.
     fn settle(&mut self) -> Result<(), SessionError> {
-        for _ in 0..SETTLE_FRAMES {
+        while self.settle_remaining > 0 {
             self.grab()?;
+            self.settle_remaining -= 1;
         }
         Ok(())
     }
 
+    /// Hands the infrared sensor and projector back to depth measurement.
+    /// The next few frames still carry the short exposure and no projector pattern.
     fn leave_marker_mode(&mut self) {
-        if self.marker_mode {
-            let _ = self.stream.set_ir_auto_exposure();
-            let _ = self.stream.set_projector_enabled(true);
-            self.marker_mode = false;
+        if !self.marker_mode {
+            return;
         }
+        best_effort("infrared auto exposure", self.stream.set_ir_auto_exposure());
+        best_effort("projector on", self.stream.set_projector_enabled(true));
+        self.marker_mode = false;
+        self.settle_remaining = SETTLE_FRAMES;
+    }
+
+    /// Leaves marker mode and discards the frames taken while the sensor
+    /// readjusts: depth comes from the infrared imagers, so it is poor under
+    /// the marker exposure.
+    fn enter_depth_mode(&mut self) -> Result<(), SessionError> {
+        self.leave_marker_mode();
+        self.settle()
     }
 
     fn enter_marker_mode(&mut self) -> Result<(), SessionError> {
         if self.marker_mode {
-            return Ok(());
+            return self.settle();
         }
         self.stream
             .set_ir_exposure_us(self.options.ir_exposure_us)?;
+        // The exposure is already short, so leaving marker mode has to undo it
+        // even if the projector switch fails.
+        self.marker_mode = true;
         // Cameras without a switchable projector report `Ok(false)`; the
         // projector's dots then stay below the relative threshold anyway.
-        let _ = self.stream.set_projector_enabled(false)?;
-        self.marker_mode = true;
+        if let Err(error) = self.stream.set_projector_enabled(false) {
+            self.leave_marker_mode();
+            return Err(error.into());
+        }
+        self.settle_remaining = SETTLE_FRAMES;
         self.settle()
     }
 
@@ -520,17 +559,21 @@ impl Session {
     /// otherwise, so a UI can offer an exposure slider next to the live marker
     /// preview.
     pub fn set_ir_exposure_us(&mut self, exposure_us: u32) -> Result<(), SessionError> {
-        self.options.ir_exposure_us = exposure_us;
+        // Do not retain a requested setting that the camera refused.
         if self.marker_mode {
             self.stream.set_ir_exposure_us(exposure_us)?;
+            self.options.ir_exposure_us = exposure_us;
+            self.settle_remaining = SETTLE_FRAMES;
             self.settle()?;
+        } else {
+            self.options.ir_exposure_us = exposure_us;
         }
         Ok(())
     }
 
     /// Grabs one frame and reports whether the screen is ready to measure.
     pub fn preview(&mut self) -> Result<Preview, SessionError> {
-        self.leave_marker_mode();
+        self.enter_depth_mode()?;
         let frames = self.grab()?;
         let tilt = self.gravity.tilt();
         let detection = detect(&self.pattern, &frames.color, &self.geometry.color);
@@ -609,7 +652,7 @@ impl Session {
         &mut self,
         progress: &mut dyn FnMut(Step),
     ) -> Result<ScreenSummary, SessionError> {
-        self.leave_marker_mode();
+        self.enter_depth_mode()?;
         let total = self.options.burst_frames.max(1);
         let frames = self.grab_burst(total, progress, |frames| frames)?;
 
@@ -629,8 +672,13 @@ impl Session {
             known_size: self.options.known_size,
             ..SolveOptions::default()
         };
-        let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)
-            .inspect_err(|_| self.failed_burst = Some(frames.clone()))?;
+        let fit = match solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options) {
+            Ok(fit) => fit,
+            Err(error) => {
+                self.failed_burst = Some(frames);
+                return Err(error.into());
+            }
+        };
         let summary = screen_summary(&fit, edges);
         let color = frames
             .last()
@@ -797,5 +845,99 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.leave_marker_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    use image::{Luma, Rgb};
+
+    use super::*;
+    use crate::camera::{DepthImage, Extrinsics, ImuSample, Intrinsics};
+
+    /// Labels frames in capture order and times out once at a chosen frame.
+    struct InterruptedStream {
+        geometry: CameraGeometry,
+        next_frame: u8,
+        fail_at: Arc<AtomicU8>,
+    }
+
+    impl CameraStream for InterruptedStream {
+        fn geometry(&self) -> &CameraGeometry {
+            &self.geometry
+        }
+
+        fn next_frames(&mut self, _: Duration) -> Result<Frames, CameraError> {
+            if self.fail_at.load(Ordering::Relaxed) == self.next_frame {
+                self.fail_at.store(u8::MAX, Ordering::Relaxed);
+                return Err(CameraError::Timeout);
+            }
+            let frame = self.next_frame;
+            self.next_frame += 1;
+            Ok(Frames {
+                color: RgbImage::from_pixel(1, 1, Rgb([frame; 3])),
+                depth: DepthImage::from_pixel(1, 1, Luma([1000])),
+                depth_unit_m: 0.001,
+                ir: GrayImage::from_pixel(1, 1, Luma([frame])),
+            })
+        }
+
+        fn drain_imu(&mut self) -> Vec<ImuSample> {
+            Vec::new()
+        }
+
+        fn set_ir_exposure_us(&mut self, _: u32) -> Result<(), CameraError> {
+            Ok(())
+        }
+
+        fn set_ir_auto_exposure(&mut self) -> Result<(), CameraError> {
+            Ok(())
+        }
+
+        fn set_projector_enabled(&mut self, _: bool) -> Result<bool, CameraError> {
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn interrupted_exposure_transitions_do_not_return_unsettled_frames() {
+        let intrinsics = Intrinsics {
+            width: 1,
+            height: 1,
+            fx: 1.0,
+            fy: 1.0,
+            cx: 0.0,
+            cy: 0.0,
+            k: [0.0; 6],
+            p: [0.0; 2],
+        };
+        let fail_at = Arc::new(AtomicU8::new(2));
+        let stream = InterruptedStream {
+            geometry: CameraGeometry {
+                color: intrinsics,
+                depth: intrinsics,
+                ir: intrinsics,
+                color_to_depth: Extrinsics::identity(),
+                ir_to_depth: Extrinsics::identity(),
+            },
+            next_frame: 0,
+            fail_at: Arc::clone(&fail_at),
+        };
+        let mut session = Session::start(Box::new(stream), 16.0 / 9.0, SessionOptions::default());
+        assert!(matches!(
+            session.preview_markers(),
+            Err(SessionError::Camera(CameraError::Timeout))
+        ));
+        assert_eq!(session.preview_markers().unwrap().ir.get_pixel(0, 0)[0], 4);
+
+        fail_at.store(7, Ordering::Relaxed);
+        assert!(matches!(
+            session.preview(),
+            Err(SessionError::Camera(CameraError::Timeout))
+        ));
+        assert_eq!(session.preview().unwrap().color.get_pixel(0, 0)[0], 9);
     }
 }

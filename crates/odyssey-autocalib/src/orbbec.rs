@@ -18,7 +18,7 @@ mod ffi;
 pub mod runtime;
 
 use std::collections::VecDeque;
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
@@ -335,7 +335,11 @@ impl Device {
         if range.min <= range.max {
             fitted = fitted.clamp(range.min, range.max);
             if range.step > 1 {
-                fitted = range.min + (fitted - range.min) / range.step * range.step;
+                // The range comes from the camera; widening keeps
+                // `fitted - min` from overflowing for a negative `min`.
+                let (min, step) = (i64::from(range.min), i64::from(range.step));
+                let snapped = min + (i64::from(fitted) - min) / step * step;
+                fitted = i32::try_from(snapped).expect("snapping down stays within min..=fitted");
             }
         }
         self.set_int(id, fitted)?;
@@ -563,11 +567,13 @@ impl ProfileList {
     }
 
     fn get(&self, index: u32) -> Result<Profile, CameraError> {
+        let index = c_int::try_from(index)
+            .map_err(|error| CameraError::Sdk(format!("profile index {index}: {error}")))?;
         Profile::new(
             &self.sdk,
             ob!(
                 self.sdk,
-                ob_stream_profile_list_get_profile(self.as_ptr(), index as i32)
+                ob_stream_profile_list_get_profile(self.as_ptr(), index)
             )?,
             "ob_stream_profile_list_get_profile",
         )
@@ -1256,6 +1262,7 @@ impl OrbbecStream {
             color_to_depth: color.profile.extrinsics_to(&depth.profile)?,
             ir_to_depth: ir.profile.extrinsics_to(&depth.profile)?,
         };
+        geometry.validate()?;
 
         let converter = match convert {
             None => None,
@@ -1354,12 +1361,14 @@ impl OrbbecStream {
         let color = RgbImage::from_raw(w, h, buf)
             .ok_or_else(|| CameraError::Sdk("color frame size mismatch".into()))?;
         let (depth, depth_unit_m) = depth_from_frame(&depth)?;
-        Ok(Some(Frames {
+        let frames = Frames {
             color,
             depth,
             depth_unit_m,
             ir: gray_from_frame(&ir)?,
-        }))
+        };
+        frames.validate(&self.geometry)?;
+        Ok(Some(frames))
     }
 
     fn color_to_rgb(&self, frame: Frame) -> Result<Frame, CameraError> {

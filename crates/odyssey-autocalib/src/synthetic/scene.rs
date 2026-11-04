@@ -69,7 +69,7 @@ pub struct SyntheticScene {
     pub show_pattern: bool,
     /// Multiplier on the pattern's dot radii; see [`Pattern::with_dot_scale`].
     pub dot_scale: f64,
-    /// Sleep one frame interval per frame, as a real camera would.
+    /// Wait one frame interval per frame, honoring shorter capture timeouts.
     pub realtime: bool,
     pub seed: u64,
 }
@@ -179,6 +179,7 @@ impl Truth {
         ));
         let [w, h] = self.size_m;
         ScreenCalibration {
+            surface: None,
             rotation: rotation.cast(),
             homography: Matrix3::new(1.0 / w, 0.0, 0.0, 0.0, 1.0 / h, 0.0, 0.0, 0.0, 1.0).cast(),
             object_points: self.markers_m.map(nalgebra::OPoint::cast),

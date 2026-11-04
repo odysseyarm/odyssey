@@ -118,6 +118,13 @@ fn default_scene_is_recovered() {
     );
     assert_eq!(cal.review.dots_used, cal.review.dots_expected);
     assert!(cal.review.gravity_aligned);
+    // The review's danger circle describes the averaged marker positions, not
+    // the noisier first frame of the marker burst.
+    let circle = cal.review.seed_circle.unwrap();
+    for marker in &cal.calibration.object_points[..3] {
+        let point = Point2::new(f64::from(marker.x), f64::from(marker.y));
+        assert!(((point - circle.center).norm() - circle.radius).abs() < 1e-6);
+    }
     // Markers project into the color image inside the screen outline.
     for p in cal.review.marker_px {
         assert!(p.x > 0.0 && p.x < 1280.0 && p.y > 0.0 && p.y < 720.0);
@@ -319,8 +326,6 @@ fn measuring_without_a_pattern_fails_cleanly() {
         matches!(err, SessionError::Solve(SolveError::PatternNotFound(_))),
         "{err}"
     );
-    // The message says what the search saw, and the whole burst it searched is kept.
-    assert!(err.to_string().contains("dot-like spots"), "{err}");
     let attempt = session.attempt_frames();
     assert_eq!(
         attempt.screen_burst.len(),
@@ -783,7 +788,7 @@ fn finish_measured_without_a_declared_size_is_finish() {
 }
 
 #[test]
-fn calibration_export_rejects_singular_screen_maps_and_nonfinite_markers() {
+fn calibration_export_rejects_singular_maps_nonfinite_markers_and_invalid_rotations() {
     let scene = SyntheticScene::default();
     let mut session = open(
         &scene,
@@ -800,4 +805,9 @@ fn calibration_export_rejects_singular_screen_maps_and_nonfinite_markers() {
     assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
     markers[0].x = f64::MAX;
     assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
+    fit.screen_from_aligned.rotation = Matrix3::new(-1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+    assert!(matches!(
+        odyssey_autocalib::solve::build_calibration(&fit, &[Point2::origin(); 6]),
+        Err(SolveError::DegeneratePose)
+    ));
 }

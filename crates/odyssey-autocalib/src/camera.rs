@@ -28,6 +28,8 @@ pub enum CameraError {
     /// The camera SDK is not usable on this machine; the text says why.
     #[error("camera support is unavailable: {0}")]
     RuntimeUnavailable(String),
+    #[error("invalid camera data: {0}")]
+    InvalidData(&'static str),
 }
 
 /// How a camera is attached, as the backend reports it. This is what the link
@@ -179,6 +181,29 @@ pub struct Intrinsics {
     pub p: [f64; 2],
 }
 
+impl Intrinsics {
+    fn is_valid(&self) -> bool {
+        self.width > 0
+            && self.height > 0
+            && self.fx.is_finite()
+            && self.fy.is_finite()
+            && self.fx > 0.0
+            && self.fy > 0.0
+            && [self.cx, self.cy]
+                .iter()
+                .chain(self.k.iter())
+                .chain(self.p.iter())
+                .all(|v| v.is_finite())
+    }
+}
+
+/// Accepts roundoff in SDK matrices stored as `f32`, not scale, shear or reflection.
+pub(crate) fn is_rotation(rotation: &Matrix3<f64>) -> bool {
+    rotation.iter().all(|v| v.is_finite())
+        && (rotation.transpose() * rotation - Matrix3::identity()).norm() <= 1e-4
+        && (rotation.determinant() - 1.0).abs() <= 1e-4
+}
+
 /// Rigid transform taking points from one camera's frame to another's:
 /// `p_to = rotation * p_from + translation`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -223,6 +248,33 @@ pub struct CameraGeometry {
     pub ir_to_depth: Extrinsics,
 }
 
+impl CameraGeometry {
+    /// Rejects unusable intrinsics and transforms that are not finite rigid motions.
+    /// Image dimensions must describe the delivered frames, not a different SDK profile.
+    pub fn validate(&self) -> Result<(), CameraError> {
+        for (intrinsics, reason) in [
+            (&self.color, "invalid color intrinsics"),
+            (&self.depth, "invalid depth intrinsics"),
+            (&self.ir, "invalid infrared intrinsics"),
+        ] {
+            if !intrinsics.is_valid() {
+                return Err(CameraError::InvalidData(reason));
+            }
+        }
+        for (extrinsics, reason) in [
+            (&self.color_to_depth, "invalid color-to-depth transform"),
+            (&self.ir_to_depth, "invalid infrared-to-depth transform"),
+        ] {
+            if !is_rotation(&extrinsics.rotation)
+                || !extrinsics.translation.iter().all(|v| v.is_finite())
+            {
+                return Err(CameraError::InvalidData(reason));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One synchronized capture. The streams are not pixel-aligned; the solver
 /// maps between them with [`CameraGeometry`].
 #[derive(Debug, Clone)]
@@ -236,6 +288,38 @@ pub struct Frames {
 }
 
 impl Frames {
+    /// Checks the fixed stream dimensions and the conversion from raw depth to meters.
+    /// A resized image cannot use the original intrinsics unchanged.
+    pub fn validate(&self, geometry: &CameraGeometry) -> Result<(), CameraError> {
+        for (actual, intrinsics, reason) in [
+            (
+                self.color.dimensions(),
+                &geometry.color,
+                "color frame dimensions differ from intrinsics",
+            ),
+            (
+                self.depth.dimensions(),
+                &geometry.depth,
+                "depth frame dimensions differ from intrinsics",
+            ),
+            (
+                self.ir.dimensions(),
+                &geometry.ir,
+                "infrared frame dimensions differ from intrinsics",
+            ),
+        ] {
+            if actual != (intrinsics.width, intrinsics.height) {
+                return Err(CameraError::InvalidData(reason));
+            }
+        }
+        if !self.depth_unit_m.is_finite() || self.depth_unit_m <= 0.0 {
+            return Err(CameraError::InvalidData(
+                "depth unit must be positive and finite",
+            ));
+        }
+        Ok(())
+    }
+
     /// Depth at a pixel in meters, or `None` outside the image or where the
     /// sensor reported no measurement or an invalid depth scale.
     pub fn depth_m(&self, x: u32, y: u32) -> Option<f64> {
@@ -307,6 +391,86 @@ mod tests {
         for unit in [0.0, -0.001, f32::NAN, f32::INFINITY] {
             frames.depth_unit_m = unit;
             assert_eq!(frames.depth_m(0, 0), None);
+        }
+    }
+
+    #[test]
+    fn geometry_rejects_unusable_intrinsics_and_nonrigid_transforms() {
+        let valid = crate::synthetic::SyntheticScene::default().geometry;
+        assert!(valid.validate().is_ok());
+        for focal in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut geometry = valid;
+            geometry.color.fx = focal;
+            assert!(matches!(
+                geometry.validate(),
+                Err(CameraError::InvalidData(_))
+            ));
+        }
+        let mut geometry = valid;
+        geometry.depth.width = 0;
+        assert!(matches!(
+            geometry.validate(),
+            Err(CameraError::InvalidData(_))
+        ));
+        geometry = valid;
+        geometry.ir.k[0] = f64::NAN;
+        assert!(matches!(
+            geometry.validate(),
+            Err(CameraError::InvalidData(_))
+        ));
+        for rotation in [
+            Matrix3::identity() * 2.0,
+            Matrix3::new(-1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+        ] {
+            geometry = valid;
+            geometry.color_to_depth.rotation = rotation;
+            assert!(matches!(
+                geometry.validate(),
+                Err(CameraError::InvalidData(_))
+            ));
+        }
+        geometry = valid;
+        geometry.ir_to_depth.translation.x = f64::INFINITY;
+        assert!(matches!(
+            geometry.validate(),
+            Err(CameraError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn frames_reject_resizing_and_invalid_depth_units() {
+        let geometry = crate::synthetic::SyntheticScene::default().geometry;
+        let mut frames = Frames {
+            color: RgbImage::new(geometry.color.width, geometry.color.height),
+            depth: DepthImage::new(geometry.depth.width, geometry.depth.height),
+            depth_unit_m: 0.001,
+            ir: GrayImage::new(geometry.ir.width, geometry.ir.height),
+        };
+        assert!(frames.validate(&geometry).is_ok());
+        frames.color = RgbImage::new(1, 1);
+        assert!(matches!(
+            frames.validate(&geometry),
+            Err(CameraError::InvalidData(_))
+        ));
+        frames.color = RgbImage::new(geometry.color.width, geometry.color.height);
+        frames.depth = DepthImage::new(1, 1);
+        assert!(matches!(
+            frames.validate(&geometry),
+            Err(CameraError::InvalidData(_))
+        ));
+        frames.depth = DepthImage::new(geometry.depth.width, geometry.depth.height);
+        frames.ir = GrayImage::new(1, 1);
+        assert!(matches!(
+            frames.validate(&geometry),
+            Err(CameraError::InvalidData(_))
+        ));
+        frames.ir = GrayImage::new(geometry.ir.width, geometry.ir.height);
+        for unit in [0.0, -0.001, f32::NAN, f32::INFINITY] {
+            frames.depth_unit_m = unit;
+            assert!(matches!(
+                frames.validate(&geometry),
+                Err(CameraError::InvalidData(_))
+            ));
         }
     }
 }

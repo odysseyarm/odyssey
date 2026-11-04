@@ -185,18 +185,14 @@ fn board_depth_points(
     let half = Vector2::new(f64::from(spec.cols - 1), f64::from(spec.rows - 1)) / 2.0
         + Vector2::new(rho, rho);
     let (w, h) = first.depth.dimensions();
-    let usable: Vec<&Frames> = frames
-        .iter()
-        .filter(|f| f.depth.dimensions() == (w, h))
-        .collect();
     // A pixel needs a valid depth in at least half of the frames.
-    let needed = usable.len().div_ceil(2);
-    let mut samples = Vec::with_capacity(usable.len());
+    let needed = frames.len().div_ceil(2);
+    let mut samples = Vec::with_capacity(frames.len());
     let mut points = Vec::new();
     for y in 0..h {
         for x in 0..w {
             samples.clear();
-            samples.extend(usable.iter().filter_map(|f| f.depth_m(x, y)));
+            samples.extend(frames.iter().filter_map(|f| f.depth_m(x, y)));
             if samples.len() < needed.max(1) {
                 continue;
             }
@@ -245,14 +241,22 @@ fn board_depth_points(
 /// [`BoardError::DegeneratePose`] for a non-finite or non-positive `pitch_mm`
 /// or rotations that do not average; the first detection error when no frame
 /// finds the board; [`BoardError::NoDepth`] when too few depth points fall on
-/// the board or too few fit one plane; [`BoardError::BadFit`] when the depth
-/// plane is parallel to the line of sight.
+/// the board or too few fit one plane; [`BoardError::BadFit`] for invalid camera
+/// data or when the depth plane is parallel to the line of sight.
 pub fn board_scale(
     geometry: &CameraGeometry,
     frames: &[Frames],
     pitch_mm: f64,
 ) -> Result<BoardScale, BoardError> {
     check_pitch_mm(pitch_mm)?;
+    geometry
+        .validate()
+        .map_err(|error| BoardError::BadFit(error.to_string()))?;
+    for frame in frames {
+        frame
+            .validate(geometry)
+            .map_err(|error| BoardError::BadFit(error.to_string()))?;
+    }
     let detections = detect_in_frames(geometry, frames, pitch_mm)?;
     let distances: Vec<f64> = detections.iter().map(|(p, _)| p.distance_m).collect();
     let board_distance_m = median(&mut distances.clone());

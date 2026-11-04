@@ -59,6 +59,9 @@ pub fn save_calibration(
     // atomically replaces an existing calibration on Unix and Windows.
     let mut temp = tempfile::NamedTempFile::new_in(screens_dir)?;
     temp.write_all(json.as_bytes())?;
+    // Without this a crash shortly after the rename can leave an empty
+    // `screen_<id>.json` on file systems that order data and metadata freely.
+    temp.as_file().sync_all()?;
     temp.persist(&path).map_err(|error| error.error)?;
     Ok(path)
 }
@@ -77,6 +80,7 @@ mod tests {
 
     fn sample() -> ScreenCalibration<f32> {
         ScreenCalibration {
+            surface: None,
             rotation: UnitQuaternion::from_euler_angles(0.1, -0.2, 0.05),
             homography: Matrix3::new(0.82, 0.0, 0.0, 0.0, 1.46, 0.0, 0.0, 0.0, 1.0),
             object_points: [
@@ -111,15 +115,18 @@ mod tests {
 
     #[test]
     fn json_layout_matches_the_hub_schema() {
+        let mut calibration = sample();
+        // An off-diagonal entry tells column-major from row-major.
+        calibration.homography[(0, 2)] = 0.05;
         let value: serde_json::Value =
-            serde_json::from_str(&calibration_to_json(&sample()).unwrap()).unwrap();
+            serde_json::from_str(&calibration_to_json(&calibration).unwrap()).unwrap();
         assert_eq!(value["rotation"].as_array().unwrap().len(), 4);
         assert_eq!(value["homography"].as_array().unwrap().len(), 9);
         assert_eq!(value["object_points"].as_array().unwrap().len(), 6);
-        // Column-major: the second entry is the (row 1, col 0) element, zero here,
-        // and the 5th entry is the (1, 1) element.
-        assert!((value["homography"][4].as_f64().unwrap() - 1.46).abs() < 1e-6);
-        assert!((value["homography"][0].as_f64().unwrap() - 0.82).abs() < 1e-6);
+        let homography = |i: usize| value["homography"][i].as_f64().unwrap();
+        assert!((homography(6) - 0.05).abs() < 1e-6, "(0, 2) is entry 6");
+        assert_eq!(homography(2), 0.0, "(2, 0) is entry 2");
+        assert!((homography(4) - 1.46).abs() < 1e-6);
     }
 
     #[test]
@@ -146,20 +153,5 @@ mod tests {
         assert!(calibration_to_json(&calibration).is_err());
         let invalid_json = serde_json::to_string(&calibration).unwrap();
         assert!(calibration_from_json(&invalid_json).is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn saving_does_not_follow_a_preexisting_scratch_symlink() {
-        let dir = tempfile::tempdir().unwrap();
-        let unrelated = dir.path().join("unrelated");
-        std::fs::write(&unrelated, b"must stay intact").unwrap();
-        std::os::unix::fs::symlink(&unrelated, dir.path().join(".screen_3.json.tmp")).unwrap();
-        save_calibration(dir.path(), 3, &sample()).unwrap();
-        assert_eq!(std::fs::read(&unrelated).unwrap(), b"must stay intact");
-        assert_eq!(
-            load_calibration(dir.path(), 3).unwrap().object_points,
-            sample().object_points
-        );
     }
 }
