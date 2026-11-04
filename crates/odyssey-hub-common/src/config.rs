@@ -397,6 +397,7 @@ pub fn screen_file_name(id: u8) -> String {
     format!("screen_{id}.json")
 }
 
+#[derive(Debug)]
 pub struct ScreenCalibrationsResult {
     pub calibrations: arrayvec::ArrayVec<
         (u8, ScreenCalibration<f32>),
