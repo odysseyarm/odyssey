@@ -183,7 +183,7 @@ pub async fn run_server(
     let (accessory_map_sender, _) = broadcast::channel(12);
     let (dongle_list_change_sender, _) = broadcast::channel::<()>(16);
 
-    let server = server::Server {
+    let server = server::HubServer {
         device_list: Default::default(),
         event_sender: event_sender.clone(),
         device_list_change_sender: device_list_change_sender.clone(),
