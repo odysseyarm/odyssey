@@ -73,10 +73,10 @@ Where the folder is, in order: `ODYSSEY_FIRMWARE_PACK_DIR`, the registry value `
 | macOS | `/Library/Application Support/OdysseyArm/Odyssey/firmware-pack` |
 | Linux | `/var/lib/odyssey/firmware-pack` |
 
-Build a pack on a machine with internet access and carry it over:
+Build a pack on a machine with internet access, from the repository root, and carry it over:
 
 ```
-python firmware/manifests/build-pack.py D:\odyssey-firmware-pack --channel stable --latest 2
+cargo xtask firmware build-pack D:\odyssey-firmware-pack --channel stable --latest 2
 ```
 
 It downloads the newest releases of each device, checks every file's size and hash, and writes

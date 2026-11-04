@@ -29,23 +29,22 @@ nRF52840 USB dongle firmware that acts as a BLE-to-USB mux for up to 7 vm-fw dev
 ### Prerequisites
 
 - Rust nightly toolchain
-- `just` command runner
-- `nrfdfu` tool for DFU flashing
+- `nrfutil` with the `nrf5sdk-tools` extension (`nrfutil install nrf5sdk-tools`) for the DFU package and serial DFU
 - nRF52840 dongle with Nordic bootloader
 
 ### Build and Flash
 
-See the [Justfile](Justfile) for available commands:
+Run from the repository root (`cargo xtask dongle --help` lists every command):
 
 ```bash
-# Build release firmware
-just build-release
+# Release artifacts (.hex, .uf2, signed -dfu.zip) in firmware/dongle-fw/dist
+cargo xtask dongle dist
 
-# Flash via DFU (put dongle in bootloader mode first)
-just dfu-release
+# Build the DFU package and flash it over serial (put dongle in bootloader mode first)
+cargo xtask dongle flash --port COM78
 
-# Build and flash in one step
-just flash-release
+# Print the defmt log from the dongle's serial port
+cargo xtask dongle attach --port COM79
 ```
 
 ### Development Build
@@ -140,11 +139,11 @@ DEFMT_LOG = "info"  # Options: trace, debug, info, warn, error
 
 With RTT feature enabled:
 ```bash
-# Build with RTT logging
-just build-rtt
+# Build, flash and run on a DK with RTT logging
+cargo xtask dongle flash-dk
 
-# Monitor logs with probe-rs
-probe-rs run --chip nRF52840_xxAA target/thumbv7em-none-eabihf/release/dongle-fw
+# Attach to a running DK with probe-rs
+cargo xtask dongle attach-dk
 ```
 
 Without RTT (USB serial logging):

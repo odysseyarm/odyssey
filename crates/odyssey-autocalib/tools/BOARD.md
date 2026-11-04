@@ -33,8 +33,8 @@ standard board are too small at your distance; otherwise the standard one is fin
 | `scale-board-rigid-large.pdf` | 24 × 17 in | 40 mm, **80 mm pitch** | alternate: only if the standard dots read too small. Always pass `--pitch-mm 80` (never 40) |
 
 All four are vector PDFs at exact size (the SVGs match). With no arguments the generator
-writes only the Letter one; regenerate the whole set with
-`python3 tools/board_artwork.py --all --out-dir tools/artwork`. The geometry is in
+writes only the Letter one; regenerate the whole set from the repository root with
+`cargo xtask autocalib artwork --all --out-dir crates/odyssey-autocalib/tools/artwork`. The geometry is in
 `board.json` and nothing else.
 
 ## Option A, quick: paper on foam board

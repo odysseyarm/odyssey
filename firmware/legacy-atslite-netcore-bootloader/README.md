@@ -30,7 +30,7 @@ Uses the same shared memory regions as BLE (they're not in use during bootloader
 - **ICMSG_RX** (0x20070000, 8K): Receive firmware from app core
 - **ICMSG_TX** (0x20078000, 8K): Send acknowledgments to app core
 
-See `boards/atslite/src/ble/host/mod.rs` for IPC usage example.
+See `firmware/atslite-common/src/ble/host/mod.rs` for IPC usage example.
 
 ## Memory Layout
 
@@ -43,9 +43,10 @@ Network Core Flash (256K @ 0x01000000):
 
 ## Building
 
+From the repository root:
+
 ```bash
-cd boards/atslite/netcore-bootloader
-cargo build --release
+cargo xtask firmware legacy-atslite build-netcore-bootloader
 ```
 
 ## Flashing
@@ -53,7 +54,7 @@ cargo build --release
 Flash to network core at 0x01000000:
 
 ```bash
-probe-rs download --chip nRF5340_xxAA_net --format Bin target/thumbv8m.main-none-eabihf/release/atslite-netcore-bootloader 0x01000000
+probe-rs download --chip nRF5340_xxAA_net --format Bin firmware/legacy-atslite-netcore-bootloader/target/thumbv8m.main-none-eabi/release/legacy-atslite-netcore-bootloader 0x01000000
 ```
 
 ## Boot Flow
@@ -71,6 +72,6 @@ probe-rs download --chip nRF5340_xxAA_net --format Bin target/thumbv8m.main-none
 
 ## See Also
 
-- `boards/atslite/bootloader/` - App core second-stage bootloader (controls net core boot)
-- `boards/atslite/src/ble/host/mod.rs` - IPC usage example
-- `memory/memory-atslite.kdl` - Memory layout
+- `firmware/legacy-atslite-bootloader/` - App core second-stage bootloader (controls net core boot)
+- `firmware/atslite-common/src/ble/host/mod.rs` - IPC usage example
+- `firmware/memory/memory-atslite.kdl` - Memory layout

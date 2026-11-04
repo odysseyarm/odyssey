@@ -23,9 +23,10 @@ Unlike traditional bootloaders, this system uses **DirectXIP** (eXecute-In-Place
 
 ### Building
 
+From the repository root:
+
 ```bash
-cd boards/atslite/bootloader
-cargo build --release
+cargo xtask firmware legacy-atslite build-bootloader
 ```
 
 ### Flashing
@@ -33,7 +34,7 @@ cargo build --release
 Flash to address 0x00002000:
 
 ```bash
-probe-rs download --chip nRF5340_xxAA --format Bin target/thumbv8m.main-none-eabihf/release/atslite-bootloader 0x00002000
+probe-rs download --chip nRF5340_xxAA --format Bin firmware/legacy-atslite-bootloader/target/thumbv8m.main-none-eabihf/release/legacy-atslite-bootloader 0x00002000
 ```
 
 Or use:
@@ -128,5 +129,5 @@ spawner.spawn(watchdog_feeder(wdt_handle).expect("Failed to spawn watchdog feede
 
 ## See Also
 
-- `boards/atslite/stage1-bootloader/` - First-stage bootloader with DirectXIP logic
-- `memory/memory-atslite.kdl` - Complete memory layout specification
+- `firmware/legacy-atslite-stage1-bootloader/` - First-stage bootloader with DirectXIP logic
+- `firmware/memory/memory-atslite.kdl` - Complete memory layout specification

@@ -4,11 +4,11 @@ name: Bootloader Release
 # pushed, e.g. atslite1-bootloader-v1. N is the bootloader's release counter, the
 # literal in its src/main.rs, and the tag has to agree with it.
 #
-# Releases made with `just release-bootloader` already exist by the time the tag
+# Releases made with `cargo xtask firmware <board> release-bootloader` already exist by the time the tag
 # does, so this workflow stands down for them rather than overwrite assets the
 # manifest may already hash. It only builds for tags pushed by hand.
 #
-# The build runs `just dist-bootloader`, the recipe a local release runs, so the
+# The build runs `cargo xtask firmware <board> dist-bootloader`, the command a local release runs, so the
 # two cannot drift.
 
 #
@@ -40,7 +40,9 @@ jobs:
       skip: ${{ steps.exists.outputs.skip }}
       device: ${{ steps.parse.outputs.device }}
       release: ${{ steps.parse.outputs.release }}
+      board: ${{ steps.parse.outputs.board }}
       board_dir: ${{ steps.parse.outputs.board_dir }}
+      crate_dir: ${{ steps.parse.outputs.crate_dir }}
     steps:
       - uses: actions/checkout@v5
       - name: Skip tags that already have a release
@@ -64,22 +66,25 @@ jobs:
           device="${RELEASE_TAG%-bootloader-v*}"
           release="${RELEASE_TAG##*-bootloader-v}"
           case "$device" in
-            atslite1) board_dir=firmware/atslite/boards/lite1 ;;
-            legacy-atslite1) board_dir=firmware/legacy/vm-fw/boards/atslite ;;
+            atslite1) board=lite1 ;;
+            legacy-atslite1) board=legacy-atslite ;;
             *) echo "Unknown device '$device' in tag $RELEASE_TAG" >&2; exit 1 ;;
           esac
           case "$release" in
             ''|*[!0-9]*) echo "Release '$release' is not a number" >&2; exit 1 ;;
           esac
-          source_release=$(firmware/release-counter "$board_dir/bootloader/src/main.rs")
+          crate_dir="firmware/$board-bootloader"
+          source_release=$(cargo xtask firmware release-counter "$crate_dir/src/main.rs")
           if [ "$release" != "$source_release" ]; then
-            echo "Tag release ($release) does not match $board_dir/bootloader/src/main.rs ($source_release)" >&2
+            echo "Tag release ($release) does not match $crate_dir/src/main.rs ($source_release)" >&2
             exit 1
           fi
           {
             echo "device=$device"
             echo "release=$release"
-            echo "board_dir=$board_dir"
+            echo "board=$board"
+            echo "board_dir=firmware/$board"
+            echo "crate_dir=$crate_dir"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -92,7 +97,7 @@ jobs:
       # rustup resolves the repo's rust-toolchain.toml from here, so the target and
       # tools are added to the pinned nightly.
       - name: Install the target and tools
-        working-directory: ${{ needs.resolve.outputs.board_dir }}
+        working-directory: ${{ needs.resolve.outputs.crate_dir }}
         run: |
           rustup target add thumbv8m.main-none-eabihf
           rustup component add llvm-tools
@@ -107,18 +112,12 @@ jobs:
           echo "LIBCLANG_PATH=$(printf '%s\n' /usr/lib/llvm-*/lib | sort -V | tail -n 1)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ needs.resolve.outputs.board_dir }}/bootloader -> target
+          workspaces: ${{ needs.resolve.outputs.crate_dir }} -> target
           shared-key: bootloader-${{ needs.resolve.outputs.device }}
-      - uses: extractions/setup-just@v3
-      - name: Install cargo-binutils
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-binutils
       - name: Build the release artifacts
-        working-directory: ${{ needs.resolve.outputs.board_dir }}
         env:
-          OBJCOPY: rust-objcopy
-        run: just dist-bootloader
+          BOARD: ${{ needs.resolve.outputs.board }}
+        run: cargo xtask firmware "$BOARD" dist-bootloader
       - uses: actions/upload-artifact@v6
         with:
           name: bootloader

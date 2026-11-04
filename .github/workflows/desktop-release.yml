@@ -1,7 +1,7 @@
 name: Desktop Release
 
 # Build and publish the Windows installer when an odyssey-desktop-vX.Y.Z tag is
-# pushed. The tag version must match apps/odyssey-desktop/Cargo.toml.
+# pushed. The tag version must match crates/odyssey-desktop/Cargo.toml.
 #
 # WiX runs on Windows only, so the bundle is built on a windows runner rather
 # than cross-compiled the way the FFI libraries are.
@@ -40,12 +40,12 @@ jobs:
       - name: Verify tag version
         id: check
         run: |
-          crate_version=$(grep -m1 '^version' apps/odyssey-desktop/Cargo.toml | cut -d'"' -f2)
+          crate_version=$(grep -m1 '^version' crates/odyssey-desktop/Cargo.toml | cut -d'"' -f2)
           # A manual run is from a branch, so there is no tag to compare.
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag_version="${GITHUB_REF_NAME#odyssey-desktop-v}"
             if [ "$tag_version" != "$crate_version" ]; then
-              echo "Tag version ($tag_version) does not match apps/odyssey-desktop/Cargo.toml version ($crate_version)" >&2
+              echo "Tag version ($tag_version) does not match crates/odyssey-desktop/Cargo.toml version ($crate_version)" >&2
               exit 1
             fi
           fi
@@ -87,38 +87,36 @@ jobs:
           tool: cargo-binstall
       - name: Install dioxus-cli
         run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
       # Two installers come from this one job. They are the same app: the offline
       # one is built without the `sdk-download` feature and carries Orbbec's camera
       # SDK, for customers who may only run offline software. Only the app crate
-      # is rebuilt for it. wix/prepare_orbbec.py stages what each variant needs,
-      # and the WiX template reads the two environment variables set here.
+      # is rebuilt for it. `cargo xtask desktop prepare-orbbec` stages what each
+      # variant needs, and the WiX template reads the two environment variables
+      # set here.
       - name: Bundle the online installer
-        working-directory: apps/odyssey-desktop
         shell: bash
         env:
           ODYSSEY_MSI_VARIANT: online
-          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\apps\odyssey-desktop\target\orbbec-stage
+          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\crates\odyssey-desktop\target\orbbec-stage
         run: |
-          python wix/prepare_orbbec.py online
+          cargo xtask desktop prepare-orbbec online
+          cd crates/odyssey-desktop
           dx bundle --desktop --package-types msi --out-dir dist/online
       - name: Bundle the offline installer
-        working-directory: apps/odyssey-desktop
         shell: bash
         env:
           ODYSSEY_MSI_VARIANT: offline
-          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\apps\odyssey-desktop\target\orbbec-stage
+          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\crates\odyssey-desktop\target\orbbec-stage
         run: |
-          python wix/prepare_orbbec.py offline
+          cargo xtask desktop prepare-orbbec offline
+          cd crates/odyssey-desktop
           dx bundle --desktop --package-types msi --no-default-features --out-dir dist/offline
       - name: Collect the installers
         shell: bash
         run: |
           mkdir dist
           for variant in online offline; do
-            set -- apps/odyssey-desktop/dist/$variant/*.msi
+            set -- crates/odyssey-desktop/dist/$variant/*.msi
             if [ ! -f "$1" ]; then echo "dx bundle produced no $variant msi" >&2; exit 1; fi
             suffix=""; [ "$variant" = offline ] && suffix="-offline"
             cp "$1" "dist/Odyssey-$VERSION-win-x64$suffix.msi"
@@ -170,7 +168,7 @@ jobs:
       - name: Install dioxus-cli
         run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
       - name: Bundle
-        working-directory: apps/odyssey-desktop
+        working-directory: crates/odyssey-desktop
         run: dx bundle --desktop --package-types appimage
       # Two defects in the bundler this image comes out of, both documented
       # upstream in tauri (dx shells out to tauri-bundler):

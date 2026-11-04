@@ -5,8 +5,8 @@ channel and download the images from GitHub releases.
 
 | File | Who follows it | How it changes |
 |---|---|---|
-| `releases.alpha.json` | Users who chose Alpha in Settings | `just gen-release` adds an entry |
-| `releases.stable.json` | Everyone else (the default) | `promote.sh` copies an entry from alpha |
+| `releases.alpha.json` | Users who chose Alpha in Settings | `cargo xtask firmware <board> gen-release` adds an entry |
+| `releases.stable.json` | Everyone else (the default) | `cargo xtask firmware promote` copies an entry from alpha |
 
 Hosts parse a manifest whole or not at all, and take the **first** entry they can
 install, so entries are newest-first and a malformed entry hides every update.
@@ -20,10 +20,12 @@ release pins the exact component releases it was tested with.
 | Component | Tag | Version is | Assets |
 |---|---|---|---|
 | Application | `<device>-v<semver>` | Cargo version | `app-a.bin`, `app-b.bin` |
-| Stage2 bootloader | `<device>-bootloader-v<N>` | counter `N` in `bootloader/src/main.rs` | `stage2-bootloader.{bin,hex,elf}` |
-| Net core | `<device>-netcore-v<N>` | counter `N` in `net-core/src/main.rs` | `net-core.{bin,hex,elf}` |
+| Stage2 bootloader | `<device>-bootloader-v<N>` | counter `N` in `firmware/<board>-bootloader/src/main.rs` | `stage2-bootloader.{bin,hex,elf}` |
+| Net core | `<device>-netcore-v<N>` | counter `N` in `firmware/<board>-net-core/src/main.rs` | `net-core.{bin,hex,elf}` |
 
-`<device>` is the manifest device key: `atslite1` or `legacy-atslite1`.
+`<device>` is the manifest device key: `atslite1` (board `lite1`) or
+`legacy-atslite1` (board `legacy-atslite`). Run every command from the
+repository root.
 
 The bootloader counter is the `release!` literal in its `main.rs`. It is
 published as `bcdDevice = 0xF000 | N` and as the DFU label `BOOTLOADER N`, and
@@ -32,15 +34,15 @@ changes. Do not reuse a number.
 
 ## Releasing a bootloader
 
-1. Raise the counter in `bootloader/src/main.rs` and merge to `master`.
+1. Raise the counter in `firmware/<board>-bootloader/src/main.rs` and merge to `master`.
 2. Publish it, either way:
-   - **Locally:** from the board directory, `just release-bootloader`
+   - **Locally:** `cargo xtask firmware <board> release-bootloader`
      (`DRY_RUN=1` runs the checks and stops). It builds, refuses a dirty tree,
      a commit not on `origin/master`, or an existing tag, then creates the
      release as a draft and publishes it last.
    - **CI:** push the tag `<device>-bootloader-v<N>`. The
      *Bootloader Release* workflow checks the tag against the source, builds with
-     the same `just dist-bootloader` and publishes. It does nothing if a release
+     the same `cargo xtask firmware <board> dist-bootloader` and publishes. It does nothing if a release
      for the tag already exists, so the two routes cannot overwrite each other.
 3. Add it to a firmware release (below). `gen-release` hashes the **published**
    asset, not a local build, because a build made elsewhere is not bit-identical
@@ -53,18 +55,18 @@ Do not delete a published bootloader release; manifest entries point at it.
 The net core (the nRF5340 BLE controller) is released on its own under
 `<device>-netcore-v<N>`, with assets `net-core.{bin,hex,elf}`.
 
-1. Raise the counter in `net-core/src/main.rs` and merge to `master`. The
+1. Raise the counter in `firmware/<board>-net-core/src/main.rs` and merge to `master`. The
    counter is the literal in `macro_rules! release { () => { N }; }`; release
-   tooling reads it through `firmware/release-counter`, which ignores layout,
+   tooling reads it through `cargo xtask firmware release-counter`, which ignores layout,
    so rustfmt may format the macro as it likes. It is `1..=65535`; `0` means
    "unknown" and is never released.
 2. Publish it, either way:
-   - **Locally:** from the board directory, `just release-netcore`
+   - **Locally:** `cargo xtask firmware <board> release-netcore`
      (`DRY_RUN=1` runs the checks and stops). It has the same checks and
      draft-then-publish order as `release-bootloader`.
    - **CI:** push the tag `<device>-netcore-v<N>`. The *Net Core Release*
      workflow checks the tag against the source, builds with the same
-     `just dist-netcore` and publishes, standing down if a release for the tag
+     `cargo xtask firmware <board> dist-netcore` and publishes, standing down if a release for the tag
      already exists.
 3. Add it to a firmware release (below). `gen-release` hashes the **published**
    `net-core.bin`, not a local build, and records `release` on the `net-core`
@@ -107,11 +109,11 @@ then the later application once N+1 is reported as running.
 
 ## Releasing application firmware
 
-From the board directory:
+From the repository root:
 
 ```
-just build
-just gen-release <requires_bootloader> <requires_netcore> <min_desktop>
+cargo xtask firmware <board> build
+cargo xtask firmware <board> gen-release <requires_bootloader> <requires_netcore> <min_desktop>
 ```
 
 - `requires_bootloader`: the lowest bootloader release this application can run
@@ -131,7 +133,7 @@ just gen-release <requires_bootloader> <requires_netcore> <min_desktop>
   hotfix to a desktop upgrade it does not need strands users. Older desktops
   are told a newer firmware exists and where to get the desktop.
 
-None has a default. Leaving one out would silently mean "any", so the recipe
+None has a default. Leaving one out would silently mean "any", so the command
 and the manifest parser both refuse.
 
 `gen-release` also refuses a bootloader or net-core image that changed without
@@ -143,18 +145,18 @@ Then tag and publish the application release, and promote it once it has run on
 alpha units:
 
 ```
-firmware/manifests/promote.sh <device> <version>
+cargo xtask firmware promote <device> <version>
 ```
 
-`promote.sh` refuses, before writing anything, a version that is not newer than
+`promote` refuses, before writing anything, a version that is not newer than
 stable's current newest for the device, and an entry whose `requires_netcore`
 is above the net core stable's newest entry carries. Stable units install
 stable's head, so promoting the entry that needs a net core before the bridge
 that delivers it would publish a head none of them can install; promote the
 bridge first, then the entry that requires it.
 
-`test-promote.sh` runs these refusals against synthetic manifests in a scratch
-directory and leaves the committed manifests alone.
+The xtask unit tests (`cargo test --manifest-path crates/xtask/Cargo.toml`) run
+these refusals against synthetic manifests and leave the committed manifests alone.
 
 ## Schema rules
 

@@ -1,5 +1,9 @@
 [alias]
 bin = ["run", "--package", "cargo-bin", "--"]
+# Repository automation (crates/xtask). Run from the repository root: the path is
+# relative to the current directory, and a firmware directory's own
+# .cargo/config.toml would build it for a thumb target.
+xtask = ["run", "--manifest-path", "crates/xtask/Cargo.toml", "--"]
 # `cargo lint`: every crate in the workspace, tests and examples included.
 #
 # dead_code_pub_in_binary is allowed here because rustc also fires it on the

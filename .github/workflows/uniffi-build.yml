@@ -170,8 +170,8 @@ jobs:
           path: dist
 
   # C# NuGet ships one package with all native libs (runtimes/<rid>/native).
-  # Natives: linux via cross (Cross.toml drives the containers, same as the
-  # local Justfile), windows via cargo-xwin, macos on the macos runner.
+  # Natives: linux via cross (Cross.toml drives the containers, same as
+  # `cargo xtask sdk dotnet build-lib`), windows via cargo-xwin, macos on the macos runner.
   dotnet-natives-linux:
     name: DotNet natives linux + windows
     runs-on: ubuntu-latest
@@ -265,7 +265,7 @@ jobs:
             mkdir -p "sdk/odyssey-hub-client-uniffi/target/$triple/release"
             mv dotnet-native-"$triple"/* "sdk/odyssey-hub-client-uniffi/target/$triple/release/"
           done
-      # Keep the tag in sync with install_tools in the dotnet Justfile
+      # Keep the tag in sync with UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs
       - name: Install uniffi-bindgen-cs
         run: cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0
       - name: Generate C# bindings

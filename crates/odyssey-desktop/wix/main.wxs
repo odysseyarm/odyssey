@@ -6,12 +6,12 @@
 
     ODYSSEY_MSI_VARIANT   "online" or "offline". Offline carries the Orbbec camera SDK as an
                           optional feature and asks for Orbbec's EULA; online carries nothing.
-    ODYSSEY_ORBBEC_STAGE  Directory prepare_orbbec.py filled (offline only): EULA.rtf and the
-                          SDK files the fragment installs.
+    ODYSSEY_ORBBEC_STAGE  Directory `cargo xtask desktop prepare-orbbec` filled (offline only):
+                          EULA.rtf and the SDK files the fragment installs.
 
   Both variants accept OFFLINE_MODE=1 at install time (the offline one defaults to it).
 
-  Run `just bundle online|offline`, or see .github/workflows/desktop-release.yml.
+  Run `cargo xtask desktop bundle online|offline`, or see .github/workflows/desktop-release.yml.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
     <Product
@@ -53,8 +53,8 @@
 
         <?if $(env.ODYSSEY_MSI_VARIANT) = "offline" ?>
         <!-- The offline installer offers Orbbec camera support as an optional feature, so it
-             uses the feature tree, and its licence page is Orbbec's EULA (prepare_orbbec.py
-             writes it). -->
+             uses the feature tree, and its licence page is Orbbec's EULA (`cargo xtask desktop
+             prepare-orbbec` writes it). -->
         <WixVariable Id="WixUILicenseRtf" Value="$(env.ODYSSEY_ORBBEC_STAGE)\EULA.rtf" />
         <UIRef Id="WixUI_FeatureTree" />
         <?else?>

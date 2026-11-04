@@ -153,9 +153,10 @@ Your linker script should use `$SLOT_ADDR` to set the correct flash origin.
 
 ## Building
 
+From the repository root:
+
 ```bash
-cd boards/atslite/stage1-bootloader
-cargo build --release
+cargo xtask firmware lite1 build-stage1
 ```
 
 ## Flashing
@@ -163,7 +164,7 @@ cargo build --release
 Flash to address 0x00000000:
 
 ```bash
-probe-rs download --chip nRF5340_xxAA --format Bin target/thumbv8m.main-none-eabihf/release/atslite-stage1-bootloader 0x00000000
+probe-rs download --chip nRF5340_xxAA --format Bin firmware/lite1-stage1-bootloader/target/thumbv8m.main-none-eabihf/release/lite1-stage1-bootloader 0x00000000
 ```
 
 Or use:
@@ -190,5 +191,5 @@ The first-stage bootloader **must fit in 8KB** (0x2000 bytes). Current optimizat
 
 ## See Also
 
-- `boards/atslite/bootloader/` - Second-stage bootloader (DFU functionality)
-- `memory/memory-atslite.kdl` - Complete memory layout specification
+- `firmware/lite1-bootloader/` - Second-stage bootloader (DFU functionality)
+- `firmware/memory/memory-lite1.kdl` - Complete memory layout specification

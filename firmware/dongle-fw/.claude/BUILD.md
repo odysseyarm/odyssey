@@ -4,30 +4,24 @@ This firmware supports two hardware configurations with different memory layouts
 
 ## Quick Start
 
-Use `just` commands (see [Justfile](../Justfile) for all available commands):
+Run `cargo xtask dongle ...` from the repository root (`cargo xtask dongle --help` lists every command):
 
 ### For Dongle (Default)
 ```bash
-# Build release firmware
-just build-release
+# Release artifacts (.hex, .uf2, signed -dfu.zip) in firmware/dongle-fw/dist
+cargo xtask dongle dist
 
-# Flash via DFU (put dongle in bootloader mode first)
-just dfu-release
-
-# Build and flash in one step
-just flash-release
+# Build the DFU package and flash it over serial (put dongle in bootloader mode first)
+cargo xtask dongle flash --port COM78
 ```
 
 ### For DK
 ```bash
-# Build DK firmware with RTT logging
-just build-dk
+# Build, flash and run on the DK with RTT logs (probe-rs)
+cargo xtask dongle flash-dk
 
-# Flash to DK via probe-rs
-just flash-dk
-
-# Run with RTT logs
-just run-dk
+# Attach probe-rs to a running DK
+cargo xtask dongle attach-dk
 ```
 
 ## Manual Building

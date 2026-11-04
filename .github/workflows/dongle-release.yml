@@ -9,7 +9,7 @@ name: Dongle Release
 #   .uf2  for mass-storage bootloaders, which appear as a drive to copy onto
 #   .zip  signed package for serial DFU, which is also what the app updates over
 #
-# The build runs `just dist` so a release and a local build cannot drift.
+# The build runs `cargo xtask dongle dist` so a release and a local build cannot drift.
 #
 # Run it by hand from the Actions tab (or `gh workflow run`) to test the build
 # without a tag: a run from a branch builds and uploads the artifacts but
@@ -71,21 +71,18 @@ jobs:
         with:
           workspaces: firmware/dongle-fw -> target
           shared-key: dongle-fw
-      - uses: extractions/setup-just@v3
-      - name: Install cargo-binstall
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-binstall
-      - name: Install the build tools
-        run: cargo binstall --no-confirm --locked cargo-binutils cargo-hex-to-uf2
-      # The signing step wants the legacy nrf5sdk-tools commands, which the
-      # standalone nrfutil only exposes through a subcommand; the PyPI build
-      # still provides them as `nrfutil pkg generate`.
+      # Nordic's nrfutil binary; the DFU package is signed by its nrf5sdk-tools
+      # extension, pinned to the version the nix shell uses.
       - name: Install nrfutil
-        run: pipx install nrfutil
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/nrfutil" \
+            https://files.nordicsemi.com/artifactory/swtools/external/nrfutil/executables/x86_64-unknown-linux-gnu/nrfutil
+          chmod +x "$HOME/.local/bin/nrfutil"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nrfutil" install nrf5sdk-tools=1.1.0
       - name: Build the release artifacts
-        working-directory: firmware/dongle-fw
-        run: just dist
+        run: cargo xtask dongle dist
       - name: Check the artifacts carry the tag version
         working-directory: firmware/dongle-fw
         run: |
