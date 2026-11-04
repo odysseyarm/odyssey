@@ -31,12 +31,12 @@ fn main() {
     let dfu_region = &regions["flash"]["dfu"];
     let netcore_ram = &regions["netcore_ram"];
 
-    // For netcore bootloader, swap TX and RX from the app core's perspective
-    // App's RX becomes netcore's TX (for DFU metadata access)
-    let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_rx"]; // App RX -> Net TX
-    let pcd_region = icmsg_tx; // PCD lives in app RX from netcore perspective
+    // The memory map names ICMSG regions from the app core's side; the net
+    // core sends on the app's RX region, which also holds the PCD (DFU metadata).
+    let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_rx"];
+    let pcd_region = icmsg_tx;
 
-    // DFU slot (in app flash) must be >= active. Reserve one page for state at end of primary.
+    // The DFU slot (in app flash) must be at least as large as ACTIVE. The last page of primary holds the state.
     let page_size: u64 = 4096;
     let active_len = netcore_primary.length().saturating_sub(page_size);
     let state_origin = netcore_primary.origin() + active_len;
@@ -90,7 +90,7 @@ PROVIDE(__pcd_region_end = {:#010x});
     fs::write(out_dir.join("memory.x"), memory_x)
         .unwrap_or_else(|e| panic!("Failed to write memory.x: {}", e));
 
-    // Also emit --defsym so symbols are always available even if linker ignores memory.x include search paths.
+    // Defsyms too, in case the linker does not find the memory.x include.
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_active_start={:#x}",
         netcore_primary.origin()

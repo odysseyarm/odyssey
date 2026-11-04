@@ -29,7 +29,6 @@ pub struct VmImuInterrupt {
     irq: Input<'static>,
 }
 
-// Implement the Imu trait from common::platform
 impl<const N: usize> common::platform::Imu for VmImu<N> {
     type Error = Error<DeviceError<spim::Error, Infallible>>;
     type Interrupt = VmImuInterrupt;
@@ -38,7 +37,6 @@ impl<const N: usize> common::platform::Imu for VmImu<N> {
         &mut self,
     ) -> impl Future<Output = Result<common::platform::ImuData, Self::Error>> {
         async move {
-            // BMI270 timestamp constants
             const TS_BITS: u32 = 24;
             const TS_MASK: u32 = (1 << TS_BITS) - 1; // 0x00FF_FFFF
             const TICK_US_NUM: u32 = 625;
@@ -46,15 +44,14 @@ impl<const N: usize> common::platform::Imu for VmImu<N> {
 
             let pkt = self.inner.get_data().await?;
 
-            // Calculate timestamp delta
-            let ts_raw = pkt.time & TS_MASK; // keep only 24 bits
+            let ts_raw = pkt.time & TS_MASK;
             let dt_ticks_u32 = match self.last_ts_raw {
                 Some(prev) => (ts_raw.wrapping_sub(prev)) & TS_MASK,
                 None => 0,
             };
             self.last_ts_raw = Some(ts_raw);
 
-            // ticks → µs: dt * (625/16)  (use u64 for the mul, then cast back)
+            // BMI270 ticks are 39.0625 µs: µs = ticks * 625 / 16, multiplied in u64.
             let dt_us =
                 (((dt_ticks_u32 as u64) * (TICK_US_NUM as u64)) >> TICK_US_DEN_SHIFT) as u32;
             self.ts_micros = self.ts_micros.wrapping_add(dt_us);
@@ -68,7 +65,6 @@ impl<const N: usize> common::platform::Imu for VmImu<N> {
     }
 }
 
-// Implement the ImuInterrupt trait
 impl common::platform::ImuInterrupt for VmImuInterrupt {
     fn wait(&mut self) -> impl Future<Output = ()> {
         self.irq.wait_for_low()

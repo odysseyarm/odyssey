@@ -17,10 +17,10 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// Magic value to identify valid PCD command structure
+/// Marks a valid PCD command structure.
 pub const PCD_CMD_MAGIC: u32 = 0x50434431; // "PCD1"
 
-/// Magic value to identify valid PCD status structure
+/// Marks a valid PCD status structure.
 pub const PCD_STATUS_MAGIC: u32 = 0x50434453; // "PCDS"
 
 /// How many times the application core starts the network core bootloader for
@@ -60,7 +60,9 @@ pub struct PcdStatus {
     /// Status code
     pub status: AtomicU32,
 
-    /// Reserved for future use
+    /// Not part of the protocol. The app core bootloader stores the page-padded
+    /// image size in `[0]` and a progress marker ('NTP'/'NTD') in `[1]`, for
+    /// debugging without RTT.
     pub reserved: [u32; 2],
 }
 

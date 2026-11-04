@@ -49,20 +49,16 @@ macro_rules! dispatch_cmd {
         // Execute sync command and get the parsed Return (POD / byte-backed).
         let ret = bt_hci::cmd::SyncCmd::exec(&cmd_val, $ctrl).await;
 
-        // Sizes/constants
         const RLEN: usize = < $ty as bt_hci::cmd::SyncCmd >::ReturnBuf::LEN;
         const HEAD: usize = 7; // 1 pkt + 1 event + 1 len + 1 num + 2 opcode + 1 status
         let param_len: u8 = (1 + 2 + 1 + RLEN) as u8;
 
-        // Allocate full controller->host event buffer on the stack.
         let mut buf = [0u8; HEAD + RLEN];
 
-        // PacketKind::Event (0x04)
         buf[0] = bt_hci::PacketKind::Event as u8;
 
         buf[1] = CommandComplete::EVENT_CODE;
 
-        // Parameter length
         buf[2] = param_len;
 
         // Num HCI command packets = 1
@@ -77,10 +73,9 @@ macro_rules! dispatch_cmd {
             Ok(ret) => {
                 buf[6] = bt_hci::param::Status::SUCCESS.into_inner();
 
-                // Return parameters RLEN bytes: copy from the parsed Return value.
+                // TODO: bt-hci has no WriteHci for command return values, so the
+                // parsed Return is copied out as raw bytes.
                 unsafe {
-                    // TODO this is a sketchy hack around the lack of WriteHci for command
-                    // responses
                     let src = core::slice::from_raw_parts((&ret as *const _ as *const u8), RLEN);
                     buf[HEAD .. HEAD + RLEN].copy_from_slice(src);
                 }
@@ -116,11 +111,11 @@ where
     E: core::fmt::Debug,
 {
     dispatch_cmd!(send, ctrl, opcode, payload, [
-        // ┬º7.1 Link Control
+        // §7.1 Link Control
         Disconnect,
         @async ReadRemoteVersionInformation,
 
-        // ┬º7.3 Controller & Baseband
+        // §7.3 Controller & Baseband
         Reset,
         SetEventMask,
         ReadTransmitPowerLevel,
@@ -131,16 +126,16 @@ where
         WriteAuthenticatedPayloadTimeout,
         HostNumberOfCompletedPackets,
 
-        // ┬º7.4 Informational params
+        // §7.4 Informational params
         ReadLocalVersionInformation,
         ReadLocalSupportedCmds,
         ReadLocalSupportedFeatures,
         ReadBdAddr,
 
-        // ┬º7.5 Status params
+        // §7.5 Status params
         ReadRssi,
 
-        // ┬º7.8 LE Controller (legacy + extended)
+        // §7.8 LE Controller (legacy + extended)
         LeSetAdvParams,
         LeReadAdvPhysicalChannelTxPower,
         LeSetAdvData,
@@ -189,7 +184,6 @@ where
         LeLongTermKeyRequestReply,
         LeLongTermKeyRequestNegativeReply,
         LeReadSupportedStates,
-        // LeTestEnd,
         LeSetDataLength,
         LeReadSuggestedDefaultDataLength,
         LeWriteSuggestedDefaultDataLength,
@@ -223,20 +217,6 @@ where
         LeSetDataRelatedAddrChanges,
         LeSetHostFeature,
         LeSetHostFeatureV2,
-
-        // Extra LE impls in the fragment:
-        // LeSetExtAdvData,
-        // LeSetExtScanResponseData,
-        // LeSetExtAdvEnable,
-        // LeSetPeriodicAdvData,
-        // LeSetExtScanParams,
-        // @async LeExtCreateConn,
-        // LeSetConnectionlessCteTransmitParams,
-        // LeSetConnCteTransmitParams,
-        // @async LeExtCreateConnV2,
-        // LeSetPeriodicAdvSubeventData,
-        // LeSetPeriodicAdvResponseData,
-        // LeSetPeriodicSyncSubevent,
 
         // Vendor-specific (Zephyr/Nordic)
         ZephyrReadVersionInfo,

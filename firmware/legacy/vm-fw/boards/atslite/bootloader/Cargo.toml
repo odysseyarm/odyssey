@@ -48,4 +48,4 @@ defmt = [
 ]
 
 [profile.release]
-debug = 2  # Full debug info for better debugging
+debug = 2

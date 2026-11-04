@@ -7,8 +7,8 @@ use embassy_nrf::nvmc::Nvmc;
 
 const PAGE_SIZE: u32 = 4096;
 
-// Cache the confirmed boot state in RAM so we don't have to re-read from flash
-// This avoids issues where flash might be corrupted between confirm and DFU request
+// Boot state as last confirmed, kept in RAM so a DFU request does not re-read
+// flash: the flash copy can be corrupted between confirmation and the request.
 static CACHED_ACTIVE_SLOT: AtomicU8 = AtomicU8::new(0);
 static CACHED_PENDING_SLOT: AtomicU8 = AtomicU8::new(0);
 
@@ -22,8 +22,8 @@ fn bootloader_state_addr() -> u32 {
 pub struct BootConfirmation;
 
 impl BootConfirmation {
-    /// Mark boot as successful - should be called by app after successful boot
-    /// This updates the cached state for DFU requests
+    /// Marks the running image as booted in flash and caches the resulting
+    /// slots for [`Self::request_dfu_with`]. Call once the app has come up.
     pub fn mark_booted(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 
@@ -38,10 +38,8 @@ impl BootConfirmation {
             );
         }
 
-        // Call mark_booted to update flash
         manager.mark_booted(nvmc, PAGE_SIZE).map_err(|_| ())?;
 
-        // Read back and cache the updated state
         let state = manager.read();
         CACHED_ACTIVE_SLOT.store(state.active_slot, Ordering::Release);
         CACHED_PENDING_SLOT.store(state.pending_slot, Ordering::Release);
@@ -57,8 +55,8 @@ impl BootConfirmation {
         Ok(())
     }
 
-    /// Confirm boot - marks the current boot as successful
-    /// This sets boot_counter to 0 and updates active_slot to pending_slot
+    /// Confirms the current boot: zeroes `boot_counter`, promotes `pending_slot`
+    /// to `active_slot`, caches the slots and writes the state to flash.
     pub fn confirm_boot_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
         let mut state = manager.read();
@@ -84,7 +82,6 @@ impl BootConfirmation {
             state.boot_counter
         );
 
-        // Cache the confirmed state in RAM for later use by request_dfu_with
         CACHED_ACTIVE_SLOT.store(state.active_slot, Ordering::Release);
         CACHED_PENDING_SLOT.store(state.pending_slot, Ordering::Release);
 
@@ -92,7 +89,6 @@ impl BootConfirmation {
             .write_boot_state(nvmc, &state, PAGE_SIZE)
             .map_err(|_| ());
 
-        // Verify what was actually written
         #[cfg(feature = "defmt")]
         {
             let verify = manager.read();
@@ -109,13 +105,11 @@ impl BootConfirmation {
         result
     }
 
-    /// Request DFU by writing SWAP_MAGIC to flash state
-    /// This preserves the boot state (active/pending slots)
+    /// Requests DFU by writing SWAP_MAGIC to the flash boot state, keeping the
+    /// active and pending slots cached by the last confirmation.
     pub fn request_dfu_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 
-        // Use cached state from RAM instead of re-reading flash
-        // Flash might be corrupted between boot confirmation and DFU request
         let active_slot = CACHED_ACTIVE_SLOT.load(Ordering::Acquire);
         let pending_slot = CACHED_PENDING_SLOT.load(Ordering::Acquire);
 
@@ -137,7 +131,6 @@ impl BootConfirmation {
 
         let result = manager.request_dfu(nvmc, &state, PAGE_SIZE).map_err(|_| ());
 
-        // Verify what was written
         #[cfg(feature = "defmt")]
         {
             let verification = manager.read();

@@ -6,7 +6,6 @@
 runner = "probe-rs run --chip nrf5340_xxAA_net"
 
 rustflags = [
-  # Code-size optimizations.
   "-C", "force-frame-pointers=yes",
 ]
 

@@ -1,5 +1,3 @@
-// VM Platform trait implementation
-
 use crate::imu::{VmImu, VmImuInterrupt};
 use crate::l2cap::VmL2capChannels;
 
@@ -19,7 +17,7 @@ impl common::platform::Platform for VmPlatform {
     // BMI270 with 500 dps range: 65.536 LSB/(deg/s)
     const GYRO_LSB_PER_DPS: f32 = 65.536;
 
-    // BMI270 axis transforms: flip X and Y, keep Z
+    // BMI270 mounting: flip X and Y, keep Z.
     fn transform_accel(raw: [i32; 3]) -> [i32; 3] {
         [-raw[0], -raw[1], raw[2]]
     }

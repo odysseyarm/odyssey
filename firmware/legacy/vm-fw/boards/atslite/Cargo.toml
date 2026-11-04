@@ -66,8 +66,8 @@ embedded-io-async = "0.7"
 memory-spec = "0.3.0"
 
 [profile.release]
-opt-level = "z"     # Optimize for size
-lto = "fat"         # Enable Link Time Optimization
+opt-level = "z"
+lto = "fat"
 codegen-units = 1   # Better optimization at cost of compile time
 debug = 2           # Keep DWARF for probe-rs RTT locations
 

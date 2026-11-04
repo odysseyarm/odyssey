@@ -30,12 +30,12 @@ fn main() {
     let dfu_region = &regions["flash"]["dfu"];
     let netcore_ram = &regions["netcore_ram"];
 
-    // For net-core, swap TX and RX from the app core's perspective
-    // App's TX becomes net's RX, and app's RX becomes net's TX
-    let icmsg_rx = &regions["ram"]["high_ram"]["icmsg_tx"]; // App TX -> Net RX
-    let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_rx"]; // App RX -> Net TX
+    // The memory map names ICMSG regions from the app core's side; the net
+    // core receives on the app's TX region and sends on its RX region.
+    let icmsg_rx = &regions["ram"]["high_ram"]["icmsg_tx"];
+    let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_rx"];
 
-    // NVMC pages are 4096 bytes.
+    // NVMC page size.
     let page_size: u64 = 4096;
     let active_len = netcore_primary.length().saturating_sub(page_size);
     let dfu_len = dfu_region.length();
@@ -94,7 +94,7 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
     fs::write(out_dir.join("memory.x"), memory_x)
         .unwrap_or_else(|e| panic!("Failed to write memory.x: {}", e));
 
-    // Provide defsyms so embassy-boot can always find the partition symbols.
+    // Defsyms so embassy-boot finds the partition symbols even without memory.x.
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_active_start={:#x}",
         netcore_primary.origin()

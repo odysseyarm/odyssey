@@ -182,9 +182,7 @@ where
             ll.interface().write_register(addr, 0, data).await
         }
 
-        // ---------- Bank 0 ----------
-        // (Note: our interface always issues the bank-select under the hood;
-        // we still group by bank to minimize redundant selects)
+        // Every write selects its bank first; the writes are grouped by bank only for reading.
         w(&mut self.ll, 0x00, 0x12, 0x01).await?; // operation mode
         w(&mut self.ll, 0x00, 0xDC, 0x00).await?; // internal_system_control_disable
         w(&mut self.ll, 0x00, 0xFB, 0x04).await?; // LEDDAC disable
@@ -193,11 +191,9 @@ where
         w(&mut self.ll, 0x00, 0x30, 0x01).await?; // Manual_PowerControl_Update_Req (1)
         w(&mut self.ll, 0x00, 0x1F, 0x00).await?; // freerun_irtx_disable
 
-        // ---------- Bank 1 ----------
         w(&mut self.ll, 0x01, 0x2D, if v_flip { 0x01 } else { 0x00 }).await?; // V flip
 
-        // ---------- Bank 12 (0x0C) ----------
-        // resolution: 4095 x 4095 => [0xFF, 0x0F] LE
+        // Resolution 4095 x 4095, little-endian [0xFF, 0x0F].
         let res_xy = [0xFFu8, 0x0F];
         w_multi(&mut self.ll, 0x0C, 0x60, &res_xy).await?; // scale X
         w_multi(&mut self.ll, 0x0C, 0x62, &res_xy).await?; // scale Y
@@ -219,11 +215,9 @@ where
         w(&mut self.ll, 0x0C, 0x12, 0x00).await?;
         w(&mut self.ll, 0x0C, 0x13, 0x00).await?;
 
-        // ---------- Bank 0 SYNC ----------
-        // (this is the crucial one for coordinates to become valid)
+        // Coordinates stay invalid until Bank 0 is synced.
         w(&mut self.ll, 0x00, 0x01, 0x01).await?; // Bank0_Sync_Updated_Flag
 
-        // ---------- Bank 12 (gain/expo/thresholds) ----------
         w(&mut self.ll, 0x0C, 0x0B, gain_global).await?; // B_global
         w(&mut self.ll, 0x0C, 0x0C, gain_ggh).await?; // B_ggh
 
@@ -235,7 +229,6 @@ where
         w(&mut self.ll, 0x0C, 0x46, 0x00).await?; // oalb
         w(&mut self.ll, 0x0C, 0x47, 0x6E).await?; // thd (Yth = 110)
 
-        // ---------- Bank 1 SYNC ----------
         w(&mut self.ll, 0x01, 0x01, 0x01).await?; // Bank1_Sync_Updated_Flag
 
         Ok(())
@@ -328,8 +321,7 @@ pub mod low_level {
                         value: uint = 0..2,
                     },
                     /// Read exposure time
-                    /// unit = 200ns
-                    /// Note: The minimum setting is 100.
+                    /// unit = 200ns. The minimum setting is 100.
                     register B_expo_R {
                         type Access = RO;
                         const ADDRESS = 0x0E;
@@ -346,7 +338,7 @@ pub mod low_level {
                         value: uint = 0..24,
                     },
                     /// Write sensor gain 1 (needs Bank1 sync)
-                    /// Note: The minimum total gain (gain1+gain2) setting is 2X.
+                    /// The minimum total gain (gain1+gain2) setting is 2X.
                     register B_global {
                         type Access = WO;
                         const ADDRESS = 0x0B;
@@ -409,7 +401,7 @@ pub fn parse_bank5(bytes: [u8; 2048 / 8]) -> [ObjectFormat1; 16] {
     for (i, c) in bytes.chunks_exact(16).enumerate() {
         let mut tmp = [0u8; 16];
         tmp.copy_from_slice(c);
-        out[i] = bytemuck::pod_read_unaligned(&tmp); // <- unaligned-safe
+        out[i] = bytemuck::pod_read_unaligned(&tmp); // `tmp` is only byte-aligned
     }
     out
 }

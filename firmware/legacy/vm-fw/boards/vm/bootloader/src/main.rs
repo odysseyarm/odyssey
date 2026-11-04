@@ -36,13 +36,11 @@ const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_devi
 fn main() -> ! {
     let p = embassy_nrf::init(Default::default());
 
-    // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
-    // as it prevents a hard fault when accessing flash 'too early' after boot.
+    // Delay before touching flash: with a debugger/RTT attached, flash accessed
+    // too early after boot hard-faults.
     for _ in 0..10000000 {
         cortex_m::asm::nop();
     }
-
-    // defmt::info!("bootloader");
 
     let flash = Nvmc::new(p.NVMC);
     let flash = Mutex::new(RefCell::new(flash));
@@ -55,7 +53,6 @@ fn main() -> ! {
     let state = boot.prepare_boot(aligned_buf.as_mut()).unwrap();
 
     if state == embassy_boot::State::DfuDetach {
-        // Create the driver, from the HAL.
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
         // Own product id, so the host can tell bootloader from application
         // without opening the device; bcdDevice then carries this bootloader's
@@ -81,7 +78,7 @@ fn main() -> ! {
             ResetImmediate,
             NullForwarder,
             NullDualBankWriter,
-            false, // active_bank_is_a (doesn't matter for single-bank)
+            false, // active_bank_is_a; irrelevant for a single-bank layout
         );
         let mut builder = Builder::new(
             driver,
@@ -92,12 +89,9 @@ fn main() -> ! {
             &mut control_buf,
         );
 
-        // We add MSOS headers so that the device automatically gets assigned the WinUSB driver on Windows.
-        // Otherwise users need to do this manually using a tool like Zadig.
-        //
-        // It seems these always need to be at added at the device level for this to work and for
-        // composite devices they also need to be added on the function level (as shown later).
-        //
+        // MSOS headers make Windows assign the WinUSB driver automatically
+        // instead of by hand with a tool like Zadig. They have to be at device
+        // level, and for a composite device at function level too.
         builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
         builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
         builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -106,8 +100,7 @@ fn main() -> ! {
         ));
 
         usb_dfu::<_, _, _, _, _, _, 4096>(&mut builder, &mut state, |func| {
-            // You likely don't have to add these function level headers if your USB device is not composite
-            // (i.e. if your device does not expose another interface in addition to DFU)
+            // Function-level headers matter only for a composite device.
             func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
             func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
                 "DeviceInterfaceGUIDs",
@@ -129,12 +122,6 @@ fn main() -> ! {
         cortex_m::asm::bootload(active_offset as *const u32)
     }
 }
-
-// #[no_mangle]
-// #[cfg_attr(target_os = "none", link_section = ".HardFault.user")]
-// unsafe extern "C" fn HardFault() {
-//     cortex_m::peripheral::SCB::sys_reset();
-// }
 
 #[exception]
 unsafe fn DefaultHandler(_: i16) -> ! {

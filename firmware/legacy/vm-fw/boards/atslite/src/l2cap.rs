@@ -1,12 +1,9 @@
 #![allow(static_mut_refs)]
-// Real L2CAP implementation for ATSlite (wraps BLE stack)
-
 use core::future::Future;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use common::odyssey_protocol::Packet;
 
-// Re-export the BLE L2CAP types
 pub use crate::ble::l2cap_bridge::{L2capChannels as Inner, get_or_init};
 use crate::ble::l2cap_bridge::{
     L2capControlRxChannel, L2capControlTxChannel, L2capDataRxChannel, L2capDataTxChannel,
@@ -24,7 +21,7 @@ impl AtsliteL2capChannels {
     }
 }
 
-// Wrapper types that preserve the actual channel type
+// Keep the concrete channel type so control and data channels stay distinct.
 pub enum L2capRxWrapper {
     Control(&'static L2capControlRxChannel),
     Data(&'static L2capDataRxChannel),
@@ -35,8 +32,8 @@ pub enum L2capTxWrapper {
     Data(&'static L2capDataTxChannel),
 }
 
-// Wrappers that must live for 'static to satisfy the trait signatures.
-// We guard initialization ourselves to avoid double-init panics when reconnecting.
+// The trait signatures need 'static wrappers. Initialization is guarded here
+// because reconnecting would otherwise initialize them twice and panic.
 static WRAPPERS_INIT: AtomicBool = AtomicBool::new(false);
 static mut CONTROL_RX_WRAPPER: Option<L2capRxWrapper> = None;
 static mut DATA_RX_WRAPPER: Option<L2capRxWrapper> = None;
@@ -66,7 +63,6 @@ fn ensure_wrappers(inner: &Inner) {
     }
 }
 
-// Implement the L2capChannels trait
 impl common::platform::L2capChannels for AtsliteL2capChannels {
     type Receiver = L2capRxWrapper;
     type Sender = L2capTxWrapper;

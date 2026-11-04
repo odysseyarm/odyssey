@@ -1,8 +1,5 @@
-/// Platform abstraction traits for board-specific implementations
-///
-/// Each board crate (vm-board, atslite-board) implements these traits
-/// to provide platform-specific functionality while keeping the core
-/// logic in this common library platform-agnostic.
+//! Traits each board crate (vm-board, atslite-board) implements so the core
+//! logic here stays board-independent.
 use core::future::Future;
 
 use embassy_nrf::usb::{Endpoint, In, Out};
@@ -13,31 +10,28 @@ use crate::Paj;
 use crate::odyssey_protocol::{Packet, PacketType};
 use crate::settings::Settings;
 
-/// IMU data with timestamp
+/// One IMU sample.
 pub struct ImuData {
     pub accel: [i32; 3],
     pub gyro: [i32; 3],
     pub timestamp_micros: u32,
 }
 
-/// IMU (Inertial Measurement Unit) abstraction
 pub trait Imu {
     type Error: core::fmt::Debug;
     type Interrupt;
 
-    /// Read IMU data (accel + gyro + timestamp) from sensor
-    /// The timestamp should be in microseconds and wrap-safe for timing calculations
+    /// Reads accel, gyro and a timestamp. The timestamp is in microseconds and
+    /// may wrap, so compare it with wrapping arithmetic.
     fn read_data(&mut self) -> impl Future<Output = Result<ImuData, Self::Error>>;
 }
 
-/// IMU interrupt source abstraction
 pub trait ImuInterrupt {
-    /// Wait for the next IMU interrupt
     fn wait(&mut self) -> impl Future<Output = ()>;
 }
 
-/// L2CAP channel abstraction for BLE communication
-/// For platforms without BLE (like VM), this is a no-op mock
+/// BLE L2CAP channels. Boards without BLE (the VM) supply a mock that never
+/// receives and drops what it sends.
 pub trait L2capChannels: Sized {
     type Receiver: L2capReceiver;
     type Sender: L2capSender;
@@ -57,14 +51,12 @@ pub trait L2capSender {
     fn try_send(&self, pkt: Packet) -> Result<(), ()>;
 }
 
-/// Platform-specific configuration and initialization
 pub trait Platform {
     type Imu: Imu;
     type ImuInterrupt: ImuInterrupt;
     type L2capChannels: L2capChannels;
     type Timer: embassy_nrf::timer::Instance;
 
-    /// Platform name for logging
     const NAME: &'static str;
 
     /// IMU accelerometer scaling: LSB per g
@@ -73,13 +65,13 @@ pub trait Platform {
     /// IMU gyroscope scaling: LSB per degree/second
     const GYRO_LSB_PER_DPS: f32;
 
-    /// IMU axis transform function: takes raw [x, y, z] and returns transformed [x, y, z]
+    /// Maps raw accel axes into the common frame.
     fn transform_accel(raw: [i32; 3]) -> [i32; 3];
 
-    /// IMU gyro axis transform function: takes raw [x, y, z] and returns transformed [x, y, z]
+    /// Maps raw gyro axes into the common frame.
     fn transform_gyro(raw: [i32; 3]) -> [i32; 3];
 
-    /// Round an accelerometer ODR value (Hz) to the nearest valid value for this platform's sensor.
+    /// Rounds an accelerometer ODR (Hz) to the nearest rate the sensor supports.
     fn round_accel_odr(hz: u16) -> u16;
 
     /// Device ID for this platform

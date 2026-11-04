@@ -19,24 +19,22 @@ use panic_probe as _;
 fn main() -> ! {
     let p = embassy_nrf::init(Default::default());
 
-    // Uncomment this if debugging with RTT attached to prevent early flash access faults
+    // With RTT attached, uncomment this delay: flash accessed too soon after boot faults.
     // for _ in 0..10000000 {
     //     cortex_m::asm::nop();
     // }
 
-    // No watchdog in stage1 - stage2 bootloader starts it instead
-    // This allows updating watchdog configuration via stage2 bootloader updates
+    // Stage1 starts no watchdog; stage2 does, so a stage2 update can change
+    // the watchdog configuration.
     let flash = Nvmc::new(p.NVMC);
     let flash = Mutex::<NoopRawMutex, _>::new(RefCell::new(flash));
 
-    // Get bootloader config from linker symbols (ACTIVE, DFU, STATE partitions)
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
     let active_offset = config.active.offset();
 
-    // Prepare boot: performs swap if needed, handles rollback on failed boots
+    // Swaps in a pending update and rolls back failed boots.
     let bl: BootLoader = BootLoader::prepare(config);
 
-    // Boot the stage2 bootloader (with swap performed if needed)
     unsafe { bl.load(active_offset) }
 }
 

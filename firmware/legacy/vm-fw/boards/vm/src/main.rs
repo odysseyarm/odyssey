@@ -24,7 +24,6 @@ const DEVICE_INTERFACE_GUID: &str = "{4d36e96c-e325-11ce-bfc1-08002be10318}";
 static BATTERY_SOC: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(100);
 static BATTERY_CHARGING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
 
-// Interrupt bindings for nRF52840 peripherals
 bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
@@ -52,17 +51,14 @@ impl
 async fn main(spawner: Spawner) {
     defmt::info!("VM board initialization starting...");
 
-    // 1. Initialize embassy with VM-specific config
     let mut config = Config::default();
     config.dcdc.reg0_voltage = Some(Reg0Voltage::_2V4);
     let p = embassy_nrf::init(config);
 
     defmt::info!("Embassy initialized with DCDC at 2.4V");
 
-    // 2. Split board peripherals using the VM pin definitions
     let board: Board = split_board!(p);
 
-    // 3. Initialize USB device
     defmt::info!("Initializing USB device...");
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_signal) = usb::usb_device(
@@ -77,7 +73,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
     defmt::info!("USB device spawned");
 
-    // 4. Initialize PAJ7025 sensors (R2 and R3)
     defmt::info!("Initializing PAJ7025 sensors...");
 
     // PAJ7025 R2 (Near Field) on TWISPI0
@@ -146,7 +141,7 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("FOD trigger channels initialized");
 
-    // 6. Initialize BMI270 IMU on SPI2
+    // BMI270 on SPI2.
     defmt::info!("Initializing BMI270 IMU...");
     let imu_spi_pins = common::utils::SpiPins {
         sck: board.bmi270.sck.into(),
@@ -167,7 +162,6 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("BMI270 IMU initialized");
 
-    // 7. Initialize settings storage with NVMC
     defmt::info!("Initializing settings storage...");
     let nvmc = Nvmc::new(p.NVMC);
     let flash_dev = embassy_embedded_hal::adapter::BlockingAsync::new(nvmc);
@@ -181,13 +175,12 @@ async fn main(spawner: Spawner) {
     .await
     .unwrap();
 
-    // Clamp accel_odr to nearest valid value for this platform's sensor
+    // Round accel_odr to the nearest rate this sensor supports.
     settings_ref.general.accel_config.accel_odr =
         imu::round_accel_odr_hz(settings_ref.general.accel_config.accel_odr);
 
     defmt::info!("Settings initialized and applied to PAJ sensors");
 
-    // 8. Create VM object-mode context
     defmt::info!("Creating ObjectModeContext...");
     let ctx = ObjectModeContext::<VmPlatform, _, _> {
         paj7025r2_group: (paj_r2_mutex, board.paj7025r2.fod.into(), p.GPIOTE_CH1),
@@ -210,6 +203,5 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("VM initialization complete! Entering object mode...");
 
-    // 10. Enter object mode (runs forever)
     let _ = object_mode(0x520F, ctx).await;
 }

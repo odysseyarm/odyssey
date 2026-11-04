@@ -50,7 +50,7 @@ symbols {
     __stage2_state_start      "flash.stage2_state.origin"
     __stage2_state_end        "flash.stage2_state.end"
 
-    // Backward compatibility: __bootloader_state points to stage2_state
+    // __bootloader_state is the stage2_state partition.
     __bootloader_state_start  "flash.stage2_state.origin"
     __bootloader_state_end    "flash.stage2_state.end"
 

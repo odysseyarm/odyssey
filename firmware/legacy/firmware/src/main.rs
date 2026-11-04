@@ -31,7 +31,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 #[cortex_m_rt::pre_init]
 unsafe fn init_ramtext() {
     core::arch::asm!(
-        // Initialise .data memory. `__sdata`, `__sidata`, and `__edata` come from the linker script.
+        // Copy .ramtext from flash into RAM. `__sramtext`, `__eramtext` and `__siramtext` come from the linker script.
         "ldr r0, =__sramtext",
         "ldr r1, =__eramtext",
         "ldr r2, =__siramtext",
@@ -46,16 +46,16 @@ unsafe fn init_ramtext() {
 
     #[cfg(feature = "mcuboot")]
     core::arch::asm!(
-        "cpsie i", // Clear primask
-        // Clear SHPR3
+        // Undo state MCUboot may leave behind: clear PRIMASK, SHPR3, SHCSR, SCR and CCR
+        // before the runtime starts.
+        "cpsie i",
         "ldr r0, =0xE000ED20",
         "ldr r1, =0x0",
         "str r1, [r0]",
-        "str r1, [r0, #4]", // Clear SHCSR
-        // Clear SCR
+        "str r1, [r0, #4]",
         "ldr r0, =0xE000ED10",
         "str r1, [r0]",
-        "str r1, [r0, #4]", // Clear CCR
+        "str r1, [r0, #4]",
     );
 }
 
@@ -88,20 +88,16 @@ async fn main(spawner: Spawner) {
     info!("Starting up");
     let shared_buffers = SHARED_BUFFERS.take();
     let mut config = Config::default();
-    // config.hfclk_source = HfclkSource::ExternalXtal;
 
-    // if the ats_mot_nrf52840 board is powered from USB
-    // (high voltage mode), GPIO output voltage is set to 1.8 volts by
-    // default and that is not enough for the vision sensors.
-    // Increase GPIO voltage to 2.4 volts.
+    // When the ats_mot_nrf52840 is powered from USB (high voltage mode), GPIO
+    // output defaults to 1.8 V, which is too low for the vision sensors; raise
+    // it to 2.4 V.
     #[cfg(feature = "_nrf52840")]
     {
         config.dcdc.reg0_voltage = Some(Reg0Voltage::_2V4);
     }
     let mut p = embassy_nrf::init(config);
     info!("Embassy nrf init done");
-
-    // log_stuff();
 
     #[cfg(any(
         feature = "atslite-1-1",
@@ -152,18 +148,12 @@ async fn main(spawner: Spawner) {
 
     wide.set_gain_1(0).await;
     wide.set_gain_2(0).await;
-    // wide.set_frame_period(16384).await;
-    // wide.set_exposure_time(2048).await;
     wide.set_frame_period(524288).await;
-    // wide.set_exposure_time(50000).await;
     wide.set_exposure_time_ns_image_mode(4_000_000).await;
     wide.set_bank1_sync_updated(1).await;
     near.set_gain_1(0).await;
     near.set_gain_2(0).await;
-    // near.set_frame_period(16384).await;
-    // near.set_exposure_time(2048).await;
     near.set_frame_period(524288).await;
-    // near.set_exposure_time(13000).await;
     near.set_exposure_time_ns_image_mode(((4_000_000 as f32) * 0.4) as u32)
         .await;
     near.set_bank1_sync_updated(1).await;
@@ -181,12 +171,11 @@ async fn main(spawner: Spawner) {
     info!("wide.frame_period = {}", wide.frame_period().await);
     info!("near.exposure_time = {}", near.exposure_time().await);
     info!("near.frame_period = {}", near.frame_period().await);
-    // Run the USB device.
     let (mut class, usb) = usb_device(p.USBD);
     spawner.must_spawn(run_usb(usb));
     class.wait_connection().await;
 
-    // Wait for something to get sent
+    // `w` requests a feature dump; any other byte starts image streaming.
     let feature_buf: &mut [u8; 256] = shared_buffers[0][..256].as_mut().try_into().unwrap();
     let mut cmd;
     loop {
@@ -194,7 +183,7 @@ async fn main(spawner: Spawner) {
         if cmd != b'w' {
             break;
         } else {
-            // only read from wide because i'm lazy
+            // Only the wide-field sensor is read.
             wide.trigger_fod().await;
             embassy_time::Timer::after_millis(1000 / 200).await;
             wide.set_bank(0x05).await;
@@ -279,22 +268,10 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    // #[cfg(any(feature = "atslite-1-1", feature = "atslite-2-2"))]
-    // spawner.must_spawn(power_button_loop(pinout!(p.pwr_btn).into()));
-
     join3(near_loop, wide_loop, buffer_mgmt_loop).await;
 }
 
-// #[cfg(any(feature = "atslite-1-1", feature="atslite-2-2"))]
-// #[embassy_executor::task]
-// async fn power_button_loop(pin: AnyPin) {
-//     let mut pwr_btn = gpio::Input::new(pin, Pull::None);
-//     pwr_btn.wait_for_falling_edge().await;
-//     // cortex_m::peripheral::SCB::sys_reset();
-//     info!("button pressed");
-// }
-
-/// Shift the data to the left n bits
+/// Shifts the whole buffer left by `n` bits, carrying across bytes.
 fn shiftl(d: &mut [u8], n: u8) {
     d[0] <<= n;
     for i in 1..d.len() {
@@ -303,7 +280,7 @@ fn shiftl(d: &mut [u8], n: u8) {
     }
 }
 
-/// Shift the data to the right n bits
+/// Shifts the whole buffer right by `n` bits, carrying across bytes.
 fn shiftr(d: &mut [u8], n: u8) {
     let mut t = 0;
     for v in d {
@@ -352,7 +329,7 @@ async fn paj7025_image_loop<'b, T, M, const N: usize, const O: usize>(
                 }
             }
 
-            // put the len bytes at the end because there is nothing there that we care about.
+            // The last three bytes of the frame carry nothing useful, so the sensor id and length go there.
             buffer[98 * 98 + 98 * 3 - 3] = id;
             buffer[98 * 98 + 98 * 3 - 2] = len_bytes[0];
             buffer[98 * 98 + 98 * 3 - 1] = len_bytes[1];
@@ -412,10 +389,8 @@ type StaticUsbDevice =
 fn usb_device(
     p: impl Peripheral<P = peripherals::USBD> + 'static,
 ) -> (StaticCdcAcmClass, StaticUsbDevice) {
-    // Create the driver, from the HAL.
     let driver = Driver::new(p, Irqs, HardwareVbusDetect::new(Irqs));
 
-    // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(0x1915, 0x530F);
     config.manufacturer = Some("Embassy");
     config.product = Some("USB-serial example");
@@ -430,8 +405,7 @@ fn usb_device(
     config.device_protocol = 0x01;
     config.composite_with_iads = true;
 
-    // Create embassy-usb DeviceBuilder using the driver and config.
-    // It needs some buffers for building the descriptors.
+    // Descriptor buffers for the builder.
     static CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
     static BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
     static MSOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
@@ -453,10 +427,8 @@ fn usb_device(
         control_buf,
     );
 
-    // Create classes on the builder.
     let class = CdcAcmClass::new(&mut builder, state, 64);
 
-    // Build the builder.
     let usb = builder.build();
     (class, usb)
 }

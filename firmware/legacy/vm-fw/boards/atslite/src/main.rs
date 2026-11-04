@@ -87,7 +87,7 @@ fn log_boot_state(label: &str) {
     }
 }
 
-// Marker used by DFU runtime detach to request bootloader DFU on next reset.
+// DFU runtime detach writes this marker so the bootloader enters DFU on the next reset.
 struct AppDfuMarker<'a> {
     flash: &'a Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
 }
@@ -95,7 +95,6 @@ struct AppDfuMarker<'a> {
 impl<'a> DfuMarker for AppDfuMarker<'a> {
     fn mark_dfu(&mut self) {
         defmt::info!("Dfu Detach");
-        // Log boot state before requesting DFU
         log_boot_state("before DFU request");
 
         let result = self.flash.lock(|flash_cell| {
@@ -116,9 +115,9 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
     }
 }
 
-/// Sync general settings from common::Settings into atslite-common and persist to flash.
-/// Registered as the GENERAL_WRITE_FN so that bulk FlashSettings (BLE path) persists
-/// general settings via atslite-common's owned flash node.
+/// Copies the general settings from `common::Settings` into atslite-common and
+/// persists them through atslite-common's flash node. Registered as the
+/// GENERAL_WRITE_FN, so a bulk FlashSettings over BLE ends up here.
 fn sync_and_write_general() {
     let common_s = unsafe { common::settings::get_settings() };
     let atslite_s = unsafe { atslite_common::settings::get_settings() };
@@ -130,7 +129,7 @@ fn sync_and_write_general() {
     atslite_s.general.camera_model_wf = common_s.general.camera_model_wf.clone();
     atslite_s.general.stereo_iso = common_s.general.stereo_iso.clone();
     atslite_s.general.name = common_s.general.name.clone();
-    // transport_mode is NOT synced here — it has its own persist path via
+    // transport_mode is not copied: it persists separately through
     // persist_transport_mode / register_transport_mode_persist_fn.
     atslite_s.general_write();
 }
@@ -143,7 +142,7 @@ async fn main(spawner: Spawner) {
     let (_cp, p) = nrf5340_init::init();
     defmt::info!("nrf5340_init complete");
 
-    // Initialize NVMC in a StaticCell so it can be shared between DFU and settings
+    // NVMC is shared between DFU and settings.
     defmt::info!("Initializing NVMC...");
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
@@ -153,9 +152,8 @@ async fn main(spawner: Spawner) {
     let board: Board = split_board!(p);
     defmt::info!("Board peripherals split");
 
-    // Boot confirmation moved to later (after IMU init)
+    // Boot is confirmed after IMU init, further down.
 
-    // Initialize PMIC over TWIM
     defmt::info!("Initializing PMIC...");
     let mut twim_cfg = twim::Config::default();
     twim_cfg.frequency = twim::Frequency::K400;
@@ -188,11 +186,9 @@ async fn main(spawner: Spawner) {
     defmt::info!("PMIC configured");
     let pmic = PMIC.init(AsyncMutex::new(pmic_dev));
 
-    // Handle PMIC IRQ pin
     defmt::info!("Spawning pmic_irq_task...");
     spawner.spawn(pmic_irq_task(board.pmic.irq.into(), pmic).unwrap());
 
-    // Initialize PMIC LED animator
     defmt::info!("Creating PmicLedAnimator...");
     let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
         .await
@@ -202,7 +198,7 @@ async fn main(spawner: Spawner) {
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
-    // Initialize watchdog (started by stage2 bootloader)
+    // The stage2 bootloader already started the watchdog.
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
     let mut wdt_config = WdtConfig::default();
     wdt_config.timeout_ticks = 32768 * 60;
@@ -212,7 +208,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
     let l2cap_channels = AtsliteL2capChannels::new();
 
-    // Power button handling
     defmt::info!("Power button handling...");
     let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
     defmt::info!("handle_boot_vbus_policy...");
@@ -228,14 +223,13 @@ async fn main(spawner: Spawner) {
     spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
     defmt::info!("Power tasks spawned");
 
-    // Initialize PAJ sensors
     defmt::info!("Initializing PAJ sensors...");
     let mut paj_cfg = embassy_nrf::spim::Config::default();
     paj_cfg.frequency = embassy_nrf::spim::Frequency::M8;
     paj_cfg.mode = embassy_nrf::spim::MODE_3;
     paj_cfg.bit_order = embassy_nrf::spim::BitOrder::LSB_FIRST;
 
-    // Manually construct SPI pins, leaving fod intact
+    // SPI pins built by hand so `fod` stays available for object mode.
     let paj7025r2_spi = common::utils::SpiPins {
         sck: board.paj7025r2.sck.into(),
         miso: board.paj7025r2.miso.into(),
@@ -273,7 +267,7 @@ async fn main(spawner: Spawner) {
     let paj_r2_mutex = PAJ7025R2_MUTEX.init(AsyncMutex::new(paj7025r2));
     let paj_r3_mutex = PAJ7025R3_MUTEX.init(AsyncMutex::new(paj7025r3));
 
-    // Initialize IMU (icm42688)
+    // ICM42688 IMU.
     defmt::info!("Initializing IMU...");
     unsafe {
         // Erratum workaround
@@ -287,7 +281,7 @@ async fn main(spawner: Spawner) {
         board.icm42688v.mosi.into(),
         board.icm42688v.int1.into(),
         board.icm42688v.clkin.into(),
-        p.TIMER1, // Use TIMER1 for IMU, save TIMER0 for object mode
+        p.TIMER1, // TIMER0 is reserved for object mode
         p.PPI_CH0.into(),
         p.GPIOTE_CH0,
         common::settings::accel_odr(),
@@ -295,7 +289,7 @@ async fn main(spawner: Spawner) {
     .await;
     defmt::info!("IMU initialized");
 
-    // Confirm boot using boot-api wrapper (which caches state for DFU requests)
+    // boot-api's mark_booted also caches the boot state for later DFU requests.
     log_boot_state("before mark_booted");
 
     nvmc.lock(|flash_cell| {
@@ -305,15 +299,14 @@ async fn main(spawner: Spawner) {
 
     log_boot_state("after mark_booted");
 
-    // Initialize device control channels BEFORE USB so they're ready when the
-    // host sends control requests immediately after enumeration.
-    // Channels are created once and registered in BOTH common (USB handler) and
-    // atslite_common (device_control_task) so they share the same queues.
+    // Device control channels exist before USB, because the host sends control
+    // requests right after enumeration. The same channels are registered in
+    // common (USB handler) and atslite_common (device_control_task) so both
+    // share one set of queues.
     let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
     common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
     atslite_common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
 
-    // USB initialization with DFU runtime interface
     static DFU_STATE: StaticCell<Control<AppDfuMarker<'static>, ResetImmediate>> =
         StaticCell::new();
     let dfu_state = DFU_STATE.init(Control::new(
@@ -331,13 +324,12 @@ async fn main(spawner: Spawner) {
         Irqs,
         vbus,
         |builder| {
-            // Add DFU runtime interface for detach support
+            // DFU runtime interface, for detach.
             usb_dfu(
                 builder,
                 dfu_state,
                 embassy_time::Duration::from_millis(2500),
                 |func| {
-                    // Apply WINUSB to DFU interface for Windows compatibility
                     func.msos_feature(embassy_usb::msos::CompatibleIdFeatureDescriptor::new(
                         "WINUSB", "",
                     ));
@@ -351,24 +343,21 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
 
-    // CRITICAL: Wait for flash writes to fully settle before stealing NVMC peripheral.
-    // On nRF5340, flash writes continue in hardware after NVMC API returns.
-    // Reinitializing NVMC (via new()) while flash controller is busy corrupts recent writes.
-    // This 200ms delay ensures boot confirmation write at 0xD000 is fully complete.
+    // Flash writes on the nRF5340 keep running in hardware after the NVMC call
+    // returns, and re-creating NVMC while the controller is busy corrupts the
+    // latest write. 200 ms covers the boot confirmation write at 0xD000.
     Timer::after_millis(200).await;
 
-    // Settings flash - borrow NVMC from the shared mutex
     let nvmc_async = nvmc.lock(|_f| {
-        // Create a new Nvmc by stealing the peripheral - this is safe because
-        // we're the only user during normal operation. On DFU DETACH, the device
-        // will reset, so there's no conflict.
+        // Stealing NVMC is sound here: nothing else writes flash in normal
+        // operation, and a DFU detach resets the device.
         BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) })
     });
-    // Phase 1: Start shared settings worker (owned by atslite-common)
+    // Settings come up in phases. First the shared settings worker owned by atslite-common.
     use atslite_common::settings as shared_settings;
     shared_settings::init_core(&spawner, nvmc_async).await;
 
-    // Phase 2: Attach legacy board-specific nodes to the shared LIST
+    // Then the legacy board-specific nodes, on the shared LIST.
     let settings_ref = {
         let mut r2 = paj_r2_mutex.lock().await;
         let mut r3 = paj_r3_mutex.lock().await;
@@ -382,16 +371,16 @@ async fn main(spawner: Spawner) {
         .unwrap()
     };
 
-    // Phase 3: Attach BLE bond node and set atslite-common SETTINGS_PTR
+    // BLE bond node; also sets atslite-common's SETTINGS_PTR.
     let atslite_settings = shared_settings::init_nodes().await;
 
-    // Phase 4: Attach general settings node (atslite-common schema) and load from flash.
-    // This makes atslite_common own "settings/general" — the same key/schema used by
-    // device_control_task for FlashSettings, SetDeviceName, WriteConfig, etc.
+    // General settings node (atslite-common schema), loaded from flash. This
+    // makes atslite_common own "settings/general", the key and schema that
+    // device_control_task uses for FlashSettings, SetDeviceName, WriteConfig.
     shared_settings::init_board_nodes(atslite_settings).await;
 
-    // Phase 5: Sync general settings from atslite-common into legacy common settings
-    // so that object_mode (which holds &mut common::Settings) sees the correct values.
+    // Copy general settings into legacy common settings, which object_mode
+    // reads through its &mut common::Settings.
     {
         let ag = &atslite_settings.general;
         settings_ref.general.transport_mode = ag.transport_mode;
@@ -406,15 +395,14 @@ async fn main(spawner: Spawner) {
     }
     settings::set_accel_odr(settings_ref.general.accel_config.accel_odr);
 
-    // Clamp accel_odr to nearest valid value for this platform's sensor
+    // Round accel_odr to the nearest rate this sensor supports.
     settings_ref.general.accel_config.accel_odr =
         imu::round_accel_odr_hz(settings_ref.general.accel_config.accel_odr);
 
-    // Check boot state after settings init to see if corruption happened
+    // Boot state again, to catch corruption from settings init.
     log_boot_state("after settings init");
     defmt::info!("Settings initialization complete");
 
-    // Load transport mode from persisted settings
     let initial_transport_mode = settings_ref.general.transport_mode;
     transport_mode::set(initial_transport_mode);
     defmt::info!(
@@ -422,26 +410,24 @@ async fn main(spawner: Spawner) {
         initial_transport_mode
     );
 
-    // Register general-settings write callback so that BLE-path FlashSettings
-    // (bulk PacketData::FlashSettings -> common::Settings::write()) persists
-    // general settings via atslite-common's flash node.
+    // A BLE FlashSettings (bulk PacketData::FlashSettings ->
+    // common::Settings::write()) persists general settings through
+    // atslite-common's flash node.
     settings::register_general_write_fn(sync_and_write_general);
 
-    // Register the board-specific persist function for transport mode
     atslite_board::device_control_task::register_transport_mode_persist_fn(
         atslite_common::settings::persist_transport_mode,
     );
 
-    // Spawn the device control task (channels already registered before USB init)
+    // Its channels were registered before USB init.
     spawner
         .spawn(atslite_board::device_control_task::device_control_task(FIRMWARE_VERSION).unwrap());
 
-    // Confirm this boot as successful so the bootloader keeps the current slot active
-    // Adjust PMIC limit after USB enumerates
+    // Raise the PMIC current limit once USB enumerates.
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
 
-    // Generate cryptographically secure seed for trouble-host PRNG using CryptoCell
-    // CryptoCell must be explicitly disabled after use to allow CPU sleep
+    // Seed for trouble-host's PRNG. CryptoCell has to be disabled afterwards or
+    // the CPU cannot sleep.
     defmt::info!("Generating BLE seed from CryptoCell...");
     let ble_seed = {
         use embassy_nrf::cryptocell_rng::CcRng;
@@ -452,7 +438,6 @@ async fn main(spawner: Spawner) {
         cc_rng.blocking_fill_bytes(&mut seed);
         defmt::info!("Dropping CcRng...");
         drop(cc_rng);
-        // Disable CryptoCell subsystem to allow CPU sleep
         defmt::info!("Disabling CryptoCell...");
         embassy_nrf::pac::CRYPTOCELL
             .enable()
@@ -461,7 +446,6 @@ async fn main(spawner: Spawner) {
         seed
     };
 
-    // BLE controller and tasks
     if !settings_ref.general.name.is_empty() {
         ble::peripheral::set_device_name_initial(settings_ref.general.name.as_str());
     }
@@ -478,7 +462,6 @@ async fn main(spawner: Spawner) {
         .unwrap(),
     );
 
-    // Build object mode context
     let ctx = ObjectModeContext::<AtslitePlatform, _, _> {
         paj7025r2_group: (paj_r2_mutex, board.paj7025r2.fod.into(), p.GPIOTE_CH1),
         paj7025r3_group: (paj_r3_mutex, board.paj7025r3.fod.into(), p.GPIOTE_CH2),
@@ -633,7 +616,7 @@ async fn handle_pending_ship(
         }
     }
     defmt::trace!("Pending ship but VBUS present -> wait for removal");
-    // Keep red charging LED on in faux-off mode with VBUS present
+    // Faux-off with VBUS present keeps the red charging LED on.
     leds.set_state(LedState::BattCharging).await;
     embassy_futures::select::select(
         async {

@@ -23,7 +23,6 @@ fn main() {
 
     let regions = memoryspec.regions();
 
-    // Now using stage2_bootloader instead of bootloader
     let bootloader = &regions["flash"]["stage2_bootloader"];
     let stage1_state = &regions["flash"]["stage1_state"];
     let stage2_state = &regions["flash"]["stage2_state"];
@@ -36,10 +35,10 @@ fn main() {
     let icmsg_rx = &regions["ram"]["high_ram"]["icmsg_rx"];
     let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_tx"];
 
-    // For dual-bank, ACTIVE and DFU point to bank_a and bank_b
-    // We make DFU slightly larger to satisfy embassy-boot's assertion (even though unused)
+    // Dual-bank: ACTIVE and DFU point at bank_a and bank_b. DFU is unused but
+    // one page larger than ACTIVE to satisfy embassy-boot's size assertion.
     let active_len = bank_a.length();
-    let dfu_len = bank_b.length() + 0x1000; // Add one page to satisfy assertion
+    let dfu_len = bank_b.length() + 0x1000;
 
     let memory_x = format!(
         "\

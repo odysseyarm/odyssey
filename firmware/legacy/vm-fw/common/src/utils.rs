@@ -5,7 +5,6 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
-// Generic SPI pin bundle
 pub struct SpiPins {
     pub sck: Peri<'static, AnyPin>,
     pub miso: Peri<'static, AnyPin>,

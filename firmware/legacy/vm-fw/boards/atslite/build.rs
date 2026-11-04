@@ -28,7 +28,7 @@ fn main() {
     let regions = memoryspec.regions();
     let symbols = memoryspec.render_symbols();
 
-    // Select app bank based on APP_BANK environment variable (default: bank_a)
+    // APP_BANK picks the flash bank to link for (default bank_a).
     let app_bank = env::var("APP_BANK").unwrap_or_else(|_| "bank_a".to_string());
     let app_flash = match app_bank.as_str() {
         "bank_a" => &regions["flash"]["app_bank_a"],

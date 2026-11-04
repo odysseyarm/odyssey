@@ -37,17 +37,16 @@ use crate::Paj;
 
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
-/// Pointer to the active StorageList (either our own LIST or an external one).
-/// Set during init_settings or init_legacy_settings.
+/// StorageList in use, this module's own LIST or an external one; set by
+/// init_settings or init_legacy_settings.
 static ACTIVE_LIST: AtomicPtr<StorageList<NoodleRawMutex>> = AtomicPtr::new(core::ptr::null_mut());
 
-/// Function pointer for flushing settings. Points to our own settings_flush_now
-/// or an external flush function (e.g. from atslite-common).
+/// Flush function: this module's settings_flush_now or an external one (e.g.
+/// from atslite-common).
 static FLUSH_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
-/// Optional function pointer that persists general settings to flash.
-/// Must be registered by boards that delegate general settings to an external
-/// crate (e.g. legacy atslite delegates to atslite-common).
+/// Persists general settings to flash. Boards that delegate general settings to
+/// another crate must register it (legacy atslite delegates to atslite-common).
 static GENERAL_WRITE_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 pub fn register_general_write_fn(f: fn()) {
@@ -78,19 +77,22 @@ static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
-// Pointer to the settings for BLE access
+// For BLE access.
 static SETTINGS_PTR: core::sync::atomic::AtomicPtr<Settings> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-/// Get a reference to settings. Only safe to call after init_settings has been called.
-/// This is primarily for BLE peripheral to access settings.
+/// Settings for the BLE peripheral.
+///
+/// # Safety
+///
+/// Only valid after init_settings has run.
 pub unsafe fn get_settings() -> &'static mut Settings {
     let ptr = SETTINGS_PTR.load(core::sync::atomic::Ordering::Acquire);
     unsafe { &mut *ptr }
 }
 
-/// Persist the transport mode to flash via the vm-fw general settings node.
-/// Intended to be registered as the `transport_mode_persist_fn` on legacy atslite.
+/// Persists the transport mode through the vm-fw general settings node.
+/// Registered as `transport_mode_persist_fn` on legacy atslite.
 pub fn persist_transport_mode(mode: odyssey_protocol::control::device::TransportMode) {
     let settings = unsafe { get_settings() };
     settings.general.transport_mode = mode;
@@ -115,7 +117,6 @@ async fn settings_worker(
 ) {
     let mut flash = Flash::new(flash_dev, region, NoCache::new());
 
-    // Buffer for cfg-noodle operations
     let mut buffer = [0u8; 4080];
 
     loop {
@@ -147,18 +148,17 @@ async fn settings_worker(
                     }
                 }
             };
-            // Queued write OR explicit flush signal to wake
+            // Wake on a queued write or an explicit flush.
             match select(wait_write, SETTINGS_FLUSH.wait()).await {
                 Either::First(_) => {}
                 Either::Second(_) => {}
             }
         };
 
-        // Periodic tick so data eventually flushes without signals
+        // A periodic tick flushes data even without a signal.
         let tick_fut = Timer::after(auto_interval);
 
         match embassy_futures::select::select(read_fut, select(write_fut, tick_fut)).await {
-            // Reads ready
             Either::First(_) => {
                 let start = Instant::now();
                 match LIST.process_reads(&mut flash, &mut buffer).await {
@@ -167,7 +167,6 @@ async fn settings_worker(
                 }
                 defmt::trace!("reads in {:?}", start.elapsed());
             }
-            // Writes or tick
             Either::Second(Either::First(_)) | Either::Second(Either::Second(_)) => {
                 let start = Instant::now();
                 match LIST.process_writes(&mut flash, &mut buffer).await {
@@ -176,7 +175,6 @@ async fn settings_worker(
                 }
                 defmt::trace!("writes in {:?}", start.elapsed());
 
-                // GC after writes
                 let start = Instant::now();
                 match LIST.process_garbage(&mut flash, &mut buffer).await {
                     Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
@@ -198,8 +196,8 @@ fn set_active(list: &'static StorageList<NoodleRawMutex>, flush_fn: fn()) {
     FLUSH_FN.store(flush_fn as *mut (), Ordering::Release);
 }
 
-/// Self-contained init: spawns its own worker on the module's own LIST.
-/// Used by boards that don't share settings infrastructure with another crate (e.g. VM board).
+/// Self-contained init that spawns its own worker on this module's LIST, for
+/// boards that share no settings infrastructure with another crate (the VM).
 pub async fn init_settings(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
@@ -216,12 +214,11 @@ pub async fn init_settings(
     );
     assert!((region.end - region.start) as usize >= 2 * PAGE_SIZE);
 
-    // Start I/O worker
     spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
 
     set_active(&LIST, settings_flush_now);
 
-    // Attach nodes with defaults (hydrates via worker)
+    // Nodes start from defaults; the worker hydrates them.
     let h_pajs = NODE_PAJS
         .attach_with_default(&LIST, PajsSettings::default)
         .await
@@ -265,9 +262,9 @@ pub async fn init_settings(
     Ok(settings_ref)
 }
 
-/// Attach legacy settings nodes to an *external* StorageList (e.g. from atslite-common).
-/// The caller must have already started the worker task on that list.
-/// Does NOT spawn a worker or manage BLE bond (that's handled by the external crate).
+/// Attaches the legacy settings nodes to an external StorageList (e.g. from
+/// atslite-common). The caller must already run the worker on that list; no
+/// worker is spawned and the BLE bond is left to the external crate.
 pub async fn init_legacy_settings(
     list: &'static StorageList<NoodleRawMutex>,
     flush_fn: fn(),
@@ -281,8 +278,8 @@ pub async fn init_legacy_settings(
         .attach_with_default(list, PajsSettings::default)
         .await
         .unwrap();
-    // NODE_GENERAL is managed by atslite-common via "settings/general";
-    // general settings are populated from atslite-common by the caller after init_board_nodes.
+    // NODE_GENERAL belongs to atslite-common ("settings/general"); the caller
+    // fills general settings from it after init_board_nodes.
     let h_transient = NODE_TRANSIENT
         .attach_with_default(list, TransientSettings::default)
         .await
@@ -296,7 +293,7 @@ pub async fn init_legacy_settings(
         pajs,
         general,
         transient,
-        // BLE bond is managed by the external crate; use default placeholder
+        // The external crate owns the BLE bond; this is a placeholder.
         ble_bond: BleBondSettings::default(),
     };
 
@@ -730,7 +727,7 @@ pub struct GeneralSettings {
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
-            // 5g legacy equivalent in SI units.
+            // 25 m/s^2 (about 2.5 g).
             impact_threshold: 25,
             suppress_ms: 100,
             accel_config: Default::default(),

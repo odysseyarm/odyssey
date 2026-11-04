@@ -34,7 +34,7 @@ type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMu
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
-/// Context structure for object_mode - platform-agnostic
+/// Everything object_mode needs from the board.
 pub struct ObjectModeContext<
     'd,
     P: Platform,
@@ -53,7 +53,7 @@ pub struct ObjectModeContext<
     pub usb_configured: UsbConfigHandle,
     pub settings: &'d mut Settings,
     pub l2cap_channels: P::L2capChannels,
-    /// Function to read current data mode (USB vs BLE).
+    /// Current data transport (USB or BLE).
     pub data_mode: fn() -> TransportMode,
     /// Firmware version [major, minor, patch].
     pub version: [u16; 3],
@@ -135,11 +135,10 @@ pub async fn object_mode<
         ctx.battery_soc,
         ctx.battery_charging,
     );
-    // TODO turn these into tasks
+    // TODO: run these as executor tasks instead of one join5.
     let r = join5(a, b, c, d, e).await;
 
-    // All tasks return Result<Infallible, Error>, meaning they never succeed
-    // If any task returns, it's because of an error
+    // Every loop returns Result<Infallible, Error>, so returning at all means an error.
     match r.0 {
         Ok(_) => unreachable!("usb_rcv_loop should never return Ok"),
         Err(e) => Err(e),
@@ -171,7 +170,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     set_ble_name: fn(&str),
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
-        // Always listen for USB control regardless of data transport; gate USB data by mode.
+        // USB control is always served; USB data only in USB mode.
         let mode = data_mode();
         let usb_enabled = usb_configured.is_configured();
         let ble_enabled = matches!(mode, TransportMode::Ble);
@@ -184,8 +183,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                         match pkt_rcv.wait_for_packet().await {
                             Ok(pkt) => break pkt,
                             Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                                // Endpoint disabled - wait for USB to actually be reconfigured
-                                // This blocks until the USB configured event fires
+                                // Blocks until USB is configured again.
                                 defmt::debug!(
                                     "USB endpoint disabled; waiting for reconfiguration..."
                                 );
@@ -202,7 +200,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 }
             },
             async {
-                // Listen to BLE control when BLE mode is active
+                // BLE control, only in BLE mode.
                 if !ble_enabled {
                     core::future::pending().await
                 } else {
@@ -210,7 +208,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 }
             },
             async {
-                // Listen to BLE data when BLE mode is active
+                // BLE data, only in BLE mode.
                 if !ble_enabled {
                     core::future::pending().await
                 } else {
@@ -225,7 +223,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
             Either3::Third(pkt) => (PacketSource::Ble, pkt),
         };
 
-        // If we're in BLE mode, drop any USB-originating data packets (keep control).
+        // In BLE mode, USB data packets are dropped; USB control packets are kept.
         if matches!(mode, TransportMode::Ble)
             && matches!(src, PacketSource::Usb)
             && !is_control_packet(&pkt)
@@ -287,12 +285,12 @@ async fn usb_rcv_loop<L: L2capChannels>(
             }
             PacketData::WriteConfig(config) => {
                 let mut wire_config: wire::GeneralConfig = config.into();
-                // Clamp accel_odr to nearest valid value for this platform
+                // Round accel_odr to the nearest rate this platform's sensor supports.
                 if let wire::GeneralConfig::AccelConfig(ref mut ac) = wire_config {
                     ac.accel_odr = round_accel_odr(ac.accel_odr);
                 }
                 settings.general.set_general_config(&wire_config);
-                // Update atomic impact settings for imu_loop
+                // imu_loop reads the impact settings through atomics.
                 match &wire_config {
                     wire::GeneralConfig::ImpactThreshold(v) => impact_settings.set_threshold(*v),
                     wire::GeneralConfig::SuppressMs(v) => impact_settings.set_suppress_ms(*v),
@@ -455,18 +453,16 @@ async fn usb_snd_loop<L: L2capChannels>(
         let usb_enabled = usb_configured.is_configured() && matches!(mode, TransportMode::Usb);
         let ble_enabled = matches!(mode, TransportMode::Ble);
 
-        // USB takes priority - if USB is enabled, only send to USB
+        // USB wins: with USB up, nothing goes to BLE.
         if usb_enabled {
             let _ = pkt_writer.write_packet(&pkt).await;
         } else if ble_enabled {
-            // USB not connected, send to BLE only
             if is_control_packet(&pkt) {
                 let _ = l2cap_channels.control_tx().try_send(pkt);
             } else {
                 let _ = l2cap_channels.data_tx().try_send(pkt);
             }
         } else {
-            // Neither mode active; drop
             defmt::debug!("[usb_snd_loop] Dropping packet because no data mode active");
         }
     }
@@ -503,17 +499,15 @@ async fn imu_loop<P: Platform>(
     stream_infos: &StreamInfos,
     impact_settings: &ImpactSettings,
 ) {
-    // ---- Unit scales from platform ----
     const G: f32 = 9.806_65;
     const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
 
-    // Track last impact time for suppression
+    // Last impact time, for the suppression window.
     let mut last_impact_ts_micros: Option<u32> = None;
 
     loop {
         imu_int.wait().await;
 
-        // Read IMU data with timestamp from the platform-specific IMU
         let imu_data = match imu.read_data().await {
             Ok(data) => data,
             Err(e) => {
@@ -526,11 +520,9 @@ async fn imu_loop<P: Platform>(
         let gyr = imu_data.gyro;
         let ts_micros = imu_data.timestamp_micros;
 
-        // Apply platform-specific axis transforms
         let acc_transformed = P::transform_accel(acc);
         let gyr_transformed = P::transform_gyro(gyr);
 
-        // Convert to SI units using platform-specific scaling
         let accel = Vector3::new(acc_transformed[0], acc_transformed[1], acc_transformed[2])
             .cast::<f32>()
             / P::ACC_LSB_PER_G
@@ -555,19 +547,15 @@ async fn imu_loop<P: Platform>(
             }
         }
 
-        // Impact detection (threshold is in m/s^2)
+        // Impact threshold is in m/s^2.
         if stream_infos.impact.enabled() {
-            // Calculate acceleration magnitude in m/s^2
             let accel_magnitude_ms2 = accel.magnitude();
 
-            // Check if magnitude exceeds threshold
             let threshold_ms2 = impact_settings.threshold() as f32;
             if accel_magnitude_ms2 >= threshold_ms2 {
-                // Check suppression window
                 let suppress_us = (impact_settings.suppress_ms() as u32) * 1000;
                 let should_send = match last_impact_ts_micros {
                     Some(last_ts) => {
-                        // Handle timestamp wraparound
                         let elapsed = ts_micros.wrapping_sub(last_ts);
                         elapsed >= suppress_us
                     }
@@ -621,7 +609,7 @@ async fn obj_loop<
         2,
     );
 
-    // TODO freezes everything when used with raw usb driver
+    // TODO: starting the trigger freezes everything when used with the raw USB driver.
     trigger.start();
 
     loop {

@@ -18,14 +18,13 @@ macro_rules! battery_model_inc {
         .param_10 = { $($p10:expr),* $(,)? },
         .param_11 = { $($p11:expr),* $(,)? },
         .param_12 = { $($p12:expr),* $(,)? }
-        $(, .name = $($_ignore_name_tokens:tt)* )?   // optional; ignored, we use `name:`
-        $(,)?                                        // optional trailing comma
+        $(, .name = $($_ignore_name_tokens:tt)* )?   // ignored; `name:` is used instead
+        $(,)?
     ) => {
         mod __battery_model_generated {
             use core::ffi::c_char;
             use nrfxlib_sys as sys;
 
-            // Keep slices (readable, no huge `static [f32; N]` boilerplate).
             pub static NAME_BYTES: &[u8] = $name.as_bytes();
 
             pub static TEMPS:   &[f32] = &[ $($temps),* ];
@@ -42,11 +41,11 @@ macro_rules! battery_model_inc {
             pub static PARAM_11: &[f32] = &[ $($p11),* ];
             pub static PARAM_12: &[f32] = &[ $($p12),* ];
 
-            // (Optional) a couple compile-time sanity checks that catch obvious mix-ups:
+            // Compile-time checks against obvious mix-ups.
             const _: () = {
-                // temps should be small (e.g., 3) but not zero
+                // A few temperatures (typically 3), never none.
                 assert!(TEMPS.len() > 0);
-                // param_1 should be monotonic SoC points [0..1]; we can at least require > 1 entry
+                // param_1 holds the SoC points in [0, 1]; at least two of them.
                 assert!(PARAM_1.len() > 1);
             };
 
@@ -76,7 +75,6 @@ macro_rules! battery_model_inc {
             };
         }
 
-        // Re-export: `battery_model::BATTERY_MODEL`
         pub use __battery_model_generated::BATTERY_MODEL;
     };
 }

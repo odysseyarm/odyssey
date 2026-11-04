@@ -1,5 +1,5 @@
-//! Device control channel for USB vendor requests
-//! Used for pairing, bond management, and version queries on lite/vm devices
+//! Device control channels behind the USB vendor requests: pairing, bond
+//! management and version queries on lite/vm devices.
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -8,13 +8,13 @@ use embassy_sync::channel::Channel;
 use odyssey_protocol::control::device::DeviceMsg;
 use static_cell::StaticCell;
 
-// Event channel: device -> host control messages (responses, async events)
+// Device -> host: responses and async events.
 pub static CONTROL_EVT_CH: StaticCell<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     StaticCell::new();
 static EVT_PTR: AtomicPtr<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     AtomicPtr::new(core::ptr::null_mut());
 
-// Command channel: host -> device control messages (requests)
+// Host -> device: requests.
 pub static CONTROL_CMD_CH: StaticCell<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
     StaticCell::new();
 static CMD_PTR: AtomicPtr<Channel<ThreadModeRawMutex, DeviceMsg, 8>> =
@@ -38,7 +38,7 @@ pub fn register(
     CMD_PTR.store(cmd_ch as *const _ as *mut _, Ordering::Release);
 }
 
-// Non-blocking send of an event to host
+/// Queues an event for the host; dropped when the channel is unregistered or full.
 pub fn try_send_event(evt: DeviceMsg) {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -47,7 +47,7 @@ pub fn try_send_event(evt: DeviceMsg) {
     }
 }
 
-// Non-blocking receive of a pending event (used by EP0 control_in)
+/// Pending event for EP0 control_in, if any.
 pub fn try_recv_event() -> Option<DeviceMsg> {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -59,7 +59,7 @@ pub fn try_recv_event() -> Option<DeviceMsg> {
     None
 }
 
-// Non-blocking send of a command from host (used by EP0 control_out)
+/// Queues a host command from EP0 control_out without blocking.
 pub fn try_send_cmd(cmd: DeviceMsg) {
     let p = CMD_PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -68,7 +68,7 @@ pub fn try_send_cmd(cmd: DeviceMsg) {
     }
 }
 
-// Async receive of commands (for the executor task)
+/// Waits for the next host command; used by the executor task.
 pub async fn recv_cmd() -> DeviceMsg {
     loop {
         let p = CMD_PTR.load(Ordering::Acquire);

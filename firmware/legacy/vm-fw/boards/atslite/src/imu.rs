@@ -12,7 +12,7 @@ use icm426xx::{ICM42688, Ready};
 
 pub struct AtsliteImu {
     inner: ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>,
-    // Accumulated timestamp in microseconds
+    // Sum of FIFO timestamp deltas, in microseconds.
     ts_micros: u32,
 }
 
@@ -23,7 +23,6 @@ pub struct AtsliteImuInterrupt {
 #[derive(Debug)]
 pub struct ImuError;
 
-// Implement the Imu trait from common::platform
 impl common::platform::Imu for AtsliteImu {
     type Error = ImuError;
     type Interrupt = AtsliteImuInterrupt;
@@ -32,7 +31,7 @@ impl common::platform::Imu for AtsliteImu {
         &mut self,
     ) -> impl Future<Output = Result<common::platform::ImuData, Self::Error>> {
         async move {
-            // Read from FIFO - buffer for 521 u32 words as in the old implementation
+            // 521 words, the FIFO buffer size the earlier firmware used.
             let mut buffer = [0u32; 521];
             let _items = self
                 .inner
@@ -40,13 +39,13 @@ impl common::platform::Imu for AtsliteImu {
                 .await
                 .map_err(|_| ImuError)?;
 
-            // Parse the first FIFO packet (skip 4 bytes header, read 20-byte packet)
+            // First FIFO packet: skip the 4-byte header, then a 20-byte packet.
             let pkt = bytemuck::from_bytes::<icm426xx::fifo::FifoPacket4>(
                 &bytemuck::cast_slice(&buffer)[4..24],
             );
 
-            // Read raw sensor data - axis transforms done in common lib via Platform trait
-            // Keep as i32 to avoid truncation
+            // Raw axes; common applies the axis transforms via the Platform
+            // trait. i32 because the 20-bit samples do not fit an i16.
             let ax = pkt.accel_data_x();
             let ay = pkt.accel_data_y();
             let az = pkt.accel_data_z();
@@ -55,8 +54,8 @@ impl common::platform::Imu for AtsliteImu {
             let gy = pkt.gyro_data_y();
             let gz = pkt.gyro_data_z();
 
-            // Accumulate timestamp delta from FIFO (CLKIN ticks at 32 kHz)
-            // The timestamp is the delta since last sample, convert to microseconds: ticks * 1000 / 32
+            // The FIFO timestamp is the delta since the last sample in CLKIN
+            // ticks (32 kHz): µs = ticks * 1000 / 32.
             let timestamp_delta = 1000 * (pkt.timestamp() as u32) / 32;
             self.ts_micros = self.ts_micros.wrapping_add(timestamp_delta);
 
@@ -69,7 +68,6 @@ impl common::platform::Imu for AtsliteImu {
     }
 }
 
-// Implement the ImuInterrupt trait
 impl common::platform::ImuInterrupt for AtsliteImuInterrupt {
     fn wait(&mut self) -> impl Future<Output = ()> {
         self.int1.wait_for_low()
@@ -156,7 +154,6 @@ where
     let mut ppi_ch = Ppi::new_one_to_one(clkin_ppi_ch, cc.event_compare(), clkin_ch.task_out());
     ppi_ch.enable();
     timer.start();
-    // Let the timer run forever
     timer.persist();
     ppi_ch.persist();
     clkin_ch.persist();

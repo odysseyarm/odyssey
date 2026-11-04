@@ -1,5 +1,5 @@
-// Mock L2CAP implementation for VM (no BLE support)
-// All operations are no-ops or pend forever
+// The VM has no BLE: receivers pend forever and senders drop packets as if
+// they were delivered.
 
 use core::future::Future;
 
@@ -30,7 +30,6 @@ pub struct MockReceiver;
 #[derive(Clone, Copy)]
 pub struct MockSender;
 
-// Implement the L2capChannels trait
 impl common::platform::L2capChannels for VmL2capChannels {
     type Receiver = MockReceiver;
     type Sender = MockSender;
@@ -52,26 +51,23 @@ impl common::platform::L2capChannels for VmL2capChannels {
     }
 }
 
-// Implement the L2capReceiver trait - always pend
 impl common::platform::L2capReceiver for MockReceiver {
     fn receive(&self) -> impl Future<Output = Packet> {
         async move {
-            // Never actually receive anything (VM has no BLE)
             core::future::pending().await
         }
     }
 }
 
-// Implement the L2capSender trait - always succeed (discard)
 impl common::platform::L2capSender for MockSender {
     fn send(&self, _pkt: Packet) -> impl Future<Output = ()> {
         async move {
-            // VM has no BLE, so pretend the packet was delivered immediately.
+            // The packet is dropped; the VM has no BLE.
         }
     }
 
     fn try_send(&self, _pkt: Packet) -> Result<(), ()> {
-        // Pretend we sent it successfully
+        // The packet is dropped; the VM has no BLE.
         Ok(())
     }
 }

@@ -30,8 +30,8 @@ fn pcd_region_addr() -> usize {
 async fn main(_spawner: embassy_executor::Spawner) {
     let p = embassy_nrf::init(Default::default());
 
-    // Uncomment this if you are debugging the bootloader with debugger/RTT attached,
-    // as it prevents a hard fault when accessing flash 'too early' after boot.
+    // With a debugger/RTT attached, uncomment this delay: flash accessed too
+    // soon after boot hard-faults.
     // for _ in 0..10000000 {
     //     cortex_m::asm::nop();
     // }
@@ -41,7 +41,6 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     let flash: Mutex<NoopRawMutex, RefCell<Nvmc<'_>>> = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
-    // Access PCD region in shared SRAM
     let pcd = unsafe { PcdRegion::at_mut(pcd_region_addr()) };
 
     if pcd.cmd.is_valid() {
@@ -70,7 +69,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
                 #[cfg(feature = "defmt")]
                 defmt::info!("Update copy/verify complete");
                 pcd.status.set_status(PcdStatusCode::Success);
-                // Ensure status is visible to app core before any further actions.
+                // The app core must see the status before anything else happens.
                 cortex_m::asm::dsb();
                 cortex_m::asm::isb();
                 clear_state_flag(&flash);
@@ -93,7 +92,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     boot_app()
 }
 
-/// Boot the network core application
+/// Boots the network core application.
 fn boot_app() -> ! {
     unsafe extern "C" {
         static __bootloader_active_start: u32;
@@ -105,14 +104,11 @@ fn boot_app() -> ! {
         cortex_m::interrupt::disable();
         cortex_m::interrupt::enable();
 
-        // Invalidate instruction cache
         p.SCB.invalidate_icache();
 
-        // Set vector table offset
         let active = &__bootloader_active_start as *const u32 as u32;
         p.SCB.vtor.write(active);
 
-        // Jump to application
         cortex_m::asm::bootload(active as *const u32)
     }
 }
@@ -198,7 +194,7 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         defmt::warn!("NVMC write error");
         return Err(());
     }
-    // Ensure flash write completes before verify.
+    // The flash write must complete before the verify.
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
     verify_copy(dst_addr, src)

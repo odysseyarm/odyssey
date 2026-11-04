@@ -47,8 +47,8 @@ impl UsbConfigHandle {
         }
     }
 
-    /// Wait for the next USB configuration event (configured or unconfigured)
-    /// This always waits for an actual event, unlike wait_until_configured which returns immediately if already configured
+    /// Waits for the next configured/unconfigured event. Unlike
+    /// wait_until_configured, it waits even when the device is already configured.
     pub async fn wait_for_event(&self) {
         self.signal.wait().await;
     }
@@ -141,8 +141,8 @@ where
         control_buf,
     );
 
-    // Add the Microsoft OS Descriptor (MSOS/MOD) descriptor.
-    // Device-level headers are always needed; function-level headers are for composite devices.
+    // Microsoft OS descriptors. Device-level headers are always needed;
+    // function-level headers only for composite devices.
     builder.msos_descriptor(windows_version::WIN8_1, 0);
     builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -160,14 +160,12 @@ where
 
     builder.handler(&mut *handler);
 
-    // Call the builder callback to allow adding additional interfaces (e.g., DFU)
+    // Extra interfaces from the board, such as DFU.
     builder_callback(&mut builder);
 
-    // Add a vendor-specific function (class 0xFF), and corresponding interface,
-    // that uses our custom handler.
-    // We tell Windows that this specific function is compatible with the "WINUSB" feature,
-    // which causes it to use the built-in WinUSB driver automatically, which in turn
-    // can be used by libusb/rusb software without needing a custom driver or INF file.
+    // Vendor-specific function (class 0xFF) with our handler. Marking it
+    // WINUSB-compatible makes Windows bind the built-in WinUSB driver, so
+    // libusb/rusb work without a custom driver or INF file.
     let mut function = builder.function(0xFF, 0, 0);
     function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -214,9 +212,8 @@ impl embassy_usb::Handler for MyHandler {
         use embassy_usb::control::{OutResponse, Recipient, RequestType};
         use odyssey_protocol::control::device::DeviceMsg;
 
-        // Vendor|Interface, request SEND=0x30
-        // Note: We don't check wIndex - the combination of Vendor request type
-        // and request code 0x30 uniquely identifies our vendor interface
+        // Vendor|Interface, request SEND=0x30. wIndex is not checked: a vendor
+        // request with code 0x30 can only be for our interface.
         if req.request_type == RequestType::Vendor
             && req.recipient == Recipient::Interface
             && req.request == 0x30
@@ -240,9 +237,8 @@ impl embassy_usb::Handler for MyHandler {
     ) -> Option<embassy_usb::control::InResponse<'a>> {
         use embassy_usb::control::{InResponse, Recipient, RequestType};
 
-        // Vendor|Interface, request RECV=0x31
-        // Note: We don't check wIndex - the combination of Vendor request type
-        // and request code 0x31 uniquely identifies our vendor interface
+        // Vendor|Interface, request RECV=0x31. wIndex is not checked: a vendor
+        // request with code 0x31 can only be for our interface.
         if req.request_type == RequestType::Vendor
             && req.recipient == Recipient::Interface
             && req.request == 0x31
