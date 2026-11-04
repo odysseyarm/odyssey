@@ -8,9 +8,12 @@
 
 mod bootloader;
 mod device_firmware_update;
-mod dfu_steps;
+mod dfu_session;
+mod downloads;
 mod firmware_channel;
 mod netcore;
+mod progress_bar;
+mod update_available;
 mod update_check;
 mod update_manager;
 mod update_notes;

@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 
-use super::update_manager::FirmwareUpdateManager;
-use super::update_state::FirmwareUpdateState;
+use super::progress_bar::ProgressBar;
+use super::update_manager::{FirmwareUpdateManager, use_polled_state};
+use super::update_state::{BYTES_PER_KB, FirmwareUpdateState, percent_complete};
 
 /// Props for the updating device row component
 #[derive(Props, Clone, PartialEq)]
@@ -10,68 +11,33 @@ pub(crate) struct UpdatingDeviceRowProps {
     pub manager: FirmwareUpdateManager,
 }
 
+/// What the row says about `state`: the fixed wording plus any data it carries.
+fn state_display(state: &FirmwareUpdateState) -> String {
+    match state {
+        FirmwareUpdateState::Flashing { progress, total }
+        | FirmwareUpdateState::FlashingNetCore { progress, total } => {
+            format!(
+                "{} {}%",
+                state.status_text(),
+                percent_complete(*progress, *total)
+            )
+        }
+        FirmwareUpdateState::Failed(error) => format!("Failed: {error}"),
+        _ => state.status_text().to_string(),
+    }
+}
+
 /// A component that displays a device being updated (when not in device list)
 #[component]
 pub(crate) fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
     let uuid = props.uuid;
-    let manager = props.manager.clone();
 
     // Poll state from manager
-    let mut state = use_signal(|| manager.get_state(&uuid));
-
-    use_future(move || {
-        let manager = manager.clone();
-        async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                state.set(manager.get_state(&uuid));
-            }
-        }
-    });
-
-    let current_state = state();
-
-    let state_display = match &current_state {
-        FirmwareUpdateState::Idle => "Idle".to_string(),
-        FirmwareUpdateState::NeedsUsbConnection { .. } => "Plug in USB to update".to_string(),
-        FirmwareUpdateState::NeedsNewerDesktop(_) => "Needs a newer Odyssey Desktop".to_string(),
-        FirmwareUpdateState::NetCoreBlockedNoPath(_) => {
-            "No update path from this net core".to_string()
-        }
-        FirmwareUpdateState::Available { .. } => "Update available".to_string(),
-        FirmwareUpdateState::Downloading => "Downloading...".to_string(),
-        FirmwareUpdateState::Detaching => "Preparing device...".to_string(),
-        FirmwareUpdateState::WaitingForDfu => "Waiting for DFU mode...".to_string(),
-        FirmwareUpdateState::Flashing { progress, total } => {
-            let percent = if *total > 0 {
-                (*progress * 100) / *total
-            } else {
-                0
-            };
-            format!("Flashing... {percent}%")
-        }
-        FirmwareUpdateState::FlashingNetCore { progress, total } => {
-            let percent = if *total > 0 {
-                (*progress * 100) / *total
-            } else {
-                0
-            };
-            format!("Updating radio firmware... {percent}%")
-        }
-        FirmwareUpdateState::VerifyingNetCore => "Checking radio firmware...".to_string(),
-        FirmwareUpdateState::InstallingNetCore => "Installing radio firmware...".to_string(),
-        FirmwareUpdateState::Rebooting => "Rebooting device...".to_string(),
-        FirmwareUpdateState::Verifying => "Verifying update...".to_string(),
-        FirmwareUpdateState::Complete => "Update complete!".to_string(),
-        FirmwareUpdateState::Failed(e) => format!("Failed: {e}"),
-    };
+    let current_state = use_polled_state(&props.manager, uuid)();
+    let state_display = state_display(&current_state);
 
     let is_error = matches!(current_state, FirmwareUpdateState::Failed(_));
     let is_complete = matches!(current_state, FirmwareUpdateState::Complete);
-    let is_flashing = matches!(
-        current_state,
-        FirmwareUpdateState::Flashing { .. } | FirmwareUpdateState::FlashingNetCore { .. }
-    );
 
     rsx! {
         div {
@@ -94,30 +60,14 @@ pub(crate) fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
                     class: if is_error { "text-xs text-red-500" }
                            else if is_complete { "text-xs text-green-500" }
                            else { "text-xs text-yellow-500" },
-                    "{state_display}"
+                    {state_display}
                 }
             }
-            if is_flashing {
-                {
-                    let (progress, total) = match &current_state {
-                        FirmwareUpdateState::Flashing { progress, total }
-                        | FirmwareUpdateState::FlashingNetCore { progress, total } => (*progress, *total),
-                        _ => (0, 1),
-                    };
-                    let percent = if total > 0 { (progress * 100) / total } else { 0 };
-                    rsx! {
-                        div {
-                            class: "w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2",
-                            div {
-                                class: "bg-blue-600 h-2 rounded-full transition-all duration-100",
-                                style: "width: {percent}%",
-                            }
-                        }
-                        span {
-                            class: "text-xs text-gray-400",
-                            "{progress / 1024} / {total / 1024} KB"
-                        }
-                    }
+            if let Some((progress, total)) = current_state.flash_progress() {
+                ProgressBar { percent: percent_complete(progress, total) }
+                span {
+                    class: "text-xs text-gray-400",
+                    "{progress / BYTES_PER_KB} / {total / BYTES_PER_KB} KB"
                 }
             }
         }
