@@ -1,4 +1,5 @@
-#[expect(unused_imports)]
+// Without std, `f32::round` is only available through nalgebra's libm-backed trait.
+#[cfg(not(feature = "std"))]
 use nalgebra::ComplexField as _;
 use odyssey_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1};
 use odyssey_protocol_macros::protocol_type;

@@ -12,14 +12,10 @@ pub enum ProductId {
 }
 
 impl ProductId {
+    const ALL: [Self; 4] = [Self::AtsVm, Self::AtsLite, Self::AtsPro, Self::Mux];
+
     pub fn from_u16(value: u16) -> Option<Self> {
-        match value {
-            0x520f => Some(Self::AtsVm),
-            0x5210 => Some(Self::AtsLite),
-            0x5211 => Some(Self::AtsPro),
-            0x5212 => Some(Self::Mux),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|id| *id as u16 == value)
     }
 
     pub fn supports_control_endpoint(&self) -> bool {

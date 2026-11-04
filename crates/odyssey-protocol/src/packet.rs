@@ -9,6 +9,12 @@ use crate::{
     ReadRegisterResponse, Register, SetDeviceNameResult, StreamUpdate, Version, WriteRegister,
 };
 
+/// First id of the vendor range. Ids strictly between this and
+/// [`VENDOR_END_ID`] are vendor packets carrying their own tag.
+const VENDOR_START_ID: u8 = 0x80;
+/// Last id of the vendor range.
+const VENDOR_END_ID: u8 = 0xff;
+
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
@@ -24,6 +30,10 @@ pub struct Packet {
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing a payload would change the public enum and the no_std wire types"
+)]
 pub enum PacketData {
     #[cfg_attr(feature = "minicbor", n(0))]
     WriteRegister(#[cfg_attr(feature = "minicbor", n(0))] WriteRegister),
@@ -194,11 +204,9 @@ impl TryFrom<u8> for PacketType {
             0x15 => Ok(Self::BatteryReport()),
             0x16 => Ok(Self::SetDeviceName()),
             0x17 => Ok(Self::SetDeviceNameResponse()),
-            0x80 => Ok(Self::VendorStart()),
-            0xff => Ok(Self::VendorEnd()),
-            n if (Self::VendorStart().into()..Self::VendorEnd().into()).contains(&n) => {
-                Ok(Self::Vendor(n))
-            }
+            VENDOR_START_ID => Ok(Self::VendorStart()),
+            VENDOR_END_ID => Ok(Self::VendorEnd()),
+            n if (VENDOR_START_ID..VENDOR_END_ID).contains(&n) => Ok(Self::Vendor(n)),
             _ => Err(Error::UnrecognizedPacketId(n)),
         }
     }
@@ -231,8 +239,8 @@ impl From<PacketType> for u8 {
             PacketType::BatteryReport() => 0x15,
             PacketType::SetDeviceName() => 0x16,
             PacketType::SetDeviceNameResponse() => 0x17,
-            PacketType::VendorStart() => 0x80,
-            PacketType::VendorEnd() => 0xff,
+            PacketType::VendorStart() => VENDOR_START_ID,
+            PacketType::VendorEnd() => VENDOR_END_ID,
             PacketType::Vendor(n) => n,
         }
     }
@@ -268,15 +276,21 @@ impl Packet {
         }
     }
 
+    /// Writes the packet header followed by `data` and returns the bytes
+    /// written.
+    ///
+    /// The header is a little-endian length in 16-bit words (header
+    /// included), the packet type and the request id.
     pub fn serialize_parts<D: Serialize>(
         id: u8,
         ty: PacketType,
         data: &D,
         mut buf: &mut [MaybeUninit<u8>],
     ) -> usize {
+        const HEADER_SIZE: usize = 4;
         let orig_buf_len = buf.len();
-        let words = u16::to_le_bytes((D::SIZE as u16 + 4) / 2);
-        push(&mut buf, &[words[0], words[1], ty.into(), id]);
+        let [words_low, words_high] = u16::to_le_bytes(((D::SIZE + HEADER_SIZE) / 2) as u16);
+        push(&mut buf, &[words_low, words_high, ty.into(), id]);
         data.serialize(&mut buf);
         orig_buf_len - buf.len()
     }
@@ -344,5 +358,53 @@ impl PacketData {
             Self::BatteryReport(x) => Some(x),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two tables (`u8 -> PacketType` and back) are written out by hand; a
+    /// row that differs between them would corrupt every packet of that type.
+    #[test]
+    fn every_known_packet_id_round_trips() {
+        let mut known = 0;
+        for id in 0..=u8::MAX {
+            if let Ok(ty) = PacketType::try_from(id) {
+                assert_eq!(u8::from(ty), id);
+                known += 1;
+            }
+        }
+        // 24 fixed ids + the vendor range 0x80..=0xff.
+        assert_eq!(known, 24 + 128);
+    }
+
+    #[test]
+    fn ids_outside_the_tables_are_rejected() {
+        assert!(matches!(
+            PacketType::try_from(0x18),
+            Err(Error::UnrecognizedPacketId(0x18))
+        ));
+        assert!(matches!(
+            PacketType::try_from(0x7f),
+            Err(Error::UnrecognizedPacketId(0x7f))
+        ));
+    }
+
+    #[test]
+    fn vendor_ids_carry_their_tag() {
+        assert!(matches!(
+            PacketType::try_from(0x90),
+            Ok(PacketType::Vendor(0x90))
+        ));
+        assert!(matches!(
+            PacketType::try_from(VENDOR_START_ID),
+            Ok(PacketType::VendorStart())
+        ));
+        assert!(matches!(
+            PacketType::try_from(VENDOR_END_ID),
+            Ok(PacketType::VendorEnd())
+        ));
     }
 }

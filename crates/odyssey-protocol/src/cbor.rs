@@ -22,8 +22,11 @@ pub(crate) mod heapless_str32 {
     }
 
     pub(crate) fn cbor_len<Ctx>(s: &DeviceName, _ctx: &mut Ctx) -> usize {
+        // A text string's length shares its header byte up to 23; a 1-byte
+        // length follows up to 255, and a device name is at most 32 bytes.
+        const INLINE_LENGTH_MAX: usize = 23;
         let n = s.as_str().len();
-        let header = if n <= 23 { 1 } else { 2 };
+        let header = if n <= INLINE_LENGTH_MAX { 1 } else { 2 };
         header + n
     }
 }
@@ -44,7 +47,7 @@ pub(crate) mod serde_with {
     {
         let mut ser = Serializer::new(e.writer_mut());
         v.serialize(&mut ser)
-            .map_err(|_| minicbor::encode::Error::message("serde encode error"))
+            .map_err(|_serde_error| minicbor::encode::Error::message("serde encode error"))
     }
 
     pub(crate) fn decode<'b, C, T>(
@@ -59,7 +62,7 @@ pub(crate) mod serde_with {
 
         let mut de = Deserializer::new(rest);
         let v: T = T::deserialize(&mut de)
-            .map_err(|_| minicbor::decode::Error::message("serde decode error"))?;
+            .map_err(|_serde_error| minicbor::decode::Error::message("serde decode error"))?;
 
         let consumed = de.decoder().position();
         d.set_position(start + consumed);
