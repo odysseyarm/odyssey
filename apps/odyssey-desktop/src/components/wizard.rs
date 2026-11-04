@@ -104,7 +104,7 @@ pub fn IconView(icon: Icon, class: Option<String>) -> Element {
     let class = class.unwrap_or_else(|| "size-6".into());
     rsx! {
         svg {
-            class: "{class}",
+            class,
             view_box: "0 0 24 24",
             fill: "none",
             stroke: "currentColor",
@@ -129,8 +129,8 @@ pub fn StatusBanner(tone: Tone, icon: Icon, title: String, detail: String) -> El
             IconView { icon, class: "size-10 shrink-0 {tone.icon_class()}" }
             div {
                 class: "min-w-0",
-                div { class: "text-xl font-semibold leading-tight", "{title}" }
-                div { class: "mt-0.5 text-base opacity-90", "{detail}" }
+                div { class: "text-xl font-semibold leading-tight", {title} }
+                div { class: "mt-0.5 text-base opacity-90", {detail} }
             }
         }
     }
@@ -179,7 +179,7 @@ pub fn Stepper(steps: Vec<&'static str>, current: usize) -> Element {
                                         "{i + 1}"
                                     }
                                 }
-                                span { class: "text-sm whitespace-nowrap {text}", "{label}" }
+                                span { class: "text-sm whitespace-nowrap {text}", {label} }
                             }
                             if i != last {
                                 div { class: "mx-3 h-0.5 flex-1 rounded {bar}" }
@@ -213,11 +213,11 @@ pub fn Slider(
             class: "flex flex-col gap-1",
             div {
                 class: "flex items-baseline justify-between",
-                label { r#for: "{id}", class: "text-base font-medium text-gray-900 dark:text-white", "{label}" }
-                span { class: "text-sm tabular-nums text-gray-600 dark:text-gray-300", "{value_text}" }
+                label { r#for: id.clone(), class: "text-base font-medium text-gray-900 dark:text-white", {label} }
+                span { class: "text-sm tabular-nums text-gray-600 dark:text-gray-300", {value_text} }
             }
             input {
-                id: "{id}",
+                id,
                 r#type: "range",
                 class: "w-full accent-blue-600 disabled:opacity-50",
                 min: "{min}",
@@ -232,7 +232,7 @@ pub fn Slider(
                 },
             }
             if let Some(help) = help {
-                span { class: "text-sm text-gray-500 dark:text-gray-400", "{help}" }
+                span { class: "text-sm text-gray-500 dark:text-gray-400", {help} }
             }
         }
     }
@@ -270,7 +270,7 @@ pub fn OverlayImage(
             class: "relative w-full overflow-hidden rounded-xl bg-black shadow-inner",
             style: "aspect-ratio: {width} / {height};",
             if !src.is_empty() {
-                img { class: "absolute inset-0 size-full object-fill", src: "{src}", alt: "{alt}" }
+                img { class: "absolute inset-0 size-full object-fill", src, alt }
             }
             svg {
                 class: "absolute inset-0 size-full",

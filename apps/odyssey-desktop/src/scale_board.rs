@@ -53,20 +53,6 @@ impl Board {
             Self::RigidLarge => artwork!("scale-board-rigid-large.pdf"),
         }
     }
-
-    /// Distance between dot centers, millimeters, as designed. A print can
-    /// differ by the printer's own scaling; see the guide's scale check.
-    pub(crate) fn pitch_mm(self) -> f64 {
-        match self {
-            Self::RigidLarge => 80.0,
-            _ => 40.0,
-        }
-    }
-
-    /// Length of the printed scale bar, millimeters, as designed.
-    pub(crate) fn bar_mm(self) -> f64 {
-        self.pitch_mm() * 5.0
-    }
 }
 
 /// Where the print files are written.
@@ -178,21 +164,12 @@ mod tests {
     }
 
     #[test]
-    fn the_files_are_distinct_and_the_scale_check_matches_the_large_board() {
+    fn every_board_has_its_own_file() {
         let names: std::collections::HashSet<_> =
             Board::ALL.iter().map(|b| b.file_name()).collect();
         assert_eq!(names.len(), Board::ALL.len());
         let bytes: std::collections::HashSet<_> = Board::ALL.iter().map(|b| b.bytes()).collect();
         assert_eq!(bytes.len(), Board::ALL.len(), "two boards share one file");
-        // The bar is five pitches long, which is what the guide's check relies on.
-        assert_eq!(
-            (Board::Letter.pitch_mm(), Board::Letter.bar_mm()),
-            (40.0, 200.0)
-        );
-        assert_eq!(
-            (Board::RigidLarge.pitch_mm(), Board::RigidLarge.bar_mm()),
-            (80.0, 400.0)
-        );
     }
 
     #[test]
