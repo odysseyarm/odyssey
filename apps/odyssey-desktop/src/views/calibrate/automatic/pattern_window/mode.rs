@@ -35,8 +35,9 @@ pub(crate) enum PatternLoss {
 pub(crate) enum PatternEvent {
     Lost(PatternLoss),
     /// The card frame should grow (positive) or shrink by this many steps of
-    /// [`super::reference::CARD_STEP_PX`]. Sent from the keyboard, which is how
-    /// the frame is resized while this window hides the wizard's own.
+    /// [`crate::views::calibrate::automatic::reference::CARD_STEP_PX`].
+    /// Sent from the keyboard, which resizes the frame while this window hides
+    /// the wizard's own.
     Nudge(i32),
 }
 
