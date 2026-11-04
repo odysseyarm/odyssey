@@ -521,7 +521,8 @@ mod windows_registry {
     };
 
     use super::{
-        DisplayLookup, LookupNote, check_consistency, parse_edid, parse_monitor_device_id,
+        DisplayLookup, LookupNote, LookupSource, check_consistency, parse_edid,
+        parse_monitor_device_id,
     };
 
     /// Registry values here are a few hundred bytes; anything larger is not an EDID.
@@ -592,14 +593,18 @@ mod windows_registry {
                     &mut size,
                 )
             };
-            (status == ERROR_SUCCESS).then(|| {
-                data.truncate(size as usize);
-                data
-            })
+            if status != ERROR_SUCCESS || kind != expected_type || size as usize > data.len() {
+                return None;
+            }
+            data.truncate(size as usize);
+            Some(data)
         }
 
         fn string(&self, name: &str) -> Option<String> {
             let bytes = self.value(name, REG_SZ)?;
+            if bytes.len() % 2 != 0 {
+                return None;
+            }
             let units: Vec<u16> = bytes
                 .as_chunks::<2>()
                 .0
