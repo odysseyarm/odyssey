@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -7,7 +8,7 @@ using Ohc = OdysseyArm.HubClient;
 
 namespace OdysseyArm.HubClient
 {
-    public class Client
+    public class Client : IDisposable
     {
         private uniffi.Client _inner;
 
@@ -203,6 +204,17 @@ namespace OdysseyArm.HubClient
         public Task UpdateAccessoryInfoMap(uniffi.AccessoryInfoMapEntry[] entries)
         {
             return _inner.UpdateAccessoryInfoMap(entries);
+        }
+
+        /// <summary>
+        /// Ends every subscription task and fails every pending call with NotConnected.
+        /// Call it (e.g. from Unity <c>OnDestroy</c>) before the scripting domain unloads;
+        /// a native call still pending afterwards calls back into unloaded code.
+        /// </summary>
+        public void Dispose()
+        {
+            _inner.Close();
+            _inner.Dispose();
         }
     }
 }

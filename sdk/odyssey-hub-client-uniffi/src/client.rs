@@ -3,6 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use odyssey_hub_client::client::RpcError;
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::ffi_common::*;
 
@@ -84,10 +85,14 @@ impl From<RpcError> for ClientError {
 #[derive(uniffi::Object)]
 pub struct Client {
     inner: Arc<RwLock<Option<odyssey_hub_client::client::Client>>>,
+    closed: CancellationToken,
 }
 
 impl Client {
     async fn client(&self) -> Result<odyssey_hub_client::client::Client, ClientError> {
+        if self.closed.is_cancelled() {
+            return Err(ClientError::NotConnected);
+        }
         self.inner
             .read()
             .await
@@ -103,6 +108,28 @@ impl Client {
         let device = device.try_into()?;
         Ok(self.client().await?.device(device))
     }
+
+    async fn until_closed<T, E: Into<ClientError>>(
+        &self,
+        call: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, ClientError> {
+        tokio::select! {
+            biased;
+            () = self.closed.cancelled() => Err(ClientError::NotConnected),
+            result = call => result.map_err(Into::into),
+        }
+    }
+}
+
+async fn next_until_closed<T>(
+    closed: &CancellationToken,
+    inner: &Mutex<futures::stream::BoxStream<'static, T>>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        () = closed.cancelled() => None,
+        item = async { inner.lock().await.next().await } => item,
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -115,6 +142,7 @@ pub struct EventStream {
             >,
         >,
     >,
+    closed: CancellationToken,
 }
 
 #[derive(uniffi::Object)]
@@ -127,11 +155,13 @@ pub struct DeviceListStream {
             >,
         >,
     >,
+    closed: CancellationToken,
 }
 
 #[derive(uniffi::Object)]
 pub struct ShotDelayStream {
     pub inner: Arc<Mutex<futures::stream::BoxStream<'static, Result<u16, RpcError>>>>,
+    closed: CancellationToken,
 }
 
 #[derive(uniffi::Object)]
@@ -144,13 +174,14 @@ pub struct AccessoryMapStream {
             >,
         >,
     >,
+    closed: CancellationToken,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
 impl EventStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Event, ClientError> {
-        match self.inner.lock().await.next().await {
+        match next_until_closed(&self.closed, &self.inner).await {
             Some(Ok(event)) => Ok(event.into()),
             Some(Err(error)) => Err(error.into()),
             None => Err(ClientError::StreamEnd),
@@ -162,7 +193,7 @@ impl EventStream {
 impl DeviceListStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<Device>, ClientError> {
-        match self.inner.lock().await.next().await {
+        match next_until_closed(&self.closed, &self.inner).await {
             Some(msg) => match msg {
                 Ok(device_list) => Ok(device_list
                     .into_iter()
@@ -179,7 +210,7 @@ impl DeviceListStream {
 impl ShotDelayStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<u16, ClientError> {
-        match self.inner.lock().await.next().await {
+        match next_until_closed(&self.closed, &self.inner).await {
             Some(msg) => match msg {
                 Ok(delay) => Ok(delay),
                 Err(error) => Err(error.into()),
@@ -193,7 +224,7 @@ impl ShotDelayStream {
 impl AccessoryMapStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
-        match self.inner.lock().await.next().await {
+        match next_until_closed(&self.closed, &self.inner).await {
             Some(msg) => match msg {
                 Ok(map) => {
                     let entries: Vec<crate::ffi_common::AccessoryMapEntry> = map
@@ -226,23 +257,38 @@ impl Client {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(None)),
+            closed: CancellationToken::new(),
         }
+    }
+
+    /// Ends every stream created by this client with `StreamEnd` and makes every pending and
+    /// later call fail with `NotConnected`. Terminal and idempotent.
+    ///
+    /// Call it before the host unloads the code that awaits these calls (e.g. Unity domain
+    /// reload, interpreter shutdown): a call still pending afterwards calls back into unloaded code.
+    #[uniffi::method]
+    pub fn close(&self) {
+        self.closed.cancel();
     }
 
     #[uniffi::method]
     pub async fn connect(&self) -> Result<(), ClientError> {
-        let client = odyssey_hub_client::client::Client::connect().await?;
-        *self.inner.write().await = Some(client);
-        Ok(())
+        self.until_closed(async {
+            let client = odyssey_hub_client::client::Client::connect().await?;
+            let mut inner = self.inner.write().await;
+            if self.closed.is_cancelled() {
+                return Err(ClientError::NotConnected);
+            }
+            *inner = Some(client);
+            Ok(())
+        })
+        .await
     }
 
     #[uniffi::method]
     pub async fn get_device_list(&self) -> Result<Vec<Device>, ClientError> {
-        self.client()
-            .await?
-            .get_device_list()
+        self.until_closed(self.client().await?.get_device_list())
             .await
-            .map_err(ClientError::from)
             .map(|dl| dl.into_iter().map(|d| d.into()).collect())
     }
 
@@ -250,11 +296,12 @@ impl Client {
     pub async fn subscribe_device_list(&self) -> Result<DeviceListStream, ClientError> {
         let client = self.client().await?;
 
-        match client.subscribe_device_list().await {
+        match self.until_closed(client.subscribe_device_list()).await {
             Ok(stream) => Ok(DeviceListStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
+                closed: self.closed.clone(),
             }),
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     }
 
@@ -262,9 +309,7 @@ impl Client {
     pub async fn get_accessory_map(
         &self,
     ) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
-        self.client()
-            .await?
-            .get_accessory_map()
+        self.until_closed(self.client().await?.get_accessory_map())
             .await
             .map(|map| {
                 map.into_iter()
@@ -282,18 +327,18 @@ impl Client {
                     })
                     .collect()
             })
-            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
     pub async fn subscribe_accessory_map(&self) -> Result<AccessoryMapStream, ClientError> {
         let client = self.client().await?;
 
-        match client.subscribe_accessory_map().await {
+        match self.until_closed(client.subscribe_accessory_map()).await {
             Ok(stream) => Ok(AccessoryMapStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
+                closed: self.closed.clone(),
             }),
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     }
 
@@ -301,11 +346,12 @@ impl Client {
     pub async fn subscribe_events(&self) -> Result<EventStream, ClientError> {
         let client = self.client().await?;
 
-        match client.subscribe_events().await {
+        match self.until_closed(client.subscribe_events()).await {
             Ok(stream) => Ok(EventStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
+                closed: self.closed.clone(),
             }),
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     }
 
@@ -314,11 +360,13 @@ impl Client {
         &self,
         device: Device,
     ) -> Result<ShotDelayStream, ClientError> {
-        match self.device(device).await?.subscribe_shot_delay().await {
+        let device = self.device(device).await?;
+        match self.until_closed(device.subscribe_shot_delay()).await {
             Ok(stream) => Ok(ShotDelayStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
+                closed: self.closed.clone(),
             }),
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     }
 
@@ -329,21 +377,15 @@ impl Client {
         tag: u8,
         data: Vec<u8>,
     ) -> Result<(), ClientError> {
-        self.device(device)
-            .await?
-            .write_vendor(tag, data)
+        self.until_closed(self.device(device).await?.write_vendor(tag, data))
             .await
-            .map_err(ClientError::from)
             .map(|_| ())
     }
 
     #[uniffi::method]
     pub async fn reset_zero(&self, device: Device) -> Result<(), ClientError> {
-        self.device(device)
-            .await?
-            .reset_zero()
+        self.until_closed(self.device(device).await?.reset_zero())
             .await
-            .map_err(ClientError::from)
             .map(|_| ())
     }
 
@@ -364,59 +406,41 @@ impl Client {
             y: target.y,
         };
 
-        self.device(device)
-            .await?
-            .zero(translation, target, None)
+        self.until_closed(self.device(device).await?.zero(translation, target, None))
             .await
-            .map_err(ClientError::from)
             .map(|_| ())
     }
 
     #[uniffi::method]
     pub async fn reset_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
-        self.device(device)
-            .await?
-            .reset_shot_delay()
+        self.until_closed(self.device(device).await?.reset_shot_delay())
             .await
-            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
     pub async fn get_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
-        self.device(device)
-            .await?
-            .get_shot_delay()
+        self.until_closed(self.device(device).await?.get_shot_delay())
             .await
-            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
     pub async fn set_shot_delay(&self, device: Device, delay_ms: u16) -> Result<(), ClientError> {
-        self.device(device)
-            .await?
-            .set_shot_delay(delay_ms)
+        self.until_closed(self.device(device).await?.set_shot_delay(delay_ms))
             .await
-            .map_err(ClientError::from)
             .map(|_| ())
     }
 
     #[uniffi::method]
     pub async fn save_shot_delay(&self, device: Device) -> Result<(), ClientError> {
-        self.device(device)
-            .await?
-            .save_shot_delay()
+        self.until_closed(self.device(device).await?.save_shot_delay())
             .await
-            .map_err(ClientError::from)
             .map(|_| ())
     }
 
     #[uniffi::method]
     pub async fn get_screen_info_by_id(&self, screen_id: u8) -> Result<ScreenInfo, ClientError> {
-        self.client()
-            .await?
-            .get_screen_info_by_id(screen_id)
+        self.until_closed(self.client().await?.get_screen_info_by_id(screen_id))
             .await
-            .map_err(ClientError::from)
             .map(|info| info.into())
     }
 
@@ -428,11 +452,12 @@ impl Client {
         bank: u8,
         address: u8,
     ) -> Result<u8, ClientError> {
-        self.device(device)
-            .await?
-            .read_register(port, bank, address)
-            .await
-            .map_err(ClientError::from)
+        self.until_closed(
+            self.device(device)
+                .await?
+                .read_register(port, bank, address),
+        )
+        .await
     }
 
     #[uniffi::method]
@@ -444,20 +469,18 @@ impl Client {
         address: u8,
         data: u8,
     ) -> Result<(), ClientError> {
-        self.device(device)
-            .await?
-            .write_register(port, bank, address, data)
-            .await
-            .map_err(ClientError::from)
+        self.until_closed(
+            self.device(device)
+                .await?
+                .write_register(port, bank, address, data),
+        )
+        .await
     }
 
     #[uniffi::method]
     pub async fn flash_settings(&self, device: Device) -> Result<(), ClientError> {
-        self.device(device)
-            .await?
-            .flash_settings()
+        self.until_closed(self.device(device).await?.flash_settings())
             .await
-            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
@@ -479,11 +502,8 @@ impl Client {
             })
             .collect::<Result<_, ClientError>>()?;
 
-        self.client()
-            .await?
-            .update_accessory_info_map(map)
+        self.until_closed(self.client().await?.update_accessory_info_map(map))
             .await
-            .map_err(ClientError::from)
             .map(|_| ())
     }
 }
@@ -502,6 +522,7 @@ mod tests {
             inner: Arc::new(Mutex::new(Box::pin(futures::stream::iter([Err(
                 RpcError::from(tonic::Status::permission_denied("device is locked")),
             )])))),
+            closed: CancellationToken::new(),
         };
 
         runtime.block_on(async {
@@ -555,5 +576,44 @@ mod tests {
             runtime.block_on(client.subscribe_events()),
             Err(ClientError::NotConnected)
         ));
+    }
+
+    #[test]
+    fn close_ends_pending_streams_and_later_calls() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let client = Client::new();
+        let stream = Arc::new(EventStream {
+            inner: Arc::new(Mutex::new(futures::stream::pending().boxed())),
+            closed: client.closed.clone(),
+        });
+
+        runtime.block_on(async {
+            let first = tokio::spawn({
+                let stream = stream.clone();
+                async move { stream.next().await }
+            });
+            let queued = tokio::spawn({
+                let stream = stream.clone();
+                async move { stream.next().await }
+            });
+            tokio::task::yield_now().await;
+            client.close();
+            client.close();
+            for pending in [first, queued] {
+                let result = tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+                    .await
+                    .expect("next() ends after close")
+                    .expect("next() task");
+                assert!(matches!(result, Err(ClientError::StreamEnd)));
+            }
+            let connect = tokio::time::timeout(std::time::Duration::from_secs(5), client.connect())
+                .await
+                .expect("connect() ends after close");
+            assert!(matches!(connect, Err(ClientError::NotConnected)));
+            assert!(client.inner.read().await.is_none());
+        });
     }
 }

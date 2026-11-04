@@ -15,3 +15,8 @@ compiler rejects PolySharp 1.16's generated embedded attributes for the
 Subscription helpers write setup and streaming errors as the final channel item,
 complete the channel on exit, and dispose the native stream. Keep consuming until
 the channel completes to observe the terminal error.
+
+Dispose the client before the scripting domain reloads or the process shuts down
+(e.g. from Unity `OnDestroy`). Disposal ends every subscription with `StreamEnd`
+and fails pending and later calls with `NotConnected`; a native call left pending
+across a domain reload calls back into unloaded code and crashes the Editor.
