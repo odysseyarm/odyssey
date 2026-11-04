@@ -183,6 +183,12 @@ fn best_seed(seeds: &[Seed]) -> Option<&Seed> {
 }
 
 /// Orders `points` the way the tracker needs them.
+///
+/// # Errors
+///
+/// [`PlacementError::NotFinite`] if a coordinate is NaN or infinite;
+/// [`PlacementError::NoSeed`] if no choice of markers meets the seed conditions in the
+/// module documentation.
 pub fn tracker_order(points: &[Point2<f64>; 6]) -> Result<TrackerOrder, PlacementError> {
     if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
         return Err(PlacementError::NotFinite);

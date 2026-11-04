@@ -237,6 +237,11 @@ pub struct MarkerFit {
 /// Finds the six markers among `blobs` and orders them for the tracker. The markers may
 /// sit anywhere on or just around the screen: exactly six spots must be there, and three
 /// of them must make the row the tracker looks for (see [`crate::placement`]).
+///
+/// # Errors
+///
+/// `TooFewBlobs` with fewer than six blobs, `WrongCount` unless exactly six land on or near
+/// the screen, and the placement error when those six cannot be ordered for the tracker.
 pub fn locate(
     geometry: &CameraGeometry,
     fit: &ScreenFit,

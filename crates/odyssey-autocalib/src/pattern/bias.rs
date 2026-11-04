@@ -19,7 +19,8 @@ const MIN_POLE_W: f64 = 1e-12;
 
 /// Offset between the center of a dot's elliptical image and the image of the
 /// dot's true center, in pixels, for a pattern-to-pixel homography
-/// `unit_to_pixel`.
+/// `unit_to_pixel`. `None` if `dot` is out of range or the projected circle has no finite
+/// center.
 ///
 /// A circle seen obliquely images to an ellipse, and perspective foreshortens
 /// its far half more than its near half, so the ellipse center (which is where
@@ -82,7 +83,8 @@ pub(super) struct Debiased {
 }
 
 /// Refits the homography on bias-corrected centers until the correction stops
-/// changing. `threshold` is the inlier distance of each refit, in pixels.
+/// changing or [`BIAS_PASSES`] run out. `threshold` is the inlier distance of each refit, in
+/// pixels.
 pub(super) fn remove_center_bias(
     pattern: &Pattern,
     blobs: &[Blob],

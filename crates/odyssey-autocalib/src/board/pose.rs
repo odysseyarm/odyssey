@@ -26,7 +26,6 @@ const MAX_ITERATIONS: usize = 30;
 const MAX_DAMPING_ATTEMPTS: usize = 8;
 /// Damping at the start, relative to the diagonal of `J^T J`.
 const INITIAL_DAMPING: f64 = 1e-3;
-/// Damping never drops under this.
 const MIN_DAMPING: f64 = 1e-9;
 /// Damping grows by this factor when the damped system cannot be solved.
 const DAMPING_GROWTH_SINGULAR: f64 = 10.0;
@@ -272,6 +271,11 @@ pub(super) struct PoseFit {
 ///
 /// Alternates between fitting the pose and correcting each centroid for the
 /// bias that pose predicts.
+///
+/// # Errors
+///
+/// [`BoardError::DegeneratePose`] when `grid_to_px` does not decompose into a
+/// rotation and translation, or puts the board behind the camera.
 pub(super) fn fit_pose(
     intrinsics: &Intrinsics,
     grid_to_px: &Matrix3<f64>,

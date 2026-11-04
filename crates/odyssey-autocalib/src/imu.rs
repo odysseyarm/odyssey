@@ -16,8 +16,8 @@ use crate::camera::ImuSample;
 /// recommends for a 6-axis filter.
 pub const MADGWICK_GAIN: f64 = 0.5;
 
-/// Gaps longer than this restart integration instead of extrapolating the
-/// gyro across a dropout.
+/// A gap longer than this between samples is skipped instead of extrapolating the gyro
+/// across a dropout; integration resumes from the later sample.
 const MAX_STEP: Duration = Duration::from_millis(500);
 /// Accelerometer readings (m/s^2) shorter than this carry no direction, so
 /// they do not correct the filter.
@@ -209,13 +209,14 @@ impl GravityEstimator {
         }
     }
 
-    /// Samples consumed since creation, including ones skipped for lack of a
-    /// usable accelerometer reading.
+    /// Samples consumed since creation, including ones skipped as non-finite, out of
+    /// order, or before a usable accelerometer reading started the filter.
     pub fn sample_count(&self) -> usize {
         self.samples
     }
 
-    /// Whether an orientation has been established.
+    /// Whether an accelerometer reading long enough to give a gravity direction has
+    /// started the filter.
     pub fn is_ready(&self) -> bool {
         self.filter.is_some()
     }

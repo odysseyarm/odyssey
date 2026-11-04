@@ -20,7 +20,7 @@ const INDEX_CELL_PX: f64 = 16.0;
 const SEED_GATE: f64 = 0.3;
 /// The same for the refinement passes, which predict with a model fit on many dots.
 const REFINE_GATE: f64 = 0.35;
-/// Refinement stops early once a pass keeps the same number of matches.
+/// Most refinement passes. Refinement stops early once a pass keeps the same number of matches.
 const REFINE_PASSES: usize = 4;
 
 /// Share of the dots a seed or refined fit must match to count as the pattern.
@@ -95,9 +95,9 @@ impl PointIndex {
     ) -> impl Iterator<Item = (usize, f64)> + 'a {
         let valid = radius.is_finite() && radius >= 0.0 && p.x.is_finite() && p.y.is_finite();
         let span = (radius / self.cell).ceil();
-        // A projective hypothesis can predict a very large spacing near its
-        // horizon. Never enumerate billions of empty cells; scan the finite
-        // blob set when that is cheaper than the cell square.
+        // A projective hypothesis can predict a very large spacing near its horizon, where the
+        // cell square would hold billions of empty cells. Scan the finite blob set instead
+        // when that is cheaper.
         let scan = (2.0 * span + 1.0).powi(2) > self.cells.len() as f64;
         let span = if valid && !scan { span as i32 } else { 0 };
         let (kx, ky) = Self::key(self.cell, p);
@@ -247,9 +247,9 @@ impl Matcher<'_> {
     }
 
     /// Whether the three corner candidates `[tl, tr, bl]` have dots next to them along
-    /// the grid's edges. This is the lattice test that separates a pattern's corners
-    /// from a bright spot that happens to stand out: a spot has no dot in two
-    /// perpendicular directions nearby. One corner direction may be missing.
+    /// the grid's edges. The lattice test separates a pattern's corners from a bright spot
+    /// that happens to stand out: a spot has no dot in two perpendicular directions nearby.
+    /// One corner direction may be missing.
     fn corner_neighbors_present(&self, [a, b, c]: [Point2<f64>; 3]) -> bool {
         let across = (b - a) / (self.pattern.cols - 1) as f64;
         let down = (c - a) / (self.pattern.rows - 1) as f64;

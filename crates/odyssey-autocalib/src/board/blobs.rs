@@ -296,7 +296,6 @@ impl PixelBox {
     }
 }
 
-/// A connected set of mask pixels.
 #[derive(Debug)]
 struct Component {
     /// Pixel indices `y * width + x`.

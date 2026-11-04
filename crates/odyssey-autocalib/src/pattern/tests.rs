@@ -263,7 +263,7 @@ fn bias_grows_with_dot_size_and_obliqueness_and_points_toward_the_near_side() {
 }
 
 /// Mean distance of the detected dot centers from the true image of the
-/// dot centers, for the corrected estimate and the raw centroid.
+/// dot centers, for the corrected estimate and the raw centroid, and the number of dots matched.
 fn detection_errors(pattern: &Pattern, h: &Matrix3<f64>) -> (f64, f64, f64) {
     let intr = intrinsics();
     let image = render(pattern, &intr, h);

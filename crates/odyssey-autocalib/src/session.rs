@@ -115,7 +115,7 @@ pub enum Hint {
     /// The camera looks at the screen from too steep an angle.
     ScreenTooOblique,
     /// The display cuts off the picture's border (overscan), so its panel
-    /// size no longer matches the pattern. Reported only when
+    /// size does not match the pattern. Reported only when
     /// [`SessionOptions::require_visible_edges`] is set.
     EdgesCropped,
 }

@@ -52,10 +52,6 @@ const COLOR_SHARPNESS: i32 = 100;
 /// `OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT` value for 60 Hz mains.
 const POWER_LINE_60_HZ: i32 = 2;
 
-// ---------------------------------------------------------------------------
-// Error handling
-// ---------------------------------------------------------------------------
-
 /// Copies an SDK-owned C string; null becomes empty.
 ///
 /// # Safety
@@ -136,10 +132,10 @@ fn ob<T>(sdk: &Sdk, call: impl FnOnce(*mut *mut ffi::ob_error) -> T) -> Result<T
 macro_rules! ob {
     ($sdk:expr_2021, $f:ident($($a:expr_2021),* $(,)?)) => {{
         let sdk: &Sdk = &$sdk;
-        // SAFETY: the module-level rule above. Each handle is alive for the
-        // whole call because the caller borrows the wrapper that owns it; the
-        // library is loaded because `sdk` is the `Arc` the handle holds; and
-        // the out-parameter is a fresh local that `ob` passes in.
+        // SAFETY: the soundness rule in the macro's doc. Each handle is alive for
+        // the whole call because the caller borrows the wrapper that owns it; the
+        // library is loaded because `sdk` is the `Arc` the handle holds; and the
+        // out-parameter is a fresh local that `ob` passes in.
         ob(sdk, |e| unsafe { sdk.$f($($a,)* e) })
     }};
 }
@@ -180,10 +176,6 @@ fn initialize(sdk: &Sdk, extensions: Option<&Path>) {
         ),
     }
 }
-
-// ---------------------------------------------------------------------------
-// RAII handles
-// ---------------------------------------------------------------------------
 
 /// Declares an owning wrapper around an SDK handle that deletes it on drop.
 /// The wrapper holds the [`Sdk`] it came from so the library outlives it.
@@ -295,10 +287,6 @@ impl DeviceList {
         Ok(unsafe { c_str(p) })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Device properties
-// ---------------------------------------------------------------------------
 
 impl Device {
     fn supports(&self, id: ffi::ob_property_id) -> bool {
@@ -459,10 +447,6 @@ impl Projector {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Stream profiles and calibration
-// ---------------------------------------------------------------------------
 
 impl Profile {
     fn format(&self) -> Result<ffi::ob_format, CameraError> {
@@ -661,10 +645,6 @@ const IR_SOURCES: [IrSource; 2] = [
     },
 ];
 
-// ---------------------------------------------------------------------------
-// Frames
-// ---------------------------------------------------------------------------
-
 impl Frame {
     /// Wraps a frame the SDK handed out, or `None` for null.
     fn adopt(sdk: &Sdk, raw: *mut ffi::ob_frame) -> Option<Self> {
@@ -779,10 +759,6 @@ fn depth_from_frame(frame: &Frame) -> Result<(DepthImage, f32), CameraError> {
     }
     Ok((image, scale_m))
 }
-
-// ---------------------------------------------------------------------------
-// IMU
-// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 struct ImuState {
@@ -985,10 +961,6 @@ impl Drop for ImuSensor {
         drop(unsafe { Box::from_raw(self.ctx) });
     }
 }
-
-// ---------------------------------------------------------------------------
-// Backend and stream
-// ---------------------------------------------------------------------------
 
 /// Lists and opens Orbbec depth cameras.
 ///

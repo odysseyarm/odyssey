@@ -4,7 +4,7 @@
 //! top right, bottom left) carry larger *anchor* dots; the bottom right stays
 //! normal. The anchors break the four-fold rotational ambiguity of the grid and
 //! make the corner correspondences unique, so detection needs no pattern
-//! dictionary: blobs, anchors, a seed homography, then robust refinement.
+//! dictionary: blobs, anchors, a seed homography, then RANSAC refinement.
 
 use image::RgbImage;
 use nalgebra::{Matrix3, Point2};
@@ -64,7 +64,7 @@ const MIN_INLIER_PX: f64 = 1.0;
 /// Dot spacing assumed for the inlier distance when the homography cannot place the center
 /// dots.
 const FALLBACK_SPACING_PX: f64 = 20.0;
-/// Hypotheses per robust homography fit.
+/// RANSAC hypotheses per homography fit.
 const RANSAC_ITERATIONS: usize = 200;
 /// Fixed seed, so a given image always gives the same detection.
 const RANSAC_SEED: u64 = 0x5EED;
@@ -200,7 +200,6 @@ impl Pattern {
             rect(0.0, 0.0, ring, 1.0),
             rect(width - ring, 0.0, ring, 1.0),
         ];
-        // Each corner gets a horizontal and a vertical bracket arm.
         for (x, y) in [
             (0.0, 0.0),
             (width - length, 0.0),
@@ -242,7 +241,7 @@ impl Pattern {
 /// Why no pattern was found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectFailure {
-    /// Fewer than a handful of dot-like blobs in the image.
+    /// Fewer than 8 dot-like blobs in the image.
     NoDots { blobs: usize },
     /// Dots are visible but no anchor triple with a consistent grid.
     NoGrid { blobs: usize },
@@ -346,13 +345,18 @@ fn inlier_threshold(pattern: &Pattern, h: &Matrix3<f64>) -> f64 {
     (INLIER_SPACING_SHARE * spacing).max(MIN_INLIER_PX)
 }
 
-/// Robust homography fit of `src` (pattern positions) to `dst` (pixels).
+/// RANSAC homography fit of `src` (pattern positions) to `dst` (pixels).
 fn robust_fit(src: &[Point2<f64>], dst: &[Point2<f64>], threshold: f64) -> Option<HomographyFit> {
     ransac_homography(src, dst, threshold, RANSAC_ITERATIONS, RANSAC_SEED)
 }
 
 /// Finds the pattern in `image`, a raw (distorted) color frame taken with
 /// `intrinsics`.
+///
+/// # Errors
+///
+/// [`DetectFailure::NoDots`] when too few blobs are found, [`DetectFailure::NoGrid`] when no
+/// anchor triple yields a grid or the screen corners do not project to finite pixels.
 pub fn detect(
     pattern: &Pattern,
     image: &RgbImage,

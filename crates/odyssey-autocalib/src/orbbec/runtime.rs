@@ -15,7 +15,7 @@
 //!    order. This is how a packager's wrapper or a global install is found.
 //! 3. A directory the application supplies, for a copy it manages itself.
 //!
-//! No install location is guessed. A candidate that is simply absent is
+//! No install location is guessed. A candidate that is absent is
 //! recorded in [`RuntimeStatus::NotFound`]; one that is present but broken is
 //! remembered and reported unless a later candidate loads.
 
@@ -244,7 +244,7 @@ fn try_dir(dir: &Path, name: &OsStr) -> Attempt {
         return Attempt::Absent(format!("{} does not exist", path.display()));
     }
     // SAFETY: loading a shared library runs its initializers. The file is the
-    // SDK the user or the application pointed us at.
+    // SDK the user or the application pointed at.
     match unsafe { open_path(&path) } {
         Ok(library) => bind(library, &path.display().to_string(), Some(path)),
         Err(error) => Attempt::Failed(RuntimeStatus::LoadFailed {
@@ -382,8 +382,8 @@ fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attemp
         Err(e) => return failed(e),
     };
     // The SDK finds `extensions/` beside the library it was loaded from, but
-    // only we know that library when it came from a directory. A by-name load
-    // leaves the lookup to the SDK.
+    // only this loader knows that library's path when it came from a directory.
+    // A by-name load leaves the lookup to the SDK.
     let extensions = library_path
         .as_deref()
         .and_then(Path::parent)

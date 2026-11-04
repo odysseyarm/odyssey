@@ -8,7 +8,7 @@ use super::LUMA_WEIGHTS;
 use crate::camera::Intrinsics;
 use crate::plane::undistort_pixel;
 
-/// A blob is foreground when it exceeds its neighborhood's mean by this share of the image's
+/// A pixel is foreground when it exceeds its neighborhood's mean by this share of the image's
 /// brightness range (see [`BRIGHT_PERCENTILE`] and [`DARK_PERCENTILE`]).
 const MARGIN_RANGE_SHARE: f64 = 0.25;
 /// The smallest foreground margin, in 8-bit levels, for images with almost no contrast.

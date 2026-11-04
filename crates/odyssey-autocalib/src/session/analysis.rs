@@ -40,9 +40,9 @@ const MIN_DEPTH_COVERAGE: f32 = 0.6;
 /// samples of one frame, meters.
 const MAX_PREVIEW_RMSE_M: f64 = 0.015;
 
-/// Depth points the preview's plane fit works on. A plane on a few hundred
-/// samples gives the viewing angle and a noise estimate without the full
-/// burst.
+/// Depth points the preview's plane fit works on. A plane on one or two
+/// thousand samples gives the viewing angle and a noise estimate without the
+/// full burst.
 const PREVIEW_PLANE_SAMPLES: usize = 1500;
 
 /// Trials the preview's plane fit may spend.
@@ -179,7 +179,7 @@ fn summarize_luma(color: &RgbImage) -> LumaSummary {
 }
 
 /// The hint for a frame in which the pattern was not found: bad exposure
-/// first, then a partly visible screen, else just not found.
+/// first, then a partly visible screen, else not found.
 pub(super) fn hint_without_pattern(color: &RgbImage, failure: DetectFailure) -> Hint {
     let luma = summarize_luma(color);
     if f64::from(luma.saturated) > MAX_SATURATED_SHARE * f64::from(luma.count) {

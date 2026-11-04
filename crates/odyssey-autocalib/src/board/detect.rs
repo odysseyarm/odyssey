@@ -1,4 +1,4 @@
-//! Finding the board in one color image: blobs, grid placement, robust
+//! Finding the board in one color image: blobs, grid placement, RANSAC
 //! inlier selection, rigid pose, quality checks.
 
 use image::RgbImage;
@@ -14,12 +14,12 @@ use super::{
 use crate::camera::Intrinsics;
 use crate::plane::{apply_homography, ransac_homography};
 
-/// The robust homography keeps matches within this fraction of the grid's
+/// The RANSAC homography keeps matches within this fraction of the grid's
 /// image pitch...
 const INLIER_PITCH_FRACTION: f64 = 0.05;
 /// ...but at least this many pixels.
 const MIN_INLIER_THRESHOLD_PX: f64 = 1.0;
-/// RANSAC samples for the robust homography.
+/// RANSAC samples for the inlier homography.
 const RANSAC_ITERATIONS: usize = 300;
 /// Fixed seed so that a frame always gives the same detection.
 const RANSAC_SEED: u64 = 0xB0A2D;
@@ -44,7 +44,9 @@ const MIN_RMS_LIMIT_PX: f64 = 1.0;
 /// is in grid units; ask the detection for a metric pose with
 /// [`BoardDetection::pose`].
 ///
-/// Errors: [`BoardError::NoBoard`] when no placement of the grid explains at
+/// # Errors
+///
+/// [`BoardError::NoBoard`] when no placement of the grid explains at
 /// least six blobs, [`BoardError::TooFewDots`] below [`MIN_DOTS`] dots,
 /// [`BoardError::AmbiguousPlacement`] when a partial view fits two placements
 /// equally well, [`BoardError::BadFit`] when the matched dots do not span the
@@ -80,7 +82,8 @@ pub fn detect_board(
             "reprojection error {rms_px:.2} px against dots {median_dot_diameter_px:.1} px across; the dots do not lie on a rigid flat board"
         )));
     }
-    // Validates the pose (in front, facing the camera, not too oblique).
+    // Run for its checks only (in front, facing the camera, not too oblique);
+    // they do not depend on the pitch.
     BoardPose::new(r, t, 1.0)?;
 
     let homography = pose_homography(intrinsics, &r, &t);
@@ -114,7 +117,7 @@ pub fn detect_board(
 /// they were kept under.
 type KeptMatches = (Vec<(usize, usize)>, Matrix3<f64>);
 
-/// The matches of `best` that agree with the rest under a robust homography,
+/// The matches of `best` that agree with the rest under a RANSAC homography,
 /// and that homography. Fails when too few remain or when they do not span
 /// at least three columns and three rows of the grid.
 fn robust_matches(

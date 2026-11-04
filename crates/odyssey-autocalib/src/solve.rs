@@ -10,7 +10,7 @@
 //! 2. Take the per-pixel median depth over the burst, keep the pixels that
 //!    land inside the inset screen region, and deproject them with the depth
 //!    intrinsics.
-//! 3. Fit the screen plane robustly in the depth frame and carry it to the
+//! 3. Fit the screen plane with RANSAC in the depth frame and carry it to the
 //!    color frame.
 //! 4. Intersect each dot's color ray with the plane for metric dot positions,
 //!    rotate them into the gravity-aligned frame and express them in a frame
@@ -185,9 +185,10 @@ impl SizeCheck {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolveOptions {
     /// Declared screen size. When set, the screen is rectified in 2D to this
-    /// size, so depth scale error no longer affects the result.
+    /// size, so depth scale error does not affect the result.
     pub known_size: Option<KnownSize>,
-    /// Seed for the plane RANSAC; fixed so a measurement is reproducible.
+    /// Seed for the plane and dot RANSAC searches; fixed so a measurement is
+    /// reproducible.
     pub seed: u64,
     /// Locate dots by the perspective-corrected center instead of the raw
     /// centroid. Only turn this off to measure what the correction buys.
@@ -852,7 +853,8 @@ mod tests {
                 ));
             }
         }
-        // Squaring this finite aspect used to overflow and produce zero height.
+        // Squaring this finite aspect overflows `f64`; a naive diagonal split
+        // would give a zero height.
         let size = diagonal.size_for_aspect(1e200).unwrap();
         assert!(size[0] > 0.0 && size[0].is_finite());
         assert!(size[1] > 0.0 && size[1].is_finite());

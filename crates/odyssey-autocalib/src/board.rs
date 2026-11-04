@@ -1,11 +1,11 @@
 //! Printed scale board: an independent check of the depth sensor's scale.
 //!
-//! **This is a prototype for validation on real hardware.** It exists to test
-//! a hypothesis: that the apparent size of a flat board of known physical size
-//! tells the board's distance well enough to expose a scale error in the depth
-//! sensor. Nothing here claims that accuracy; the tests only show that the
-//! geometry is self-consistent on synthetic images. It does not feed any
-//! calibration result.
+//! Prototype for validation on real hardware. It tests the hypothesis that
+//! the apparent size of a flat board of known physical size tells the
+//! board's distance well enough to expose a scale error in the depth sensor.
+//! Nothing here claims that accuracy; the tests only show that the geometry
+//! is self-consistent on synthetic images. It does not feed any calibration
+//! result.
 //!
 //! The board is a `cols x rows` grid of black dots on white paper
 //! (`board.json`), with one dot missing to break the grid's 180-degree
@@ -72,7 +72,7 @@ pub use scale::{BoardScale, DetectionStats, board_scale};
 pub const MIN_DOTS: usize = 12;
 /// Below this many matched dots a hypothesis is not even reported as "too few
 /// dots": a handful of coincidentally aligned blobs is indistinguishable from
-/// clutter, so the frame is simply "no board".
+/// clutter, so the frame is "no board".
 const MIN_PLAUSIBLE_DOTS: usize = 6;
 /// Dots at least this many pixels across make a target whose center is
 /// located far better than a pixel: a 1 px edge blur or demosaicing smear is
@@ -125,7 +125,7 @@ impl BoardSpec {
         SPEC.pitch_mm
     }
 
-    /// How many dots the board has.
+    /// Dots on the board, absent ones excluded.
     pub fn dots_expected(&self) -> usize {
         (self.cols * self.rows) as usize - self.missing.len()
     }
@@ -195,7 +195,6 @@ impl TargetSize {
     }
 }
 
-/// One matched dot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MatchedDot {
     pub col: u32,
@@ -317,12 +316,10 @@ impl BoardPose {
     }
 }
 
-/// Board normal, pointing at the camera, in the camera frame.
 fn board_normal(rotation: &Matrix3<f64>) -> Vector3<f64> {
     -(rotation * Vector3::z())
 }
 
-/// Fails unless `pitch_mm` is a positive, finite length.
 fn check_pitch_mm(pitch_mm: f64) -> Result<(), BoardError> {
     if pitch_mm.is_finite() && pitch_mm > 0.0 {
         return Ok(());

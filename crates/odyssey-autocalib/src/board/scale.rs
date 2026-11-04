@@ -147,7 +147,6 @@ fn consensus_pose(
     BoardPose::new(rotation, center, pitch_mm)
 }
 
-/// Medians of the detections' statistics.
 fn detection_stats(detections: &[(BoardPose, BoardDetection)]) -> DetectionStats {
     let stat = |f: &dyn Fn(&BoardDetection) -> f64| {
         median(&mut detections.iter().map(|(_, d)| f(d)).collect::<Vec<_>>())
@@ -234,12 +233,20 @@ fn board_depth_points(
 /// RANSAC plane, which rejects outliers and depth dropouts. `depth_distance_m`
 /// is the distance from the color camera's center to where that plane meets
 /// the ray through the grid center, the same point `board_distance_m` refers
-/// to; see the module documentation for the exact definition.
+/// to; the parent `board` module documentation defines it exactly.
 ///
 /// `pitch_mm` is the dot pitch of the print as measured, in millimeters
 /// ([`BoardSpec::nominal_pitch_mm`] for an unmeasured standard print).
 /// `board_distance_m` assumes it is exact and that the color intrinsics in
 /// `geometry` are right; the board must not move between the frames.
+///
+/// # Errors
+///
+/// [`BoardError::DegeneratePose`] for a non-finite or non-positive `pitch_mm`
+/// or rotations that do not average; the first detection error when no frame
+/// finds the board; [`BoardError::NoDepth`] when too few depth points fall on
+/// the board or too few fit one plane; [`BoardError::BadFit`] when the depth
+/// plane is parallel to the line of sight.
 pub fn board_scale(
     geometry: &CameraGeometry,
     frames: &[Frames],

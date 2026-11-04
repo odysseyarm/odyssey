@@ -198,10 +198,9 @@ impl Plane {
     }
 }
 
-/// Least-squares plane through `points`: the centroid and the direction of
-/// least variance, which is the right singular vector of the centered points
-/// for the smallest singular value. `None` for fewer than three points or a
-/// degenerate (collinear) cloud.
+/// Least-squares plane through `points`: the centroid and the eigenvector of
+/// the centered points' scatter matrix with the smallest eigenvalue. `None`
+/// for fewer than three points, a non-finite point, or a collinear cloud.
 pub fn fit_plane(points: &[Vector3<f64>]) -> Option<Plane> {
     if points.len() < 3 || points.iter().any(|p| !p.iter().all(|v| v.is_finite())) {
         return None;
@@ -370,7 +369,8 @@ fn best_plane_hypothesis(
 /// set settle on the refined plane instead of the noisy sample hypothesis.
 const PLANE_REFIT_ROUNDS: usize = 2;
 
-/// Robust plane fit.
+/// RANSAC plane fit, refit on its inliers. `None` for invalid `params`, a
+/// non-finite point, or fewer than three final inliers.
 ///
 /// Inlier tests use the orthogonal distance, not the residual along the
 /// camera's z axis: the latter shrinks with the cosine of the screen's tilt
@@ -428,7 +428,8 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
     })
 }
 
-/// Applies a 3x3 homography to a point.
+/// Applies a 3x3 homography to a point; `None` when it maps to infinity or to
+/// a non-finite point.
 pub fn apply_homography(h: &Matrix3<f64>, p: Point2<f64>) -> Option<Point2<f64>> {
     let v = h * Vector3::new(p.x, p.y, 1.0);
     if !v.iter().all(|coordinate| coordinate.is_finite()) || v.z.abs() <= HOMOGENEOUS_EPSILON {
@@ -559,7 +560,6 @@ fn transfer_errors(h: &Matrix3<f64>, src: &[Point2<f64>], dst: &[Point2<f64>]) -
         .collect()
 }
 
-/// Indices of the errors that are at most `threshold`.
 fn indices_within(errors: &[f64], threshold: f64) -> Vec<usize> {
     let mut indices = Vec::new();
     for (i, &error) in errors.iter().enumerate() {

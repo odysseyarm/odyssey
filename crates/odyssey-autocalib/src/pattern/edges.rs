@@ -8,7 +8,7 @@ use super::{FRAME_THICKNESS_H, LUMA_WEIGHTS, Pattern};
 use crate::camera::Intrinsics;
 use crate::plane::{apply_homography, distort_pixel};
 
-/// Which sides of the screen image. The ring on a side is the pattern's
+/// A set of screen sides. The ring on a side is the pattern's
 /// outermost pixel row or column there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SideSet {
