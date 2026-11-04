@@ -19,7 +19,11 @@ impl TrackingHistory {
         }
     }
 
+    /// A zero-capacity history discards events.
     pub fn push(&mut self, event: TrackingEvent) {
+        if self.capacity == 0 {
+            return;
+        }
         self.buffer[self.head] = Some(event);
         self.head = (self.head + 1) % self.capacity;
         if self.head == 0 {
@@ -42,9 +46,16 @@ impl TrackingHistory {
         let mut best: Option<TrackingEvent> = None;
         let mut best_diff = u32::MAX;
 
-        for event in self.buffer[..len].iter().flatten() {
+        // Start at the oldest retained event, not physical slot zero after wrap.
+        let start = if self.full { self.head } else { 0 };
+        let events = self.buffer[start..]
+            .iter()
+            .chain(self.buffer[..start].iter())
+            .take(len)
+            .flatten();
+        for event in events {
             let diff = event.timestamp.abs_diff(timestamp);
-            if diff < best_diff {
+            if best.is_none() || diff < best_diff {
                 best_diff = diff;
                 best = Some(*event);
             }
@@ -103,5 +114,29 @@ mod tests {
         history.push(event_at(10));
         history.push(event_at(20));
         assert_eq!(history.get_closest(15).map(|e| e.timestamp), Some(10));
+    }
+
+    #[test]
+    fn closest_prefers_the_older_event_after_wraparound() {
+        let mut history = TrackingHistory::new(2);
+        for timestamp in [10, 20, 30] {
+            history.push(event_at(timestamp));
+        }
+        assert_eq!(history.get_closest(25).map(|e| e.timestamp), Some(20));
+    }
+
+    #[test]
+    fn closest_includes_maximum_timestamp_distance() {
+        let mut history = TrackingHistory::new(1);
+        history.push(event_at(0));
+        assert_eq!(history.get_closest(u32::MAX).map(|e| e.timestamp), Some(0));
+    }
+
+    #[test]
+    fn zero_capacity_discards_events() {
+        let mut history = TrackingHistory::new(0);
+        history.push(event_at(10));
+        assert!(history.latest().is_none());
+        assert!(history.get_closest(10).is_none());
     }
 }
