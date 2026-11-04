@@ -1,0 +1,61 @@
+name: Tracking Regression
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  tracking:
+    runs-on: ubuntu-latest
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
+      GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libudev-dev libdbus-1-dev libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          shared-key: tracking-regression
+      - name: Test regression contracts
+        run: |
+          cargo test --locked -p odyssey-sim
+          cargo test --locked -p odyssey-hub-server --features tracking-regression
+      - name: Run deterministic tracking suite
+        run: cargo run --locked -p odyssey-hub-server --features tracking-regression --bin tracking-regression -- suite tracking-report.json
+      - name: Run display-mapping suite
+        run: cargo run --locked -p odyssey-hub-server --features tracking-regression --bin tracking-regression -- surface-suite surface-report.json
+      - uses: cachix/install-nix-action@v31
+      - name: Check Rerun recording semantics
+        run: nix-shell tools/tracking_scene/shell.nix --run 'TRACKING_REGRESSION="$PWD/target/debug/tracking-regression" python3 -m unittest discover -s tools/tracking_scene -p test_rerun_export.py -v'
+      - name: Render and round-trip calibrated Blender scenes
+        run: |
+          nix-shell tools/tracking_scene/shell.nix --run '
+            V="$PWD/target/debug/tracking-regression"
+            blender -b --python-exit-code 1 --python tools/tracking_scene/blender_scene.py -- \
+              --validator "$V" selfcheck scene-tool-evidence &&
+            python3 tools/tracking_scene/rerun_export.py \
+              scene-tool-evidence/authored-environment/scene.json scene-tool-evidence/environment.rrd \
+              --images scene-tool-evidence/authored-environment/manifest.json \
+              --validator "$V" --self-check'
+      - name: Upload tracking evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tracking-report
+          path: |
+            tracking-report.json
+            surface-report.json
+            scene-tool-evidence/
+          if-no-files-found: warn

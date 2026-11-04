@@ -17,6 +17,8 @@ mod server_error;
 pub mod sim;
 mod startup_config;
 
+#[cfg(feature = "tracking-regression")]
+pub use device_tasks::tracking_regression;
 pub use local_socket_stream::LocalSocketStream;
 pub use message::Message;
 pub use run_server::run_server;

@@ -8,6 +8,9 @@ mod netcore_probe;
 mod semver;
 mod sensor_streams;
 mod tracking;
+#[cfg(feature = "tracking-regression")]
+#[path = "../tracking_regression/mod.rs"]
+pub mod tracking_regression;
 mod transport_selection;
 mod usb_probe;
 
