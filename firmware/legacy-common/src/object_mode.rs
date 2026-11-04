@@ -33,6 +33,8 @@ use crate::usb::{self, UsbConfigHandle};
 use crate::utils::impl_from;
 use crate::{Paj, PajGroup};
 
+mod transport;
+
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
@@ -467,9 +469,9 @@ async fn usb_rcv_loop<L: L2capChannels>(
     }
 }
 
-/// Sends queued packets over `data_mode()`: reports go over USB while a USB host uses the
-/// device and to the L2CAP queues otherwise. A USB write in progress is abandoned the moment
-/// USB goes away, so reports move to BLE without waiting for a stalled transfer.
+/// Sends reports over `data_mode()` and USB replies only to their original host.
+/// A USB write in progress is abandoned when USB goes away, so reports move to
+/// BLE without waiting for a stalled transfer.
 async fn usb_snd_loop<L: L2capChannels>(
     mut pkt_writer: PacketWriter<'_>,
     pkt_rcv: Receiver<'_, Packet, 64>,
@@ -479,22 +481,20 @@ async fn usb_snd_loop<L: L2capChannels>(
 ) -> ! {
     loop {
         let pkt = pkt_rcv.receive().await;
-        // These statuses are queued here only for requests received on USB. Unlike
-        // reports, their response must not move to BLE when the report transport changes.
-        let transport = if matches!(&pkt.data, PacketData::ImageStatus(_)) {
-            TransportMode::Usb
-        } else {
-            data_mode()
+        // BLE replies bypass this queue; all queued control packets belong to USB.
+        let Some(transport) = transport::queued_transport(&pkt, data_mode(), usb::is_active())
+        else {
+            continue;
         };
         match transport {
             TransportMode::Usb => {
                 let write = pkt_writer.write_packet(&pkt);
-                match select(write, usb_configured.wait_until_inactive()).await {
-                    Either::First(Ok(())) => {}
-                    Either::First(Err(error)) => {
+                match select(usb_configured.wait_until_inactive(), write).await {
+                    Either::Second(Ok(())) => {}
+                    Either::Second(Err(error)) => {
                         defmt::warn!("[usb_snd_loop] USB write failed: {:?}", error);
                     }
-                    Either::Second(()) => {
+                    Either::First(()) => {
                         defmt::debug!("[usb_snd_loop] USB went away mid-write, packet dropped");
                     }
                 }

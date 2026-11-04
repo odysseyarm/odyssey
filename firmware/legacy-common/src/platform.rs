@@ -7,7 +7,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 
 use crate::Paj;
-use crate::odyssey_protocol::{Packet, PacketType};
+use crate::odyssey_protocol::Packet;
 use crate::settings::Settings;
 
 /// One IMU sample.

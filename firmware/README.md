@@ -76,6 +76,11 @@ Saved settings return at boot; reapply any unsaved sensor edits after recovery.
 The original image firmware used this reboot workflow; it does not establish a
 safe reboot-free image-master → register-slave transition.
 
+Legacy tracking accepts control requests over USB and BLE independently of the
+current report transport. Replies stay on the requesting transport; USB detach
+or suspend drops USB replies instead of rerouting them over BLE. Partial USB
+bulk requests survive BLE preemption, including multi-packet requests.
+
 Legacy ATSlite retains its fixed dual-bank flash layout. Its target configuration
 uses `-Z location-detail=none` to omit runtime panic source paths while retaining
 DWARF debug information for probe-rs. Build with the pinned nightly and
