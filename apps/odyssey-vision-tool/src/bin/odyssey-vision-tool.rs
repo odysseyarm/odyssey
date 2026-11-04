@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,6 +14,7 @@ use odyssey_common::ScreenCalibration;
 use odyssey_usb::device::GeneralSettings;
 use odyssey_vision_tool::consts::APP_INFO;
 use odyssey_vision_tool::mot_runner::MotRunner;
+use odyssey_vision_tool::recording::encode_recording;
 use odyssey_vision_tool::run_canvas::RunCanvas;
 use odyssey_vision_tool::run_raw_canvas::RunRawCanvas;
 use odyssey_vision_tool::test_canvas::TestCanvas;
@@ -212,7 +212,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tokio_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .map_err(|e| format!("Failed to start the async runtime: {e}"))?;
     let tokio_handle = tokio_rt.handle();
     let _enter = tokio_handle.enter();
     let leptos_rt = leptos_reactive::create_runtime();
@@ -517,8 +517,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |_| {
             let view = view.c();
             let new_device = device_rs.get();
-            eprintln!(
-                ">>> Device changed: {}",
+            tracing::debug!(
+                "Device changed: {}",
                 if new_device.is_some() {
                     "Some(device)"
                 } else {
@@ -730,31 +730,31 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     save_packets_button.on_clicked(&ui, {
         let ui = ui.c();
         let main_win = main_win.c();
-        let packets = packets.c();
         let mot_runner = mot_runner.c();
         move |_| {
-            let packets = packets.lock();
             let path_buf =
                 main_win.save_file_with_filter(&ui, &[FileTypeFilter::new("bin").extension("bin")]);
-            if let Some(mut path_buf) = path_buf {
-                if path_buf.extension() != Some("bin".as_ref()) {
-                    path_buf.as_mut_os_string().push(".bin");
-                }
-                let mut file = File::create(path_buf).expect("Could not create file");
-                let mut bytes = Vec::new();
+            let Some(mut path_buf) = path_buf else {
+                return;
+            };
+            if path_buf.extension() != Some("bin".as_ref()) {
+                path_buf.as_mut_os_string().push(".bin");
+            }
 
-                postcard::to_slice(&mot_runner.lock().general_config, &mut bytes).unwrap();
-
-                for (timestamp, packet_data) in packets.iter() {
-                    let packet = odyssey_usb::packets::vm::Packet {
-                        data: packet_data.clone(),
-                        id: 0,
-                    };
-                    bytes.extend_from_slice(&timestamp.to_le_bytes());
-                    postcard::to_slice(&packet, &mut bytes).unwrap();
-                }
-
-                file.write_all(&bytes).expect("Could not write to file");
+            // Lock order is mot_runner, then packets, as in the MotRunner tasks.
+            let encoded = {
+                let runner = mot_runner.lock();
+                let packets = runner.packets.lock();
+                encode_recording(&runner.general_config, &packets)
+            };
+            let saved = encoded
+                .map_err(|e| format!("Could not encode packets: {e}"))
+                .and_then(|bytes| {
+                    std::fs::write(&path_buf, bytes)
+                        .map_err(|e| format!("Could not write file: {e}"))
+                });
+            if let Err(message) = saved {
+                main_win.modal_err(&ui, "Failed to save packets", &message);
             }
         }
     });

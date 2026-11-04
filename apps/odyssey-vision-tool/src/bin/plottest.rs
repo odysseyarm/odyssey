@@ -80,13 +80,16 @@ impl AreaHandler for MainCanvas {
             &mut root,
             (self.start.elapsed().as_secs_f64() * 1000.0 / 20.0) as i32 % 157,
         )
-        .unwrap();
+        .expect("failed to draw plot");
     }
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "alternative plotters example; swap it into `draw` to try it"
+)]
 fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
-    root.fill(&WHITE).unwrap();
+    root.fill(&WHITE).expect("failed to fill background");
     let root = root.margin(50, 50, 50, 50);
     // After this point, we should be able to construct a chart context
     let mut chart = ChartBuilder::on(&root)
@@ -116,7 +119,7 @@ fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
             vec![(0.0, 0.0), (5.0, 5.0), (8.0, 7.0)],
             &RED,
         ))
-        .unwrap();
+        .expect("failed to draw line series");
     // Similarly, we can draw point series
     chart
         .draw_series(PointSeries::of_element(
@@ -129,10 +132,13 @@ fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
             + Text::new(format!("{c:?}"), (10, 0), ("sans-serif", 10).into_font())
             },
         ))
-        .unwrap();
+        .expect("failed to draw point series");
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "alternative plotters example; swap it into `draw` to try it"
+)]
 fn matshow<DB: DrawingBackend>(
     root: &mut DrawingArea<DB, Shift>,
 ) -> Result<(), Box<dyn Error + '_>> {
@@ -161,8 +167,8 @@ fn matshow<DB: DrawingBackend>(
 
     let mut matrix = [[0; 15]; 15];
 
-    for i in 0..15 {
-        matrix[i][i] = i + 4;
+    for (i, row) in matrix.iter_mut().enumerate() {
+        row[i] = i + 4;
     }
 
     chart.draw_series(

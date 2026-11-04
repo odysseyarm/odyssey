@@ -6,6 +6,7 @@ pub mod layout_macro;
 pub mod mot_runner;
 pub mod mot_state;
 pub mod plots_window;
+pub mod recording;
 pub mod run_canvas;
 pub mod run_raw_canvas;
 pub mod screen_info;

@@ -1,10 +1,28 @@
 //! Mux CLI tool for managing the dongle
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "command-line tool: stdout/stderr is its interface"
+)]
+
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use nusb::MaybeFuture as _;
 use odyssey_usb::device::MuxDevice;
+
+/// Nordic Semiconductor's USB vendor id.
+const NORDIC_VENDOR_ID: u16 = 0x1915;
+/// USB product id of the mux (dongle).
+const MUX_PRODUCT_ID: u16 = 0x5212;
+
+/// USB endpoints probed by `usb-info` (address of each expected endpoint).
+const BULK_OUT_ENDPOINT: u8 = 0x01;
+const BULK_IN_ENDPOINT: u8 = 0x81;
+const INTERRUPT_IN_ENDPOINT: u8 = 0x86;
+/// Interfaces `usb-info` tries to claim.
+const PROBED_INTERFACE_COUNT: u8 = 8;
 
 #[derive(Parser)]
 #[command(name = "mux-cli")]
@@ -43,10 +61,33 @@ fn list_dongles() -> Result<Vec<nusb::DeviceInfo>, String> {
     let devices: Vec<_> = nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
+        .filter(|info| info.vendor_id() == NORDIC_VENDOR_ID && info.product_id() == MUX_PRODUCT_ID)
         .collect();
 
     Ok(devices)
+}
+
+/// The dongle selected by `--device`, or the only one connected.
+/// `devices` must not be empty.
+fn select_dongle(
+    devices: Vec<nusb::DeviceInfo>,
+    device_index: Option<usize>,
+) -> Result<nusb::DeviceInfo, String> {
+    if let Some(idx) = device_index {
+        return devices.get(idx).cloned().ok_or_else(|| {
+            format!("Device index {idx} not found. Use 'devices' command to see available devices.")
+        });
+    }
+    if devices.len() > 1 {
+        return Err(format!(
+            "Multiple dongles found ({}). Please specify which one to use with --device <index>. Use 'devices' command to list them.",
+            devices.len()
+        ));
+    }
+    Ok(devices
+        .into_iter()
+        .next()
+        .expect("devices is non-empty: checked by the caller"))
 }
 
 async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice, String> {
@@ -58,24 +99,7 @@ async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice, Str
         );
     }
 
-    let device_info = if let Some(idx) = device_index {
-        devices
-            .get(idx)
-            .ok_or_else(|| {
-                format!(
-                    "Device index {idx} not found. Use 'devices' command to see available devices."
-                )
-            })?
-            .clone()
-    } else {
-        if devices.len() > 1 {
-            return Err(format!(
-                "Multiple dongles found ({}). Please specify which one to use with --device <index>. Use 'devices' command to list them.",
-                devices.len()
-            ));
-        }
-        devices[0].clone()
-    };
+    let device_info = select_dongle(devices, device_index)?;
 
     MuxDevice::connect_usb(device_info)
         .await
@@ -89,7 +113,7 @@ fn format_device_addr(addr: &[u8; 6]) -> String {
     )
 }
 
-async fn cmd_devices() -> Result<(), String> {
+fn cmd_devices() -> Result<(), String> {
     let devices = list_dongles()?;
 
     if devices.is_empty() {
@@ -99,8 +123,7 @@ async fn cmd_devices() -> Result<(), String> {
         for (i, info) in devices.iter().enumerate() {
             let product = info
                 .product_string()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "Unknown".to_string());
+                .map_or_else(|| "Unknown".to_string(), ToString::to_string);
             println!(
                 "  [{}] VID:0x{:04X} PID:0x{:04X} - {}",
                 i,
@@ -149,74 +172,6 @@ async fn cmd_version(device: &MuxDevice) -> Result<(), String> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
-    let cli = Cli::parse();
-
-    let result = match &cli.command {
-        Commands::Devices => cmd_devices().await,
-        Commands::List => {
-            let device = match connect_to_device(cli.device).await {
-                Ok(dev) => dev,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            cmd_list(&device).await
-        }
-        Commands::Version => {
-            let device = match connect_to_device(cli.device).await {
-                Ok(dev) => dev,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            cmd_version(&device).await
-        }
-        Commands::Pair { timeout } => {
-            let device = match connect_to_device(cli.device).await {
-                Ok(dev) => dev,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            cmd_pair(&device, *timeout).await
-        }
-        Commands::PairCancel => {
-            let device = match connect_to_device(cli.device).await {
-                Ok(dev) => dev,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            cmd_pair_cancel(&device).await
-        }
-        Commands::UsbInfo => cmd_usb_info(cli.device).await,
-        Commands::Clear => {
-            let device = match connect_to_device(cli.device).await {
-                Ok(dev) => dev,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            cmd_clear(&device).await
-        }
-    };
-
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
 async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
     println!("Starting pairing for {timeout} ms...");
     device
@@ -235,17 +190,11 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
                 format_device_addr(&bond.uuid),
                 bond.name.as_str()
             );
-            Ok(())
         }
-        odyssey_usb::device::PairingEvent::Timeout => {
-            println!("Pairing timed out");
-            Ok(())
-        }
-        odyssey_usb::device::PairingEvent::Cancelled => {
-            println!("Pairing cancelled");
-            Ok(())
-        }
+        odyssey_usb::device::PairingEvent::Timeout => println!("Pairing timed out"),
+        odyssey_usb::device::PairingEvent::Cancelled => println!("Pairing cancelled"),
     }
+    Ok(())
 }
 
 async fn cmd_pair_cancel(device: &MuxDevice) -> Result<(), String> {
@@ -297,15 +246,42 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
         device_info.vendor_id(),
         device_info.product_id()
     );
-    for idx in 0u8..8 {
+    for idx in 0..PROBED_INTERFACE_COUNT {
         if let Ok(iface) = dev.claim_interface(idx).await {
-            let bulk_in = iface.endpoint::<Bulk, In>(0x81).is_ok();
-            let bulk_out = iface.endpoint::<Bulk, Out>(0x01).is_ok();
-            let intr_in = iface.endpoint::<Interrupt, In>(0x86).is_ok();
+            let bulk_in = iface.endpoint::<Bulk, In>(BULK_IN_ENDPOINT).is_ok();
+            let bulk_out = iface.endpoint::<Bulk, Out>(BULK_OUT_ENDPOINT).is_ok();
+            let intr_in = iface
+                .endpoint::<Interrupt, In>(INTERRUPT_IN_ENDPOINT)
+                .is_ok();
             println!(
                 "  iface {idx}: bulk_out 0x01={bulk_out}, bulk_in 0x81={bulk_in}, intr_in 0x86={intr_in}"
             );
         }
     }
     Ok(())
+}
+
+async fn run(cli: Cli) -> Result<(), String> {
+    match cli.command {
+        Commands::Devices => cmd_devices(),
+        Commands::UsbInfo => cmd_usb_info(cli.device).await,
+        Commands::List => cmd_list(&connect_to_device(cli.device).await?).await,
+        Commands::Version => cmd_version(&connect_to_device(cli.device).await?).await,
+        Commands::Pair { timeout } => {
+            cmd_pair(&connect_to_device(cli.device).await?, timeout).await
+        }
+        Commands::PairCancel => cmd_pair_cancel(&connect_to_device(cli.device).await?).await,
+        Commands::Clear => cmd_clear(&connect_to_device(cli.device).await?).await,
+    }
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    match run(Cli::parse()).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

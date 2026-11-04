@@ -1,10 +1,33 @@
+#![expect(
+    clippy::print_stdout,
+    reason = "command-line tool: stdout is its interface"
+)]
+
+use anyhow::{Context as _, Result};
 use app_dirs2::{AppDataType, get_app_root};
 use nalgebra::{ComplexField, Point3, RealField, Scalar};
 use odyssey_common::MARKER_PATTERN_LEN;
 use odyssey_vision_tool::ScreenInfo;
 use odyssey_vision_tool::consts::APP_INFO;
+use serde::Serialize;
 
 pub const MARKER_DEPTH_METERS: f64 = 0.0117;
+
+/// Marker positions ("serious wall" layout) as fractions of the screen width
+/// and height.
+const MARKER_RATIOS: [(f64, f64); MARKER_PATTERN_LEN] = [
+    (0.18, 0.29),
+    (0.15, 0.82),
+    (0.77, 0.8),
+    (0.51, 0.35),
+    (0.79, 0.25),
+    (0.49, 0.76),
+];
+
+/// Physical size of the "serious wall" screen: 2.032 m high, 16:9.
+const SCREEN_DIMENSIONS_METERS: [f32; 2] = [2.032 * (16. / 9.), 2.032];
+
+const METERS_PER_INCH: f32 = 0.0254;
 
 /// Screen is centered at (0, 0, 0)
 /// ```text
@@ -18,77 +41,37 @@ pub fn marker_pattern<F>(screen_dimensions_meters: [F; 2]) -> [Point3<F>; MARKER
 where
     F: Scalar + std::ops::SubAssign + ComplexField + RealField + Copy,
 {
-    let _d = F::from_f64(MARKER_DEPTH_METERS).unwrap();
+    let depth = F::from_f64(MARKER_DEPTH_METERS).expect("marker depth is representable");
+    let [width, height] = screen_dimensions_meters;
 
-    let w = screen_dimensions_meters[0];
-    let h = screen_dimensions_meters[1];
+    MARKER_RATIOS.map(|(x_ratio, y_ratio)| {
+        Point3::from([
+            F::from_f64(x_ratio).expect("marker ratio is representable") * width,
+            F::from_f64(y_ratio).expect("marker ratio is representable") * height,
+            depth,
+        ])
+    })
+}
 
-    // if MARKER_PATTERN_LEN == 6
-    // Define the points using ratios
-    // [
-    //     Point3::from([F::from_f64(0.2).unwrap() * w, F::from_f64(0.15).unwrap() * h, _d]),
-    //     Point3::from([F::from_f64(0.25).unwrap() * w, F::from_f64(0.87).unwrap() * h, _d]),
-    //     Point3::from([F::from_f64(0.75).unwrap() * w, F::from_f64(0.83).unwrap() * h, _d]),
-    //     Point3::from([F::from_f64(0.46).unwrap() * w, F::from_f64(0.2).unwrap() * h, _d]),
-    //     Point3::from([F::from_f64(0.7).unwrap() * w, F::from_f64(0.1).unwrap() * h, _d]),
-    //     Point3::from([F::from_f64(0.5).unwrap() * w, F::from_f64(0.8).unwrap() * h, _d]),
-    // ]
-
-    // for serious wall
-    [
-        Point3::from([
-            F::from_f64(0.18).unwrap() * w,
-            F::from_f64(0.29).unwrap() * h,
-            _d,
-        ]),
-        Point3::from([
-            F::from_f64(0.15).unwrap() * w,
-            F::from_f64(0.82).unwrap() * h,
-            _d,
-        ]),
-        Point3::from([
-            F::from_f64(0.77).unwrap() * w,
-            F::from_f64(0.8).unwrap() * h,
-            _d,
-        ]),
-        Point3::from([
-            F::from_f64(0.51).unwrap() * w,
-            F::from_f64(0.35).unwrap() * h,
-            _d,
-        ]),
-        Point3::from([
-            F::from_f64(0.79).unwrap() * w,
-            F::from_f64(0.25).unwrap() * h,
-            _d,
-        ]),
-        Point3::from([
-            F::from_f64(0.49).unwrap() * w,
-            F::from_f64(0.76).unwrap() * h,
-            _d,
-        ]),
-    ]
-    // else if MARKER_PATTERN_LEN == 8
-    //    [
-    //        Point3::from([F::from_f64(0.18).unwrap() * w, F::from_f64(0.29).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.15).unwrap() * w, F::from_f64(0.82).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.77).unwrap() * w, F::from_f64(0.8).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.51).unwrap() * w, F::from_f64(0.35).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.79).unwrap() * w, F::from_f64(0.25).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.49).unwrap() * w, F::from_f64(0.76).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.49).unwrap() * w, F::from_f64(0.76).unwrap() * h, _d]),
-    //        Point3::from([F::from_f64(0.49).unwrap() * w, F::from_f64(0.76).unwrap() * h, _d]),
-    //    ]
+/// Writes `value` as pretty JSON to `<user config dir>/<directory>/<file_name>`.
+fn save_to_config_dir(directory: &str, file_name: &str, value: &impl Serialize) -> Result<()> {
+    let config_dir =
+        get_app_root(AppDataType::UserConfig, &APP_INFO).context("no user config directory")?;
+    let directory = config_dir.join(directory);
+    std::fs::create_dir_all(&directory)
+        .with_context(|| format!("failed to create {}", directory.display()))?;
+    let path = directory.join(file_name);
+    let file = std::fs::File::create(&path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    serde_json::to_writer_pretty(file, value)
+        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 pub fn main() {
-    // 3840x2160 (16:9) SVT
-    // let screen_dimensions_meters = [3.64631, 2.05105];
-
-    // 1920x1080 abe's wall
-    // let screen_dimensions_meters = [2.28231, 1.2838];
-
-    // serious wall
-    let screen_dimensions_meters = [2.032 * (16. / 9.), 2.032];
+    // Other screens that have been used with this tool:
+    //   3840x2160 (16:9) SVT:   [3.64631, 2.05105]
+    //   1920x1080 abe's wall:   [2.28231, 1.2838]
+    let screen_dimensions_meters = SCREEN_DIMENSIONS_METERS;
 
     let pattern = marker_pattern(screen_dimensions_meters);
 
@@ -98,53 +81,26 @@ pub fn main() {
     };
 
     for (i, p) in pattern.iter().enumerate() {
-        println!("Marker {} = ({:.4}, {:.4})", i, p.x / 0.0254, p.y / 0.0254);
+        println!(
+            "Marker {} = ({:.4}, {:.4})",
+            i,
+            p.x / METERS_PER_INCH,
+            p.y / METERS_PER_INCH
+        );
     }
 
-    // ScreenInfo
-    match get_app_root(AppDataType::UserConfig, &APP_INFO)
-        .ok()
-        .and_then(|config_dir| {
-            let screen_info_path = config_dir
-                .join("ats-vision-tool")
-                .join("new-screen-info.json");
-            std::fs::create_dir_all(screen_info_path.parent().unwrap()).ok()?;
-            serde_json::to_writer_pretty(
-                std::fs::File::create(screen_info_path).ok()?,
-                &screen_info,
-            )
-            .ok()?;
-            Some(screen_info)
-        }) {
-        Some(screen_info) => {
-            println!("Screen info saved to {screen_info:?}");
-        }
-        None => {
-            println!("Failed to save screen info");
-        }
+    match save_to_config_dir("ats-vision-tool", "new-screen-info.json", &screen_info) {
+        Ok(()) => println!("Screen info saved to {screen_info:?}"),
+        Err(e) => println!("Failed to save screen info: {e:#}"),
     }
 
-    // ScreenCalibration
     let screen_calibration: odyssey_common::ScreenCalibration<f32> = screen_info.into();
-    match get_app_root(AppDataType::UserConfig, &APP_INFO)
-        .ok()
-        .and_then(|config_dir| {
-            let screen_calibration_path = config_dir
-                .join("screens")
-                .join("new-screen-calibration.json");
-            std::fs::create_dir_all(screen_calibration_path.parent().unwrap()).ok()?;
-            serde_json::to_writer_pretty(
-                std::fs::File::create(screen_calibration_path).ok()?,
-                &screen_calibration,
-            )
-            .ok()?;
-            Some(screen_calibration)
-        }) {
-        Some(screen_calibration) => {
-            println!("Screen calibration saved to {screen_calibration:?}");
-        }
-        None => {
-            println!("Failed to save screen calibration");
-        }
+    match save_to_config_dir(
+        "screens",
+        "new-screen-calibration.json",
+        &screen_calibration,
+    ) {
+        Ok(()) => println!("Screen calibration saved to {screen_calibration:?}"),
+        Err(e) => println!("Failed to save screen calibration: {e:#}"),
     }
 }
