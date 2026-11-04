@@ -39,6 +39,8 @@ impl UsbDeviceRelease {
             major < Self::RESERVED_MAJOR,
             "major 15 is reserved for a future layout"
         );
+        assert!(minor <= 63, "minor must fit the six-bit version field");
+        assert!(patch <= 63, "patch must fit the six-bit version field");
         Self::builder()
             .with_major(arbitrary_int::u4::new(major as u8))
             .with_minor(arbitrary_int::u6::new(minor as u8))
@@ -136,6 +138,27 @@ impl BootloaderRelease {
 #[cfg(test)]
 mod bootloader_release_tests {
     use super::*;
+    #[test]
+    fn application_version_fields_round_trip_at_their_limits() {
+        for version in [[0, 0, 1], [14, 63, 63]] {
+            assert_eq!(
+                UsbDeviceRelease::from_version(version).report(),
+                UsbVersionReport::Known(version)
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "minor must fit")]
+    fn application_minor_cannot_wrap_before_validation() {
+        let _ = UsbDeviceRelease::from_version([1, 256, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "patch must fit")]
+    fn application_patch_cannot_wrap_before_validation() {
+        let _ = UsbDeviceRelease::from_version([1, 0, 256]);
+    }
 
     #[test]
     fn shipped_default_is_legacy_not_release_16() {
