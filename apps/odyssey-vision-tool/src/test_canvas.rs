@@ -90,8 +90,8 @@ fn draw(painter: &egui::Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>) {
     );
     draw_text(painter, at(20.0, 40.0), &format!("screen_id = {screen_id}"));
 
-    // The grid spans the unit square; its inverse screen mapping is simply
-    // pixel scaling, not a perspective solve.
+    // The grid spans the unit square, so its screen mapping is a plain scale
+    // by the pixel size, not a perspective solve.
     draw_grid(
         &painter.with_clip_rect(rect),
         10,

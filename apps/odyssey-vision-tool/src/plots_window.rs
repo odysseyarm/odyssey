@@ -291,8 +291,8 @@ impl ChartData {
     }
 }
 
-/// Live telemetry charts in a grid that fills the
-/// window. Space pauses and resumes them.
+/// Live telemetry charts in a grid that fills the window. Space pauses and
+/// resumes them.
 #[derive(Debug)]
 pub struct PlotsWindow {
     /// While set, the charts keep showing the data they had when paused.

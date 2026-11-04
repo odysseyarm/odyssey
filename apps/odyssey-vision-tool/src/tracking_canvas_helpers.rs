@@ -14,7 +14,7 @@ use crate::mot_runner::MotRunner;
 
 /// Canvas background; dark so it blends with the egui dark theme.
 const BACKGROUND: Color32 = Color32::from_gray(20);
-/// Neutral line colour for outlines that were black on the light iui canvas.
+/// Neutral line colour for outlines, light enough to read on [`BACKGROUND`].
 const OUTLINE: Color32 = Color32::from_gray(200);
 /// Half-transparent red fill (premultiplied) for near field boxes.
 const NF_FILL: Color32 = Color32::from_rgba_premultiplied(128, 0, 0, 128);
@@ -116,8 +116,8 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
 
     let center_tf = Translation2::new(f64::from(center.x), f64::from(center.y)).to_homogeneous();
 
-    // Border around the drawing area
-    // For POC markers, use 4:3 aspect ratio (matching PAG7665QN 320x240 sensor)
+    // POC reports come from the 320x240 PAG7665QN, so their border is 4:3
+    // instead of square.
     {
         let border_transform = Transform2::from_matrix_unchecked(
             center_tf
@@ -125,7 +125,6 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
                 * Scale2::new(draw_size, draw_size).to_homogeneous(),
         );
         if state.is_poc_markers {
-            // Draw 4:3 aspect ratio box for POC markers (matching 320x240 sensor)
             draw_rect(painter, 0.5, 0.375, border_transform, stroke1);
         } else {
             draw_square(painter, border_transform, stroke1);
@@ -165,7 +164,6 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
         Source::Processed => draw_not_raw(painter, &state, draw_tf, gravity_rot),
     }
 
-    // Center point
     draw_diamond(painter, center, 8.0, 8.0, stroke2);
 }
 
@@ -181,7 +179,7 @@ fn draw_raw(
             if mot_data.area == 0 {
                 continue;
             }
-            // todo don't use hardcoded 4095x4095 res assumption
+            // TODO: assumes a 4095x4095 sensor; take the resolution from the device.
             let p = Point2::new(mot_data.cx, mot_data.cy).cast::<f64>() / 4095.
                 - Vector2::new(0.5, 0.5);
             let p = gravity_rot * p;

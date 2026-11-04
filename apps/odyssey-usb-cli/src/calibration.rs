@@ -160,10 +160,9 @@ pub(crate) async fn calculate_and_save_bias_scale(
         gravity,
     };
 
-    // Initial parameter guess: [b_x, b_y, b_z, s_x, s_y, s_z]
+    // Zero bias, unit scale.
     let init_param = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 
-    // Perform optimization with detailed logging
     let solver = argmin::solver::gradientdescent::SteepestDescent::new(
         argmin::solver::linesearch::MoreThuenteLineSearch::new(),
     );
@@ -226,8 +225,8 @@ pub(crate) async fn calculate_and_save_gyro_bias(
     Ok(())
 }
 
-/// Require every requested sample; dividing a short stream by the requested
-/// count would silently underestimate the bias.
+/// Require every requested sample: dividing a short stream by the requested
+/// count would underestimate the bias.
 async fn collect_gyro_bias(
     samples: &mut (impl futures::Stream<Item = odyssey_usb::packets::vm::AccelReport> + Unpin),
     num_samples: usize,

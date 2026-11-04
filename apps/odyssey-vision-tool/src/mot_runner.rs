@@ -113,7 +113,6 @@ fn update_raycast(runner: &mut MotRunner) {
     }
 }
 
-/// Wrapper to track whether markers came from POC or combined report
 enum MarkersReport {
     Combined(CombinedMarkersReport),
     Poc(PocMarkersReport),
@@ -216,7 +215,6 @@ async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
 
         let mut runner = runner.lock();
 
-        // Track whether this is a POC marker report
         runner.state.is_poc_markers = is_poc;
 
         let nf = process_points(&nf_points, &runner.general_config.camera_model_nf, None);
@@ -241,7 +239,6 @@ async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
             realign_stereo_rotation(&mut runner, &wf.normalized, &nf.normalized, gravity_vec);
         }
 
-        // Observe markers
         let nf_markers_cv = runner
             .state
             .nf_markers2
@@ -264,20 +261,18 @@ async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
 
         update_raycast(&mut runner);
 
-        // Update runner state. Nothing identifies WF markers into the
-        // `*_markers` / `wf_reproj` lists any more, so every point stays
-        // unmatched and those lists stay empty; the canvases still read them.
+        // Nothing matches WF markers into the `*_markers` / `wf_reproj` lists,
+        // so every point stays unmatched and those lists stay empty; the
+        // canvases still read them.
         runner.state.nf_points = nf.tuples;
         runner.state.wf_points = wf.tuples;
         runner.state.nf_markers.clear();
         runner.state.wf_markers.clear();
         runner.state.wf_reproj.clear();
 
-        // Update aimpoint history
         let gravity_angle = -gravity_vec.z.atan2(-gravity_vec.x).to_degrees() + 90.0;
         runner.state.push_aimpoint(gravity_angle);
 
-        // Record packets if enabled
         if runner.record_packets {
             let packet_data = if is_poc {
                 PacketData::PocMarkersReport(PocMarkersReport { points: nf_points })
@@ -316,7 +311,7 @@ async fn accel_stream(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
         let accel_odr = runner.general_config.accel_config.accel_odr;
         anyhow::ensure!(accel_odr != 0, "accelerometer sample rate must be nonzero");
 
-        // correct accel and gyro bias and scale
+        // Bias and scale correction from the device's stored IMU config.
         let accel = odyssey_usb::packets::vm::AccelReport {
             accel: accel.corrected_accel(&runner.general_config.accel_config),
             gyro: accel.corrected_gyro(&runner.general_config.gyro_config),

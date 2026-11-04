@@ -113,7 +113,7 @@ impl PagSensorSettingsForm {
         let cid = retry_checked(|| device.pag_chip_id(Port::Nf), timeout, 3).await?;
         let fps = retry_checked(|| device.pag_fps(Port::Nf), timeout, 3).await?;
 
-        // Use correct register addresses based on PAG variant
+        // The PAG7665QN keeps these registers at different addresses from the PAG7661QN.
         let (expo, area_threshold_min, area_threshold_max, light_threshold, gain) = if is_pag7665 {
             let expo = retry_checked(|| device.pag7665_exposure(Port::Nf), timeout, 3).await?;
             let area_threshold_min =
@@ -235,7 +235,7 @@ impl PagSensorSettingsForm {
         }
     }
 
-    /// Make sure to call `validate()` before calling this method.
+    /// Run `validate()` first.
     pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
         let is_pag7665 = self.pag7665;
 
@@ -251,7 +251,7 @@ impl PagSensorSettingsForm {
 
         let circles = self.circle_registers()?;
 
-        // Use correct register addresses based on PAG variant
+        // The PAG7665QN keeps these registers at different addresses from the PAG7661QN.
         if is_pag7665 {
             tokio::try_join!(
                 device.set_pag_fps(Port::Nf, fps),

@@ -1,4 +1,4 @@
-//! Calibration functions
+//! Accelerometer and gyroscope calibration.
 
 use argmin::core::{CostFunction, Error, Executor, State as _};
 use futures::StreamExt as _;
@@ -142,10 +142,10 @@ pub(crate) async fn cmd_accel_calib(
         gravity,
     };
 
-    // Initial parameter guess: [b_x, b_y, b_z, s_x, s_y, s_z]
+    // Zero bias, unit scale.
     let init_param = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 
-    // Build simplex around the initial guess for Nelder-Mead (n + 1 vertices)
+    // Nelder-Mead starts from n + 1 vertices around the initial guess.
     let mut simplex = Vec::with_capacity(init_param.len() + 1);
     simplex.push(init_param.clone());
     for i in 0..init_param.len() {
@@ -223,8 +223,8 @@ pub(crate) async fn cmd_gyro_calib(
     Ok(())
 }
 
-/// Require every requested sample; dividing a short stream by the requested
-/// count would silently underestimate the bias.
+/// Require every requested sample: dividing a short stream by the requested
+/// count would underestimate the bias.
 async fn collect_gyro_bias(
     samples: &mut (impl futures::Stream<Item = odyssey_usb::packets::vm::AccelReport> + Unpin),
     num_samples: usize,

@@ -252,7 +252,7 @@ impl PajSensorSettingsForm {
         }
     }
 
-    /// Make sure to call `validate()` before calling this method.
+    /// Run `validate()` first.
     pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
         let gain = self.gain;
 
@@ -455,8 +455,8 @@ mod tests {
         form.validate(&mut errors);
         assert!(errors.iter().any(|error| error.starts_with("gain")));
         errors.clear();
-        // This valid custom pair was previously decoded as a different table
-        // entry. Keep it valid without silently normalizing the registers.
+        // A valid custom pair that a table lookup can mistake for a different
+        // entry; it must validate as-is, without the registers being normalized.
         form.gain = Gain::new(16, 0);
         form.validate(&mut errors);
         assert!(errors.is_empty(), "{errors:?}");

@@ -5,7 +5,7 @@ use odyssey_usb::packets::vm::MotData;
 
 #[derive(Debug)]
 pub struct MotState {
-    // Coordinates between 0.0 and 1.0
+    // Normalized to 0.0..=1.0.
     pub fv_aimpoint: Point2<f32>,
 
     pub distance: f32,
@@ -21,9 +21,9 @@ pub struct MotState {
     pub nf_markers2: ArrayVec<Marker, 16>,
     pub wf_markers2: ArrayVec<Marker, 16>,
 
-    /// True if markers came from PocMarkersReport (PAG7665QN sensor)
-    /// POC markers have different coordinate range (320x240 with 6-bit fractional = max 20416x15296)
-    /// vs regular CombinedMarkersReport (4095x4095)
+    /// Set when the markers came from a `PocMarkersReport` (PAG7665QN, 320x240
+    /// with 6 fractional bits, so at most 20416x15296) rather than a
+    /// `CombinedMarkersReport` (4095x4095).
     pub is_poc_markers: bool,
 
     pub screen_id: u8,

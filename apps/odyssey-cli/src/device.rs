@@ -1,4 +1,4 @@
-//! Direct device (lite/vm) management commands
+//! Commands for lite/vm devices connected directly over USB.
 
 use clap::Subcommand;
 use odyssey_protocol::control::device::TransportMode;
@@ -88,7 +88,7 @@ async fn connect_to_device(
     require_usb_mode: bool,
 ) -> Result<VmDevice, String> {
     // Explicit indices refer to the unfiltered enumeration printed by
-    // `list-devices`; probing/filtering first would silently renumber devices.
+    // `list-devices`; probing or filtering first would renumber devices.
     let device_info = if let Some(idx) = device_index {
         list_vm_usb_devices()?
             .get(idx)
@@ -124,13 +124,12 @@ async fn connect_to_device(
 }
 
 async fn cmd_list_devices() -> Result<(), String> {
-    // First, list all matching USB devices without transport mode probing
     let all_usb_devices = list_vm_usb_devices()?;
 
     if all_usb_devices.is_empty() {
         println!("No devices found (VID:0x1915, PID:0x520F/0x5210/0x5211)");
 
-        // Show all Nordic devices for debugging
+        // With no match, list every Nordic device as a debugging aid.
         let nordic_devices = list_nordic_devices()?;
 
         if !nordic_devices.is_empty() {
@@ -160,7 +159,6 @@ async fn cmd_list_devices() -> Result<(), String> {
                 info.device_address()
             );
 
-            // Try to probe transport mode
             match VmDevice::probe_transport_mode(info).await {
                 Ok(mode) => println!("      Transport mode: {mode:?}"),
                 Err(e) => println!("      Transport mode: probe failed ({e})"),

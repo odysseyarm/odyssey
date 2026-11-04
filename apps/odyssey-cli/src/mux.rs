@@ -1,4 +1,4 @@
-//! Mux (dongle) management commands
+//! Commands for the mux dongle.
 
 use clap::Subcommand;
 use odyssey_usb::device::MuxDevice;

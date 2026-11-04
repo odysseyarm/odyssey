@@ -36,7 +36,7 @@ use crate::{MotState, TestFrame, run_canvas, run_raw_canvas, test_canvas, theme}
 /// Every screen id up to and including `MAX_SCREEN_ID` can have a saved calibration.
 const SCREEN_SLOTS: usize = (odyssey_common::MAX_SCREEN_ID + 1) as usize;
 
-/// Madgwick filter gain the tool has always used.
+/// Madgwick filter gain (beta).
 const MADGWICK_BETA: f32 = 0.2;
 
 /// Default size of the main window, in points.
@@ -800,7 +800,7 @@ mod tests {
         ready.await.unwrap();
         task.stop();
 
-        // A current-thread runtime cannot process the abort until we yield.
+        // A current-thread runtime cannot process the abort until this task yields.
         task.sync(true, || panic!("old subscription is still tearing down"))
             .unwrap();
         tokio::task::yield_now().await;

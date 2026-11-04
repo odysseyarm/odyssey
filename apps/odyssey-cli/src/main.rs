@@ -1,4 +1,4 @@
-//! Unified CLI tool for managing ATS devices (mux and direct device connections)
+//! CLI for managing ATS devices, through a mux dongle or a direct USB connection.
 
 #![expect(
     clippy::print_stdout,

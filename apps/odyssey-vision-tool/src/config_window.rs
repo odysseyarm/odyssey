@@ -316,7 +316,7 @@ impl ConfigWindow {
                 connection: Some(connection.clone()),
             });
         }
-        // The simulator and M4Hub entries have no connection path any more.
+        // The simulator and M4Hub entries have no connection path.
         if let Some(addr) = &self.simulator_addr {
             self.choices.push(DeviceChoice {
                 label: format!("{SIMULATOR_LABEL_PREFIX}{addr}"),
@@ -354,8 +354,6 @@ impl ConfigWindow {
             _ => SensorSettings::Unsupported,
         }
     }
-
-    // ---- drawing ----
 
     fn device_bar(&mut self, ui: &mut egui::Ui) {
         let mut picked = None;
@@ -517,8 +515,6 @@ impl ConfigWindow {
         }
     }
 
-    // ---- device connection ----
-
     fn refresh_devices(&mut self) {
         if self.operation.is_some() {
             return;
@@ -568,8 +564,6 @@ impl ConfigWindow {
             sender.send(Event::Completed { attempt, result });
         }));
     }
-
-    // ---- toolbar actions ----
 
     /// Validates the forms, writes them to the device, and for
     /// [`Commit::Save`] also flashes them.
@@ -662,8 +656,6 @@ impl ConfigWindow {
         self.notice = None;
         self.flash = None;
     }
-
-    // ---- calibration and configuration files ----
 
     fn general_action(&mut self, action: GeneralAction) {
         match action {
@@ -933,7 +925,7 @@ enum NoticeKind {
     Info,
 }
 
-/// A dismissable message at the top of the window; replaces the modal dialogs.
+/// A dismissable message at the top of the window.
 struct Notice {
     kind: NoticeKind,
     title: String,
@@ -1105,7 +1097,7 @@ impl SensorSettings {
         }
     }
 
-    /// Make sure to call `validate()` before calling this method.
+    /// Run `validate()` first.
     async fn apply(&self, device: &VmDevice) -> Result<(), Notice> {
         match self {
             Self::Vm { wf, nf } => {
@@ -1260,7 +1252,6 @@ impl GeneralSettingsForm {
     async fn load_from_device(device: &VmDevice) -> Result<(Self, GeneralSettings)> {
         let timeout = Duration::from_millis(5000);
 
-        // Read all config values at once
         let config = match retry(|| device.read_all_config(), timeout, 3).await {
             Some(Ok(cfg)) => cfg,
             Some(Err(e)) => return Err(e),
@@ -1277,7 +1268,6 @@ impl GeneralSettingsForm {
             ));
         }
 
-        // Read individual prop fields
         let uuid_prop = match retry(|| device.read_prop(PropKind::Uuid), timeout, 3).await {
             Some(Ok(p)) => p,
             Some(Err(e)) => return Err(e),
@@ -1294,7 +1284,6 @@ impl GeneralSettingsForm {
                 }
             };
 
-        // Extract values from enum variants
         let Props::Uuid(uuid) = uuid_prop else {
             return Err(anyhow::anyhow!("Unexpected prop variant for Uuid"));
         };
@@ -1340,11 +1329,12 @@ impl GeneralSettingsForm {
         })
     }
 
-    /// Make sure to call `validate()` before calling this method.
+    /// Run `validate()` first: `config()` rejects only the first out-of-range
+    /// field, and as an error rather than a form message.
     async fn apply(&self, device: &VmDevice) -> Result<GeneralSettings> {
         let config = self.config()?;
 
-        // Write each config field separately using the new API
+        // The protocol writes one `GeneralConfig` field per request.
         device
             .write_config(GeneralConfig::ImpactThreshold(config.impact_threshold))
             .await?;
@@ -1388,7 +1378,6 @@ impl GeneralSettingsForm {
         self.accel_config = AccelConfig::default();
         self.gyro_config = GyroConfig::default();
 
-        // Set intrinsics based on device type
         match self.product() {
             Some(ProductId::AtsPro) => {
                 // PAG7665QN sensor defaults:
@@ -1438,7 +1427,7 @@ async fn connect(
     old_device: Option<VmDevice>,
     target: Option<VmConnectionInfo>,
 ) -> Result<(VmDevice, LoadedSettings)> {
-    // Clean up old device if it exists, BEFORE connecting to new one
+    // Stop the old device's streams before the new connection opens.
     if let Some(old_device) = old_device {
         tracing::debug!("Cleaning up previous device connection...");
         let _ = old_device.clear_all_streams().await;
@@ -1456,7 +1445,7 @@ async fn connect(
     })?;
 
     tracing::debug!("Connection successful, disabling any active streams...");
-    // Disable all streams from previous session to prevent flooding
+    // Streams a previous session left enabled would flood the new connection.
     if let Err(e) = device.clear_all_streams().await {
         tracing::warn!("Failed to disable streams: {e:?}");
     }
@@ -1502,7 +1491,8 @@ async fn scan_devices(mut existing_muxes: Vec<ExistingMux>) -> Result<ScannedDev
         .filter(|info| info.vendor_id() == VENDOR_ID)
         .collect();
 
-    // Separate direct USB vision modules and mux devices, probing transport mode for vision modules
+    // Muxes are collected separately; direct vision modules are probed for
+    // their transport mode.
     let mut vm_connections: Vec<VmConnectionInfo> = Vec::new();
     let mut hub_devices: Vec<DeviceInfo> = Vec::new();
 

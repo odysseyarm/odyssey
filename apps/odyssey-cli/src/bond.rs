@@ -1,4 +1,4 @@
-//! Bond command — manually create a bond between a dongle and a device
+//! `bond`: writes a matching bond entry to a dongle and a device by hand.
 
 use clap::Args;
 use odyssey_usb::device::{MuxDevice, VmDevice};
@@ -34,8 +34,8 @@ async fn list_vm_devices() -> Result<Vec<nusb::DeviceInfo>, String> {
     Ok(devices)
 }
 
-/// Parse the first 6 bytes of the FICR device ID from the USB serial number string.
-/// The serial is 16 uppercase hex chars representing 8 bytes (low word then high word).
+/// The first 6 bytes of the FICR device ID, parsed from the USB serial number. The
+/// serial is 16 uppercase hex chars encoding 8 bytes, low word then high word.
 fn bd_addr_from_serial(serial: &str) -> Result<[u8; 6], String> {
     if serial.len() < 12 {
         return Err(format!(
@@ -139,7 +139,7 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
     let (mux, dongle_bd_addr) = pick_mux(args.mux).await?;
     let device = pick_device(args.device).await?;
 
-    // Read device UUID — this is also its BLE address
+    // The device UUID is also its BLE address.
     let device_bd_addr: [u8; 6] = device
         .read_uuid()
         .await
@@ -148,17 +148,17 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
     println!("Dongle BD addr: {}", format_bd_addr(&dongle_bd_addr));
     println!("Device BD addr: {}", format_bd_addr(&device_bd_addr));
 
-    // Generate random LTK and IRK (same values for both sides)
+    // Both sides of the bond hold the same LTK and IRK.
     let mut rng = rand::thread_rng();
     let mut ltk = [0u8; 16];
     let mut irk = [0u8; 16];
     rng.fill_bytes(&mut ltk);
     rng.fill_bytes(&mut irk);
 
-    // Dongle bond: bd_addr = device (who the dongle connects to)
+    // The dongle's entry names the device it connects to.
     let dongle_entry = bond_entry(device_bd_addr, ltk, irk);
 
-    // Device bond: bd_addr = dongle (who the device expects to connect to it)
+    // The device's entry names the dongle it expects to connect to it.
     let device_entry = bond_entry(dongle_bd_addr, ltk, irk);
 
     println!("Sending bond to dongle...");
