@@ -42,7 +42,7 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Area ( $handler:expr_2021 )
     ] => [
-        #[expect(unused_mut)]
+        #[expect(unused_mut, reason = "mutability depends on the call site")]
         let mut $ctl = iui::controls::Area::new($ui, $handler);
     ];
 
@@ -50,7 +50,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Button ( $text:expr_2021 $( , enabled: $enabled:expr_2021 $(,)? )? )
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Button::new($ui, "");
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
@@ -83,7 +82,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Checkbox ( $text:expr_2021 $( , checked: $checked:expr_2021 )? )
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::Checkbox::new($ui, $text);
         $( $ctl.set_checked($ui, $checked); )?
     ];
@@ -92,7 +90,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = ColorButton ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::ColorButton::new();
     ];
 
@@ -101,7 +98,6 @@ macro_rules! layout {
         let $ctl:ident = Combobox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
         { $( $option:expr_2021 ),* }
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Combobox::new($ui);
         $( $ctl.append($ui, $option); )*
         $($crate::layout!(@args Combobox $ui; $ctl $prop $value);)*
@@ -111,7 +107,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = DateTimePicker ( $kind:ident )
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::DateTimePicker::new(
             iui::controls::DateTimePickerKind::$kind);
     ];
@@ -121,7 +116,6 @@ macro_rules! layout {
         let $ctl:ident = EditableCombobox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
         { $( $option:expr_2021 ),* }
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::EditableCombobox::new($ui);
         $( $ctl.append($ui, $option); )*
         $($crate::layout!(@args EditableCombobox $ui; $ctl $prop $value);)*
@@ -131,8 +125,10 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Entry ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Entry::new($ui);
+        // Some entries are never mutated (only `value:`/`enabled:`) and others are
+        // (`signal:`), so mark the binding as used mutably for both.
+        $crate::layout_macro::mark_mutably_used(&mut $ctl);
         $($crate::layout!(@args Entry $ui; $ctl $prop $value);)*
     ];
 
@@ -140,7 +136,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = FontButton ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::FontButton::new($ui);
     ];
 
@@ -148,7 +143,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = HorizontalSeparator ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::HorizontalSeparator::new($ui);
     ];
 
@@ -156,13 +150,12 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Label ( $text:literal )
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::Label::new($ui, $text);
     ];
     [ $ui:expr_2021 ,
         let $ctl:ident = Label ( $text:expr_2021 )
     ] => [
-        #[expect(unused_mut)]
+        #[expect(unused_mut, reason = "mutability depends on the call site")]
         let mut $ctl = iui::controls::Label::new($ui, "");
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
@@ -181,7 +174,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = MultilineEntry ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::MultilineEntry::new($ui);
     ];
 
@@ -189,7 +181,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = MultilineEntry ( wrapping: $wrapping:expr_2021 )
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = if $wrapping {
             iui::controls::MultilineEntry::new($ui)
         } else {
@@ -201,7 +192,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = PasswordEntry ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::PasswordEntry::new($ui);
     ];
 
@@ -210,7 +200,6 @@ macro_rules! layout {
         let $ctl:ident = RadioButtons ( $( selected: $selected:expr_2021 )? )
         { $( $option:expr_2021 ),* }
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::RadioButtons::new($ui);
         $( $ctl.append($option); )*
         $( $ctl.set_selected($selected); )?
@@ -220,7 +209,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = SearchEntry ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::SearchEntry::new($ui);
     ];
 
@@ -228,7 +216,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Slider ( $min:expr_2021 , $max:expr_2021 )
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::Slider::new($ui, $min, $max);
     ];
 
@@ -236,7 +223,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Spacer ()
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::Spacer::new($ui);
     ];
 
@@ -244,7 +230,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Spinbox ( $min:expr_2021 , $max:expr_2021 $(, $prop:ident: $value:expr_2021 )* $(,)?)
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::Spinbox::new($ui, $min, $max);
         $($crate::layout!(@args Spinbox $ui; $ctl $prop $value);)*
     ];
@@ -253,7 +238,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Spinbox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Spinbox::new_unlimited($ui);
         $($crate::layout!(@args Spinbox $ui; $ctl $prop $value);)*
     ];
@@ -262,7 +246,6 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = ProgressBar ( $($value:expr_2021 )? )
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::ProgressBar::new($ui);
         $(
             leptos_reactive::create_effect({
@@ -287,7 +270,6 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Form::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -304,7 +286,6 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )? }
     ] => [
-        #[allow(unused_mut)]
         let mut $ctl = iui::controls::Group::new($title);
         $( $ctl.set_margined($margined); )?
         $(
@@ -321,7 +302,6 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::HorizontalBox::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -341,7 +321,6 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::LayoutGrid::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -363,7 +342,6 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::TabGroup::new($ui);
         $(
             $crate::layout! { $ui, let $child = $type ($($opt)*) $({$($body)*})? }
@@ -380,7 +358,6 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[expect(unused_mut)]
         let mut $ctl = iui::controls::VerticalBox::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -524,3 +501,7 @@ where
         MaybeSignal::derive(move || self().into())
     }
 }
+
+/// Counts as a mutable use of a control the `layout!` macro declares with
+/// `let mut`, for expansions where the caller never mutates it.
+pub const fn mark_mutably_used<T>(_control: &mut T) {}

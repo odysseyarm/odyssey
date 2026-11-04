@@ -5,111 +5,23 @@ use ahrs::Ahrs as _;
 use arrayvec::ArrayVec;
 use iui::concurrent::Context;
 use leptos_reactive::RwSignal;
-use nalgebra::{Matrix3, Point2, Rotation3, Scalar, Translation3, UnitVector3, Vector2, Vector3};
-use odyssey_common::MARKER_PATTERN_LEN;
+use nalgebra::{Isometry3, Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
 use odyssey_protocol::PocMarkersReport;
 use odyssey_usb::device::{GeneralSettings, VmDevice};
-use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData};
+use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData, PacketData};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
 use tokio_stream::StreamExt as _;
 
 use crate::{CloneButShorter as _, Marker, TestFrame};
 
-pub fn transform_aimpoint_to_identity(
-    center_aim: Point2<f64>,
-    p1: Point2<f64>,
-    p2: Point2<f64>,
-    p3: Point2<f64>,
-    p4: Point2<f64>,
-) -> Option<Point2<f64>> {
-    odyssey_cv::transform_aim_point(
-        center_aim,
-        p1,
-        p2,
-        p3,
-        p4,
-        Point2::new(0.5, 1.),
-        Point2::new(0., 0.5),
-        Point2::new(0.5, 0.),
-        Point2::new(1., 0.5),
-    )
-}
+/// Most markers either sensor reports in one frame.
+const MAX_MARKERS: usize = 16;
 
-/// Given 4 points in the following shape
+/// The tracking state shared between the UI and the device-stream tasks.
 ///
-/// ```text
-/// +--x
-/// |
-/// y                 top
-///
-///
-///   left                              right
-///
-///
-///                  bottom
-/// ```
-///
-/// Sort them into the order bottom, left, top, right
-pub fn sort_diamond<T: Scalar + PartialOrd>(a: &mut [Point2<T>]) {
-    if a[0].y < a[1].y {
-        a.swap(0, 1);
-    }
-    if a[2].y > a[3].y {
-        a.swap(2, 3);
-    }
-    if a[0].y < a[3].y {
-        a.swap(0, 3);
-    }
-    if a[2].y > a[1].y {
-        a.swap(2, 1);
-    }
-    if a[1].x > a[3].x {
-        a.swap(1, 3);
-    }
-}
-
-/// Given 4 points in the following shape
-///
-/// ```text
-/// +--x
-/// |
-/// y        a              b
-///
-///
-///          c              d
-/// ```
-///
-/// Sort them into the order a, b, d, c
-pub fn sort_rectangle<T: Scalar + PartialOrd>(a: &mut [Point2<T>]) {
-    if a[0].y > a[2].y {
-        a.swap(0, 2);
-    }
-    if a[1].y > a[3].y {
-        a.swap(1, 3);
-    }
-    if a[0].y > a[1].y {
-        a.swap(0, 1);
-    }
-    if a[2].y > a[3].y {
-        a.swap(2, 3);
-    }
-    if a[1].y > a[2].y {
-        a.swap(1, 2);
-    }
-    if a[0].x > a[1].x {
-        a.swap(0, 1);
-    }
-    if a[2].x < a[3].x {
-        a.swap(2, 3);
-    }
-}
-
-pub fn sort_points<T: Scalar + PartialOrd>(a: &mut [Point2<T>]) {
-    sort_rectangle(a);
-}
-
+/// Lock order is the runner first, then `packets` or `datapoints`.
 pub struct MotRunner {
     pub state: crate::MotState,
     pub device: Option<VmDevice>,
@@ -117,7 +29,7 @@ pub struct MotRunner {
     pub record_impact: bool,
     pub record_packets: bool,
     pub datapoints: Arc<Mutex<Vec<TestFrame>>>,
-    pub packets: Arc<Mutex<Vec<(u128, odyssey_usb::packets::vm::PacketData)>>>,
+    pub packets: Arc<Mutex<Vec<(u128, PacketData)>>>,
     pub ui_update: RwSignal<()>,
     pub ui_ctx: Context,
     pub wfnf_realign: bool,
@@ -127,77 +39,80 @@ pub struct MotRunner {
     >,
 }
 
+impl std::fmt::Debug for MotRunner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MotRunner")
+            .field("record_impact", &self.record_impact)
+            .field("record_packets", &self.record_packets)
+            .field("wfnf_realign", &self.wfnf_realign)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MotRunner {
+    /// Appends `packet_data` to the recording, stamped with the current time.
+    fn push_recorded_packet(&self, packet_data: PacketData) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_millis();
+        self.packets.lock().push((timestamp, packet_data));
+    }
+}
+
+/// The device currently selected in the UI, if any.
+fn current_device(runner: &Mutex<MotRunner>) -> Option<VmDevice> {
+    runner.lock().device.c()
+}
+
 pub async fn run(runner: Arc<Mutex<MotRunner>>) {
     tokio::join!(
-        markers_loop(runner.clone()),
-        accel_stream(runner.clone()),
-        impact_loop(runner.clone()),
+        markers_loop(Arc::clone(&runner)),
+        accel_stream(Arc::clone(&runner)),
+        impact_loop(Arc::clone(&runner)),
     );
 }
 
 pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
-    let device = runner.lock().device.c().unwrap();
-    let mut mot_data_stream = device.stream_mot_data().await.unwrap();
+    let Some(device) = current_device(&runner) else {
+        return;
+    };
+    let mut mot_data_stream = match device.stream_mot_data().await {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::error!("Failed to stream mot data: {:?}", e);
+            return;
+        }
+    };
     loop {
         if runner.lock().device.is_none() {
             return;
         }
-        if let Some(mot_data) = mot_data_stream.next().await {
-            let nf_data = mot_data.mot_data_nf;
-            let wf_data = mot_data.mot_data_wf;
-            let mut runner = runner.lock();
-            let nf_data = ArrayVec::<MotData, 16>::from_iter(nf_data);
-            // let nf_data = ArrayVec::<MotData,16>::from_iter(dummy_nf_data());
-            let wf_data = ArrayVec::<MotData, 16>::from_iter(wf_data);
+        let Some(mot_data) = mot_data_stream.next().await else {
+            return;
+        };
+        let nf_data = ArrayVec::<MotData, MAX_MARKERS>::from_iter(mot_data.mot_data_nf);
+        let wf_data = ArrayVec::<MotData, MAX_MARKERS>::from_iter(mot_data.mot_data_wf);
 
-            let state = &mut runner.state;
-            state.nf_data = Some(nf_data);
-            state.wf_data = Some(wf_data);
+        let mut runner = runner.lock();
+        let state = &mut runner.state;
+        state.nf_data = Some(nf_data);
+        state.wf_data = Some(wf_data);
 
-            if runner.record_packets {
-                runner.packets.lock().push((
-                    std::time::SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis(),
-                    odyssey_usb::packets::vm::PacketData::ObjectReport(mot_data),
-                ));
-            }
+        if runner.record_packets {
+            runner.push_recorded_packet(PacketData::ObjectReport(mot_data));
         }
     }
 }
 
-// fn get_raycast_aimpoint(fv_state: &odyssey_cv::foveated::FoveatedAimpointState, screen_calibration: &ScreenCalibration<f64>) -> (Rotation3<f64>, Translation3<f64>, Option<Point2<f64>>) {
-//     let orientation = fv_state.filter.orientation.cast();
-//     let position = fv_state.filter.position.cast();
-//
-//     let flip_yz = Matrix3::new(
-//         1., 0., 0.,
-//         0., -1., 0.,
-//         0., 0., -1.,
-//     );
-//
-//     let rot = Rotation3::from_matrix_unchecked(flip_yz * orientation.to_rotation_matrix() * flip_yz);
-//     let trans = Translation3::from(flip_yz * position);
-//
-//     let isometry = nalgebra::Isometry::<f64, Rotation3<f64>, 3>::from_parts(trans, rot);
-//
-//     let fv_aimpoint = odyssey_cv::calculate_aimpoint(
-//         &isometry,
-//         screen_calibration,
-//     );
-//
-//     (rot, trans, fv_aimpoint)
-// }
-
-fn my_raycast_update(runner: &mut MotRunner) {
+fn update_raycast(runner: &mut MotRunner) {
     let screen_calibrations = runner.screen_calibrations.clone();
     let fv_state = &mut runner.state.fv_state;
     let offset = runner.state.fv_zero_offset;
     let (pose, aimpoint_and_d) =
         odyssey_cv::helpers::raycast_update(&screen_calibrations, fv_state, Some(offset));
     if let Some(pose) = pose {
-        let flip_yz = Matrix3::new(1., 0., 0., 0., -1., 0., 0., 0., -1.);
+        let flip_yz = Matrix3::from_diagonal(&Vector3::new(1., -1., -1.));
 
         let rot = Rotation3::from_matrix_unchecked(flip_yz * pose.0 * flip_yz);
         let trans = Translation3::from(flip_yz * pose.1);
@@ -216,10 +131,78 @@ enum MarkersReport {
     Poc(PocMarkersReport),
 }
 
+/// One camera's detected points, after dropping empty slots, undistorting
+/// and normalizing them.
+struct ProcessedPoints {
+    /// `(mot_id, pixel position)` of every point that was detected.
+    tuples: Vec<(u8, Point2<f32>)>,
+    normalized: ArrayVec<Point2<f32>, MAX_MARKERS>,
+    markers: ArrayVec<Marker, MAX_MARKERS>,
+}
+
+/// Applies the camera model to a camera's raw points.
+fn process_points(
+    points: &[Point2<u16>],
+    camera_model: &RosOpenCvIntrinsics<f32>,
+    stereo_iso: Option<&Isometry3<f32>>,
+) -> ProcessedPoints {
+    let tuples = create_point_tuples(points);
+    let points_raw: Vec<_> = tuples.iter().map(|&(_, p)| p).collect();
+    let points_transformed = transform_points(&points_raw, camera_model);
+    let intrinsics = odyssey_common::ros_opencv_intrinsics_type_convert(camera_model);
+    let normalized: ArrayVec<_, MAX_MARKERS> = points_transformed
+        .iter()
+        .map(|&p| to_normalized_image_coordinates(p, &intrinsics, stereo_iso))
+        .collect();
+    let markers = tuples
+        .iter()
+        .zip(&normalized)
+        .map(|(&(mot_id, _), &normalized)| Marker {
+            mot_id,
+            pattern_id: None,
+            normalized,
+        })
+        .collect();
+    ProcessedPoints {
+        tuples,
+        normalized,
+        markers,
+    }
+}
+
+/// Re-derives the rotation between the wide- and near-field cameras from a
+/// frame in which both see the same markers.
+fn realign_stereo_rotation(
+    runner: &mut MotRunner,
+    wf_normalized: &[Point2<f32>],
+    nf_normalized: &[Point2<f32>],
+    gravity_vec: UnitVector3<f32>,
+) {
+    let Some((wf_match_ix, _, _)) = odyssey_cv::foveated::identify_markers(
+        wf_normalized,
+        gravity_vec.cast(),
+        &runner.screen_calibrations,
+    ) else {
+        return;
+    };
+    let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
+    let (nf_match_ix, _) = odyssey_cv::foveated::match3(nf_normalized, &wf_match);
+    if !nf_match_ix.iter().all(Option::is_some) {
+        return;
+    }
+    let nf_ordered = nf_match_ix.map(|i| {
+        let i = i.expect("every nf marker matched: checked above");
+        nf_normalized[i].coords.push(1.0)
+    });
+    let wf_ordered = wf_match_ix.map(|i| wf_normalized[i].coords.push(1.0));
+    let q = calculate_rotational_offset(&wf_ordered, &nf_ordered);
+    runner.general_config.stereo_iso.rotation *= q.cast();
+    runner.wfnf_realign = false;
+}
+
 async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
-    let device = match runner.lock().device.as_ref() {
-        Some(d) => d.c(),
-        None => return,
+    let Some(device) = current_device(&runner) else {
+        return;
     };
     let combined_markers_stream = match device.stream_combined_markers().await {
         Ok(stream) => stream,
@@ -236,6 +219,7 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
         }
     };
 
+    // The two sensors report on separate streams; handle whichever report arrives next.
     let mut markers_stream = combined_markers_stream
         .map(MarkersReport::Combined)
         .merge(poc_markers_stream.map(MarkersReport::Poc));
@@ -251,39 +235,15 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
         // Track whether this is a POC marker report
         runner.state.is_poc_markers = is_poc;
 
-        // Helper closure to process points (applies camera model transforms)
-        let process_points = |points, camera_model, stereo_iso| {
-            let point_tuples = create_point_tuples(points);
-            let points_raw: Vec<_> = point_tuples.iter().map(|&(_, p)| p).collect();
-            let points_transformed = transform_points(&points_raw, camera_model);
-            let intrinsics = odyssey_common::ros_opencv_intrinsics_type_convert(camera_model);
-            let normalized_points: ArrayVec<_, 16> = points_transformed
-                .iter()
-                .map(|&p| to_normalized_image_coordinates(p, &intrinsics, stereo_iso))
-                .collect();
-            let markers = point_tuples
-                .iter()
-                .zip(&normalized_points)
-                .map(|(&(mot_id, _), &normalized)| Marker {
-                    mot_id,
-                    pattern_id: None,
-                    normalized,
-                })
-                .collect();
-            (point_tuples, points_transformed, normalized_points, markers)
-        };
-
-        // Process nf_points and wf_points
-        let (nf_point_tuples, nf_points_transformed, nf_normalized, nf_markers2) =
-            process_points(&nf_points, &runner.general_config.camera_model_nf, None);
-        let (wf_point_tuples, wf_points_transformed, wf_normalized, wf_markers2) = process_points(
+        let nf = process_points(&nf_points, &runner.general_config.camera_model_nf, None);
+        let wf = process_points(
             &wf_points,
             &runner.general_config.camera_model_wf,
             Some(&runner.general_config.stereo_iso.cast()),
         );
 
-        runner.state.nf_markers2 = nf_markers2;
-        runner.state.wf_markers2 = wf_markers2;
+        runner.state.nf_markers2 = nf.markers;
+        runner.state.wf_markers2 = wf.markers;
 
         let gravity_vec = UnitVector3::new_unchecked(
             runner
@@ -293,23 +253,8 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
                 .xzy(),
         );
 
-        // Re-alignment logic
-        if runner.wfnf_realign
-            && let Some((wf_match_ix, _, _)) = odyssey_cv::foveated::identify_markers(
-                &wf_normalized,
-                gravity_vec.cast(),
-                &runner.screen_calibrations.clone(),
-            )
-        {
-            let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
-            let (nf_match_ix, _) = odyssey_cv::foveated::match3(&nf_normalized, &wf_match);
-            if nf_match_ix.iter().all(Option::is_some) {
-                let nf_ordered = nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
-                let wf_ordered = wf_match_ix.map(|i| wf_normalized[i].coords.push(1.0));
-                let q = calculate_rotational_offset(&wf_ordered, &nf_ordered);
-                runner.general_config.stereo_iso.rotation *= q.cast();
-                runner.wfnf_realign = false;
-            }
+        if runner.wfnf_realign {
+            realign_stereo_rotation(&mut runner, &wf.normalized, &nf.normalized, gravity_vec);
         }
 
         // Observe markers
@@ -318,13 +263,13 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
             .nf_markers2
             .iter()
             .map(Marker::odyssey_cv_marker)
-            .collect::<ArrayVec<_, 16>>();
+            .collect::<ArrayVec<_, MAX_MARKERS>>();
         let wf_markers_cv = runner
             .state
             .wf_markers2
             .iter()
             .map(Marker::odyssey_cv_marker)
-            .collect::<ArrayVec<_, 16>>();
+            .collect::<ArrayVec<_, MAX_MARKERS>>();
         let screen_calibrations = runner.screen_calibrations.clone();
         runner.state.fv_state.observe_markers(
             &nf_markers_cv,
@@ -333,67 +278,16 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
             &screen_calibrations,
         );
 
-        my_raycast_update(&mut runner);
+        update_raycast(&mut runner);
 
-        let wf_markers: Option<(
-            [usize; MARKER_PATTERN_LEN],
-            [Vector2<f32>; MARKER_PATTERN_LEN],
-            Option<u8>,
-        )> = None;
-
-        let (wf_marker_ix, wf_reproj) = wf_markers
-            .as_ref()
-            .map(|(markers, reproj, _)| (markers.as_slice(), reproj.as_slice()))
-            .unwrap_or_default();
-
-        // Match nf_markers with wf_markers
-        let mut nf_markers = ArrayVec::<Point2<f32>, 16>::new();
-        if wf_marker_ix.len() >= MARKER_PATTERN_LEN {
-            let chosen_wf_markers: [_; MARKER_PATTERN_LEN] = wf_marker_ix
-                .iter()
-                .map(|&i| wf_normalized[i].coords)
-                .collect::<ArrayVec<_, MARKER_PATTERN_LEN>>()
-                .into_inner()
-                .unwrap();
-
-            let (nf_match_ix, _) = odyssey_cv::foveated::match3(&nf_normalized, &chosen_wf_markers);
-
-            for (i, &wf_idx) in wf_marker_ix.iter().enumerate() {
-                runner.state.wf_markers2[wf_idx].pattern_id = Some(i as u8);
-                if let Some(nf_idx) = nf_match_ix[i] {
-                    nf_markers.push(nf_points_transformed[nf_idx]);
-                    runner.state.nf_markers2[nf_idx].pattern_id = Some(i as u8);
-                } else {
-                    nf_markers.push(Point2::new(-9999., -9999.));
-                }
-            }
-        }
-
-        // Update runner state
-        runner.state.nf_points = nf_point_tuples
-            .into_iter()
-            .filter(|&(mot_id, p)| {
-                !runner
-                    .state
-                    .nf_markers2
-                    .iter()
-                    .any(|m| m.mot_id == mot_id && nf_markers.contains(&p))
-            })
-            .collect();
-
-        runner.state.wf_points = wf_point_tuples
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !wf_marker_ix.contains(i))
-            .map(|(_, p)| p)
-            .collect();
-
-        runner.state.nf_markers = nf_markers;
-        runner.state.wf_markers = wf_marker_ix
-            .iter()
-            .map(|&i| wf_points_transformed[i])
-            .collect();
-        runner.state.wf_reproj = wf_reproj.iter().copied().map(Into::into).collect();
+        // Update runner state. Nothing identifies WF markers into the
+        // `*_markers` / `wf_reproj` lists any more, so every point stays
+        // unmatched and those lists stay empty; the canvases still read them.
+        runner.state.nf_points = nf.tuples.into_iter().collect();
+        runner.state.wf_points = wf.tuples.into_iter().collect();
+        runner.state.nf_markers.clear();
+        runner.state.wf_markers.clear();
+        runner.state.wf_reproj.clear();
 
         // Update aimpoint history
         let gravity_angle = -gravity_vec.z.atan2(-gravity_vec.x).to_degrees() + 90.0;
@@ -409,22 +303,14 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
         // Record packets if enabled
         if runner.record_packets {
             let packet_data = if is_poc {
-                odyssey_usb::packets::vm::PacketData::PocMarkersReport(PocMarkersReport {
-                    points: nf_points,
-                })
+                PacketData::PocMarkersReport(PocMarkersReport { points: nf_points })
             } else {
-                odyssey_usb::packets::vm::PacketData::CombinedMarkersReport(CombinedMarkersReport {
+                PacketData::CombinedMarkersReport(CombinedMarkersReport {
                     nf_points,
                     wf_points,
                 })
             };
-            runner.packets.lock().push((
-                std::time::SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-                packet_data,
-            ));
+            runner.push_recorded_packet(packet_data);
         }
     }
 }
@@ -449,9 +335,8 @@ fn transform_points(
 }
 
 async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
-    let device = match runner.lock().device.as_ref() {
-        Some(d) => d.c(),
-        None => return,
+    let Some(device) = current_device(&runner) else {
+        return;
     };
     let mut accel_stream = match device.stream_accel().await {
         Ok(stream) => stream,
@@ -472,22 +357,10 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
             timestamp: accel.timestamp,
         };
 
-        // println!("Timestamp: {}", accel.timestamp);
-
-        // println!("{:7.3?} {:7.3?}", accel.accel.xzy(), accel.gyro.xzy());
-        // println!("{:7.3?}", accel.accel.norm());
-
-        // print rotation in degrees
-        // println!("Rotation: {}", accel.gyro.xzy().map(|x| x.to_degrees()));
-
-        if let Some(_prev_timestamp) = prev_timestamp
-            && accel.timestamp < _prev_timestamp
-        {
+        // The device clock went backwards (e.g. it restarted): drop the
+        // sample and start over from the next one.
+        if prev_timestamp.is_some_and(|prev| accel.timestamp < prev) {
             prev_timestamp = None;
-            if accel.timestamp < _prev_timestamp {
-                prev_timestamp = None;
-                continue;
-            }
             continue;
         }
 
@@ -521,25 +394,18 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
             (-accel.accel.xzy().cast(), -accel.gyro.xzy().cast())
         );
 
-        my_raycast_update(&mut runner);
+        update_raycast(&mut runner);
 
         if runner.record_packets {
-            runner.packets.lock().push((
-                std::time::SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-                odyssey_usb::packets::vm::PacketData::AccelReport(accel),
-            ));
+            runner.push_recorded_packet(PacketData::AccelReport(accel));
         }
     }
 }
 
 // todo use an aimpoint history to choose the aimpoint closest to the timestamp
 async fn impact_loop(runner: Arc<Mutex<MotRunner>>) {
-    let device = match runner.lock().device.as_ref() {
-        Some(d) => d.c(),
-        None => return,
+    let Some(device) = current_device(&runner) else {
+        return;
     };
     let mut impact_stream = match device.stream_impact().await {
         Ok(stream) => stream,
@@ -548,7 +414,7 @@ async fn impact_loop(runner: Arc<Mutex<MotRunner>>) {
             return;
         }
     };
-    while let Some(_impact) = impact_stream.next().await {
+    while let Some(impact) = impact_stream.next().await {
         let runner = runner.lock();
         if runner.record_impact {
             let mut frame = TestFrame {
@@ -584,49 +450,7 @@ async fn impact_loop(runner: Arc<Mutex<MotRunner>>) {
             });
         }
         if runner.record_packets {
-            runner.packets.lock().push((
-                std::time::SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-                odyssey_usb::packets::vm::PacketData::ImpactReport(_impact),
-            ));
+            runner.push_recorded_packet(PacketData::ImpactReport(impact));
         }
     }
-}
-
-pub fn rescale(val: f64) -> f64 {
-    rescale_generic(-2047.0, 2047.0, 0.0, 1.0, val)
-}
-fn rescale_generic(lo1: f64, hi1: f64, lo2: f64, hi2: f64, val: f64) -> f64 {
-    (val - lo1) / (hi1 - lo1) * (hi2 - lo2) + lo2
-}
-
-fn _dummy_nf_data() -> [MotData; 4] {
-    [
-        MotData {
-            cx: 1047,
-            cy: 2047,
-            area: 1,
-            ..Default::default()
-        },
-        MotData {
-            cx: 3347,
-            cy: 2047,
-            area: 1,
-            ..Default::default()
-        },
-        MotData {
-            cx: 2047,
-            cy: 1047,
-            area: 1,
-            ..Default::default()
-        },
-        MotData {
-            cx: 2047,
-            cy: 3047,
-            area: 1,
-            ..Default::default()
-        },
-    ]
 }

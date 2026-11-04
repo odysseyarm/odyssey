@@ -130,17 +130,14 @@ pub fn draw(
         &format!("gravity_angle = {:.3}", gravity_angle.to_degrees()),
     );
 
+    let paths = DrawPaths {
+        nf: &nf_path,
+        wf: &wf_path,
+        nf_grid: &nf_grid_path,
+        ch: &ch_path,
+    };
     if raw {
-        draw_raw(
-            ctx,
-            state,
-            draw_tf,
-            gravity_rot,
-            &nf_path,
-            &wf_path,
-            &nf_grid_path,
-            &ch_path,
-        );
+        draw_raw(ctx, state, draw_tf, gravity_rot, &paths);
     } else {
         let screen_calibration = runner
             .screen_calibrations
@@ -152,10 +149,7 @@ pub fn draw(
             &runner.general_config,
             draw_tf,
             gravity_rot,
-            &nf_path,
-            &wf_path,
-            &nf_grid_path,
-            &ch_path,
+            &paths,
             screen_calibration,
         );
     }
@@ -235,16 +229,27 @@ pub fn draw(
     ctx.stroke(&center_point_path, &brush, &stroke2);
 }
 
+/// The shared paths the marker drawing helpers accumulate into.
+struct DrawPaths<'a> {
+    nf: &'a Path,
+    wf: &'a Path,
+    nf_grid: &'a Path,
+    ch: &'a Path,
+}
+
 fn draw_raw(
     ctx: &DrawContext,
     state: &MotState,
     draw_tf: Transform2<f64>,
     gravity_rot: Rotation2<f64>,
-    nf_path: &Path,
-    wf_path: &Path,
-    nf_grid_path: &Path,
-    ch_path: &Path,
+    paths: &DrawPaths<'_>,
 ) {
+    let DrawPaths {
+        nf: nf_path,
+        wf: wf_path,
+        nf_grid: nf_grid_path,
+        ch: ch_path,
+    } = *paths;
     if let Some(nf_data) = state.nf_data.as_ref() {
         let mut nf_points = ArrayVec::<Point2<f64>, 16>::new();
         for (i, mot_data) in nf_data.iter().enumerate() {
@@ -329,12 +334,14 @@ fn draw_not_raw(
     config: &odyssey_usb::device::GeneralSettings,
     draw_tf: Transform2<f64>,
     gravity_rot: Rotation2<f64>,
-    nf_path: &Path,
-    wf_path: &Path,
-    _nf_grid_path: &Path,
-    _ch_path: &Path,
+    paths: &DrawPaths<'_>,
     screen: Option<&(u8, odyssey_common::ScreenCalibration<f32>)>,
 ) {
+    let DrawPaths {
+        nf: nf_path,
+        wf: wf_path,
+        ..
+    } = *paths;
     nf_path.end(ctx);
     wf_path.end(ctx);
     let fx = config.camera_model_nf.p.m11;

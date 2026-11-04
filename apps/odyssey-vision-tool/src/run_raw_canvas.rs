@@ -12,8 +12,14 @@ pub struct RunRawCanvas {
     pub runner: Arc<Mutex<MotRunner>>,
 }
 
+impl std::fmt::Debug for RunRawCanvas {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunRawCanvas").finish_non_exhaustive()
+    }
+}
+
 impl AreaHandler for RunRawCanvas {
-    fn draw(&mut self, _area: &Area, draw_params: &AreaDrawParams) {
-        tracking_canvas_helpers::draw(self.ctx.c(), self.runner.c(), _area, draw_params, true);
+    fn draw(&mut self, area: &Area, draw_params: &AreaDrawParams) {
+        tracking_canvas_helpers::draw(self.ctx.c(), self.runner.c(), area, draw_params, true);
     }
 }

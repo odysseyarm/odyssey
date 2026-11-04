@@ -3,6 +3,7 @@ use nalgebra::{Isometry3, Matrix3, Matrix3x1, Point2, Rotation3};
 use odyssey_cv::foveated::FoveatedAimpointState;
 use odyssey_usb::packets::vm::MotData;
 
+#[derive(Debug)]
 pub struct MotState {
     // Coordinates between 0.0 and 1.0
     pub fv_aimpoint: Point2<f32>,
@@ -67,6 +68,7 @@ impl Default for MotState {
     }
 }
 
+#[derive(Debug)]
 pub struct Marker {
     pub mot_id: u8,
     pub pattern_id: Option<u8>,

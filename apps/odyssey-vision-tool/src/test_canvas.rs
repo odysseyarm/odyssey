@@ -19,6 +19,15 @@ pub struct TestCanvas {
     pub last_draw_height: Option<f64>,
 }
 
+impl std::fmt::Debug for TestCanvas {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestCanvas")
+            .field("last_draw_width", &self.last_draw_width)
+            .field("last_draw_height", &self.last_draw_height)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AreaHandler for TestCanvas {
     fn draw(&mut self, _area: &Area, draw_params: &AreaDrawParams) {
         self.last_draw_width = Some(draw_params.area_width);
@@ -171,13 +180,14 @@ impl AreaHandler for TestCanvas {
             if area_key_event.key == b'z' {
                 let t = Translation3::new(0., -0.0381, 0.);
                 let quat = {
-                    let screen_calibrations = &self.runner.lock().screen_calibrations;
-                    let fv_state = &self.runner.lock().state.fv_state;
+                    // One guard for both reads: parking_lot mutexes are not
+                    // reentrant, so locking twice here would deadlock.
+                    let runner = self.runner.lock();
                     odyssey_cv::helpers::calculate_zero_offset_quat(
                         t,
                         Point2::new(0.5, 0.5),
-                        screen_calibrations,
-                        fv_state,
+                        &runner.screen_calibrations,
+                        &runner.state.fv_state,
                     )
                 };
                 if let Some(quat) = quat {
@@ -188,14 +198,16 @@ impl AreaHandler for TestCanvas {
             }
             return true;
         }
-        match area_key_event.ext_key as _ {
-            ui_sys::uiExtKeyEscape => (self.on_closing)(&mut self.window),
-            _ => match area_key_event.key {
+        let is_escape = i64::from(area_key_event.ext_key) == i64::from(ui_sys::uiExtKeyEscape);
+        if is_escape {
+            (self.on_closing)(&mut self.window);
+        } else {
+            match area_key_event.key {
                 b'q' => (self.on_closing)(&mut self.window),
                 // Backspace
                 8 => self.runner.lock().state.fv_zero_offset = Default::default(),
                 _ => (),
-            },
+            }
         }
         true
     }

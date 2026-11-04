@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct TestFrame {
     pub fv_aimpoint_x: Option<f32>,
     pub fv_aimpoint_y: Option<f32>,

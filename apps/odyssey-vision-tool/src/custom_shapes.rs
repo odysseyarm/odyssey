@@ -1,5 +1,5 @@
 use iui::controls::{FontDescription, SlantStyle, StretchStyle};
-use iui::draw::{self, Brush, FillMode, Path, SolidBrush, StrokeParams, text};
+use iui::draw::{self, Brush, Path, SolidBrush, text};
 use nalgebra::{Point2, Rotation2, SMatrix, Transform2, Vector2};
 
 pub fn draw_crosshair(ctx: &draw::DrawContext, path: &Path, x: f64, y: f64, r: f64) {
@@ -134,33 +134,6 @@ pub fn draw_rectangle(
 
 pub fn solid_brush(r: f64, g: f64, b: f64) -> Brush {
     Brush::Solid(SolidBrush { r, g, b, a: 1.0 })
-}
-
-pub fn draw_line(
-    ctx: &draw::DrawContext,
-    x1: f64,
-    y1: f64,
-    x2: f64,
-    y2: f64,
-    brush: &Brush,
-    thickness: f64,
-) {
-    let path = Path::new(ctx, FillMode::Winding);
-    path.new_figure(ctx, x1, y1);
-    path.line_to(ctx, x2, y2);
-    path.end(ctx);
-    ctx.stroke(
-        &path,
-        brush,
-        &StrokeParams {
-            cap: 0,  // Bevel
-            join: 0, // Flat
-            thickness,
-            miter_limit: 0.,
-            dashes: vec![],
-            dash_phase: 0.,
-        },
-    );
 }
 
 pub fn draw_text(ctx: &draw::DrawContext, x: f64, y: f64, s: &str) {
