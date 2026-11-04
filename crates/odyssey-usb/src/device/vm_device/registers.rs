@@ -1,3 +1,7 @@
+//! Typed accessors for the image sensors' registers, one line per register.
+//! Each `(bank, addresses)` pair is the sensor datasheet's register map; a
+//! multi-byte value is stored little-endian across the listed addresses.
+
 use super::VmDevice;
 use crate::packets::vm::Port;
 

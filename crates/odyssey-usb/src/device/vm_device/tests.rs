@@ -192,3 +192,44 @@ async fn quarantined_id_is_reused_after_the_quarantine() {
     let (after, _rx) = device.get_oneshot_slot().unwrap();
     assert_eq!(after.id, timed_out, "lowest free id is the expired one");
 }
+
+#[tokio::test]
+async fn write_vendor_refuses_out_of_range_input_instead_of_panicking() {
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx: _open,
+    } = harness();
+
+    // The range markers themselves, and anything below the range.
+    for tag in [0x00, 0x80, 0xff] {
+        assert!(device.write_vendor(tag, &[1]).await.is_err(), "tag {tag}");
+    }
+    // One byte past the 98-byte payload.
+    assert!(device.write_vendor(0x90, &[0; 99]).await.is_err());
+    assert!(sent.try_recv().is_err(), "nothing was sent");
+
+    device.write_vendor(0x90, &[7; 98]).await.unwrap();
+    let packet = sent.try_recv().expect("a valid vendor packet is sent");
+    assert!(matches!(packet.data, PacketData::Vendor(0x90, data) if data.len == 98));
+}
+
+#[tokio::test]
+async fn failed_stream_subscription_does_not_block_the_next_attempt() {
+    let Harness {
+        device,
+        sent,
+        incoming_tx: _open,
+    } = harness();
+    // With the transport's receiving side gone the Enable packet cannot be sent.
+    drop(sent);
+
+    for _ in 0..2 {
+        let err = device
+            .stream(crate::packets::vm::PacketType::ObjectReport())
+            .await
+            .err()
+            .expect("subscription fails without a transport");
+        assert!(!err.to_string().contains("more than one"), "{err}");
+    }
+}

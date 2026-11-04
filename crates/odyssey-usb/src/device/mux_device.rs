@@ -1,145 +1,79 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use heapless::Vec as HVec;
-use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient, TransferError};
 use nusb::{DeviceInfo, Interface};
-use odyssey_protocol::control::usb_mux::{ClearBondsError, PairingError, UsbMuxCtrlMsg};
+use odyssey_protocol::control::usb_mux::{
+    ClearBondsError, ClearBondsResult, PairingError, PairingOutcome, StartPairing, UsbMuxCtrlMsg,
+};
+use odyssey_protocol::control::{AddBondResult, BondEntry, BondedDevice};
 use tokio::sync::mpsc;
+use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::debug;
+use tracing::{debug, warn};
 
-use super::mux_transport::MuxTransport;
+use super::control_transfer::{self, FLASH_WRITE_REPLY_TIMEOUT, REPLY_TIMEOUT, UndecodableReply};
+use super::mux_transport::{DevicePacketRoutes, DeviceSnapshot, MuxTransport, MuxTransportParts};
+use super::usb_bulk_io::open_bulk_endpoints;
 use crate::packets::mux::{MAX_DEVICES, MuxMsg, SendTo};
 use crate::packets::vm::Packet;
+
+/// A dongle exposes its bulk endpoints on one of its first interfaces; probing
+/// stops after this many.
+const MAX_PROBED_INTERFACES: u8 = 8;
+/// How many times `request_devices` asks before giving up.
+const REQUEST_DEVICES_ATTEMPTS: u32 = 3;
+/// Pause between `request_devices` attempts.
+const REQUEST_DEVICES_BACKOFF: Duration = Duration::from_millis(200);
+/// How long `request_devices` waits for one snapshot.
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(1);
+/// A stale snapshot is only drained if it is already queued; this is the most
+/// time spent checking for one.
+const STALE_SNAPSHOT_POLL: Duration = Duration::from_millis(10);
+/// Longest a pairing session can run before the dongle reports a timeout.
+const PAIRING_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
+/// The dongle clears bonds synchronously and may drop the response when busy;
+/// after this long without one, the clear is assumed to have worked.
+const CLEAR_BONDS_PATIENCE: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct MuxDevice {
     writer: mpsc::Sender<MuxMsg>,
-    snapshots_rx: Arc<tokio::sync::Mutex<ReceiverStream<HVec<[u8; 6], MAX_DEVICES>>>>,
+    snapshots_rx: Arc<tokio::sync::Mutex<ReceiverStream<DeviceSnapshot>>>,
     msg_rx: Arc<tokio::sync::Mutex<ReceiverStream<MuxMsg>>>,
-    pub(super) device_packets_tx: Arc<Mutex<HashMap<[u8; 6], mpsc::Sender<Packet>>>>,
+    pub(super) device_packets_tx: Arc<DevicePacketRoutes>,
     ctrl_if: Interface,
 }
 
+#[derive(Debug, Clone)]
+pub enum PairingEvent {
+    Result(BondedDevice),
+    Timeout,
+    Cancelled,
+}
+
 impl MuxDevice {
-    #[expect(dead_code)]
-    async fn ctrl_recv_polling(&self, timeout: Duration) -> Result<UsbMuxCtrlMsg> {
-        let idx = u16::from(self.ctrl_if.interface_number());
-        let start = std::time::Instant::now();
-        loop {
-            let elapsed = start.elapsed();
-            if elapsed >= timeout {
-                return Err(anyhow!("timeout waiting for ctrl event"));
-            }
-            let slice = (timeout - elapsed).min(Duration::from_millis(500));
-            match self
-                .ctrl_if
-                .control_in(
-                    ControlIn {
-                        control_type: ControlType::Vendor,
-                        recipient: Recipient::Interface,
-                        request: Self::USB_MUX_CTRL_REQ_RECV,
-                        value: 0,
-                        index: idx,
-                        length: 256,
-                    },
-                    slice,
-                )
-                .await
-            {
-                Ok(data) => {
-                    if data.is_empty() {
-                        continue;
-                    }
-                    break postcard::from_bytes::<UsbMuxCtrlMsg>(&data)
-                        .map_err(|e| anyhow!("ctrl decode failed: {e}"));
-                }
-                Err(_) => {
-                    continue;
-                }
-            }
-        }
+    async fn ctrl_recv_filtered(
+        &self,
+        timeout: Duration,
+        accept: impl FnMut(&UsbMuxCtrlMsg) -> bool,
+    ) -> Result<UsbMuxCtrlMsg> {
+        control_transfer::recv_matching(&self.ctrl_if, timeout, UndecodableReply::Skip, accept)
+            .await
     }
 
-    async fn ctrl_recv_filtered<F>(&self, timeout: Duration, mut accept: F) -> Result<UsbMuxCtrlMsg>
-    where
-        F: FnMut(&UsbMuxCtrlMsg) -> bool,
-    {
-        let idx = u16::from(self.ctrl_if.interface_number());
-        let start = std::time::Instant::now();
-        loop {
-            let elapsed = start.elapsed();
-            if elapsed >= timeout {
-                return Err(anyhow!("timeout waiting for ctrl event"));
-            }
-            let slice = (timeout - elapsed).min(Duration::from_millis(500));
-            let reply = match self
-                .ctrl_if
-                .control_in(
-                    ControlIn {
-                        control_type: ControlType::Vendor,
-                        recipient: Recipient::Interface,
-                        request: Self::USB_MUX_CTRL_REQ_RECV,
-                        value: 0,
-                        index: idx,
-                        length: 256,
-                    },
-                    slice,
-                )
-                .await
-            {
-                Ok(data) => data,
-                Err(TransferError::Cancelled) => continue, // poll-slice timeout, retry
-                Err(e) => return Err(anyhow!("ctrl_recv control_in failed: {e:?}")),
-            };
-
-            if reply.is_empty() {
-                continue;
-            }
-
-            let msg = match postcard::from_bytes::<UsbMuxCtrlMsg>(&reply) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    if start.elapsed() < timeout {
-                        continue;
-                    }
-                    return Err(anyhow!("ctrl decode failed: {e}"));
-                }
-            };
-
-            if accept(&msg) {
-                return Ok(msg);
-            }
-        }
-    } // USB Mux control over EP0 (Interface recipient)
-    const USB_MUX_CTRL_REQ_SEND: u8 = 0x30; // vendor request to send ctrl msg
-    const USB_MUX_CTRL_REQ_RECV: u8 = 0x31; // vendor request to receive ctrl msg
-
     async fn ctrl_send(&self, msg: UsbMuxCtrlMsg) -> Result<()> {
-        use std::time::Duration;
-        let data = postcard::to_allocvec(&msg).map_err(|e| anyhow!("ctrl encode failed: {e}"))?;
-        self.ctrl_if
-            .control_out(
-                ControlOut {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Interface,
-                    request: Self::USB_MUX_CTRL_REQ_SEND,
-                    value: 0,
-                    index: u16::from(self.ctrl_if.interface_number()),
-                    data: &data,
-                },
-                Duration::from_millis(1000),
-            )
-            .await
-            .map_err(|e| anyhow!("control_out failed: {e}"))?;
-        Ok(())
+        control_transfer::send(&self.ctrl_if, &msg).await
     }
 
     pub fn from_transport(transport: MuxTransport, ctrl_if: Interface) -> Self {
-        let (writer, snapshots, control, device_packets_tx) = transport.split();
+        let MuxTransportParts {
+            writer,
+            snapshots,
+            control,
+            device_packets_tx,
+        } = transport.split();
 
         Self {
             writer,
@@ -153,31 +87,17 @@ impl MuxDevice {
     pub async fn connect_usb(info: DeviceInfo) -> Result<Self> {
         let dev = info.open().await?;
 
-        // Probe interfaces to find the one that has our bulk endpoints (0x01 OUT, 0x81 IN).
-        for idx in 0u8..8 {
-            let iface = match dev.claim_interface(idx).await {
-                Ok(i) => i,
-                Err(_) => continue,
+        // Probe interfaces to find the one that has our bulk endpoints.
+        for idx in 0..MAX_PROBED_INTERFACES {
+            let Ok(iface) = dev.claim_interface(idx).await else {
+                continue;
+            };
+            let Ok((in_ep, out_ep)) = open_bulk_endpoints(&iface) else {
+                continue;
             };
 
-            let in_ep = match iface.endpoint::<Bulk, In>(0x81) {
-                Ok(e) => e.reader(4096),
-                Err(_) => {
-                    drop(iface);
-                    continue;
-                }
-            };
-            let out_ep = match iface.endpoint::<Bulk, Out>(0x01) {
-                Ok(e) => e.writer(4096),
-                Err(_) => {
-                    drop(iface);
-                    continue;
-                }
-            };
-
-            let ctrl_if = iface.clone();
             let transport = MuxTransport::usb(in_ep, out_ep);
-            return Ok(Self::from_transport(transport, ctrl_if));
+            return Ok(Self::from_transport(transport, iface));
         }
         Err(anyhow!(
             "failed to find mux interface with required endpoints"
@@ -193,52 +113,46 @@ impl MuxDevice {
     }
 
     pub async fn receive_msg(&self) -> Result<MuxMsg> {
-        use tokio_stream::StreamExt as _;
         let mut rx = self.msg_rx.lock().await;
         let msg = rx.next().await.ok_or_else(|| anyhow!("channel closed"))?;
         debug!("MuxDevice::receive_msg got control message");
         Ok(msg)
     }
 
-    pub async fn receive_snapshot(&self) -> Result<HVec<[u8; 6], MAX_DEVICES>> {
-        use tokio_stream::StreamExt as _;
+    pub async fn receive_snapshot(&self) -> Result<DeviceSnapshot> {
         let mut rx = self.snapshots_rx.lock().await;
         let devices = rx.next().await.ok_or_else(|| anyhow!("channel closed"))?;
         debug!("MuxDevice::receive_snapshot got device snapshot");
         Ok(devices)
     }
 
-    pub async fn request_devices(&self) -> Result<HVec<[u8; 6], MAX_DEVICES>> {
+    /// Drops snapshots that were queued before the caller asked, so the next
+    /// one received answers the new request.
+    async fn drain_stale_snapshots(&self) {
+        let mut rx = self.snapshots_rx.lock().await;
+        while let Ok(Some(_)) = tokio::time::timeout(STALE_SNAPSHOT_POLL, rx.next()).await {
+            debug!("Drained stale snapshot");
+        }
+    }
+
+    pub async fn request_devices(&self) -> Result<DeviceSnapshot> {
         let mut last_err = None;
-        for attempt in 0..3 {
+        for attempt in 0..REQUEST_DEVICES_ATTEMPTS {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(REQUEST_DEVICES_BACKOFF).await;
             }
 
-            // Drain any stale snapshots that may be in the channel
-            {
-                use tokio_stream::StreamExt as _;
-                let mut rx = self.snapshots_rx.lock().await;
-                while let Ok(Some(_)) =
-                    tokio::time::timeout(Duration::from_millis(10), rx.next()).await
-                {
-                    debug!("Drained stale snapshot");
-                }
-            }
+            self.drain_stale_snapshots().await;
 
-            // Send the request
             if let Err(e) = self.send_msg(MuxMsg::RequestDevices()).await {
                 last_err = Some(e);
                 continue;
             }
 
-            // Wait for response with a 1-second timeout
-            let total_timeout = Duration::from_secs(1);
-
-            match tokio::time::timeout(total_timeout, self.receive_snapshot()).await {
+            match tokio::time::timeout(SNAPSHOT_TIMEOUT, self.receive_snapshot()).await {
                 Ok(Ok(devices)) => return Ok(devices),
                 Ok(Err(e)) => last_err = Some(e),
-                Err(_) => last_err = Some(anyhow!("timeout waiting for DevicesSnapshot")),
+                Err(_elapsed) => last_err = Some(anyhow!("timeout waiting for DevicesSnapshot")),
             }
         }
         Err(last_err.unwrap_or_else(|| anyhow!("request_devices failed")))
@@ -273,7 +187,7 @@ impl MuxDevice {
     pub async fn read_ctrl_version(&self) -> Result<odyssey_protocol::Version> {
         self.ctrl_send(UsbMuxCtrlMsg::ReadVersion()).await?;
         match self
-            .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
+            .ctrl_recv_filtered(REPLY_TIMEOUT, |msg| {
                 matches!(msg, UsbMuxCtrlMsg::ReadVersionResponse(_))
             })
             .await?
@@ -282,26 +196,23 @@ impl MuxDevice {
             other => Err(anyhow!("unexpected ctrl response: {other:?}")),
         }
     }
-    /// Start pairing mode on the dongle with a timeout (ms).
+
     /// Start pairing mode on the dongle with a timeout (ms).
     pub async fn start_pairing(&self, timeout_ms: u32) -> Result<()> {
-        use odyssey_protocol::control::usb_mux::StartPairing;
         self.ctrl_send(UsbMuxCtrlMsg::StartPairing(StartPairing { timeout_ms }))
             .await?;
         match self
-            .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
-                matches!(msg, UsbMuxCtrlMsg::StartPairingResponse())
-                    || matches!(msg, UsbMuxCtrlMsg::PairingResult(_))
+            .ctrl_recv_filtered(REPLY_TIMEOUT, |msg| {
+                matches!(
+                    msg,
+                    UsbMuxCtrlMsg::StartPairingResponse() | UsbMuxCtrlMsg::PairingResult(_)
+                )
             })
             .await?
         {
             UsbMuxCtrlMsg::StartPairingResponse() => Ok(()),
-            UsbMuxCtrlMsg::PairingResult(
-                odyssey_protocol::control::usb_mux::PairingOutcome::Ok(_addr),
-            ) => {
-                // Pairing finished immediately; treat as success so the caller can proceed
-                Ok(())
-            }
+            // Pairing finished immediately; treat as success so the caller can proceed
+            UsbMuxCtrlMsg::PairingResult(PairingOutcome::Ok(_addr)) => Ok(()),
             other => Err(anyhow!("unexpected ctrl response: {other:?}")),
         }
     }
@@ -315,78 +226,66 @@ impl MuxDevice {
     pub async fn wait_pairing_event(&self) -> Result<PairingEvent> {
         loop {
             match self
-                .ctrl_recv_filtered(Duration::from_secs(120), |msg| {
+                .ctrl_recv_filtered(PAIRING_EVENT_TIMEOUT, |msg| {
                     matches!(msg, UsbMuxCtrlMsg::PairingResult(_))
                 })
                 .await?
             {
-                UsbMuxCtrlMsg::PairingResult(
-                    odyssey_protocol::control::usb_mux::PairingOutcome::Ok(device),
-                ) => return Ok(PairingEvent::Result(device)),
-                UsbMuxCtrlMsg::PairingResult(
-                    odyssey_protocol::control::usb_mux::PairingOutcome::Err(PairingError::Timeout),
-                ) => return Ok(PairingEvent::Timeout),
-                UsbMuxCtrlMsg::PairingResult(
-                    odyssey_protocol::control::usb_mux::PairingOutcome::Err(
-                        PairingError::Cancelled,
-                    ),
-                ) => return Ok(PairingEvent::Cancelled),
+                UsbMuxCtrlMsg::PairingResult(PairingOutcome::Ok(device)) => {
+                    return Ok(PairingEvent::Result(device));
+                }
+                UsbMuxCtrlMsg::PairingResult(PairingOutcome::Err(PairingError::Timeout)) => {
+                    return Ok(PairingEvent::Timeout);
+                }
+                UsbMuxCtrlMsg::PairingResult(PairingOutcome::Err(PairingError::Cancelled)) => {
+                    return Ok(PairingEvent::Cancelled);
+                }
                 _ => { /* filtered */ }
             }
         }
     }
 
     pub async fn clear_bonds(&self) -> Result<()> {
-        use std::time::{Duration, Instant};
         self.ctrl_send(UsbMuxCtrlMsg::ClearBonds()).await?;
         let start = Instant::now();
-        let max_wait = Duration::from_secs(10);
         loop {
             match self
-                .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
-                    matches!(msg, UsbMuxCtrlMsg::ClearBondsResponse(_))
-                        || matches!(msg, UsbMuxCtrlMsg::PairingResult(_))
+                .ctrl_recv_filtered(REPLY_TIMEOUT, |msg| {
+                    matches!(
+                        msg,
+                        UsbMuxCtrlMsg::ClearBondsResponse(_) | UsbMuxCtrlMsg::PairingResult(_)
+                    )
                 })
                 .await
             {
                 Ok(msg) => match msg {
-                    UsbMuxCtrlMsg::ClearBondsResponse(
-                        odyssey_protocol::control::usb_mux::ClearBondsResult::Ok(),
-                    ) => return Ok(()),
-                    UsbMuxCtrlMsg::ClearBondsResponse(
-                        odyssey_protocol::control::usb_mux::ClearBondsResult::Err(
-                            ClearBondsError::Failed,
-                        ),
-                    ) => return Err(anyhow!("Failed to clear bonds")),
+                    UsbMuxCtrlMsg::ClearBondsResponse(ClearBondsResult::Ok()) => return Ok(()),
+                    UsbMuxCtrlMsg::ClearBondsResponse(ClearBondsResult::Err(
+                        ClearBondsError::Failed,
+                    )) => return Err(anyhow!("Failed to clear bonds")),
                     // Ignore unrelated ctrl messages (e.g., pairing result racing with clear)
-                    _ if start.elapsed() < max_wait => continue,
-                    // No explicit response but we've waited long enough; assume success because the
-                    // dongle side clears synchronously and may drop the response when busy.
+                    _ if start.elapsed() < CLEAR_BONDS_PATIENCE => {}
                     _ => {
-                        eprintln!("Warning: no ClearBonds response received; assuming success");
+                        warn!("no ClearBonds response received; assuming success");
                         return Ok(());
                     }
                 },
+                // Treat timeouts as benign while waiting; after the patience runs out, assume success.
+                Err(e) if start.elapsed() < CLEAR_BONDS_PATIENCE => {
+                    debug!("ClearBonds: still waiting for a response: {e}");
+                }
                 Err(e) => {
-                    // Treat timeouts as benign while waiting; after max_wait, assume success.
-                    if start.elapsed() < max_wait {
-                        continue;
-                    }
-                    eprintln!(
-                        "Warning: ClearBonds timeout waiting for ctrl event: {e}; assuming success"
-                    );
+                    warn!("ClearBonds timeout waiting for ctrl event: {e}; assuming success");
                     return Ok(());
                 }
             }
         }
     }
 
-    pub async fn list_bonds(
-        &self,
-    ) -> Result<HVec<odyssey_protocol::control::BondedDevice, MAX_DEVICES>> {
+    pub async fn list_bonds(&self) -> Result<HVec<BondedDevice, MAX_DEVICES>> {
         self.ctrl_send(UsbMuxCtrlMsg::ListBonds()).await?;
         match self
-            .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
+            .ctrl_recv_filtered(REPLY_TIMEOUT, |msg| {
                 matches!(msg, UsbMuxCtrlMsg::ListBondsResponse(_))
             })
             .await?
@@ -404,28 +303,19 @@ impl MuxDevice {
         .await
     }
 
-    pub async fn add_bond(&self, entry: odyssey_protocol::control::BondEntry) -> Result<()> {
+    pub async fn add_bond(&self, entry: BondEntry) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::AddBond(entry)).await?;
         match self
-            .ctrl_recv_filtered(Duration::from_secs(5), |msg| {
+            .ctrl_recv_filtered(FLASH_WRITE_REPLY_TIMEOUT, |msg| {
                 matches!(msg, UsbMuxCtrlMsg::AddBondResponse(_))
             })
             .await?
         {
-            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Ok()) => {
-                Ok(())
-            }
-            UsbMuxCtrlMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Err(e)) => {
+            UsbMuxCtrlMsg::AddBondResponse(AddBondResult::Ok()) => Ok(()),
+            UsbMuxCtrlMsg::AddBondResponse(AddBondResult::Err(e)) => {
                 Err(anyhow!("AddBond failed: {e:?}"))
             }
             other => Err(anyhow!("unexpected ctrl response: {other:?}")),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum PairingEvent {
-    Result(odyssey_protocol::control::BondedDevice),
-    Timeout,
-    Cancelled,
 }

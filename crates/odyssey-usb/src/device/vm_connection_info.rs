@@ -1,6 +1,7 @@
 use anyhow::Result;
 use nusb::DeviceInfo;
 
+use super::hex_address::HexAddress;
 use super::mux_device::MuxDevice;
 use super::vm_device::VmDevice;
 
@@ -34,15 +35,7 @@ impl VmConnectionInfo {
                 )
             }
             Self::ViaMux { device_addr, .. } => {
-                format!(
-                    "VM via Mux {:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                    device_addr[0],
-                    device_addr[1],
-                    device_addr[2],
-                    device_addr[3],
-                    device_addr[4],
-                    device_addr[5]
-                )
+                format!("VM via Mux {:#}", HexAddress(*device_addr))
             }
         }
     }

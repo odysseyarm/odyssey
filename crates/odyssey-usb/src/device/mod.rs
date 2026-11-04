@@ -1,11 +1,14 @@
 mod cobs;
+mod control_transfer;
 mod general_settings;
+mod hex_address;
 mod mux_device;
 mod mux_transport;
 mod packet_stream;
 mod packet_transport;
 mod response_slots;
 mod retry;
+mod usb_bulk_io;
 mod vm_connection_info;
 mod vm_device;
 

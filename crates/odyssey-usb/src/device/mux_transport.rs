@@ -1,122 +1,94 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use heapless::Vec as HVec;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::Bulk;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace};
 
+use super::hex_address::HexAddress;
+use super::usb_bulk_io::{MessageReader, spawn_writer};
 use crate::packets::mux::{MAX_DEVICES, MuxMsg};
 use crate::packets::vm::Packet;
 
+/// Messages queued towards the dongle before `send` waits.
+const OUTGOING_CAPACITY: usize = 64;
+/// Messages queued from the dongle, per kind, before the reader waits.
+const INCOMING_CAPACITY: usize = 128;
+
+/// Device addresses the dongle currently reports.
+pub(super) type DeviceSnapshot = HVec<[u8; 6], MAX_DEVICES>;
+/// Where packets from each paired device are delivered.
+pub(super) type DevicePacketRoutes = Mutex<HashMap<[u8; 6], mpsc::Sender<Packet>>>;
+
+/// The routing table is a plain map that is never left half-updated, so a
+/// panic elsewhere while it was held does not invalidate it.
+pub(super) fn lock_routes(
+    routes: &DevicePacketRoutes,
+) -> MutexGuard<'_, HashMap<[u8; 6], mpsc::Sender<Packet>>> {
+    routes.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The link to a dongle: control messages, device snapshots, and the packets
+/// of every device behind it, demultiplexed.
+#[derive(Debug)]
 pub struct MuxTransport {
     writer: mpsc::Sender<MuxMsg>,
-    snapshots_rx: mpsc::Receiver<HVec<[u8; 6], MAX_DEVICES>>,
+    snapshots_rx: mpsc::Receiver<DeviceSnapshot>,
     msg_rx: mpsc::Receiver<MuxMsg>,
-    device_packets_tx: Arc<Mutex<HashMap<[u8; 6], mpsc::Sender<Packet>>>>,
+    device_packets_tx: Arc<DevicePacketRoutes>,
+}
+
+/// The parts of a [`MuxTransport`], see [`MuxTransport::split`].
+pub(super) struct MuxTransportParts {
+    pub(super) writer: mpsc::Sender<MuxMsg>,
+    pub(super) snapshots: ReceiverStream<DeviceSnapshot>,
+    pub(super) control: ReceiverStream<MuxMsg>,
+    pub(super) device_packets_tx: Arc<DevicePacketRoutes>,
 }
 
 impl MuxTransport {
-    pub fn usb(mut in_ep: EndpointRead<Bulk>, mut out_ep: EndpointWrite<Bulk>) -> Self {
-        let (writer, mut writer_rx) = mpsc::channel::<MuxMsg>(64);
-        let (snapshots_tx, snapshots_rx) = mpsc::channel::<HVec<[u8; 6], MAX_DEVICES>>(128);
-        let (msg_tx, msg_rx) = mpsc::channel::<MuxMsg>(128);
-        let device_packets_tx =
-            Arc::new(Mutex::new(HashMap::<[u8; 6], mpsc::Sender<Packet>>::new()));
-        let device_packets_tx_clone = Arc::clone(&device_packets_tx);
+    pub fn usb(in_ep: EndpointRead<Bulk>, out_ep: EndpointWrite<Bulk>) -> Self {
+        let (writer, writer_rx) = mpsc::channel::<MuxMsg>(OUTGOING_CAPACITY);
+        let (snapshots_tx, snapshots_rx) = mpsc::channel::<DeviceSnapshot>(INCOMING_CAPACITY);
+        let (msg_tx, msg_rx) = mpsc::channel::<MuxMsg>(INCOMING_CAPACITY);
+        let device_packets_tx = Arc::new(DevicePacketRoutes::default());
+        let routes = Arc::clone(&device_packets_tx);
 
-        // Writer task
-        tokio::spawn(async move {
-            let mut raw = Vec::with_capacity(1024);
-            while let Some(msg) = writer_rx.recv().await {
-                raw.clear();
-                if let Err(e) = postcard::to_io(&msg, &mut raw) {
-                    error!("mux postcard serialize failed: {e}");
-                    continue;
-                }
-                if let Err(e) = out_ep.write_all(&raw).await {
-                    error!("mux usb write_all failed: {e}");
-                    continue;
-                }
-                if let Err(e) = out_ep.flush_end_async().await {
-                    error!("mux usb flush_end failed: {e:?}");
-                    continue;
-                }
-            }
-            info!("mux usb writer exits");
-        });
+        spawn_writer(out_ep, writer_rx, "mux usb");
 
-        // Reader task - routes messages by type
+        // Routes each message by kind. Ends when the endpoint fails.
+        let mut reader = MessageReader::new(in_ep, "mux usb");
         tokio::spawn(async move {
-            let mut reader = in_ep.until_short_packet();
-            let mut io_errs = 0u8;
-            loop {
-                let mut buf = Vec::with_capacity(256);
-                match reader.read_to_end(&mut buf).await {
-                    Err(e) => {
-                        use std::io::ErrorKind::{
-                            BrokenPipe, ConnectionReset, TimedOut, UnexpectedEof, WouldBlock,
-                        };
-                        match e.kind() {
-                            TimedOut | WouldBlock => {
-                                io_errs = 0;
-                                continue;
-                            }
-                            BrokenPipe | UnexpectedEof | ConnectionReset => {
-                                error!("mux usb read fatal error: {e:?} (kind: {:?})", e.kind());
-                                break;
-                            }
-                            _ => {
-                                if io_errs < 3 {
-                                    warn!("mux usb read error (ignored): {e}");
-                                    io_errs += 1;
-                                    continue;
-                                }
-                                error!("mux usb read error: {e}");
-                                break;
-                            }
-                        }
-                    }
-                    Ok(_) => {
-                        io_errs = 0;
-                    }
-                }
-                if let Err(e) = reader.consume_end() {
-                    warn!("mux usb consume_end failed: {e:?}");
-                    continue;
-                }
-                match postcard::from_bytes::<MuxMsg>(&buf) {
-                    Ok(MuxMsg::DevicesSnapshot(devices)) => {
+            while let Some(msg) = reader.next_message::<MuxMsg>().await {
+                match msg {
+                    MuxMsg::DevicesSnapshot(devices) => {
                         debug!("mux reader: routing DevicesSnapshot");
                         let _ = snapshots_tx.send(devices.0).await;
                     }
-                    Ok(MuxMsg::DevicePacket(dev_pkt)) => {
+                    MuxMsg::DevicePacket(dev_pkt) => {
                         trace!(
-                            "mux reader: routing DevicePacket for {:02X}:{:02X}...",
-                            dev_pkt.dev[0], dev_pkt.dev[1]
+                            "mux reader: routing DevicePacket for {}",
+                            HexAddress(dev_pkt.dev)
                         );
                         // Clone the sender to avoid holding the lock across await
-                        let tx_opt = {
-                            let channels = device_packets_tx_clone.lock().unwrap();
-                            channels.get(&dev_pkt.dev).cloned()
-                        };
-                        if let Some(tx) = tx_opt {
-                            let _ = tx.send(dev_pkt.pkt).await;
-                        } else {
-                            trace!(
-                                "mux reader: no receiver registered for device {:02X}:{:02X}...",
-                                dev_pkt.dev[0], dev_pkt.dev[1]
-                            );
+                        let route = lock_routes(&routes).get(&dev_pkt.dev).cloned();
+                        match route {
+                            Some(tx) => {
+                                let _ = tx.send(dev_pkt.pkt).await;
+                            }
+                            None => trace!(
+                                "mux reader: no receiver registered for device {}",
+                                HexAddress(dev_pkt.dev)
+                            ),
                         }
                     }
-                    Ok(other) => {
+                    other => {
                         debug!("mux reader: routing control message");
                         let _ = msg_tx.send(other).await;
                     }
-                    Err(e) => error!("mux postcard decode failed: {e:?}"),
                 }
             }
             info!("mux usb reader exits");
@@ -130,25 +102,18 @@ impl MuxTransport {
         }
     }
 
-    pub fn split(
-        self,
-    ) -> (
-        mpsc::Sender<MuxMsg>,
-        ReceiverStream<HVec<[u8; 6], MAX_DEVICES>>,
-        ReceiverStream<MuxMsg>,
-        Arc<Mutex<HashMap<[u8; 6], mpsc::Sender<Packet>>>>,
-    ) {
+    pub(super) fn split(self) -> MuxTransportParts {
         let Self {
             writer,
             snapshots_rx,
             msg_rx,
             device_packets_tx,
         } = self;
-        (
+        MuxTransportParts {
             writer,
-            ReceiverStream::new(snapshots_rx),
-            ReceiverStream::new(msg_rx),
+            snapshots: ReceiverStream::new(snapshots_rx),
+            control: ReceiverStream::new(msg_rx),
             device_packets_tx,
-        )
+        }
     }
 }
