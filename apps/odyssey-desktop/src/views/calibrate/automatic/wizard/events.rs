@@ -81,7 +81,10 @@ impl Wizard {
     /// because a second app instance exits right after launch and must not
     /// open the pattern window on its way out.
     pub(super) fn maybe_auto_start(mut self) {
-        if !*self.auto_start.peek() || *self.stage.peek() != Stage::Setup {
+        if !*self.auto_start.peek()
+            || !*self.setup_ready.peek()
+            || *self.stage.peek() != Stage::Setup
+        {
             return;
         }
         if self.server_ready.is_some_and(|ready| !*ready.0.peek()) {

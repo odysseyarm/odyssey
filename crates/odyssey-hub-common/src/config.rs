@@ -193,8 +193,43 @@ pub async fn ui_state_async() -> ConfigLoadResult<UiState> {
     }
 }
 
-pub async fn ui_state_save_async(state: &UiState) -> Result<(), Box<dyn std::error::Error>> {
-    save_ui_state_to(&ui_state_path()?, state).await
+/// Update the latest on-disk UI state without replacing unrelated fields.
+///
+/// Writers are serialized through the atomic replacement, even if the awaiting
+/// future is cancelled. A corrupt or unreadable existing file is never overwritten.
+/// Callers that need user-intent ordering must enqueue edits before spawning work
+/// and await them serially (a future is not scheduled until it is polled).
+pub async fn ui_state_update_async(
+    edit: impl FnOnce(&mut UiState) + Send + 'static,
+) -> Result<UiState, Box<dyn std::error::Error>> {
+    let path = ui_state_path()?;
+    Ok(tokio::task::spawn_blocking(move || update_ui_state_at(&path, edit)).await??)
+}
+
+static UI_STATE_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn update_ui_state_at(path: &Path, edit: impl FnOnce(&mut UiState)) -> std::io::Result<UiState> {
+    // The worker, not its awaiting future, owns this guard: cancelling the caller
+    // cannot let an older in-flight write land after a newer edit.
+    let _guard = UI_STATE_WRITE_LOCK.lock().map_err(|error| {
+        std::io::Error::other(format!("UI state writer lock poisoned: {error}"))
+    })?;
+    let mut state = match std::fs::read_to_string(path) {
+        Ok(contents) => json5::from_str::<UiState>(&contents).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Refusing to overwrite invalid UI state at {}: {error}",
+                    path.display()
+                ),
+            )
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => UiState::default(),
+        Err(error) => return Err(error),
+    };
+    edit(&mut state);
+    save_ui_state_to(path, &state)?;
+    Ok(state)
 }
 
 async fn load_ui_state_from(path: PathBuf) -> ConfigLoadResult<UiState> {
@@ -233,11 +268,19 @@ async fn load_ui_state_from(path: PathBuf) -> ConfigLoadResult<UiState> {
     }
 }
 
-async fn save_ui_state_to(path: &Path, state: &UiState) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    fs::write(path, serde_json::to_string_pretty(state)?).await?;
+fn save_ui_state_to(path: &Path, state: &UiState) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let contents = serde_json::to_vec_pretty(state)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(&contents)?;
+    temporary.as_file_mut().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -420,9 +463,9 @@ pub async fn screen_calibrations_async() -> ScreenCalibrationsResult {
     }
 }
 
-/// Loads every `screen_<id>.json` in `dir`, ordered by id. A file that is
-/// unreadable or does not parse is reported in `corrupted_screens` and left out
-/// of `calibrations`; a missing file is simply absent.
+/// Loads every `screen_<id>.json` in `dir`, ordered by id. Unreadable,
+/// malformed, or geometrically invalid calibrations are reported in
+/// `corrupted_screens` and excluded; a missing file is simply absent.
 pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibrationsResult {
     let mut calibrations = arrayvec::ArrayVec::new();
     let mut corrupted_screens = Vec::new();
@@ -444,9 +487,17 @@ pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibration
             }
         };
         tracing::info!("Loading screen calibration from {}", path.display());
-        match json5::from_str::<ScreenCalibration<f32>>(&txt) {
+        let parsed = json5::from_str::<ScreenCalibration<f32>>(&txt)
+            .map_err(|error| error.to_string())
+            .and_then(|calibration| {
+                calibration
+                    .validate()
+                    .map(|()| calibration)
+                    .map_err(|error| error.to_string())
+            });
+        match parsed {
             Ok(cal) => {
-                let _ = calibrations.try_push((i, cal));
+                calibrations.push((i, cal));
             }
             Err(e) => {
                 tracing::error!(
@@ -454,7 +505,7 @@ pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibration
                     i,
                     e
                 );
-                corrupted_screens.push((i, path, e.to_string()));
+                corrupted_screens.push((i, path, e));
             }
         }
     }
@@ -575,7 +626,7 @@ mod tests {
         };
 
         block_on(async {
-            save_ui_state_to(&path, &state).await.unwrap();
+            save_ui_state_to(&path, &state).unwrap();
             match load_ui_state_from(path.clone()).await {
                 ConfigLoadResult::Success(loaded) => assert_eq!(loaded, state),
                 other => panic!("expected Success, got {other:?}"),
@@ -606,6 +657,49 @@ mod tests {
     }
 
     #[test]
+    fn ui_state_edits_preserve_other_fields_and_refuse_corrupt_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ui_state.json");
+        let first = update_ui_state_at(&path, |state| {
+            state.selected_monitor = Some(key());
+        })
+        .unwrap();
+        let second = update_ui_state_at(&path, |state| {
+            state.prefer_camera_size = true;
+            state.remember_calibration_screen(key(), 2);
+        })
+        .unwrap();
+        assert_eq!(second.selected_monitor, first.selected_monitor);
+        assert_eq!(second.calibration_screen(&key()), Some(2));
+        assert!(second.prefer_camera_size);
+
+        let invalid = "{ selected_monitor: [oops";
+        std::fs::write(&path, invalid).unwrap();
+        assert!(update_ui_state_at(&path, |state| state.prefer_camera_size = false).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+    }
+
+    #[test]
+    fn concurrent_ui_state_edits_do_not_replace_unrelated_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ui_state.json");
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                update_ui_state_at(&path, |state| state.selected_monitor = Some(key())).unwrap();
+            });
+            scope.spawn(|| {
+                barrier.wait();
+                update_ui_state_at(&path, |state| state.prefer_camera_size = true).unwrap();
+            });
+        });
+        let saved: UiState = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.selected_monitor, Some(key()));
+        assert!(saved.prefer_camera_size);
+    }
+
+    #[test]
     fn ui_state_tolerates_missing_and_unknown_fields() {
         assert_eq!(
             json5::from_str::<UiState>("{}").unwrap(),
@@ -613,13 +707,6 @@ mod tests {
         );
         let state: UiState = json5::from_str(r#"{ "from_a_newer_version": 3 }"#).unwrap();
         assert_eq!(state, UiState::default());
-    }
-
-    #[test]
-    fn camera_size_is_off_unless_asked_for() {
-        assert!(!UiState::default().prefer_camera_size);
-        let state: UiState = json5::from_str(r#"{ "prefer_camera_size": true }"#).unwrap();
-        assert!(state.prefer_camera_size);
     }
 
     fn other_key() -> MonitorKey {

@@ -47,6 +47,7 @@ use super::settings::SizeField;
 use super::worker::{Command, Failure, Finished, MarkerFrame, PreviewFrame, SavedAttempt, Worker};
 use crate::ServerReady;
 use crate::components::screen_picker::MonitorSelection;
+use crate::ui_state::UiStateWriter;
 
 /// How long the screen must read "ready" before Next lights up, so a hint that
 /// flickers at the edge of acceptable never enables a measurement.
@@ -88,6 +89,7 @@ pub(crate) struct Wizard {
     pub screen_choice: Signal<Option<u8>>,
     pub saved: Signal<[bool; SCREEN_COUNT]>,
     ui_state: Signal<UiState>,
+    ui_state_writer: UiStateWriter,
     pub cameras: Signal<CameraList>,
     pub camera_choice: Signal<Option<String>>,
     /// The size field's text. Blank means "use what the display says, or
@@ -117,6 +119,8 @@ pub(crate) struct Wizard {
     /// Command-line values that could not be honored, shown in Setup.
     pub notes: Signal<Vec<String>>,
     list_pending: Signal<bool>,
+    /// Remembered setup answers and saved screen IDs have finished loading.
+    setup_ready: Signal<bool>,
     /// A command line that names the monitor skips Setup once a camera is
     /// known.
     auto_start: Signal<bool>,

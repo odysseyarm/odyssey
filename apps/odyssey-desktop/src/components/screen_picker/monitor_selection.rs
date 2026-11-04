@@ -8,6 +8,7 @@ use dioxus::prelude::*;
 use odyssey_hub_common::config::{self, MonitorKey};
 
 use super::monitor_layout::{MonitorInfo, monitor_key, resolve_selected};
+use crate::ui_state::UiStateWriter;
 
 /// How often to look for monitors being plugged in or removed.
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -20,12 +21,13 @@ fn enumerate_monitors(window: &DesktopContext) -> Vec<MonitorInfo> {
         .collect()
 }
 
-/// The attached monitors and the one the user picked. Copy it freely: it is a
-/// pair of signal handles.
+/// The attached monitors and the one the user picked, plus the app's ordered
+/// persistence queue. Copy it freely: these are only handles.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct MonitorSelection {
     monitors: Signal<Vec<MonitorInfo>>,
     chosen: Signal<Option<MonitorKey>>,
+    writer: UiStateWriter,
 }
 
 impl MonitorSelection {
@@ -54,12 +56,13 @@ impl MonitorSelection {
         let mut chosen = self.chosen;
         chosen.set(Some(key.clone()));
 
+        // Queue at the click, before spawning a waiter. The shared writer
+        // serializes edits and preserves fields changed by other views.
+        let save = self
+            .writer
+            .update(move |state| state.selected_monitor = Some(key));
         spawn(async move {
-            // Reload rather than reuse an earlier snapshot so a field some
-            // other part of the app saved in the meantime is not overwritten.
-            let mut state = config::ui_state_async().await.into_value();
-            state.selected_monitor = Some(key);
-            if let Err(e) = config::ui_state_save_async(&state).await {
+            if let Err(e) = save.await {
                 tracing::warn!("Failed to save UI state: {e}");
             }
         });
@@ -70,6 +73,7 @@ impl MonitorSelection {
 /// monitor the user picked last time.
 pub(crate) fn use_monitor_selection() -> MonitorSelection {
     let window = use_window();
+    let writer = use_context::<UiStateWriter>();
     let mut monitors = use_signal({
         let window = Rc::clone(&window);
         move || enumerate_monitors(&window)
@@ -97,5 +101,9 @@ pub(crate) fn use_monitor_selection() -> MonitorSelection {
         }
     });
 
-    MonitorSelection { monitors, chosen }
+    MonitorSelection {
+        monitors,
+        chosen,
+        writer,
+    }
 }

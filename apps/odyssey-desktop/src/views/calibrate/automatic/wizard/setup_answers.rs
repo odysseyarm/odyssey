@@ -93,11 +93,12 @@ impl Wizard {
     /// Turns the camera-size preference on or off and remembers it.
     pub(crate) fn set_prefer_camera_size(mut self, on: bool) {
         self.ui_state.write().prefer_camera_size = on;
+        // Enqueue before spawning so rapid toggles persist in UI intent order.
+        let update = self
+            .ui_state_writer
+            .update(move |state| state.prefer_camera_size = on);
         spawn(async move {
-            // Read again so anything else saved in the meantime is not overwritten.
-            let mut state = config::ui_state_async().await.into_value();
-            state.prefer_camera_size = on;
-            if let Err(e) = config::ui_state_save_async(&state).await {
+            if let Err(e) = update.await {
                 tracing::warn!("Failed to save UI state: {e}");
             }
         });
@@ -118,7 +119,8 @@ impl Wizard {
     }
 
     pub(crate) fn can_continue(self) -> bool {
-        self.selected_monitor().is_some()
+        *self.setup_ready.read()
+            && self.selected_monitor().is_some()
             && self.camera().is_some()
             && self.entered().is_ok()
             // The display's size decides the plan, so wait until it is read.

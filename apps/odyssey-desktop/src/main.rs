@@ -25,6 +25,7 @@ mod scale_board;
 mod sdk_install;
 mod server_status;
 mod tray;
+mod ui_state;
 mod views;
 
 /// How often the hub connection checks whether the server is listening yet.
@@ -162,6 +163,8 @@ fn app() -> Element {
     use_server_task(cancel_token, config_corruptions, server_ready);
 
     let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
+    let ui_state_writer = ui_state::use_ui_state_writer();
+    use_context_provider(|| ui_state_writer);
     use_hub_connection(hub, server_ready);
 
     // Decided once: the wizard takes the command-line request when it opens,

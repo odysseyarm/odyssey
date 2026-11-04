@@ -11,6 +11,10 @@ impl Wizard {
     /// Asks where to save the latest attempt's diagnostic bundle, then has the
     /// camera thread write it. Nothing is written unless the user picks a place.
     pub(crate) fn save_attempt(mut self) {
+        if *self.attempt_saving.peek() {
+            return;
+        }
+        let session = *self.session.peek();
         spawn(async move {
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -23,6 +27,12 @@ impl Wizard {
             else {
                 return;
             };
+            // The picker can outlive the review it was opened from.
+            if *self.session.peek() != session
+                || !matches!(*self.stage.peek(), Stage::Review | Stage::Problem)
+            {
+                return;
+            }
             *self.attempt_status.write() = None;
             *self.attempt_saving.write() = true;
             self.send(Command::SaveAttempt {
@@ -34,6 +44,9 @@ impl Wizard {
     /// Saves unless that screen already holds a calibration and the tech has not
     /// confirmed replacing it.
     pub(crate) fn save(mut self, replace_confirmed: bool) {
+        if *self.saving.peek() {
+            return;
+        }
         let Some(finished) = self.finished.peek().clone() else {
             return;
         };
@@ -48,6 +61,7 @@ impl Wizard {
         let key = self.selected_monitor();
         let kind = self.kind();
         let use_measured = *self.use_measured.peek();
+        let session = *self.session.peek();
         spawn(async move {
             let calibration = finished.outcome(use_measured).calibration;
             let written = tokio::task::spawn_blocking(move || {
@@ -58,21 +72,33 @@ impl Wizard {
             .await
             .map_err(|e| e.to_string())
             .and_then(|r| r);
-            *self.saving.write() = false;
+            // Leaving or restarting the wizard must not be undone by a late save.
+            if *self.session.peek() != session || *self.stage.peek() != Stage::Review {
+                return;
+            }
             match written {
                 Ok(path) => {
                     if let Some(key) = key {
-                        // Reload before saving so a field changed elsewhere
-                        // meanwhile is not overwritten.
-                        let mut state = config::ui_state_async().await.into_value();
-                        state.remember_calibration_screen(key.clone(), screen_id);
-                        state.remember_display_kind(key, kind);
-                        if let Err(e) = config::ui_state_save_async(&state).await {
+                        let persisted_key = key.clone();
+                        let update = self.ui_state_writer.update(move |state| {
+                            state.remember_calibration_screen(persisted_key.clone(), screen_id);
+                            state.remember_display_kind(persisted_key, kind);
+                        });
+                        if let Err(e) = update.await {
                             tracing::warn!("could not remember the screen: {e}");
                         }
-                        *self.ui_state.write() = state;
+                        if *self.session.peek() != session || *self.stage.peek() != Stage::Review {
+                            return;
+                        }
+                        let mut state = self.ui_state.write();
+                        state.remember_calibration_screen(key.clone(), screen_id);
+                        state.remember_display_kind(key, kind);
                     }
                     self.refresh_saved_screens().await;
+                    if *self.session.peek() != session || *self.stage.peek() != Stage::Review {
+                        return;
+                    }
+                    *self.saving.write() = false;
                     *self.saved_to.write() = Some(SavedInfo {
                         screen_id,
                         path: path.display().to_string(),
@@ -80,6 +106,7 @@ impl Wizard {
                     self.set_stage(Stage::Saved);
                 }
                 Err(e) => {
+                    *self.saving.write() = false;
                     tracing::error!("could not save the calibration: {e}");
                     *self.save_error.write() = Some(e);
                 }

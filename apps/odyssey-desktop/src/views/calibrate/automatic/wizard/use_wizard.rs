@@ -84,6 +84,7 @@ pub(crate) fn use_wizard() -> Wizard {
         screen_choice: use_signal(|| args.screen_id),
         saved: use_signal(|| [false; SCREEN_COUNT]),
         ui_state: use_signal(UiState::default),
+        ui_state_writer: use_context::<crate::ui_state::UiStateWriter>(),
         cameras: use_signal(|| CameraList::Searching),
         camera_choice: use_signal(|| args.camera.clone()),
         size_text: use_signal(|| args.diagonal_in.map(|d| d.to_string()).unwrap_or_default()),
@@ -96,6 +97,7 @@ pub(crate) fn use_wizard() -> Wizard {
         helper_problem: use_signal(|| None),
         use_measured: use_signal(|| false),
         notes: use_signal(Vec::new),
+        setup_ready: use_signal(|| false),
         list_pending: use_signal(|| false),
         auto_start: use_signal(|| had_args && args.monitor.is_some()),
         color_exposure: use_signal(|| {
@@ -148,6 +150,8 @@ fn use_monitor_argument(mut wizard: Wizard, monitor_arg: Option<usize>) {
         }
         *wizard.ui_state.write() = config::ui_state_async().await.into_value();
         wizard.refresh_saved_screens().await;
+        *wizard.setup_ready.write() = true;
+        wizard.maybe_auto_start();
     });
 }
 
