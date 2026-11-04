@@ -136,6 +136,10 @@ fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
 fn matshow<DB: DrawingBackend>(
     root: &mut DrawingArea<DB, Shift>,
 ) -> Result<(), Box<dyn Error + '_>> {
+    #[expect(
+        clippy::reversed_empty_ranges,
+        reason = "plotters draws a reversed y range with the axis flipped; matshow wants row 0 at the top"
+    )]
     let mut chart = ChartBuilder::on(&root)
         .caption("Matshow Example", ("sans-serif", 80))
         .margin(5)

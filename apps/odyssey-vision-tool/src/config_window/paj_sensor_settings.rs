@@ -394,13 +394,18 @@ pub static GAIN_TABLE: [(&str, Gain); 16 * 3 + 1] = {
         }
         v
     };
-    let mut omegalul = [("", Gain::new(0, 0)); 16 * 3 + 1];
+    let mut table = [("", Gain::new(0, 0)); 16 * 3 + 1];
     let mut i = 0;
     while i < 16 * 3 {
-        omegalul[i].0 = unsafe { std::str::from_utf8_unchecked(&BACKING[i]) };
-        omegalul[i].1 = Gain::new((i % 16) as u8, [0, 2, 3][i / 16]);
+        // `n_to_bstr` yields ASCII digits, so this cannot fail; if it ever did,
+        // evaluating the table would be a compile error, not a runtime one.
+        table[i].0 = match std::str::from_utf8(&BACKING[i]) {
+            Ok(text) => text,
+            Err(_) => panic!("n_to_bstr produced bytes that are not UTF-8"),
+        };
+        table[i].1 = Gain::new((i % 16) as u8, [0, 2, 3][i / 16]);
         i += 1;
     }
-    omegalul[16 * 3] = ("8.0000", Gain::new(16, 3));
-    omegalul
+    table[16 * 3] = ("8.0000", Gain::new(16, 3));
+    table
 };

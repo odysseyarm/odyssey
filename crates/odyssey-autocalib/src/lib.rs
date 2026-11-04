@@ -16,6 +16,7 @@ pub mod camera;
 pub mod display;
 pub mod imu;
 pub mod markers;
+#[expect(unsafe_code, reason = "Orbbec SDK FFI: the bindgen bindings and the run-time loader")]
 pub mod orbbec;
 pub mod pattern;
 pub mod placement;

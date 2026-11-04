@@ -189,6 +189,7 @@ pub trait Serialize {
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]);
 
     #[cfg(feature = "std")]
+    #[expect(unsafe_code, reason = "set_len over the spare capacity that serialize just filled")]
     fn serialize_to_vec(&self, buf: &mut Vec<u8>) {
         buf.reserve(Self::SIZE);
         let _ = self.serialize(&mut buf.spare_capacity_mut());
@@ -198,6 +199,7 @@ pub trait Serialize {
     }
 }
 
+#[expect(unsafe_code, reason = "raw copy into an uninitialised wire buffer, bounds asserted above")]
 #[inline]
 fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
     assert!(buf.len() >= data.len());
@@ -998,6 +1000,7 @@ impl Parse for MotData {
 
 impl Serialize for MotData {
     const SIZE: usize = 16;
+    #[expect(unsafe_code, reason = "raw copy into an uninitialised wire buffer")]
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]) {
         let data = [
             self.area as u8,
