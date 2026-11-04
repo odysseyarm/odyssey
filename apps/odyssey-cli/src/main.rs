@@ -1,5 +1,11 @@
 //! Unified CLI tool for managing ATS devices (mux and direct device connections)
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "command-line tool: stdout/stderr is its interface"
+)]
+
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -8,6 +14,7 @@ mod bond;
 mod calibration;
 mod device;
 mod mux;
+mod usb_discovery;
 
 #[derive(Parser)]
 #[command(name = "odyssey-cli")]

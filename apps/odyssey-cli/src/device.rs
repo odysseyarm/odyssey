@@ -1,9 +1,12 @@
 //! Direct device (lite/vm) management commands
 
 use clap::Subcommand;
-use nusb::MaybeFuture as _;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
+
+use crate::usb_discovery::{
+    format_bd_addr, list_nordic_devices, list_vm_usb_devices, product_name,
+};
 
 #[derive(Subcommand)]
 pub(crate) enum DeviceCommands {
@@ -46,16 +49,7 @@ pub(crate) enum DeviceCommands {
 async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, String> {
     let mut devices = Vec::new();
     let mut skipped = 0usize;
-    for info in nusb::list_devices()
-        .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .filter(|info| {
-            info.vendor_id() == 0x1915
-                && (info.product_id() == 0x520F
-                    || info.product_id() == 0x5210
-                    || info.product_id() == 0x5211)
-        })
-    {
+    for info in list_vm_usb_devices()? {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(mode) => {
                 if require_usb_mode && !matches!(mode, TransportMode::Usb) {
@@ -130,55 +124,34 @@ async fn connect_to_device(
 
 async fn cmd_list_devices() -> Result<(), String> {
     // First, list all matching USB devices without transport mode probing
-    let all_usb_devices: Vec<_> = nusb::list_devices()
-        .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .filter(|info| {
-            info.vendor_id() == 0x1915
-                && (info.product_id() == 0x520F
-                    || info.product_id() == 0x5210
-                    || info.product_id() == 0x5211)
-        })
-        .collect();
+    let all_usb_devices = list_vm_usb_devices()?;
 
     if all_usb_devices.is_empty() {
         println!("No devices found (VID:0x1915, PID:0x520F/0x5210/0x5211)");
 
         // Show all Nordic devices for debugging
-        let nordic_devices: Vec<_> = nusb::list_devices()
-            .wait()
-            .map_err(|e| format!("Failed to list USB devices: {e}"))?
-            .filter(|info| info.vendor_id() == 0x1915)
-            .collect();
+        let nordic_devices = list_nordic_devices()?;
 
         if !nordic_devices.is_empty() {
             println!("\nOther Nordic (VID:0x1915) devices found:");
             for info in nordic_devices {
-                let product = info
-                    .product_string()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "Unknown".to_string());
                 println!(
                     "  VID:0x{:04X} PID:0x{:04X} - {}",
                     info.vendor_id(),
                     info.product_id(),
-                    product
+                    product_name(&info)
                 );
             }
         }
     } else {
         println!("Found {} USB device(s):", all_usb_devices.len());
         for (i, info) in all_usb_devices.iter().enumerate() {
-            let product = info
-                .product_string()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "Unknown".to_string());
             println!(
                 "  [{}] VID:0x{:04X} PID:0x{:04X} - {}",
                 i,
                 info.vendor_id(),
                 info.product_id(),
-                product
+                product_name(info)
             );
             println!(
                 "      Bus: {:?}, Address: {}",
@@ -228,24 +201,21 @@ async fn cmd_version(device: &VmDevice) -> Result<(), String> {
 async fn cmd_pair(device: &VmDevice, timeout: u32) -> Result<(), String> {
     println!("Starting pairing mode (timeout: {timeout}ms)...");
 
-    match device.start_pairing(timeout).await {
-        Ok(()) => {
-            println!("Pairing mode started, waiting for device...");
+    device
+        .start_pairing(timeout)
+        .await
+        .map_err(|e| format!("Failed to start pairing: {e}"))?;
+    println!("Pairing mode started, waiting for device...");
 
-            match device.wait_pairing_event().await {
-                Ok(bond) => {
-                    let addr = bond.uuid;
-                    println!(
-                        "Successfully paired with device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
-                    );
-                    Ok(())
-                }
-                Err(e) => Err(format!("Pairing failed: {e}")),
-            }
-        }
-        Err(e) => Err(format!("Failed to start pairing: {e}")),
-    }
+    let bond = device
+        .wait_pairing_event()
+        .await
+        .map_err(|e| format!("Pairing failed: {e}"))?;
+    println!(
+        "Successfully paired with device: {}",
+        format_bd_addr(&bond.uuid)
+    );
+    Ok(())
 }
 
 async fn cmd_pair_cancel(device: &VmDevice) -> Result<(), String> {

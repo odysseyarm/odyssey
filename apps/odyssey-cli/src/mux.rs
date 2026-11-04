@@ -1,8 +1,9 @@
 //! Mux (dongle) management commands
 
 use clap::Subcommand;
-use nusb::MaybeFuture as _;
 use odyssey_usb::device::MuxDevice;
+
+use crate::usb_discovery::{format_bd_addr, list_muxes, product_name};
 
 #[derive(Subcommand)]
 pub(crate) enum MuxCommands {
@@ -23,16 +24,6 @@ pub(crate) enum MuxCommands {
     PairCancel,
     /// Clear all bonds
     ClearBonds,
-}
-
-fn list_muxes() -> Result<Vec<nusb::DeviceInfo>, String> {
-    let devices: Vec<_> = nusb::list_devices()
-        .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
-        .collect();
-
-    Ok(devices)
 }
 
 async fn connect_to_mux(device_index: Option<usize>) -> Result<MuxDevice, String> {
@@ -66,14 +57,7 @@ async fn connect_to_mux(device_index: Option<usize>) -> Result<MuxDevice, String
         .map_err(|e| format!("Failed to connect to mux: {e}"))
 }
 
-fn format_device_addr(addr: &[u8; 6]) -> String {
-    format!(
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
-    )
-}
-
-async fn cmd_list_devices() -> Result<(), String> {
+fn cmd_list_devices() -> Result<(), String> {
     let devices = list_muxes()?;
 
     if devices.is_empty() {
@@ -81,16 +65,12 @@ async fn cmd_list_devices() -> Result<(), String> {
     } else {
         println!("Available muxes:");
         for (i, info) in devices.iter().enumerate() {
-            let product = info
-                .product_string()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "Unknown".to_string());
             println!(
                 "  [{}] VID:0x{:04X} PID:0x{:04X} - {}",
                 i,
                 info.vendor_id(),
                 info.product_id(),
-                product
+                product_name(info)
             );
         }
         println!();
@@ -110,7 +90,7 @@ async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
     } else {
         println!("Connected devices ({}):", devices.len());
         for dev in &devices {
-            println!("  {}", format_device_addr(dev));
+            println!("  {}", format_bd_addr(dev));
         }
     }
     Ok(())
@@ -146,7 +126,7 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
         .map_err(|e| format!("Error waiting for pairing event: {e}"))?
     {
         odyssey_usb::device::PairingEvent::Result(bond) => {
-            println!("Paired with device {}", format_device_addr(&bond.uuid));
+            println!("Paired with device {}", format_bd_addr(&bond.uuid));
             Ok(())
         }
         odyssey_usb::device::PairingEvent::Timeout => {
@@ -226,7 +206,7 @@ pub(crate) async fn handle_command(
     command: MuxCommands,
 ) -> Result<(), String> {
     match command {
-        MuxCommands::ListDevices => cmd_list_devices().await,
+        MuxCommands::ListDevices => cmd_list_devices(),
         MuxCommands::UsbInfo => cmd_usb_info(device_index).await,
         MuxCommands::List => {
             let device = connect_to_mux(device_index).await?;

@@ -1,8 +1,12 @@
 //! Bond command — manually create a bond between a dongle and a device
 
 use clap::Args;
-use nusb::MaybeFuture as _;
 use odyssey_usb::device::{MuxDevice, VmDevice};
+
+use crate::usb_discovery::{format_bd_addr, list_muxes, list_vm_usb_devices};
+
+/// BLE security level 2: encrypted and authenticated.
+const SECURITY_LEVEL_ENCRYPTED_AUTHENTICATED: u8 = 2;
 
 #[derive(Args)]
 pub(crate) struct BondArgs {
@@ -15,26 +19,9 @@ pub(crate) struct BondArgs {
     pub device: Option<usize>,
 }
 
-fn list_muxes() -> Result<Vec<nusb::DeviceInfo>, String> {
-    Ok(nusb::list_devices()
-        .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
-        .collect())
-}
-
 async fn list_vm_devices() -> Result<Vec<nusb::DeviceInfo>, String> {
     let mut devices = Vec::new();
-    for info in nusb::list_devices()
-        .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .filter(|info| {
-            info.vendor_id() == 0x1915
-                && (info.product_id() == 0x520F
-                    || info.product_id() == 0x5210
-                    || info.product_id() == 0x5211)
-        })
-    {
+    for info in list_vm_usb_devices()? {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(_) => devices.push(info),
             Err(e) => eprintln!(
@@ -80,7 +67,10 @@ async fn pick_mux(index: Option<usize>) -> Result<(MuxDevice, [u8; 6]), String> 
                     muxes.len()
                 ));
             }
-            muxes.into_iter().next().unwrap()
+            muxes
+                .into_iter()
+                .next()
+                .expect("muxes is non-empty: checked above")
         }
     };
     let serial = info
@@ -110,7 +100,9 @@ async fn pick_device(index: Option<usize>) -> Result<VmDevice, String> {
                     devs.len()
                 ));
             }
-            devs.into_iter().next().unwrap()
+            devs.into_iter()
+                .next()
+                .expect("devs is non-empty: checked above")
         }
     };
     VmDevice::connect_usb_any_mode(info)
@@ -118,11 +110,18 @@ async fn pick_device(index: Option<usize>) -> Result<VmDevice, String> {
         .map_err(|e| format!("Failed to connect to device: {e}"))
 }
 
-fn format_addr(addr: &[u8; 6]) -> String {
-    format!(
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
-    )
+fn bond_entry(
+    bd_addr: [u8; 6],
+    ltk: [u8; 16],
+    irk: [u8; 16],
+) -> odyssey_protocol::control::BondEntry {
+    odyssey_protocol::control::BondEntry {
+        bd_addr,
+        ltk,
+        security_level: SECURITY_LEVEL_ENCRYPTED_AUTHENTICATED,
+        is_bonded: true,
+        irk: Some(irk),
+    }
 }
 
 pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
@@ -137,8 +136,8 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to read device UUID: {e}"))?;
 
-    println!("Dongle BD addr: {}", format_addr(&dongle_bd_addr));
-    println!("Device BD addr: {}", format_addr(&device_bd_addr));
+    println!("Dongle BD addr: {}", format_bd_addr(&dongle_bd_addr));
+    println!("Device BD addr: {}", format_bd_addr(&device_bd_addr));
 
     // Generate random LTK and IRK (same values for both sides)
     let mut rng = rand::thread_rng();
@@ -148,22 +147,10 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
     rng.fill_bytes(&mut irk);
 
     // Dongle bond: bd_addr = device (who the dongle connects to)
-    let dongle_entry = odyssey_protocol::control::BondEntry {
-        bd_addr: device_bd_addr,
-        ltk,
-        security_level: 2, // EncryptedAuthenticated
-        is_bonded: true,
-        irk: Some(irk),
-    };
+    let dongle_entry = bond_entry(device_bd_addr, ltk, irk);
 
     // Device bond: bd_addr = dongle (who the device expects to connect to it)
-    let device_entry = odyssey_protocol::control::BondEntry {
-        bd_addr: dongle_bd_addr,
-        ltk,
-        security_level: 2,
-        is_bonded: true,
-        irk: Some(irk),
-    };
+    let device_entry = bond_entry(dongle_bd_addr, ltk, irk);
 
     println!("Sending bond to dongle...");
     mux.add_bond(dongle_entry)
@@ -180,8 +167,8 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
 
     println!(
         "Bond created successfully: dongle {} <-> device {}",
-        format_addr(&dongle_bd_addr),
-        format_addr(&device_bd_addr)
+        format_bd_addr(&dongle_bd_addr),
+        format_bd_addr(&device_bd_addr)
     );
     Ok(())
 }
