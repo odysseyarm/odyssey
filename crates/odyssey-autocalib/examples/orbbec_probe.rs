@@ -7,6 +7,11 @@
 //! code is 0 whenever the program runs to the end, including when the SDK or
 //! the camera is missing; the printed text says what happened.
 
+#![expect(
+    clippy::print_stdout,
+    reason = "a command-line probe whose output is its report"
+)]
+
 use std::time::{Duration, Instant};
 
 use odyssey_autocalib::camera::{CameraBackend as _, CameraError, CaptureSettings, Intrinsics};

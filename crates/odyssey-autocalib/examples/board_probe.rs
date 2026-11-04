@@ -18,6 +18,12 @@
 //! the end, including when the SDK, the camera or the board is missing; the
 //! printed text says what happened. A bad command line exits with 2.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "a command-line probe: the report goes to stdout, usage errors to stderr"
+)]
+
 use std::time::{Duration, Instant};
 
 use odyssey_autocalib::board::{
