@@ -13,6 +13,7 @@ use static_cell::StaticCell;
 use trouble_host::Stack;
 
 use crate::DEVICE_LIST_SUBSCRIBED;
+use crate::ble::task_slots::{self, ClaimError};
 use crate::storage::Settings;
 
 // Counters read when diagnosing link drops and host backpressure.
@@ -105,21 +106,28 @@ pub static SCAN_STOPPED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub static SCAN_RESUME: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Registers a pending connect and waits until the background scanner has
-/// stopped its scan session. Call before `central.connect()` and pair with
-/// [`end_connect`].
-pub async fn begin_connect() {
+/// stopped its scan session. Call before `central.connect()` and drop the
+/// returned lease once it returns, success or failure.
+pub async fn begin_connect() -> ConnectLease {
     CONNECT_PENDING.fetch_add(1, Ordering::Release);
+    let lease = ConnectLease(());
     while SCAN_ACTIVE.load(Ordering::Acquire) {
         SCAN_STOPPED.wait().await;
     }
+    lease
 }
 
-/// Releases a pending connect after `central.connect()` returns, success or
-/// failure. The last one out resumes the background scanner.
-pub fn end_connect() {
-    let prev = CONNECT_PENDING.fetch_sub(1, Ordering::AcqRel);
-    if prev == 1 {
-        SCAN_RESUME.signal(());
+/// A pending connect counted in [`CONNECT_PENDING`]. Dropping it releases the
+/// count, also when the device task is stopped mid-connect; the last one out
+/// resumes the background scanner.
+pub struct ConnectLease(());
+
+impl Drop for ConnectLease {
+    fn drop(&mut self) {
+        let prev = CONNECT_PENDING.fetch_sub(1, Ordering::AcqRel);
+        if prev == 1 {
+            SCAN_RESUME.signal(());
+        }
     }
 }
 
@@ -208,10 +216,6 @@ pub fn adv_matches(data: &[u8]) -> bool {
     false
 }
 
-pub fn adv_matches_pairing(data: &[u8]) -> bool {
-    adv_matches(data)
-}
-
 pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 32>;
 
 pub struct DeviceQueues {
@@ -234,6 +238,8 @@ impl DeviceQueues {
         }
     }
 
+    /// Hands `uuid` a free queue from the pool, emptied of anything left by
+    /// the device that held it before.
     pub async fn register(&self, uuid: &Uuid) -> Option<&'static DeviceQueue> {
         let mut map = self.queues.lock().await;
         if map.contains_key(uuid) {
@@ -252,6 +258,7 @@ impl DeviceQueues {
 
         let idx = idx?;
         let queue = &QUEUE_POOL[idx];
+        queue.clear();
         let _ = map.insert(*uuid, (queue, idx));
         Some(queue)
     }
@@ -305,10 +312,10 @@ impl ActiveConnections {
 
     pub async fn remove(&self, uuid: &Uuid) {
         let mut map = self.connections.lock().await;
-        let _ = map.remove(uuid);
+        let removed = map.remove(uuid).is_some();
         drop(map);
 
-        if DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
+        if removed && DEVICE_LIST_SUBSCRIBED.load(Ordering::Relaxed) {
             let devices = self.get_all().await;
             let response = odyssey_protocol::mux::MuxMsg::DevicesSnapshot(devices.into());
             if crate::HOST_RESPONSES.try_send(response).is_err() {
@@ -334,30 +341,6 @@ impl ActiveConnections {
 }
 
 pub static ACTIVE_CONNECTIONS: StaticCell<ActiveConnections> = StaticCell::new();
-
-// Set once at boot so the control task can reach the tracker and queues.
-static GLOBAL_ACTIVE_CONNECTIONS: AsyncMutex<
-    ThreadModeRawMutex,
-    Option<&'static ActiveConnections>,
-> = AsyncMutex::new(None);
-static GLOBAL_DEVICE_QUEUES: AsyncMutex<ThreadModeRawMutex, Option<&'static DeviceQueues>> =
-    AsyncMutex::new(None);
-
-pub async fn set_global_refs(
-    active_connections: &'static ActiveConnections,
-    device_queues: &'static DeviceQueues,
-) {
-    *GLOBAL_ACTIVE_CONNECTIONS.lock().await = Some(active_connections);
-    *GLOBAL_DEVICE_QUEUES.lock().await = Some(device_queues);
-}
-
-pub async fn get_active_connections() -> Option<&'static ActiveConnections> {
-    *GLOBAL_ACTIVE_CONNECTIONS.lock().await
-}
-
-pub async fn get_device_queues() -> Option<&'static DeviceQueues> {
-    *GLOBAL_DEVICE_QUEUES.lock().await
-}
 
 /// Spawns one connection task per scan target.
 pub struct BleManager {
@@ -389,39 +372,42 @@ impl BleManager {
         }
     }
 
-    /// Re-reads the scan targets every 2 s, or on [`RESTART_CENTRAL`], and
-    /// spawns a task for each target that has none.
+    /// Re-reads the scan targets every 2 s, or on [`RESTART_CENTRAL`], stops
+    /// the task of every address that left them, and spawns a task for each
+    /// target whose previous task, if any, has exited.
     pub async fn run(&mut self) -> ! {
         info!("Starting BLE central manager");
 
-        let mut spawned_tasks: heapless::Vec<[u8; 6], MAX_DEVICES> = heapless::Vec::new();
-
         loop {
             let targets = self.settings.get_scan_targets().await;
-
-            // A target missing from the list had its bond cleared and its task
-            // has exited, so forget it.
-            spawned_tasks.retain(|addr| targets.contains(addr));
+            task_slots::stop_untargeted(&targets);
 
             for addr in targets.iter() {
-                if !spawned_tasks.contains(addr) {
-                    info!("Spawning device task for {:02x}", *addr);
-                    match crate::ble::device_task::device_connection_task(
-                        self.stack,
-                        self.device_packets,
-                        self.active_connections,
-                        self.device_queues,
-                        self.settings,
-                        trouble_host::prelude::BdAddr::new(*addr),
-                    ) {
-                        Ok(token) => {
-                            self.spawner.spawn(token);
-                            let _ = spawned_tasks.push(*addr);
-                            info!("Device task spawned for {:02x}", *addr);
-                        }
-                        Err(_) => {
-                            error!("Failed to spawn device task for {:02x} (pool full)", *addr);
-                        }
+                let slot = match task_slots::claim(*addr) {
+                    Ok(slot) => slot,
+                    Err(ClaimError::Running) => continue,
+                    Err(ClaimError::Full) => {
+                        error!("No free device task slot for {:02x}", *addr);
+                        continue;
+                    }
+                };
+                info!("Spawning device task for {:02x}", *addr);
+                match crate::ble::device_task::device_connection_task(
+                    self.stack,
+                    self.device_packets,
+                    self.active_connections,
+                    self.device_queues,
+                    self.settings,
+                    slot,
+                    trouble_host::prelude::BdAddr::new(*addr),
+                ) {
+                    Ok(token) => {
+                        self.spawner.spawn(token);
+                        info!("Device task spawned for {:02x}", *addr);
+                    }
+                    Err(_) => {
+                        task_slots::release(slot);
+                        error!("Failed to spawn device task for {:02x} (pool full)", *addr);
                     }
                 }
             }

@@ -1,14 +1,17 @@
+use core::cell::RefCell;
 use core::sync::atomic::Ordering;
 
+use backon::{ConstantBuilder, EmbassySleeper, RetryableWithContext};
 use defmt::{error, info, warn};
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant};
 use odyssey_protocol::mux::DevicePacket;
 use trouble_host::Stack;
 use trouble_host::prelude::{
-    AddrKind, BdAddr, ConnectConfig, ConnectParams, CreditFlowPolicy, L2capChannel,
-    L2capChannelConfig, PhySet, ScanConfig,
+    AddrKind, BdAddr, Central, ConnectConfig, ConnectParams, Connection, CreditFlowPolicy,
+    L2capChannel, L2capChannelConfig, PhySet, ScanConfig,
 };
 
 use super::DevicePacketChannel;
@@ -16,11 +19,20 @@ use super::central::{
     ActiveConnections, DISCONNECT_COUNT, DROPPED_DATA_TO_HOST, DeviceQueue, DeviceQueues,
     L2CAP_PSM_CONTROL, L2CAP_PSM_DATA, is_control_packet,
 };
+use super::task_slots::{self, TaskSlot};
+
+/// Wait between the end of one connection attempt or session and the next
+/// connect, whatever ended it. A device that keeps failing pairing or
+/// encryption is retried at this pace rather than in a tight loop.
+const RETRY_BACKOFF: core::time::Duration = core::time::Duration::from_secs(5);
 
 /// Owns one device for its whole lifetime: connect, pair or encrypt, open the
-/// L2CAP channels, relay packets, and reconnect 5 s after a disconnect. Builds
-/// its own Central from the shared stack. Returns once the device leaves the
-/// scan targets.
+/// L2CAP channels, relay packets, and reconnect [`RETRY_BACKOFF`] after any
+/// failure or disconnect. Builds its own Central from the shared stack.
+///
+/// Runs until [`task_slots::stop_requested`] fires for `slot`. A stop drops
+/// whatever step is in progress, disconnects, removes the device from
+/// `active_connections` and `device_queues`, and only then releases `slot`.
 #[embassy_executor::task(pool_size = odyssey_protocol::mux::MAX_DEVICES)]
 pub async fn device_connection_task(
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
@@ -28,23 +40,102 @@ pub async fn device_connection_task(
     active_connections: &'static ActiveConnections,
     device_queues: &'static DeviceQueues,
     settings: &'static crate::storage::Settings,
+    slot: TaskSlot,
     target: BdAddr,
 ) {
     info!("Device task started for {:02x}", target);
 
     let host = stack.build();
-    let mut central = host.central;
+    let central = host.central;
+    let device = Device {
+        stack,
+        device_packets,
+        active_connections,
+        device_queues,
+        settings,
+        target,
+    };
 
-    loop {
-        // The bond may have been cleared while disconnected.
-        let targets = settings.get_scan_targets().await;
-        if !targets.contains(&target.into_inner()) {
-            info!(
-                "Device {:02x} no longer in scan targets, stopping task",
-                target
-            );
-            return;
+    let conn = RefCell::new(None);
+    let supervise = async {
+        // An attempt always ends in `Err`, so backon waits `RETRY_BACKOFF` and
+        // reconnects until the stop signal drops this future.
+        let conn = &conn;
+        let attempt = |mut central| async move {
+            device
+                .connect_and_relay(&mut central, &mut *conn.borrow_mut())
+                .await;
+            device.release(conn).await;
+            (central, Err::<(), Reconnect>(Reconnect))
+        };
+        let _ = attempt
+            .retry(
+                ConstantBuilder::new()
+                    .with_delay(RETRY_BACKOFF)
+                    .without_max_times(),
+            )
+            .context(central)
+            .sleep(EmbassySleeper)
+            .await;
+    };
+    select(task_slots::stop_requested(slot), supervise).await;
+    device.release(&conn).await;
+
+    info!("Device task for {:02x} stopped", target);
+    task_slots::release(slot);
+    // The address may have been re-added while this task was stopping, and the
+    // manager cannot spawn its replacement until the slot is free.
+    crate::ble::central::RESTART_CENTRAL.signal(());
+}
+
+/// The retry error of [`device_connection_task`]: every attempt ends and is
+/// followed by a reconnect.
+struct Reconnect;
+
+#[derive(Clone, Copy)]
+struct Device {
+    stack: &'static Stack<'static, crate::Controller, crate::Pool>,
+    device_packets: &'static DevicePacketChannel,
+    active_connections: &'static ActiveConnections,
+    device_queues: &'static DeviceQueues,
+    settings: &'static crate::storage::Settings,
+    target: BdAddr,
+}
+
+impl Device {
+    /// Disconnects the stored connection and removes the device from the
+    /// active-connection and device-queue registries. Safe to repeat.
+    async fn release(&self, conn: &RefCell<Option<Connection<'static, crate::Pool>>>) {
+        if let Some(conn) = conn.borrow_mut().take() {
+            conn.disconnect();
         }
+        self.active_connections
+            .remove(&self.target.into_inner())
+            .await;
+        self.device_queues
+            .unregister(&self.target.into_inner())
+            .await;
+    }
+
+    /// One connection attempt and, if it gets that far, the session that
+    /// follows. Returns on the first failure or when the session ends.
+    ///
+    /// The connection is stored in `conn` so the caller can disconnect it even
+    /// when this future is dropped part way. The caller also undoes the device
+    /// queue and active-connection registration.
+    async fn connect_and_relay(
+        self,
+        central: &mut Central<'static, crate::Controller, crate::Pool>,
+        conn: &mut Option<Connection<'static, crate::Pool>>,
+    ) {
+        let Device {
+            stack,
+            active_connections,
+            device_queues,
+            settings,
+            target,
+            ..
+        } = self;
 
         let config = ConnectConfig {
             connect_params: ConnectParams {
@@ -63,15 +154,15 @@ pub async fn device_connection_task(
         };
 
         info!("Connecting to {:02x}...", target);
-        crate::ble::central::begin_connect().await;
+        let connect_lease = crate::ble::central::begin_connect().await;
         let connect_result =
             embassy_time::with_timeout(Duration::from_secs(10), central.connect(&config)).await;
-        crate::ble::central::end_connect();
+        drop(connect_lease);
 
         let conn = match connect_result {
-            Ok(Ok(conn)) => {
+            Ok(Ok(new_conn)) => {
                 info!("Connected to {:02x}", target);
-                conn
+                conn.insert(new_conn)
             }
             Ok(Err(e)) => {
                 error!(
@@ -79,13 +170,11 @@ pub async fn device_connection_task(
                     target,
                     defmt::Debug2Format(&e)
                 );
-                Timer::after_secs(5).await;
-                continue;
+                return;
             }
             Err(_) => {
                 error!("Connect timeout for {:02x}", target);
-                Timer::after_secs(5).await;
-                continue;
+                return;
             }
         };
 
@@ -96,7 +185,7 @@ pub async fn device_connection_task(
             info!("No bond found, initiating pairing for {:02x}", target);
             if let Err(e) = conn.request_security() {
                 error!("Failed to request security: {:?}", defmt::Debug2Format(&e));
-                continue;
+                return;
             }
 
             let pairing_result = embassy_time::with_timeout(Duration::from_secs(10), async {
@@ -110,7 +199,7 @@ pub async fn device_connection_task(
                             if let Some(bi) = bond {
                                 let bd = crate::ble::security::bonddata_from_info(&bi);
                                 info!("Storing bond for {:02x}", bd.bd_addr);
-                                crate::ble::security::BOND_TO_STORE.signal(bd);
+                                crate::ble::security::BOND_TO_STORE.send(bd).await;
                             }
                             return Ok(());
                         }
@@ -132,7 +221,7 @@ pub async fn device_connection_task(
                 Ok(Ok(())) => info!("Pairing successful"),
                 Ok(Err(())) | Err(_) => {
                     error!("Pairing failed or timed out");
-                    continue;
+                    return;
                 }
             }
         } else {
@@ -142,7 +231,7 @@ pub async fn device_connection_task(
                     "Failed to request security for bonded device: {:?}",
                     defmt::Debug2Format(&e)
                 );
-                continue;
+                return;
             }
 
             let security_result = embassy_time::with_timeout(Duration::from_secs(10), async {
@@ -173,7 +262,7 @@ pub async fn device_connection_task(
                 Ok(Ok(())) => info!("Encryption successful"),
                 Ok(Err(())) | Err(_) => {
                     error!("Encryption failed or timed out");
-                    continue;
+                    return;
                 }
             }
         }
@@ -216,7 +305,7 @@ pub async fn device_connection_task(
         );
         let l2cap_control_channel = match embassy_time::with_timeout(
             Duration::from_secs(10),
-            L2capChannel::create(stack, &conn, L2CAP_PSM_CONTROL, &l2cap_control_config),
+            L2capChannel::create(stack, conn, L2CAP_PSM_CONTROL, &l2cap_control_config),
         )
         .await
         {
@@ -226,11 +315,11 @@ pub async fn device_connection_task(
                     "Failed to create L2CAP control channel: {:?}",
                     defmt::Debug2Format(&e)
                 );
-                continue;
+                return;
             }
             Err(_) => {
                 error!("L2CAP control channel creation timeout");
-                continue;
+                return;
             }
         };
 
@@ -240,7 +329,7 @@ pub async fn device_connection_task(
         );
         let l2cap_data_channel = match embassy_time::with_timeout(
             Duration::from_secs(10),
-            L2capChannel::create(stack, &conn, L2CAP_PSM_DATA, &l2cap_data_config),
+            L2capChannel::create(stack, conn, L2CAP_PSM_DATA, &l2cap_data_config),
         )
         .await
         {
@@ -250,26 +339,22 @@ pub async fn device_connection_task(
                     "Failed to create L2CAP data channel: {:?}",
                     defmt::Debug2Format(&e)
                 );
-                continue;
+                return;
             }
             Err(_) => {
                 error!("L2CAP data channel creation timeout");
-                continue;
+                return;
             }
         };
 
-        let device_queue = match device_queues.register(&target.into_inner()).await {
-            Some(queue) => queue,
-            None => {
-                error!("Failed to register device queue for {:02x}", target);
-                continue;
-            }
+        let Some(device_queue) = device_queues.register(&target.into_inner()).await else {
+            error!("Failed to register device queue for {:02x}", target);
+            return;
         };
 
         if !active_connections.add(&target.into_inner()).await {
             error!("Failed to add device to active connections");
-            device_queues.unregister(&target.into_inner()).await;
-            continue;
+            return;
         }
 
         info!(
@@ -278,38 +363,34 @@ pub async fn device_connection_task(
         );
 
         run_connection(
+            self,
             conn,
             l2cap_control_channel,
             l2cap_data_channel,
             device_queue,
-            device_packets,
-            stack,
-            target,
-            settings,
         )
         .await;
 
         info!("Device {:02x} disconnected, cleaning up", target);
-
-        active_connections.remove(&target.into_inner()).await;
-        device_queues.unregister(&target.into_inner()).await;
-
-        Timer::after_secs(5).await;
     }
 }
 
 /// Relays packets in both directions until the link drops or either L2CAP
 /// channel fails.
 async fn run_connection(
-    conn: trouble_host::prelude::Connection<'static, crate::Pool>,
+    device: Device,
+    conn: &Connection<'static, crate::Pool>,
     l2cap_control_channel: L2capChannel<'static, crate::Pool>,
     l2cap_data_channel: L2capChannel<'static, crate::Pool>,
     device_queue: &'static DeviceQueue,
-    device_packets: &'static DevicePacketChannel,
-    stack: &'static Stack<'static, crate::Controller, crate::Pool>,
-    target: BdAddr,
-    settings: &'static crate::storage::Settings,
 ) {
+    let Device {
+        stack,
+        device_packets,
+        settings,
+        target,
+        ..
+    } = device;
     let (mut control_writer, mut control_reader) = l2cap_control_channel.split();
     let (mut data_writer, mut data_reader) = l2cap_data_channel.split();
 
@@ -452,7 +533,7 @@ async fn run_connection(
                     if let Some(bi) = bond {
                         let bd = crate::ble::security::bonddata_from_info(&bi);
                         info!("Storing bond for {:02x}", bd.bd_addr);
-                        crate::ble::security::BOND_TO_STORE.signal(bd);
+                        crate::ble::security::BOND_TO_STORE.send(bd).await;
                     }
                 }
                 trouble_host::prelude::ConnectionEvent::PairingFailed(err) => {

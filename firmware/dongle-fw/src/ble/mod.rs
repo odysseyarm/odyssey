@@ -7,6 +7,7 @@ pub mod central;
 pub mod device_task;
 pub mod pairing_scanner;
 pub mod security;
+pub mod task_slots;
 
 pub use central::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager};
 

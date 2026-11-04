@@ -74,8 +74,7 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
-                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data)
-                {
+                if crate::pairing::is_active() && crate::ble::central::adv_matches(rep.data) {
                     defmt::info!("pairing: adv/scan match {:02x}", addr);
                     crate::ble::central::report_scan_address(addr, name);
                     break;
@@ -93,8 +92,7 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
-                if crate::pairing::is_active() && crate::ble::central::adv_matches_pairing(rep.data)
-                {
+                if crate::pairing::is_active() && crate::ble::central::adv_matches(rep.data) {
                     defmt::info!("pairing: adv match (EXT) {:02x}", addr);
                     crate::ble::central::report_scan_address(addr, name);
                     break;
@@ -301,8 +299,6 @@ async fn main(mut spawner: Spawner) {
 
     let active_connections = ACTIVE_CONNECTIONS.init(ActiveConnections::new());
 
-    ble::security::load_bond_cache(settings).await;
-
     // Preloaded bonds let reconnects encrypt without re-pairing. ClearBonds
     // purges them from the host through HOST_MGMT_CH so no stale LTK survives.
     {
@@ -333,9 +329,6 @@ async fn main(mut spawner: Spawner) {
 
     use ble::central::DEVICE_QUEUES;
     let device_queues = DEVICE_QUEUES.init(ble::central::DeviceQueues::new());
-
-    // The control task looks these up at runtime.
-    ble::central::set_global_refs(active_connections, device_queues).await;
 
     spawner.spawn(unwrap!(usb_rx_task(
         ep_out,
@@ -374,7 +367,7 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
     use defmt::info;
 
     loop {
-        let bond = BOND_TO_STORE.wait().await;
+        let bond = BOND_TO_STORE.receive().await;
 
         info!("Storing bond for device {:02x}...", bond.bd_addr);
 
@@ -383,7 +376,6 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
                 info!("Bond stored successfully for device {:02x}", bond.bd_addr);
 
                 let _ = settings.add_scan_target(bond.bd_addr).await;
-                ble::security::update_bond_cache(bond).await;
 
                 // Prefer DEVICE_NAMES, which sees every adv report including scan
                 // responses, over PAIRING_FOUND_NAME, which may come from the primary
@@ -867,34 +859,18 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                         let _ = to_purge.push(*bd);
                     }
                 }
+                // Device tasks go first. One still running could reconnect, find
+                // its bond gone and pair again, re-adding the bond being cleared.
+                // Each task disconnects and frees its device queue before it
+                // releases its slot, so no queue is reused while a task reads it.
+                settings.scan_list_clear().await;
+                ble::task_slots::stop_all().await;
                 // Wait for the host purge so its bond DB and flash cannot disagree.
                 HOST_MGMT_CH.send(HostMgmtCmd::PurgeBonds(to_purge)).await;
                 HOST_MGMT_DONE.wait().await;
                 settings.bonds_clear().await;
-                settings.scan_list_clear().await;
-                ble::security::clear_bond_cache().await;
                 ble::central::clear_device_names();
                 settings.clear_device_names().await;
-
-                // Forget every live connection and its queue. This does not send a
-                // BLE disconnect itself.
-                if let (Some(active_connections), Some(device_queues)) = (
-                    ble::central::get_active_connections().await,
-                    ble::central::get_device_queues().await,
-                ) {
-                    let active_devs = active_connections.get_all().await;
-                    for dev in active_devs.iter() {
-                        info!(
-                            "Disconnecting active connection to {:02x} due to bond clear",
-                            dev
-                        );
-                        active_connections.remove(dev).await;
-                        device_queues.unregister(dev).await;
-                    }
-                }
-
-                // Restart the central loop now rather than at its next 2 s poll.
-                ble::central::RESTART_CENTRAL.signal(());
 
                 control::try_send_event(C::ClearBondsResponse(ClearBondsResult::Ok()));
             }
@@ -905,7 +881,6 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 match settings.add_bond(bond).await {
                     Ok(()) => {
                         let _ = settings.add_scan_target(bond.bd_addr).await;
-                        ble::security::update_bond_cache(bond).await;
                         HOST_MGMT_CH.send(HostMgmtCmd::AddBond(bond)).await;
                         let host_result = HOST_MGMT_ADD_RESULT.wait().await;
                         if host_result.is_err() {

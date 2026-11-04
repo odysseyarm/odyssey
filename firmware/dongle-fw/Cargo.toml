@@ -12,6 +12,7 @@ embassy-usb-driver = "0.2.0"
 embassy-time-driver = "0.2.0"
 embassy-sync = { version = "0.7.2", features = ["defmt"] }
 embassy-futures = "0.1.2"
+backon = { version = "1.6", default-features = false, features = ["embassy-sleep"] }
 embassy-embedded-hal = "0.5.0"
 
 defmt-rtt = { version = "0.4", optional = true }
