@@ -94,56 +94,11 @@ const ACCEL: Chart = Chart {
     },
 };
 
-#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
-const PNP_POSITION: Chart = Chart {
-    title: "PnP Position",
-    y_range: -5.0..1.0,
-    traces: XYZ,
-    fill: |out| {
-        let series = odyssey_cv::telemetry::pnp_solutions();
-        fill_vec3(series, out, |pose| {
-            pose.inverse_transform_point(&[0., 0., 0.].into())
-                .coords
-                .cast()
-        })
-    },
-};
-
-#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
-const PNP_ORIENTATION: Chart = Chart {
-    title: "PnP Orientation",
-    y_range: -3.15..3.15,
-    traces: XYZ,
-    fill: |out| {
-        let series = odyssey_cv::telemetry::pnp_solutions();
-        fill_vec3(series, out, |pose| {
-            let (x, y, z) = pose.rotation.inverse().euler_angles();
-            Vector3::new(x, y, z).cast()
-        })
-    },
-};
-
-#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
-const ROT_BIAS: Chart = Chart {
-    title: "ESKF Rot. Bias",
-    y_range: -1.0..1.0,
-    traces: XYZ,
-    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_rot_bias(), out),
-};
-
 const ACCEL_BIAS: Chart = Chart {
     title: "ESKF Accel. Bias",
     y_range: -5.0..5.0,
     traces: XYZ,
     fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_accel_bias(), out),
-};
-
-#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
-const GRAVITY: Chart = Chart {
-    title: "ESKF Gravity",
-    y_range: -10.0..10.0,
-    traces: XYZ,
-    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_gravity(), out),
 };
 
 const LOCAL_GRAVITY: Chart = Chart {
@@ -172,14 +127,6 @@ const ACCEL_BIAS_UNCERTAINTY: Chart = Chart {
     y_range: 0.0..1.0,
     traces: XYZ,
     fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_accel_bias_uncertainty(), out),
-};
-
-#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
-const ROT_BIAS_UNCERTAINTY: Chart = Chart {
-    title: "ESKF Rot. Bias Uncertainty",
-    y_range: 0.0..1.0,
-    traces: XYZ,
-    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_rot_bias_uncertainty(), out),
 };
 
 const VELOCITY_UNCERTAINTY: Chart = Chart {
@@ -344,7 +291,7 @@ impl ChartData {
     }
 }
 
-/// The "le plot" window contents: telemetry charts in a grid that fills the
+/// Live telemetry charts in a grid that fills the
 /// window. Space pauses and resumes them.
 #[derive(Debug)]
 pub struct PlotsWindow {
