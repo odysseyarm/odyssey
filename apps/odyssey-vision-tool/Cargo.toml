@@ -26,7 +26,6 @@ serde = "1.0.193"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "rt", "sync", "time"] }
 odyssey-cv = { workspace = true, features = ["telemetry"] }
 odyssey-common = { path = "../../crates/odyssey-common", features = ["std"] }
-odyssey-playback = { path = "../../crates/odyssey-playback" }
 odyssey-usb = { workspace = true }
 odyssey-protocol = { path = "../../crates/odyssey-protocol" }
 tokio-stream = { workspace = true }
@@ -46,7 +45,6 @@ bevy_infinite_grid = { git = "https://github.com/XYCaptain/bevy_infinite_grid.gi
 bevy_atmosphere = { version = "0.13.0", optional = true }
 num-traits = { workspace = true }
 num-derive = { workspace = true }
-cobs = "0.4.0"
 nusb = { workspace = true, features = ["tokio"] }
 postcard = { workspace = true, features = ["use-std"] }
 

@@ -21,7 +21,6 @@ nalgebra = "0.35"
 nusb = { workspace = true }
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = { workspace = true }
-serialport = { workspace = true, features = ["usbportinfo-interface"] }
 tokio = { workspace = true, features = ["signal", "io-std", "io-util", "macros", "rt-multi-thread"] }
 anyhow = { workspace = true }
 rand = "0.8"

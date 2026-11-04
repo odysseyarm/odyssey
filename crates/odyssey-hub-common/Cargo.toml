@@ -22,7 +22,6 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 json5 = "0.4.1"
 tokio = { workspace = true, features = ["fs"] }
-fixed_str = "0.9"
 uniffi = "0.31.0"
 
 [dev-dependencies]

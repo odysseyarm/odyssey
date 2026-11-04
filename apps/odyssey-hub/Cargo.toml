@@ -21,7 +21,3 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-[dependencies.interprocess]
-git = "https://github.com/kotauskas/interprocess.git"
-rev = "ffbf7c65911c87251c47a8403da9b91118eb259c"
-features = ["tokio"]
