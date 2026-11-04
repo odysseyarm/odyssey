@@ -6,7 +6,7 @@ use eframe::egui::{self, Color32, Painter, Rect, Stroke};
 use nalgebra::{Isometry3, Point2, Rotation2, Scale2, Transform2, Translation2, Vector2, Vector3};
 use parking_lot::Mutex;
 
-use crate::MotState;
+use crate::Marker;
 use crate::custom_shapes::{
     self, draw_crosshair_rotated, draw_diamond, draw_rect, draw_square, draw_text, to_pos,
 };
@@ -30,6 +30,70 @@ pub(crate) enum Source {
     Processed,
 }
 
+/// Copies only display data under the acquisition lock. Text layout and paint
+/// generation must not hold up device packets at the display's refresh rate.
+struct CanvasState {
+    gravity_angle: f64,
+    screen_id: u8,
+    is_poc_markers: bool,
+    nf_data: Option<ArrayVec<odyssey_usb::packets::vm::MotData, 16>>,
+    wf_data: Option<ArrayVec<odyssey_usb::packets::vm::MotData, 16>>,
+    nf_markers2: ArrayVec<Marker, 16>,
+    wf_markers2: ArrayVec<Marker, 16>,
+    wf_reproj: ArrayVec<Point2<f32>, 16>,
+    focal: Vector2<f32>,
+    pose: Isometry3<f32>,
+    screen: Option<odyssey_common::ScreenCalibration<f32>>,
+}
+
+impl CanvasState {
+    fn snapshot(runner: &MotRunner, source: Source) -> Self {
+        let state = &runner.state;
+        let gravity = state.orientation.inverse_transform_vector(&Vector3::z());
+        let raw = source == Source::Raw;
+        let processed = source == Source::Processed;
+        Self {
+            gravity_angle: f64::atan2(f64::from(-gravity.z), f64::from(-gravity.x)) + PI / 2.,
+            screen_id: state.fv_state.screen_id,
+            is_poc_markers: state.is_poc_markers,
+            nf_data: if raw { state.nf_data.clone() } else { None },
+            wf_data: if raw { state.wf_data.clone() } else { None },
+            nf_markers2: if processed {
+                state.nf_markers2.clone()
+            } else {
+                ArrayVec::new()
+            },
+            wf_markers2: if processed {
+                state.wf_markers2.clone()
+            } else {
+                ArrayVec::new()
+            },
+            wf_reproj: if processed {
+                state.wf_reproj.clone()
+            } else {
+                ArrayVec::new()
+            },
+            focal: Vector2::new(
+                runner.general_config.camera_model_nf.p.m11,
+                runner.general_config.camera_model_nf.p.m22,
+            ),
+            pose: Isometry3::from_parts(
+                state.fv_state.filter.position.into(),
+                state.fv_state.filter.orientation,
+            ),
+            screen: if processed {
+                runner
+                    .screen_calibrations
+                    .iter()
+                    .find(|(id, _)| *id == state.fv_state.screen_id)
+                    .map(|(_, calibration)| *calibration)
+            } else {
+                None
+            },
+        }
+    }
+}
+
 /// Fills the available space of `ui` with the tracking visualisation.
 pub(crate) fn show(ui: &mut egui::Ui, runner: &Arc<Mutex<MotRunner>>, source: Source) {
     let size = ui.available_size();
@@ -47,11 +111,8 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
     let stroke2 = Stroke::new(2., OUTLINE);
     let painter = &painter.with_clip_rect(rect);
 
-    let runner = runner.lock();
-    let state = &runner.state;
-
-    let gravity_vec = state.orientation.inverse_transform_vector(&Vector3::z());
-    let gravity_angle = f64::atan2(f64::from(-gravity_vec.z), f64::from(-gravity_vec.x)) + PI / 2.;
+    let state = CanvasState::snapshot(&runner.lock(), source);
+    let gravity_angle = state.gravity_angle;
 
     let center_tf = Translation2::new(f64::from(center.x), f64::from(center.y)).to_homogeneous();
 
@@ -88,7 +149,7 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
     draw_text(
         painter,
         rect.min + egui::vec2(20.0, 20.0),
-        &format!("screen_id = {}", state.fv_state.screen_id),
+        &format!("screen_id = {}", state.screen_id),
     );
 
     let gravity_rot = Rotation2::new(-gravity_angle);
@@ -100,21 +161,8 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
     );
 
     match source {
-        Source::Raw => draw_raw(painter, state, draw_tf, gravity_rot, stroke2),
-        Source::Processed => {
-            let screen_calibration = runner
-                .screen_calibrations
-                .iter()
-                .find(|x| x.0 == state.fv_state.screen_id);
-            draw_not_raw(
-                painter,
-                state,
-                &runner.general_config,
-                draw_tf,
-                gravity_rot,
-                screen_calibration,
-            );
-        }
+        Source::Raw => draw_raw(painter, &state, draw_tf, gravity_rot, stroke2),
+        Source::Processed => draw_not_raw(painter, &state, draw_tf, gravity_rot),
     }
 
     // Center point
@@ -123,13 +171,12 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
 
 fn draw_raw(
     painter: &Painter,
-    state: &MotState,
+    state: &CanvasState,
     draw_tf: Transform2<f64>,
     gravity_rot: Rotation2<f64>,
     marker_stroke: Stroke,
 ) {
     if let Some(nf_data) = state.nf_data.as_ref() {
-        let mut nf_points = ArrayVec::<Point2<f64>, 16>::new();
         for (i, mot_data) in nf_data.iter().enumerate() {
             if mot_data.area == 0 {
                 continue;
@@ -138,7 +185,6 @@ fn draw_raw(
             let p = Point2::new(mot_data.cx, mot_data.cy).cast::<f64>() / 4095.
                 - Vector2::new(0.5, 0.5);
             let p = gravity_rot * p;
-            nf_points.push((p + Vector2::new(0.5, 0.5)) * 4095.);
             let p = draw_tf * p;
 
             custom_shapes::fill_rectangle(
@@ -216,51 +262,26 @@ fn pattern_color(pattern_id: Option<u8>, known: u8, unmatched: Color32) -> Color
 
 fn draw_not_raw(
     painter: &Painter,
-    state: &MotState,
-    config: &odyssey_usb::device::GeneralSettings,
+    state: &CanvasState,
     draw_tf: Transform2<f64>,
     gravity_rot: Rotation2<f64>,
-    screen: Option<&(u8, odyssey_common::ScreenCalibration<f32>)>,
 ) {
-    let fx = config.camera_model_nf.p.m11;
-    let fy = config.camera_model_nf.p.m22;
-
-    // After to_normalized_image_coordinates, coords are in normalized image space.
-    // Scale to fit display box. The divisor matches the sensor's max coordinate range.
-    // For POC: box is 0.5 x 0.375 (4:3 aspect), sensor is 20479 x 15359
-    // For regular: box is 0.5 x 0.5 (square), sensor is 4095 x 4095
-    let normalized_scale = if state.is_poc_markers {
-        // POC: scale so edge of sensor maps to edge of box
-        Scale2::new(fx / 20479.0, fy / 15359.0)
+    // WF rays have already been rotated into the NF camera's coordinates, so
+    // both use the NF focal length. POC's 4:3 box keeps the same scale on each
+    // axis: 15359 / 20479 is its displayed 0.75 height-to-width ratio.
+    let sensor_width = if state.is_poc_markers {
+        20479.0
     } else {
-        // Regular: 4095x4095 max coordinate range, square box
-        Scale2::new(fx / 4095.0, fy / 4095.0)
+        4095.0
     };
-
-    if state.is_poc_markers {
-        tracing::debug!(
-            "POC scale: fx={}, fy={}, scale_x={}, scale_y={}",
-            fx,
-            fy,
-            fx / 20479.0,
-            fy / 15359.0
-        );
-    }
+    let normalized_scale = Scale2::new(state.focal.x / sensor_width, state.focal.y / sensor_width);
 
     let thin = |color| Stroke::new(1., color);
 
     for marker in &state.nf_markers2 {
         let p = normalized_scale * marker.normalized;
-        if state.is_poc_markers {
-            tracing::debug!(
-                "POC marker: raw=({}, {}), scaled=({}, {}), fx={}, fy={}",
-                marker.normalized.x,
-                marker.normalized.y,
-                p.x,
-                p.y,
-                fx,
-                fy
-            );
+        if !p.coords.iter().all(|coordinate| coordinate.is_finite()) {
+            continue;
         }
         let p = gravity_rot * p.cast();
         let p = draw_tf * p;
@@ -278,6 +299,9 @@ fn draw_not_raw(
 
     for marker in &state.wf_markers2 {
         let p = normalized_scale * marker.normalized;
+        if !p.coords.iter().all(|coordinate| coordinate.is_finite()) {
+            continue;
+        }
         let p = gravity_rot * p.cast();
         let p = draw_tf * p;
 
@@ -294,37 +318,38 @@ fn draw_not_raw(
     }
 
     // Projects a camera-space point into the canvas through the near field intrinsics.
-    let project = |p: nalgebra::Point3<f32>| {
-        let p = p / p.z;
-        // todo don't use hardcoded 4095x4095 res assumption
-        let p = Point2::new(p.x * fx, p.y * fy) / 4095.;
-        to_pos(draw_tf * (gravity_rot * p.cast()))
+    let project = |point: nalgebra::Point3<f32>| {
+        if point.z <= 0.0 || !point.coords.iter().all(|coordinate| coordinate.is_finite()) {
+            return None;
+        }
+        let point = normalized_scale * Point2::new(point.x / point.z, point.y / point.z);
+        Some(to_pos(draw_tf * (gravity_rot * point.cast())))
     };
 
-    if let Some((_, screen_calibration)) = screen {
-        for p in screen_calibration.object_points {
-            // eskf reprojections
-            let position = state.fv_state.filter.position;
-            let orientation = state.fv_state.filter.orientation;
-            let reproj_tf = Isometry3::from_parts(position.into(), orientation);
-            let p = project(reproj_tf.cast().inverse_transform_point(&p));
+    if let Some(screen_calibration) = &state.screen {
+        for point in screen_calibration.object_points {
+            let Some(p) = project(state.pose.cast().inverse_transform_point(&point)) else {
+                continue;
+            };
             draw_crosshair_rotated(painter, p, 20., thin(Color32::from_rgb(0, 176, 107)));
         }
     }
     let pnp_iso = odyssey_cv::telemetry::pnp_solutions().get_last();
     if let Some(pnp_iso) = pnp_iso
-        && let Some((_, screen_calibration)) = screen
+        && let Some(screen_calibration) = &state.screen
     {
-        for p in screen_calibration.object_points {
-            // pnp reprojections
-            let reproj_tf = pnp_iso.inverse();
-            let p = project(reproj_tf.cast().inverse_transform_point(&p));
+        for point in screen_calibration.object_points {
+            let Some(p) = project(pnp_iso.cast().transform_point(&point)) else {
+                continue;
+            };
             draw_crosshair_rotated(painter, p, 20., thin(Color32::from_gray(77)));
         }
     }
     for p in &state.wf_reproj {
-        // todo don't use hardcoded 4095x4095 res assumption
-        let p = Point2::new(p.x * fx, p.y * fy) / 4095.;
+        let p = normalized_scale * p;
+        if !p.coords.iter().all(|coordinate| coordinate.is_finite()) {
+            continue;
+        }
         let p = to_pos(draw_tf * (gravity_rot * p.cast()));
         draw_crosshair_rotated(
             painter,
