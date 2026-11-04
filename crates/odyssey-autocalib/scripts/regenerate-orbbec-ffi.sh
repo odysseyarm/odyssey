@@ -68,7 +68,15 @@ awk -v keep="^($constants)\$" '
             next
         }
     }
-    { print }
+    {
+        # The function table is private to the backend. Keep generated fields
+        # public for access through Sdk, but restrict declarations and methods.
+        sub(/^pub /, "pub(super) ")
+        sub(/^    pub unsafe fn /, "    pub(super) unsafe fn ")
+        gsub(/Ok\(OrbbecSdk \{/, "Ok(Self {")
+        print
+    }
 ' "$tmp" >"$out"
+rustfmt "$out"
 
 echo "wrote $out"
