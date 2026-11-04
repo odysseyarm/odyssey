@@ -1,5 +1,6 @@
 mod commands;
 mod connection_changes;
+mod images;
 mod sensor_control;
 #[cfg(test)]
 mod tests;
@@ -80,6 +81,8 @@ pub(super) struct DeviceHandler {
     tracker: DeviceTracker,
     sensors: SensorStreams,
     stream_timers: StreamRestartTimers,
+    image_session: Option<images::ImageSession>,
+    image_reboot_required: bool,
     shot_delay_stream: Fuse<WatchStream<u32>>,
     control_stream: Fuse<ReceiverStream<DeviceTaskMessage>>,
 }
@@ -150,6 +153,8 @@ impl DeviceHandler {
             tracker,
             sensors,
             stream_timers: StreamRestartTimers::new(),
+            image_session: None,
+            image_reboot_required: false,
             shot_delay_stream: WatchStream::new(shot_delay_rx).fuse(),
             control_stream: ReceiverStream::new(control_rx).fuse(),
         }
@@ -178,10 +183,15 @@ impl DeviceHandler {
                         break;
                     }
                 }
+                image_event = images::next_image_event(&mut self.image_session),
+                    if self.image_session.is_some() =>
+                {
+                    self.on_image_event(image_event).await;
+                }
                 Some(new_delay) = self.shot_delay_stream.next() => {
                     self.on_shot_delay_changed(new_delay).await;
                 }
-                () = &mut self.stream_timers.resume_sleep, if self.stream_timers.resume_armed => {
+                () = &mut self.stream_timers.resume_sleep, if self.stream_timers.resume_armed && !self.image_reboot_required => {
                     self.on_streams_resume_due().await;
                 }
                 () = &mut self.stream_timers.retry_sleep,
@@ -207,6 +217,9 @@ impl DeviceHandler {
             }
         }
 
+        self.stop_image_session(Some(tonic::Status::unavailable("device disconnected")))
+            .await;
+
         info!(
             "Device handler task ending for {:02x?}, sending disconnect",
             self.device.uuid
@@ -219,7 +232,67 @@ impl DeviceHandler {
 
     /// Dispatch one control message. `Break` ends the handler task.
     async fn on_control_message(&mut self, message: DeviceTaskMessage) -> ControlFlow<()> {
+        // Sensor operations and link replacement must never race camera mode ownership.
+        // End capture explicitly before allowing the existing supervised control path
+        // to pause streams, change transport, or replace an endpoint.
+        if self.image_session.is_some()
+            && matches!(
+                &message,
+                DeviceTaskMessage::ReadRegister { .. }
+                    | DeviceTaskMessage::WriteRegister { .. }
+                    | DeviceTaskMessage::ReadConfig { .. }
+                    | DeviceTaskMessage::WriteConfig { .. }
+                    | DeviceTaskMessage::FlashSettings { .. }
+                    | DeviceTaskMessage::SetTransportMode { .. }
+                    | DeviceTaskMessage::AddControlDevice { .. }
+                    | DeviceTaskMessage::RemoveControlDevice
+            )
+        {
+            self.stop_image_session(Some(tonic::Status::aborted(
+                "image session ended for device control or transport change",
+            )))
+            .await;
+        }
+        if self.image_reboot_required {
+            let refused = "Legacy image mode requires reboot/power-cycle and reconnect before sensor settings can be accessed.";
+            match message {
+                DeviceTaskMessage::ReadRegister { reply, .. }
+                | DeviceTaskMessage::ReadConfig { reply, .. } => {
+                    let _ = reply.send(Err(refused.to_owned()));
+                    return ControlFlow::Continue(());
+                }
+                DeviceTaskMessage::WriteRegister { reply, .. }
+                | DeviceTaskMessage::WriteConfig { reply, .. }
+                | DeviceTaskMessage::FlashSettings { reply } => {
+                    let _ = reply.send(Err(refused.to_owned()));
+                    return ControlFlow::Continue(());
+                }
+                _ => {}
+            }
+        }
         match message {
+            DeviceTaskMessage::Reboot { reply } => {
+                self.stop_image_session(None).await;
+                let result = match self.connections.control_device.clone() {
+                    Some(device) => tokio::time::timeout(CALL_TIMEOUT, device.reboot()).await
+                        .map_err(|error| format!("Device reboot acknowledgement timed out: {error}; power-cycle and reconnect if it does not return."))
+                        .and_then(|result| result.map_err(|error| error.to_string())),
+                    None => Err("No USB control endpoint; power-cycle the device and reconnect.".to_owned()),
+                };
+                let accepted = result.is_ok();
+                let _ = reply.send(result);
+                if accepted {
+                    return ControlFlow::Break(());
+                }
+            }
+            DeviceTaskMessage::StartImages {
+                config,
+                renewals: super::ImageRenewals(renewals),
+                reply,
+            } => {
+                let result = self.start_image_session(config, renewals).await;
+                let _ = reply.send(Ok(result));
+            }
             DeviceTaskMessage::SetTransportMode { usb_mode, reply } => {
                 return self.on_set_transport_mode(usb_mode, reply).await;
             }
@@ -358,6 +431,9 @@ impl DeviceHandler {
 
     /// A link is attached whose sensor streams are not running.
     fn has_stopped_streams(&self) -> bool {
+        if self.image_reboot_required {
+            return false;
+        }
         let events_stopped = self.connections.events_device.is_some() && !self.sensors.is_running();
         let standby_stopped = self
             .standby
@@ -424,7 +500,7 @@ async fn read_initial_settings(
 }
 
 fn log_config_read(
-    read: Result<anyhow::Result<GeneralSettings>, tokio::time::error::Elapsed>,
+    read: Result<odyssey_usb::Result<GeneralSettings>, tokio::time::error::Elapsed>,
     uuid: [u8; 6],
     via: &str,
     call_name: &str,
@@ -469,7 +545,7 @@ async fn call_over_links<T, Call, Fut>(
 ) -> Result<T, String>
 where
     Call: Fn(VmDevice) -> Fut,
-    Fut: Future<Output = anyhow::Result<T>>,
+    Fut: Future<Output = odyssey_usb::Result<T>>,
 {
     let mut result = Err(format!("{call_name}: no device available"));
     for (attempt, link) in links.iter().enumerate() {

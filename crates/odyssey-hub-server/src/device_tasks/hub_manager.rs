@@ -6,11 +6,11 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use backon::{ConstantBuilder, Retryable as _};
 use futures::stream::{self, BoxStream, StreamExt as _};
 use futures_concurrency::stream::Merge as _;
 use odyssey_hub_common::events::Event;
+use odyssey_usb::Result;
 use odyssey_usb::device::{MuxDevice, PairingEvent};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
@@ -40,7 +40,7 @@ type DeviceSnapshot = heapless::Vec<DeviceAddress, { odyssey_protocol::mux::MAX_
 /// Everything a hub manager needs to start.
 pub(super) struct HubManagerInit {
     pub(super) hub: MuxDevice,
-    pub(super) hub_info: nusb::DeviceInfo,
+    pub(super) serial: String,
     pub(super) context: DeviceTaskContext,
     pub(super) device_handles: DeviceHandles,
     pub(super) shutdown: oneshot::Receiver<()>,
@@ -66,7 +66,7 @@ pub(super) struct HubManager {
     context: DeviceTaskContext,
     device_handles: DeviceHandles,
     hub: MuxDevice,
-    hub_info: nusb::DeviceInfo,
+    serial: String,
     dongle: DongleIdentity,
     /// Unique to this manager incarnation, even when a dongle reconnects at the same address.
     events_owner: Arc<()>,
@@ -84,7 +84,7 @@ impl HubManager {
     /// watches for that (see `UsbDeviceManager::on_hub_device`).
     pub(super) fn spawn(init: HubManagerInit) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            tracing::info!("Hub manager task started for hub {:?}", init.hub_info);
+            tracing::info!("Hub manager task started for hub {}", init.serial);
             let (manager, commands, shutdown) = Self::register(init).await;
             manager.run(commands, shutdown).await;
         })
@@ -100,17 +100,17 @@ impl HubManager {
     ) {
         let HubManagerInit {
             hub,
-            hub_info,
+            serial,
             context,
             device_handles,
             shutdown,
         } = init;
-        let dongle = DongleIdentity::read(&hub, &hub_info).await;
+        let dongle = DongleIdentity::read(&hub, &serial).await;
         let manager = Self {
             context,
             device_handles,
             hub,
-            hub_info,
+            serial,
             dongle,
             events_owner: Arc::new(()),
             managed_devices: HashMap::new(),
@@ -362,7 +362,7 @@ impl HubManager {
 
         tracing::info!(
             "Hub manager task ending for hub {:?}, cleaning up {} devices",
-            self.hub_info,
+            self.serial,
             self.managed_devices.len()
         );
         for (address, device) in &self.managed_devices {
@@ -380,7 +380,7 @@ impl HubManager {
                 )))
                 .await;
         }
-        tracing::info!("Hub manager task ended for hub {:?}", self.hub_info);
+        tracing::info!("Hub manager task ended for hub {}", self.serial);
     }
 
     fn connected_addresses(&self) -> Vec<DeviceAddress> {

@@ -329,7 +329,11 @@ impl DeviceHandler {
         let result = call_with_timeout(
             CALL_TIMEOUT,
             "set_transport_mode",
-            device.set_transport_mode(usb_mode),
+            device.set_transport_mode(if usb_mode {
+                TransportMode::Usb
+            } else {
+                TransportMode::Ble
+            }),
         )
         .await
         .map(|mode| matches!(mode, TransportMode::Usb));

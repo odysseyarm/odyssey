@@ -68,6 +68,9 @@ impl DeviceHandler {
     /// Subscribe again on every attached link whose streams are not running. The events
     /// device goes first: it is the link the reports come over.
     async fn start_stopped_streams(&mut self) {
+        if self.image_reboot_required {
+            return;
+        }
         let uuid = self.device.uuid;
         if !self.sensors.is_running()
             && let Some(events_device) = self.connections.events_device.as_ref()

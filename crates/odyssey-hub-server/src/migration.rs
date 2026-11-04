@@ -14,7 +14,7 @@ use nusb::{DeviceInfo, MaybeFuture as _};
 /// Serial numbers that identify nothing.
 ///
 /// The legacy ATS Lite bootloader reports a hardcoded string for every unit
-/// (`firmware/legacy/vm-fw/boards/atslite/bootloader/src/main.rs`), so while a
+/// (`firmware/legacy-atslite-bootloader/src/main.rs`), so while a
 /// device of that generation sits in DFU, its serial cannot be matched against
 /// a uuid. The current bootloader derives the serial from FICR instead.
 const PLACEHOLDER_SERIALS: &[&str] = &["1235678"];

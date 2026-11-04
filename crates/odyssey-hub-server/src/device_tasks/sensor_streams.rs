@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use anyhow::Result;
 use futures::stream::{BoxStream, SelectAll, Stream, StreamExt as _};
+use odyssey_usb::Result;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::{
     AccelReport, BatteryReport, CombinedMarkersReport, ImpactReport, PocMarkersReport,

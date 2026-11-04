@@ -41,7 +41,7 @@ impl UsbDeviceManager {
         &mut self,
         dev_info: &nusb::DeviceInfo,
         direct_usb_id: &str,
-        connect_error: &anyhow::Error,
+        connect_error: &odyssey_usb::Error,
         present: &mut PresentUsbDevices,
     ) {
         tracing::debug!("Failed to connect to USB device: {}", connect_error);

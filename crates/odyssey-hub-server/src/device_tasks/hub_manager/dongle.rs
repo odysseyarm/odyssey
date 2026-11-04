@@ -26,8 +26,8 @@ pub(super) struct DongleIdentity {
 impl DongleIdentity {
     /// Ask the dongle for its versions. A dongle that does not answer is registered with
     /// versions 0.0.0 rather than skipped.
-    pub(super) async fn read(hub: &MuxDevice, hub_info: &nusb::DeviceInfo) -> Self {
-        let id = hub_info.serial_number().unwrap_or("unknown").to_string();
+    pub(super) async fn read(hub: &MuxDevice, serial: &str) -> Self {
+        let id = serial.to_owned();
         let (protocol_version, firmware_version) = match hub.read_version().await {
             Ok(version) => {
                 info!(

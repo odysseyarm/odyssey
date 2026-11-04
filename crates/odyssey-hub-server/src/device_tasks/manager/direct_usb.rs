@@ -22,6 +22,25 @@ use crate::firmware::DFU_CLASS;
 /// Capacity of a handler's control channel.
 const HANDLER_CHANNEL_CAPACITY: usize = 32;
 
+/// Discovery metadata independent of the USB enumerator.
+pub(super) struct DirectUsbMetadata<'a> {
+    pub(super) product_id: u16,
+    pub(super) product_name: &'a str,
+    pub(super) dfu: bool,
+}
+
+impl<'a> DirectUsbMetadata<'a> {
+    fn from_usb(info: &'a nusb::DeviceInfo) -> Self {
+        Self {
+            product_id: info.product_id(),
+            product_name: info.product_string().unwrap_or_default(),
+            dfu: info
+                .interfaces()
+                .any(|interface| interface.class() == DFU_CLASS),
+        }
+    }
+}
+
 /// A unit that answered on its USB control or packet endpoint, with what it reported.
 struct ProbedUsbDevice {
     uuid: DeviceAddress,
@@ -65,7 +84,6 @@ impl UsbDeviceManager {
         product_id: ProductId,
         present: &mut PresentUsbDevices,
     ) {
-        let pid = dev_info.product_id();
         let direct_usb_id = format!("{:?}", dev_info.id());
         present.direct_usb_ids.insert(direct_usb_id.clone());
         debug!("Found direct USB device {product_id:?}, checking if already connected");
@@ -76,8 +94,49 @@ impl UsbDeviceManager {
         else {
             return;
         };
-        let uuid = probed.uuid;
+        self.register_direct_usb(direct_usb_id, DirectUsbMetadata::from_usb(dev_info), probed)
+            .await;
+    }
 
+    #[cfg(feature = "sim")]
+    pub(super) async fn on_simulated_unit(
+        &mut self,
+        connection: VmDevice,
+        present: &mut PresentUsbDevices,
+    ) {
+        let id = "sim:unit-usb".to_owned();
+        present.direct_usb_ids.insert(id.clone());
+        let Ok(odyssey_protocol::Props::ProductId(product_id)) = connection
+            .read_prop(odyssey_protocol::PropKind::ProductId)
+            .await
+        else {
+            return;
+        };
+        let Some(product_id) = ProductId::from_u16(product_id) else {
+            return;
+        };
+        if let Some(probed) = Self::probe_connection(connection, product_id, false).await {
+            self.register_direct_usb(
+                id,
+                DirectUsbMetadata {
+                    product_id: product_id as u16,
+                    product_name: "Odyssey Simulator",
+                    dfu: false,
+                },
+                probed,
+            )
+            .await;
+        }
+    }
+
+    async fn register_direct_usb(
+        &mut self,
+        direct_usb_id: String,
+        metadata: DirectUsbMetadata<'_>,
+        probed: ProbedUsbDevice,
+    ) {
+        let uuid = probed.uuid;
+        let pid = metadata.product_id;
         let replace_control = self.direct_usb_id_to_uuid.get(&direct_usb_id) != Some(&uuid);
         self.direct_usb_id_to_uuid.insert(direct_usb_id, uuid);
         self.last_uuid_by_pid.insert(pid, uuid);
@@ -93,7 +152,7 @@ impl UsbDeviceManager {
         // No handler yet, or a BLE-mux handler is being replaced; the probe's connection
         // is reused.
         info!("Connecting new USB device with UUID {uuid:02x?}, PID: 0x{pid:04x}");
-        self.spawn_direct_usb_handler(dev_info, probed).await;
+        self.spawn_direct_usb_handler(&metadata, probed).await;
     }
 
     /// Connect and read UUID/version/transport mode. The connection is kept if the unit
@@ -114,6 +173,19 @@ impl UsbDeviceManager {
             }
         };
 
+        Self::probe_connection(
+            vm_device,
+            product_id,
+            DirectUsbMetadata::from_usb(dev_info).dfu,
+        )
+        .await
+    }
+
+    async fn probe_connection(
+        vm_device: VmDevice,
+        product_id: ProductId,
+        dfu: bool,
+    ) -> Option<ProbedUsbDevice> {
         // Control plane for AtsLite/AtsPro (control endpoint), packet protocol for AtsVm.
         let uuid = read_uuid_with_retry(&vm_device, product_id).await?;
         let firmware = read_firmware_version(&vm_device, uuid).await;
@@ -137,9 +209,7 @@ impl UsbDeviceManager {
             events_protocol_version,
             transport_mode,
             transport_selection,
-            dfu: dev_info
-                .interfaces()
-                .any(|interface| interface.class() == DFU_CLASS),
+            dfu,
             vm_device,
         })
     }
@@ -238,7 +308,11 @@ impl UsbDeviceManager {
         }
     }
 
-    async fn spawn_direct_usb_handler(&self, dev_info: &nusb::DeviceInfo, probed: ProbedUsbDevice) {
+    async fn spawn_direct_usb_handler(
+        &self,
+        metadata: &DirectUsbMetadata<'_>,
+        probed: ProbedUsbDevice,
+    ) {
         // USB scans and dongle snapshots can discover the same UUID concurrently.
         // Check and install under one lock so neither task replaces a live handler.
         let mut handles = self.device_handles.lock().await;
@@ -251,7 +325,7 @@ impl UsbDeviceManager {
             return;
         }
         let uuid = probed.uuid;
-        let device = direct_usb_device(dev_info, &probed);
+        let device = direct_usb_device(metadata, &probed);
         let (commands, control_rx) = mpsc::channel(HANDLER_CHANNEL_CAPACITY);
         let netcore_probe_link = NetCoreLink::Control(probed.vm_device.clone());
         let control_protocol_version = probed.control_protocol_version();
@@ -367,7 +441,7 @@ impl UsbDeviceManager {
 }
 
 /// The device-list entry for a unit that is plugged in over USB.
-fn direct_usb_device(dev_info: &nusb::DeviceInfo, probed: &ProbedUsbDevice) -> Device {
+fn direct_usb_device(metadata: &DirectUsbMetadata<'_>, probed: &ProbedUsbDevice) -> Device {
     let in_usb_mode = probed.streams_over_usb();
 
     // CONTROL always; EVENTS only in USB transport mode; DFU whenever the device exposes
@@ -379,17 +453,10 @@ fn direct_usb_device(dev_info: &nusb::DeviceInfo, probed: &ProbedUsbDevice) -> D
     if probed.transport_selection == TransportSelection::Automatic {
         capabilities.insert(DeviceCapabilities::AUTO_TRANSPORT);
     }
-    if dev_info
-        .interfaces()
-        .any(|interface| interface.class() == DFU_CLASS)
-    {
+    if metadata.dfu {
         capabilities.insert(DeviceCapabilities::DFU);
     }
 
-    let product_name = dev_info
-        .product_string()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_default();
     Device {
         uuid: probed.uuid,
         transport: Transport::Usb,
@@ -404,8 +471,67 @@ fn direct_usb_device(dev_info: &nusb::DeviceInfo, probed: &ProbedUsbDevice) -> D
             EventsTransport::Bluetooth
         },
         events_connected: in_usb_mode,
-        product_id: dev_info.product_id(),
-        name: Device::name_bytes(product_name),
+        product_id: metadata.product_id,
+        name: Device::name_bytes(metadata.product_name),
         netcore_release: 0,
+    }
+}
+
+#[cfg(all(test, feature = "sim"))]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use arc_swap::ArcSwap;
+    use odyssey_sim::{Command, SensorModel, Simulator};
+    use tokio::sync::{Mutex, RwLock, broadcast};
+
+    use super::*;
+    use crate::device_tasks::context::DeviceTaskContext;
+
+    #[tokio::test]
+    async fn simulated_registration_distinguishes_modern_from_reboot_required_cameras() {
+        for (model, expected) in [
+            (SensorModel::Pag7665qn, ProductId::AtsPro),
+            (SensorModel::Paj7025, ProductId::AtsLite),
+        ] {
+            let simulator = Simulator::with_sensor_model(model);
+            simulator
+                .handle()
+                .execute(Command::UnitUsb { plugged: true })
+                .await
+                .unwrap();
+            let (message_channel, mut messages) = mpsc::channel(16);
+            let context = DeviceTaskContext {
+                message_channel,
+                screen_calibrations: Arc::new(ArcSwap::from_pointee(Default::default())),
+                device_offsets: Arc::new(Mutex::new(Default::default())),
+                device_shot_delays: Arc::new(RwLock::new(Default::default())),
+                shot_delay_watch: Arc::new(RwLock::new(Default::default())),
+                event_sender: broadcast::channel(16).0,
+                direct_usb_handler_uuids: Arc::new(Mutex::new(Default::default())),
+                bond_names: Arc::new(Mutex::new(Default::default())),
+            };
+            let mut manager = UsbDeviceManager::new(context);
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                manager.on_simulated_unit(
+                    simulator.connect_unit_usb(),
+                    &mut PresentUsbDevices::default(),
+                ),
+            )
+            .await
+            .unwrap();
+            let Some(Message::Connect(device, _)) =
+                tokio::time::timeout(Duration::from_secs(5), messages.recv())
+                    .await
+                    .unwrap()
+            else {
+                panic!("simulated unit must register a connected device");
+            };
+            assert_eq!(device.product_id, expected as u16, "{model:?}");
+            drop(manager);
+            simulator.shutdown().await.unwrap();
+        }
     }
 }

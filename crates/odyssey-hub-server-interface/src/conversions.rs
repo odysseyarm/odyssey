@@ -7,5 +7,6 @@ mod accessory;
 mod device;
 mod event;
 mod hardware_address;
+mod image;
 mod math;
 mod screen;

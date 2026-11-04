@@ -11,12 +11,32 @@ use super::transport_selection::TransportSelection;
 /// Answer channel of a request: the value, or the reason it failed, as text for the RPC reply.
 pub(crate) type Reply<T> = oneshot::Sender<Result<T, String>>;
 
+/// Lease renewals from the image RPC's request stream.
+pub(crate) struct ImageRenewals(pub(crate) futures::stream::BoxStream<'static, ()>);
+
+impl std::fmt::Debug for ImageRenewals {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ImageRenewals")
+    }
+}
+
 /// Commands for one device's handler task.
 #[derive(Debug)]
 pub(crate) enum DeviceTaskMessage {
     ResetZero,
+    /// Capture on the unit's USB events endpoint, under its handler's ownership.
+    /// Each `renewals` item extends the device lease; its end stops capture.
+    StartImages {
+        config: odyssey_protocol::image::ImageStreamConfig,
+        renewals: ImageRenewals,
+        reply: Reply<Result<super::image_stream::ImageResponseStream, tonic::Status>>,
+    },
+    Reboot {
+        reply: Reply<()>,
+    },
     SaveZero,
-    /// Send a vendor packet; the USB layer rejects invalid tags or payloads over 98 bytes.
+    /// Send a vendor packet; the USB layer rejects invalid tags and payloads over
+    /// `VendorData::CAPACITY` bytes.
     WriteVendor(u8, Vec<u8>),
     /// Shot delay in milliseconds, applied live to the running handler.
     SetShotDelay(u16),

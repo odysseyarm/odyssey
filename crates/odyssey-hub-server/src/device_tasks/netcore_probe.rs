@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use anyhow::Result;
 use backon::Retryable as _;
+use odyssey_usb::Result;
 use odyssey_usb::device::VmDevice;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -179,7 +179,7 @@ mod netcore_probe_tests {
     }
 
     fn failed() -> Result<u16> {
-        Err(anyhow::anyhow!("no answer"))
+        Err(odyssey_usb::Error::Closed)
     }
 
     #[tokio::test]

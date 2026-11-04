@@ -62,6 +62,10 @@ struct FakeLink {
 
 impl FakeLink {
     fn new() -> Self {
+        Self::with_images(false)
+    }
+
+    fn with_images(images: bool) -> Self {
         let (writer, mut written) = mpsc::channel::<Packet>(64);
         let (to_host, incoming) = mpsc::channel::<Packet>(64);
         let (log, sent) = mpsc::unbounded_channel();
@@ -72,7 +76,26 @@ impl FakeLink {
                     let _ = acks
                         .send(Packet {
                             id: packet.id,
-                            data: PacketData::Ack(),
+                            data: match &packet.data {
+                                PacketData::ImageCommand(command) if images => {
+                                    use odyssey_protocol::image::{
+                                        ImageCommand, ImageStatus, ImageStatusCode,
+                                    };
+                                    let (generation, status) = match command {
+                                        ImageCommand::Start { generation, .. } => {
+                                            (*generation, ImageStatusCode::Started)
+                                        }
+                                        ImageCommand::Stop { generation } => {
+                                            (*generation, ImageStatusCode::Stopped)
+                                        }
+                                        ImageCommand::Renew { .. } => {
+                                            unreachable!("request_images never renews")
+                                        }
+                                    };
+                                    PacketData::ImageStatus(ImageStatus { generation, status })
+                                }
+                                _ => PacketData::Ack(),
+                            },
                         })
                         .await;
                 }
@@ -673,4 +696,177 @@ async fn a_request_that_fails_over_a_pulled_cable_goes_over_ble() {
         ble.receives(|data| matches!(data, PacketData::WriteConfig(_)))
             .await
     );
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "test helper preserves the image RPC's Result<_, Status> contract"
+)]
+async fn request_images(
+    harness: &Harness,
+) -> Result<crate::device_tasks::image_stream::ImageResponseStream, tonic::Status> {
+    let (reply, answer) = oneshot::channel();
+    harness
+        .send(DeviceTaskMessage::StartImages {
+            config: odyssey_protocol::image::ImageStreamConfig {
+                camera: odyssey_protocol::Port::Nf,
+                fps: 5,
+            },
+            renewals: crate::device_tasks::ImageRenewals(Box::pin(futures::stream::pending())),
+            reply,
+        })
+        .await;
+    tokio::time::timeout(WAIT, answer)
+        .await
+        .expect("image request finishes")
+        .expect("handler replies")
+        .expect("handler serves request")
+}
+
+#[tokio::test]
+async fn image_capture_rejects_usb_control_with_bluetooth_events() {
+    let usb = FakeLink::with_images(true);
+    let ble = FakeLink::with_images(true);
+    let mut connected = device(DeviceCapabilities::CONTROL | DeviceCapabilities::EVENTS);
+    connected.events_connected = true;
+    connected.transport = Transport::Usb;
+    let harness = start_handler_with_links(
+        connected,
+        None,
+        Some(usb.device.clone()),
+        Some(ble.device.clone()),
+    );
+    let error = request_images(&harness)
+        .await
+        .expect_err("BLE is not an image transport");
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn image_owner_keeps_independent_reports_and_restarts_after_drop() {
+    let mut usb = FakeLink::with_images(true);
+    let mut connected = device(DeviceCapabilities::CONTROL | DeviceCapabilities::EVENTS);
+    connected.transport = Transport::Usb;
+    connected.events_transport = EventsTransport::Wired;
+    connected.events_connected = true;
+    let mut harness = start_handler_with_links(
+        connected,
+        None,
+        Some(usb.device.clone()),
+        Some(usb.device.clone()),
+    );
+    let images = request_images(&harness).await.expect("image stream starts");
+    let error = request_images(&harness)
+        .await
+        .expect_err("one camera owner per unit");
+    assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+    usb.report_impact(811).await;
+    harness.expect_impact(811).await;
+    drop(images);
+    let images = request_images(&harness)
+        .await
+        .expect("capture restarts immediately after cancellation");
+    assert!(
+        usb.receives(|data| matches!(
+            data,
+            PacketData::ImageCommand(odyssey_protocol::image::ImageCommand::Stop { .. })
+        ))
+        .await,
+        "consumer drop stops image capture"
+    );
+    usb.report_impact(812).await;
+    harness.expect_impact(812).await;
+    drop(images);
+}
+
+#[tokio::test]
+async fn rejected_image_start_restores_sensor_subscriptions() {
+    let usb = FakeLink::new(); // Old firmware ACKs unknown commands, never advertises support.
+    let mut connected = device(DeviceCapabilities::CONTROL | DeviceCapabilities::EVENTS);
+    connected.transport = Transport::Usb;
+    connected.events_transport = EventsTransport::Wired;
+    connected.events_connected = true;
+    let mut harness = start_handler_with_links(
+        connected,
+        None,
+        Some(usb.device.clone()),
+        Some(usb.device.clone()),
+    );
+    let error = request_images(&harness)
+        .await
+        .expect_err("generic ACK is not image support");
+    assert_eq!(error.code(), tonic::Code::Unimplemented);
+    usb.report_impact(813).await;
+    harness.expect_impact(813).await;
+}
+
+#[tokio::test]
+async fn image_frames_use_the_events_endpoint_and_end_when_usb_detaches() {
+    use futures::StreamExt as _;
+    use odyssey_protocol::image::{IMAGE_CHUNK_CAPACITY, ImageChunk, ImageCommand};
+
+    let control = FakeLink::new();
+    let mut events = FakeLink::with_images(true);
+    let mut connected = device(DeviceCapabilities::CONTROL | DeviceCapabilities::EVENTS);
+    connected.transport = Transport::Usb;
+    connected.events_transport = EventsTransport::Wired;
+    connected.events_connected = true;
+    let harness = start_handler_with_links(
+        connected,
+        None,
+        Some(control.device.clone()),
+        Some(events.device.clone()),
+    );
+    let mut images = request_images(&harness)
+        .await
+        .expect("wired events endpoint supports images");
+    let (id, generation) = tokio::time::timeout(WAIT, async {
+        loop {
+            let packet = events.sent.recv().await.expect("events endpoint is open");
+            if let PacketData::ImageCommand(ImageCommand::Start { generation, .. }) = packet.data {
+                break (packet.id, generation);
+            }
+        }
+    })
+    .await
+    .expect("Start is sent to events, not control");
+    for offset in (0..98 * 98).step_by(IMAGE_CHUNK_CAPACITY) {
+        let len = IMAGE_CHUNK_CAPACITY.min(98 * 98 - offset);
+        events
+            .to_host
+            .send(Packet {
+                id,
+                data: PacketData::ImageChunk(ImageChunk {
+                    generation,
+                    frame_id: 7,
+                    timestamp_us: 500,
+                    objects_timestamp_us: 490,
+                    camera: odyssey_protocol::Port::Nf,
+                    width: 98,
+                    height: 98,
+                    object_count: 0,
+                    offset: offset as u32,
+                    len: len as u16,
+                    data: [27; IMAGE_CHUNK_CAPACITY],
+                }),
+            })
+            .await
+            .expect("events packet delivered");
+    }
+    let frame = tokio::time::timeout(WAIT, images.next())
+        .await
+        .expect("complete frame arrives")
+        .expect("stream stays open")
+        .expect("valid image");
+    assert_eq!(frame.frame_id, 7);
+    assert_eq!(frame.pixels, vec![27; 98 * 98]);
+    assert_eq!(frame.objects_timestamp_us, 490);
+    harness.send(DeviceTaskMessage::RemoveControlDevice).await;
+    let error = tokio::time::timeout(WAIT, images.next())
+        .await
+        .expect("disconnect terminates stream")
+        .expect("disconnect has a status")
+        .expect_err("USB detach invalidates image session");
+    assert_eq!(error.code(), tonic::Code::Aborted);
+    assert!(images.next().await.is_none());
 }

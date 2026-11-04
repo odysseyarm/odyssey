@@ -4,8 +4,13 @@ pub enum ServerError {
     SocketAlreadyInUse,
     #[error("hub I/O failed: {0}")]
     IoError(#[source] std::io::Error),
-    #[error(transparent)]
-    Other(anyhow::Error),
+    #[error("hub transport failed")]
+    Transport(#[from] tonic::transport::Error),
+    #[error("device tasks exited unexpectedly")]
+    DeviceTasksExited,
+    #[cfg(feature = "sim")]
+    #[error("simulator control failed: {0}")]
+    Simulator(#[from] crate::sim::ControlError),
 }
 
 impl From<std::io::Error> for ServerError {
@@ -15,11 +20,5 @@ impl From<std::io::Error> for ServerError {
         } else {
             Self::IoError(err)
         }
-    }
-}
-
-impl From<anyhow::Error> for ServerError {
-    fn from(err: anyhow::Error) -> Self {
-        Self::Other(err)
     }
 }

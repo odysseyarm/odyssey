@@ -181,7 +181,7 @@ impl HubManager {
             {
                 vm_device.clear_all_streams().await?;
             }
-            anyhow::Ok(version)
+            Ok::<_, odyssey_usb::Error>(version)
         };
         match connected.await {
             Ok(version) => {
@@ -408,7 +408,7 @@ impl HubManager {
     }
 }
 
-async fn read_version(vm_device: &VmDevice) -> anyhow::Result<Version> {
+async fn read_version(vm_device: &VmDevice) -> odyssey_usb::Result<Version> {
     match vm_device
         .request_with_retry(
             PacketData::ReadVersion(),
@@ -418,6 +418,6 @@ async fn read_version(vm_device: &VmDevice) -> anyhow::Result<Version> {
         .await?
     {
         PacketData::ReadVersionResponse(version) => Ok(version),
-        other => anyhow::bail!("unexpected reply to ReadVersion: {other:?}"),
+        other => Err(odyssey_usb::Error::UnexpectedReply(format!("{other:?}"))),
     }
 }

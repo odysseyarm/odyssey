@@ -83,6 +83,7 @@ impl Service for HubServer {
     type SubscribeEventsStream = ReceiverStream<Result<Event, Status>>;
     type SubscribeShotDelayStream = ReceiverStream<Result<GetShotDelayReply, Status>>;
     type SubscribeDongleListStream = ReceiverStream<Result<DongleListReply, Status>>;
+    type StreamImagesStream = crate::device_tasks::image_stream::ImageResponseStream;
     async fn get_device_list(
         &self,
         _req: tonic::Request<DeviceListRequest>,
@@ -336,6 +337,49 @@ impl Service for HubServer {
         Ok(Response::new(ReceiverStream::new(out)))
     }
 
+    async fn stream_images(
+        &self,
+        req: tonic::Request<tonic::Streaming<odyssey_hub_server_interface::StreamImagesRequest>>,
+    ) -> Result<Response<Self::StreamImagesStream>, Status> {
+        let mut requests = req.into_inner();
+        let request = requests
+            .message()
+            .await?
+            .ok_or_else(|| Status::invalid_argument("missing image stream request"))?;
+        let camera = match request.camera {
+            0 => odyssey_protocol::Port::Nf,
+            1 => odyssey_protocol::Port::Wf,
+            _ => return Err(Status::invalid_argument("invalid image camera")),
+        };
+        let fps = request_byte(request.fps, 15, "image FPS (expected 1..=15)")?;
+        if fps == 0 {
+            return Err(Status::invalid_argument(
+                "image FPS must be between 1 and 15",
+            ));
+        }
+        let task = self.device_task("stream_images", requested_uuid(request.device)?)?;
+        let stream = task
+            .request(|reply| DeviceTaskMessage::StartImages {
+                config: odyssey_protocol::image::ImageStreamConfig { camera, fps },
+                renewals: crate::device_tasks::ImageRenewals(Box::pin(
+                    requests.map_while(|renewal| renewal.ok().map(drop)),
+                )),
+                reply,
+            })
+            .await??;
+        Ok(Response::new(stream))
+    }
+
+    async fn reboot_device(
+        &self,
+        req: tonic::Request<Device>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let task = self.device_task("reboot_device", requested_uuid(Some(req.into_inner()))?)?;
+        task.request(|reply| DeviceTaskMessage::Reboot { reply })
+            .await?;
+        ok_empty()
+    }
+
     async fn write_vendor(
         &self,
         req: tonic::Request<WriteVendorRequest>,
@@ -345,8 +389,11 @@ impl Service for HubServer {
         if tag < 0x81 {
             return Err(RpcError::InvalidField("vendor tag (expected 0x81..=0xfe)").into());
         }
-        if data.len() > 98 {
-            return Err(Status::invalid_argument("vendor payload exceeds 98 bytes"));
+        if data.len() > odyssey_protocol::VendorData::CAPACITY {
+            return Err(Status::invalid_argument(format!(
+                "vendor payload exceeds {} bytes",
+                odyssey_protocol::VendorData::CAPACITY
+            )));
         }
         let task = self.device_task("write_vendor", requested_uuid(device)?)?;
         task.send_now(DeviceTaskMessage::WriteVendor(tag, data))?;

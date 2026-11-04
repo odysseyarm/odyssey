@@ -1,9 +1,9 @@
 [package]
 name = "odyssey-hub-server-interface"
-version = "0.1.0"
-edition = "2024"
-license-file = "../LICENSE"
-repository = "https://github.com/odysseyarm/odyssey"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Protobuf interface and From impl's for Odyssey Hub server"
 
 [lints]
@@ -13,6 +13,7 @@ workspace = true
 nalgebra = "0.35"
 odyssey-common = { path = "../odyssey-common" }
 odyssey-hub-common = { workspace = true }
+odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 prost = "0.12.4"
 tonic = { workspace = true, features = ["prost"] }
 odyssey-usb = { workspace = true }

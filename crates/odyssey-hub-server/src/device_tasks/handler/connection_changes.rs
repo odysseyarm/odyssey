@@ -46,6 +46,11 @@ impl DeviceHandler {
             self.attach_standby(events_device, owner).await;
             return;
         }
+        if self.image_session.is_some() && self.device.events_transport == EventsTransport::Wired {
+            // An image session owns the wired events endpoint even though its
+            // normal object subscriptions are deliberately stopped.
+            return;
+        }
         // Repeated snapshots must not restart active streams, but a different
         // dongle must replace the old BLE endpoint even if it is still draining.
         let same_owner = self
@@ -67,18 +72,24 @@ impl DeviceHandler {
         self.protocol_version = events_protocol_version;
         self.stream_timers.paused = false;
         self.stream_timers.resume_armed = false;
-        self.sensors = SensorStreams::start(&events_device, uuid, self.protocol_version).await;
+        self.sensors = if self.image_reboot_required {
+            SensorStreams::stopped()
+        } else {
+            SensorStreams::start(&events_device, uuid, self.protocol_version).await
+        };
 
         // A unit that started in BLE mode has no config yet; this is where it gets one.
         info!("Reading device config from BLE mux device for {uuid:02x?}");
-        match tokio::time::timeout(SLOW_CALL_TIMEOUT, events_device.read_all_config()).await {
-            Ok(Ok(settings)) => {
-                info!("Updating device config for {uuid:02x?} from BLE mux");
-                self.tracker
-                    .set_cameras(CameraModels::from_settings(&settings));
+        if !self.image_reboot_required {
+            match tokio::time::timeout(SLOW_CALL_TIMEOUT, events_device.read_all_config()).await {
+                Ok(Ok(settings)) => {
+                    info!("Updating device config for {uuid:02x?} from BLE mux");
+                    self.tracker
+                        .set_cameras(CameraModels::from_settings(&settings));
+                }
+                Ok(Err(e)) => warn!("Failed to read device config from BLE mux {uuid:02x?}: {e}"),
+                Err(_) => warn!("read_all_config timed out for BLE mux {uuid:02x?}"),
             }
-            Ok(Err(e)) => warn!("Failed to read device config from BLE mux {uuid:02x?}: {e}"),
-            Err(_) => warn!("read_all_config timed out for BLE mux {uuid:02x?}"),
         }
 
         self.device.events_transport = EventsTransport::Bluetooth;
@@ -117,7 +128,11 @@ impl DeviceHandler {
         }
         info!("AddEventsDevice - keeping BLE link of {uuid:02x?} as standby next to USB");
         self.events_owner = Some(owner);
-        let sensors = SensorStreams::start(&link, uuid, self.protocol_version).await;
+        let sensors = if self.image_session.is_some() || self.image_reboot_required {
+            SensorStreams::stopped()
+        } else {
+            SensorStreams::start(&link, uuid, self.protocol_version).await
+        };
         self.standby = Some(StandbyLink {
             device: link,
             sensors,
@@ -136,6 +151,12 @@ impl DeviceHandler {
             "AddControlDevice - adding USB control device for {uuid:02x?} ({transport_selection:?} transport)"
         );
 
+        // The USB probe obtained this version from the new packet endpoint,
+        // after board sensor initialization. Image-only recovery answers with
+        // RebootRequired instead, so a mere cable reconnect cannot clear it.
+        if self.image_reboot_required && events_protocol_version != [0, 0, 0] {
+            self.image_reboot_required = false;
+        }
         self.refresh_firmware_version(&control_device).await;
         self.set_transport_selection(transport_selection);
         match transport_selection {
@@ -153,9 +174,11 @@ impl DeviceHandler {
                         self.sensors.stop();
                         self.protocol_version = events_protocol_version;
                         self.connections.events_device = Some(control_device.clone());
-                        self.sensors =
-                            SensorStreams::start(&control_device, uuid, self.protocol_version)
-                                .await;
+                        self.sensors = if self.image_reboot_required {
+                            SensorStreams::stopped()
+                        } else {
+                            SensorStreams::start(&control_device, uuid, self.protocol_version).await
+                        };
                     }
                 }
             }
@@ -209,7 +232,11 @@ impl DeviceHandler {
             self.protocol_version = events_protocol_version;
         }
         self.connections.events_device = Some(usb.clone());
-        self.sensors = SensorStreams::start(usb, uuid, self.protocol_version).await;
+        self.sensors = if self.image_reboot_required {
+            SensorStreams::stopped()
+        } else {
+            SensorStreams::start(usb, uuid, self.protocol_version).await
+        };
         self.device.events_transport = EventsTransport::Wired;
         self.device.events_connected = true;
         self.device.capabilities.insert(DeviceCapabilities::EVENTS);

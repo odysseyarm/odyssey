@@ -6,7 +6,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use bootloader_devices::BootloaderDevice;
 use futures::StreamExt as _;
 use nusb::hotplug::HotplugWatch;
@@ -41,7 +40,8 @@ pub(crate) async fn device_tasks(
     device_shot_delays: ShotDelays,
     shot_delay_watch: ShotDelayWatchers,
     event_sender: broadcast::Sender<Event>,
-) -> Result<()> {
+    #[cfg(feature = "sim")] simulator: Option<odyssey_sim::Simulator>,
+) -> Result<(), std::convert::Infallible> {
     tracing::info!("device_tasks starting");
     let context = DeviceTaskContext {
         message_channel,
@@ -53,7 +53,10 @@ pub(crate) async fn device_tasks(
         direct_usb_handler_uuids: Arc::new(Mutex::new(HashSet::new())),
         bond_names: Arc::new(Mutex::new(HashMap::new())),
     };
-    UsbDeviceManager::new(context).run().await
+    let manager = UsbDeviceManager::new(context);
+    #[cfg(feature = "sim")]
+    let manager = manager.with_simulator(simulator);
+    manager.run().await
 }
 
 /// A hub manager task and the USB device it manages.
@@ -93,6 +96,17 @@ struct UsbDeviceManager {
     /// protocol. These are surfaced in the device list so the user can flash firmware
     /// even when normal communication is unavailable.
     bootloader_devices: HashMap<String, BootloaderDevice>,
+    #[cfg(feature = "sim")]
+    simulated: Option<SimulatedDevices>,
+}
+
+#[cfg(feature = "sim")]
+struct SimulatedDevices {
+    simulator: odyssey_sim::Simulator,
+    changes: tokio::sync::watch::Receiver<odyssey_sim::Snapshot>,
+    hub: Option<(tokio::task::JoinHandle<()>, oneshot::Sender<()>)>,
+    unit_generation: u64,
+    dongle_generation: u64,
 }
 
 impl UsbDeviceManager {
@@ -104,10 +118,47 @@ impl UsbDeviceManager {
             direct_usb_id_to_uuid: HashMap::new(),
             last_uuid_by_pid: HashMap::new(),
             bootloader_devices: HashMap::new(),
+            #[cfg(feature = "sim")]
+            simulated: None,
         }
     }
 
+    #[cfg(feature = "sim")]
+    fn with_simulator(mut self, simulator: Option<odyssey_sim::Simulator>) -> Self {
+        self.simulated = simulator.map(|simulator| SimulatedDevices {
+            changes: simulator.handle().subscribe(),
+            simulator,
+            hub: None,
+            unit_generation: 0,
+            dongle_generation: 0,
+        });
+        self
+    }
+
     async fn run(mut self) -> ! {
+        #[cfg(feature = "sim")]
+        if self.simulated.is_some() {
+            loop {
+                self.scan(&[]).await;
+                let simulated = self
+                    .simulated
+                    .as_mut()
+                    .expect("simulator remains installed");
+                // Report ticks do not warrant another USB discovery pass.
+                let unit_generation = simulated.unit_generation;
+                let dongle_generation = simulated.dongle_generation;
+                let closed = tokio::select! {
+                    change = simulated.changes.wait_for(|snapshot| {
+                        snapshot.unit_usb_generation != unit_generation
+                            || snapshot.dongle_usb_generation != dongle_generation
+                    }) => change.is_err(),
+                    () = sleep(SCAN_INTERVAL) => false,
+                };
+                if closed {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
         // A unit that picks its own transport switches its reports to USB the moment a
         // host configures it and back to BLE when the cable goes, so the hub has to
         // follow within milliseconds rather than at the next periodic scan.
@@ -121,8 +172,8 @@ impl UsbDeviceManager {
         loop {
             let devices = match nusb::list_devices().await {
                 Ok(devices) => devices.collect::<Vec<_>>(),
-                Err(e) => {
-                    warn!("Failed to list USB devices: {}", e);
+                Err(error) => {
+                    warn!("Failed to list USB devices: {error}");
                     sleep(SCAN_FAILURE_RETRY_DELAY).await;
                     continue;
                 }
@@ -155,6 +206,9 @@ impl UsbDeviceManager {
                     .await;
             }
         }
+
+        #[cfg(feature = "sim")]
+        self.scan_simulated(&mut present).await;
 
         self.reconcile_direct_usb_disconnects(&present).await;
         self.reconcile_bootloader_disconnects(&present).await;
@@ -248,7 +302,7 @@ impl UsbDeviceManager {
         let (shutdown, shutdown_rx) = oneshot::channel();
         let task = HubManager::spawn(HubManagerInit {
             hub,
-            hub_info: dev_info.clone(),
+            serial: dev_info.serial_number().unwrap_or("unknown").to_owned(),
             context: self.context.clone(),
             device_handles: Arc::clone(&self.device_handles),
             shutdown: shutdown_rx,
@@ -258,6 +312,69 @@ impl UsbDeviceManager {
             task,
             shutdown,
         });
+    }
+    #[cfg(feature = "sim")]
+    async fn scan_simulated(&mut self, present: &mut PresentUsbDevices) {
+        let Some(mut simulated) = self.simulated.take() else {
+            return;
+        };
+        let snapshot = simulated.changes.borrow_and_update().clone();
+        if (!snapshot.dongle_usb
+            || snapshot.dongle_usb_generation != simulated.dongle_generation
+            || simulated
+                .hub
+                .as_ref()
+                .is_some_and(|(task, _)| task.is_finished()))
+            && let Some((task, shutdown)) = simulated.hub.take()
+        {
+            let _ = shutdown.send(());
+            if let Err(error) = task.await {
+                warn!("Simulated hub task failed during shutdown: {error}");
+            }
+        }
+        if snapshot.dongle_usb && simulated.hub.is_none() {
+            let hub = simulated.simulator.connect_dongle();
+            match hub.subscribe_device_list().await {
+                Ok(()) => {
+                    let (shutdown, shutdown_rx) = oneshot::channel();
+                    let task = HubManager::spawn(HubManagerInit {
+                        hub,
+                        serial: "SIM-ODYSSEY-DONGLE".to_owned(),
+                        context: self.context.clone(),
+                        device_handles: Arc::clone(&self.device_handles),
+                        shutdown: shutdown_rx,
+                    });
+                    simulated.hub = Some((task, shutdown));
+                }
+                Err(error) => warn!("Failed to subscribe to simulated dongle: {error}"),
+            }
+        }
+        if snapshot.unit_usb && snapshot.unit_usb_generation != simulated.unit_generation {
+            // A watch receiver may coalesce an unplug/replug into one snapshot.
+            // Force replacement of the old control channel without replacing its
+            // handler, which may still be receiving BLE events for this UUID.
+            self.direct_usb_id_to_uuid.remove("sim:unit-usb");
+        }
+        if snapshot.unit_usb {
+            let id = "sim:unit-usb";
+            present.direct_usb_ids.insert(id.to_owned());
+            let connected = match self.direct_usb_id_to_uuid.get(id) {
+                Some(uuid) => self
+                    .device_handles
+                    .lock()
+                    .await
+                    .get(uuid)
+                    .is_some_and(|device| !device.task.is_finished()),
+                None => false,
+            };
+            if !connected {
+                self.on_simulated_unit(simulated.simulator.connect_unit_usb(), present)
+                    .await;
+            }
+        }
+        simulated.unit_generation = snapshot.unit_usb_generation;
+        simulated.dongle_generation = snapshot.dongle_usb_generation;
+        self.simulated = Some(simulated);
     }
 }
 

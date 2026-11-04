@@ -14,6 +14,13 @@ service Service {
 
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event) {}
 
+  // USB-only camera stream. The first request selects device/camera/fps; send another
+  // request every IMAGE_LEASE_RENEW_INTERVAL_MS while frames are being consumed. Modern
+  // devices restore tracking when renewals stop; legacy needs reboot to track again.
+  rpc StreamImages(stream StreamImagesRequest) returns (stream ImageFrame) {}
+  // Acknowledges a requested device reset, not successful tracking recovery.
+  rpc RebootDevice(Device) returns (EmptyReply) {}
+
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
   rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
   rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
@@ -103,6 +110,45 @@ message Device {
   uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
   string name = 8; // BLE bond name, USB product string, or a name the user set.
   uint32 netcore_release = 9; // nRF5340 net core release counter, 0=unknown or not reported
+}
+
+// Only the first message's fields are read; later messages are lease renewals.
+message StreamImagesRequest {
+  Device device = 1;
+  uint32 camera = 2; // 0 = near-field, 1 = wide-field.
+  uint32 fps = 3; // Requested rate, 1..15; firmware may cap it lower.
+}
+
+message ImageBounds {
+  uint32 left = 1;
+  uint32 top = 2;
+  uint32 right = 3;
+  uint32 bottom = 4;
+}
+
+// Auxiliary sensor diagnostics, not additional tracking criteria.
+message ImageObjectFeature {
+  uint32 id = 1;
+  float x = 2;
+  float y = 3;
+  uint32 area = 4;
+  uint32 mean_brightness = 5;
+  optional uint32 max_brightness = 6;
+  ImageBounds bounds = 7;
+  optional float radius = 8;
+  optional float aspect_ratio = 9;
+  optional bool is_circle = 10;
+}
+
+message ImageFrame {
+  uint32 frame_id = 1;
+  uint32 timestamp_us = 2;
+  uint32 camera = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  bytes pixels = 6; // Native-coordinate, full-resolution grayscale.
+  repeated ImageObjectFeature objects = 7;
+  uint32 objects_timestamp_us = 8; // Objects need not be simultaneous with pixels.
 }
 
 message FirmwareVersion {
