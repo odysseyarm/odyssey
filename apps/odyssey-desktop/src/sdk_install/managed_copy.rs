@@ -37,6 +37,11 @@ fn removal_marker(dir: &Path) -> PathBuf {
     sibling(dir, "remove")
 }
 
+/// Whether a download of ours is on disk, for the "Remove" action.
+pub(crate) fn has_managed_copy() -> bool {
+    managed_dir().is_some_and(|dir| dir.exists())
+}
+
 /// Moves `dir` out of the way. One rename: it works or nothing changes, unlike
 /// deleting files one by one, which could strip a running SDK of its extensions
 /// before reaching the library Windows will not delete.

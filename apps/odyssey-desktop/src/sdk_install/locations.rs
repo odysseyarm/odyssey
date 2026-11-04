@@ -30,8 +30,3 @@ pub(crate) fn search_dir() -> Option<PathBuf> {
         .flatten()
         .find(|dir| holds_library(dir))
 }
-
-/// Whether a download of ours is on disk, for the "Remove" action.
-pub(crate) fn has_managed_copy() -> bool {
-    managed_dir().is_some_and(|dir| dir.exists())
-}

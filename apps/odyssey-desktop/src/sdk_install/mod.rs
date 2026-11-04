@@ -30,9 +30,9 @@ pub(crate) use advisory::{Advisory, current_advisory};
 pub(crate) use delivery::{Delivery, delivery};
 #[cfg(feature = "sdk-download")]
 pub(crate) use download::{Installed, Phase, install};
-pub(crate) use locations::{has_managed_copy, search_dir};
+pub(crate) use locations::search_dir;
 pub(crate) use managed_copy::{
-    Removal, finish_pending, removal_pending, remove_managed_copy, update_pending,
+    Removal, finish_pending, has_managed_copy, removal_pending, remove_managed_copy, update_pending,
 };
 #[cfg(feature = "sdk-download")]
 pub(crate) use pin_file::pin;
