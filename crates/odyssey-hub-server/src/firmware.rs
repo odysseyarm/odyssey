@@ -67,6 +67,10 @@ impl FirmwareChannel {
 /// GitHub releases download base URL
 const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/odyssey/releases/download";
 
+/// Upper bound for one firmware download, including connection, redirects and
+/// the complete response body. A stalled transfer must release the update claim.
+const FIRMWARE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Known device types mapped by VID:PID
 pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
     (0x1915, 0x5210, "legacy-atslite1"),
@@ -388,6 +392,7 @@ fn verify_sha256(data: &[u8], expected_sha256: &str) -> anyhow::Result<()> {
 
 /// Download a firmware file and verify its SHA256 hash. In offline mode the file
 /// comes from the firmware pack instead and nothing touches the network.
+/// Online transfers have a two-minute deadline covering headers and body.
 pub async fn download_firmware(
     device_type: &str,
     source: ReleaseSource<'_>,
@@ -407,7 +412,9 @@ pub async fn download_firmware(
     tracing::info!("Downloading firmware from {}", url);
 
     tracing::debug!("Creating reqwest client...");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(FIRMWARE_DOWNLOAD_TIMEOUT)
+        .build()?;
     tracing::debug!("Sending GET request...");
     let response = client.get(&url).send().await?;
     tracing::debug!("Got response, status: {}", response.status());
