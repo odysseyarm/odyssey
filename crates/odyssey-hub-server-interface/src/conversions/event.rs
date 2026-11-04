@@ -6,6 +6,21 @@ use crate::{
     Vector3, device_event, event,
 };
 
+impl From<common::events::TrackingEvent> for device_event::TrackingEvent {
+    fn from(e: common::events::TrackingEvent) -> Self {
+        Self {
+            timestamp: e.timestamp,
+            aimpoint: Some(Vector2::from(e.aimpoint)),
+            pose: Some(Pose {
+                rotation: Some(Matrix3x3::from(e.pose.rotation)),
+                translation: Some(Matrix3x1::from(e.pose.translation)),
+            }),
+            distance: e.distance,
+            screen_id: e.screen_id,
+        }
+    }
+}
+
 impl From<common::events::Event> for Event {
     fn from(value: common::events::Event) -> Self {
         match value {
@@ -23,16 +38,7 @@ impl From<common::events::Event> for Event {
                         )
                     }
                     common::events::DeviceEventKind::TrackingEvent(e) => {
-                        device_event::DeviceEventOneof::Tracking(device_event::TrackingEvent {
-                            timestamp: e.timestamp,
-                            aimpoint: Some(Vector2::from(e.aimpoint)),
-                            pose: Some(Pose {
-                                rotation: Some(Matrix3x3::from(e.pose.rotation)),
-                                translation: Some(Matrix3x1::from(e.pose.translation)),
-                            }),
-                            distance: e.distance,
-                            screen_id: e.screen_id,
-                        })
+                        device_event::DeviceEventOneof::Tracking(e.into())
                     }
                     common::events::DeviceEventKind::ImpactEvent(e) => {
                         device_event::DeviceEventOneof::Impact(device_event::ImpactEvent {
