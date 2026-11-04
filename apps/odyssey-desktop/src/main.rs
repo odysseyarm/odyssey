@@ -59,19 +59,27 @@ fn main() {
     // loaded is dealt with now, before anything can load it again.
     sdk_install::finish_pending();
 
-    LaunchBuilder::new().with_cfg(desktop_config()).launch(app);
+    let config = match desktop_config() {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!("Could not configure the desktop window: {error:#}");
+            std::process::exit(1);
+        }
+    };
+    LaunchBuilder::new().with_cfg(config).launch(app);
 }
 
-fn desktop_config() -> Config {
+fn desktop_config() -> anyhow::Result<Config> {
     let config = Config::default()
         .with_menu(None)
         .with_close_behaviour(WindowCloseBehaviour::WindowCloses)
         .with_window(WindowBuilder::new().with_title("Odyssey"));
     if cfg!(target_os = "windows") {
-        let user_data_dir = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
-        config.with_data_directory(user_data_dir)
+        let user_data_dir = std::env::var_os("LOCALAPPDATA")
+            .ok_or_else(|| anyhow::anyhow!("LOCALAPPDATA is not set"))?;
+        Ok(config.with_data_directory(user_data_dir))
     } else {
-        config
+        Ok(config)
     }
 }
 
@@ -109,21 +117,20 @@ fn use_server_task(
         async move {
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
 
-            // Spawn server in background. Its failures reach the UI as
-            // status messages, so the result itself carries nothing more.
-            let server_handle = tokio::spawn({
-                let cancel_token = cancel_token.clone();
-                async move {
-                    let _ = odyssey_hub_server::run_server(sender, cancel_token).await;
-                }
-            });
+            // Cancelling the component future must not detach a live hub server.
+            // Use a child so normal server completion does not cancel the tray.
+            let server_cancel = cancel_token.child_token();
+            let _stop_server = server_cancel.clone().drop_guard();
+            let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, server_cancel));
 
             // Handle status messages (this future has access to Signal)
             let exit = handle_server_status(receiver, config_corruptions, server_ready).await;
 
-            // Wait for server task to complete
-            let _ = server_handle.await;
-            tracing::info!("Server task ended");
+            match server_handle.await {
+                Ok(Ok(())) => tracing::info!("Server task ended"),
+                Ok(Err(error)) => tracing::error!("Hub server failed: {error}"),
+                Err(error) => tracing::error!("Hub server task failed: {error}"),
+            }
 
             // If we detected another instance, close the app
             if exit == ServerExit::AnotherInstanceRunning {
@@ -150,7 +157,7 @@ fn use_hub_connection(hub: Signal<hub::HubContext>, server_ready: Signal<bool>) 
 
 #[component]
 fn app() -> Element {
-    let cancel_token = CancellationToken::new();
+    let cancel_token = use_hook(CancellationToken::new);
     let config_corruptions = use_signal(Vec::<ConfigCorruptionEvent>::new);
     let server_ready = use_signal(|| false);
 
