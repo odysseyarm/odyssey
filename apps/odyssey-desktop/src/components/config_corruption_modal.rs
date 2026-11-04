@@ -2,37 +2,35 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 
-/// Removes the corrupted files from disk so the server writes fresh defaults.
-async fn delete_corrupted_files(corruptions: Vec<ConfigCorruptionEvent>) {
+/// Removes corrupted files and returns the entries that could not be deleted.
+/// A file already removed outside the app no longer needs a warning.
+async fn delete_corrupted_files(
+    corruptions: Vec<ConfigCorruptionEvent>,
+) -> Vec<ConfigCorruptionEvent> {
+    let mut remaining = Vec::new();
     for corruption in corruptions {
-        if let Err(e) = tokio::fs::remove_file(&corruption.file_path).await {
-            tracing::error!("Failed to delete {}: {}", corruption.file_path, e);
-        } else {
-            tracing::info!("Deleted corrupted file: {}", corruption.file_path);
+        match tokio::fs::remove_file(&corruption.file_path).await {
+            Ok(()) => tracing::info!("Deleted corrupted file: {}", corruption.file_path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::error!("Failed to delete {}: {error}", corruption.file_path);
+                remaining.push(corruption);
+            }
         }
     }
-}
-
-/// Forgets the reported corruptions and closes the dialog.
-fn dismiss(mut corruptions: Signal<Vec<ConfigCorruptionEvent>>, mut show_modal: Signal<bool>) {
-    corruptions.write().clear();
-    show_modal.set(false);
+    remaining
 }
 
 /// Tells the user which config files were unreadable at startup and offers to
 /// delete them or carry on with defaults.
 #[component]
-pub(crate) fn ConfigCorruptionModal(corruptions: Signal<Vec<ConfigCorruptionEvent>>) -> Element {
-    let mut show_modal = use_signal(|| false);
+pub(crate) fn ConfigCorruptionModal(
+    mut corruptions: Signal<Vec<ConfigCorruptionEvent>>,
+) -> Element {
+    let mut deleting = use_signal(|| false);
+    let mut delete_failed = use_signal(|| false);
 
-    // Show modal when corruptions are detected
-    use_effect(move || {
-        if !corruptions.read().is_empty() && !*show_modal.read() {
-            show_modal.set(true);
-        }
-    });
-
-    if !*show_modal.read() || corruptions.read().is_empty() {
+    if corruptions.read().is_empty() {
         return rsx! {};
     }
 
@@ -42,7 +40,11 @@ pub(crate) fn ConfigCorruptionModal(corruptions: Signal<Vec<ConfigCorruptionEven
         // Modal backdrop
         div {
             class: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4",
-            onclick: move |_| show_modal.set(false),
+            onclick: move |_| {
+                if !deleting() {
+                    corruptions.write().clear();
+                }
+            },
 
             // Modal content
             div {
@@ -108,24 +110,82 @@ pub(crate) fn ConfigCorruptionModal(corruptions: Signal<Vec<ConfigCorruptionEven
                     }
                 }
 
+                if delete_failed() {
+                    p {
+                        class: "px-6 py-3 text-sm text-red-700 dark:text-red-300",
+                        role: "alert",
+                        "Some files could not be deleted. Check their permissions and try again, or continue with defaults."
+                    }
+                }
+
                 // Footer
                 div {
                     class: "bg-gray-50 dark:bg-gray-900 px-6 py-4 flex justify-end gap-3 flex-shrink-0",
                     button {
                         class: "btn-danger",
-                        onclick: move |_| {
-                            spawn(delete_corrupted_files(corruptions.read().clone()));
-                            dismiss(corruptions, show_modal);
+                        disabled: deleting(),
+                        onclick: move |_| async move {
+                            deleting.set(true);
+                            let reported = corruptions.peek().clone();
+                            let remaining = delete_corrupted_files(reported).await;
+                            delete_failed.set(!remaining.is_empty());
+                            corruptions.set(remaining);
+                            deleting.set(false);
                         },
-                        "Delete Files"
+                        if deleting() { "Deleting…" } else { "Delete Files" }
                     }
                     button {
                         class: "btn-primary",
-                        onclick: move |_| dismiss(corruptions, show_modal),
+                        disabled: deleting(),
+                        onclick: move |_| corruptions.write().clear(),
                         "Continue with Defaults"
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use odyssey_hub_common::config::ConfigFileType;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn deletion_keeps_only_failed_files_for_retry() {
+        let root =
+            std::env::temp_dir().join(format!("odyssey-corruption-delete-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("scratch directory");
+        let removable = root.join("corrupt.json");
+        std::fs::write(&removable, "{").expect("corrupt file");
+        let missing = root.join("already-removed.json");
+        let blocked = root.join("not-a-file");
+        std::fs::create_dir_all(&blocked).expect("directory cannot be removed as a file");
+        let reports = [&removable, &missing, &blocked]
+            .into_iter()
+            .map(|path| ConfigCorruptionEvent {
+                file_type: ConfigFileType::DeviceOffsets,
+                file_path: path.to_string_lossy().into_owned(),
+                error_message: "invalid JSON".into(),
+                using_default: true,
+            })
+            .collect();
+
+        let remaining = delete_corrupted_files(reports).await;
+
+        assert_eq!(
+            remaining
+                .iter()
+                .map(|event| event.file_path.as_str())
+                .collect::<Vec<_>>(),
+            [blocked.to_string_lossy().as_ref()]
+        );
+        assert!(
+            !removable.exists(),
+            "successfully deleted file stays deleted"
+        );
+        assert_eq!(remaining[0].error_message, "invalid JSON");
+        std::fs::remove_dir_all(root).expect("clean scratch directory");
     }
 }
