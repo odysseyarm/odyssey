@@ -18,26 +18,21 @@ pub(crate) fn device_type(device: &Device) -> &'static str {
 
 /// An address as colon-separated uppercase hex bytes.
 pub(crate) fn format_address(address: &[u8; 6]) -> String {
-    address
-        .iter()
-        .map(|byte| format!("{byte:02X}"))
-        .collect::<Vec<_>>()
-        .join(":")
+    format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        address[0], address[1], address[2], address[3], address[4], address[5]
+    )
 }
 
 /// The device's product, name and address, with a DFU mark for a device that
 /// can only be flashed.
 pub(crate) fn device_label(device: &Device) -> String {
-    let addr = device
-        .uuid
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<Vec<_>>()
-        .join(":");
+    let [a, b, c, d, e, f] = device.uuid;
+    let addr = format!("{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}");
     let device_type = device_type(device);
     let is_dfu = device.capabilities.contains(DeviceCapabilities::DFU)
         && !device.capabilities.contains(DeviceCapabilities::CONTROL);
-    let name = device.name().to_string();
+    let name = device.name();
     if is_dfu {
         format!("{device_type} [DFU] ({addr})")
     } else if name.is_empty() {
