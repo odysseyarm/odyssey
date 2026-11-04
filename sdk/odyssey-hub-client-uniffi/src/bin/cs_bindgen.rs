@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    // Get optional override for library path from CLI argument
+    // Usage: cs_bindgen [library path] [output dir]
     let lib_path = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
         if cfg!(debug_assertions) {
             PathBuf::from("target/debug/ohc_uniffi.dll")
@@ -94,7 +94,7 @@ fn main() {
             )
             .replace("internal enum AccessoryType", "public enum AccessoryType");
 
-        // Ensure we import types from the shared common bindings before our namespace.
+        // Import the shared common bindings, and their BigEndianStream, ahead of the namespace.
         if !patched.contains("using uniffi.odyssey_hub_common;") {
             patched = patched.replace(
                 "namespace OdysseyArm.HubClient.uniffi;",
@@ -102,7 +102,8 @@ fn main() {
             );
         }
 
-        // Use the common BigEndianStream instead of a duplicate local one to avoid type mismatch
+        // Rename the local BigEndianStream so the alias above resolves to the common one; two
+        // distinct BigEndianStream types do not match across the two binding files.
         patched = patched.replace(
             "static class BigEndianStreamExtensions",
             "static class LocalBigEndianStreamExtensions",
@@ -121,7 +122,7 @@ fn main() {
         panic!("Generated C# file not found: {:?}", target_file);
     }
 
-    // Patch the generated common bindings to make Transport and EventsTransport public
+    // uniffi-bindgen-cs emits Transport and EventsTransport as internal; the SDK exposes them.
     let common_file = output_dir.join("odyssey_hub_common.cs");
     if common_file.exists() {
         let mut contents = String::new();

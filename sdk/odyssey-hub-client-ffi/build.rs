@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // cargo-xwin, CARGO_ENCODED_RUSTFLAGS/RUSTFLAGS carry the cross target's
     // linker flags (e.g. -C linker-flavor=lld-link), which that host-mode
     // probe then applies against the host toolchain and fails. Header
-    // generation never needs to link anything, so just drop them.
+    // generation never needs to link anything, so drop them.
     // SAFETY: The build script is still single-threaded, before cbindgen starts.
     unsafe {
         env::remove_var("CARGO_ENCODED_RUSTFLAGS");
@@ -24,7 +24,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // C header
     let mut config: cbindgen::Config = Default::default();
     config.language = cbindgen::Language::C;
     config.cpp_compat = true;
@@ -41,7 +40,6 @@ fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         .generate()?
         .write_to_file(Path::new(crate_dir).join("generated/include/ohc.h"));
 
-    // C++ header
     let mut config: cbindgen::Config = Default::default();
     config.language = cbindgen::Language::Cxx;
     config.cpp_compat = true;

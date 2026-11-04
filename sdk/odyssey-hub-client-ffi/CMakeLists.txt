@@ -1,18 +1,14 @@
-# ------------------------------------------------------------------------------
-# Odyssey Hub Client C/C++ SDK
+# Odyssey Hub Client C/C++ SDK.
 #
-# Ships prebuilt binaries only (no source build) — native libs are
-# cross-compiled in odysseyarm/odyssey's CI. This declares an
-# IMPORTED `ohc` target (see cmake/DeclareOhcTarget.cmake) pointing at the
-# right prebuilt file for the current platform/arch/linkage, and installs
-# headers + a CMake package config so `find_package(odyssey_hub_client
-# CONFIG)` works.
+# Ships prebuilt binaries only; the native libs are cross-compiled in
+# odysseyarm/odyssey's CI. This declares an IMPORTED `ohc` target (see
+# cmake/DeclareOhcTarget.cmake) pointing at the prebuilt file for the current
+# platform, arch and linkage, and installs the headers and a CMake package
+# config so `find_package(odyssey_hub_client CONFIG)` works.
 #
-# Works three ways with no changes needed:
-#   - As a vcpkg port (odysseyarm/vcpkg-registry, port "odyssey-hub-client")
-#   - Via CMake FetchContent, pointed at a release zip
-#   - Vendored directly / add_subdirectory()'d
-# ------------------------------------------------------------------------------
+# Usable unchanged as a vcpkg port (odysseyarm/vcpkg-registry, port
+# "odyssey-hub-client"), through FetchContent pointed at a release zip, or
+# vendored with add_subdirectory().
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -25,8 +21,6 @@ set(OHC_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib")
 set(OHC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeclareOhcTarget.cmake")
 
-# -----------------------------------------------------------------------------
-# Installation.
 set(OHC_INSTALL_CMAKE_DIR "lib/cmake/odyssey_hub_client")
 
 if(OHC_INSTALL_C_HEADER)
@@ -41,10 +35,9 @@ if(OHC_INSTALL_CXX_HEADER)
     )
 endif()
 
-# CMake can't install() an IMPORTED target's binary directly, so it's added
-# as a plain file instead — keeping the __<os>_<arch> suffix (matching
-# rerun-io/rerun's rerun_c, which doesn't rename on install either). Non-CMake
-# consumers reference this exact filename by hand.
+# CMake cannot install() an IMPORTED target's binary, so it is installed as a
+# plain file and keeps its __<os>_<arch> suffix, as rerun-io/rerun's rerun_c
+# does. Non-CMake consumers reference this exact filename by hand.
 if(OHC_LINK_SHARED AND WIN32)
     get_target_property(OHC_DLL_LOCATION ohc IMPORTED_LOCATION)
     get_target_property(OHC_IMPLIB_LOCATION ohc IMPORTED_IMPLIB)
@@ -61,10 +54,9 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DeclareOhcTarget.cmake" DESTINA
 
 include(CMakePackageConfigHelpers)
 
-# No ${VERSION} equivalent is available when this is configured standalone
-# (FetchContent / add_subdirectory) — that variable only exists inside a
-# vcpkg portfile's own scope. Read it from a plain VERSION file instead,
-# which CI writes alongside everything else during release packaging.
+# No ${VERSION} exists when this is configured standalone (FetchContent or
+# add_subdirectory); that variable lives only in a vcpkg portfile's scope.
+# Read it from the VERSION file CI writes during release packaging.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" OHC_SDK_VERSION LIMIT_COUNT 1)
 
 configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in

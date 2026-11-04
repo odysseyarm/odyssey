@@ -37,7 +37,6 @@ void clientConnectCallback(ohc::UserObj userdata, ohc::ClientError error) {
     if (error == ohc::ClientError::NONE) {
         std::cout << "Connected to hub" << std::endl;
         startStreams(state->handle, state->client);
-        // Subscribe to device list changes
         ohc::client_subscribe_device_list(state->handle.get(), state->client.get(), ohc::UserObj{nullptr}, deviceListCallback);
     } else {
         switch (error) {

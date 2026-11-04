@@ -3,7 +3,7 @@ name = "odyssey-hub-client-ffi"
 version = "0.1.0"
 edition = "2024"
 
-# CI likes to use workspace root
+# A standalone workspace with its own Cargo.lock; the root Cargo.toml says why.
 [workspace]
 
 [lib]

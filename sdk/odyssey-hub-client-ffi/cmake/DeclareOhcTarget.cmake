@@ -1,11 +1,11 @@
 # Declares the `ohc` IMPORTED target against a prebuilt lib in OHC_LIB_DIR
 # and headers in OHC_INCLUDE_DIR (both must be set by the includer).
 #
-# Included both by the top-level CMakeLists.txt (pre-install / FetchContent /
-# add_subdirectory use) and by the installed odyssey_hub_clientConfig.cmake
-# (post-install, via find_package()). An IMPORTED target can't be
+# Included by the top-level CMakeLists.txt (before install: FetchContent or
+# add_subdirectory) and by the installed odyssey_hub_clientConfig.cmake (after
+# install, through find_package()). An IMPORTED target cannot be
 # install(EXPORT)-ed like a normal library, so each context re-declares it
-# fresh against its own paths instead of sharing one CMake target object.
+# against its own paths.
 
 if(TARGET ohc)
     return()
@@ -15,11 +15,10 @@ if(NOT DEFINED OHC_LIB_DIR OR NOT DEFINED OHC_INCLUDE_DIR)
     message(FATAL_ERROR "OHC_LIB_DIR and OHC_INCLUDE_DIR must be set before including DeclareOhcTarget.cmake")
 endif()
 
-# Where the .dll itself lives (as opposed to its .dll.lib import library, in
-# OHC_LIB_DIR). These only differ post-install: install() puts runtime DLLs
-# in bin/ and import libs in lib/, but pre-install everything sits flat
-# together in the bundle's one lib/ dir — so default to OHC_LIB_DIR and let
-# Config.cmake.in (the only context where they diverge) override it.
+# Directory of the .dll itself; its .dll.lib import library is in OHC_LIB_DIR.
+# The two differ only after install, where install() puts runtime DLLs in bin/
+# and import libs in lib/. Before install everything sits in the bundle's one
+# lib/ dir, so default to OHC_LIB_DIR and let Config.cmake.in override it.
 if(NOT DEFINED OHC_BIN_DIR)
     set(OHC_BIN_DIR "${OHC_LIB_DIR}")
 endif()
@@ -44,27 +43,25 @@ if(APPLE)
     else()
         set(OHC_OS_ARCH "macos_x64")
     endif()
-elseif(UNIX) # if(LINUX) # CMake 3.25
+elseif(UNIX) # if(LINUX) needs CMake 3.25
     if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^(arm64|aarch64)$")
         set(OHC_OS_ARCH "linux_arm64")
     else()
         set(OHC_OS_ARCH "linux_x64")
     endif()
 elseif(WIN32)
-    # TODO: arm64 Windows support.
+    # TODO: no win_arm64 library is built, so arm64 Windows gets the x64 one.
     set(OHC_OS_ARCH "win_x64")
 else()
     message(FATAL_ERROR "Unsupported platform ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}, can't find a prebuilt ohc library.")
 endif()
 
-# The __<os>_<arch> suffix stays on the installed file too (matching
-# rerun-io/rerun's rerun_c: they don't rename on install either — the
-# Config.cmake.in just bakes in the resolved filename from the original
-# build, same idea as OHC_OS_ARCH being recomputed here). Non-CMake
-# consumers (e.g. a plain vcxproj under vcpkg's classic MSBuild integration)
-# have to reference this exact filename by hand either way — CMake's
-# find_package()/imported-target resolution is the only thing that can pick
-# the right file automatically, and only CMake consumers get that for free.
+# The __<os>_<arch> suffix stays on the installed file, as rerun-io/rerun's
+# rerun_c does. The installed Config.cmake.in re-includes this module, which
+# recomputes OHC_OS_ARCH and so resolves the same filename. Non-CMake consumers,
+# such as a plain vcxproj under vcpkg's classic MSBuild integration, reference
+# this exact filename by hand: only find_package() and imported-target
+# resolution pick the right file automatically.
 set(OHC_LIB_SUFFIX "__${OHC_OS_ARCH}")
 
 if(OHC_LINK_SHARED)
@@ -87,11 +84,11 @@ else()
         set_target_properties(ohc PROPERTIES IMPORTED_LOCATION "${OHC_LIB_DIR}/libohc${OHC_LIB_SUFFIX}.a")
     endif()
 
-    # A raw Rust staticlib needs its runtime's OS dependencies linked in by
-    # whoever embeds it (dynamic linkage already bundles these). This list is
-    # best-effort from our actual dependency stack (tokio, tonic/TLS, nusb +
-    # interprocess for USB/IPC) — not verified against a real static link on
-    # every platform yet, may need adjusting once CI actually tries it.
+    # A raw Rust staticlib needs its runtime's OS dependencies linked by
+    # whoever embeds it; the shared library already bundles them. This list
+    # comes from the dependency stack (tokio, tonic/TLS, nusb and interprocess
+    # for USB/IPC) and has not been checked against a real static link on
+    # every platform, so the first CI static link may need it adjusted.
     if(WIN32)
         target_link_libraries(ohc INTERFACE
             ws2_32

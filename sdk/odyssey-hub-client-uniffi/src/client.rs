@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::ffi_common::*;
 
 #[derive(uniffi::Object, Debug, thiserror::Error)]
-#[error("{e:?}")] // default message is from anyhow.
+#[error("{e:?}")] // anyhow's Debug form, which includes the cause chain.
 pub struct AnyhowError {
     e: uniffi::deps::anyhow::Error,
 }
@@ -329,7 +329,8 @@ impl Client {
             .map_err(|_| ClientError::NotConnected)
     }
 
-    // TODO ClientError does not encompass all possible errors
+    // TODO: every RPC failure maps to ClientError::NotConnected; ClientError has no
+    // variant for the other errors.
     #[uniffi::method]
     pub async fn get_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
         self.inner

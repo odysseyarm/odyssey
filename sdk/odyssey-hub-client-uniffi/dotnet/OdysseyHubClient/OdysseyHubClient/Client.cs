@@ -23,25 +23,23 @@ namespace OdysseyArm.HubClient
         unsafe delegate void EventDelegate(uniffi.Event? @event, uniffi.ClientException? @error);
 
         /// <summary>
-        /// This function connects to the hub.
+        /// Connects to the hub. Every other call fails with NotConnected until this completes.
         /// </summary>
-        /// <returns></returns>
         public Task Connect()
         {
             return _inner.Connect();
         }
 
         /// <summary>
-        /// This function retrieves a list of devices connected to the hub.
+        /// The devices currently connected to the hub.
         /// </summary>
-        /// <returns></returns>
         public Task<uniffi.Device[]> GetDeviceList()
         {
             return _inner.GetDeviceList();
         }
 
         /// <summary>
-        /// Get the current accessory map snapshot.
+        /// A snapshot of the accessory map.
         /// </summary>
         public Task<uniffi.AccessoryMapEntry[]> GetAccessoryMap()
         {
@@ -49,9 +47,9 @@ namespace OdysseyArm.HubClient
         }
 
         /// <summary>
-        /// This function starts a stream of events from the device.
+        /// Streams events from every device on the hub into <paramref name="channelWriter"/>.
+        /// An error ends the stream: it is written to the channel, then the channel is completed.
         /// </summary>
-        /// <param name="channelWriter"></param>
         public Task SubscribeEvents(ChannelWriter<(uniffi.Event?, uniffi.ClientException?)> channelWriter)
         {
             return Task.Run(async () =>
@@ -81,8 +79,8 @@ namespace OdysseyArm.HubClient
         }
 
         /// <summary>
-        /// Subscribe to device list updates, writing each snapshot to the provided channel.
-        /// The channel receives the full device list whenever any device connects or disconnects.
+        /// Writes the full device list to <paramref name="channelWriter"/> whenever a device
+        /// connects or disconnects. An error is written, then the channel is completed.
         /// </summary>
         public Task SubscribeDeviceList(ChannelWriter<(uniffi.Device[]?, uniffi.ClientException?)> channelWriter)
         {
@@ -113,7 +111,8 @@ namespace OdysseyArm.HubClient
         }
 
         /// <summary>
-        /// Subscribe to accessory map updates, writing each snapshot to the provided channel.
+        /// Writes each accessory map snapshot to <paramref name="channelWriter"/>. An error is
+        /// written, then the channel is completed.
         /// </summary>
         public Task SubscribeAccessoryMap(ChannelWriter<(uniffi.AccessoryMapEntry[]?, uniffi.ClientException?)> channelWriter)
         {
@@ -172,12 +171,8 @@ namespace OdysseyArm.HubClient
         }
 
         /// <summary>
-        /// This function sends a vendor packet to the device.
+        /// Sends a vendor packet with the given tag to the device.
         /// </summary>
-        /// <param name="device"></param>
-        /// <param name="tag"></param>
-        /// <param name="data"></param>
-        /// <returns></returns>
         public Task WriteVendor(uniffi.Device device, byte tag, byte[] data)
         {
             return _inner.WriteVendor(device, tag, data);

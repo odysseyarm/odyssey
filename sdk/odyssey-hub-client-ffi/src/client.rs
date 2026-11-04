@@ -12,14 +12,15 @@ pub struct UserObj {
     pub ptr: *const c_void,
 }
 
-// cbindgen all of a sudden doesn't create opaque types
+// cbindgen emits no opaque type for the foreign `Client`; this stand-in gets one
+// declared in the generated headers.
 mod hack {
     #[allow(unused)]
     #[unsafe(no_mangle)]
     pub struct Client;
 }
 
-// SAFETY: Any user data object must be safe to send between threads.
+// SAFETY: the C API requires callers to pass userdata that may be used from any thread.
 unsafe impl Send for UserObj {}
 
 #[repr(C)]
@@ -460,16 +461,14 @@ pub extern "C" fn client_subscribe_shot_delay(
             Ok(mut stream) => loop {
                 match stream.next().await {
                     Some(Ok(delay)) => {
-                        // notify caller of new shot delay value
                         callback(userdata, ClientError::None, delay);
                     }
                     None => {
-                        // stream ended normally
                         callback(userdata, ClientError::StreamEnd, 0);
                         break;
                     }
                     Some(Err(_)) => {
-                        // stream ended with error
+                        // An error also ends the stream; C sees StreamEnd either way.
                         callback(userdata, ClientError::StreamEnd, 0);
                         break;
                     }

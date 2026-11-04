@@ -5,7 +5,7 @@ edition = "2024"
 
 [workspace]
 members = ["uniffi-bindgen"]
-# Let `cargo run --bin uniffi-bindgen` resolve from the package root — maturin
+# Lets `cargo run --bin uniffi-bindgen` resolve from the package root; maturin
 # invokes it that way to generate bindings with the exact locked uniffi version.
 default-members = [".", "uniffi-bindgen"]
 
