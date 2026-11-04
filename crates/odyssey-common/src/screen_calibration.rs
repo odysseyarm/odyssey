@@ -2,7 +2,9 @@ use nalgebra::{Point2, RealField, Scalar};
 use num::FromPrimitive;
 use num::traits::Float;
 
+/// Highest screen id a hub tracks; ids run `0..=MAX_SCREEN_ID`.
 pub const MAX_SCREEN_ID: u8 = 5;
+/// Number of markers in the pattern shown on a screen.
 pub const MARKER_PATTERN_LEN: usize = 6;
 
 /// `rotation` describes the rotation to transform coordinates in world space to physical screen
@@ -37,15 +39,18 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
 
     /// tl, tr, bl, br
     pub fn bounds(&self) -> [Point2<F>; 4] {
-        let _0 = F::from_f32(0.).unwrap();
-        let _1 = F::from_f32(1.).unwrap();
-        let inv_homography = self.homography.try_inverse().unwrap();
+        let zero = <F as num::Zero>::zero();
+        let one = <F as num::One>::one();
+        let inv_homography = self
+            .homography
+            .try_inverse()
+            .expect("a screen homography maps a plane to the unit square, so it is invertible");
         [
-            Point2::new(_0, _0),
-            Point2::new(_1, _0),
-            Point2::new(_0, _1),
-            Point2::new(_1, _1),
+            Point2::new(zero, zero),
+            Point2::new(one, zero),
+            Point2::new(zero, one),
+            Point2::new(one, one),
         ]
-        .map(|p| inv_homography.transform_point(&p))
+        .map(|corner| inv_homography.transform_point(&corner))
     }
 }

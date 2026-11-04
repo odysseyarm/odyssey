@@ -3,7 +3,7 @@ use num::FromPrimitive;
 use num::traits::Float;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Plane<F: Float + FromPrimitive + Scalar> {
     pub origin: nalgebra::Point3<F>,
     pub normal: nalgebra::Vector3<F>,

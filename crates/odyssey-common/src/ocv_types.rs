@@ -196,7 +196,7 @@ pub struct StereoCalibrationParams<R: RealField> {
 }
 
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MinimalCameraCalibrationParams<R: RealField> {
     pub camera_matrix: OpenCVMatrix3<R>,
     pub dist_coeffs: OpenCVMatrix5x1<R>,
@@ -209,81 +209,71 @@ pub struct MinimalStereoCalibrationParams<R: RealField> {
     pub t: OpenCVMatrix3x1<R>,
 }
 
+/// Reads `N` little-endian `f32`s off the front of `data`, advancing it.
+#[cfg(feature = "std")]
+fn take_f32s<const N: usize>(data: &mut &[u8]) -> Result<[f32; N], Box<dyn std::error::Error>> {
+    let mut values = [0.0; N];
+    for value in &mut values {
+        let (bytes, rest) = data
+            .split_first_chunk::<{ size_of::<f32>() }>()
+            .ok_or("Unexpected end of data")?;
+        *value = f32::from_le_bytes(*bytes);
+        *data = rest;
+    }
+    Ok(values)
+}
+
+#[cfg(feature = "std")]
+fn put_f32s(buf: &mut Vec<u8>, values: &[f32]) {
+    for value in values {
+        buf.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
 impl MinimalCameraCalibrationParams<f32> {
+    /// `data` is left untouched when it is too short.
     #[cfg(feature = "std")]
     pub fn parse(data: &mut &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut params = Self {
-            camera_matrix: OpenCVMatrix3 { data: [0.; 9] },
-            dist_coeffs: OpenCVMatrix5x1 { data: [0.; 5] },
+        let mut cursor = *data;
+        let camera_matrix = OpenCVMatrix3 {
+            data: take_f32s(&mut cursor)?,
         };
-        let mut data_iter = data.iter();
-        for i in 0..9 {
-            params.camera_matrix.data[i] = f32::from_le_bytes([
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-            ]);
-        }
-        for i in 0..5 {
-            params.dist_coeffs.data[i] = f32::from_le_bytes([
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-            ]);
-        }
-        *data = data_iter.as_slice();
-        Ok(params)
+        let dist_coeffs = OpenCVMatrix5x1 {
+            data: take_f32s(&mut cursor)?,
+        };
+        *data = cursor;
+        Ok(Self {
+            camera_matrix,
+            dist_coeffs,
+        })
     }
 
     #[cfg(feature = "std")]
     pub fn serialize(&self, buf: &mut Vec<u8>) {
-        for i in 0..9 {
-            buf.extend_from_slice(&self.camera_matrix.data[i].to_le_bytes());
-        }
-        for i in 0..5 {
-            buf.extend_from_slice(&self.dist_coeffs.data[i].to_le_bytes());
-        }
+        put_f32s(buf, &self.camera_matrix.data);
+        put_f32s(buf, &self.dist_coeffs.data);
     }
 }
 
 impl MinimalStereoCalibrationParams<f32> {
+    /// `data` is left untouched when it is too short.
     #[cfg(feature = "std")]
     pub fn parse(data: &mut &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut params = Self {
-            r: OpenCVMatrix3 { data: [0.; 9] },
-            t: OpenCVMatrix3x1 { data: [0.; 3] },
+        let mut cursor = *data;
+        let r = OpenCVMatrix3 {
+            data: take_f32s(&mut cursor)?,
         };
-        let mut data_iter = data.iter();
-        for i in 0..9 {
-            params.r.data[i] = f32::from_le_bytes([
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-            ]);
-        }
-        for i in 0..3 {
-            params.t.data[i] = f32::from_le_bytes([
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-                *data_iter.next().ok_or("Unexpected end of data")?,
-            ]);
-        }
-        *data = data_iter.as_slice();
-        Ok(params)
+        let t = OpenCVMatrix3x1 {
+            data: take_f32s(&mut cursor)?,
+        };
+        *data = cursor;
+        Ok(Self { r, t })
     }
 
     #[cfg(feature = "std")]
     pub fn serialize(&self, buf: &mut Vec<u8>) {
-        for i in 0..9 {
-            buf.extend_from_slice(&self.r.data[i].to_le_bytes());
-        }
-        for i in 0..3 {
-            buf.extend_from_slice(&self.t.data[i].to_le_bytes());
-        }
+        put_f32s(buf, &self.r.data);
+        put_f32s(buf, &self.t.data);
     }
 }
 
@@ -419,5 +409,66 @@ impl<R: RealField> From<Isometry3<R>> for MinimalStereoCalibrationParams<R> {
             r: r.into(),
             t: OpenCVMatrix3x1 { data: t.into() },
         }
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    fn sample_camera() -> MinimalCameraCalibrationParams<f32> {
+        MinimalCameraCalibrationParams {
+            camera_matrix: OpenCVMatrix3 {
+                data: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            },
+            dist_coeffs: OpenCVMatrix5x1 {
+                data: [0.1, 0.2, 0.3, 0.4, 0.5],
+            },
+        }
+    }
+
+    #[test]
+    fn camera_params_round_trip_and_leave_trailing_bytes() {
+        let mut bytes = Vec::new();
+        sample_camera().serialize(&mut bytes);
+        bytes.push(0xAB);
+
+        let mut cursor = bytes.as_slice();
+        let parsed = MinimalCameraCalibrationParams::parse(&mut cursor).unwrap();
+
+        assert_eq!(
+            parsed.camera_matrix.data,
+            sample_camera().camera_matrix.data
+        );
+        assert_eq!(parsed.dist_coeffs.data, sample_camera().dist_coeffs.data);
+        assert_eq!(cursor, [0xAB]);
+    }
+
+    #[test]
+    fn short_input_is_an_error_and_is_not_consumed() {
+        let mut bytes = Vec::new();
+        sample_camera().serialize(&mut bytes);
+        bytes.pop();
+
+        let mut cursor = bytes.as_slice();
+        assert!(MinimalCameraCalibrationParams::parse(&mut cursor).is_err());
+        assert_eq!(cursor.len(), bytes.len());
+    }
+
+    #[test]
+    fn stereo_params_round_trip() {
+        let params = MinimalStereoCalibrationParams {
+            r: OpenCVMatrix3 { data: [1.0; 9] },
+            t: OpenCVMatrix3x1 {
+                data: [0.5, -0.5, 2.0],
+            },
+        };
+        let mut bytes = Vec::new();
+        params.serialize(&mut bytes);
+
+        let parsed = MinimalStereoCalibrationParams::parse(&mut bytes.as_slice()).unwrap();
+
+        assert_eq!(parsed.r.data, params.r.data);
+        assert_eq!(parsed.t.data, params.t.data);
     }
 }
