@@ -5,41 +5,62 @@ use std::rc::Rc;
 
 use dioxus::desktop::tao::event::{Event as TaoEvent, WindowEvent};
 use dioxus::desktop::use_wry_event_handler;
-use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_autocalib::camera::CaptureSettings;
+use odyssey_autocalib::display::{self, DisplayLookup, LookupNote, LookupSource};
 use odyssey_autocalib::session::SessionOptions;
-use odyssey_hub_common::config::{self, UiState};
-use tokio::sync::mpsc::unbounded_channel;
+use odyssey_hub_common::config::{self, MonitorKey, UiState};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::{CameraList, Stage, Wizard};
 use crate::ServerReady;
 use crate::cli::{self, CalibrateArgs};
 use crate::components::use_monitor_selection;
 use crate::views::calibrate::automatic::kind::Finding;
-use crate::views::calibrate::automatic::pattern_window::{PatternEvent, PatternLoss};
+use crate::views::calibrate::automatic::pattern_window::PatternEvent;
 use crate::views::calibrate::automatic::screens::SCREEN_COUNT;
 use crate::views::calibrate::automatic::settings::SizeField;
 use crate::views::calibrate::automatic::worker::{
     Backend, DEMO_DIAGONAL_IN, Event, Worker, demo_scene,
 };
 
-/// Creates the wizard's state, camera thread and event pump. `args` are the
-/// command-line answers, consumed by the first wizard to open.
+/// An unbounded channel whose receiving half is moved into the one task that
+/// pumps it. The component can rerun the pump's closure, but only the first
+/// run gets the receiver.
+struct Pump<T> {
+    sender: UnboundedSender<T>,
+    receiver: Rc<RefCell<Option<UnboundedReceiver<T>>>>,
+}
+
+impl<T> Clone for Pump<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            receiver: Rc::clone(&self.receiver),
+        }
+    }
+}
+
+fn use_pump<T: 'static>() -> Pump<T> {
+    use_hook(|| {
+        let (sender, receiver) = unbounded_channel::<T>();
+        Pump {
+            sender,
+            receiver: Rc::new(RefCell::new(Some(receiver))),
+        }
+    })
+}
+
+/// Creates the wizard's state, camera thread and event pumps. The
+/// command-line answers are consumed by the first wizard to open.
 pub(crate) fn use_wizard() -> Wizard {
     let args = use_hook(|| cli::take_pending_calibrate().unwrap_or_default());
     let had_args = use_hook(|| args.clone() != CalibrateArgs::default());
     let demo = args.demo;
 
     let monitors = use_monitor_selection();
-    let channel = use_hook(|| {
-        let (tx, rx) = unbounded_channel::<Event>();
-        (tx, Rc::new(RefCell::new(Some(rx))))
-    });
-    let losses = use_hook(|| {
-        let (tx, rx) = unbounded_channel::<PatternEvent>();
-        (tx, Rc::new(RefCell::new(Some(rx))))
-    });
+    let camera_events = use_pump::<Event>();
+    let pattern_events = use_pump::<PatternEvent>();
     let backend = if demo {
         Backend::Demo {
             overscan_fraction: args.demo_overscan_percent.unwrap_or(0.0) / 100.0,
@@ -48,12 +69,12 @@ pub(crate) fn use_wizard() -> Wizard {
         Backend::Hardware
     };
     let worker = use_signal({
-        let tx = channel.0.clone();
-        move || Rc::new(Worker::spawn(backend, tx))
+        let sender = camera_events.sender.clone();
+        move || Rc::new(Worker::spawn(backend, sender))
     });
     let server_ready = use_hook(try_consume_context::<ServerReady>);
 
-    let mut wizard = Wizard {
+    let wizard = Wizard {
         demo,
         monitors,
         stage: use_signal(|| Stage::Setup),
@@ -96,34 +117,43 @@ pub(crate) fn use_wizard() -> Wizard {
         attempt_status: use_signal(|| None),
         attempt_saving: use_signal(|| false),
         pattern: use_signal(|| None),
-        pattern_loss: use_signal(|| losses.0.clone()),
+        pattern_loss: use_signal(|| pattern_events.sender.clone()),
         same_monitor: use_signal(|| false),
         hidden: use_signal(|| false),
         flow: use_signal(|| None),
     };
 
-    // Apply the monitor from the command line, then load what Setup needs to
-    // default its choices.
-    use_future({
-        let monitor_arg = args.monitor;
-        move || async move {
-            if let Some(number) = monitor_arg {
-                if number > wizard.monitors.monitors().len() {
-                    wizard.note(format!(
-                        "Display {number} isn't connected, so pick the screen below."
-                    ));
-                    *wizard.auto_start.write() = false;
-                } else {
-                    wizard.monitors.select(number - 1);
-                }
-            }
-            *wizard.ui_state.write() = config::ui_state_async().await.into_value();
-            wizard.refresh_saved_screens().await;
-        }
-    });
+    use_monitor_argument(wizard, args.monitor);
+    use_display_finding(wizard, demo);
+    use_camera_events(wizard, camera_events);
+    use_pattern_events(wizard, pattern_events);
+    use_close_request(wizard);
 
-    // Read the selected display's own size whenever the selection changes.
-    // The lookup reads files, so it stays off the UI thread.
+    wizard
+}
+
+/// Applies the monitor from the command line, then loads what Setup needs to
+/// default its choices.
+fn use_monitor_argument(mut wizard: Wizard, monitor_arg: Option<usize>) {
+    use_future(move || async move {
+        if let Some(number) = monitor_arg {
+            if number > wizard.monitors.monitors().len() {
+                wizard.note(format!(
+                    "Display {number} isn't connected, so pick the screen below."
+                ));
+                *wizard.auto_start.write() = false;
+            } else {
+                wizard.monitors.select(number - 1);
+            }
+        }
+        *wizard.ui_state.write() = config::ui_state_async().await.into_value();
+        wizard.refresh_saved_screens().await;
+    });
+}
+
+/// Reads the selected display's own size whenever the selection changes. The
+/// lookup reads files, so it stays off the UI thread.
+fn use_display_finding(mut wizard: Wizard, demo: bool) {
     use_resource(move || async move {
         let monitor = wizard.selected_monitor();
         // The helper's picture is on the monitor that was chosen when it opened;
@@ -138,108 +168,66 @@ pub(crate) fn use_wizard() -> Wizard {
         }
         *wizard.finding.write() = None;
         let Some(key) = monitor else { return };
-        let found = if demo {
-            let [w, h] = demo_scene(
-                f64::from(key.width) / f64::from(key.height.max(1)),
-                DEMO_DIAGONAL_IN,
-                true,
-                0.0,
-            )
-            .screen_size_m;
-            Finding::demo(w, h)
-        } else {
-            let lookup = tokio::task::spawn_blocking(move || {
-                odyssey_autocalib::display::lookup(key.name.as_deref(), (key.width, key.height))
-            })
-            .await;
-            match lookup {
-                Ok(lookup) => Finding::from_lookup(&lookup),
-                // A panicked lookup is no reason to block calibration.
-                Err(_) => Finding::from_lookup(&odyssey_autocalib::display::DisplayLookup {
-                    edid: None,
-                    source: odyssey_autocalib::display::LookupSource::Unavailable,
-                    note: Some(odyssey_autocalib::display::LookupNote::NotFound),
-                }),
-            }
-        };
-        *wizard.finding.write() = Some(found);
+        *wizard.finding.write() = Some(read_finding(key, demo).await);
         wizard.maybe_auto_start();
     });
+}
 
-    // Camera events arrive from the camera thread.
-    use_future({
-        let receiver = channel.1.clone();
-        move || {
-            let receiver = receiver.borrow_mut().take();
-            async move {
-                let Some(mut receiver) = receiver else { return };
-                while let Some(event) = receiver.recv().await {
-                    wizard.on_event(event);
-                }
+async fn read_finding(key: MonitorKey, demo: bool) -> Finding {
+    if demo {
+        let [width_m, height_m] = demo_scene(
+            f64::from(key.width) / f64::from(key.height.max(1)),
+            DEMO_DIAGONAL_IN,
+            true,
+            0.0,
+        )
+        .screen_size_m;
+        return Finding::demo(width_m, height_m);
+    }
+    let lookup = tokio::task::spawn_blocking(move || {
+        display::lookup(key.name.as_deref(), (key.width, key.height))
+    })
+    .await;
+    match lookup {
+        Ok(lookup) => Finding::from_lookup(&lookup),
+        // A panicked lookup is no reason to block calibration.
+        Err(_) => Finding::from_lookup(&DisplayLookup {
+            edid: None,
+            source: LookupSource::Unavailable,
+            note: Some(LookupNote::NotFound),
+        }),
+    }
+}
+
+/// Camera events arrive from the camera thread.
+fn use_camera_events(wizard: Wizard, pump: Pump<Event>) {
+    use_future(move || {
+        let receiver = pump.receiver.borrow_mut().take();
+        async move {
+            let Some(mut receiver) = receiver else { return };
+            while let Some(event) = receiver.recv().await {
+                wizard.on_event(event);
             }
         }
     });
+}
 
-    // Without the pattern window, or with it on the wrong monitor, there is
-    // nothing valid for the camera to look at, so the calibration stops.
-    use_future({
-        let receiver = losses.1.clone();
-        move || {
-            let receiver = receiver.borrow_mut().take();
-            async move {
-                let Some(mut receiver) = receiver else { return };
-                while let Some(event) = receiver.recv().await {
-                    let loss = match event {
-                        PatternEvent::Nudge(steps) => {
-                            wizard.nudge_card(steps);
-                            continue;
-                        }
-                        PatternEvent::Lost(loss) => loss,
-                    };
-                    let helper_covers = wizard.helper.peek().as_ref().map(|h| h.covers);
-                    match helper_covers {
-                        // The picture hid this window, so closing it is how you come back.
-                        Some(true) => {
-                            wizard.close_pattern();
-                            dioxus::desktop::window().set_focus();
-                            if loss == PatternLoss::WrongMonitor {
-                                *wizard.helper_problem.write() = Some(
-                                    "The picture didn't appear on the screen you chose. Your window manager moved it; \
-                                     allow the \"Calibration pattern\" window to open fullscreen on the chosen display and try again."
-                                        .into(),
-                                );
-                            }
-                            continue;
-                        }
-                        Some(false) => {
-                            wizard.cancel_helper();
-                            wizard.note("The measuring screen was closed.".into());
-                            continue;
-                        }
-                        None => {}
-                    }
-                    if wizard.pattern.peek().is_none() {
-                        continue;
-                    }
-                    tracing::info!("pattern window lost ({loss:?}); stopping the calibration");
-                    wizard.back_to_setup();
-                    wizard.note(
-                        match loss {
-                            PatternLoss::Closed => "The pattern screen was closed, so the calibration stopped.",
-                            PatternLoss::WrongMonitor => {
-                                "The pattern didn't appear on the screen you chose. Your window manager moved it; \
-                                 allow the \"Calibration pattern\" window to open fullscreen on the chosen display and try again."
-                            }
-                        }
-                        .into(),
-                    );
-                }
+/// Pattern window events arrive from the pattern window's own page.
+fn use_pattern_events(wizard: Wizard, pump: Pump<PatternEvent>) {
+    use_future(move || {
+        let receiver = pump.receiver.borrow_mut().take();
+        async move {
+            let Some(mut receiver) = receiver else { return };
+            while let Some(event) = receiver.recv().await {
+                wizard.on_pattern_event(event);
             }
         }
     });
+}
 
-    // Closing the main window only hides it to the tray; the camera must not
-    // keep streaming behind a hidden window.
+/// Closing the main window only hides it to the tray; the camera must not keep
+/// streaming behind a hidden window.
+fn use_close_request(wizard: Wizard) {
     use_wry_event_handler({
         let own_id = dioxus::desktop::window().id();
         move |event, _| {
@@ -255,6 +243,4 @@ pub(crate) fn use_wizard() -> Wizard {
             }
         }
     });
-
-    wizard
 }
