@@ -9695,8 +9695,6 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
- "serial2",
- "serialport",
  "sha2",
  "slab",
  "tokio",
@@ -9917,11 +9915,11 @@ dependencies = [
  "egui_plot",
  "enumn",
  "nalgebra 0.35.0",
- "num-derive",
  "num-traits",
  "nusb",
  "odyssey-common",
  "odyssey-cv",
+ "odyssey-playback",
  "odyssey-protocol",
  "odyssey-usb",
  "opencv-ros-camera",
@@ -11739,17 +11737,6 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
-]
-
-[[package]]
-name = "serial2"
-version = "0.2.38"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16809bc35793b19ce4e0c53924bc0dce3937f15487997cfdaed936004180730"
-dependencies = [
- "cfg-if",
- "libc",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

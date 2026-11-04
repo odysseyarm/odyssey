@@ -13,8 +13,6 @@ workspace = true
 anyhow = { workspace = true }
 futures = { version = "0.3.30", default-features = false, features = ["std", "async-await"] }
 futures-concurrency = { workspace = true }
-serialport = { workspace = true, features = ["usbportinfo-interface"] }
-serial2 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 odyssey-usb = { workspace = true }
 tracing-subscriber = { workspace = true }
