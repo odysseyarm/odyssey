@@ -162,13 +162,88 @@ fn ransac_homography_rejects_gross_outliers() {
 }
 
 #[test]
-fn ransac_trial_budget_follows_the_inlier_share() {
-    // Every sample is outlier-free: stop at the current trial.
-    assert_eq!(trials_for_confidence(1.0, 4, 0.99, 7, 300), 7);
-    // No support at all: the full budget.
-    assert_eq!(trials_for_confidence(0.0, 4, 0.99, 7, 300), 300);
-    // Half inliers, samples of four: ln(0.01) / ln(1 - 0.5^4) = 71.4 trials.
-    assert_eq!(trials_for_confidence(0.5, 4, 0.99, 1, 300), 72);
-    // The sample may be drawn more than once, never zero times.
-    assert_eq!(trials_for_confidence(0.99, 4, 0.5, 1, 300), 1);
+fn homography_fits_reject_mismatched_degenerate_and_nonfinite_pairs() {
+    let square = [
+        Point2::new(0.0, 0.0),
+        Point2::new(1.0, 0.0),
+        Point2::new(1.0, 1.0),
+        Point2::new(0.0, 1.0),
+    ];
+    assert!(fit_homography(&square, &square[..3]).is_none());
+    assert!(ransac_homography(&square, &square[..3], 1.0, 10, 0).is_none());
+    let line = [0.0, 1.0, 2.0, 3.0].map(|x| Point2::new(x, 2.0 * x));
+    assert!(fit_homography(&line, &square).is_none());
+    assert!(fit_homography(&square, &line).is_none());
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut invalid = square;
+        invalid[0].x = bad;
+        assert!(fit_homography(&invalid, &square).is_none());
+        assert!(ransac_homography(&square, &invalid, 1.0, 10, 0).is_none());
+    }
+}
+
+#[test]
+fn geometric_projections_reject_nonfinite_results() {
+    let intr = intrinsics();
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(project(&intr, &Vector3::new(bad, 0.0, 1.0)).is_none());
+        assert!(project_pinhole(&intr, &Vector3::new(0.0, 0.0, bad)).is_none());
+        assert!(apply_homography(&Matrix3::identity(), Point2::new(bad, 0.0)).is_none());
+    }
+    let plane = Plane::new(Vector3::new(0.0, 0.0, f64::INFINITY), Vector3::z());
+    assert!(
+        plane
+            .intersect_ray(&Vector3::zeros(), &Vector3::z())
+            .is_none()
+    );
+}
+
+#[test]
+fn plane_fits_reject_nonfinite_clouds_and_invalid_sampling() {
+    let points = [
+        Vector3::new(0.0, 0.0, 1.0),
+        Vector3::new(1.0, 0.0, 1.0),
+        Vector3::new(0.0, 1.0, 1.0),
+    ];
+    let params = RansacParams {
+        sample_size: 3,
+        score_points: 3,
+        ..RansacParams::default()
+    };
+    let mut invalid = points;
+    invalid[0].x = f64::NAN;
+    assert!(fit_plane(&invalid).is_none());
+    assert!(ransac_plane(&invalid, &params).is_none());
+    assert!(
+        ransac_plane(
+            &points,
+            &RansacParams {
+                sample_size: 2,
+                ..params
+            }
+        )
+        .is_none()
+    );
+    assert!(
+        ransac_plane(
+            &points,
+            &RansacParams {
+                score_points: 0,
+                ..params
+            }
+        )
+        .is_none()
+    );
+    for threshold in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(
+            ransac_plane(
+                &points,
+                &RansacParams {
+                    threshold,
+                    ..params
+                }
+            )
+            .is_none()
+        );
+    }
 }

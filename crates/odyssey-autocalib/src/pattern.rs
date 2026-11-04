@@ -441,6 +441,9 @@ fn screen_quad(h: &Matrix3<f64>, intrinsics: &Intrinsics) -> Option<[Point2<f64>
     let mut quad = [Point2::origin(); 4];
     for (slot, (u, v)) in quad.iter_mut().zip(corners) {
         *slot = distort_pixel(intrinsics, apply_homography(h, Point2::new(u, v))?);
+        if !slot.x.is_finite() || !slot.y.is_finite() {
+            return None;
+        }
     }
     Some(quad)
 }

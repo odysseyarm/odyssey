@@ -79,7 +79,8 @@ fn inset_corners() -> [(f64, f64); 4] {
 /// What a frame showed of a found pattern.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Observation {
-    /// The inset screen region lies inside the color and depth images.
+    /// The inset screen region lies inside the color image; depth visibility
+    /// is accounted for by `depth.coverage`.
     pub(super) region_inside_images: bool,
     /// Share of the pattern's dots that were matched.
     pub(super) completeness: f64,
@@ -110,7 +111,9 @@ pub(super) fn choose_hint(observation: &Observation) -> Hint {
     } else if depth.cos_incidence.is_some_and(|c| c < MIN_INCIDENCE_COS) {
         Hint::ScreenTooOblique
     } else if depth.coverage.is_none_or(|c| c < MIN_DEPTH_COVERAGE)
-        || depth.plane_rmse_m.is_some_and(|e| e > MAX_PREVIEW_RMSE_M)
+        || depth
+            .plane_rmse_m
+            .is_none_or(|e| !e.is_finite() || e > MAX_PREVIEW_RMSE_M)
     {
         Hint::DepthPoor
     } else if observation.edges_block {
@@ -120,10 +123,13 @@ pub(super) fn choose_hint(observation: &Observation) -> Hint {
     }
 }
 
-/// Whether the inset screen region lies inside both the color and the depth
-/// image.
+/// Whether the inset screen region lies inside the color image. The depth
+/// imager's visibility is reflected separately in [`DepthStats::coverage`].
 pub(super) fn region_inside_images(geometry: &CameraGeometry, unit_to_px: &Matrix3<f64>) -> bool {
     let color = &geometry.color;
+    if color.width == 0 || color.height == 0 {
+        return false;
+    }
     inset_corners().into_iter().all(|(u, v)| {
         apply_homography(unit_to_px, Point2::new(u, v)).is_some_and(|p| {
             p.x >= 0.0
@@ -313,7 +319,7 @@ mod tests {
 
     #[test]
     fn each_problem_maps_to_its_hint() {
-        let cases: [(Spoil, Hint); 10] = [
+        let cases: [(Spoil, Hint); 12] = [
             (
                 |o| o.region_inside_images = false,
                 Hint::ScreenPartlyVisible,
@@ -337,6 +343,8 @@ mod tests {
             ),
             (|o| o.depth.coverage = None, Hint::DepthPoor),
             (|o| o.depth.plane_rmse_m = Some(0.05), Hint::DepthPoor),
+            (|o| o.depth.plane_rmse_m = None, Hint::DepthPoor),
+            (|o| o.depth.plane_rmse_m = Some(f64::NAN), Hint::DepthPoor),
             (|o| o.edges_block = true, Hint::EdgesCropped),
         ];
         for (break_it, expected) in cases {

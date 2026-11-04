@@ -121,7 +121,9 @@ fn luma_at(image: &RgbImage, x: u32, y: u32) -> f64 {
 /// registration error. `None` unless the block lies inside the image.
 fn luma_peak(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
     let (x, y) = (p.x.round(), p.y.round());
-    if x < 1.0
+    if !x.is_finite()
+        || !y.is_finite()
+        || x < 1.0
         || y < 1.0
         || x + 2.0 > f64::from(image.width())
         || y + 2.0 > f64::from(image.height())
@@ -139,7 +141,9 @@ fn luma_peak(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
 /// the image.
 fn luma_bilinear(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
     let (x0, y0) = (p.x.floor(), p.y.floor());
-    if x0 < 0.0
+    if !x0.is_finite()
+        || !y0.is_finite()
+        || x0 < 0.0
         || y0 < 0.0
         || x0 + 2.0 > f64::from(image.width())
         || y0 + 2.0 > f64::from(image.height())

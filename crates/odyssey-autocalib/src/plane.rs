@@ -54,7 +54,7 @@ fn pixel_to_normalized(intr: &Intrinsics, pixel: Point2<f64>) -> Vector2<f64> {
 /// Normalized image coordinates `(x / z, y / z)` of a camera-frame point, or
 /// `None` at or behind the image plane.
 fn normalized_coordinates(p: &Vector3<f64>) -> Option<Vector2<f64>> {
-    if p.z <= MIN_PROJECTION_DEPTH_M {
+    if !p.iter().all(|v| v.is_finite()) || p.z <= MIN_PROJECTION_DEPTH_M {
         return None;
     }
     Some(Vector2::new(p.x / p.z, p.y / p.z))
@@ -64,14 +64,16 @@ fn normalized_coordinates(p: &Vector3<f64>) -> Option<Vector2<f64>> {
 /// `None` for points at or behind the image plane.
 pub fn project(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
     let n = normalized_coordinates(p)?;
-    Some(normalized_to_pixel(intr, distort_normalized(intr, n)))
+    let pixel = normalized_to_pixel(intr, distort_normalized(intr, n));
+    (pixel.x.is_finite() && pixel.y.is_finite()).then_some(pixel)
 }
 
 /// Projects a camera-frame point with the pinhole model only. This is the
 /// pixel grid that [`undistort_pixel`] produces.
 pub fn project_pinhole(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
     let n = normalized_coordinates(p)?;
-    Some(normalized_to_pixel(intr, n))
+    let pixel = normalized_to_pixel(intr, n);
+    (pixel.x.is_finite() && pixel.y.is_finite()).then_some(pixel)
 }
 
 const UNDISTORT_ITERATIONS: usize = 40;
@@ -173,7 +175,7 @@ impl Plane {
             return None;
         }
         let t = self.normal.dot(&(self.point - origin)) / denom;
-        (t > 0.0).then_some(t)
+        (t.is_finite() && t > 0.0).then_some(t)
     }
 
     /// Where the ray `origin + t * direction` meets the plane, for `t > 0`.
@@ -182,8 +184,9 @@ impl Plane {
         origin: &Vector3<f64>,
         direction: &Vector3<f64>,
     ) -> Option<Vector3<f64>> {
-        self.ray_parameter(origin, direction)
-            .map(|t| origin + direction * t)
+        let t = self.ray_parameter(origin, direction)?;
+        let hit = origin + direction * t;
+        hit.iter().all(|v| v.is_finite()).then_some(hit)
     }
 
     /// The same plane expressed in another frame.
@@ -200,7 +203,7 @@ impl Plane {
 /// for the smallest singular value. `None` for fewer than three points or a
 /// degenerate (collinear) cloud.
 pub fn fit_plane(points: &[Vector3<f64>]) -> Option<Plane> {
-    if points.len() < 3 {
+    if points.len() < 3 || points.iter().any(|p| !p.iter().all(|v| v.is_finite())) {
         return None;
     }
     let centroid = points.iter().sum::<Vector3<f64>>() / points.len() as f64;
@@ -209,11 +212,14 @@ pub fn fit_plane(points: &[Vector3<f64>]) -> Option<Plane> {
         let d = p - centroid;
         cov += d * d.transpose();
     }
+    if !cov.iter().all(|v| v.is_finite()) {
+        return None;
+    }
     let eig = SymmetricEigen::new(cov);
     let mut order = [0usize, 1, 2];
     order.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
     let (smallest, middle) = (eig.eigenvalues[order[0]], eig.eigenvalues[order[1]]);
-    if middle.is_nan() || middle <= DEGENERATE_EPSILON || !smallest.is_finite() {
+    if !middle.is_finite() || middle <= DEGENERATE_EPSILON || !smallest.is_finite() {
         return None;
     }
     let normal = eig.eigenvectors.column(order[0]).into_owned();
@@ -373,7 +379,16 @@ const PLANE_REFIT_ROUNDS: usize = 2;
 /// seeded generator makes the result reproducible.
 pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<PlaneFit> {
     let n = points.len();
-    if n < params.sample_size.max(3) {
+    if params.sample_size < 3
+        || n < params.sample_size
+        || params.score_points < 3
+        || !params.threshold.is_finite()
+        || params.threshold <= 0.0
+        || !params.confidence.is_finite()
+        || !(0.0..1.0).contains(&params.confidence)
+        || params.confidence == 0.0
+        || points.iter().any(|p| !p.iter().all(|v| v.is_finite()))
+    {
         return None;
     }
     let mut rng = StdRng::seed_from_u64(params.seed);
@@ -416,7 +431,11 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
 /// Applies a 3x3 homography to a point.
 pub fn apply_homography(h: &Matrix3<f64>, p: Point2<f64>) -> Option<Point2<f64>> {
     let v = h * Vector3::new(p.x, p.y, 1.0);
-    (v.z.abs() > HOMOGENEOUS_EPSILON).then(|| Point2::new(v.x / v.z, v.y / v.z))
+    if !v.iter().all(|coordinate| coordinate.is_finite()) || v.z.abs() <= HOMOGENEOUS_EPSILON {
+        return None;
+    }
+    let point = Point2::new(v.x / v.z, v.y / v.z);
+    (point.x.is_finite() && point.y.is_finite()).then_some(point)
 }
 
 /// Hartley normalization: translates the centroid to the origin and scales the
@@ -424,7 +443,7 @@ pub fn apply_homography(h: &Matrix3<f64>, p: Point2<f64>) -> Option<Point2<f64>>
 fn normalization(points: &[Point2<f64>]) -> Option<Matrix3<f64>> {
     let c = points.iter().map(|p| p.coords).sum::<Vector2<f64>>() / points.len() as f64;
     let mean_dist = points.iter().map(|p| (p.coords - c).norm()).sum::<f64>() / points.len() as f64;
-    if mean_dist.is_nan() || mean_dist <= DEGENERATE_EPSILON {
+    if !mean_dist.is_finite() || mean_dist <= DEGENERATE_EPSILON {
         return None;
     }
     let s = std::f64::consts::SQRT_2 / mean_dist;
@@ -475,14 +494,31 @@ fn dlt_system(
 /// that minimizes the algebraic error over all pairs. Needs at least four pairs
 /// with no three collinear.
 pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix3<f64>> {
-    assert_eq!(src.len(), dst.len());
-    if src.len() < MIN_HOMOGRAPHY_PAIRS {
+    if src.len() != dst.len()
+        || src.len() < MIN_HOMOGRAPHY_PAIRS
+        || src
+            .iter()
+            .chain(dst)
+            .any(|p| !p.x.is_finite() || !p.y.is_finite())
+    {
         return None;
     }
     let ts = normalization(src)?;
     let td = normalization(dst)?;
 
     let svd = dlt_system(src, dst, &ts, &td).svd(false, true);
+    // A homography needs eight independent constraints. Collinear or repeated
+    // pairs otherwise yield an arbitrary null-space vector, not a mapping.
+    let largest = svd.singular_values.iter().copied().fold(0.0, f64::max);
+    if svd
+        .singular_values
+        .iter()
+        .filter(|&&s| s > largest * DEGENERATE_EPSILON)
+        .count()
+        < 8
+    {
+        return None;
+    }
     let v_t = svd.v_t?;
     let (min_idx, _) = svd
         .singular_values
@@ -491,6 +527,11 @@ pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix
         .min_by(|a, b| a.1.total_cmp(b.1))?;
     let h = v_t.row(min_idx);
     let hn = Matrix3::new(h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8]);
+    // The unit-norm null vector must describe an invertible projective map,
+    // not a collapse onto a destination line.
+    if hn.determinant().abs() <= DEGENERATE_EPSILON {
+        return None;
+    }
     let h = td.try_inverse()? * hn * ts;
     if !h.iter().all(|v| v.is_finite()) {
         return None;
@@ -631,7 +672,15 @@ pub fn ransac_homography(
     max_trials: usize,
     seed: u64,
 ) -> Option<HomographyFit> {
-    if src.len() < MIN_HOMOGRAPHY_PAIRS {
+    if src.len() != dst.len()
+        || src.len() < MIN_HOMOGRAPHY_PAIRS
+        || !threshold.is_finite()
+        || threshold <= 0.0
+        || src
+            .iter()
+            .chain(dst)
+            .any(|p| !p.x.is_finite() || !p.y.is_finite())
+    {
         return None;
     }
     let mut inliers = best_homography_inliers(src, dst, threshold, max_trials, seed)?;

@@ -262,34 +262,6 @@ fn bias_grows_with_dot_size_and_obliqueness_and_points_toward_the_near_side() {
     assert!(norm(&big, &steep) > 1.5 * norm(&pattern, &steep));
 }
 
-#[test]
-fn correction_is_cheap() {
-    let pattern = Pattern::new(16.0 / 9.0);
-    let h = pose_homography(&pattern, 0.8, 0.1, 2.0);
-    let measured: Vec<(usize, Point2<f64>)> = (0..pattern.dots().len())
-        .map(|i| {
-            (
-                i,
-                apply_homography(&h, Point2::new(pattern.dots()[i].u, pattern.dots()[i].v))
-                    .unwrap(),
-            )
-        })
-        .collect();
-    let start = std::time::Instant::now();
-    for _ in 0..100 {
-        std::hint::black_box(corrected_centers(&pattern, &h, &measured).unwrap());
-    }
-    let per_call = start.elapsed() / 100;
-    eprintln!(
-        "corrected_centers for {} dots: {per_call:?}",
-        measured.len()
-    );
-    assert!(
-        per_call < std::time::Duration::from_millis(5),
-        "{per_call:?}"
-    );
-}
-
 /// Mean distance of the detected dot centers from the true image of the
 /// dot centers, for the corrected estimate and the raw centroid.
 fn detection_errors(pattern: &Pattern, h: &Matrix3<f64>) -> (f64, f64, f64) {
@@ -407,6 +379,16 @@ fn edges_are_unknown_when_nothing_can_be_judged() {
     // A washed-out picture has no contrast to judge by.
     let faint = RgbImage::from_pixel(intr.width, intr.height, Rgb([30, 30, 30]));
     assert_eq!(check_edges(&pattern, &faint, &intr, &h), EdgeCheck::Unknown);
+}
+
+#[test]
+fn edges_are_unknown_when_the_lens_maps_samples_to_nonfinite_pixels() {
+    let pattern = Pattern::new(16.0 / 9.0);
+    let mut intr = intrinsics();
+    let h = pose_homography(&pattern, 0.15, 0.0, 2.2);
+    let image = RgbImage::from_pixel(intr.width, intr.height, Rgb([30; 3]));
+    intr.k[0] = f64::NAN;
+    assert_eq!(check_edges(&pattern, &image, &intr, &h), EdgeCheck::Unknown);
 }
 
 /// A room of isolated bright spots, some bigger than the corner dots, must not

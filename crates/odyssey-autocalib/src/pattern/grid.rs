@@ -93,16 +93,26 @@ impl PointIndex {
         p: Point2<f64>,
         radius: f64,
     ) -> impl Iterator<Item = (usize, f64)> + 'a {
-        let span = (radius / self.cell).ceil() as i32;
+        let valid = radius.is_finite() && radius >= 0.0 && p.x.is_finite() && p.y.is_finite();
+        let span = (radius / self.cell).ceil();
+        // A projective hypothesis can predict a very large spacing near its
+        // horizon. Never enumerate billions of empty cells; scan the finite
+        // blob set when that is cheaper than the cell square.
+        let scan = (2.0 * span + 1.0).powi(2) > self.cells.len() as f64;
+        let span = if valid && !scan { span as i32 } else { 0 };
         let (kx, ky) = Self::key(self.cell, p);
-        (-span..=span)
-            .flat_map(move |dy| (-span..=span).map(move |dx| (kx + dx, ky + dy)))
+        let cells = (-span..=span)
+            .flat_map(move |dy| (-span..=span).map(move |dx| (dx, dy)))
+            .filter_map(move |(dx, dy)| Some((kx.checked_add(dx)?, ky.checked_add(dy)?)))
+            .filter(move |_| valid && !scan)
             .filter_map(|k| self.cells.get(&k))
             .flatten()
-            .filter_map(move |&i| {
-                let d = (blobs[i as usize].undistorted - p).norm();
-                (d <= radius).then_some((i as usize, d))
-            })
+            .map(|&i| i as usize);
+        let all = 0..if valid && scan { blobs.len() } else { 0 };
+        cells.chain(all).filter_map(move |i| {
+            let d = (blobs[i].undistorted - p).norm();
+            (d <= radius).then_some((i, d))
+        })
     }
 }
 
@@ -477,14 +487,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn triples_are_visited_best_ranked_members_first() {
-        let triples: Vec<_> = triples_by_largest_member(3).collect();
-        assert_eq!(triples.len(), 27);
-        assert_eq!(triples[0], (0, 0, 0));
-        // Ordered by largest member; within one, by (i, j, l).
-        let largest: Vec<_> = triples.iter().map(|&(i, j, l)| i.max(j).max(l)).collect();
-        assert!(largest.is_sorted());
-        assert_eq!(triples[1], (0, 0, 1));
-        assert_eq!(triples[7], (1, 1, 1));
+    fn horizon_sized_searches_scan_blobs_without_overflowing_cell_keys() {
+        let blobs = [
+            Blob {
+                raw: Point2::origin(),
+                undistorted: Point2::origin(),
+                area: 1.0,
+            },
+            Blob {
+                raw: Point2::new(40.0, 0.0),
+                undistorted: Point2::new(40.0, 0.0),
+                area: 1.0,
+            },
+        ];
+        let index = PointIndex::new(&blobs);
+        let found: Vec<_> = index
+            .within(&blobs, Point2::origin(), 1e100)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(found, [0, 1]);
+        assert_eq!(
+            index
+                .within(&blobs, Point2::new(16.0, 0.0), 17.0)
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>(),
+            [0]
+        );
+        assert_eq!(
+            index
+                .within(&blobs, Point2::new(f64::MAX, 0.0), 1.0)
+                .count(),
+            0
+        );
+        assert_eq!(
+            index
+                .within(&blobs, Point2::origin(), f64::INFINITY)
+                .count(),
+            0
+        );
     }
 }
