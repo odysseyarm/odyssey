@@ -517,7 +517,8 @@ async fn ble_task(
 }
 
 // Reads host commands from the bulk OUT endpoint, re-arming after every
-// deconfigure.
+// deconfigure. A deconfigure or bus reset disables the endpoint, which ends
+// the pending read with `EndpointError::Disabled`.
 #[embassy_executor::task]
 async fn usb_rx_task(
     mut ep_out: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::Out>,
@@ -535,14 +536,8 @@ async fn usb_rx_task(
         let mut read_buf = [0u8; 512];
 
         loop {
-            // 250 ms bound so pairing timeouts and deconfigure are noticed while idle.
-            match embassy_time::with_timeout(
-                embassy_time::Duration::from_millis(250),
-                EndpointOut::read_transfer(&mut ep_out, &mut read_buf),
-            )
-            .await
-            {
-                Ok(Ok(n)) => {
+            match EndpointOut::read_transfer(&mut ep_out, &mut read_buf).await {
+                Ok(n) => {
                     defmt::trace!("USB RX: received {} bytes", n);
                     if let Err(_e) =
                         handle_usb_rx(&read_buf[..n], device_queues, active_connections).await
@@ -550,22 +545,13 @@ async fn usb_rx_task(
                         error!("Error handling USB RX ({} bytes)", n);
                     }
                 }
-                Ok(Err(EndpointError::Disabled)) => {
+                Err(EndpointError::Disabled) => {
                     info!("USB RX: disabled, waiting for reconnection");
                     break;
                 }
-                Ok(Err(_e)) => {
+                Err(_e) => {
                     warn!("USB RX: read error");
                 }
-                Err(_) => {
-                    // Timed out; fall through to the pairing timeout check.
-                }
-            }
-
-            if pairing::take_timeout() {
-                control::try_send_event(UsbMuxCtrlMsg::PairingResult(PairingOutcome::Err(
-                    PairingError::Timeout,
-                )));
             }
         }
     }
