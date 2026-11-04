@@ -52,7 +52,7 @@ pub fn Accessories() -> Element {
 
     use_accessory_map(hub, known, infos);
     use_ble_scan(nearby);
-    let edits = AccessoryEdits::new(hub, infos);
+    let edits = AccessoryEdits::use_new(hub, infos);
 
     // Snapshots for render
     let info_snapshot = infos.read().clone();
@@ -111,7 +111,7 @@ pub fn Accessories() -> Element {
                             AddedAccessory {
                                 key: "{format_address(&id)}",
                                 id,
-                                info: added_info(&known_snapshot, &info_snapshot, &id),
+                                info: info_snapshot[&id].clone(),
                                 connected: is_connected(&id),
                                 device_choices: device_choices.clone(),
                                 edits,
@@ -135,18 +135,6 @@ pub fn Accessories() -> Element {
             }
         }
     }
-}
-
-/// What to show for an added accessory: what the hub reports, else what was
-/// last saved, else a placeholder.
-fn added_info(known: &Known, saved: &AccessoryInfoMap, id: &[u8; 6]) -> AccessoryInfo {
-    if let Some((info, _)) = known.get(id) {
-        return info.clone();
-    }
-    saved
-        .get(id)
-        .cloned()
-        .unwrap_or_else(|| AccessoryInfo::with_defaults("Unknown", AccessoryType::DryFireMag))
 }
 
 #[component]
@@ -190,6 +178,7 @@ fn AddedAccessory(
 
                 select {
                     class: "px-2 py-1 text-sm rounded-lg border border-gray-300/70 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60",
+                    disabled: edits.pending(),
                     value: assigned_uuid.map(|uuid| uuid.to_string()).unwrap_or_default(),
                     onchange: move |evt| {
                         if let Some(assignment) = parse_assignment(&evt.value()) {
@@ -204,6 +193,7 @@ fn AddedAccessory(
 
                 button {
                     class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 hover:bg-red-500 hover:text-white transition",
+                    disabled: edits.pending(),
                     onclick: move |_| edits.remove(id),
                     "Remove"
                 }
@@ -228,6 +218,7 @@ fn NearbyAccessory(
             }
             button {
                 class: "px-3 py-1.5 text-sm rounded-lg border border-emerald-600/60 hover:bg-emerald-600 hover:text-white transition",
+                disabled: edits.pending(),
                 onclick: move |_| edits.add(id, label.clone(), ty),
                 "Add"
             }

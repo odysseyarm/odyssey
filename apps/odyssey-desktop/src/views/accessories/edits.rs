@@ -8,17 +8,27 @@ use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryTy
 
 use crate::hub::HubContext;
 
-/// The ways the list can be edited. Each edit sends the whole changed list to
-/// the hub and shows it only once the hub accepts it.
+/// The ways the list can be edited. Only one whole-map replacement may be in
+/// flight at a time, so rapid edits cannot overwrite each other's snapshots.
+/// Changes are shown only once the hub accepts them.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct AccessoryEdits {
     hub: Signal<HubContext>,
     infos: Signal<AccessoryInfoMap>,
+    pending: Signal<bool>,
 }
 
 impl AccessoryEdits {
-    pub(super) fn new(hub: Signal<HubContext>, infos: Signal<AccessoryInfoMap>) -> Self {
-        Self { hub, infos }
+    pub(super) fn use_new(hub: Signal<HubContext>, infos: Signal<AccessoryInfoMap>) -> Self {
+        Self {
+            hub,
+            infos,
+            pending: use_signal(|| false),
+        }
+    }
+
+    pub(super) fn pending(self) -> bool {
+        (self.pending)()
     }
 
     pub(super) fn add(self, id: [u8; 6], name: String, ty: AccessoryType) {
@@ -43,6 +53,10 @@ impl AccessoryEdits {
     }
 
     fn commit(mut self, action: &'static str, edit: impl FnOnce(&mut AccessoryInfoMap)) {
+        if *self.pending.peek() {
+            return;
+        }
+        self.pending.set(true);
         let mut next = self.infos.read().clone();
         edit(&mut next);
 
@@ -54,6 +68,7 @@ impl AccessoryEdits {
                 Ok(()) => self.infos.set(next),
                 Err(e) => tracing::error!("Failed to {action} accessory: {e}"),
             }
+            self.pending.set(false);
         });
     }
 }

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager};
+use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::accessory::AccessoryType;
 use uuid::Uuid;
@@ -24,6 +25,26 @@ const SCAN_DURATION: Duration = Duration::from_secs(3);
 /// How long to rest between scans.
 const SCAN_PAUSE: Duration = Duration::from_secs(5);
 
+/// Dioxus cancels the scan future when the page unmounts. Stopping discovery
+/// must outlive that scope, otherwise navigation during the scan leaves it on.
+struct ScanSession {
+    adapter: Adapter,
+    active: bool,
+}
+
+impl Drop for ScanSession {
+    fn drop(&mut self) {
+        if self.active {
+            let adapter = self.adapter.clone();
+            tokio::spawn(async move {
+                if let Err(e) = adapter.stop_scan().await {
+                    tracing::warn!("Failed to stop accessory scan on navigation: {e}");
+                }
+            });
+        }
+    }
+}
+
 /// Keeps `nearby` up to date with the DryFireMag and MantisX accessories in
 /// range. Does nothing when the machine has no Bluetooth adapter.
 pub(super) fn use_ble_scan(mut nearby: Signal<Nearby>) {
@@ -37,22 +58,32 @@ pub(super) fn use_ble_scan(mut nearby: Signal<Nearby>) {
         let Some(adapter) = adapters.into_iter().next() else {
             return;
         };
+        let mut session = ScanSession {
+            adapter,
+            active: false,
+        };
         loop {
-            nearby.set(scan_once(&adapter).await);
+            nearby.set(scan_once(&mut session).await);
             tokio::time::sleep(SCAN_PAUSE).await;
         }
     });
 }
 
-async fn scan_once(adapter: &Adapter) -> Nearby {
+async fn scan_once(session: &mut ScanSession) -> Nearby {
     let filter = ScanFilter { services: vec![] };
-    // A scan that cannot start or stop leaves the previous results readable.
-    let _ = adapter.start_scan(filter).await;
+    // Mark active before awaiting so cancellation during start also cleans up.
+    session.active = true;
+    if let Err(e) = session.adapter.start_scan(filter).await {
+        tracing::warn!("Failed to start accessory scan: {e}");
+    }
     tokio::time::sleep(SCAN_DURATION).await;
-    let _ = adapter.stop_scan().await;
+    match session.adapter.stop_scan().await {
+        Ok(()) => session.active = false,
+        Err(e) => tracing::warn!("Failed to stop accessory scan: {e}"),
+    }
 
     let mut found = Nearby::new();
-    let Ok(peripherals) = adapter.peripherals().await else {
+    let Ok(peripherals) = session.adapter.peripherals().await else {
         return found;
     };
     for peripheral in peripherals {
