@@ -40,8 +40,8 @@ exclude = [
 # `[lints] workspace = true` (cargo warns, via missing_lints_inheritance, when
 # one forgets). Cargo cannot override an inherited lint inside one crate, so a
 # crate that has a real reason to differ does it in source, with
-# `#![expect(lint, reason = "...")]`, which also tells you when the reason stops
-# being true. sdk/* and firmware/ are separate workspace roots with their own
+# `#![expect(lint, reason = "...")]`, which warns once the reason stops being
+# true. sdk/* and firmware/ are separate workspace roots with their own
 # lockfiles and do not inherit these.
 #
 # No clippy group is switched on: pedantic, restriction and nursery are
@@ -137,8 +137,8 @@ rest_pat_in_fully_bound_structs = "warn"
 
 [workspace.lints.cargo]
 # Everything else (unused_dependencies, unused_workspace_dependencies,
-# missing_lints_inheritance, ...) is already warn by default. These stay on
-# the default; this only adds the one guardrail that costs nothing today.
+# missing_lints_inheritance, ...) is already warn by default and stays there;
+# the one addition is a guardrail that nothing in the workspace violates.
 non_kebab_case_packages = "warn"
 
 [workspace.dependencies]
@@ -187,7 +187,6 @@ uuid = "1.18.0"
 [workspace.metadata.bin]
 dioxus-cli = { version = "0.7.10", locked = true, bins = ["dx"] }
 
-# Enable optimizations for dependencies in dev profile
 [profile.dev.package."*"]
 opt-level = 3
 
@@ -202,7 +201,7 @@ inherits = "dev"
 inherits = "dev"
 
 # opencv-ros-camera is deliberately unpinned here: odyssey-cv depends on the same
-# fork without a rev, and a rev on our side would make them two distinct
+# fork without a rev, and a rev here would make them two distinct
 # sources with incompatible types. Cargo.lock is the pin.
 
 [patch."https://github.com/odysseyarm/odyssey"]

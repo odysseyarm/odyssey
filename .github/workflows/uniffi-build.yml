@@ -24,10 +24,10 @@ permissions:
 
 jobs:
   # Wheel builds use the project-local uniffi-bindgen: maturin detects the
-  # workspace bin and runs `cargo run --bin uniffi-bindgen`, so bindings always
-  # match the uniffi version in Cargo.lock. The pip pin in pyproject.toml only
-  # covers builds where that bin isn't available — guard that it hasn't
-  # drifted from the lockfile.
+  # workspace bin and runs `cargo run --bin uniffi-bindgen`, so bindings match
+  # the uniffi version in Cargo.lock. The pip pin in pyproject.toml only covers
+  # builds where that bin is unavailable, so this job fails if it drifts from
+  # the lockfile.
   check-pyproject-pin:
     name: Check pyproject uniffi-bindgen pin
     runs-on: ubuntu-latest

@@ -5,14 +5,14 @@
 # this file only holds the options those lints read.
 
 # Tests may unwrap, expect, dbg! and print: a failed unwrap is the failure
-# report, and the output is what you read when a test goes wrong.
+# report, and the output is what gets read when a test goes wrong.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
 
 # Wildcard imports (`wildcard_imports`, warn in Cargo.toml) stay at clippy's
-# defaults, which already allow exactly the cases we accept: `use super::*` in a
+# defaults, which allow exactly the accepted cases: `use super::*` in a
 # test module, `prelude` modules (`dioxus::prelude::*`), enum variants, and
 # `pub use` facades over generated code. Anything else is spelled out. The one
 # suppression is `use tonic::codegen::*` emitted into odyssey-hub-server-interface's

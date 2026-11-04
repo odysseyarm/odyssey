@@ -12,8 +12,8 @@ const ANSI_RESET: &str = "\x1b[0m";
 fn main() {
     let res = cargo_run_bin::cli::run();
 
-    // Only reached if run-bin code fails, otherwise process exits early from within
-    // binary::run.
+    // binary::run exits the process itself when the binary runs, so this is reached
+    // only when run-bin fails.
     if let Err(res) = res {
         eprintln!("{ANSI_RED}run-bin failed: {res}{ANSI_RESET}");
         process::exit(1);

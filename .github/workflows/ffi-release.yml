@@ -5,14 +5,14 @@ name: FFI Release
 #
 # Two destinations:
 #   1. A GitHub Release on this repo holding the one bundled SDK zip (all
-#      platforms + both linkages + CMakeLists.txt) — not marked "latest",
-#      that stays reserved for odyssey-desktop-v* app releases so this
-#      doesn't hijack the repo's Latest-release badge.
+#      platforms, both linkages, CMakeLists.txt). It is not marked "latest":
+#      that stays with the odyssey-desktop-v* app releases, so the repo's
+#      Latest-release badge keeps pointing at the app.
 #   2. odysseyarm/vcpkg-registry: the port's versions/ files are bumped so
-#      `vcpkg install odyssey-hub-client` resolves the new release. (Port
-#      name omits "-ffi" — vcpkg is C++-only, so there's no C# package in
-#      this registry to disambiguate against — but keeps the hyphens vcpkg's
-#      own naming convention uses, e.g. abseil-cpp, nlohmann-json.)
+#      `vcpkg install odyssey-hub-client` resolves this release. The port name
+#      drops "-ffi" because vcpkg is C++-only and has no C# package to tell it
+#      apart from, but keeps the hyphens of vcpkg's naming convention
+#      (abseil-cpp, nlohmann-json).
 
 on:
   push:
@@ -80,9 +80,9 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: odysseyarm/vcpkg-registry
-          # Fine-grained PAT scoped to only this repo, Contents: read & write.
+          # Fine-grained PAT scoped to this repo only, Contents: read & write.
           # Registry updates are JSON-only and fully automated, so a direct
-          # push (no PR) is fine for our own private registry.
+          # push without a PR is acceptable for this private registry.
           token: ${{ secrets.VCPKG_REGISTRY_TOKEN }}
           path: vcpkg-registry
       - name: Download SDK zip

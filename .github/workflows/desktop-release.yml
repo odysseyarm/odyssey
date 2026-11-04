@@ -177,8 +177,8 @@ jobs:
       #
       #   - libwebkit2gtk is bundled but none of the helper binaries it
       #     spawns, and their path is compiled into the library rather than
-      #     read from the environment, so the image only ran on a host that
-      #     already had webkit2gtk-4.1 at a matching version
+      #     read from the environment, so the unpatched image only runs on a
+      #     host that already has webkit2gtk-4.1 at a matching version
       #     (tauri-apps/tauri#12463).
       #   - linuxdeploy sweeps in libwayland-client and the GL stack, which
       #     must come from the host: against Mesa 25+ the bundled copies make

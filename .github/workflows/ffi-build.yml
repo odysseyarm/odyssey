@@ -1,21 +1,20 @@
 name: FFI Build
 
 # Reusable workflow that cross-builds the C/C++ FFI library
-# (odyssey-hub-client-ffi) for every platform, then bundles everything —
-# CMakeLists.txt, headers, and every platform/linkage's prebuilt libs — into
-# one self-contained "odyssey-hub-client" zip. That single zip is what gets
-# attached to a GitHub Release and is consumed either directly via CMake
-# FetchContent, or through the vcpkg port in odysseyarm/vcpkg-registry
-# (whose portfile just downloads it and runs vcpkg_cmake_configure/install
-# against the embedded CMakeLists.txt).
+# (odyssey-hub-client-ffi) for every platform and bundles CMakeLists.txt, the
+# headers and the prebuilt libs for every platform and linkage into one
+# self-contained "odyssey-hub-client" zip. That zip is attached to a GitHub
+# Release and consumed either directly via CMake FetchContent or through the
+# vcpkg port in odysseyarm/vcpkg-registry, whose portfile downloads it and runs
+# vcpkg_cmake_configure/install against the embedded CMakeLists.txt.
 #
 # Called by ffi-ci.yml (PRs / pushes) and ffi-release.yml (tags).
 #
-# odyssey-hub-client-ffi is its own workspace (excluded from the root one,
-# see root Cargo.toml) with its own Cargo.lock and Cross.toml — building it
-# as part of the root workspace would force cargo to also resolve
-# odyssey-hub-server's odyssey-cv SSH git dependency, which CI can't
-# authenticate to, even though odyssey-hub-client-ffi doesn't depend on it.
+# odyssey-hub-client-ffi is its own workspace (excluded from the root one, see
+# root Cargo.toml) with its own Cargo.lock and Cross.toml. Building it in the
+# root workspace would make cargo resolve odyssey-hub-server's odyssey-cv SSH
+# git dependency, which CI cannot authenticate to, even though
+# odyssey-hub-client-ffi does not depend on it.
 
 on:
   workflow_call:
@@ -30,9 +29,8 @@ permissions:
   contents: read
 
 jobs:
-  # crate-type = ["staticlib", "cdylib"] means one cargo/cross/xwin build
-  # already produces both linkages — nothing extra needed to build both,
-  # just to package both instead of only the dynamic one like before.
+  # crate-type = ["staticlib", "cdylib"], so one cargo/cross/xwin build
+  # produces both linkages and the jobs below package both.
   ffi-linux:
     name: FFI linux ${{ matrix.triplet }} (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -64,7 +62,7 @@ jobs:
         with:
           name: ohc-libs-${{ matrix.triplet }}
           path: libs
-      # Headers are identical across every target/platform — only need one copy.
+      # The headers are identical for every target, so one copy is uploaded.
       - name: Upload headers
         if: matrix.triplet == 'linux_x64'
         uses: actions/upload-artifact@v6

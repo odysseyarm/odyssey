@@ -1,17 +1,16 @@
 name: Proto Breaking Change Check
 
 # odyssey-hub-server and every client (in-process odyssey-hub-client, the
-# uniffi bindings, and the FFI/vcpkg library) talk over the gRPC/protobuf
-# service defined in service_interface.proto. Protobuf tolerates clients and
-# servers drifting to different versions independently — but only if field
-# numbers/types are never reused or changed, and messages are only extended
-# additively. This fails PRs that break that contract.
+# uniffi bindings, the FFI/vcpkg library) talk over the gRPC/protobuf service
+# defined in service_interface.proto. Protobuf tolerates clients and servers at
+# different versions only if field numbers and types are never reused or
+# changed and messages are only extended additively. This fails PRs that break
+# that contract.
 #
-# Client and server release independently (uniffi/FFI packages have their
-# own tags and version numbers, separate from odyssey-desktop), so unlike
-# the uniffi-bindgen-cs<->uniffi build-time ABI (which needs a strict
-# version pin because a mismatch is a hard failure), this is a wire-protocol
-# compatibility check instead of a version-pin scheme.
+# Client and server release independently: the uniffi/FFI packages have their
+# own tags and version numbers, separate from odyssey-desktop. That is why this
+# is a wire-compatibility check, not a version pin like the one between
+# uniffi-bindgen-cs and uniffi, whose build-time ABI fails hard on a mismatch.
 
 on:
   pull_request:
