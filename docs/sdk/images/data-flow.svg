@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="odg" viewBox="0 0 760 230" width="760" height="230" role="img">
+<title>How your app gets tracking data</title>
+<desc>Odyssey devices connect to Odyssey Desktop over USB, Bluetooth, or the dongle. Odyssey Desktop runs the hub, which does the tracking. Your app connects to the hub on the same computer through the client SDK and receives events.</desc>
+<style>.odg{--fg:var(--oa-dg-fg,#1f2328);--muted:var(--oa-dg-muted,#59636e);--line:var(--oa-dg-line,#d1d9e0);--faint:var(--oa-dg-faint,#eef1f4);--surface:var(--oa-dg-surface,#f6f8fa);--panel:var(--oa-dg-panel,#ffffff);--x:var(--oa-dg-x,#cf222e);--y:var(--oa-dg-y,#1a7f37);--z:var(--oa-dg-z,#0969da);--accent:var(--oa-dg-accent,#bc4c00);--accentsoft:var(--oa-dg-accentsoft,#fff4ea);--dev:var(--oa-dg-dev,#57606a);--devtop:var(--oa-dg-devtop,#8c959f);--devside:var(--oa-dg-devside,#424a53);--trk:var(--oa-dg-trk,#d97a1e);--trktop:var(--oa-dg-trktop,#f0a25a);--trkside:var(--oa-dg-trkside,#a85a12);font-family:var(--oa-dg-font,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif)}@media (prefers-color-scheme:dark){.odg{--fg:var(--oa-dg-fg,#e6edf3);--muted:var(--oa-dg-muted,#9198a1);--line:var(--oa-dg-line,#3d444d);--faint:var(--oa-dg-faint,#1c2128);--surface:var(--oa-dg-surface,#161b22);--panel:var(--oa-dg-panel,#0d1117);--x:var(--oa-dg-x,#ff7b72);--y:var(--oa-dg-y,#3fb950);--z:var(--oa-dg-z,#58a6ff);--accent:var(--oa-dg-accent,#ffa657);--accentsoft:var(--oa-dg-accentsoft,#2b1d10);--dev:var(--oa-dg-dev,#8b949e);--devtop:var(--oa-dg-devtop,#b1bac4);--devside:var(--oa-dg-devside,#6e7681);--trk:var(--oa-dg-trk,#e8893a);--trktop:var(--oa-dg-trktop,#ffb877);--trkside:var(--oa-dg-trkside,#b8661c)}}.odg text{fill:var(--fg);font-size:16.5px;dominant-baseline:auto}.odg .m{fill:var(--muted)}.odg .s{font-size:14.5px}.odg .l{font-size:19px}.odg .b{font-weight:600}.odg .mono{font-family:var(--oa-dg-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:14.5px}.odg .h{paint-order:stroke fill;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}</style>
+<rect x="16" y="30" width="196" height="140" rx="14" style="fill:var(--surface);stroke:var(--line)" stroke-width="1.5"/>
+<text x="114" y="112" text-anchor="middle" class="b">Odyssey device</text>
+<text x="114" y="134" text-anchor="middle" class="s m">camera and</text>
+<text x="114" y="151" text-anchor="middle" class="s m">motion sensors</text>
+<rect x="282" y="30" width="196" height="140" rx="14" style="fill:var(--surface);stroke:var(--line)" stroke-width="1.5"/>
+<text x="380" y="112" text-anchor="middle" class="b">Odyssey Desktop</text>
+<text x="380" y="134" text-anchor="middle" class="s m">the hub: tracking,</text>
+<text x="380" y="151" text-anchor="middle" class="s m">calibration, zero</text>
+<rect x="548" y="30" width="196" height="140" rx="14" style="fill:var(--accentsoft);stroke:var(--accent)" stroke-width="2"/>
+<text x="646" y="112" text-anchor="middle" class="b">Your app</text>
+<text x="646" y="134" text-anchor="middle" class="s m">client SDK:</text>
+<text x="646" y="151" text-anchor="middle" class="s m">C#, Python, C/C++, Rust</text>
+<path d="M94.6 57.8L138.7 57.8L140.6 62.6L142.1 88.1L140.6 90L131 90L129.6 88.1L126.2 63.1L116.2 62.6L94.6 62.6Z" style="fill:var(--dev)"/>
+<path d="M116.2 62.6Q116.2 71.8 122.9 71.8L126.7 70.8" fill="none" style="stroke:var(--dev)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M121.9 63.1L122.9 68.4" fill="none" style="stroke:var(--devside)" stroke-width="0.96" stroke-linecap="round"/>
+<path d="M92.6 50.6L143 50.6L144 51.6L144 57.8L92.6 57.8L91.7 56.4L91.7 51.6Z" style="fill:var(--devside)"/>
+<path d="M136.3 51.6L136.3 56.9" fill="none" style="stroke:var(--dev)" stroke-width="0.384" stroke-linecap="round"/>
+<path d="M137.8 51.6L137.8 56.9" fill="none" style="stroke:var(--dev)" stroke-width="0.384" stroke-linecap="round"/>
+<path d="M139.2 51.6L139.2 56.9" fill="none" style="stroke:var(--dev)" stroke-width="0.384" stroke-linecap="round"/>
+<path d="M140.6 51.6L140.6 56.9" fill="none" style="stroke:var(--dev)" stroke-width="0.384" stroke-linecap="round"/>
+<path d="M142.1 51.6L142.1 56.9" fill="none" style="stroke:var(--dev)" stroke-width="0.384" stroke-linecap="round"/>
+<path d="M96 63.1L113.3 63.1L114.2 64.1L114.2 70.3L113.3 71.3L96 71.3Z" style="fill:var(--trk)"/>
+<circle cx="96" cy="67.2" r="1.1" style="fill:var(--devside)"/>
+<rect x="350" y="40" width="60" height="38" rx="4" style="fill:var(--panel);stroke:var(--fg)" stroke-width="2.5"/>
+<path d="M380 78L380 86" fill="none" style="stroke:var(--fg)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M366 87L394 87" fill="none" style="stroke:var(--fg)" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="380" cy="59" r="6" style="fill:none;stroke:var(--accent)" stroke-width="2.5"/>
+<path d="M380 48L380 57" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M380 61L380 70" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M369 59L378 59" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M382 59L391 59" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="380" cy="59" r="2.5" style="fill:var(--accent)"/>
+<text x="646" y="76" text-anchor="middle" class="l b" style="fill:var(--accent)">&lt;/&gt;</text>
+<path d="M222 100L262 100" fill="none" style="stroke:var(--fg)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M272 100L261 105.3L261 94.7Z" style="fill:var(--fg)"/>
+<text x="247" y="196" text-anchor="middle" class="s m">USB, Bluetooth</text>
+<text x="247" y="213" text-anchor="middle" class="s m">or dongle</text>
+<path d="M488 100L528 100" fill="none" style="stroke:var(--fg)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M538 100L527 105.3L527 94.7Z" style="fill:var(--fg)"/>
+<text x="513" y="196" text-anchor="middle" class="s m">local connection,</text>
+<text x="513" y="213" text-anchor="middle" class="s m">same computer</text>
+</svg>

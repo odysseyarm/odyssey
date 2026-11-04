@@ -1,200 +1,223 @@
-# Coordinate Systems
+<!-- order: 3 -->
+<!-- description: Odyssey's right-handed, Y-up 3D frame and its 2D aimpoint, compared with Unity, Unreal, Godot, Bevy and Blender, with conversions. -->
 
-This page documents every coordinate frame used across the tracking stack, how they relate to each other, and the transforms between them.
+# Coordinate system
 
----
+Odyssey describes a device in two ways:
 
-## Quick-reference table
+- **In 3D**, the **pose**: where the device is in front of the screen and which
+  way it points, in meters.
+- **In 2D**, the **aimpoint**: where on the screen it is aimed, as a fraction of
+  the screen.
 
-| Frame | X+ | Y+ | Z+ | Origin | Units | Source |
-|---|---|---|---|---|---|---|
-| **ESKF World** | right | **down** | toward viewer | screen center | meters | `odyssey-cv: crates/odyssey-cv/src/foveated.rs` (private) |
-| **Physical Screen Space** | right | **down** | — (screen is Z=0 plane) | screen center | meters | `crates/odyssey-common/src/screen_calibration.rs` |
-| **Screen Unit Square** | right | **down** | — | top-left corner | [0,1] | `crates/odyssey-common/src/screen_calibration.rs` |
-| **Client Pose** (uniffi) | right | **up** | into screen | screen center | meters | `crates/odyssey-hub-server/src/device_tasks/tracking.rs` |
-| **Unity World** | right | **up** | into scene | scene origin | meters | — |
+## 3D: right-handed, Y up
 
----
+Odyssey uses a **right-handed, Y-up** coordinate system, in **meters**, with
+its origin at the **top-left corner of the screen**:
 
-## ESKF World Frame
+- **+X** points right, along the top edge of the screen.
+- **+Y** points up.
+- **+Z** points out of the screen, toward the shooter. A device therefore
+  looks along **−Z**, into the screen.
 
-<img width="700" height="460" alt="ESKF World Frame diagram" src="https://github.com/user-attachments/assets/cbb08762-d989-48b4-a901-def33ca8ccb8" />
+![The screen lies in the XY plane with the origin at its top-left corner. +X points right, +Y up, and +Z out of the screen toward the shooter. A device in front of the screen looks along its −Z axis; where that line meets the screen is the aimpoint.](./images/coordinate-system.svg)
 
-The Error-State Kalman Filter in `odyssey-cv` (private) tracks the device in a world frame anchored to the physical screen.
+It is the same convention as Bevy, Godot, three.js, and OpenGL. Unity flips the
+Z axis; Unreal Engine and Blender put Z up.
 
-| Axis | Direction | Note |
-|---|---|---|
-| X+ | right | |
-| Y+ | **physically down** | gravity vector = `(0, +9.81, 0)` |
-| Z+ | toward viewer | out of the screen plane toward the shooter |
+![A two by two chart of axis conventions. Right-handed with Y up: Odyssey, Bevy, Godot, three.js, and OpenGL, forward is −Z. Right-handed with Z up: Blender, forward is −Y. Left-handed with Y up: Unity, forward is +Z. Left-handed with Z up: Unreal Engine, forward is +X.](./images/engine-axes.svg "Logos are trademarks of their owners and identify each engine. Godot logo by Andrea Calabró, CC BY 4.0.")
 
-The screen lies on the **Z = 0 plane**.  Corner positions in this frame:
+What this means in practice:
 
-```
-top-left     (−W/2, −H/2, 0)      ← Y is negative at the top (Y-down)
-top-right    (+W/2, −H/2, 0)
-bottom-left  (−W/2, +H/2, 0)
-bottom-right (+W/2, +H/2, 0)
-```
+- A shooter in front of the screen has a **positive `translation.z`**: their
+  distance from the plane of the screen.
+- Anywhere below the top edge has a **negative `translation.y`**. The middle of
+  a 1.6 m × 0.9 m screen is at `(0.8, -0.45, 0)`.
+- **Up is the screen's up.** On a tilted screen, Y tilts with it.
+- **Each screen has its own origin.** When `screen_id` changes, positions are
+  measured from the new screen's top-left corner.
 
-**Source:** `odyssey-cv: crates/odyssey-cv/src/foveated.rs` (private)
-```rust
-filter.gravity = Vector3::new(0., 9.81, 0.);   // +Y = physically down
-```
-**ESKF default** (for reference) uses Z-down: `gravity: Vector3::new(0f32, 0f32, 9.81)` (in the `eskf` crate).
+### Position
 
-The `transvec` passed to `transform_pose_for_client` is `fv_state.filter.position.coords` — the device's position in this world frame (`odyssey-cv: crates/odyssey-cv/src/helpers.rs` (private) (private)).
+`pose.translation` (`x`, `y`, `z`) is the position of the device's tracking
+camera, in meters. Zeroing never changes it.
 
----
+### Orientation
 
-## Physical Screen Space
+`pose.rotation` is a 3×3 rotation matrix with entries `m11` to `m33` (row,
+column). It turns directions on the device into directions in the screen's
+frame, and its columns are the device's own axes:
 
-The physical screen space is the coordinate frame used by `ScreenCalibration`:
+![A pistol with the Odyssey tracker under its barrel, and its own axes starting at the tracker's camera: +X to the device's right, +Y up out of its top, +Z back toward the shooter. Its line of sight is −Z. The columns of pose.rotation are these axes.](./images/device-axes.svg)
 
-> *"`object_points` is the positions of the markers in **meters** in physical screen space, where the physical screen lies on the XY plane."*
-> — `crates/odyssey-common/src/screen_calibration.rs`
+The device's line of sight, the way its tracker looks, is its −Z axis:
 
-`ScreenCalibration.rotation` is the quaternion that **rotates world-space coordinates into physical screen space**.
-
-The **homography** maps from physical screen space (meters) → screen unit square [0, 1]²:
-
-```
-Physical TL (−W/2, −H/2)  →  unit (0, 0)   ← top-left in image convention
-Physical TR (+W/2, −H/2)  →  unit (1, 0)
-Physical BL (−W/2, +H/2)  →  unit (0, 1)   ← bottom-left
-Physical BR (+W/2, +H/2)  →  unit (1, 1)
+```text
+line of sight = (-m13, -m23, -m33)
 ```
 
-`bounds()` (`crates/odyssey-common/src/screen_calibration.rs`) applies the **inverse** homography to retrieve the four corners in physical screen space:
+A device held level and aimed straight at the screen has the identity rotation:
+its axes line up with the screen's.
 
-```rust
-/// tl, tr, bl, br
-pub fn bounds(&self) -> [Point2<F>; 4] {
-    [(0,0), (1,0), (0,1), (1,1)]
-        .map(|p| inv_homography.transform_point(&p))
-}
+> [!NOTE]
+> The tracker's line of sight is never exactly parallel to the bore.
+> [Zeroing](./zeroing.md) corrects the aimpoint for that, but not the pose, so
+> for scoring use the aimpoint.
+
+## 2D: the aimpoint
+
+Like UI and image coordinates in most engines, the aimpoint has its origin at
+the **top-left** and its y axis pointing **down**. It is a fraction of the
+screen, so it does not depend on resolution.
+
+![The aimpoint is a fraction of the screen. (0, 0) is the top-left corner, (1, 1) the bottom-right corner and (0.5, 0.5) the center. x grows to the right and y grows downward. Values outside 0 to 1 mean the device is aimed past an edge.](./images/aimpoint.svg)
+
+To get a pixel, multiply by the size of what is being shot at. Where the
+pixel origin is the top-left, as in Unreal Engine, Godot, Bevy, and most 2D and
+UI APIs:
+
+```text
+pixel = (aimpoint.x * width, aimpoint.y * height)
 ```
 
-The server packages these as `ScreenInfo.{tl, tr, bl, br}` — values are **still in physical screen space (Y-down, meters)**.
+Where it is the bottom-left, as in Unity's `Screen` coordinates and OpenGL,
+flip y:
 
----
+```text
+pixel = (aimpoint.x * width, (1 - aimpoint.y) * height)
+```
 
-## Screen Unit Square
+The aimpoint already includes the device's [zero](./zeroing.md). On a curved or
+irregular display measured during calibration, it follows the measured
+surface.
 
-<img width="760" height="400" alt="Screen coordinate spaces" src="https://github.com/user-attachments/assets/3b85fbd7-69f1-4e05-92a5-015aec4295b9" />
+## Screen corners
 
-The normalized 2D screen space used for aimpoints and the homography output.
+`get_screen_info_by_id` returns a screen's corners, `tl`, `tr`, `bl`, and `br`,
+in meters. They come from the screen calibration, which measures **y
+downward**, unlike the pose. To use a corner in the pose's frame, negate its y:
 
-- `(0, 0)` = **top-left** corner of screen
-- `(1, 1)` = **bottom-right** corner of screen
-- Y increases **downward** (image convention)
+```text
+corner in the pose's frame = (corner.x, -corner.y, 0)
+```
 
-The **aimpoint** in `TrackingEvent` is in this space.  Converting to Unity screen pixels:
+For a screen calibrated with Odyssey Desktop's automatic calibration, `tl` is
+`(0, 0)` and `br` is `(width, height)`. Read the corners rather than assuming
+this.
+
+## Converting to your engine
+
+Positions are relative to the screen's top-left corner. Place an object at your
+scene's screen corner and parent tracked objects to it.
+
+| Odyssey | Unity | Unreal Engine | Godot, Bevy |
+|---|---|---|---|
+| +X, right | +X | +Y | +X |
+| +Y, up | +Y | +Z | +Y |
+| +Z, toward the shooter | −Z | −X | +Z |
+| meters | meters | centimeters, × 100 | meters |
+
+<!-- tabs: engine -->
+
+**Unity**
 
 ```csharp
-// InputHandlers.cs — PerformShoot
-Vector2 screenPoint = new Vector2(
-    screenPointNormal.x * Screen.width,
-    Screen.height - screenPointNormal.y * Screen.height   // flip Y for Unity screen
-);
-```
+using UnityEngine;
+using Ohc = OdysseyArm.HubClient;
 
----
+static class OdysseyToUnity
+{
+    // Unity is left-handed: flip z.
+    public static Vector3 Position(Ohc.uniffi.Pose pose) =>
+        new Vector3(pose.Translation.X, pose.Translation.Y, -pose.Translation.Z);
 
-## Client Pose Frame (uniffi `TrackingEvent.pose`)
-
-<img width="700" height="460" alt="Client Pose Frame diagram" src="https://github.com/user-attachments/assets/824cc032-fc66-4040-b04a-d54d5877dae7" />
-
-This is the frame delivered to all uniffi clients via `TrackingEvent.pose`.
-
-| Axis | Direction | Derived from |
-|---|---|---|
-| X+ | right | unchanged from world frame |
-| Y+ | **physically up** | world Y negated |
-| Z+ | into screen (away from viewer) | world Z negated |
-
-Produced by `transform_pose_for_client` in `crates/odyssey-hub-server/src/device_tasks/tracking.rs`:
-
-```rust
-fn transform_pose_for_client(rotmat: Matrix3<f32>, transvec: Vector3<f32>) -> Pose {
-    let flip = Matrix3::new(1.0, 0.0, 0.0,
-                            0.0,-1.0, 0.0,
-                            0.0, 0.0,-1.0);   // negates Y and Z
-    Pose {
-        rotation:    flip * rotmat * flip,
-        translation: flip * transvec,
+    // Forward (+Z) is the device's line of sight; up (+Y) is its top.
+    public static Quaternion Rotation(Ohc.uniffi.Pose pose)
+    {
+        var r = pose.Rotation;
+        return Quaternion.LookRotation(
+            new Vector3(-r.M13, -r.M23, r.M33),
+            new Vector3(r.M12, r.M22, -r.M32));
     }
 }
 ```
 
-**Key property:** `pose.translation.y` **increases** when the physical device moves **up**.  This matches Unity's Y-up convention.
+**Unreal Engine**
 
-To undo the flip (e.g. when computing zero offsets server-side), apply the same flip again — it is its own inverse:
+```cpp
+#include <ohc.hpp>
+
+// Odyssey: meters, right-handed, +Y up, +Z toward the shooter.
+// Unreal:  centimeters, left-handed, +Z up, +X forward.
+static FVector ToUnreal(float X, float Y, float Z) { return FVector(-Z, X, Y); }
+
+FVector OdysseyLocation(const ohc::Pose& Pose)
+{
+    return ToUnreal(Pose.translation.x, Pose.translation.y, Pose.translation.z) * 100.0;
+}
+
+// Forward (+X) is the device's line of sight; up (+Z) is its top.
+FQuat OdysseyRotation(const ohc::Pose& Pose)
+{
+    const auto& R = Pose.rotation;
+    const FVector Forward = ToUnreal(-R.m13, -R.m23, -R.m33);
+    const FVector Up = ToUnreal(R.m12, R.m22, R.m32);
+    return FRotationMatrix::MakeFromXZ(Forward, Up).ToQuat();
+}
+```
+
+**Godot**
+
+```csharp
+using Godot;
+using Ohc = OdysseyArm.HubClient;
+
+static class OdysseyToGodot
+{
+    // Same axes and units as Odyssey: copy the matrix across as-is.
+    public static Transform3D Transform(Ohc.uniffi.Pose pose)
+    {
+        var r = pose.Rotation;
+        var t = pose.Translation;
+        var basis = new Basis(
+            new Vector3(r.M11, r.M21, r.M31),
+            new Vector3(r.M12, r.M22, r.M32),
+            new Vector3(r.M13, r.M23, r.M33));
+        return new Transform3D(basis, new Vector3(t.X, t.Y, t.Z));
+    }
+}
+```
+
+**Bevy**
 
 ```rust
-// crates/odyssey-hub-server/src/device_tasks/tracking.rs
-let raw_translation = flip * te.pose.translation;   // undo flip
+use bevy::prelude::*;
+use odyssey_hub_common::events::Pose;
+
+/// Same axes and units as Odyssey: copy the matrix across as-is.
+fn odyssey_transform(pose: &Pose) -> Transform {
+    let r = &pose.rotation;
+    let rotation = Mat3::from_cols(
+        Vec3::new(r.m11, r.m21, r.m31),
+        Vec3::new(r.m12, r.m22, r.m32),
+        Vec3::new(r.m13, r.m23, r.m33),
+    );
+    let t = &pose.translation;
+    Transform::from_xyz(t.x, t.y, t.z).with_rotation(Quat::from_mat3(&rotation))
+}
 ```
 
----
+<!-- /tabs -->
 
-## Transform Pipeline
+In Godot and Bevy, a camera or node looks along −Z, just like the device, so a
+camera given this transform looks where the device looks.
 
-<img width="900" height="320" alt="Coordinate transform pipeline" src="https://github.com/user-attachments/assets/92996eae-6ae3-4b8b-8b64-be634f018adb" />
+## Quick reference
 
-```
-odyssey-cv ESKF (private)      transform_pose_for_client           uniffi client             Unity
-────────────────────           ─────────────────────────           ────────────────          ─────────────────────
-X-right, Y-down, Z→viewer  →  flip = diag(1, −1, −1)         →   X-right, Y-up        →   use translation directly
-gravity = (0, +9.81, 0)        t′ = flip · t                       Z+ into screen            do NOT negate Y
-filter.position (world)         R′ = flip · R · flip                                          flipY for rotation only
-```
-
----
-
-## Unity Integration Notes
-
-When integrating client pose data in Unity (`PoseUtils.ConvertOdyPoseToUnity`):
-
-**The client pose translation is already Y-up.  Do not negate Y.**
-
-```csharp
-// CORRECT — use raw translation; Y-up matches Unity
-position = new Vector3(pose.translation.x, pose.translation.y, pose.translation.z);
-```
-
-```csharp
-// WRONG — applying flipY to the full matrix negates Y again, inverting vertical movement
-Matrix4x4 transformed = flipY * raw * flipY;
-position = t;  // t.y is now negated: camera goes DOWN when device goes UP
-```
-
-The `flipY` sandwich is still used for the **rotation matrix** to convert from right-handed (odyssey-cv world) to Unity's left-handed coordinate system.  It must **not** be applied to the translation.
-
-### `HandleScreenZeroInfo` and `zero_translation`
-
-`ScreenInfo.{tl, tr, bl, br}` arrive in **physical screen space (Y-down)**.  The helper function `f()` converts to Unity Y-up:
-
-```csharp
-float unityY = -(vec.y - centerY);   // flip Y: physical Y-down → Unity Y-up
-```
-
-This is correct because `screenInfo.tl.y < screenInfo.bl.y` (top has smaller/negative Y in Y-down physical space).
-
-`zero_translation` is the Unity-space position of the Odyssey coordinate origin, with `z = distance_offset` (1 m) as the initial camera depth.
-
----
-
-## Source reference index
-
-| Symbol | Source location |
-|---|---|
-| `filter.gravity = (0, 9.81, 0)` | `odyssey-cv: crates/odyssey-cv/src/foveated.rs` (private) |
-| `filter.position` (ESKF world position) | `odyssey-cv: crates/odyssey-cv/src/helpers.rs` (private) |
-| `calculate_screen_3dpoints` (screen corners in world frame) | `odyssey-cv: crates/odyssey-cv/src/lib.rs` (private) |
-| `ScreenCalibration` definition and docs | `crates/odyssey-common/src/screen_calibration.rs` |
-| `bounds()` — physical screen corners | `crates/odyssey-common/src/screen_calibration.rs` |
-| `transform_pose_for_client` | `crates/odyssey-hub-server/src/device_tasks/tracking.rs` |
-| `calculate_zero_offset_from_tracking_event` (undo flip) | `crates/odyssey-hub-server/src/device_tasks/tracking.rs` |
-| Unity `PoseUtils.ConvertOdyPoseToUnity` | `Assets/Scripts/Utils/PoseUtils.cs` |
-| Unity `HandleScreenZeroInfo` | `Assets/Scripts/InputHandlers.cs` |
+| Value | Measured in | Axes |
+|---|---|---|
+| `aimpoint` | fractions of the screen, from its top-left corner | x right, y **down** |
+| `pose.translation` | meters, from the screen's top-left corner | x right, y **up**, z toward the shooter |
+| `pose.rotation` | its columns are the device's axes | right, up, back (line of sight is −Z) |
+| Screen corners | meters, usually from the top-left corner | x right, y **down** |
+| `distance` | meters, from the device | along its line of sight |

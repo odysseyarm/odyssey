@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="odg" viewBox="0 0 760 512" width="760" height="512" role="img">
+<title>The device's own axes</title>
+<desc>A pistol with the Odyssey tracker under its barrel. Its own axes start at the tracker's camera: +X to the device's right, +Y up out of its top, and +Z back toward the shooter. Its line of sight, the way the tracker looks, is -Z. The columns of pose.rotation are these axes in the screen's frame.</desc>
+<style>.odg{--fg:var(--oa-dg-fg,#1f2328);--muted:var(--oa-dg-muted,#59636e);--line:var(--oa-dg-line,#d1d9e0);--faint:var(--oa-dg-faint,#eef1f4);--surface:var(--oa-dg-surface,#f6f8fa);--panel:var(--oa-dg-panel,#ffffff);--x:var(--oa-dg-x,#cf222e);--y:var(--oa-dg-y,#1a7f37);--z:var(--oa-dg-z,#0969da);--accent:var(--oa-dg-accent,#bc4c00);--accentsoft:var(--oa-dg-accentsoft,#fff4ea);--dev:var(--oa-dg-dev,#57606a);--devtop:var(--oa-dg-devtop,#8c959f);--devside:var(--oa-dg-devside,#424a53);--trk:var(--oa-dg-trk,#d97a1e);--trktop:var(--oa-dg-trktop,#f0a25a);--trkside:var(--oa-dg-trkside,#a85a12);font-family:var(--oa-dg-font,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif)}@media (prefers-color-scheme:dark){.odg{--fg:var(--oa-dg-fg,#e6edf3);--muted:var(--oa-dg-muted,#9198a1);--line:var(--oa-dg-line,#3d444d);--faint:var(--oa-dg-faint,#1c2128);--surface:var(--oa-dg-surface,#161b22);--panel:var(--oa-dg-panel,#0d1117);--x:var(--oa-dg-x,#ff7b72);--y:var(--oa-dg-y,#3fb950);--z:var(--oa-dg-z,#58a6ff);--accent:var(--oa-dg-accent,#ffa657);--accentsoft:var(--oa-dg-accentsoft,#2b1d10);--dev:var(--oa-dg-dev,#8b949e);--devtop:var(--oa-dg-devtop,#b1bac4);--devside:var(--oa-dg-devside,#6e7681);--trk:var(--oa-dg-trk,#e8893a);--trktop:var(--oa-dg-trktop,#ffb877);--trkside:var(--oa-dg-trkside,#b8661c)}}.odg text{fill:var(--fg);font-size:16.5px;dominant-baseline:auto}.odg .m{fill:var(--muted)}.odg .s{font-size:14.5px}.odg .l{font-size:19px}.odg .b{font-weight:600}.odg .mono{font-family:var(--oa-dg-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:14.5px}.odg .h{paint-order:stroke fill;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}</style>
+<path d="M430 168L696.1 112.2" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="9 7"/>
+<text x="706.1" y="117.2" text-anchor="start" class="l b" style="fill:var(--accent)">−Z</text>
+<path d="M417.7 143.7L333 161.5L357.7 170L442.3 152.3Z" style="fill:var(--trktop);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M333 201.5L357.7 210L357.7 170L333 161.5Z" style="fill:var(--trkside);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M442.3 192.3L442.3 152.3L357.7 170L357.7 210Z" style="fill:var(--trk);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M398.1 127.6L198.5 169.4L215.2 175.2L414.7 133.3Z" style="fill:var(--devtop);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M430.4 80.3L188.5 131L207 137.4L448.9 86.7Z" style="fill:var(--devtop);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M414.7 163.3L414.7 133.3L215.2 175.2L215.2 205.2Z" style="fill:var(--dev);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M448.9 126.7L448.9 86.7L207 137.4L207 177.4Z" style="fill:var(--dev);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M262.6 183.7L207.1 177.8L225 183.9L280.5 189.8Z" style="fill:var(--devtop);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M168.2 317.4L186.1 323.6L225 183.9L207.1 177.8Z" style="fill:var(--devside);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M241.6 329.5L280.5 189.8L225 183.9L186.1 323.6Z" style="fill:var(--dev);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M198.5 199.4L215.2 205.2L215.2 175.2L198.5 169.4Z" style="fill:var(--devside);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M188.5 171L207 177.4L207 137.4L188.5 131Z" style="fill:var(--devside);stroke:var(--panel)" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M430 168L507.4 194.7" fill="none" style="stroke:var(--panel)" stroke-width="8" stroke-linecap="round"/>
+<path d="M522.5 199.9L503.8 202.1L509.1 186.7Z" style="fill:var(--panel)"/>
+<path d="M430 168L509.3 195.4" fill="none" style="stroke:var(--x)" stroke-width="4" stroke-linecap="round"/>
+<path d="M522.5 199.9L506 201.8L510.7 188.2Z" style="fill:var(--x)"/>
+<path d="M430 168L430 21.5" fill="none" style="stroke:var(--panel)" stroke-width="8" stroke-linecap="round"/>
+<path d="M430 5.5L438.2 22.5L421.8 22.5Z" style="fill:var(--panel)"/>
+<path d="M430 168L430 19.5" fill="none" style="stroke:var(--y)" stroke-width="4" stroke-linecap="round"/>
+<path d="M430 5.5L437.2 20.5L422.8 20.5Z" style="fill:var(--y)"/>
+<path d="M430 168L282.4 199" fill="none" style="stroke:var(--panel)" stroke-width="8" stroke-linecap="round"/>
+<path d="M266.7 202.3L281.7 190.8L285 206.7Z" style="fill:var(--panel)"/>
+<path d="M430 168L280.4 199.4" fill="none" style="stroke:var(--z)" stroke-width="4" stroke-linecap="round"/>
+<path d="M266.7 202.3L279.9 192.1L282.9 206.2Z" style="fill:var(--z)"/>
+<circle cx="430" cy="168" r="6" style="fill:var(--panel);stroke:var(--fg)" stroke-width="2.5"/>
+<text x="534.5" y="209.9" text-anchor="start" class="l b" style="fill:var(--x)">+X</text>
+<text x="444" y="13.5" text-anchor="start" class="l b" style="fill:var(--y)">+Y</text>
+<text x="340.4" y="215.1" text-anchor="middle" class="l b h" style="fill:var(--z)">+Z</text>
+<text x="446" y="154" text-anchor="start" class="s b h">origin: the tracker's camera</text>
+<rect x="40" y="348" width="680" height="150" rx="12" style="fill:var(--surface);stroke:var(--line)" stroke-width="1.2"/>
+<text x="330" y="370" text-anchor="start" class="s mono m">pose.rotation</text>
+<text x="64" y="396" text-anchor="start" class="b" style="fill:var(--x)">+X</text>
+<text x="104" y="396" text-anchor="start" class="">the device's right</text>
+<text x="430" y="396" text-anchor="start" class="s m">column 1</text>
+<text x="500" y="396" text-anchor="start" class="mono">m11, m21, m31</text>
+<text x="64" y="423" text-anchor="start" class="b" style="fill:var(--y)">+Y</text>
+<text x="104" y="423" text-anchor="start" class="">up, out of its top</text>
+<text x="430" y="423" text-anchor="start" class="s m">column 2</text>
+<text x="500" y="423" text-anchor="start" class="mono">m12, m22, m32</text>
+<text x="64" y="450" text-anchor="start" class="b" style="fill:var(--z)">+Z</text>
+<text x="104" y="450" text-anchor="start" class="">back, toward the shooter</text>
+<text x="430" y="450" text-anchor="start" class="s m">column 3</text>
+<text x="500" y="450" text-anchor="start" class="mono">m13, m23, m33</text>
+<text x="64" y="477" text-anchor="start" class="b" style="fill:var(--accent)">−Z</text>
+<text x="104" y="477" text-anchor="start" class="">line of sight: where the tracker looks</text>
+</svg>

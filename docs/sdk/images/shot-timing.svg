@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="odg" viewBox="0 0 760 266" width="760" height="266" role="img">
+<title>Finding the aimpoint at the moment of the shot</title>
+<desc>A timeline. Tracking events arrive about every 10 ms. The trigger breaks; the impact is detected a little later, after the shot delay. Subtract the shot delay from the impact's timestamp and use the tracking event closest to that time.</desc>
+<style>.odg{--fg:var(--oa-dg-fg,#1f2328);--muted:var(--oa-dg-muted,#59636e);--line:var(--oa-dg-line,#d1d9e0);--faint:var(--oa-dg-faint,#eef1f4);--surface:var(--oa-dg-surface,#f6f8fa);--panel:var(--oa-dg-panel,#ffffff);--x:var(--oa-dg-x,#cf222e);--y:var(--oa-dg-y,#1a7f37);--z:var(--oa-dg-z,#0969da);--accent:var(--oa-dg-accent,#bc4c00);--accentsoft:var(--oa-dg-accentsoft,#fff4ea);--dev:var(--oa-dg-dev,#57606a);--devtop:var(--oa-dg-devtop,#8c959f);--devside:var(--oa-dg-devside,#424a53);--trk:var(--oa-dg-trk,#d97a1e);--trktop:var(--oa-dg-trktop,#f0a25a);--trkside:var(--oa-dg-trkside,#a85a12);font-family:var(--oa-dg-font,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif)}@media (prefers-color-scheme:dark){.odg{--fg:var(--oa-dg-fg,#e6edf3);--muted:var(--oa-dg-muted,#9198a1);--line:var(--oa-dg-line,#3d444d);--faint:var(--oa-dg-faint,#1c2128);--surface:var(--oa-dg-surface,#161b22);--panel:var(--oa-dg-panel,#0d1117);--x:var(--oa-dg-x,#ff7b72);--y:var(--oa-dg-y,#3fb950);--z:var(--oa-dg-z,#58a6ff);--accent:var(--oa-dg-accent,#ffa657);--accentsoft:var(--oa-dg-accentsoft,#2b1d10);--dev:var(--oa-dg-dev,#8b949e);--devtop:var(--oa-dg-devtop,#b1bac4);--devside:var(--oa-dg-devside,#6e7681);--trk:var(--oa-dg-trk,#e8893a);--trktop:var(--oa-dg-trktop,#ffb877);--trkside:var(--oa-dg-trkside,#b8661c)}}.odg text{fill:var(--fg);font-size:16.5px;dominant-baseline:auto}.odg .m{fill:var(--muted)}.odg .s{font-size:14.5px}.odg .l{font-size:19px}.odg .b{font-weight:600}.odg .mono{font-family:var(--oa-dg-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:14.5px}.odg .h{paint-order:stroke fill;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}</style>
+<path d="M40 124L711 124" fill="none" style="stroke:var(--muted)" stroke-width="1.8" stroke-linecap="round"/>
+<path d="M720 124L710 128.8L710 119.2Z" style="fill:var(--muted)"/>
+<text x="720" y="152" text-anchor="end" class="s m">time</text>
+<circle cx="60" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="96" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="132" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="168" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="204" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="240" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="276" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="312" cy="124" r="7" style="fill:var(--accent)"/>
+<circle cx="348" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="384" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="420" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="456" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="492" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="528" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="564" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="600" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="636" cy="124" r="5" style="fill:var(--muted)"/>
+<circle cx="672" cy="124" r="5" style="fill:var(--muted)"/>
+<text x="60" y="102" text-anchor="start" class="s m">tracking events, about every 10 ms</text>
+<path d="M300 138L300 180" fill="none" style="stroke:var(--fg)" stroke-width="2" stroke-linecap="round"/>
+<text x="300" y="200" text-anchor="middle" class="s b">trigger breaks</text>
+<path d="M520 60L520 180" fill="none" style="stroke:var(--z)" stroke-width="2.5" stroke-linecap="round"/>
+<text x="520" y="50" text-anchor="middle" class="s b" style="fill:var(--z)">impact event</text>
+<text x="520" y="200" text-anchor="middle" class="s mono m">its timestamp</text>
+<path d="M410 228L308 228" fill="none" style="stroke:var(--fg)" stroke-width="1.8" stroke-linecap="round"/>
+<path d="M300 228L309 223.7L309 232.3Z" style="fill:var(--fg)"/>
+<path d="M410 228L512 228" fill="none" style="stroke:var(--fg)" stroke-width="1.8" stroke-linecap="round"/>
+<path d="M520 228L511 232.3L511 223.7Z" style="fill:var(--fg)"/>
+<text x="410" y="250" text-anchor="middle" class="s">shot delay (set per device)</text>
+<path d="M510 88L324 88" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M314 88L325 82.7L325 93.3Z" style="fill:var(--accent)"/>
+<text x="504" y="78" text-anchor="end" class="s b" style="fill:var(--accent)">use the event closest to timestamp − shot delay</text>
+</svg>

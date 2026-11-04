@@ -1,68 +1,52 @@
-# Client SDK
+<!-- order: 0 -->
+<!-- sidebar-label: Overview -->
+<!-- description: Read where Odyssey devices aim, where they are, and when they fire, from your own game, simulator, or training app. -->
 
-The Odyssey client SDK connects your application to the Odyssey hub, which runs
-alongside Odyssey Desktop and talks to the devices. Through it you receive
-device connections, tracking poses and events, and send commands back.
+# Build with Odyssey
 
-The SDK is written in Rust. Other languages use bindings generated from it:
+The Odyssey client SDK lets your game, simulator, or training app follow every
+Odyssey device live: where it is aimed on the screen, where it is in front of
+the screen, and when it fires.
 
-| Language | Binding | Source |
-|---|---|---|
-| Rust | native crate | [`crates/odyssey-hub-client`](https://github.com/odysseyarm/odyssey/tree/master/crates/odyssey-hub-client) |
-| C, C++ | C ABI with a C++ helper header | [`sdk/odyssey-hub-client-ffi`](https://github.com/odysseyarm/odyssey/tree/master/sdk/odyssey-hub-client-ffi) |
-| C#, Python | UniFFI | [`sdk/odyssey-hub-client-uniffi`](https://github.com/odysseyarm/odyssey/tree/master/sdk/odyssey-hub-client-uniffi) |
+![Odyssey devices connect to Odyssey Desktop over USB, Bluetooth, or the dongle. Odyssey Desktop runs the hub, which does the tracking. Your app connects to the hub on the same computer with the client SDK.](./images/data-flow.svg)
 
-Before writing tracking code, read [Coordinate systems](./coordinate-systems.md):
-it explains which way each axis points in the poses the SDK returns and how to
-convert them for engines such as Unity.
+Your app never talks to a device directly. **Odyssey Desktop** runs the
+**hub**: it talks to the devices, holds the screen calibration, does the
+tracking and applies each device's zero. Your app connects to the hub on the
+same computer and subscribes to its events.
 
-## Installing
+> [!IMPORTANT]
+> Before your app receives any tracking data, Odyssey Desktop must be running,
+> the device connected, and the screen calibrated in Odyssey Desktop.
 
-### C#
+## What you get
 
-Install the [`OdysseyArm.HubClient`](https://www.nuget.org/packages/OdysseyArm.HubClient)
-package from NuGet:
+- **Aimpoint:** where each device is aimed, as a fraction of the screen.
+- **Pose:** where each device is in front of the screen and which way it
+  points, in meters.
+- **Shots:** an event each time a device fires, with the device's timestamp.
+- **Zeroing:** line up each device's aimpoint with where its shots land.
 
-```sh
-dotnet add package OdysseyArm.HubClient
-```
+## Languages
 
-### Python
+The SDK is written in Rust, with bindings for C#, Python, C, and C++. Every
+language has the same events and fields; only the naming style changes, such
+as `screen_id` in Rust, Python, and C versus `ScreenId` in C#.
 
-Install [`odysseyhubclient`](https://pypi.org/project/odysseyhubclient/) from PyPI:
+| Language | Typical use |
+|---|---|
+| C# | Unity, Godot (.NET), other .NET apps |
+| C++ | Unreal Engine, native apps |
+| Python | Tools, prototypes, recording data |
+| Rust | Bevy, native apps |
 
-```sh
-pip install odysseyhubclient
-```
+## Start here
 
-The module is imported as `ohc_uniffi`. See the
-[Python sample](https://github.com/odysseyarm/odyssey/tree/master/sdk/odyssey-hub-client-uniffi/samples/py/odyhubclient).
-
-### C and C++
-
-With vcpkg:
-
-1. Add the registry `https://github.com/odysseyarm/vcpkg-registry` to your
-   project's `vcpkg-configuration.json`.
-2. Install the `odyssey-hub-client` port.
-
-Without vcpkg, download `odyssey-hub-client.zip` from the latest
-[`odyssey-hub-client-ffi` release](https://github.com/odysseyarm/odyssey/releases?q=odyssey-hub-client-ffi).
-
-Either way, the package provides a CMake config, so you can use:
-
-```cmake
-find_package(odyssey_hub_client CONFIG REQUIRED)
-```
-
-See the [C sample](https://github.com/odysseyarm/odyssey/tree/master/sdk/odyssey-hub-client-ffi/samples/c/odyssey-hub-client)
-and the [C++ sample](https://github.com/odysseyarm/odyssey/tree/master/sdk/odyssey-hub-client-ffi/samples/cpp/odyssey-hub-client).
-
-### Rust
-
-The crate is not on crates.io yet. Depend on it from git:
-
-```toml
-[dependencies]
-odyssey-hub-client = { git = "https://github.com/odysseyarm/odyssey" }
-```
+<!-- cards -->
+- [Installation](./install.md): add the SDK to your project.
+- [Quickstart](./quickstart.md): connect and print where each device is aimed.
+- [Coordinate system](./coordinate-systems.md): what aimpoints and poses mean, and how they map to Unity, Unreal, Godot, and Bevy.
+- [Tracking events](./tracking.md): every event the hub sends, field by field.
+- [Scoring shots](./shots.md): find where a device was aimed at the moment it fired.
+- [Zeroing](./zeroing.md): make each device's aimpoint land where its shots do.
+<!-- /cards -->

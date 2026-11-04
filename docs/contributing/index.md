@@ -3,6 +3,9 @@
 Documentation for people working on the Odyssey repositories: how the system
 fits together, how to build and test it, and how releases are made.
 
+- How tracking works inside the hub is documented in the private odyssey-cv
+  repository, alongside the tracking code.
+
 ## Existing notes
 
 These still live next to the code they describe:

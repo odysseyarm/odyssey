@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="odg" viewBox="0 0 700 400" width="700" height="400" role="img">
+<title>Aimpoint coordinates</title>
+<desc>The aimpoint is a fraction of the screen. (0, 0) is the top-left corner, (1, 1) the bottom-right corner, and (0.5, 0.5) the center. x grows to the right and y grows downward. Values outside 0 to 1 mean the device is aimed past an edge.</desc>
+<style>.odg{--fg:var(--oa-dg-fg,#1f2328);--muted:var(--oa-dg-muted,#59636e);--line:var(--oa-dg-line,#d1d9e0);--faint:var(--oa-dg-faint,#eef1f4);--surface:var(--oa-dg-surface,#f6f8fa);--panel:var(--oa-dg-panel,#ffffff);--x:var(--oa-dg-x,#cf222e);--y:var(--oa-dg-y,#1a7f37);--z:var(--oa-dg-z,#0969da);--accent:var(--oa-dg-accent,#bc4c00);--accentsoft:var(--oa-dg-accentsoft,#fff4ea);--dev:var(--oa-dg-dev,#57606a);--devtop:var(--oa-dg-devtop,#8c959f);--devside:var(--oa-dg-devside,#424a53);--trk:var(--oa-dg-trk,#d97a1e);--trktop:var(--oa-dg-trktop,#f0a25a);--trkside:var(--oa-dg-trkside,#a85a12);font-family:var(--oa-dg-font,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif)}@media (prefers-color-scheme:dark){.odg{--fg:var(--oa-dg-fg,#e6edf3);--muted:var(--oa-dg-muted,#9198a1);--line:var(--oa-dg-line,#3d444d);--faint:var(--oa-dg-faint,#1c2128);--surface:var(--oa-dg-surface,#161b22);--panel:var(--oa-dg-panel,#0d1117);--x:var(--oa-dg-x,#ff7b72);--y:var(--oa-dg-y,#3fb950);--z:var(--oa-dg-z,#58a6ff);--accent:var(--oa-dg-accent,#ffa657);--accentsoft:var(--oa-dg-accentsoft,#2b1d10);--dev:var(--oa-dg-dev,#8b949e);--devtop:var(--oa-dg-devtop,#b1bac4);--devside:var(--oa-dg-devside,#6e7681);--trk:var(--oa-dg-trk,#e8893a);--trktop:var(--oa-dg-trktop,#ffb877);--trkside:var(--oa-dg-trkside,#b8661c)}}.odg text{fill:var(--fg);font-size:16.5px;dominant-baseline:auto}.odg .m{fill:var(--muted)}.odg .s{font-size:14.5px}.odg .l{font-size:19px}.odg .b{font-weight:600}.odg .mono{font-family:var(--oa-dg-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:14.5px}.odg .h{paint-order:stroke fill;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}</style>
+<rect x="118" y="70" width="448" height="252" rx="6" style="fill:var(--surface);stroke:var(--fg)" stroke-width="2.5"/>
+<path d="M230 70L230 322" fill="none" style="stroke:var(--line)" stroke-width="1" stroke-linecap="round" stroke-dasharray="3 6"/>
+<path d="M118 133L566 133" fill="none" style="stroke:var(--line)" stroke-width="1" stroke-linecap="round" stroke-dasharray="3 6"/>
+<path d="M342 70L342 322" fill="none" style="stroke:var(--line)" stroke-width="1" stroke-linecap="round" stroke-dasharray="3 6"/>
+<path d="M118 196L566 196" fill="none" style="stroke:var(--line)" stroke-width="1" stroke-linecap="round" stroke-dasharray="3 6"/>
+<path d="M454 70L454 322" fill="none" style="stroke:var(--line)" stroke-width="1" stroke-linecap="round" stroke-dasharray="3 6"/>
+<path d="M118 259L566 259" fill="none" style="stroke:var(--line)" stroke-width="1" stroke-linecap="round" stroke-dasharray="3 6"/>
+<path d="M118 44L257 44" fill="none" style="stroke:var(--x)" stroke-width="3" stroke-linecap="round"/>
+<path d="M268 44L256 49.8L256 38.2Z" style="fill:var(--x)"/>
+<text x="278" y="49" text-anchor="start" class="l b" style="fill:var(--x)">x</text>
+<path d="M92 70L92 189" fill="none" style="stroke:var(--y)" stroke-width="3" stroke-linecap="round"/>
+<path d="M92 200L86.2 188L97.8 188Z" style="fill:var(--y)"/>
+<text x="92" y="224" text-anchor="middle" class="l b" style="fill:var(--y)">y</text>
+<circle cx="118" cy="70" r="5" style="fill:var(--fg)"/>
+<text x="130" y="94" text-anchor="start" class="mono">(0, 0)</text>
+<circle cx="566" cy="70" r="5" style="fill:var(--fg)"/>
+<text x="554" y="94" text-anchor="end" class="mono">(1, 0)</text>
+<circle cx="118" cy="322" r="5" style="fill:var(--fg)"/>
+<text x="130" y="308" text-anchor="start" class="mono">(0, 1)</text>
+<circle cx="566" cy="322" r="5" style="fill:var(--fg)"/>
+<text x="554" y="308" text-anchor="end" class="mono">(1, 1)</text>
+<circle cx="342" cy="196" r="10" style="fill:none;stroke:var(--accent)" stroke-width="2.5"/>
+<path d="M342 181L342 190" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M342 202L342 211" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M327 196L336 196" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M348 196L357 196" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="342" cy="196" r="2.5" style="fill:var(--accent)"/>
+<text x="364" y="182" text-anchor="start" class="mono b h" style="fill:var(--accent)">(0.5, 0.5)</text>
+<text x="364" y="200" text-anchor="start" class="s m h">center</text>
+<circle cx="628.7" cy="145.6" r="8" style="fill:none;stroke:var(--muted)" stroke-width="2"/>
+<path d="M624.7 141.6L632.7 149.6" fill="none" style="stroke:var(--muted)" stroke-width="2" stroke-linecap="round"/>
+<path d="M632.7 141.6L624.7 149.6" fill="none" style="stroke:var(--muted)" stroke-width="2" stroke-linecap="round"/>
+<text x="628.7" y="173.6" text-anchor="middle" class="mono m">(1.14, 0.3)</text>
+<text x="628.7" y="191.6" text-anchor="middle" class="s m">aimed past</text>
+<text x="628.7" y="207.6" text-anchor="middle" class="s m">the right edge</text>
+<text x="342" y="362" text-anchor="middle" class="s m">Origin at the top-left; y grows downward, like UI and image coordinates.</text>
+</svg>

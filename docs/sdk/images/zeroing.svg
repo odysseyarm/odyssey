@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="odg" viewBox="0 0 760 340" width="760" height="340" role="img">
+<title>What zeroing corrects</title>
+<desc>Side view. The Odyssey tracker sits below the bore and its line of sight is not parallel to it, so before zeroing the aimpoint misses the target. Zeroing records the offset from the tracker to the sight line and the angle that makes that line pass through the target.</desc>
+<style>.odg{--fg:var(--oa-dg-fg,#1f2328);--muted:var(--oa-dg-muted,#59636e);--line:var(--oa-dg-line,#d1d9e0);--faint:var(--oa-dg-faint,#eef1f4);--surface:var(--oa-dg-surface,#f6f8fa);--panel:var(--oa-dg-panel,#ffffff);--x:var(--oa-dg-x,#cf222e);--y:var(--oa-dg-y,#1a7f37);--z:var(--oa-dg-z,#0969da);--accent:var(--oa-dg-accent,#bc4c00);--accentsoft:var(--oa-dg-accentsoft,#fff4ea);--dev:var(--oa-dg-dev,#57606a);--devtop:var(--oa-dg-devtop,#8c959f);--devside:var(--oa-dg-devside,#424a53);--trk:var(--oa-dg-trk,#d97a1e);--trktop:var(--oa-dg-trktop,#f0a25a);--trkside:var(--oa-dg-trkside,#a85a12);font-family:var(--oa-dg-font,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif)}@media (prefers-color-scheme:dark){.odg{--fg:var(--oa-dg-fg,#e6edf3);--muted:var(--oa-dg-muted,#9198a1);--line:var(--oa-dg-line,#3d444d);--faint:var(--oa-dg-faint,#1c2128);--surface:var(--oa-dg-surface,#161b22);--panel:var(--oa-dg-panel,#0d1117);--x:var(--oa-dg-x,#ff7b72);--y:var(--oa-dg-y,#3fb950);--z:var(--oa-dg-z,#58a6ff);--accent:var(--oa-dg-accent,#ffa657);--accentsoft:var(--oa-dg-accentsoft,#2b1d10);--dev:var(--oa-dg-dev,#8b949e);--devtop:var(--oa-dg-devtop,#b1bac4);--devside:var(--oa-dg-devside,#6e7681);--trk:var(--oa-dg-trk,#e8893a);--trktop:var(--oa-dg-trktop,#ffb877);--trkside:var(--oa-dg-trkside,#b8661c)}}.odg text{fill:var(--fg);font-size:16.5px;dominant-baseline:auto}.odg .m{fill:var(--muted)}.odg .s{font-size:14.5px}.odg .l{font-size:19px}.odg .b{font-weight:600}.odg .mono{font-family:var(--oa-dg-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:14.5px}.odg .h{paint-order:stroke fill;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}</style>
+<rect x="68" y="40" width="12" height="250" rx="3" style="fill:var(--fg)"/>
+<text x="74" y="316" text-anchor="middle" class="s m">screen</text>
+<path d="M528 206L80 238" fill="none" style="stroke:var(--z)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="8 7"/>
+<path d="M528 156L80 124" fill="none" style="stroke:var(--accent)" stroke-width="3" stroke-linecap="round"/>
+<path d="M522 172L706 172L714 192L720 298L714 306L674 306L668 298L654 194L612 192L522 192Z" style="fill:var(--dev)"/>
+<path d="M612 192Q612 230 640 230L656 226" fill="none" style="stroke:var(--dev)" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M636 194L640 216" fill="none" style="stroke:var(--devside)" stroke-width="4.0" stroke-linecap="round"/>
+<path d="M514 142L724 142L728 146L728 172L514 172L510 166L510 146Z" style="fill:var(--devside)"/>
+<path d="M696 146L696 168" fill="none" style="stroke:var(--dev)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M702 146L702 168" fill="none" style="stroke:var(--dev)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M708 146L708 168" fill="none" style="stroke:var(--dev)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M714 146L714 168" fill="none" style="stroke:var(--dev)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M720 146L720 168" fill="none" style="stroke:var(--dev)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M528 194L600 194L604 198L604 224L600 228L528 228Z" style="fill:var(--trk)"/>
+<circle cx="528" cy="211" r="4.5" style="fill:var(--devside)"/>
+<circle cx="80" cy="124" r="11" style="fill:none;stroke:var(--accent)" stroke-width="2.5"/>
+<path d="M80 108L80 117" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M80 131L80 140" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M64 124L73 124" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M87 124L96 124" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="80" cy="124" r="2.5" style="fill:var(--accent)"/>
+<circle cx="80" cy="238" r="7" style="fill:var(--z)"/>
+<text x="100" y="106" text-anchor="start" class="b h" style="fill:var(--accent)">target</text>
+<text x="98" y="264" text-anchor="start" class="s h" style="fill:var(--z)">aimpoint before zeroing</text>
+<text x="300" y="124" text-anchor="middle" class="s h" style="fill:var(--accent)">sight line, used for the aimpoint after zeroing</text>
+<text x="300" y="246" text-anchor="middle" class="s h" style="fill:var(--z)">the tracker's own line of sight</text>
+<path d="M476 156L492 156" fill="none" style="stroke:var(--fg)" stroke-width="1.5" stroke-linecap="round"/>
+<path d="M476 206L492 206" fill="none" style="stroke:var(--fg)" stroke-width="1.5" stroke-linecap="round"/>
+<path d="M484 181L484 165" fill="none" style="stroke:var(--fg)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M484 158L487.8 166L480.2 166Z" style="fill:var(--fg)"/>
+<path d="M484 181L484 197" fill="none" style="stroke:var(--fg)" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M484 204L480.2 196L487.8 196Z" style="fill:var(--fg)"/>
+<text x="472" y="179" text-anchor="end" class="s b h">offset</text>
+<text x="472" y="195" text-anchor="end" class="s m h">6.35 cm up</text>
+<text x="410" y="318" text-anchor="middle" class="s m">Zeroing finds the angle that puts the sight line through the target,</text>
+<text x="410" y="335" text-anchor="middle" class="s m">then applies it to every aimpoint from that device.</text>
+</svg>
