@@ -36,8 +36,8 @@ pub struct MotState {
     pub fv_state: FoveatedAimpointState,
     pub fv_zero_offset: Isometry3<f32>,
 
-    pub fv_aimpoint_history: [(Point2<f32>, f32, Matrix3x1<f32>); 80],
-    pub fv_aimpoint_history_index: usize,
+    fv_aimpoint_history: [(Point2<f32>, f32, Matrix3x1<f32>); 80],
+    fv_aimpoint_history_index: usize,
 }
 
 impl Default for MotState {
@@ -51,7 +51,7 @@ impl Default for MotState {
             screen_id: 0,
             orientation: Rotation3::identity(),
             madgwick: ahrs::Madgwick::new(1. / 100., 0.04),
-            rotation_mat: Default::default(),
+            rotation_mat: Matrix3::identity(),
             translation_mat: Default::default(),
             nf_points: Default::default(),
             wf_points: Default::default(),
@@ -68,7 +68,23 @@ impl Default for MotState {
     }
 }
 
-#[derive(Debug)]
+impl MotState {
+    pub(crate) fn push_aimpoint(&mut self, cant: f32) {
+        self.fv_aimpoint_history[self.fv_aimpoint_history_index] =
+            (self.fv_aimpoint, cant, self.translation_mat);
+        self.fv_aimpoint_history_index =
+            (self.fv_aimpoint_history_index + 1) % self.fv_aimpoint_history.len();
+    }
+
+    /// The cursor denotes the next write, so an impact uses the preceding slot.
+    pub(crate) fn latest_aimpoint(&self) -> (Point2<f32>, f32, Matrix3x1<f32>) {
+        let index = (self.fv_aimpoint_history_index + self.fv_aimpoint_history.len() - 1)
+            % self.fv_aimpoint_history.len();
+        self.fv_aimpoint_history[index]
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Marker {
     pub mot_id: u8,
     pub pattern_id: Option<u8>,
@@ -79,6 +95,30 @@ impl Marker {
     pub fn odyssey_cv_marker(&self) -> odyssey_cv::foveated::Marker {
         odyssey_cv::foveated::Marker {
             position: self.normalized.cast(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn impacts_use_latest_aimpoint_before_and_after_history_wraps() {
+        let mut state = MotState::default();
+        for sample in 1..=81 {
+            let value = sample as f32;
+            state.fv_aimpoint = Point2::new(value, -value);
+            state.translation_mat = Matrix3x1::new(value, value + 1.0, value + 2.0);
+            state.push_aimpoint(value + 3.0);
+            assert_eq!(
+                state.latest_aimpoint(),
+                (
+                    Point2::new(value, -value),
+                    value + 3.0,
+                    Matrix3x1::new(value, value + 1.0, value + 2.0),
+                )
+            );
         }
     }
 }

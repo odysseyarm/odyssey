@@ -287,14 +287,7 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
 
         // Update aimpoint history
         let gravity_angle = -gravity_vec.z.atan2(-gravity_vec.x).to_degrees() + 90.0;
-        let index = runner.state.fv_aimpoint_history_index;
-        runner.state.fv_aimpoint_history[index] = (
-            runner.state.fv_aimpoint,
-            gravity_angle,
-            runner.state.translation_mat,
-        );
-        runner.state.fv_aimpoint_history_index =
-            (index + 1) % runner.state.fv_aimpoint_history.len();
+        runner.state.push_aimpoint(gravity_angle);
 
         // Record packets if enabled
         if runner.record_packets {
@@ -423,7 +416,7 @@ async fn impact_loop(runner: Arc<Mutex<MotRunner>>) {
             };
 
             {
-                let data = runner.state.fv_aimpoint_history[runner.state.fv_aimpoint_history_index];
+                let data = runner.state.latest_aimpoint();
                 let fv_aimpoint = data.0;
                 frame.fv_aimpoint_x = Some(fv_aimpoint.x);
                 frame.fv_aimpoint_y = Some(fv_aimpoint.y);
