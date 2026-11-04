@@ -7,12 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use backon::{ConstantBuilder, Retryable as _};
 use futures::stream::{self, BoxStream, StreamExt as _};
 use futures_concurrency::stream::Merge as _;
 use odyssey_hub_common::events::Event;
 use odyssey_usb::device::{MuxDevice, PairingEvent};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{MissedTickBehavior, interval, sleep};
+use tokio::time::{MissedTickBehavior, interval};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, warn};
 
@@ -168,24 +169,32 @@ impl HubManager {
 
     /// Request the initial device list, with retries.
     async fn request_initial_devices(&self) -> Option<DeviceSnapshot> {
-        for attempt in 1..=INITIAL_DEVICE_REQUEST_ATTEMPTS {
-            match self.hub.request_devices().await {
-                Ok(list) => {
-                    if !list.is_empty() {
-                        tracing::info!("Hub manager found {} devices on startup", list.len());
-                    }
-                    return Some(list);
+        let mut attempt = 0u8;
+        match (|| self.hub.request_devices())
+            .retry(
+                ConstantBuilder::default()
+                    .with_delay(INITIAL_DEVICE_REQUEST_RETRY_DELAY)
+                    .with_max_times(usize::from(INITIAL_DEVICE_REQUEST_ATTEMPTS - 1)),
+            )
+            .notify(|e, _delay| {
+                attempt += 1;
+                debug!("Failed to request devices (attempt {attempt}): {e}, retrying...");
+            })
+            .await
+        {
+            Ok(list) => {
+                if !list.is_empty() {
+                    tracing::info!("Hub manager found {} devices on startup", list.len());
                 }
-                Err(e) if attempt < INITIAL_DEVICE_REQUEST_ATTEMPTS => {
-                    debug!("Failed to request devices (attempt {attempt}): {e}, retrying...");
-                    sleep(INITIAL_DEVICE_REQUEST_RETRY_DELAY).await;
-                }
-                Err(e) => warn!(
+                Some(list)
+            }
+            Err(e) => {
+                warn!(
                     "Failed to request devices after {INITIAL_DEVICE_REQUEST_ATTEMPTS} attempts: {e}"
-                ),
+                );
+                None
             }
         }
-        None
     }
 
     /// Merge the hub's device snapshots, the retry ticks and the dongle's commands into one

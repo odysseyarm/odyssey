@@ -717,6 +717,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "backon"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
+dependencies = [
+ "fastrand",
+ "tokio",
+]
+
+[[package]]
 name = "base16"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7010,6 +7020,7 @@ name = "odyssey-desktop"
 version = "0.6.7"
 dependencies = [
  "anyhow",
+ "backon",
  "base64 0.22.1",
  "btleplug",
  "dfu-nusb",
@@ -7102,6 +7113,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "arrayvec 0.7.8",
+ "backon",
  "btleplug",
  "cam-geom",
  "dfu-core",
@@ -7195,6 +7207,7 @@ name = "odyssey-usb"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backon",
  "enumn",
  "heapless 0.9.3",
  "minicbor",
@@ -7242,6 +7255,7 @@ dependencies = [
  "anyhow",
  "app_dirs2",
  "arrayvec 0.7.8",
+ "backon",
  "bevy",
  "bevy_infinite_grid",
  "cam-geom",

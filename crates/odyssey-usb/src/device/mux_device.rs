@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
+use backon::{ConstantBuilder, Retryable as _};
 use heapless::Vec as HVec;
 use nusb::{DeviceInfo, Interface};
 use odyssey_protocol::control::usb_mux::{
@@ -22,7 +23,7 @@ use crate::packets::mux::{MAX_DEVICES, MuxMsg, SendTo};
 use crate::packets::vm::Packet;
 
 /// How many times `request_devices` asks before giving up.
-const REQUEST_DEVICES_ATTEMPTS: u32 = 3;
+const REQUEST_DEVICES_ATTEMPTS: usize = 3;
 /// Pause between `request_devices` attempts.
 const REQUEST_DEVICES_BACKOFF: Duration = Duration::from_millis(200);
 /// How long `request_devices` waits for one snapshot.
@@ -152,26 +153,19 @@ impl MuxDevice {
     }
 
     pub async fn request_devices(&self) -> Result<DeviceSnapshot> {
-        let mut last_err = None;
-        for attempt in 0..REQUEST_DEVICES_ATTEMPTS {
-            if attempt > 0 {
-                tokio::time::sleep(REQUEST_DEVICES_BACKOFF).await;
-            }
-
+        (async || {
             self.drain_stale_snapshots().await;
-
-            if let Err(e) = self.send_msg(MuxMsg::RequestDevices()).await {
-                last_err = Some(e);
-                continue;
-            }
-
-            match tokio::time::timeout(SNAPSHOT_TIMEOUT, self.receive_snapshot()).await {
-                Ok(Ok(devices)) => return Ok(devices),
-                Ok(Err(e)) => last_err = Some(e),
-                Err(_elapsed) => last_err = Some(anyhow!("timeout waiting for DevicesSnapshot")),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| anyhow!("request_devices failed")))
+            self.send_msg(MuxMsg::RequestDevices()).await?;
+            tokio::time::timeout(SNAPSHOT_TIMEOUT, self.receive_snapshot())
+                .await
+                .map_err(|_elapsed| anyhow!("timeout waiting for DevicesSnapshot"))?
+        })
+        .retry(
+            ConstantBuilder::default()
+                .with_delay(REQUEST_DEVICES_BACKOFF)
+                .with_max_times(REQUEST_DEVICES_ATTEMPTS - 1),
+        )
+        .await
     }
 
     /// After this the dongle sends a `DevicesSnapshot` whenever a device

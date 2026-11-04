@@ -5,6 +5,7 @@ pub mod pack;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use backon::{ConstantBuilder, Retryable as _};
 use dfu_core::DfuIo as _;
 use dfu_nusb::DfuNusb;
 use futures::io::Cursor;
@@ -1106,6 +1107,48 @@ where
     Ok(())
 }
 
+/// The bootloader is not (yet) enumerated in DFU mode.
+struct NotInDfuMode;
+
+/// Whether the device with `uuid` currently shows its DFU-mode interface (protocol 0x02,
+/// not the application's runtime 0x01).
+fn is_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
+    let Ok(info) = find_bootloader_by_uuid(uuid, vid, pid) else {
+        return false;
+    };
+    tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
+    let Ok(device) = info.open().wait() else {
+        return false;
+    };
+    let Ok(interface_num) = find_dfu_interface(&device) else {
+        return false;
+    };
+    for config in device.configurations() {
+        for interface in config.interfaces() {
+            if interface.interface_number() != interface_num {
+                continue;
+            }
+            for alt in interface.alt_settings() {
+                tracing::debug!(
+                    "wait_for_dfu_device: alt {} class={:02x} subclass={:02x} protocol={:02x}",
+                    alt.alternate_setting(),
+                    alt.class(),
+                    alt.subclass(),
+                    alt.protocol()
+                );
+                if alt.class() == DFU_CLASS
+                    && alt.subclass() == DFU_SUBCLASS
+                    && alt.protocol() == DFU_PROTOCOL_DFU_MODE
+                {
+                    tracing::debug!("wait_for_dfu_device: device is in DFU mode!");
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Poll every 100 ms until the device with `uuid` shows its DFU-mode interface (protocol
 /// 0x02, not the application's runtime 0x01).
 ///
@@ -1118,51 +1161,30 @@ pub async fn wait_for_dfu_device(
     pid: u16,
     timeout: Duration,
 ) -> Result<(), DfuError> {
-    let start = std::time::Instant::now();
     tracing::debug!(
         "wait_for_dfu_device: starting poll for {:04x}:{:04x}",
         vid,
         pid
     );
 
-    loop {
-        if start.elapsed() > timeout {
-            tracing::debug!("wait_for_dfu_device: timeout after {:?}", start.elapsed());
-            return Err(DfuError::DeviceNotFound);
+    let poll = (|| async {
+        if is_in_dfu_mode(uuid, vid, pid) {
+            Ok(())
+        } else {
+            Err(NotInDfuMode)
         }
-
-        if let Ok(info) = find_bootloader_by_uuid(uuid, vid, pid) {
-            tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
-            if let Ok(device) = info.open().wait()
-                && let Ok(interface_num) = find_dfu_interface(&device)
-            {
-                for config in device.configurations() {
-                    for interface in config.interfaces() {
-                        if interface.interface_number() != interface_num {
-                            continue;
-                        }
-                        for alt in interface.alt_settings() {
-                            tracing::debug!(
-                                "wait_for_dfu_device: alt {} class={:02x} subclass={:02x} protocol={:02x}",
-                                alt.alternate_setting(),
-                                alt.class(),
-                                alt.subclass(),
-                                alt.protocol()
-                            );
-                            if alt.class() == DFU_CLASS
-                                && alt.subclass() == DFU_SUBCLASS
-                                && alt.protocol() == DFU_PROTOCOL_DFU_MODE
-                            {
-                                tracing::debug!("wait_for_dfu_device: device is in DFU mode!");
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
+    })
+    .retry(
+        ConstantBuilder::default()
+            .with_delay(Duration::from_millis(100))
+            .without_max_times(),
+    );
+    match tokio::time::timeout(timeout, poll).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(NotInDfuMode)) | Err(_) => {
+            tracing::debug!("wait_for_dfu_device: timeout after {timeout:?}");
+            Err(DfuError::DeviceNotFound)
         }
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 

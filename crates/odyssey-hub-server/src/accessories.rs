@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use backon::{ConstantBuilder, Retryable as _};
 use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::stream::StreamExt as _;
@@ -95,20 +96,34 @@ async fn find_adapter() -> Option<Adapter> {
             return None;
         }
     };
-    loop {
-        match manager.adapters().await {
-            Ok(adapters) => {
-                if let Some(adapter) = adapters.into_iter().next() {
-                    return Some(adapter);
-                }
-            }
-            Err(error) => {
-                warn!("accessory_manager: failed to list BT adapters: {error}");
-                return None;
-            }
+    let found = (async || match manager.adapters().await {
+        Ok(adapters) => adapters.into_iter().next().ok_or(AdapterMiss::NoneYet),
+        Err(error) => Err(AdapterMiss::ListFailed(error)),
+    })
+    .retry(
+        ConstantBuilder::default()
+            .with_delay(ADAPTER_POLL_INTERVAL)
+            .without_max_times(),
+    )
+    .when(|miss| matches!(miss, AdapterMiss::NoneYet))
+    .await;
+    match found {
+        Ok(adapter) => Some(adapter),
+        Err(AdapterMiss::ListFailed(error)) => {
+            warn!("accessory_manager: failed to list BT adapters: {error}");
+            None
         }
-        time::sleep(ADAPTER_POLL_INTERVAL).await;
+        // Unreachable: `NoneYet` is retried without limit.
+        Err(AdapterMiss::NoneYet) => None,
     }
+}
+
+/// Why one adapter lookup produced no adapter.
+enum AdapterMiss {
+    /// The system lists no Bluetooth adapter yet.
+    NoneYet,
+    /// The adapter list could not be read.
+    ListFailed(btleplug::Error),
 }
 
 struct AccessoryManager {

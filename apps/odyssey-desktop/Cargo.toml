@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+backon = { workspace = true }
 futures = { version = "0.3.30", default-features = false, features = ["std", "async-await"] }
 futures-concurrency = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }

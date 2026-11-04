@@ -144,7 +144,7 @@ fn use_server_task(
 /// connected.
 fn use_hub_connection(hub: Signal<hub::HubContext>, server_ready: Signal<bool>) {
     use_future(move || {
-        let mut hub = hub();
+        let hub = hub();
         async move {
             while !*server_ready.read() {
                 tokio::time::sleep(SERVER_READY_POLL_INTERVAL).await;

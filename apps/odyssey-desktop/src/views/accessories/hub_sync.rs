@@ -1,11 +1,14 @@
 //! Following the hub's accessory list.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::time::Duration;
 
+use backon::{ConstantBuilder, RetryableWithContext as _};
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures::StreamExt as _;
+use odyssey_hub_client::client::{Client, ClientError, RpcError};
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryMap};
 
 use crate::hub::HubContext;
@@ -31,24 +34,48 @@ pub(super) fn use_accessory_map(
 
         // Resubscribe after a stream error: ending the loop would freeze the
         // list for the rest of the session.
-        loop {
-            match client.subscribe_accessory_map().await {
-                Ok(mut stream) => {
-                    while let Some(next) = stream.next().await {
-                        match next {
-                            Ok(map) => publish(map, &mut known, &mut infos),
-                            Err(e) => {
-                                tracing::warn!("accessory map stream error: {e}");
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(e) => tracing::warn!("accessory map subscribe failed: {e}"),
-            }
-            tokio::time::sleep(RESUBSCRIBE_DELAY).await;
-        }
+        let backoff = ConstantBuilder::new()
+            .with_delay(RESUBSCRIBE_DELAY)
+            .without_max_times();
+        // A stream never ends well, so with no retry limit this only
+        // completes by being dropped.
+        let _ = (|mut client: Client| async move {
+            let result = follow_accessory_map(&mut client, known, infos).await;
+            (client, result)
+        })
+        .retry(backoff)
+        .context(client)
+        .notify(|down, _| match down {
+            StreamDown::Subscribe(e) => tracing::warn!("accessory map subscribe failed: {e}"),
+            StreamDown::Failed(e) => tracing::warn!("accessory map stream error: {e}"),
+            StreamDown::Ended => {}
+        })
+        .await;
     });
+}
+
+/// Why the accessory map stopped updating.
+enum StreamDown {
+    Subscribe(ClientError),
+    Failed(RpcError),
+    Ended,
+}
+
+/// Applies accessory maps until the subscription fails or ends.
+async fn follow_accessory_map(
+    client: &mut Client,
+    mut known: Signal<Known>,
+    mut infos: Signal<AccessoryInfoMap>,
+) -> Result<Infallible, StreamDown> {
+    let mut stream = client
+        .subscribe_accessory_map()
+        .await
+        .map_err(StreamDown::Subscribe)?;
+    while let Some(next) = stream.next().await {
+        let map = next.map_err(StreamDown::Failed)?;
+        publish(map, &mut known, &mut infos);
+    }
+    Err(StreamDown::Ended)
 }
 
 fn publish(map: AccessoryMap, known: &mut Signal<Known>, infos: &mut Signal<AccessoryInfoMap>) {

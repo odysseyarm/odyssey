@@ -185,6 +185,7 @@ fn inode(_: &std::fs::Metadata) -> u64 {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use backon::{ConstantBuilder, Retryable as _};
     use nalgebra::{Matrix3, Point3, UnitQuaternion};
 
     use super::*;
@@ -453,14 +454,15 @@ mod tests {
         });
 
         save(&dir.0, 5, 6.0);
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while scale_of(&target.load(), 5).is_none() {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "reload never happened"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        (|| async { scale_of(&target.load(), 5).ok_or("reload never happened") })
+            .retry(
+                ConstantBuilder::default()
+                    .with_delay(Duration::from_millis(10))
+                    // 1000 polls of 10 ms: about the 10 s the reload may take.
+                    .with_max_times(1000),
+            )
+            .await
+            .unwrap();
         assert_eq!(scale_of(&target.load(), 5), Some(6.0));
 
         cancel.cancel();

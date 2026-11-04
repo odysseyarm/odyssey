@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use backon::{ExponentialBuilder, Retryable as _};
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
@@ -41,27 +42,28 @@ pub(super) fn use_firmware_manifest() -> FirmwareManifestState {
         };
         manifest.set(None);
         error.set(None);
-        let mut delay = MANIFEST_RETRY_START;
-        loop {
-            match firmware::fetch_manifest(channel).await {
-                Ok(fetched) => {
-                    tracing::info!(
-                        "Fetched {} firmware manifest version {}",
-                        channel.name(),
-                        fetched.version
-                    );
-                    error.set(None);
-                    manifest.set(Some(fetched));
-                    return;
-                }
-                Err(e) => {
-                    error.set(Some(e.to_string()));
-                    tracing::warn!("Failed to fetch firmware manifest, retrying: {}", e);
-                    tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(MANIFEST_RETRY_MAX);
-                }
-            }
-        }
+        let backoff = ExponentialBuilder::new()
+            .with_factor(2.0)
+            .with_min_delay(MANIFEST_RETRY_START)
+            .with_max_delay(MANIFEST_RETRY_MAX)
+            .without_max_times();
+        let Ok(fetched) = (|| firmware::fetch_manifest(channel))
+            .retry(backoff)
+            .notify(|e, _| {
+                error.set(Some(e.to_string()));
+                tracing::warn!("Failed to fetch firmware manifest, retrying: {}", e);
+            })
+            .await
+        else {
+            return;
+        };
+        tracing::info!(
+            "Fetched {} firmware manifest version {}",
+            channel.name(),
+            fetched.version
+        );
+        error.set(None);
+        manifest.set(Some(fetched));
     });
 
     FirmwareManifestState { manifest, error }

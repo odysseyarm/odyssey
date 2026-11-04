@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use backon::Retryable as _;
 use odyssey_usb::device::VmDevice;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -57,29 +58,49 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<u16>>,
 {
-    let mut last_read_was_zero = false;
-    for &delay_s in delays_s {
-        sleep(Duration::from_secs(delay_s)).await;
-        if is_closed() {
-            return None;
+    let (first_delay_s, later_delays_s) = delays_s.split_first()?;
+    sleep(Duration::from_secs(*first_delay_s)).await;
+    let outcome = (|| {
+        let pending = (!is_closed()).then(&mut read);
+        async {
+            let Some(pending) = pending else {
+                return Err(ProbeMiss::Closed);
+            };
+            match tokio::time::timeout(Duration::from_secs(3), pending).await {
+                Ok(Ok(0)) => {
+                    debug!("Net core release not reported yet");
+                    Err(ProbeMiss::Zero)
+                }
+                Ok(Ok(release)) => Ok(release),
+                Ok(Err(e)) => {
+                    debug!("Could not read the net core release: {e}");
+                    Err(ProbeMiss::NoAnswer)
+                }
+                Err(_) => {
+                    debug!("Reading the net core release timed out");
+                    Err(ProbeMiss::NoAnswer)
+                }
+            }
         }
-        match tokio::time::timeout(Duration::from_secs(3), read()).await {
-            Ok(Ok(0)) => {
-                last_read_was_zero = true;
-                debug!("Net core release not reported yet");
-            }
-            Ok(Ok(release)) => return Some(release),
-            Ok(Err(e)) => {
-                last_read_was_zero = false;
-                debug!("Could not read the net core release: {e}");
-            }
-            Err(_) => {
-                last_read_was_zero = false;
-                debug!("Reading the net core release timed out");
-            }
-        }
+    })
+    .retry(later_delays_s.iter().map(|&s| Duration::from_secs(s)))
+    .when(|miss| !matches!(miss, ProbeMiss::Closed))
+    .await;
+    match outcome {
+        Ok(release) => Some(release),
+        Err(ProbeMiss::Zero) => settle_zero.then_some(0),
+        Err(ProbeMiss::Closed | ProbeMiss::NoAnswer) => None,
     }
-    (settle_zero && last_read_was_zero).then_some(0)
+}
+
+/// Why one net core read produced no release.
+enum ProbeMiss {
+    /// The device went away: stop probing.
+    Closed,
+    /// The net core answered 0: it has not reported a release yet.
+    Zero,
+    /// The read failed or timed out.
+    NoAnswer,
 }
 
 /// Read the net core release over `link` and hand it to the device's handler

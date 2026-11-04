@@ -1,8 +1,10 @@
 use std::time::{Duration, Instant};
 
+use backon::Retryable as _;
 use dioxus::logger::tracing;
 use odyssey_hub_server::firmware;
 
+use super::poll_window::{poll_window, ready};
 use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
 
@@ -30,14 +32,16 @@ impl DfuSession<'_> {
 
     /// Poll until the device enumerates in application mode, `false` on timeout.
     pub(super) async fn wait_for_app_mode(&self, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            tokio::time::sleep(APP_MODE_POLL_INTERVAL).await;
-            if firmware::is_device_in_app_mode(&self.uuid, self.vid, self.pid) {
-                return true;
-            }
-        }
-        false
+        let backoff = poll_window(timeout, APP_MODE_POLL_INTERVAL);
+        tokio::time::sleep(APP_MODE_POLL_INTERVAL).await;
+        (|| async {
+            ready(firmware::is_device_in_app_mode(
+                &self.uuid, self.vid, self.pid,
+            ))
+        })
+        .retry(backoff)
+        .await
+        .is_ok()
     }
 
     /// Put the device into DFU mode, detaching it first when it is running its
@@ -122,14 +126,14 @@ impl DfuSession<'_> {
 
     /// Poll until the device stops enumerating as a bootloader, `false` on timeout.
     pub(super) async fn wait_for_bootloader_reset(&self, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            if !firmware::is_device_in_dfu_mode(&self.uuid, self.vid, self.pid) {
-                return true;
-            }
-            tokio::time::sleep(BOOTLOADER_RESET_POLL_INTERVAL).await;
-        }
-        false
+        (|| async {
+            ready(!firmware::is_device_in_dfu_mode(
+                &self.uuid, self.vid, self.pid,
+            ))
+        })
+        .retry(poll_window(timeout, BOOTLOADER_RESET_POLL_INTERVAL))
+        .await
+        .is_ok()
     }
 
     /// Wait for a device that has just reset to come back and put it in DFU mode,
@@ -139,16 +143,11 @@ impl DfuSession<'_> {
     /// something asks for DFU, so the unit has to be taken back in rather than
     /// waited for.
     pub(super) async fn return_to_dfu(&self, timeout: Duration) -> Result<(), String> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            tokio::time::sleep(RETURN_TO_DFU_POLL_INTERVAL).await;
-            match self.enter_dfu().await {
-                Ok(()) => return Ok(()),
-                Err(e) if Instant::now() < deadline => {
-                    tracing::debug!("Device not back yet: {e}");
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        let backoff = poll_window(timeout, RETURN_TO_DFU_POLL_INTERVAL);
+        tokio::time::sleep(RETURN_TO_DFU_POLL_INTERVAL).await;
+        (|| self.enter_dfu())
+            .retry(backoff)
+            .notify(|e, _| tracing::debug!("Device not back yet: {e}"))
+            .await
     }
 }

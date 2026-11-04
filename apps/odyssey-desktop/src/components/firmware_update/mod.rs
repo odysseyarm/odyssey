@@ -10,6 +10,7 @@ mod dfu_session;
 mod downloads;
 mod firmware_channel;
 mod netcore;
+mod poll_window;
 mod progress_bar;
 mod update_available;
 mod update_check;

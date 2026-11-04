@@ -1,9 +1,9 @@
 use std::time::Duration;
 
+use backon::{ConstantBuilder, Retryable as _};
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::PacketData;
-use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 const UUID_READ_ATTEMPTS: u8 = 3;
@@ -43,44 +43,54 @@ pub(super) async fn read_uuid_with_retry(
     }
 }
 
+fn uuid_read_schedule() -> ConstantBuilder {
+    ConstantBuilder::default()
+        .with_delay(UUID_READ_RETRY_DELAY)
+        .with_max_times(usize::from(UUID_READ_ATTEMPTS - 1))
+}
+
 async fn read_uuid_over_control(vm_device: &VmDevice) -> Option<[u8; 6]> {
-    for attempt in 1..=UUID_READ_ATTEMPTS {
-        match vm_device.read_uuid().await {
-            Ok(uuid) => return Some(uuid),
-            Err(e) if attempt < UUID_READ_ATTEMPTS => {
-                debug!(
-                    "ATS Lite: Failed to read UUID via control (attempt {attempt}): {e}, retrying..."
-                );
-                sleep(UUID_READ_RETRY_DELAY).await;
-            }
-            Err(e) => warn!(
+    let mut attempt = 0u8;
+    match (|| vm_device.read_uuid())
+        .retry(uuid_read_schedule())
+        .notify(|e, _delay| {
+            attempt += 1;
+            debug!(
+                "ATS Lite: Failed to read UUID via control (attempt {attempt}): {e}, retrying..."
+            );
+        })
+        .await
+    {
+        Ok(uuid) => Some(uuid),
+        Err(e) => {
+            warn!(
                 "ATS Lite: Failed to read UUID via control after {UUID_READ_ATTEMPTS} attempts: {e}, skipping"
-            ),
+            );
+            None
         }
     }
-    None
 }
 
 async fn read_uuid_over_packets(vm_device: &VmDevice) -> Option<[u8; 6]> {
-    for attempt in 1..=UUID_READ_ATTEMPTS {
-        match vm_device.read_prop(odyssey_protocol::PropKind::Uuid).await {
-            Ok(odyssey_protocol::Props::Uuid(bytes)) => return Some(bytes),
-            Ok(other) => {
-                warn!("Expected Uuid prop, got {other:?}, skipping device");
-                return None;
-            }
-            Err(e) if attempt < UUID_READ_ATTEMPTS => {
-                debug!("Failed to read UUID (attempt {attempt}): {e}, retrying...");
-                sleep(UUID_READ_RETRY_DELAY).await;
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to read UUID after {UUID_READ_ATTEMPTS} attempts: {e}, skipping device"
-                );
-            }
+    let mut attempt = 0u8;
+    match (|| vm_device.read_prop(odyssey_protocol::PropKind::Uuid))
+        .retry(uuid_read_schedule())
+        .notify(|e, _delay| {
+            attempt += 1;
+            debug!("Failed to read UUID (attempt {attempt}): {e}, retrying...");
+        })
+        .await
+    {
+        Ok(odyssey_protocol::Props::Uuid(bytes)) => Some(bytes),
+        Ok(other) => {
+            warn!("Expected Uuid prop, got {other:?}, skipping device");
+            None
+        }
+        Err(e) => {
+            warn!("Failed to read UUID after {UUID_READ_ATTEMPTS} attempts: {e}, skipping device");
+            None
         }
     }
-    None
 }
 
 /// Firmware (and control protocol) version over the control plane, which works in any

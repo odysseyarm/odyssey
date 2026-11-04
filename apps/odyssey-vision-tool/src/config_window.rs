@@ -6,6 +6,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
+use backon::{ConstantBuilder, Retryable as _};
 use eframe::egui;
 use nusb::{DeviceId, DeviceInfo};
 use odyssey_protocol::control::device::TransportMode;
@@ -1604,18 +1605,21 @@ fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
     }
 }
 
-/// Retry an asynchronous operation up to `limit` times.
+/// Runs an asynchronous operation, giving each of up to `limit` attempts
+/// `timeout`. Only a timeout starts another attempt, immediately; `None` means
+/// every attempt timed out.
 async fn retry<F, G>(mut op: F, timeout: Duration, limit: usize) -> Option<G::Output>
 where
     F: FnMut() -> G,
     G: Future,
 {
-    for _ in 0..limit {
-        if let Ok(r) = tokio::time::timeout(timeout, op()).await {
-            return Some(r);
-        }
-    }
-    None
+    let backoff = ConstantBuilder::new()
+        .with_delay(Duration::ZERO)
+        .with_max_times(limit.saturating_sub(1));
+    (|| tokio::time::timeout(timeout, op()))
+        .retry(backoff)
+        .await
+        .ok()
 }
 
 /// Like `retry`, but a timeout becomes an error instead of `None`, and the

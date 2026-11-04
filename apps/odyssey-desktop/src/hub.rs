@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fmt;
 use std::pin::pin;
 use std::time::Duration;
 
+use backon::{ConstantBuilder, Retryable as _};
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures::{Stream, StreamExt as _, stream};
@@ -80,6 +82,12 @@ enum HubUpdate {
 enum SessionEnd {
     StreamFailed(StreamKind, RpcError),
     StreamClosed(StreamKind),
+}
+
+/// Why the hub stopped following the server.
+enum LinkDown {
+    Connect(ConnectError),
+    Session(SessionEnd),
 }
 
 /// The setup step that failed while dialling the hub.
@@ -225,30 +233,40 @@ impl HubContext {
 
     /// Follows the hub server for as long as the caller keeps this future
     /// alive, reconnecting whenever a session ends.
-    pub(crate) async fn run(&mut self) {
-        loop {
-            tracing::info!("Hub connecting to server...");
-            let mut client = Client::clone(&self.client.peek());
-            match connect(&mut client).await {
-                Ok(subscriptions) => {
-                    // Publish only once connected, so readers never see a
-                    // half-dialled client.
-                    self.client.set(client);
-                    let end = self.run_session(subscriptions).await;
-                    match end {
-                        SessionEnd::StreamFailed(stream, error) => {
-                            tracing::error!("{stream} stream error: {error}");
-                        }
-                        SessionEnd::StreamClosed(stream) => {
-                            tracing::warn!("{stream} stream ended");
-                        }
-                    }
-                    tracing::warn!("Reconnecting in {RECONNECT_DELAY:?}...");
-                }
-                Err(error) => tracing::error!("{error}"),
+    pub(crate) async fn run(&self) {
+        let backoff = ConstantBuilder::new()
+            .with_delay(RECONNECT_DELAY)
+            .without_max_times();
+        // A session never ends well, so with no retry limit this only
+        // completes by being dropped.
+        let _ = (|| {
+            let mut hub = self.clone();
+            async move { hub.follow_server().await }
+        })
+        .retry(backoff)
+        .notify(|down, delay| match down {
+            LinkDown::Connect(error) => tracing::error!("{error}"),
+            LinkDown::Session(SessionEnd::StreamFailed(stream, error)) => {
+                tracing::error!("{stream} stream error: {error}");
+                tracing::warn!("Reconnecting in {delay:?}...");
             }
-            tokio::time::sleep(RECONNECT_DELAY).await;
-        }
+            LinkDown::Session(SessionEnd::StreamClosed(stream)) => {
+                tracing::warn!("{stream} stream ended");
+                tracing::warn!("Reconnecting in {delay:?}...");
+            }
+        })
+        .await;
+    }
+
+    /// Dials the server and applies its updates until the session ends.
+    async fn follow_server(&mut self) -> Result<Infallible, LinkDown> {
+        tracing::info!("Hub connecting to server...");
+        let mut client = Client::clone(&self.client.peek());
+        let subscriptions = connect(&mut client).await.map_err(LinkDown::Connect)?;
+        // Publish only once connected, so readers never see a half-dialled
+        // client.
+        self.client.set(client);
+        Err(LinkDown::Session(self.run_session(subscriptions).await))
     }
 
     /// Applies updates until any stream fails or ends; the stale half of a

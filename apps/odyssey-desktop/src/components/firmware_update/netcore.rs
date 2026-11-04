@@ -1,5 +1,7 @@
-use std::time::{Duration, Instant};
+use std::future;
+use std::time::Duration;
 
+use backon::Retryable as _;
 use dioxus::logger::tracing;
 use dioxus::prelude::{ReadableExt as _, SyncSignal};
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
@@ -7,6 +9,7 @@ use odyssey_hub_server::firmware;
 use slab::Slab;
 
 use super::dfu_session::DfuSession;
+use super::poll_window::{NotYet, poll_window};
 use super::update_state::FirmwareUpdateState;
 
 /// How long the net core gets to report the release that was just written.
@@ -55,17 +58,24 @@ pub(super) async fn wait_for_netcore_release(
     uuid: &[u8; 6],
     published: u16,
 ) -> Result<(), String> {
-    let start = Instant::now();
     let mut last = None;
-    while start.elapsed() < NETCORE_REPORT_TIMEOUT {
-        tokio::time::sleep(NETCORE_REPORT_POLL_INTERVAL).await;
-        if let Some(now) = reported_netcore_release(devices, uuid) {
+    let backoff = poll_window(NETCORE_REPORT_TIMEOUT, NETCORE_REPORT_POLL_INTERVAL);
+    tokio::time::sleep(NETCORE_REPORT_POLL_INTERVAL).await;
+    let reported = (|| {
+        let reading = reported_netcore_release(devices, uuid);
+        if let Some(now) = reading {
             last = Some(now);
-            if firmware::netcore_took_update(now, published) {
-                tracing::info!("Net core now reports release {}", now);
-                return Ok(());
-            }
         }
+        future::ready(match reading {
+            Some(now) if firmware::netcore_took_update(now, published) => Ok(now),
+            _ => Err(NotYet),
+        })
+    })
+    .retry(backoff)
+    .await;
+    if let Ok(now) = reported {
+        tracing::info!("Net core now reports release {}", now);
+        return Ok(());
     }
     tracing::warn!(
         "Net core did not report release {} (last reading: {:?})",

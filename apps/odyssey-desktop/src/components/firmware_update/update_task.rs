@@ -1,5 +1,7 @@
-use std::time::{Duration, Instant};
+use std::future;
+use std::time::Duration;
 
+use backon::Retryable as _;
 use dioxus::logger::tracing;
 use dioxus::prelude::{ReadableExt as _, SyncSignal};
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
@@ -9,6 +11,7 @@ use slab::Slab;
 use super::dfu_session::DfuSession;
 use super::downloads::{Downloads, published_release};
 use super::netcore::wait_for_netcore_release;
+use super::poll_window::{poll_window, ready};
 use super::update_check::{desktop_version, format_version, is_in_bootloader};
 use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
@@ -213,18 +216,19 @@ impl DfuSession<'_> {
         if self.wait_for_app_mode(APP_MODE_TIMEOUT).await {
             // Enumeration alone also succeeds when the bootloader rejected the
             // new image and fell back to the old application.
-            let deadline = Instant::now() + APP_VERSION_TIMEOUT;
             let mut last_version = None;
-            while Instant::now() < deadline {
+            let reported = (|| {
                 last_version = reported_application_version(&devices.peek(), &self.uuid);
-                if last_version == Some(expected_version) {
-                    tracing::info!(
-                        "Device reconnected running application {}",
-                        format_version(expected_version)
-                    );
-                    return Ok(());
-                }
-                tokio::time::sleep(APP_VERSION_POLL_INTERVAL).await;
+                future::ready(ready(last_version == Some(expected_version)))
+            })
+            .retry(poll_window(APP_VERSION_TIMEOUT, APP_VERSION_POLL_INTERVAL))
+            .await;
+            if reported.is_ok() {
+                tracing::info!(
+                    "Device reconnected running application {}",
+                    format_version(expected_version)
+                );
+                return Ok(());
             }
             Err(format!(
                 "Device returned but did not report firmware {} (last reading: {}). \

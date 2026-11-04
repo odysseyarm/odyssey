@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+backon = { workspace = true }
 odyssey-common = { path = "../odyssey-common", features = ["std"] }
 enumn = { workspace = true }
 nalgebra = "0.35"

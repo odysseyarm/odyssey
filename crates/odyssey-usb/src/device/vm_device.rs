@@ -3,6 +3,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use backon::Retryable as _;
 use nusb::{DeviceInfo, Interface};
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_protocol::{PocMarkersReport, VendorData};
@@ -18,7 +19,7 @@ use super::mux_device::MuxDevice;
 use super::packet_stream::PacketStream;
 use super::packet_transport::{PacketTransport, PacketTransportTx};
 use super::response_slots::{Delivery, NO_REPLY_ID, ResponseSlot, State};
-use super::retry::{STREAM_CONTROL_ATTEMPT_TIMEOUT, STREAM_CONTROL_ATTEMPTS, retry};
+use super::retry::{STREAM_CONTROL_ATTEMPT_TIMEOUT, STREAM_CONTROL_ATTEMPTS, resend_schedule};
 use super::usb_bulk_io::{find_vendor_interface, open_bulk_endpoints};
 use crate::packets::vm::{
     AccelReport, BatteryReport, CombinedMarkersReport, ConfigKind, GeneralConfig, ImpactReport,
@@ -138,18 +139,19 @@ impl VmDevice {
 
     /// Asks the device to stop every stream, re-sending until it acknowledges.
     async fn disable_all_streams(&self) -> Result<()> {
-        let acknowledged = retry(
-            async || {
+        let acknowledged = (async || {
+            tokio::time::timeout(
+                STREAM_CONTROL_ATTEMPT_TIMEOUT,
                 self.request(PacketData::StreamUpdate(StreamUpdate {
                     packet_id: PacketType::End(),
                     action: StreamUpdateAction::DisableAll,
-                }))
-                .await
-            },
-            STREAM_CONTROL_ATTEMPT_TIMEOUT,
-            STREAM_CONTROL_ATTEMPTS,
-        )
-        .await;
+                })),
+            )
+            .await
+        })
+        .retry(resend_schedule(STREAM_CONTROL_ATTEMPTS))
+        .await
+        .ok();
         match acknowledged {
             Some(Ok(PacketData::Ack())) => Ok(()),
             Some(Ok(other)) => Err(anyhow!("unexpected DisableAll response: {other:?}")),
@@ -206,13 +208,10 @@ impl VmDevice {
         timeout: Duration,
         limit: usize,
     ) -> Result<PacketData> {
-        retry(
-            async || self.request_unbounded(data.clone()).await,
-            timeout,
-            limit,
-        )
-        .await
-        .ok_or_else(|| anyhow!("no response after {limit} attempts of {timeout:?}"))?
+        (async || tokio::time::timeout(timeout, self.request_unbounded(data.clone())).await)
+            .retry(resend_schedule(limit))
+            .await
+            .map_err(|_elapsed| anyhow!("no response after {limit} attempts of {timeout:?}"))?
     }
 
     fn live_state(&self) -> Result<Arc<State>> {
