@@ -19,19 +19,19 @@ mod icmsg_config {
 
     pub const ALIGN: usize = 4;
     pub fn get_icmsg_config() -> icmsg::MemoryConfig {
-        unsafe {
-            let send_buffer_len =
-                (&raw const __icmsg_tx_end).byte_offset_from(&raw const __icmsg_tx_start) as u32
-                    - size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-            let recv_buffer_len =
-                (&raw const __icmsg_rx_end).byte_offset_from(&raw const __icmsg_rx_start) as u32
-                    - size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-            icmsg::MemoryConfig {
-                send_region: (&raw mut __icmsg_tx_start).cast(),
-                recv_region: (&raw mut __icmsg_rx_start).cast(),
-                send_buffer_len,
-                recv_buffer_len,
-            }
+        // Linker symbols delimit a region, not one Rust allocation.
+        let header_len = size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>();
+        let send_buffer_len = ((&raw const __icmsg_tx_end).addr()
+            - (&raw const __icmsg_tx_start).addr()
+            - header_len) as u32;
+        let recv_buffer_len = ((&raw const __icmsg_rx_end).addr()
+            - (&raw const __icmsg_rx_start).addr()
+            - header_len) as u32;
+        icmsg::MemoryConfig {
+            send_region: (&raw mut __icmsg_tx_start).cast(),
+            recv_region: (&raw mut __icmsg_rx_start).cast(),
+            send_buffer_len,
+            recv_buffer_len,
         }
     }
 }

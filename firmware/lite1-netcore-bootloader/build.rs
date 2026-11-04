@@ -8,10 +8,10 @@ fn main() {
     let kdl_file = "memory-lite1.kdl";
 
     println!("cargo:info=Building netcore-bootloader using {}", kdl_file);
-    println!("cargo:rerun-if-changed=../../../memory/{}", kdl_file);
+    println!("cargo:rerun-if-changed=../memory/{}", kdl_file);
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let memory_kdl_path = manifest_dir.join("../../../memory").join(kdl_file);
+    let memory_kdl_path = manifest_dir.join("../memory").join(kdl_file);
 
     let content = fs::read_to_string(&memory_kdl_path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", kdl_file, e));

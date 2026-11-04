@@ -24,7 +24,7 @@ macro_rules! dispatch_cmd {
                 < $ty as bt_hci::cmd::Cmd >::OPCODE =>
                     dispatch_cmd!(@arm $ctrl, $payload, { $($async)? }, $ty, $send),
             )*
-            _ => Err(bt_hci::cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED)),
+            _ => Err(bt_hci::cmd::Error::Hci(bt_hci::param::Error::UNKNOWN_CMD)),
         }
     }};
 
@@ -73,16 +73,16 @@ macro_rules! dispatch_cmd {
             Ok(ret) => {
                 buf[6] = bt_hci::param::Status::SUCCESS.into_inner();
 
-                unsafe {
-                    // Copies the Return value's in-memory bytes as its wire encoding, because
-                    // bt-hci has no WriteHci for command returns. Only sound while every
-                    // Return is plain bytes with no padding.
-                    let src = core::slice::from_raw_parts((&ret as *const _ as *const u8), RLEN);
-                    buf[HEAD .. HEAD + RLEN].copy_from_slice(src);
-                }
+                let bytes = bt_hci::AsHciBytes::as_hci_bytes(&ret);
+                buf[HEAD..HEAD + RLEN].copy_from_slice(bytes);
             }
             Err(bt_hci::cmd::Error::Hci(e)) => {
                 buf[6] = e.to_status().into_inner();
+                // CommandComplete must echo the command handle even on error so the host can
+                // match the response to an outstanding command with a nonzero handle.
+                let handle = bt_hci::cmd::SyncCmd::param_handle(&cmd_val);
+                let bytes = bt_hci::AsHciBytes::as_hci_bytes(&handle);
+                buf[HEAD..HEAD + bytes.len()].copy_from_slice(bytes);
             }
             Err(e) => {
                 return Err(e);
@@ -94,10 +94,9 @@ macro_rules! dispatch_cmd {
     }};
 
     (@arm $_c:expr, $_p:expr, {$bad:tt}, $_ty:path, $_s:expr) => {
-        compile_error!("unknown marker after '@' ΓÇö use '@async' or omit it")
+        compile_error!("unknown marker after '@': use '@async' or omit it")
     };
 }
-pub(crate) use dispatch_cmd;
 
 use crate::IpcNotify;
 use crate::icmsg_config::ALIGN;

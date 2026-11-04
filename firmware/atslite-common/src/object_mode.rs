@@ -1,7 +1,8 @@
-//! Object mode: answers odyssey-protocol requests from BLE L2CAP or USB and streams marker,
-//! IMU, impact and battery reports. Reports go over USB while a USB host is using the device
-//! and over BLE otherwise; each reply goes back the way its request came.
+//! Tracking and reversible USB image capture for the main firmware.
+//! Reports use USB while configured, otherwise BLE; image capture is USB-only and
+//! retains Image mode for the session without acquiring object snapshots.
 
+use core::future::Future;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use donger_common::usb_device;
@@ -11,10 +12,15 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
-use embassy_time::Timer;
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embassy_usb::driver::{Endpoint as _, EndpointError};
 use nalgebra::Vector3;
 use odyssey_protocol::control::device::TransportMode;
+use odyssey_protocol::image::{
+    IMAGE_CHUNK_CAPACITY, IMAGE_LEASE_TIMEOUT_MS, ImageChunk, ImageCommand, ImageStatus,
+    ImageStatusCode, ImageStreamConfig,
+};
 use odyssey_protocol::wire::GeneralConfig;
 use odyssey_protocol::{
     BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse,
@@ -22,6 +28,9 @@ use odyssey_protocol::{
 
 use crate::ble::l2cap_bridge::{self, L2capChannels};
 use crate::settings::PagSettings;
+
+mod image_state;
+use image_state::ImageOwnership;
 
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
@@ -34,6 +43,68 @@ const USB_REQUEST_QUEUE: usize = 2;
 /// Replies to USB requests waiting for the bulk IN endpoint. They bypass the report queue, so
 /// a backlog of reports does not delay them.
 const USB_REPLY_QUEUE: usize = 4;
+
+/// A single static frame avoids both a 76 KiB task-stack temporary and heap allocation.
+const IMAGE_WIDTH: u16 = 320;
+const IMAGE_HEIGHT: u16 = 240;
+const IMAGE_PIXELS: usize = IMAGE_WIDTH as usize * IMAGE_HEIGHT as usize;
+const IMAGE_QUEUE: usize = 2;
+// Preserve live (not merely flashed) settings, including ROI and sensor-size selection.
+// The meaning of SENSOR_SIZE_SEL (0x12) is not documented in this repository. Preserve it
+// verbatim rather than guessing a 320×240 selector; capture follows the existing driver API.
+const IMAGE_SAVED_REGISTERS: [u8; 18] = [
+    0x67, 0x68, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x23, 0x24, 0x77, 0x78, 0x13, 0x12, 0x72, 0x73, 0x74,
+    0x75, 0x76,
+];
+
+/// USB packets retain the connection that received/produced them across queue backpressure.
+struct UsbPacket {
+    packet: Packet,
+    generation: u32,
+}
+
+#[derive(Clone, Copy)]
+struct UsbReplies<'a, const N: usize> {
+    sender: Sender<'a, UsbPacket, N>,
+    generation: u32,
+}
+
+impl<const N: usize> UsbReplies<'_, N> {
+    fn try_send(&self, packet: Packet) -> Result<(), ()> {
+        self.sender
+            .try_send(UsbPacket {
+                packet,
+                generation: self.generation,
+            })
+            .map_err(|_| ())
+    }
+}
+
+struct ImageRequest {
+    id: u8,
+    command: ImageCommand,
+    usb_generation: u32,
+}
+
+impl ImageRequest {
+    fn belongs_to(&self, usb_generation: u32) -> bool {
+        ImageOwnership::request_is_current(self.usb_generation, usb_generation)
+    }
+}
+
+struct ImageState {
+    ownership: ImageOwnership,
+    abort: Signal<NoopRawMutex, ()>,
+}
+
+impl ImageState {
+    fn new() -> Self {
+        Self {
+            ownership: ImageOwnership::new(),
+            abort: Signal::new(),
+        }
+    }
+}
 
 /// Request id and enable flag of one report stream.
 #[derive(Default)]
@@ -105,39 +176,6 @@ impl StreamInfos {
     }
 }
 
-/// Impact threshold and suppression time, shared between the receive loop and the IMU loop.
-#[allow(dead_code)]
-struct ImpactSettings {
-    threshold: AtomicU8,
-    suppress_ms: AtomicU8,
-}
-
-#[allow(dead_code)]
-impl ImpactSettings {
-    fn new(threshold: u8, suppress_ms: u8) -> Self {
-        Self {
-            threshold: AtomicU8::new(threshold),
-            suppress_ms: AtomicU8::new(suppress_ms),
-        }
-    }
-
-    fn threshold(&self) -> u8 {
-        self.threshold.load(Ordering::Relaxed)
-    }
-
-    fn suppress_ms(&self) -> u8 {
-        self.suppress_ms.load(Ordering::Relaxed)
-    }
-
-    fn set_threshold(&self, val: u8) {
-        self.threshold.store(val, Ordering::Relaxed);
-    }
-
-    fn set_suppress_ms(&self, val: u8) {
-        self.suppress_ms.store(val, Ordering::Relaxed);
-    }
-}
-
 /// PAG7665QN vision sensor as seen by object mode.
 #[allow(async_fn_in_trait)]
 pub trait PagSensor {
@@ -154,6 +192,15 @@ pub trait PagSensor {
     ) -> Result<Option<u8>, Self::Error>;
 
     async fn switch_to_idle(&mut self) -> Result<(), Self::Error>;
+
+    /// Enters Image with ROI temporarily disabled; `restore_object` reinstates the live ROI.
+    async fn switch_to_image(&mut self) -> Result<(), Self::Error>;
+
+    /// Polls one full-resolution native-orientation frame; never waits for a future frame.
+    async fn try_get_image(&mut self, image: &mut [u8; IMAGE_PIXELS]) -> Result<bool, Self::Error>;
+
+    /// Releases a report-buffer lock and restores Object even after a failed transition.
+    async fn restore_object(&mut self) -> Result<(), Self::Error>;
 }
 
 #[allow(async_fn_in_trait)]
@@ -211,7 +258,7 @@ async fn read_pag_settings<P: PagSensor>(pag: &mut P) -> Result<PagSettings, P::
     })
 }
 
-/// Hardware and settings handed to [`run`].
+/// Hardware handed to [`run`]. Settings are borrowed synchronously through `with_settings`.
 pub struct ObjectModeContext<'a, P, I, PI, II>
 where
     P: PagSensor,
@@ -227,8 +274,6 @@ where
     pub product_id: u16,
     /// `[major, minor, patch]`
     pub firmware_version: [u16; 3],
-    /// Config writes from the host land here and are flushed to flash on request.
-    pub settings: &'a mut crate::settings::Settings,
     /// USB bulk IN: reports and responses to the host.
     pub usb_snd: Endpoint<'static, In>,
     /// USB bulk OUT: commands from the host.
@@ -249,17 +294,16 @@ where
     defmt::info!("[object_mode] Starting object mode");
 
     let reports = Channel::<Packet, 64>::new();
-    let usb_requests = Channel::<Packet, USB_REQUEST_QUEUE>::new();
-    let usb_replies = Channel::<Packet, USB_REPLY_QUEUE>::new();
+    let usb_requests = Channel::<UsbPacket, USB_REQUEST_QUEUE>::new();
+    let usb_replies = Channel::<UsbPacket, USB_REPLY_QUEUE>::new();
+    let image_requests = Channel::<ImageRequest, 2>::new();
+    let image_data = Channel::<Packet, IMAGE_QUEUE>::new();
+    let image_state = ImageState::new();
     let stream_infos = StreamInfos::new();
-    let impact_settings = ImpactSettings::new(
-        ctx.settings.general.impact_threshold,
-        ctx.settings.general.suppress_ms,
-    );
 
-    let l2cap = l2cap_bridge::get_or_init();
+    let l2cap = l2cap_bridge::channels();
 
-    let usb_read_task = usb_read_loop(&mut ctx.usb_rcv, usb_requests.sender());
+    let usb_read_task = usb_read_loop(&mut ctx.usb_rcv, usb_requests.sender(), ctx.usb_configured);
 
     let recv_task = recv_loop(
         ctx.pag,
@@ -268,10 +312,11 @@ where
         ctx.device_id,
         ctx.product_id,
         ctx.firmware_version,
-        &impact_settings,
-        ctx.settings,
         usb_requests.receiver(),
         usb_replies.sender(),
+        image_requests.sender(),
+        &image_state,
+        ctx.usb_configured,
     );
 
     let imu_task = imu_loop(
@@ -279,14 +324,25 @@ where
         &mut ctx.imu_int,
         reports.sender(),
         &stream_infos,
-        &impact_settings,
     );
 
-    let obj_task = obj_loop(ctx.pag, &mut ctx.pag_int, reports.sender(), &stream_infos);
+    let obj_task = obj_loop(
+        ctx.pag,
+        &mut ctx.pag_int,
+        reports.sender(),
+        &stream_infos,
+        image_requests.receiver(),
+        usb_replies.sender(),
+        &image_data,
+        &image_state,
+        ctx.usb_configured,
+    );
 
     let stream_task = stream_loop(
         reports.receiver(),
         usb_replies.receiver(),
+        image_data.receiver(),
+        &image_state,
         &l2cap,
         &mut ctx.usb_snd,
         ctx.usb_configured,
@@ -304,13 +360,32 @@ where
 /// Reads requests from USB bulk OUT into `requests` while a host has the endpoint enabled.
 async fn usb_read_loop<const N: usize>(
     usb_rcv: &mut Endpoint<'static, Out>,
-    requests: Sender<'_, Packet, N>,
+    requests: Sender<'_, UsbPacket, N>,
+    usb_configured: UsbConfigHandle,
 ) {
     let mut usb_buf = [0u8; 512];
     loop {
-        match read_transfer(usb_rcv, &mut usb_buf).await {
+        let generation = usb_configured.generation();
+        let transfer = match select(
+            usb_configured.wait_until_generation_changes(generation),
+            read_transfer(usb_rcv, &mut usb_buf),
+        )
+        .await
+        {
+            Either::First(()) => continue,
+            Either::Second(result) => result,
+        };
+        match transfer {
             Ok(n) => match postcard::from_bytes::<Packet>(&usb_buf[..n]) {
-                Ok(pkt) => requests.send(pkt).await,
+                Ok(pkt) if generation == usb_configured.generation() => {
+                    requests
+                        .send(UsbPacket {
+                            packet: pkt,
+                            generation,
+                        })
+                        .await;
+                }
+                Ok(_) => {}
                 Err(e) => defmt::error!(
                     "[object_mode] USB packet deserialization failed: {:?}",
                     defmt::Debug2Format(&e)
@@ -340,37 +415,63 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
     device_id: [u8; 6],
     product_id: u16,
     firmware_version: [u16; 3],
-    impact_settings: &ImpactSettings,
-    settings: &mut crate::settings::Settings,
-    usb_requests: Receiver<'_, Packet, Q>,
-    usb_replies: Sender<'_, Packet, R>,
+    usb_requests: Receiver<'_, UsbPacket, Q>,
+    usb_replies: Sender<'_, UsbPacket, R>,
+    image_requests: Sender<'_, ImageRequest, 2>,
+    image_state: &ImageState,
+    usb_configured: UsbConfigHandle,
 ) {
     loop {
-        let (request_transport, pkt) = match select3(
+        let (request_transport, pkt, usb_generation) = match select3(
             usb_requests.receive(),
             l2cap.control_rx.receive(),
             l2cap.data_rx.receive(),
         )
         .await
         {
-            Either3::First(pkt) => (TransportMode::Usb, pkt),
-            Either3::Second(pkt) | Either3::Third(pkt) => (TransportMode::Ble, pkt),
+            Either3::First(request) => (TransportMode::Usb, request.packet, request.generation),
+            Either3::Second(pkt) | Either3::Third(pkt) => (TransportMode::Ble, pkt, 0),
+        };
+        if request_transport == TransportMode::Usb && usb_generation != usb_configured.generation()
+        {
+            continue;
+        }
+        let ble_session = match request_transport {
+            TransportMode::Usb => 0,
+            TransportMode::Ble => l2cap_bridge::session_generation(),
         };
 
         let response = match pkt.data {
+            PacketData::WriteRegister(_) if !image_state.ownership.settings_writable() => {
+                Some(image_status(
+                    pkt.id,
+                    image_state.ownership.generation(),
+                    ImageStatusCode::Busy,
+                ))
+            }
             PacketData::WriteRegister(register) => {
                 let mut pag = pag.lock().await;
-                match pag
-                    .write_register(register.bank, register.address, register.data)
-                    .await
-                {
-                    Ok(()) => Some(Packet {
-                        id: pkt.id,
-                        data: PacketData::Ack(),
-                    }),
-                    Err(e) => {
-                        defmt::error!("[object_mode] WriteRegister failed: {:?}", e);
-                        None
+                // The ownership state may have changed while this request waited on the
+                // sensor mutex. Never ACK a write that cleanup would subsequently overwrite.
+                if !image_state.ownership.settings_writable() {
+                    Some(image_status(
+                        pkt.id,
+                        image_state.ownership.generation(),
+                        ImageStatusCode::Busy,
+                    ))
+                } else {
+                    match pag
+                        .write_register(register.bank, register.address, register.data)
+                        .await
+                    {
+                        Ok(()) => Some(Packet {
+                            id: pkt.id,
+                            data: PacketData::Ack(),
+                        }),
+                        Err(e) => {
+                            defmt::error!("[object_mode] WriteRegister failed: {:?}", e);
+                            None
+                        }
                     }
                 }
             }
@@ -419,7 +520,9 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                 let prop = match kind {
                     PropKind::Uuid => Props::Uuid(device_id),
                     PropKind::ProductId => Props::ProductId(product_id),
-                    PropKind::Name => Props::Name(settings.general.name.clone().into()),
+                    PropKind::Name => Props::Name(crate::settings::with_settings(|s| {
+                        s.general.name.clone().into()
+                    })),
                     PropKind::Version => {
                         Props::Version(odyssey_protocol::Version::new(firmware_version))
                     }
@@ -446,14 +549,9 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                     defmt::Debug2Format(&config)
                 );
                 let wire_config: GeneralConfig = config.into();
-                // imu_loop reads impact settings from the atomics, not from `settings`.
-                match &wire_config {
-                    GeneralConfig::ImpactThreshold(v) => impact_settings.set_threshold(*v),
-                    GeneralConfig::SuppressMs(v) => impact_settings.set_suppress_ms(*v),
-                    _ => {}
-                }
+                // Shared by USB control and object mode; imu_loop reads the same live settings.
                 // Persisted on the next FlashSettings.
-                settings.general.set_general_config(&wire_config);
+                crate::settings::with_settings(|s| s.general.set_general_config(&wire_config));
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::Ack(),
@@ -462,24 +560,26 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
 
             PacketData::ReadConfig(kind) => {
                 defmt::info!("[object_mode] ReadConfig: {:?}", kind);
-                let g = &settings.general;
-                let wire_config = match kind {
-                    ConfigKind::ImpactThreshold => {
-                        GeneralConfig::ImpactThreshold(g.impact_threshold)
+                let wire_config = crate::settings::with_settings(|s| {
+                    let g = &s.general;
+                    match kind {
+                        ConfigKind::ImpactThreshold => {
+                            GeneralConfig::ImpactThreshold(g.impact_threshold)
+                        }
+                        ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
+                        ConfigKind::AccelConfig => {
+                            GeneralConfig::AccelConfig(g.accel_config.clone().into())
+                        }
+                        ConfigKind::GyroConfig => GeneralConfig::GyroConfig(g.gyro_config.clone()),
+                        ConfigKind::CameraModelNf => {
+                            GeneralConfig::CameraModelNf(g.camera_model_nf.clone())
+                        }
+                        ConfigKind::CameraModelWf => {
+                            GeneralConfig::CameraModelWf(g.camera_model_wf.clone())
+                        }
+                        ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone()),
                     }
-                    ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
-                    ConfigKind::AccelConfig => {
-                        GeneralConfig::AccelConfig(g.accel_config.clone().into())
-                    }
-                    ConfigKind::GyroConfig => GeneralConfig::GyroConfig(g.gyro_config.clone()),
-                    ConfigKind::CameraModelNf => {
-                        GeneralConfig::CameraModelNf(g.camera_model_nf.clone())
-                    }
-                    ConfigKind::CameraModelWf => {
-                        GeneralConfig::CameraModelWf(g.camera_model_wf.clone())
-                    }
-                    ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone()),
-                };
+                });
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::ReadConfigResponse(wire_config.into()),
@@ -487,11 +587,7 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             }
 
             PacketData::FlashSettings() => {
-                defmt::info!(
-                    "[object_mode] FlashSettings received. impact_threshold={}, suppress_ms={}",
-                    settings.general.impact_threshold,
-                    settings.general.suppress_ms,
-                );
+                defmt::info!("[object_mode] FlashSettings received");
 
                 // Snapshot the PAG registers (NF sensor only) so they persist too.
                 let pag_settings = {
@@ -499,15 +595,18 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                     read_pag_settings(&mut *pag).await
                 };
 
-                if let Ok(pag_settings) = pag_settings {
-                    settings.pag = pag_settings;
-                } else {
-                    defmt::error!("[object_mode] Failed to read PAG settings, saving general only");
-                }
-
-                settings.general_write();
-                settings.pag_write();
-                defmt::info!("[object_mode] Settings saved to flash");
+                crate::settings::with_settings(|settings| {
+                    if let Ok(pag_settings) = pag_settings {
+                        settings.pag = pag_settings;
+                        settings.pag_write();
+                    } else {
+                        defmt::error!(
+                            "[object_mode] Failed to read PAG settings, saving general only"
+                        );
+                    }
+                    settings.general_write();
+                });
+                defmt::info!("[object_mode] Settings queued for flash");
 
                 Some(Packet {
                     id: pkt.id,
@@ -515,13 +614,60 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                 })
             }
 
-            PacketData::WriteMode(mode) => {
-                defmt::info!("[object_mode] WriteMode: {:?}", mode);
-                // Object/image mode switching is not implemented; the request is just acked.
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::Ack(),
-                })
+            PacketData::WriteMode(_) => Some(image_status(pkt.id, 0, ImageStatusCode::Unsupported)),
+
+            // Renew is never answered: a reply on the stream id would end the host session.
+            PacketData::ImageCommand(command @ ImageCommand::Renew { .. }) => {
+                if request_transport == TransportMode::Usb {
+                    let _ = image_requests.try_send(ImageRequest {
+                        id: pkt.id,
+                        command,
+                        usb_generation,
+                    });
+                }
+                None
+            }
+            PacketData::ImageCommand(command) => {
+                let generation = match command {
+                    ImageCommand::Start { generation, .. }
+                    | ImageCommand::Stop { generation }
+                    | ImageCommand::Renew { generation } => generation,
+                };
+                if request_transport != TransportMode::Usb {
+                    Some(image_status(
+                        pkt.id,
+                        generation,
+                        ImageStatusCode::UsbRequired,
+                    ))
+                } else if let ImageCommand::Start { config, .. } = command
+                    && config.camera != odyssey_protocol::Port::Nf
+                {
+                    Some(image_status(
+                        pkt.id,
+                        generation,
+                        ImageStatusCode::UnsupportedCamera,
+                    ))
+                } else if let ImageCommand::Start { config, .. } = command
+                    && !(1..=15).contains(&config.fps)
+                {
+                    Some(image_status(
+                        pkt.id,
+                        generation,
+                        ImageStatusCode::CaptureError,
+                    ))
+                } else if image_requests
+                    .try_send(ImageRequest {
+                        id: pkt.id,
+                        command,
+                        usb_generation,
+                    })
+                    .is_err()
+                {
+                    Some(image_status(pkt.id, generation, ImageStatusCode::Busy))
+                } else {
+                    // The sensor owner responds only after it has actually changed/restored mode.
+                    None
+                }
             }
 
             PacketData::SetDeviceName(name) => {
@@ -530,8 +676,10 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                 // connection, and a restart would drop it. The new name is advertised on the
                 // next advertising cycle.
                 crate::ble::peripheral::set_device_name_initial(name.as_str());
-                settings.general.name = name.into();
-                settings.general_write();
+                crate::settings::with_settings(|settings| {
+                    settings.general.name = name.into();
+                    settings.general_write();
+                });
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::SetDeviceNameResponse(
@@ -555,6 +703,9 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             PacketData::ReadVersionResponse(_) => None,
             PacketData::BatteryReport(_) => None,
             PacketData::SetDeviceNameResponse(_) => None,
+            PacketData::ImageStatus(_) => None,
+            PacketData::ImageChunk(_) => None,
+            PacketData::ImageObject(_) => None,
         };
 
         // Id 255 asks for no reply.
@@ -565,8 +716,21 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             match atslite_transport::reply_transport(request_transport, usb_device::is_active()) {
                 // stream_loop owns the USB IN endpoint. try_send keeps a USB host that stopped
                 // reading from stalling the BLE requests behind it.
-                Some(TransportMode::Usb) => usb_replies.try_send(r).is_ok(),
-                Some(TransportMode::Ble) => l2cap.try_send(r).is_ok(),
+                Some(TransportMode::Usb) => usb_replies
+                    .try_send(UsbPacket {
+                        packet: r,
+                        generation: usb_generation,
+                    })
+                    .is_ok(),
+                Some(TransportMode::Ble) if ble_session == l2cap_bridge::session_generation() => {
+                    l2cap.try_send(r).is_ok()
+                }
+                Some(TransportMode::Ble) => {
+                    // The handler awaited sensor I/O across a disconnect. Its reply belongs to
+                    // the old session, even if another central has already reconnected.
+                    defmt::debug!("[object_mode] BLE session changed before reply, dropping it");
+                    true
+                }
                 None => {
                     defmt::debug!("[object_mode] USB went away before the reply, dropping it");
                     true
@@ -609,7 +773,9 @@ async fn battery_loop<const N: usize>(
 /// a stalled transfer.
 async fn stream_loop<const N: usize, const R: usize>(
     reports: Receiver<'_, Packet, N>,
-    usb_replies: Receiver<'_, Packet, R>,
+    usb_replies: Receiver<'_, UsbPacket, R>,
+    image_data: Receiver<'_, Packet, IMAGE_QUEUE>,
+    image_state: &ImageState,
     l2cap: &L2capChannels,
     usb_snd: &mut Endpoint<'static, In>,
     usb_configured: UsbConfigHandle,
@@ -619,15 +785,45 @@ async fn stream_loop<const N: usize, const R: usize>(
     let mut usb_snd_buf = [0u8; 1024];
 
     loop {
-        let (pkt, transport) = match select(usb_replies.receive(), reports.receive()).await {
-            Either::First(pkt) => (
-                pkt,
-                atslite_transport::reply_transport(TransportMode::Usb, usb_device::is_active()),
-            ),
-            Either::Second(pkt) => (
+        let (pkt, transport, usb_generation) = match select3(
+            usb_replies.receive(),
+            reports.receive(),
+            image_data.receive(),
+        )
+        .await
+        {
+            Either3::First(reply) => {
+                if reply.generation != usb_configured.generation() {
+                    continue;
+                }
+                (
+                    reply.packet,
+                    atslite_transport::reply_transport(TransportMode::Usb, usb_device::is_active()),
+                    reply.generation,
+                )
+            }
+            Either3::Second(pkt) => (
                 pkt,
                 Some(atslite_transport::report_transport(usb_device::is_active())),
+                usb_configured.generation(),
             ),
+            Either3::Third(pkt) => {
+                let generation = match &pkt.data {
+                    PacketData::ImageChunk(chunk) => chunk.generation,
+                    _ => continue,
+                };
+                if !image_state
+                    .ownership
+                    .accepts(generation, usb_configured.generation())
+                {
+                    continue;
+                }
+                (
+                    pkt,
+                    atslite_transport::reply_transport(TransportMode::Usb, usb_device::is_active()),
+                    image_state.ownership.usb_generation(),
+                )
+            }
         };
         pkt_count = pkt_count.wrapping_add(1);
         if pkt_count % 100 == 0 {
@@ -651,18 +847,21 @@ async fn stream_loop<const N: usize, const R: usize>(
                     }
                 };
                 match select(
+                    usb_configured.wait_until_generation_changes(usb_generation),
                     write_transfer(usb_snd, payload, true),
-                    usb_configured.wait_until_inactive(),
                 )
                 .await
                 {
-                    Either::First(Ok(())) => {}
-                    Either::First(Err(e)) => defmt::error!(
-                        "[stream_loop] USB write error: {:?}",
-                        defmt::Debug2Format(&e)
-                    ),
-                    Either::Second(()) => {
-                        defmt::info!("[stream_loop] USB went away mid-write, packet dropped");
+                    Either::First(()) => {
+                        defmt::info!("[stream_loop] USB epoch changed mid-write, packet dropped");
+                    }
+                    Either::Second(Ok(())) => {}
+                    Either::Second(Err(e)) => {
+                        image_state.abort.signal(());
+                        defmt::error!(
+                            "[stream_loop] USB write error: {:?}",
+                            defmt::Debug2Format(&e)
+                        );
                     }
                 }
             }
@@ -682,7 +881,6 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
     imu_int: &mut II,
     pkt_snd: Sender<'_, Packet, N>,
     stream_infos: &StreamInfos,
-    impact_settings: &ImpactSettings,
 ) {
     const G: f32 = 9.806_65;
 
@@ -743,10 +941,13 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
         // The threshold is in m/s²; impacts closer together than suppress_ms are dropped.
         if stream_infos.impact.enabled() {
             let accel_magnitude_ms2 = accel.magnitude();
-            let threshold_ms2 = impact_settings.threshold() as f32;
+            let (threshold, suppress_ms) = crate::settings::with_settings(|s| {
+                (s.general.impact_threshold, s.general.suppress_ms)
+            });
+            let threshold_ms2 = threshold as f32;
 
             if accel_magnitude_ms2 >= threshold_ms2 {
-                let suppress_us = (impact_settings.suppress_ms() as u32) * 1000;
+                let suppress_us = u32::from(suppress_ms) * 1000;
                 let should_send = match last_impact_ts_micros {
                     Some(last_ts) => ts_micros.wrapping_sub(last_ts) >= suppress_us,
                     None => true,
@@ -770,70 +971,405 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
     }
 }
 
-/// Streams PAG marker reports while the marker stream is enabled.
+/// Sensor ownership loop. Image transitions/capture/cleanup never block USB receive or IMU.
+/// No PAG mutex guard survives USB delivery. Normal markers keep their existing all-centroid
+/// semantics outside image sessions.
 async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
     pag: &AsyncMutex<NoopRawMutex, P>,
     pag_int: &mut PI,
     pkt_snd: Sender<'_, Packet, N>,
     stream_infos: &StreamInfos,
+    image_requests: Receiver<'_, ImageRequest, 2>,
+    usb_replies: Sender<'_, UsbPacket, USB_REPLY_QUEUE>,
+    image_data: &Channel<Packet, IMAGE_QUEUE>,
+    image_state: &ImageState,
+    usb_configured: UsbConfigHandle,
 ) {
-    defmt::info!("[obj_loop] Started");
-    let mut last_enabled_log = false;
+    static IMAGE: static_cell::ConstStaticCell<[u8; IMAGE_PIXELS]> =
+        static_cell::ConstStaticCell::new([0; IMAGE_PIXELS]);
+    let image = IMAGE.take();
+    let mut objs = [pag7665qn::types::Object::DEFAULT; 16];
+    let mut frame_id = 0u32;
+    let mut restore_pending = false;
+    let mut saved_image_settings = [0; IMAGE_SAVED_REGISTERS.len()];
 
     loop {
-        let enabled = stream_infos.marker.enabled();
-
-        if enabled != last_enabled_log {
-            if enabled {
-                defmt::info!("[obj_loop] Marker stream ENABLED, starting to read objects");
-            } else {
-                defmt::info!("[obj_loop] Marker stream DISABLED, sleeping");
-            }
-            last_enabled_log = enabled;
+        if restore_pending {
+            restore_pending = restore_image_settings(pag, &saved_image_settings)
+                .await
+                .is_err();
+            image_state.ownership.finish_restore(!restore_pending);
         }
+        let request = match select(image_requests.receive(), async {
+            if stream_infos.marker.enabled() && !restore_pending {
+                let _ = with_timeout(Duration::from_millis(50), pag_int.wait()).await;
+            } else {
+                Timer::after_millis(50).await;
+            }
+        })
+        .await
+        {
+            Either::First(request) => Some(request),
+            Either::Second(_) => None,
+        };
+        if let Some(request) = request {
+            if !request.belongs_to(usb_configured.generation()) || !usb_device::is_active() {
+                continue;
+            }
+            let usb_replies = UsbReplies {
+                sender: usb_replies,
+                generation: request.usb_generation,
+            };
+            match request.command {
+                ImageCommand::Renew { .. } => {}
+                ImageCommand::Stop { generation } => {
+                    let status = if restore_pending {
+                        ImageStatusCode::CaptureError
+                    } else {
+                        ImageStatusCode::Stopped
+                    };
+                    let _ = usb_replies.try_send(image_status(request.id, generation, status));
+                }
+                ImageCommand::Start { generation, config } => {
+                    if !usb_device::is_active() {
+                        continue;
+                    }
+                    if restore_pending {
+                        let _ = usb_replies.try_send(image_status(
+                            request.id,
+                            generation,
+                            ImageStatusCode::CaptureError,
+                        ));
+                        continue;
+                    }
+                    image_state.abort.reset();
+                    image_data.clear();
+                    image_state
+                        .ownership
+                        .begin(generation, request.usb_generation);
+                    let snapshot = async {
+                        let mut sensor = pag.lock().await;
+                        for (index, register) in IMAGE_SAVED_REGISTERS.iter().enumerate() {
+                            saved_image_settings[index] =
+                                sensor.read_register(0, *register).await?;
+                        }
+                        Ok::<(), P::Error>(())
+                    }
+                    .await;
+                    if let Err(e) = snapshot {
+                        image_state.ownership.finish_capture();
+                        image_state.ownership.finish_restore(true);
+                        defmt::error!("[image] Cannot snapshot live settings: {:?}", e);
+                        let _ = usb_replies.try_send(image_status(
+                            request.id,
+                            generation,
+                            ImageStatusCode::CaptureError,
+                        ));
+                        continue;
+                    }
+                    let end = image_session(
+                        pag,
+                        image,
+                        &mut frame_id,
+                        request.id,
+                        generation,
+                        request.usb_generation,
+                        config,
+                        image_requests,
+                        usb_replies,
+                        image_data,
+                        image_state,
+                        usb_configured,
+                    )
+                    .await;
+                    image_state.ownership.finish_capture();
+                    image_data.clear();
+                    let restored = restore_image_settings(pag, &saved_image_settings).await;
+                    restore_pending = restored.is_err();
+                    image_state.ownership.finish_restore(!restore_pending);
+                    if let Err(e) = &restored {
+                        defmt::error!("[obj_loop] Failed to restore Object: {:?}", e);
+                    }
+                    match end {
+                        ImageEnd::Stop { id, generation } => {
+                            let status = if restored.is_ok() {
+                                ImageStatusCode::Stopped
+                            } else {
+                                ImageStatusCode::CaptureError
+                            };
+                            let _ = usb_replies.try_send(image_status(id, generation, status));
+                        }
+                        ImageEnd::LeaseExpired => {
+                            let status = if restored.is_ok() {
+                                ImageStatusCode::LeaseExpired
+                            } else {
+                                ImageStatusCode::CaptureError
+                            };
+                            let _ = usb_replies.try_send(image_status(request.id, generation, status));
+                        }
+                        ImageEnd::CaptureError => {
+                            let _ = usb_replies.try_send(image_status(
+                                request.id,
+                                generation,
+                                ImageStatusCode::CaptureError,
+                            ));
+                        }
+                        ImageEnd::Disconnected => {}
+                    }
+                }
+            }
+            continue;
+        }
+        if !stream_infos.marker.enabled() || restore_pending {
+            continue;
+        }
+        match pag.lock().await.get_objects(&mut objs).await {
+            Ok(Some(_)) => {
+                send_markers(pkt_snd, stream_infos, &objs);
+            }
+            Ok(None) => {}
+            Err(e) => defmt::error!("[obj_loop] get_objects failed: {:?}", e),
+        }
+    }
+}
 
-        if enabled {
-            let mut objs = [pag7665qn::types::Object::DEFAULT; 16];
+/// Reapply the exact pre-session registers in Idle and attempt Object restoration even if
+/// cleanup or a settings write fails. A failed attempt remains pending in the sensor loop.
+async fn restore_image_settings<P: PagSensor>(
+    pag: &AsyncMutex<NoopRawMutex, P>,
+    settings: &[u8; IMAGE_SAVED_REGISTERS.len()],
+) -> Result<(), P::Error> {
+    let mut sensor = pag.lock().await;
+    let restore = async {
+        sensor.restore_object().await?;
+        sensor.switch_to_idle().await?;
+        for (register, value) in IMAGE_SAVED_REGISTERS.iter().zip(settings) {
+            sensor.write_register(0, *register, *value).await?;
+        }
+        Ok::<(), P::Error>(())
+    }
+    .await;
+    let object = sensor.restore_object().await;
+    restore?;
+    object
+}
 
-            // On timeout, loop around and re-check whether the stream is still enabled.
-            match embassy_time::with_timeout(
-                embassy_time::Duration::from_millis(100),
-                pag_int.wait(),
+fn send_markers<const N: usize>(
+    reports: Sender<'_, Packet, N>,
+    streams: &StreamInfos,
+    objs: &[pag7665qn::types::Object; 16],
+) {
+    if streams.marker.enabled() {
+        let _ = reports.try_send(Packet {
+            id: streams.marker.req_id(),
+            data: PacketData::PocMarkersReport(odyssey_protocol::PocMarkersReport {
+                points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
+            }),
+        });
+    }
+}
+
+fn image_status(id: u8, generation: u32, status: ImageStatusCode) -> Packet {
+    Packet {
+        id,
+        data: PacketData::ImageStatus(ImageStatus { generation, status }),
+    }
+}
+
+enum ImageEnd {
+    Stop { id: u8, generation: u32 },
+    Disconnected,
+    LeaseExpired,
+    CaptureError,
+}
+
+/// Waits without starving stop/disconnect/lease expiry while an image packet is backpressured.
+async fn image_wait<F: Future>(
+    future: F,
+    generation: u32,
+    usb_generation: u32,
+    lease: &mut Instant,
+    requests: Receiver<'_, ImageRequest, 2>,
+    replies: UsbReplies<'_, USB_REPLY_QUEUE>,
+    state: &ImageState,
+    usb: UsbConfigHandle,
+) -> Result<F::Output, ImageEnd> {
+    let mut future = core::pin::pin!(future);
+    loop {
+        if usb.generation() != usb_generation || !usb_device::is_active() {
+            return Err(ImageEnd::Disconnected);
+        }
+        // Check the epoch cancellation first. A brief deconfigure/reconfigure must win over
+        // a new host's already queued command and over a ready packet-send future.
+        // Cancellation and expiry are polled before requests, so a Renew queued after the
+        // deadline cannot revive the session.
+        match select3(
+            select3(
+                state.abort.wait(),
+                usb.wait_until_generation_changes(usb_generation),
+                Timer::at(*lease),
+            ),
+            requests.receive(),
+            future.as_mut(),
+        )
+        .await
+        {
+            Either3::First(Either3::First(())) => return Err(ImageEnd::CaptureError),
+            Either3::First(Either3::Second(())) => return Err(ImageEnd::Disconnected),
+            Either3::First(Either3::Third(())) => return Err(ImageEnd::LeaseExpired),
+            Either3::Second(request) => {
+                if !request.belongs_to(usb_generation) {
+                    continue;
+                }
+                match request.command {
+                    ImageCommand::Renew { generation: renewed } => {
+                        if renewed == generation {
+                            *lease = Instant::now() + Duration::from_millis(IMAGE_LEASE_TIMEOUT_MS);
+                        }
+                    }
+                    ImageCommand::Stop {
+                        generation: stopped,
+                    } if stopped == generation => {
+                        return Err(ImageEnd::Stop {
+                            id: request.id,
+                            generation,
+                        });
+                    }
+                    ImageCommand::Stop {
+                        generation: stopped,
+                    } => {
+                        let _ = replies.try_send(image_status(
+                            request.id,
+                            stopped,
+                            ImageStatusCode::Stopped,
+                        ));
+                    }
+                    ImageCommand::Start {
+                        generation: started,
+                        ..
+                    } => {
+                        let _ = replies.try_send(image_status(
+                            request.id,
+                            started,
+                            ImageStatusCode::Busy,
+                        ));
+                    }
+                }
+            }
+            Either3::Third(value) => return Ok(value),
+        }
+    }
+}
+
+async fn image_session<P: PagSensor>(
+    pag: &AsyncMutex<NoopRawMutex, P>,
+    image: &mut [u8; IMAGE_PIXELS],
+    frame_id: &mut u32,
+    id: u8,
+    generation: u32,
+    usb_generation: u32,
+    config: ImageStreamConfig,
+    requests: Receiver<'_, ImageRequest, 2>,
+    replies: UsbReplies<'_, USB_REPLY_QUEUE>,
+    data: &Channel<Packet, IMAGE_QUEUE>,
+    state: &ImageState,
+    usb: UsbConfigHandle,
+) -> ImageEnd {
+    let period = Duration::from_millis(1000 / u64::from(config.fps));
+    let mut lease = Instant::now() + Duration::from_millis(IMAGE_LEASE_TIMEOUT_MS);
+    if let Err(e) = pag.lock().await.switch_to_image().await {
+        defmt::error!("[image] Image transition failed: {:?}", e);
+        return ImageEnd::CaptureError;
+    }
+    if usb.generation() != usb_generation || !usb_device::is_active() {
+        return ImageEnd::Disconnected;
+    }
+    if replies
+        .try_send(image_status(id, generation, ImageStatusCode::Started))
+        .is_err()
+    {
+        return ImageEnd::CaptureError;
+    }
+    loop {
+        let frame_start = Instant::now();
+        let capture_deadline = Instant::now() + Duration::from_secs(1);
+        let timestamp_us = loop {
+            match pag.lock().await.try_get_image(image).await {
+                Ok(true) => break Instant::now().as_micros() as u32,
+                Ok(false) if Instant::now() < capture_deadline => {}
+                Ok(false) => return ImageEnd::CaptureError,
+                Err(e) => {
+                    defmt::error!("[image] Capture failed: {:?}", e);
+                    return ImageEnd::CaptureError;
+                }
+            }
+            if let Err(end) = image_wait(
+                Timer::after_millis(5),
+                generation,
+                usb_generation,
+                &mut lease,
+                requests,
+                replies,
+                state,
+                usb,
             )
             .await
             {
-                Ok(_) => {}
-                Err(_) => {
-                    defmt::trace!("[obj_loop] PAG interrupt timeout");
-                    continue;
-                }
+                return end;
             }
-
+        };
+        *frame_id = frame_id.wrapping_add(1);
+        for (index, pixels) in image.chunks(IMAGE_CHUNK_CAPACITY).enumerate() {
+            let mut chunk = ImageChunk {
+                generation,
+                frame_id: *frame_id,
+                timestamp_us,
+                objects_timestamp_us: 0,
+                camera: config.camera,
+                width: IMAGE_WIDTH,
+                height: IMAGE_HEIGHT,
+                object_count: 0,
+                offset: (index * IMAGE_CHUNK_CAPACITY) as u32,
+                len: pixels.len() as u16,
+                data: [0; IMAGE_CHUNK_CAPACITY],
+            };
+            chunk.data[..pixels.len()].copy_from_slice(pixels);
+            match image_wait(
+                with_timeout(
+                    Duration::from_millis(500),
+                    data.send(Packet {
+                        id,
+                        data: PacketData::ImageChunk(chunk),
+                    }),
+                ),
+                generation,
+                usb_generation,
+                &mut lease,
+                requests,
+                replies,
+                state,
+                usb,
+            )
+            .await
             {
-                let mut pag = pag.lock().await;
-                match pag.get_objects(&mut objs).await {
-                    Ok(Some(_)) => {}
-                    Ok(None) => continue,
-                    Err(e) => {
-                        defmt::error!("[obj_loop] get_objects failed: {:?}", e);
-                        continue;
-                    }
-                }
-            };
-
-            let id = stream_infos.marker.req_id();
-            let pkt = Packet {
-                id,
-                data: PacketData::PocMarkersReport(odyssey_protocol::PocMarkersReport {
-                    points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
-                }),
-            };
-
-            if pkt_snd.try_send(pkt).is_err() {
-                defmt::warn!("[obj_loop] Marker channel full, dropping packet");
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return ImageEnd::CaptureError,
+                Err(end) => return end,
             }
-        } else {
-            Timer::after_millis(50).await;
+        }
+        if let Err(end) = image_wait(
+            Timer::at(frame_start + period),
+            generation,
+            usb_generation,
+            &mut lease,
+            requests,
+            replies,
+            state,
+            usb,
+        )
+        .await
+        {
+            return end;
         }
     }
 }

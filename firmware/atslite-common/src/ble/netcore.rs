@@ -8,9 +8,9 @@
 // The bt-hci macros test their own `defmt` feature name, which this crate does not declare.
 #![allow(unexpected_cfgs)]
 
-use backon::{EmbassySleeper, ExponentialBuilder, Retryable};
 use core::sync::atomic::{AtomicU16, Ordering};
 
+use backon::{EmbassySleeper, ExponentialBuilder, Retryable};
 use bt_hci::cmd;
 use bt_hci::controller::ControllerCmdSync;
 use embassy_time::{Duration, Timer, with_timeout};

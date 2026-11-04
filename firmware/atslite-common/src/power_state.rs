@@ -1,6 +1,6 @@
-use backon::{ConstantBuilder, EmbassySleeper, Retryable};
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+use backon::{ConstantBuilder, EmbassySleeper, Retryable};
 use embassy_nrf::twim::Twim;
 use embassy_time::{Delay, Duration, Ticker};
 use npm1300_rs::NPM1300;

@@ -68,15 +68,13 @@ pub fn try_send_cmd(cmd: DeviceMsg) {
     }
 }
 
-/// Waits for the next host command by polling the channel every millisecond.
+/// Waits for the next host command, or for registration during startup.
 pub async fn recv_cmd() -> DeviceMsg {
     loop {
         let p = CMD_PTR.load(Ordering::Acquire);
         if !p.is_null() {
             let ch: &Channel<ThreadModeRawMutex, DeviceMsg, 8> = unsafe { &*p };
-            if let Ok(m) = ch.try_receive() {
-                return m;
-            }
+            return ch.receive().await;
         }
         embassy_time::Timer::after_millis(1).await;
     }

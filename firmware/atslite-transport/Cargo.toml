@@ -6,4 +6,4 @@ description = "Which transport (USB or BLE) carries each packet an ATSlite sends
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-odyssey-protocol = { path = "../../../crates/odyssey-protocol", default-features = false }
+odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }

@@ -158,7 +158,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(power_button_task(pwr_btn_task, pmic, pmic_leds).unwrap());
     defmt::info!("Power tasks spawned");
 
-    // DFU and settings both write flash, so they share one NVMC behind a mutex.
+    // Boot confirmation and DFU use this synchronous NVMC handle.
     defmt::info!("Initializing NVMC...");
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
@@ -166,11 +166,12 @@ async fn main(spawner: Spawner) {
 
     // Settings come up before the PAG so its saved configuration can be applied.
     defmt::info!("Initializing settings...");
-    let nvmc_async =
-        nvmc.lock(|_| BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) }));
+    // SAFETY: both handles run on the application executor. BlockingAsync delegates directly
+    // to synchronous NVMC operations, so settings never yields with a flash operation in flight.
+    let nvmc_async = BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) });
     lite1::settings::init_core(&spawner, nvmc_async).await;
-    let settings = lite1::settings::init_nodes().await;
-    lite1::settings::init_board_nodes(settings).await;
+    let mut settings = lite1::settings::init_nodes().await;
+    lite1::settings::init_board_nodes(&mut settings).await;
     defmt::info!("Settings initialized");
 
     defmt::info!("Resetting PAG7665QN...");
@@ -302,6 +303,9 @@ async fn main(spawner: Spawner) {
         "ATS USB"
     };
 
+    // Publish only after board initialization; application tasks borrow settings synchronously.
+    lite1::settings::publish(settings);
+
     // The channels have to exist before USB comes up: the host sends control
     // requests as soon as enumeration finishes, and try_send_cmd drops anything
     // that arrives while the pointers are still null.
@@ -338,14 +342,20 @@ async fn main(spawner: Spawner) {
     spawner.spawn(usb::run_usb(usb_dev).unwrap());
 
     spawner.spawn(
-        lite1::device_control_task::device_control_task(FIRMWARE_VERSION, active_transport)
-            .unwrap(),
+        lite1::device_control_task::device_control_task(
+            FIRMWARE_VERSION,
+            lite1::usb::PID,
+            active_transport,
+        )
+        .unwrap(),
     );
 
     // BLE advertises the configured device name when one is set.
-    if !settings.general.name.is_empty() {
-        lite1::ble::peripheral::set_device_name_initial(settings.general.name.as_str());
-    }
+    lite1::settings::with_settings(|settings| {
+        if !settings.general.name.is_empty() {
+            lite1::ble::peripheral::set_device_name_initial(settings.general.name.as_str());
+        }
+    });
 
     // USB may draw 500 mA from VBUS only once the host has configured it.
     spawner.spawn(usb_pmic_config_task(usb_cfg, pmic).unwrap());
@@ -386,7 +396,6 @@ async fn main(spawner: Spawner) {
         device_id,
         product_id: 0x5211,
         firmware_version: FIRMWARE_VERSION,
-        settings,
         usb_snd,
         usb_rcv,
         usb_configured: usb_cfg,

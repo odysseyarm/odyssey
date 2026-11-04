@@ -9,6 +9,9 @@
 //! 3. The netcore bootloader reads the command, copies the image if one is
 //!    pending, and reports the outcome in [`PcdStatus`].
 //! 4. The netcore application boots and confirms itself through [`PcdStatus`].
+//!
+//! Both cores hold shared references to this region. Every mutable word is atomic; never
+//! create an exclusive reference while the other core may access it.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -55,7 +58,7 @@ pub struct PcdStatus {
     /// A [`PcdStatusCode`].
     pub status: AtomicU32,
 
-    pub reserved: [u32; 2],
+    pub reserved: [AtomicU32; 2],
 }
 
 #[repr(u32)]
@@ -87,14 +90,6 @@ impl PcdCmd {
         unsafe { &*(addr as *const Self) }
     }
 
-    /// # Safety
-    ///
-    /// `addr` must point to a `PcdCmd` that stays mapped for `'static` and is
-    /// not otherwise borrowed.
-    pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        unsafe { &mut *(addr as *mut Self) }
-    }
-
     pub fn is_valid(&self) -> bool {
         self.magic.load(Ordering::Acquire) == PCD_CMD_MAGIC
     }
@@ -108,7 +103,7 @@ impl PcdCmd {
     }
 
     /// Called by the app core.
-    pub fn set_update(&mut self, addr: u32, size: u32) {
+    pub fn set_update(&self, addr: u32, size: u32) {
         self.image_addr.store(addr, Ordering::Release);
         self.image_size.store(size, Ordering::Release);
         // Magic goes last so the netcore never sees a valid but half-written command.
@@ -116,7 +111,7 @@ impl PcdCmd {
     }
 
     /// Called by the netcore once the command is handled.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.magic.store(0, Ordering::Release);
     }
 }
@@ -127,14 +122,6 @@ impl PcdStatus {
     /// `addr` must point to a `PcdStatus` that stays mapped for `'static`.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
-    }
-
-    /// # Safety
-    ///
-    /// `addr` must point to a `PcdStatus` that stays mapped for `'static` and
-    /// is not otherwise borrowed.
-    pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        unsafe { &mut *(addr as *mut Self) }
     }
 
     pub fn is_valid(&self) -> bool {
@@ -156,13 +143,13 @@ impl PcdStatus {
     }
 
     /// Called by the netcore.
-    pub fn set_status(&mut self, status: PcdStatusCode) {
+    pub fn set_status(&self, status: PcdStatusCode) {
         self.status.store(status as u32, Ordering::Release);
         // Magic goes last so the app core never sees a valid but half-written status.
         self.magic.store(PCD_STATUS_MAGIC, Ordering::Release);
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.magic.store(0, Ordering::Release);
     }
 }
@@ -180,14 +167,6 @@ impl PcdRegion {
     /// `addr` must point to a `PcdRegion` that stays mapped for `'static`.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
-    }
-
-    /// # Safety
-    ///
-    /// `addr` must point to a `PcdRegion` that stays mapped for `'static` and
-    /// is not otherwise borrowed.
-    pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Whether the application core still has to run the network core
@@ -222,7 +201,7 @@ mod tests {
 
     fn region(cmd: bool, status: Option<PcdStatusCode>) -> PcdRegion {
         // SAFETY: every field is plain integers or atomics, for which all-zero is valid.
-        let mut r: PcdRegion = unsafe { core::mem::zeroed() };
+        let r: PcdRegion = unsafe { core::mem::zeroed() };
         if cmd {
             r.cmd.set_update(0x1000, 4096);
         }

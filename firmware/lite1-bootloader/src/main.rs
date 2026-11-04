@@ -3,6 +3,7 @@
 
 use core::cell::RefCell;
 use core::future::Future;
+use core::sync::atomic::Ordering;
 use core::task::Poll;
 
 use better_boot::{BootState, BootStateManager, STATE_MAGIC};
@@ -29,7 +30,7 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
 });
 
-use pcd::{PcdRegion, PcdStatusCode};
+use lite1_pcd::{PcdRegion, PcdStatusCode};
 
 // Set in high RAM by the application's DFU detach; survives a soft reset.
 #[repr(C)]
@@ -62,38 +63,38 @@ const PCD_REGION_ADDR: u32 = 0x20070000;
 // Just below the PCD region, outside it.
 const APP_DFU_FLAG_ADDR: u32 = 0x2006FF00;
 
-fn get_pcd_region() -> &'static mut PcdRegion {
-    unsafe { PcdRegion::at_mut(PCD_REGION_ADDR as usize) }
+fn get_pcd_region() -> &'static PcdRegion {
+    unsafe { PcdRegion::at(PCD_REGION_ADDR as usize) }
 }
 
 fn get_app_dfu_flag() -> &'static mut AppDfuFlag {
     unsafe { &mut *(APP_DFU_FLAG_ADDR as *mut AppDfuFlag) }
 }
 
-unsafe fn get_icmsg_config() -> icmsg::MemoryConfig {
-    unsafe {
-        unsafe extern "C" {
-            static mut __icmsg_tx_start: u32;
-            static __icmsg_tx_end: u32;
-            static mut __icmsg_rx_start: u32;
-            static __icmsg_rx_end: u32;
-        }
+fn get_icmsg_config() -> icmsg::MemoryConfig {
+    unsafe extern "C" {
+        static mut __icmsg_tx_start: u32;
+        static __icmsg_tx_end: u32;
+        static mut __icmsg_rx_start: u32;
+        static __icmsg_rx_end: u32;
+    }
 
-        const ALIGN: usize = 4;
-        let send_buffer_len = (&raw const __icmsg_tx_end)
-            .byte_offset_from(&raw const __icmsg_tx_start) as u32
-            - core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-        let recv_buffer_len = (&raw const __icmsg_rx_end)
-            .byte_offset_from(&raw const __icmsg_rx_start) as u32
-            - core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
+    const ALIGN: usize = 4;
+    // Linker symbols delimit a region, not one Rust allocation.
+    let header_len = core::mem::size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>();
+    let send_buffer_len = ((&raw const __icmsg_tx_end).addr()
+        - (&raw const __icmsg_tx_start).addr()
+        - header_len) as u32;
+    let recv_buffer_len = ((&raw const __icmsg_rx_end).addr()
+        - (&raw const __icmsg_rx_start).addr()
+        - header_len) as u32;
 
-        // TX and RX as the app core sees them; the netcore has them swapped.
-        icmsg::MemoryConfig {
-            send_region: (&raw mut __icmsg_tx_start as *mut u32).cast(),
-            recv_region: (&raw mut __icmsg_rx_start as *mut u32).cast(),
-            send_buffer_len,
-            recv_buffer_len,
-        }
+    // TX and RX as the app core sees them; the netcore has them swapped.
+    icmsg::MemoryConfig {
+        send_region: (&raw mut __icmsg_tx_start as *mut u32).cast(),
+        recv_region: (&raw mut __icmsg_rx_start as *mut u32).cast(),
+        send_buffer_len,
+        recv_buffer_len,
     }
 }
 
@@ -138,7 +139,7 @@ impl IpcForwarder {
         defmt::info!("Initializing IPC for network core DFU (blocking)");
 
         let ipc_peripheral = self.ipc_peripheral.take().ok_or(())?;
-        let config = unsafe { get_icmsg_config() };
+        let config = get_icmsg_config();
 
         let mut ipc = Ipc::new(ipc_peripheral, Irqs);
         ipc.event0.configure_trigger([IpcChannel::Channel0]);
@@ -334,14 +335,6 @@ impl<'d> DualBankFlashWriter<'d> {
         }
     }
 
-    /// Identity: the DFU handler already picks the inactive bank.
-    fn map_target(&self, target: DfuTarget) -> DfuTarget {
-        match target {
-            DfuTarget::NetCore => DfuTarget::NetCore,
-            _ => target,
-        }
-    }
-
     fn get_bank_range(&self, target: DfuTarget) -> (usize, usize) {
         unsafe extern "C" {
             static __bootloader_app_a_start: u32;
@@ -385,31 +378,24 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
         offset: usize,
         data: &[u8],
     ) -> Result<(), ()> {
-        let actual_target = self.map_target(target);
-        defmt::debug!(
-            "DFU write: interface={:?}, actual_target={:?}",
-            target,
-            actual_target
-        );
-
-        let (bank_start, bank_end) = self.get_bank_range(actual_target);
+        let (bank_start, bank_end) = self.get_bank_range(target);
 
         if bank_start == 0 {
             defmt::error!("Invalid target for dual-bank write: {:?}", target);
             return Err(());
         }
 
-        let write_addr = bank_start + offset;
-
-        if write_addr + data.len() > bank_end {
+        let bank_len = bank_end.saturating_sub(bank_start);
+        if offset > bank_len || data.len() > bank_len - offset {
             defmt::error!(
-                "Write would exceed bank boundary: addr={:#x}, len={}, end={:#x}",
-                write_addr,
+                "Write would exceed bank boundary: offset={:#x}, len={}, capacity={:#x}",
+                offset,
                 data.len(),
-                bank_end
+                bank_len
             );
             return Err(());
         }
+        let write_addr = bank_start + offset;
 
         defmt::debug!(
             "Writing {} bytes to {:?} at offset {:#x}",
@@ -418,24 +404,12 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
             write_addr
         );
 
-        if target == DfuTarget::NetCore {
-            self.netcore_dfu_size = (offset + data.len()).max(self.netcore_dfu_size);
-
-            // Coarse progress in the PCD reserved fields, readable with a debugger and no RTT.
-            let pcd = unsafe { pcd::PcdRegion::at_mut(PCD_REGION_ADDR as usize) };
-            unsafe {
-                core::ptr::write_volatile(
-                    &mut pcd.status.reserved[0],
-                    (offset + data.len()) as u32,
-                );
-                core::ptr::write_volatile(&mut pcd.status.reserved[1], 0x4E_5450u32); // "NTP": netcore progress
-            }
-        }
-
         self.flash.lock(|flash_cell| {
             let mut flash = flash_cell.borrow_mut();
 
-            let page_start = write_addr & !(PAGE_SIZE - 1);
+            // DFU appends chunks in order. The page containing an unaligned offset already holds
+            // earlier bytes; erase only pages first reached by this chunk.
+            let page_start = (write_addr + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
             let page_end = (write_addr + data.len() + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
             for page_addr in (page_start..page_end).step_by(PAGE_SIZE) {
@@ -451,7 +425,19 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
             }
 
             Ok(())
-        })
+        })?;
+
+        if target == DfuTarget::NetCore {
+            self.netcore_dfu_size = if offset == 0 {
+                data.len()
+            } else {
+                (offset + data.len()).max(self.netcore_dfu_size)
+            };
+            let pcd = get_pcd_region();
+            pcd.status.reserved[0].store(self.netcore_dfu_size as u32, Ordering::Release);
+            pcd.status.reserved[1].store(0x4E_5450, Ordering::Release); // "NTP"
+        }
+        Ok(())
     }
 
     fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), ()> {
@@ -461,8 +447,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
         );
 
         // The bank written last is preferred on the next boot.
-        let actual_target = self.map_target(target);
-        let target_slot = match actual_target {
+        let target_slot = match target {
             DfuTarget::AppBankA => SLOT_A,
             DfuTarget::AppBankB => SLOT_B,
             DfuTarget::NetCore => {
@@ -482,10 +467,8 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 pcd.cmd.set_update(dfu_addr, self.netcore_dfu_size as u32);
                 // The netcore copies whole pages, so the size is padded to a page.
                 let padded = (self.netcore_dfu_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-                unsafe {
-                    core::ptr::write_volatile(&mut pcd.status.reserved[0], padded as u32);
-                    core::ptr::write_volatile(&mut pcd.status.reserved[1], 0x4E_54_44u32); // "NTD"
-                }
+                pcd.status.reserved[0].store(padded as u32, Ordering::Release);
+                pcd.status.reserved[1].store(0x4E_54_44, Ordering::Release); // "NTD"
                 defmt::info!(
                     "PCD command set in RAM: addr={:#x}, size={} (padded {})",
                     dfu_addr,
@@ -1108,12 +1091,12 @@ async fn main(spawner: Spawner) -> ! {
             let state_addr = &__bootloader_state_start as *const u32 as usize;
             core::ptr::read_volatile((state_addr + 24) as *const u32)
         };
-        match pcd::next_copy_attempt(stored_attempts) {
+        match lite1_pcd::next_copy_attempt(stored_attempts) {
             Some(attempt) => {
                 defmt::info!(
                     "Net core copy attempt {}/{}",
                     attempt,
-                    pcd::MAX_COPY_ATTEMPTS
+                    lite1_pcd::MAX_COPY_ATTEMPTS
                 );
                 if persist_netcore_copy_attempt(
                     &flash,
@@ -1129,7 +1112,7 @@ async fn main(spawner: Spawner) -> ! {
             None => {
                 defmt::error!(
                     "Net core copy abandoned after {} attempts",
-                    pcd::MAX_COPY_ATTEMPTS
+                    lite1_pcd::MAX_COPY_ATTEMPTS
                 );
                 if clear_netcore_dfu_info(&flash).is_err() {
                     defmt::warn!("Failed to clear persisted netcore DFU info");

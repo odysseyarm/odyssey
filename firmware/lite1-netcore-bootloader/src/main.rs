@@ -2,18 +2,20 @@
 #![no_main]
 
 use core::cell::RefCell;
+#[cfg(feature = "defmt")]
+use core::sync::atomic::Ordering;
 
 #[cfg(feature = "rtt")]
 use defmt_rtt as _;
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use lite1_pcd::{PcdRegion, PcdStatusCode};
 use nrf_pac as pac;
 #[cfg(not(feature = "rtt"))]
 use panic_halt as _;
 #[cfg(feature = "rtt")]
 use panic_probe as _;
-use pcd::{PcdRegion, PcdStatusCode};
 
 const FLASH_BASE: u32 = 0x0100_0000;
 const FLASH_SIZE: u32 = 256 * 1024;
@@ -41,7 +43,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     let flash: Mutex<NoopRawMutex, RefCell<Nvmc<'_>>> = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
-    let pcd = unsafe { PcdRegion::at_mut(pcd_region_addr()) };
+    let pcd = unsafe { PcdRegion::at(pcd_region_addr()) };
 
     if pcd.cmd.is_valid() {
         pcd.status.set_status(PcdStatusCode::Updating);
@@ -53,8 +55,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
             "PCD valid: addr={:#x}, size={} (reserved0={}, reserved1={})",
             image_addr,
             image_size,
-            unsafe { core::ptr::read_volatile(&pcd.status.reserved[0]) },
-            unsafe { core::ptr::read_volatile(&pcd.status.reserved[1]) }
+            pcd.status.reserved[0].load(Ordering::Acquire),
+            pcd.status.reserved[1].load(Ordering::Acquire)
         );
 
         let result = flash.lock(|flash_cell| {
@@ -82,9 +84,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
         }
     } else {
         #[cfg(feature = "defmt")]
-        defmt::info!("No PCD cmd: magic=0x{:08x}", unsafe {
-            core::ptr::read_volatile(&pcd.cmd.magic as *const _ as *const u32)
-        });
+        defmt::info!(
+            "No PCD cmd: magic=0x{:08x}",
+            pcd.cmd.magic.load(Ordering::Acquire)
+        );
     }
 
     #[cfg(feature = "defmt")]
@@ -154,12 +157,12 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         _dfu_len
     );
 
-    if size == 0 || size > active_len {
+    if size == 0 || size % 4 != 0 || size > active_len {
         #[cfg(feature = "defmt")]
         defmt::warn!("Invalid size {}, active_len {}", size, active_len);
         return Err(());
     }
-    if src_addr < dfu_start || src_addr + size > dfu_end {
+    if src_addr < dfu_start || src_addr > dfu_end || size > dfu_end - src_addr {
         #[cfg(feature = "defmt")]
         defmt::warn!(
             "Src out of range: addr {:#x} len {} (dfu {:#x}-{:#x})",
@@ -196,33 +199,16 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
     // Flash writes must complete before reading the copy back.
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
-    verify_copy(dst_addr, src)
-}
-
-fn verify_copy(dst_addr: u32, src: &[u8]) -> Result<(), ()> {
-    // Only the first 16 bytes are compared; enough to catch a copy that did not happen.
-    let mut buf = [0u8; 16];
-    let len = core::cmp::min(buf.len(), src.len());
-    unsafe {
-        core::ptr::copy_nonoverlapping(dst_addr as *const u8, buf.as_mut_ptr(), len);
-    }
-    #[cfg(feature = "defmt")]
-    {
-        defmt::info!("Verify len {}", len);
-        defmt::info!("Flash head: {=[u8]:x}", &buf[..len]);
-        defmt::info!("Src   head: {=[u8]:x}", &src[..len]);
-    }
-    if buf[..len] == src[..len] {
+    // Both complete ranges were validated above; do not confirm an image based on its vector
+    // table alone, which can match even when a later page was not copied correctly.
+    let dst = unsafe { core::slice::from_raw_parts(dst_addr as *const u8, size as usize) };
+    if dst == src {
         #[cfg(feature = "defmt")]
-        defmt::info!("Verify OK ({} bytes checked)", len);
+        defmt::info!("Verify OK ({} bytes checked)", size);
         Ok(())
     } else {
         #[cfg(feature = "defmt")]
-        defmt::warn!(
-            "Verify failed: flash {:?} != src {:?}",
-            &buf[..len],
-            &src[..len]
-        );
+        defmt::warn!("Verify failed: copied image differs from source");
         Err(())
     }
 }
@@ -231,7 +217,7 @@ fn check_bounds(start: u32, end: u32) -> Result<(), ()> {
     if start < FLASH_BASE || end > FLASH_BASE + FLASH_SIZE || end < start {
         return Err(());
     }
-    if start % PAGE_SIZE as u32 != 0 || end % PAGE_SIZE as u32 != 0 {
+    if !start.is_multiple_of(PAGE_SIZE as u32) || !end.is_multiple_of(PAGE_SIZE as u32) {
         return Err(());
     }
     Ok(())
@@ -271,8 +257,8 @@ fn erase_abs(start: u32, end: u32) -> Result<(), ()> {
 }
 
 fn write_abs(addr: u32, bytes: &[u8]) -> Result<(), ()> {
-    if addr < FLASH_BASE
-        || addr as usize + bytes.len() > FLASH_BASE as usize + FLASH_SIZE as usize
+    if !(FLASH_BASE..=FLASH_BASE + FLASH_SIZE).contains(&addr)
+        || bytes.len() > (FLASH_BASE + FLASH_SIZE - addr) as usize
         || addr % 4 != 0
         || bytes.len() % 4 != 0
     {

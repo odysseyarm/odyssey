@@ -101,7 +101,14 @@ pub async fn run<C>(
             // is stored, so the link can encrypt with it.
             let bondable = is_pairing_active() || bond_stored;
             defmt::info!("[adv] setting bondable={}", bondable);
-            conn.raw().set_bondable(bondable).unwrap();
+            if let Err(e) = conn.raw().set_bondable(bondable) {
+                defmt::warn!(
+                    "[adv] Failed to configure connection: {:?}",
+                    defmt::Debug2Format(&e)
+                );
+                disconnect_and_wait(&conn).await;
+                continue;
+            }
             match select3(
                 gatt_events_task(&server, &conn),
                 custom_task(&server, &conn, &stack),
@@ -126,6 +133,11 @@ pub async fn run<C>(
                     disconnect_and_wait(&conn).await;
                 }
             }
+            // custom_task may have been cancelled by either of the other futures. Cleanup belongs
+            // to this connection owner, not to the tail of a cancellable child future.
+            crate::ble::l2cap_bridge::channels().drain();
+            crate::pmic_leds::set_ble_connected(false);
+            crate::power_state::update_led_for_ble_state().await;
         }
     })
     .await;
@@ -146,10 +158,7 @@ fn sync_bond<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> bool {
         defmt::warn!("[ble] Settings not initialized, bond storage disabled");
         return false;
     }
-    // SAFETY: settings are initialized (checked above). Other tasks hold references from
-    // get_settings too, but this one only reads `ble_bond` and does not yield in between, and
-    // the executor is single-threaded, so no write can interleave with the read.
-    let stored = settings::ble_bond_to_bond_info(&unsafe { settings::get_settings() }.ble_bond);
+    let stored = settings::with_settings(|s| settings::ble_bond_to_bond_info(&s.ble_bond));
     for bond in stack.get_bond_information() {
         let keep = stored
             .as_ref()
@@ -220,19 +229,37 @@ async fn gatt_events_task(
             } => {
                 defmt::info!("[peripheral] Pairing complete!");
                 if let Some(bond) = bond {
+                    let pairing_active = is_pairing_active();
+                    let allowed = pairing_active
+                        || (settings::is_initialized()
+                            && settings::with_settings(|s| {
+                                settings::ble_bond_to_bond_info(&s.ble_bond).is_some_and(|stored| {
+                                    stored.identity.match_identity(&bond.identity)
+                                })
+                            }));
+                    if !allowed {
+                        // A cancelled/expired pairing must not replace the stored bond later.
+                        defmt::warn!("[peripheral] Rejecting bond outside the pairing window");
+                        request_disconnect();
+                        continue;
+                    }
                     if settings::is_initialized() {
-                        let settings = unsafe { settings::get_settings() };
-                        settings.ble_bond = settings::ble_bond_from_bond_info(&bond);
-                        settings.ble_bond_write();
-                        defmt::info!("[peripheral] Bond stored to flash");
+                        settings::with_settings(|s| {
+                            s.ble_bond = settings::ble_bond_from_bond_info(&bond);
+                            s.ble_bond_write();
+                        });
+                        defmt::info!("[peripheral] Bond queued for flash");
                     }
 
-                    let addr = bond.identity.bd_addr.raw();
-                    let mut addr_copy = [0u8; 6];
-                    addr_copy.copy_from_slice(addr);
-                    PAIRING_COMPLETE_SIGNAL.signal(addr_copy);
+                    if pairing_active {
+                        let mut addr = [0u8; 6];
+                        addr.copy_from_slice(bond.identity.bd_addr.raw());
+                        PAIRING_COMPLETE_SIGNAL.signal(addr);
+                        // Keep the successful connection; only cancellation tears one down.
+                        PAIRING.store(false, Ordering::Relaxed);
+                        ADVERTISING_STALE.signal(());
+                    }
                 }
-                cancel_pairing_mode();
             }
             GattConnectionEvent::PairingFailed(err) => {
                 defmt::warn!(
@@ -288,6 +315,11 @@ async fn advertise<'values, 'server, C: Controller>(
     const COMPANY_ID: u16 = 0x068A; // Raytac
 
     let pairing_on = is_pairing_active();
+    // A valid 32-byte device name does not fit in a legacy 31-byte advertisement. Include
+    // only complete UTF-8 characters and reserve space for flags and pairing manufacturer data.
+    let manufacturer_len = if pairing_on { 4 + prod_prefix.len() } else { 0 };
+    let adv_name = shortened_name(device_name, 31usize.saturating_sub(5 + manufacturer_len));
+    let scan_name = shortened_name(device_name, 29);
     let adv_len = if pairing_on {
         AdStructure::encode_slice(
             &[
@@ -296,7 +328,7 @@ async fn advertise<'values, 'server, C: Controller>(
                     company_identifier: COMPANY_ID,
                     payload: prod_prefix,
                 },
-                AdStructure::ShortenedLocalName(device_name.as_bytes()),
+                AdStructure::ShortenedLocalName(adv_name.as_bytes()),
             ],
             &mut advertiser_data[..],
         )?
@@ -304,14 +336,14 @@ async fn advertise<'values, 'server, C: Controller>(
         AdStructure::encode_slice(
             &[
                 AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::ShortenedLocalName(device_name.as_bytes()),
+                AdStructure::ShortenedLocalName(adv_name.as_bytes()),
             ],
             &mut advertiser_data[..],
         )?
     };
 
     let scan_len = AdStructure::encode_slice(
-        &[AdStructure::ShortenedLocalName(device_name.as_bytes())],
+        &[AdStructure::ShortenedLocalName(scan_name.as_bytes())],
         &mut scan_rsp_data[..],
     )?;
     let advertiser = peripheral
@@ -327,6 +359,14 @@ async fn advertise<'values, 'server, C: Controller>(
     let conn = advertiser.accept().await?.with_attribute_server(server)?;
     defmt::info!("[advertise] Connection accepted!");
     Ok(conn)
+}
+
+fn shortened_name(name: &str, max_bytes: usize) -> &str {
+    let mut end = name.len().min(max_bytes);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
 }
 
 /// How long one L2CAP accept waits for the central to open the channel.
@@ -439,35 +479,39 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         L2CAP_PSM_DATA
     );
 
-    let Some(l2cap_control_channel) = accept_l2cap(
-        stack,
-        conn,
-        &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
-        &l2cap_control_config,
-        1,
-    )
-    .await
+    let Some(l2cap_control_channel) =
+        accept_l2cap(stack, conn, &[L2CAP_PSM_CTRL], &l2cap_control_config, 1).await
     else {
         return;
     };
     defmt::info!("[custom_task] L2CAP channel 1 accepted (control PSM 0x0080)");
 
-    let Some(l2cap_data_channel) = accept_l2cap(
-        stack,
-        conn,
-        &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
-        &l2cap_data_config,
-        2,
-    )
-    .await
+    let Some(l2cap_data_channel) =
+        accept_l2cap(stack, conn, &[L2CAP_PSM_DATA], &l2cap_data_config, 2).await
     else {
         return;
     };
     defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
 
+    // L2CAP is independent of GATT: its accept path does not enforce GATT's encryption check.
+    // Only the stored peer may issue commands or receive reports, including after pairing.
+    let encrypted = conn
+        .raw()
+        .security_level()
+        .is_ok_and(|level| level.encrypted());
+    let known_peer = settings::is_initialized()
+        && settings::with_settings(|s| {
+            settings::ble_bond_to_bond_info(&s.ble_bond)
+                .is_some_and(|bond| bond.identity.match_identity(&conn.raw().peer_identity()))
+        });
+    if !encrypted || !known_peer {
+        defmt::warn!("[custom_task] Rejecting unencrypted or unknown L2CAP peer");
+        return;
+    }
+
     // The pumps run whatever transport carries reports. While USB does, object mode queues only
     // replies to requests that came over BLE, and the link otherwise idles until USB goes away.
-    let l2cap_channels = crate::ble::l2cap_bridge::get_or_init();
+    let l2cap_channels = crate::ble::l2cap_bridge::channels();
     l2cap_channels.drain();
 
     defmt::info!("[custom_task] L2CAP bridge ready, splitting channels");
@@ -498,8 +542,6 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         Either4::Fourth(_) => defmt::info!("[custom_task] data_rx_task exited"),
     }
 
-    crate::pmic_leds::set_ble_connected(false);
-    crate::power_state::update_led_for_ble_state().await;
     defmt::info!("[custom_task] exiting - L2CAP channels closed, BLE disconnected");
 }
 
@@ -510,8 +552,6 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 ) {
     defmt::info!("[control_tx_task] started");
     let mut tx_buf = [0u8; 1024];
-    let mut consecutive_timeouts = 0u8;
-    const MAX_CONSECUTIVE_TIMEOUTS: u8 = 3;
 
     loop {
         let pkt = tx_queue.receive().await;
@@ -530,7 +570,6 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                 .await
                 {
                     Ok(Ok(())) => {
-                        consecutive_timeouts = 0;
                         let duration_ms = send_start.elapsed().as_millis();
                         defmt::info!(
                             "[control_tx_task] TX control: send complete (id={}, duration={}ms)",
@@ -546,18 +585,10 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                         return;
                     }
                     Err(_) => {
-                        consecutive_timeouts += 1;
-                        defmt::error!(
-                            "[control_tx_task] L2CAP control send timeout ({}/{})",
-                            consecutive_timeouts,
-                            MAX_CONSECUTIVE_TIMEOUTS
-                        );
-                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
-                            defmt::error!(
-                                "[control_tx_task] Too many consecutive timeouts, exiting"
-                            );
-                            return;
-                        }
+                        // send() may already have emitted part of a segmented SDU. Another send
+                        // on this channel would be interpreted as its continuation, so reconnect.
+                        defmt::error!("[control_tx_task] L2CAP control send timeout, closing link");
+                        return;
                     }
                 }
             }
@@ -575,8 +606,6 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 ) {
     defmt::info!("[data_tx_task] started");
     let mut tx_buf = [0u8; 1024];
-    let mut consecutive_timeouts = 0u8;
-    const MAX_CONSECUTIVE_TIMEOUTS: u8 = 10;
 
     loop {
         let pkt = tx_queue.receive().await;
@@ -589,9 +618,7 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                 )
                 .await
                 {
-                    Ok(Ok(())) => {
-                        consecutive_timeouts = 0;
-                    }
+                    Ok(Ok(())) => {}
                     Ok(Err(e)) => {
                         defmt::warn!(
                             "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
@@ -600,18 +627,9 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                         return;
                     }
                     Err(_) => {
-                        consecutive_timeouts += 1;
-                        defmt::warn!(
-                            "[data_tx_task] L2CAP data send timeout (dropping packet, {}/{})",
-                            consecutive_timeouts,
-                            MAX_CONSECUTIVE_TIMEOUTS
-                        );
-                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
-                            defmt::error!(
-                                "[data_tx_task] Too many consecutive timeouts, connection appears dead"
-                            );
-                            return;
-                        }
+                        // Dropping a timed-out send may leave a partial SDU on the peer.
+                        defmt::warn!("[data_tx_task] L2CAP data send timeout, closing link");
+                        return;
                     }
                 }
             }
@@ -709,9 +727,6 @@ static CURRENT_NAME: BlockingMutex<BmRaw, RefCell<heapless::String<32>>> =
 /// Sets the advertised name without restarting advertising. Before `run()` this replaces its
 /// `device_name`; afterwards the name takes effect on the next advertising cycle.
 pub fn set_device_name_initial(name: &str) {
-    if name.is_empty() {
-        return;
-    }
     CURRENT_NAME.lock(|n| {
         let mut s = n.borrow_mut();
         s.clear();
@@ -738,9 +753,12 @@ pub fn enter_pairing_mode() {
     DISCONNECT_REQUEST.signal(());
 }
 
-/// Leaves pairing mode and drops the pairing data from advertising. A connection is kept.
+/// Leaves pairing mode and aborts an in-flight pairing connection. Successful pairing clears
+/// `PAIRING` before notifying device control, so acknowledging success keeps the link up.
 pub fn cancel_pairing_mode() {
-    PAIRING.store(false, Ordering::Relaxed);
+    if PAIRING.swap(false, Ordering::Relaxed) {
+        DISCONNECT_REQUEST.signal(());
+    }
     ADVERTISING_STALE.signal(());
 }
 

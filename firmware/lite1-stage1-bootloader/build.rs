@@ -5,10 +5,10 @@ use std::{env, fs};
 use memory_spec::MemorySpec;
 
 fn main() {
-    println!("cargo:rerun-if-changed=../../../memory/memory-lite1.kdl");
+    println!("cargo:rerun-if-changed=../memory/memory-lite1.kdl");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let memory_kdl_path = manifest_dir.join("../../../memory/memory-lite1.kdl");
+    let memory_kdl_path = manifest_dir.join("../memory/memory-lite1.kdl");
 
     let content = fs::read_to_string(&memory_kdl_path)
         .unwrap_or_else(|e| panic!("Failed to read memory-lite1.kdl: {}", e));

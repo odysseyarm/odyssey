@@ -17,6 +17,7 @@ use crate::{device_control, settings};
 #[embassy_executor::task]
 pub async fn device_control_task(
     firmware_version: [u16; 3],
+    product_id: u16,
     active_transport: fn() -> TransportMode,
 ) {
     info!("Device control task started");
@@ -42,6 +43,7 @@ pub async fn device_control_task(
                     cmd,
                     &mut pairing_deadline,
                     firmware_version,
+                    product_id,
                     active_transport,
                 )
                 .await;
@@ -63,6 +65,7 @@ async fn handle_cmd(
     cmd: DeviceMsg,
     pairing_deadline: &mut Option<Instant>,
     firmware_version: [u16; 3],
+    product_id: u16,
     active_transport: fn() -> TransportMode,
 ) {
     match cmd {
@@ -77,13 +80,13 @@ async fn handle_cmd(
                 }
                 PropKind::Name => {
                     let name = if settings::is_initialized() {
-                        unsafe { settings::get_settings() }.general.name.clone()
+                        settings::with_settings(|s| s.general.name.clone())
                     } else {
                         heapless::String::new()
                     };
                     Props::Name(name.into())
                 }
-                PropKind::ProductId => return,
+                PropKind::ProductId => Props::ProductId(product_id),
                 PropKind::NetCoreRelease => {
                     Props::NetCoreRelease(crate::ble::netcore::netcore_release())
                 }
@@ -93,12 +96,15 @@ async fn handle_cmd(
 
         DeviceMsg::ClearBond() => {
             info!("Clearing bond...");
-            // The bond itself is not cleared here; this only drops the current connection.
-
-            peripheral::request_disconnect();
-
-            info!("Bond cleared successfully");
-            device_control::try_send_event(DeviceMsg::ClearBondResponse(ClearBondResult::Ok()));
+            let result = if settings::is_initialized() {
+                settings::with_settings(|s| s.ble_bond_clear());
+                // The next advertising cycle removes the old bond from the BLE host too.
+                peripheral::request_disconnect();
+                ClearBondResult::Ok()
+            } else {
+                ClearBondResult::Err(odyssey_protocol::control::device::ClearBondsError::Failed)
+            };
+            device_control::try_send_event(DeviceMsg::ClearBondResponse(result));
         }
 
         DeviceMsg::StartPairing(params) => {
@@ -106,6 +112,7 @@ async fn handle_cmd(
             // A repeated StartPairing only restarts the timeout.
             if pairing_deadline.replace(deadline).is_some() {
                 info!("Pairing timeout reset to {} ms", params.timeout_ms);
+                device_control::try_send_event(DeviceMsg::StartPairingResponse());
                 return;
             }
             info!("Starting pairing mode for {} ms", params.timeout_ms);
@@ -142,44 +149,46 @@ async fn handle_cmd(
         }
 
         DeviceMsg::ReadConfig(kind) => {
-            let settings = unsafe { crate::settings::get_settings() };
-            let g = &settings.general;
-            use odyssey_protocol::{ConfigKind, GeneralConfig};
-            let config = match kind {
-                ConfigKind::ImpactThreshold => GeneralConfig::ImpactThreshold(g.impact_threshold),
-                ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
-                ConfigKind::AccelConfig => GeneralConfig::AccelConfig(g.accel_config.clone()),
-                ConfigKind::GyroConfig => GeneralConfig::GyroConfig(g.gyro_config.clone()),
-                ConfigKind::CameraModelNf => {
-                    GeneralConfig::CameraModelNf(g.camera_model_nf.clone().into())
+            let config = settings::with_settings(|settings| {
+                let g = &settings.general;
+                use odyssey_protocol::{ConfigKind, GeneralConfig};
+                match kind {
+                    ConfigKind::ImpactThreshold => {
+                        GeneralConfig::ImpactThreshold(g.impact_threshold)
+                    }
+                    ConfigKind::SuppressMs => GeneralConfig::SuppressMs(g.suppress_ms),
+                    ConfigKind::AccelConfig => GeneralConfig::AccelConfig(g.accel_config.clone()),
+                    ConfigKind::GyroConfig => GeneralConfig::GyroConfig(g.gyro_config.clone()),
+                    ConfigKind::CameraModelNf => {
+                        GeneralConfig::CameraModelNf(g.camera_model_nf.clone().into())
+                    }
+                    ConfigKind::CameraModelWf => {
+                        GeneralConfig::CameraModelWf(g.camera_model_wf.clone().into())
+                    }
+                    ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone().into()),
                 }
-                ConfigKind::CameraModelWf => {
-                    GeneralConfig::CameraModelWf(g.camera_model_wf.clone().into())
-                }
-                ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone().into()),
-            };
+            });
             device_control::try_send_event(DeviceMsg::ReadConfigResponse(config));
         }
 
         DeviceMsg::WriteConfig(config) => {
-            let settings = unsafe { crate::settings::get_settings() };
             let wire_config = odyssey_protocol::wire::GeneralConfig::from(config);
-            settings.general.set_general_config(&wire_config);
+            settings::with_settings(|s| s.general.set_general_config(&wire_config));
             device_control::try_send_event(DeviceMsg::WriteConfigAck());
         }
 
         DeviceMsg::FlashSettings() => {
-            let settings = unsafe { crate::settings::get_settings() };
-            settings.general_write();
+            settings::with_settings(|s| s.general_write());
             device_control::try_send_event(DeviceMsg::FlashSettingsAck());
         }
 
         DeviceMsg::SetDeviceName(name) => {
             info!("SetDeviceName: {:?}", name.as_str());
             if settings::is_initialized() {
-                let s = unsafe { settings::get_settings() };
-                s.general.name = name.clone().into();
-                s.general_write();
+                settings::with_settings(|s| {
+                    s.general.name = name.clone().into();
+                    s.general_write();
+                });
             }
             // No ADV_RESTART_SIGNAL: the dongle may be connected, and a restart would drop it.
             peripheral::set_device_name_initial(name.as_str());
@@ -192,9 +201,10 @@ async fn handle_cmd(
             use odyssey_protocol::control::AddBondError;
             info!("AddBond received for {:02x}", entry.bd_addr);
             if settings::is_initialized() {
-                let s = unsafe { settings::get_settings() };
-                s.ble_bond = entry.into();
-                s.ble_bond_write();
+                settings::with_settings(|s| {
+                    s.ble_bond = entry.into();
+                    s.ble_bond_write();
+                });
                 // The BLE loop loads the bond from settings into the host before it advertises
                 // again, so the new bond is live from the next connection on.
                 peripheral::request_disconnect();

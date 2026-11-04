@@ -869,12 +869,16 @@ dependencies = [
  "embedded-storage",
  "futures",
  "icmsg",
+ "lite1-pcd",
  "memory-spec",
  "odyssey-protocol",
  "panic-probe",
- "pcd",
  "static_cell",
 ]
+
+[[package]]
+name = "lite1-pcd"
+version = "0.1.0"
 
 [[package]]
 name = "litrs"
@@ -1076,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-common"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "nalgebra",
  "num",
@@ -1086,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-protocol"
-version = "0.2.0"
+version = "0.0.0"
 dependencies = [
  "arbitrary-int",
  "bitbybit",
@@ -1100,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-protocol-macros"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1130,10 +1134,6 @@ dependencies = [
  "cortex-m",
  "defmt 1.0.1",
 ]
-
-[[package]]
-name = "pcd"
-version = "0.1.0"
 
 [[package]]
 name = "pin-project-lite"

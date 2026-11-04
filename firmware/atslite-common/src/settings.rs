@@ -13,6 +13,8 @@ mod settings_region {
     }
 }
 
+use core::cell::RefCell;
+
 use cfg_noodle::flash::Flash;
 use cfg_noodle::minicbor::{CborLen, Decode, Encode};
 use cfg_noodle::mutex::raw_impls::cs::CriticalSectionRawMutex as NoodleRawMutex;
@@ -22,11 +24,11 @@ use defmt::Format;
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, WithTimeout as _};
 pub use settings_region::get_settings_region;
-use static_cell::StaticCell;
 
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
@@ -40,25 +42,28 @@ static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// can leave the node undecodable.
 static SETTINGS_SETTLED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
+// Access is synchronous on the single-threaded application executor: a settings borrow never
+// survives an await and cannot alias the object-mode, USB-control or BLE handlers.
+static SETTINGS: Mutex<ThreadModeRawMutex, RefCell<Option<Settings>>> =
+    Mutex::new(RefCell::new(None));
 
-// Null until `init_nodes` runs. The BLE peripheral and the control handlers reach settings here.
-static SETTINGS_PTR: core::sync::atomic::AtomicPtr<Settings> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+pub fn publish(settings: Settings) {
+    SETTINGS.lock(|cell| {
+        let mut slot = cell.borrow_mut();
+        assert!(slot.is_none(), "settings already initialized");
+        *slot = Some(settings);
+    });
+}
 
-/// Returns the shared settings.
-///
-/// # Safety
-/// `init_nodes` must have completed, and the caller must not hold another reference.
-pub unsafe fn get_settings() -> &'static mut Settings {
-    let ptr = SETTINGS_PTR.load(core::sync::atomic::Ordering::Acquire);
-    unsafe { &mut *ptr }
+pub fn with_settings<R>(f: impl FnOnce(&mut Settings) -> R) -> R {
+    SETTINGS.lock(|cell| {
+        let mut slot = cell.borrow_mut();
+        f(slot.as_mut().expect("settings not initialized"))
+    })
 }
 
 pub fn is_initialized() -> bool {
-    !SETTINGS_PTR
-        .load(core::sync::atomic::Ordering::Acquire)
-        .is_null()
+    SETTINGS.lock(|cell| cell.borrow().is_some())
 }
 
 #[embassy_executor::task]
@@ -150,6 +155,9 @@ pub fn settings_flush_now() {
 /// Callers that reset the chip must go through this, otherwise the reset can
 /// land in the middle of a page erase.
 pub async fn settings_wait_settled(timeout: Duration) {
+    // A completion from an earlier pass says nothing about writes queued since then.
+    SETTINGS_SETTLED.reset();
+    settings_flush_now();
     if embassy_time::with_timeout(timeout, SETTINGS_SETTLED.wait())
         .await
         .is_err()
@@ -159,7 +167,7 @@ pub async fn settings_wait_settled(timeout: Duration) {
 }
 
 /// Spawns the settings I/O worker. Call before `init_nodes()` or any `attach_with_default` on
-/// `LIST`. Attaches no nodes and leaves `SETTINGS_PTR` null.
+/// `LIST`. Attaches no nodes; call `publish` after loading the board's nodes.
 pub async fn init_core(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
@@ -176,26 +184,19 @@ pub async fn init_core(
     spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
 }
 
-/// Attaches the BLE bond node, builds `Settings` and publishes it through `SETTINGS_PTR`.
-/// Boards attach their own nodes (general, PAG, ...) separately. Call after `init_core()`.
-pub async fn init_nodes() -> &'static mut Settings {
+/// Loads the BLE bond node into owned settings. Call after `init_core()`, then load any
+/// board-specific nodes before publishing the settings for the application tasks.
+pub async fn init_nodes() -> Settings {
     let h_ble_bond = NODE_BLE_BOND
         .attach_with_default(&LIST, ble_bond_default)
         .await
         .unwrap();
 
-    let s = Settings {
+    Settings {
         ble_bond: h_ble_bond.load(),
         general: GeneralSettings::default(),
         pag: PagSettings::default(),
-    };
-
-    let settings_ref = SETTINGS_CELL.init(s);
-    SETTINGS_PTR.store(
-        settings_ref as *mut Settings,
-        core::sync::atomic::Ordering::Release,
-    );
-    settings_ref
+    }
 }
 
 /// Attaches the general and PAG nodes and loads them into `settings`. For boards that use this
@@ -230,7 +231,6 @@ impl Settings {
         settings_flush_now();
     }
 
-    #[allow(dead_code)]
     pub fn ble_bond_clear(&mut self) {
         self.ble_bond = ble_bond_default();
         embassy_futures::block_on(async {
@@ -450,16 +450,16 @@ impl Default for PagSettings {
     fn default() -> Self {
         Self {
             // From Xavier's recommendations and poc-fw.
-            exposure: 0x80 | 20,  // 2000 µs, LED always on
-            gain: 3,              // Xavier: never below 3
+            exposure: 0x80 | 20, // 2000 µs, LED always on
+            gain: 3,             // Xavier: never below 3
             light_threshold: 120,
             area_min: 10,
             area_max: 500,
-            circle_r_min: 0x1A,   // datasheet default
-            circle_r_max: 0x26,   // datasheet default
-            circle_k_min: 0x17,   // datasheet default
-            circle_k_max: 0x1D,   // datasheet default
-            frame_rate: 180,      // FPS
+            circle_r_min: 0x1A, // datasheet default
+            circle_r_max: 0x26, // datasheet default
+            circle_k_min: 0x17, // datasheet default
+            circle_k_max: 0x1D, // datasheet default
+            frame_rate: 180,    // FPS
         }
     }
 }

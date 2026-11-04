@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 memory-spec = "0.1.0"
 
 [dependencies]
-odyssey-protocol = { path = "../../../../../crates/odyssey-protocol", default-features = false }
+odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }
 defmt = { version = "1", optional = true }
 defmt-rtt = { version = "1", optional = true }
 panic-probe = { version = "1.0.0", features = ["defmt", "print-defmt"] }
@@ -20,8 +20,8 @@ cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-sing
 embassy-sync = "0.7.2"
 cortex-m-rt = "0.7.5"
 cfg-if = "1.0.0"
-better-dfu = { path = "../../../../better-dfu", features = ["dfu", "cortex-m"] }
-better-boot = { path = "../../../../better-boot" }
+better-dfu = { path = "../better-dfu", features = ["dfu", "cortex-m"] }
+better-boot = { path = "../better-boot" }
 embassy-usb = { version = "0.5.1", default-features = false }
 embassy-futures = "0.1.2"
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs", default-features = false }
@@ -32,7 +32,7 @@ embassy-time = { version = "0.5.0", features = ["defmt-timestamp-uptime-tms"] }
 static_cell = "2.1.1"
 futures = { version = "0.3", default-features = false, features = ["async-await"] }
 
-pcd = { path = "../pcd" }
+lite1-pcd = { path = "../lite1-pcd" }
 
 [features]
 default = ["defmt"]

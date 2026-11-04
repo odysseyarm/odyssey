@@ -36,11 +36,15 @@ pub enum SensorError {
 /// The PAG7665QN as an object_mode [`PagSensor`].
 pub struct Pag7665QnSensor {
     pub driver: PagDriver<mode::Mode>,
+    image_roi: Option<u8>,
 }
 
 impl Pag7665QnSensor {
     pub fn new(driver: PagDriver<mode::Mode>) -> Self {
-        Self { driver }
+        Self {
+            driver,
+            image_roi: None,
+        }
     }
 }
 
@@ -90,6 +94,52 @@ impl PagSensor for Pag7665QnSensor {
             .switch_mode_mut(mode::Mode::Idle)
             .await
             .map_err(|_| SensorError::Spi)
+    }
+
+    async fn switch_to_image(&mut self) -> Result<(), Self::Error> {
+        self.switch_to_idle().await?;
+        // ROI_CTRL bit 0 is the documented ROI enable. Disable that known restriction and
+        // restore the exact byte before the next object snapshot. SENSOR_SIZE_SEL's mapping
+        // is undocumented here, so it is not guessed or changed.
+        let roi = match self.image_roi {
+            Some(roi) => roi,
+            None => {
+                let roi = self.read_register(0, 0x72).await?;
+                self.image_roi = Some(roi);
+                roi
+            }
+        };
+        self.write_register(0, 0x72, roi & !1).await?;
+        self.driver
+            .switch_mode_mut(mode::Mode::Image)
+            .await
+            .map_err(|_| SensorError::Spi)
+    }
+
+    async fn try_get_image(&mut self, image: &mut [u8; 320 * 240]) -> Result<bool, Self::Error> {
+        self.driver
+            .try_get_image::<core::convert::Infallible>(image)
+            .await
+            .map_err(|_| SensorError::Spi)
+    }
+
+    async fn restore_object(&mut self) -> Result<(), Self::Error> {
+        let roi = async {
+            if let Some(roi) = self.image_roi {
+                self.switch_to_idle().await?;
+                self.write_register(0, 0x72, roi).await?;
+                self.image_roi = None;
+            }
+            Ok::<(), SensorError>(())
+        }
+        .await;
+        let object = self
+            .driver
+            .restore_object_mode()
+            .await
+            .map_err(|_| SensorError::Spi);
+        roi?;
+        object
     }
 }
 

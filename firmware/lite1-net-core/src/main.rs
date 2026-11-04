@@ -33,7 +33,7 @@ use crate::cmd_dispatch::exec_cmd_by_opcode;
 use crate::icmsg_config::ALIGN;
 
 /// Release counter of this net-core image. Release tooling reads the literal through
-/// firmware/release-counter, which ignores layout. 0 is reserved for "unknown" on the host side.
+/// `cargo xtask firmware release-counter`, which ignores layout. 0 is reserved for "unknown" on the host side.
 macro_rules! release {
     () => {
         1
@@ -75,19 +75,19 @@ mod icmsg_config {
 
     pub const ALIGN: usize = 4;
     pub fn get_icmsg_config() -> icmsg::MemoryConfig {
-        unsafe {
-            let send_buffer_len =
-                (&raw const __icmsg_tx_end).byte_offset_from(&raw const __icmsg_tx_start) as u32
-                    - size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-            let recv_buffer_len =
-                (&raw const __icmsg_rx_end).byte_offset_from(&raw const __icmsg_rx_start) as u32
-                    - size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-            icmsg::MemoryConfig {
-                send_region: (&raw mut __icmsg_tx_start).cast(),
-                recv_region: (&raw mut __icmsg_rx_start).cast(),
-                send_buffer_len,
-                recv_buffer_len,
-            }
+        // Linker symbols delimit a region, not one Rust allocation.
+        let header_len = size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>();
+        let send_buffer_len = ((&raw const __icmsg_tx_end).addr()
+            - (&raw const __icmsg_tx_start).addr()
+            - header_len) as u32;
+        let recv_buffer_len = ((&raw const __icmsg_rx_end).addr()
+            - (&raw const __icmsg_rx_start).addr()
+            - header_len) as u32;
+        icmsg::MemoryConfig {
+            send_region: (&raw mut __icmsg_tx_start).cast(),
+            recv_region: (&raw mut __icmsg_rx_start).cast(),
+            send_buffer_len,
+            recv_buffer_len,
         }
     }
 }
@@ -310,10 +310,40 @@ async fn exec_h4_to_sdc(
                     .lock(|x| x.borrow_mut().send(&reply))
                     .map_err(|_| cmd::Error::Io(sdc::Error::EIO));
             }
-            exec_cmd_by_opcode::<sdc::Error>(send, sdc, opcode, payload).await
+            match exec_cmd_by_opcode::<sdc::Error>(send, sdc, opcode, payload).await {
+                Err(cmd::Error::Hci(error)) => {
+                    // The dispatcher rejects unknown opcodes/invalid parameters before the SDC
+                    // can emit an event. Return the command credit and error instead of leaving
+                    // the application core waiting forever. Async success remains SDC-owned.
+                    let [lo, hi] = opcode.to_raw().to_le_bytes();
+                    let status = error.to_status().into_inner();
+                    let reply = if error == param::Error::UNKNOWN_CMD {
+                        // An unrecognized opcode uses CommandComplete with no return parameters.
+                        [0x04, 0x0E, 4, 1, lo, hi, status]
+                    } else {
+                        // Known commands rejected before execution use CommandStatus.
+                        [0x04, 0x0F, 4, status, 1, lo, hi]
+                    };
+                    send.lock(|x| x.borrow_mut().send(&reply))
+                        .map_err(|_| cmd::Error::Io(sdc::Error::EIO))
+                }
+                result => result,
+            }
         }
-        bt_hci::PacketKind::AclData => io!(sdc.hci_data_put(rest)),
-        bt_hci::PacketKind::IsoData => io!(sdc.hci_iso_data_put(rest)),
+        bt_hci::PacketKind::AclData | bt_hci::PacketKind::IsoData => {
+            // The SDC methods assert these lengths before calling the controller. ICMSG input
+            // is fallible, so malformed data must be rejected here rather than panic the core.
+            if rest.len() < 4
+                || usize::from(u16::from_le_bytes([rest[2], rest[3]])) > rest.len() - 4
+            {
+                return Err(cmd::Error::Hci(param::Error::INVALID_HCI_PARAMETERS));
+            }
+            if matches!(kind, bt_hci::PacketKind::AclData) {
+                io!(sdc.hci_data_put(rest))
+            } else {
+                io!(sdc.hci_iso_data_put(rest))
+            }
+        }
         bt_hci::PacketKind::SyncData => Err(cmd::Error::Hci(param::Error::UNSUPPORTED)),
         bt_hci::PacketKind::Event => Err(cmd::Error::Hci(param::Error::UNSPECIFIED)),
     }
