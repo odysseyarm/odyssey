@@ -62,6 +62,8 @@ pub extern "C" fn client_connect(
     });
 }
 
+/// The device array is borrowed only for the duration of the callback.
+/// Copy any devices needed afterward; do not free the array. An empty list is null.
 #[unsafe(no_mangle)]
 pub extern "C" fn client_get_device_list(
     handle: *const Handle,
@@ -76,14 +78,12 @@ pub extern "C" fn client_get_device_list(
     tokio::spawn(async move {
         let result = client.get_device_list().await;
         match result {
-            Ok(dl) => {
-                let devices: Vec<common::device::Device> = dl.into_iter().map(Into::into).collect();
+            Ok(mut devices) => {
                 let len = devices.len();
-                let ptr = unsafe {
-                    let layout = std::alloc::Layout::array::<common::device::Device>(len).unwrap();
-                    let ptr = std::alloc::alloc(layout) as *mut common::device::Device;
-                    ptr.copy_from_nonoverlapping(devices.as_ptr(), len);
-                    ptr
+                let ptr = if devices.is_empty() {
+                    std::ptr::null_mut()
+                } else {
+                    devices.as_mut_ptr()
                 };
                 callback(userdata, ClientError::None, ptr, len);
             }
@@ -92,6 +92,9 @@ pub extern "C" fn client_get_device_list(
     });
 }
 
+/// Starts an event subscription. A start after stop uses a fresh cancellation
+/// token; resetting the original client before cloning keeps subsequent stops
+/// attached to this subscription.
 #[unsafe(no_mangle)]
 pub extern "C" fn client_start_stream(
     handle: *const crate::Handle,
@@ -102,7 +105,11 @@ pub extern "C" fn client_start_stream(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let mut client = unsafe { &mut *client }.clone();
+    let client = unsafe { &mut *client };
+    if client.end_token.is_cancelled() {
+        client.end_token = Default::default();
+    }
+    let mut client = client.clone();
 
     tokio::spawn(async move {
         match client.subscribe_events().await {
@@ -149,15 +156,12 @@ pub extern "C" fn client_start_stream(
     });
 }
 
+/// Requests cancellation before returning. The stream's terminal callback is
+/// asynchronous; consumers must wait for it before freeing callback userdata.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_stop_stream(handle: *const Handle, client: *mut Client) {
-    let handle = unsafe { &*handle };
-    let _guard = handle.tokio_rt.enter();
-    let client = unsafe { &mut *client }.clone();
-
-    tokio::spawn(async move {
-        client.end_token.cancel();
-    });
+pub extern "C" fn client_stop_stream(_handle: *const Handle, client: *mut Client) {
+    let client = unsafe { &*client };
+    client.end_token.cancel();
 }
 
 #[unsafe(no_mangle)]
@@ -395,6 +399,8 @@ pub extern "C" fn client_get_screen_info_by_id(
     });
 }
 
+/// Each device array is borrowed only for the duration of its callback.
+/// Copy any devices needed afterward; do not free the array. An empty list is null.
 #[unsafe(no_mangle)]
 pub extern "C" fn client_subscribe_device_list(
     handle: *const Handle,
@@ -410,21 +416,12 @@ pub extern "C" fn client_subscribe_device_list(
         match client.subscribe_device_list().await {
             Ok(mut stream) => loop {
                 match stream.next().await {
-                    Some(Ok(device_list)) => {
-                        let devices: Vec<common::device::Device> =
-                            device_list.into_iter().map(Into::into).collect();
+                    Some(Ok(mut devices)) => {
                         let len = devices.len();
-                        let ptr = if len > 0 {
-                            unsafe {
-                                let layout =
-                                    std::alloc::Layout::array::<common::device::Device>(len)
-                                        .unwrap();
-                                let ptr = std::alloc::alloc(layout) as *mut common::device::Device;
-                                ptr.copy_from_nonoverlapping(devices.as_ptr(), len);
-                                ptr
-                            }
-                        } else {
+                        let ptr = if devices.is_empty() {
                             std::ptr::null_mut()
+                        } else {
+                            devices.as_mut_ptr()
                         };
                         callback(userdata, ClientError::None, ptr, len);
                     }
@@ -483,4 +480,22 @@ pub extern "C" fn client_subscribe_shot_delay(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_cancels_before_return_without_polling_the_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let handle = Handle { tokio_rt: runtime };
+        let mut client = Client::default();
+        let subscription_token = client.end_token.clone();
+        client_stop_stream(&handle, &mut client);
+        assert!(subscription_token.is_cancelled());
+    }
 }
