@@ -47,8 +47,7 @@ exclude = [
 # No clippy group is switched on: pedantic, restriction and nursery are
 # cherry-picked below, the way jj and bevy do it, because every project that
 # enables `pedantic` wholesale then has to switch off 15-20 of its lints again.
-# Nothing here needs a `priority`, since nothing is a group. See
-# ~/.omp/agent/docs/rust-style-triage.md (section D) for the reasoning per lint.
+# Nothing here needs a `priority`, since nothing is a group.
 [workspace.lints.rust]
 # Denied, not forbidden: `forbid` cannot be overridden even by `#[expect]`, and
 # the FFI crates have to opt in with `#![expect(unsafe_code, reason = "...")]`.
@@ -63,10 +62,8 @@ redundant_lifetimes = "warn"
 redundant_imports = "warn"
 trivial_numeric_casts = "warn"
 ambiguous_negative_literals = "warn"
-# Not enabled: `let_underscore_drop`. It fires on `let _ = tx.send(..)`, which is
-# the deliberate way to ignore a closed channel in the actor pattern (142 hits
-# when this was tried), and it does not tell a deliberate ignore from a
-# swallowed error. Swallowed errors are a review matter; see WATCHDOG.md.
+# Not enabled: `let_underscore_drop`. Ignoring a closed channel during shutdown
+# with `let _ = tx.send(..)` is intentional; swallowed errors require review.
 elided_lifetimes_in_paths = "warn"
 # Finds unused `pub` items in binary crates, which rustc cannot see on its own.
 dead_code_pub_in_binary = "warn"
