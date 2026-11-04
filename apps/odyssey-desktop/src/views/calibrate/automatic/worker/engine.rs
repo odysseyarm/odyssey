@@ -1,18 +1,24 @@
 //! The camera thread's state and its command loop.
+//!
+//! The thread is a small state machine. With no `live` session it is idle and
+//! blocks on the command channel. With a session open, `mode` says how the
+//! time between commands is spent: `Hold` keeps blocking on the channel,
+//! `Preview` and `Markers` grab and report one frame, then look at the channel
+//! again. Every command runs to completion before the next is read.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, RecvError, TryRecvError};
 use std::time::Instant;
 
 use dioxus::logger::tracing;
 use odyssey_autocalib::camera::CameraError;
-use odyssey_autocalib::session::{AttemptFrames, Session, SessionError};
+use odyssey_autocalib::session::{AttemptFrames, Calibration, Session, SessionError, Step};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::backend::Backend;
+use super::backend::{Backend, OpenRequest};
 use super::command::{Command, Mode};
 use super::event::{Event, SavedAttempt, SessionEvent};
 use super::failure::{Failure, FailureKind};
@@ -33,9 +39,19 @@ pub(super) struct Attempt {
     pub(super) frames: Option<AttemptFrames>,
 }
 
+/// An open camera session and how long its preview has read "ready".
 struct Live {
     session: Session,
     ready: Stability,
+}
+
+/// What the loop does next.
+enum Turn {
+    Command(Command),
+    /// No command is waiting and the camera is streaming: serve one frame.
+    Frame,
+    /// The [`super::Worker`] is gone; nobody is left to report to.
+    Stop,
 }
 
 pub(super) struct Engine {
@@ -54,6 +70,11 @@ pub(super) struct Engine {
     attempt: Option<Attempt>,
     /// The open request of the current session, as words.
     request_text: String,
+}
+
+fn send_session_event(events: &UnboundedSender<Event>, session: u64, event: SessionEvent) {
+    // A send fails only once the UI is gone, and then nobody needs the event.
+    let _ = events.send(Event::Session { session, event });
 }
 
 impl Engine {
@@ -94,40 +115,116 @@ impl Engine {
 
     fn serve(&mut self, receiver: &Receiver<Command>) {
         loop {
-            let streaming = self.live.is_some() && self.mode != Mode::Hold;
-            let command = if streaming {
-                match receiver.try_recv() {
-                    Ok(command) => Some(command),
-                    Err(TryRecvError::Empty) => None,
-                    Err(TryRecvError::Disconnected) => return,
-                }
-            } else {
-                match receiver.recv() {
-                    Ok(command) => Some(command),
-                    Err(_) => return,
-                }
-            };
-            match command {
-                Some(command) => self.handle(command),
-                None => self.stream_one(),
+            match self.next_turn(receiver) {
+                Turn::Command(command) => self.handle(command),
+                Turn::Frame => self.stream_one(),
+                Turn::Stop => return,
+            }
+        }
+    }
+
+    fn next_turn(&self, receiver: &Receiver<Command>) -> Turn {
+        let streaming = self.live.is_some() && self.mode != Mode::Hold;
+        if streaming {
+            match receiver.try_recv() {
+                Ok(command) => Turn::Command(command),
+                Err(TryRecvError::Empty) => Turn::Frame,
+                Err(TryRecvError::Disconnected) => Turn::Stop,
+            }
+        } else {
+            match receiver.recv() {
+                Ok(command) => Turn::Command(command),
+                Err(RecvError) => Turn::Stop,
             }
         }
     }
 
     fn emit(&self, event: SessionEvent) {
-        let _ = self.events.send(Event::Session {
-            session: self.session,
-            event,
-        });
+        send_session_event(&self.events, self.session, event);
     }
 
+    fn handle(&mut self, command: Command) {
+        match command {
+            Command::ListCameras => {
+                let result = self.backend.list();
+                let _ = self.events.send(Event::Cameras(result));
+            }
+            Command::Open { session, request } => self.open(session, &request),
+            Command::SetMode(mode) => self.set_mode(mode),
+            Command::SetIrExposure(us) => self.set_ir_exposure(us),
+            Command::MeasureScreen => self.measure(
+                |session, progress| session.measure_screen(progress).map(|_| ()),
+                SessionEvent::ScreenMeasured,
+            ),
+            Command::MeasureMarkers => self.measure(
+                |session, progress| session.measure_markers(progress).map(|_| ()),
+                SessionEvent::MarkersMeasured,
+            ),
+            Command::Finish => self.finish(),
+            Command::SaveAttempt { path } => self.save_attempt(path),
+            Command::Close => self.close(),
+        }
+    }
+
+    // ---- Opening and closing ----
+
+    fn open(&mut self, session: u64, request: &OpenRequest) {
+        self.close_quietly();
+        self.session = session;
+        self.timeouts = 0;
+        self.size_origin = request.size_origin;
+        self.require_edges = request.options.require_visible_edges;
+        self.request_text = report::describe_request(request);
+        self.attempt = None;
+        match self.backend.open(request) {
+            Ok(opened) => {
+                tracing::info!(
+                    "camera opened: {} (calibration session {session})",
+                    request.camera.name
+                );
+                self.live = Some(Live {
+                    session: opened,
+                    ready: Stability::default(),
+                });
+                self.mode = Mode::Preview;
+                self.emit(SessionEvent::Opened);
+            }
+            Err(e) => self.fail(FailureKind::CameraOpen, e.to_string(), false),
+        }
+    }
+
+    /// Releases the camera and tells the UI, if one was open.
     fn close(&mut self) {
         self.mode = Mode::Hold;
-        if self.live.take().is_some() {
-            tracing::info!("camera closed (calibration session {})", self.session);
+        if self.close_quietly() {
             self.emit(SessionEvent::Closed);
         }
     }
+
+    /// Releases the camera without an event; returns whether one was open.
+    fn close_quietly(&mut self) -> bool {
+        let was_open = self.live.take().is_some();
+        if was_open {
+            tracing::info!("camera closed (calibration session {})", self.session);
+        }
+        was_open
+    }
+
+    fn set_mode(&mut self, mode: Mode) {
+        let Some(live) = &mut self.live else { return };
+        live.ready.reset();
+        self.mode = mode;
+        self.timeouts = 0;
+    }
+
+    fn set_ir_exposure(&mut self, exposure_us: u32) {
+        let Some(live) = &mut self.live else { return };
+        if let Err(e) = live.session.set_ir_exposure_us(exposure_us) {
+            self.fail(FailureKind::CameraLost, e.to_string(), false);
+        }
+    }
+
+    // ---- Failing ----
 
     fn fail(&mut self, kind: FailureKind, details: String, keep_camera: bool) {
         tracing::warn!("calibration failed ({kind:?}): {details}");
@@ -144,96 +241,6 @@ impl Engine {
         }));
     }
 
-    fn close_quietly(&mut self) {
-        if self.live.take().is_some() {
-            tracing::info!("camera closed (calibration session {})", self.session);
-        }
-    }
-
-    fn handle(&mut self, command: Command) {
-        match command {
-            Command::ListCameras => {
-                let result = self.backend.list();
-                let _ = self.events.send(Event::Cameras(result));
-            }
-            Command::Open { session, request } => {
-                self.close_quietly();
-                self.session = session;
-                self.timeouts = 0;
-                self.size_origin = request.size_origin;
-                self.require_edges = request.options.require_visible_edges;
-                self.request_text = report::describe_request(&request);
-                self.attempt = None;
-                match self.backend.open(&request) {
-                    Ok(opened) => {
-                        tracing::info!(
-                            "camera opened: {} (calibration session {session})",
-                            request.camera.name
-                        );
-                        self.live = Some(Live {
-                            session: opened,
-                            ready: Stability::default(),
-                        });
-                        self.mode = Mode::Preview;
-                        self.emit(SessionEvent::Opened);
-                    }
-                    Err(e) => self.fail(FailureKind::CameraOpen, e.to_string(), false),
-                }
-            }
-            Command::SetMode(mode) => {
-                if let Some(live) = &mut self.live {
-                    live.ready.reset();
-                    self.mode = mode;
-                    self.timeouts = 0;
-                }
-            }
-            Command::SetIrExposure(us) => {
-                if let Some(live) = &mut self.live
-                    && let Err(e) = live.session.set_ir_exposure_us(us)
-                {
-                    self.fail(FailureKind::CameraLost, e.to_string(), false);
-                }
-            }
-            Command::MeasureScreen => self.measure_screen(),
-            Command::MeasureMarkers => self.measure_markers(),
-            Command::Finish => self.finish(),
-            Command::SaveAttempt { path } => self.save_attempt(path),
-            Command::Close => self.close(),
-        }
-    }
-
-    fn measure_screen(&mut self) {
-        let Some(live) = &mut self.live else { return };
-        self.mode = Mode::Hold;
-        let (events, session) = (&self.events, self.session);
-        let result = live.session.measure_screen(&mut |step| {
-            let _ = events.send(Event::Session {
-                session,
-                event: SessionEvent::Progress(step),
-            });
-        });
-        match result {
-            Ok(_) => self.emit(SessionEvent::ScreenMeasured),
-            Err(e) => self.session_failed(e),
-        }
-    }
-
-    fn measure_markers(&mut self) {
-        let Some(live) = &mut self.live else { return };
-        self.mode = Mode::Hold;
-        let (events, session) = (&self.events, self.session);
-        let result = live.session.measure_markers(&mut |step| {
-            let _ = events.send(Event::Session {
-                session,
-                event: SessionEvent::Progress(step),
-            });
-        });
-        match result {
-            Ok(_) => self.emit(SessionEvent::MarkersMeasured),
-            Err(e) => self.session_failed(e),
-        }
-    }
-
     fn session_failed(&mut self, error: SessionError) {
         let kind = FailureKind::of_session(&error);
         // A measurement that found nothing usable leaves the camera fine; a
@@ -241,6 +248,113 @@ impl Engine {
         let keep = kind != FailureKind::CameraLost;
         self.fail(kind, error.to_string(), keep);
     }
+
+    // ---- Measuring ----
+
+    /// Runs one blocking measurement, reporting each of its steps as it goes,
+    /// then `done` on success. The camera stops streaming while it measures.
+    fn measure(
+        &mut self,
+        run: impl FnOnce(&mut Session, &mut dyn FnMut(Step)) -> Result<(), SessionError>,
+        done: SessionEvent,
+    ) {
+        let Some(live) = &mut self.live else { return };
+        self.mode = Mode::Hold;
+        let (events, session) = (&self.events, self.session);
+        let result = run(&mut live.session, &mut |step| {
+            send_session_event(events, session, SessionEvent::Progress(step));
+        });
+        match result {
+            Ok(()) => self.emit(done),
+            Err(e) => self.session_failed(e),
+        }
+    }
+
+    fn finish(&mut self) {
+        let Some(live) = &self.live else { return };
+        let solved = solve_declared_and_measured(&live.session);
+        let (declared, measured) = match solved {
+            Ok(solved) => solved,
+            Err(e) => return self.session_failed(e),
+        };
+        let (image, width, height) = encode::encode_rgb(
+            &declared.review.color,
+            u32::MAX,
+            encode::REVIEW_JPEG_QUALITY,
+        );
+        // Kept for the user to save after the camera closes just below.
+        self.remember_attempt(report::finished_summary(&declared, measured.as_ref()));
+        let finished = Finished {
+            image,
+            width,
+            height,
+            size_origin: self.size_origin,
+            primary: frame::outcome(declared),
+            measured: measured.map(frame::outcome),
+        };
+        self.emit(SessionEvent::Finished(Box::new(finished)));
+        // The measurement is complete; the camera has nothing left to do.
+        self.close();
+    }
+
+    // ---- Streaming ----
+
+    /// Grabs and processes one frame in the current mode.
+    fn stream_one(&mut self) {
+        match self.mode {
+            Mode::Hold => {}
+            Mode::Preview => self.stream_preview(),
+            Mode::Markers => self.stream_markers(),
+        }
+    }
+
+    fn stream_preview(&mut self) {
+        let Some(live) = &mut self.live else { return };
+        let now = Instant::now();
+        let preview = match live.session.preview() {
+            Ok(preview) => preview,
+            Err(e) => return self.stream_error(e),
+        };
+        self.timeouts = 0;
+        let ready_for = live.ready.observe(preview.is_ready(), now);
+        if self.claim_frame() {
+            let frame = frame::preview_frame(preview, ready_for, self.require_edges);
+            self.emit(SessionEvent::Preview(Box::new(frame)));
+        }
+    }
+
+    fn stream_markers(&mut self) {
+        let Some(live) = &mut self.live else { return };
+        let preview = match live.session.preview_markers() {
+            Ok(preview) => preview,
+            Err(e) => return self.stream_error(e),
+        };
+        self.timeouts = 0;
+        if self.claim_frame() {
+            let frame = frame::marker_frame(preview);
+            self.emit(SessionEvent::Markers(Box::new(frame)));
+        }
+    }
+
+    /// Claims the right to send a frame. The UI releases it when it takes the
+    /// frame, so a slow UI skips frames instead of queueing them.
+    fn claim_frame(&self) -> bool {
+        self.in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn stream_error(&mut self, error: SessionError) {
+        if matches!(error, SessionError::Camera(CameraError::Timeout)) {
+            self.timeouts += 1;
+            if self.timeouts < MAX_CONSECUTIVE_TIMEOUTS {
+                return;
+            }
+        }
+        self.fail(FailureKind::of_session(&error), error.to_string(), false);
+    }
+
+    // ---- The attempt bundle ----
 
     /// Keeps what the attempt looked at and how it ended, so the user can save it
     /// after the camera is closed. Replaced by the next attempt.
@@ -262,22 +376,7 @@ impl Engine {
     fn save_attempt(&mut self, path: PathBuf) {
         let result = match &self.attempt {
             None => Err("there is no calibration attempt to save yet".to_string()),
-            Some(attempt) => {
-                let log = crate::paths::log_dir()
-                    .map(|dir| dir.join("latest.log"))
-                    .and_then(|file| std::fs::read_to_string(file).ok())
-                    .unwrap_or_default();
-                let summary = report::attempt_summary(attempt);
-                attempt_bundle::write(
-                    &path,
-                    &Bundle {
-                        summary: &summary,
-                        frames: attempt.frames.as_ref(),
-                        log: &log,
-                    },
-                )
-                .map(|bytes| SavedAttempt { path, bytes })
-            }
+            Some(attempt) => write_bundle(attempt, path),
         };
         match &result {
             Ok(saved) => tracing::info!(
@@ -289,101 +388,33 @@ impl Engine {
         }
         self.emit(SessionEvent::AttemptSaved(result));
     }
+}
 
-    fn finish(&mut self) {
-        let Some(live) = &self.live else { return };
-        let result = live.session.finish().and_then(|declared| {
-            // With a declared size, also solve the same frames without it, so
-            // the review can offer the camera's own number after the camera
-            // has stopped.
-            let measured = if declared.review.size_check.is_some() {
-                Some(live.session.finish_measured()?)
-            } else {
-                None
-            };
-            Ok((declared, measured))
-        });
-        match result {
-            Ok((declared, measured)) => {
-                let (image, width, height) = encode::encode_rgb(
-                    &declared.review.color,
-                    u32::MAX,
-                    encode::REVIEW_JPEG_QUALITY,
-                );
-                // Kept for the user to save after the camera closes just below.
-                let mut summary = format!("finished\n{}", report::result_text(&declared));
-                if let Some(measured) = &measured {
-                    summary.push_str(&format!(
-                        "\nthe same frames solved with the declared size set aside (the camera's own size):\n{}",
-                        report::result_text(measured)
-                    ));
-                }
-                self.remember_attempt(summary);
-                let finished = Finished {
-                    image,
-                    width,
-                    height,
-                    size_origin: self.size_origin,
-                    primary: frame::outcome(declared),
-                    measured: measured.map(frame::outcome),
-                };
-                self.emit(SessionEvent::Finished(Box::new(finished)));
-                // The measurement is complete; the camera has nothing left to do.
-                self.close();
-            }
-            Err(e) => self.session_failed(e),
-        }
-    }
+/// Solves the frames with the declared size and, when one was declared, again
+/// without it, so the review can offer the camera's own number after the
+/// camera has stopped.
+fn solve_declared_and_measured(
+    session: &Session,
+) -> Result<(Calibration, Option<Calibration>), SessionError> {
+    let declared = session.finish()?;
+    let measured = if declared.review.size_check.is_some() {
+        Some(session.finish_measured()?)
+    } else {
+        None
+    };
+    Ok((declared, measured))
+}
 
-    /// Grabs and processes one frame in the current mode.
-    fn stream_one(&mut self) {
-        let Some(live) = &mut self.live else { return };
-        let now = Instant::now();
-        match self.mode {
-            Mode::Hold => {}
-            Mode::Preview => match live.session.preview() {
-                Ok(preview) => {
-                    self.timeouts = 0;
-                    let ready_for = live.ready.observe(preview.is_ready(), now);
-                    if self.claim_frame() {
-                        self.emit(SessionEvent::Preview(Box::new(frame::preview_frame(
-                            preview,
-                            ready_for,
-                            self.require_edges,
-                        ))));
-                    }
-                }
-                Err(e) => self.stream_error(e),
-            },
-            Mode::Markers => match live.session.preview_markers() {
-                Ok(preview) => {
-                    self.timeouts = 0;
-                    if self.claim_frame() {
-                        self.emit(SessionEvent::Markers(Box::new(frame::marker_frame(
-                            preview,
-                        ))));
-                    }
-                }
-                Err(e) => self.stream_error(e),
-            },
-        }
-    }
-
-    /// Claims the right to send a frame. The UI releases it when it takes the
-    /// frame, so a slow UI skips frames instead of queueing them.
-    fn claim_frame(&self) -> bool {
-        self.in_flight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    }
-
-    fn stream_error(&mut self, error: SessionError) {
-        if matches!(error, SessionError::Camera(CameraError::Timeout)) {
-            self.timeouts += 1;
-            if self.timeouts < MAX_CONSECUTIVE_TIMEOUTS {
-                return;
-            }
-        }
-        self.fail(FailureKind::of_session(&error), error.to_string(), false);
-    }
+fn write_bundle(attempt: &Attempt, path: PathBuf) -> Result<SavedAttempt, String> {
+    let log = crate::paths::log_dir()
+        .map(|dir| dir.join("latest.log"))
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .unwrap_or_default();
+    let summary = report::attempt_summary(attempt);
+    let bundle = Bundle {
+        summary: &summary,
+        frames: attempt.frames.as_ref(),
+        log: &log,
+    };
+    attempt_bundle::write(&path, &bundle).map(|bytes| SavedAttempt { path, bytes })
 }
