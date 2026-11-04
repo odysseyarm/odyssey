@@ -140,7 +140,6 @@ non_kebab_case_packages = "warn"
 
 [workspace.dependencies]
 ahrs = { git = "https://github.com/jmagnuson/ahrs-rs", rev = "0b04dfe5e23fd0af9dbea1d24116e4c5b69d3ed9" }
-anyhow = "1.0.81"
 app_dirs2 = "2.5.5"
 argmin = "0.11"
 argmin-math = "0.5"
