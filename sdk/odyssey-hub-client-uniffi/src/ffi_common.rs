@@ -209,11 +209,20 @@ impl From<AccessoryType> for common::accessory::AccessoryType {
     }
 }
 
-impl From<AccessoryInfo> for common::accessory::AccessoryInfo {
-    fn from(info: AccessoryInfo) -> Self {
-        let mut r = common::accessory::AccessoryInfo::with_defaults(info.name, info.ty.into());
-        r.assignment = info.assignment.and_then(|v| std::num::NonZeroU64::new(v));
-        r
+impl TryFrom<AccessoryInfo> for common::accessory::AccessoryInfo {
+    type Error = crate::client::ClientError;
+
+    fn try_from(info: AccessoryInfo) -> Result<Self, Self::Error> {
+        let mut result = Self::with_defaults(info.name, info.ty.into());
+        result.assignment = info
+            .assignment
+            .map(|value| {
+                std::num::NonZeroU64::new(value).ok_or_else(|| Self::Error::InvalidArgument {
+                    message: "accessory assignment must be nonzero when present".to_string(),
+                })
+            })
+            .transpose()?;
+        Ok(result)
     }
 }
 
@@ -276,24 +285,40 @@ impl From<common::device::Device> for Device {
     }
 }
 
-impl From<Device> for common::device::Device {
-    fn from(device: Device) -> Self {
-        Self {
-            uuid: device.uuid.try_into().unwrap(),
+impl TryFrom<Device> for common::device::Device {
+    type Error = crate::client::ClientError;
+
+    fn try_from(device: Device) -> Result<Self, Self::Error> {
+        let uuid = device
+            .uuid
+            .try_into()
+            .map_err(|_| Self::Error::InvalidArgument {
+                message: "device UUID must contain exactly 6 bytes".to_string(),
+            })?;
+        let firmware_version = device
+            .firmware_version
+            .map(|version| {
+                version
+                    .try_into()
+                    .map_err(|_| Self::Error::InvalidArgument {
+                        message: "firmware version must contain exactly 3 components".to_string(),
+                    })
+            })
+            .transpose()?
+            .unwrap_or([0, 0, 0]);
+        Ok(Self {
+            uuid,
             transport: device.transport,
             capabilities: common::device::DeviceCapabilities::new(device.capabilities),
-            firmware_version: device
-                .firmware_version
-                .map(|v| v.try_into().unwrap())
-                .unwrap_or([0, 0, 0]),
+            firmware_version,
             events_transport: device.events_transport,
             events_connected: device.events_connected,
             product_id: device.product_id.unwrap_or(0),
-            name: common::device::Device::name_bytes(&device.name),
+            name: Self::name_bytes(&device.name),
             // The bindings do not carry the net core release; the server resolves a
             // device by uuid, so a reconstructed device does not need it.
             netcore_release: 0,
-        }
+        })
     }
 }
 
@@ -382,5 +407,57 @@ impl From<common::events::Event> for Event {
                 error,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::ClientError;
+
+    fn device() -> Device {
+        Device {
+            uuid: vec![1, 2, 3, 4, 5, 6],
+            transport: common::device::Transport::Usb,
+            capabilities: 0,
+            firmware_version: Some(vec![1, 2, 3]),
+            events_transport: common::device::EventsTransport::Wired,
+            events_connected: false,
+            product_id: None,
+            name: String::new(),
+        }
+    }
+
+    #[test]
+    fn device_vector_lengths_are_validated_at_the_boundary() {
+        for length in [0, 5, 7] {
+            let mut device = device();
+            device.uuid.resize(length, 0);
+            assert!(matches!(
+                common::device::Device::try_from(device),
+                Err(ClientError::InvalidArgument { .. }),
+            ));
+        }
+        for length in [0, 2, 4] {
+            let mut device = device();
+            device.firmware_version = Some(vec![0; length]);
+            assert!(matches!(
+                common::device::Device::try_from(device),
+                Err(ClientError::InvalidArgument { .. }),
+            ));
+        }
+        let converted = common::device::Device::try_from(device()).expect("valid device");
+        assert_eq!(converted.uuid, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(converted.firmware_version, [1, 2, 3]);
+    }
+
+    #[test]
+    fn zero_is_not_silently_converted_to_an_unassigned_accessory() {
+        let result = common::accessory::AccessoryInfo::try_from(AccessoryInfo {
+            name: "accessory".to_string(),
+            ty: AccessoryType::DryFireMag,
+            assignment: Some(0),
+        });
+        assert!(matches!(result, Err(ClientError::InvalidArgument { .. })));
     }
 }

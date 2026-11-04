@@ -11,8 +11,8 @@ Task connectTask = client.Connect();
 try {
     await connectTask;
     Console.WriteLine("Connected!");
-} catch (Ohc.uniffi.AnyhowException ex) {
-    Console.WriteLine(ex.AnyhowMessage());
+} catch (Ohc.uniffi.ClientException ex) {
+    Console.WriteLine(ex.Message);
     Environment.Exit(1);
 }
 
@@ -21,8 +21,8 @@ Ohc.uniffi.Device[] devices = {};
 try {
     devices = await deviceListTask;
     Console.WriteLine("Devices (count: {0}):", devices.Length);
-} catch (Ohc.uniffi.AnyhowException ex) {
-    Console.WriteLine(ex.AnyhowMessage());
+} catch (Ohc.uniffi.ClientException ex) {
+    Console.WriteLine(ex.Message);
     Environment.Exit(1);
 }
 

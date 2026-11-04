@@ -25,6 +25,7 @@ fn main() {
 
     let status = Command::new("uniffi-bindgen-cs")
         .args([
+            "--no-format",
             "--out-dir",
             output_dir.to_str().unwrap(),
             "--library",
@@ -73,8 +74,17 @@ fn main() {
             .replace("internal record", "public record")
             .replace("internal class Device", "public class Device")
             .replace(
-                "internal class AnyhowException",
-                "public class AnyhowException",
+                "internal interface IRpcFailure",
+                "public interface IRpcFailure",
+            )
+            .replace("internal class RpcFailure", "public class RpcFailure")
+            .replace(
+                "internal interface IConnectionFailure",
+                "public interface IConnectionFailure",
+            )
+            .replace(
+                "internal class ConnectionFailure",
+                "public class ConnectionFailure",
             )
             .replace("uniffi.ohc_uniffi", "OdysseyArm.HubClient.uniffi")
             // Fully-qualified cross-crate refs must escape the renamed namespace:

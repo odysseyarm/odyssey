@@ -26,8 +26,8 @@ tokio-util = "0.7.10"
 tonic = "0.11.0"
 nalgebra = "0.35"
 odyssey-usb = { path = "../../crates/odyssey-usb" }
-paste = "1.0.15"
 uniffi = { version = "0.31.0", features = ["tokio"] }
 thiserror = "2.0.17"
 tokio-stream = "0.1.17"
 futures = "0.3.31"
+parking_lot = "0.12"

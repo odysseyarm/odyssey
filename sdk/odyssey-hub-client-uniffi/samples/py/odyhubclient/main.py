@@ -33,15 +33,15 @@ async def main():
                 shot_delay_ms = await client.get_shot_delay(dr)
                 shot_delays[d.uuid()] = shot_delay_ms
                 print(f"Found device: id={d.uuid():x} shot_delay_ms={shot_delay_ms}")
-        except ohc.AnyhowError as e:
-            print(f"Failed to connect: {e.anyhow_message()}")
+        except ohc.ClientError as e:
+            print(f"Failed to connect: {e}")
             await asyncio.sleep(1)
             continue
 
         try:
             stream = await client.subscribe_events()
-        except ohc.AnyhowError as e:
-            print(f"Failed to subscribe to events: {e.anyhow_message()}")
+        except ohc.ClientError as e:
+            print(f"Failed to subscribe to events: {e}")
             await asyncio.sleep(1)
             continue
 
@@ -82,8 +82,8 @@ async def main():
                         shot_delays.pop(uuid, None)
                         histories.pop(uuid, None)
                         print(f"Disconnect Event: device_id={uuid:x}")
-        except ohc.AnyhowError as e:
-            print(f"Event stream ended: {e.anyhow_message()}")
+        except ohc.ClientError as e:
+            print(f"Event stream ended: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use crate::ffi_common::TrackingEvent;
 
@@ -20,20 +22,16 @@ impl TrackingHistory {
 
     #[uniffi::method]
     pub fn push(&self, event: TrackingEvent) {
-        self.inner.lock().unwrap().push(event.into());
+        self.inner.lock().push(event.into());
     }
 
     #[uniffi::method]
     pub fn latest(&self) -> Option<TrackingEvent> {
-        self.inner.lock().unwrap().latest().map(|e| e.into())
+        self.inner.lock().latest().map(|e| e.into())
     }
 
     #[uniffi::method]
     pub fn get_closest(&self, timestamp: u32) -> Option<TrackingEvent> {
-        self.inner
-            .lock()
-            .unwrap()
-            .get_closest(timestamp)
-            .map(|e| e.into())
+        self.inner.lock().get_closest(timestamp).map(|e| e.into())
     }
 }

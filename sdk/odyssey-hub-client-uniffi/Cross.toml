@@ -21,7 +21,7 @@ pre-build = [
 # Cargo.toml ([workspace.dependencies]). cross mounts those crates' own directories
 # but not the root, so cargo inside the container cannot find the workspace root
 # ("failed to find a workspace root"). Mount the whole checkout, at the same path,
-# from the directory ODYSSEY_REPO names: CI sets it to the workspace, and locally it
-# is `git rev-parse --show-toplevel`.
+# from the directory ODYSSEY_REPO names: CI sets it to the workspace, and
+# `cargo xtask sdk dotnet build-lib` to the repository root.
 [build.env]
 volumes = ["ODYSSEY_REPO"]

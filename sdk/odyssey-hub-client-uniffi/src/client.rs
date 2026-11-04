@@ -6,22 +6,37 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::ffi_common::*;
 
+/// A gRPC failure with the original typed status retained as its error source.
 #[derive(uniffi::Object, Debug, thiserror::Error)]
-#[error("{e:?}")] // anyhow's Debug form, which includes the cause chain.
-pub struct AnyhowError {
-    e: uniffi::deps::anyhow::Error,
+#[error("{}", .source.message())]
+pub struct RpcFailure {
+    #[source]
+    source: tonic::Status,
 }
 
 #[uniffi::export]
-impl AnyhowError {
-    fn anyhow_message(&self) -> String {
-        self.to_string()
+impl RpcFailure {
+    pub fn message(&self) -> String {
+        self.source.message().to_string()
+    }
+
+    pub fn code(&self) -> u32 {
+        self.source.code() as u32
     }
 }
 
-impl From<uniffi::deps::anyhow::Error> for AnyhowError {
-    fn from(e: uniffi::deps::anyhow::Error) -> Self {
-        Self { e }
+/// A local socket or transport failure, retaining the typed native error.
+#[derive(uniffi::Object, Debug, thiserror::Error)]
+#[error("{source}")]
+pub struct ConnectionFailure {
+    #[source]
+    source: odyssey_hub_client::client::ClientError,
+}
+
+#[uniffi::export]
+impl ConnectionFailure {
+    pub fn message(&self) -> String {
+        self.to_string()
     }
 }
 
@@ -31,6 +46,40 @@ pub enum ClientError {
     NotConnected,
     #[error("Stream ended unexpectedly")]
     StreamEnd,
+    #[error("{source}")]
+    RpcFailure {
+        #[source]
+        source: Arc<RpcFailure>,
+    },
+    #[error("{source}")]
+    ConnectionFailure {
+        #[source]
+        source: Arc<ConnectionFailure>,
+    },
+    #[error("{message}")]
+    InvalidArgument { message: String },
+}
+
+impl From<odyssey_hub_client::client::ClientError> for ClientError {
+    fn from(error: odyssey_hub_client::client::ClientError) -> Self {
+        match error {
+            odyssey_hub_client::client::ClientError::NotConnected => Self::NotConnected,
+            odyssey_hub_client::client::ClientError::Rpc(error) => error.into(),
+            source => Self::ConnectionFailure {
+                source: Arc::new(ConnectionFailure { source }),
+            },
+        }
+    }
+}
+
+impl From<RpcError> for ClientError {
+    fn from(error: RpcError) -> Self {
+        Self::RpcFailure {
+            source: Arc::new(RpcFailure {
+                source: error.into_status(),
+            }),
+        }
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -83,14 +132,10 @@ pub struct AccessoryMapStream {
 impl EventStream {
     #[uniffi::method]
     pub async fn next(&self) -> Result<Event, ClientError> {
-        loop {
-            match self.inner.lock().await.next().await {
-                Some(Ok(event)) => match odyssey_hub_common::events::Event::try_from(event) {
-                    Ok(ev) => return Ok(ev.into()),
-                    Err(_) => continue,
-                },
-                Some(Err(_)) | None => return Err(ClientError::StreamEnd),
-            }
+        match self.inner.lock().await.next().await {
+            Some(Ok(event)) => Ok(event.into()),
+            Some(Err(error)) => Err(error.into()),
+            None => Err(ClientError::StreamEnd),
         }
     }
 }
@@ -105,7 +150,7 @@ impl DeviceListStream {
                     .into_iter()
                     .map(|d| odyssey_hub_common::device::Device::from(d).into())
                     .collect()),
-                Err(_) => Err(ClientError::StreamEnd),
+                Err(error) => Err(error.into()),
             },
             _ => Err(ClientError::StreamEnd),
         }
@@ -119,7 +164,7 @@ impl ShotDelayStream {
         match self.inner.lock().await.next().await {
             Some(msg) => match msg {
                 Ok(delay) => Ok(delay),
-                Err(_) => Err(ClientError::StreamEnd),
+                Err(error) => Err(error.into()),
             },
             _ => Err(ClientError::StreamEnd),
         }
@@ -150,7 +195,7 @@ impl AccessoryMapStream {
                         .collect();
                     Ok(entries)
                 }
-                Err(_) => Err(ClientError::StreamEnd),
+                Err(error) => Err(error.into()),
             },
             _ => Err(ClientError::StreamEnd),
         }
@@ -167,23 +212,23 @@ impl Client {
     }
 
     #[uniffi::method]
-    pub async fn connect(&self) -> Result<(), Arc<AnyhowError>> {
+    pub async fn connect(&self) -> Result<(), ClientError> {
         self.inner
             .write()
             .await
             .connect()
             .await
-            .map_err(|e| Arc::new(uniffi::deps::anyhow::Error::new(e).into()))
+            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
-    pub async fn get_device_list(&self) -> Result<Vec<Device>, Arc<AnyhowError>> {
+    pub async fn get_device_list(&self) -> Result<Vec<Device>, ClientError> {
         self.inner
             .write()
             .await
             .get_device_list()
             .await
-            .map_err(|e| Arc::new(uniffi::deps::anyhow::Error::new(e).into()))
+            .map_err(ClientError::from)
             .map(|dl| dl.into_iter().map(|d| d.into()).collect())
     }
 
@@ -195,14 +240,14 @@ impl Client {
             Ok(stream) => Ok(DeviceListStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
             }),
-            Err(_) => Err(ClientError::NotConnected),
+            Err(error) => Err(error.into()),
         }
     }
 
     #[uniffi::method]
     pub async fn get_accessory_map(
         &self,
-    ) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, Arc<AnyhowError>> {
+    ) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
         self.inner
             .write()
             .await
@@ -224,7 +269,7 @@ impl Client {
                     })
                     .collect()
             })
-            .map_err(|e| Arc::new(uniffi::deps::anyhow::Error::new(e).into()))
+            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
@@ -235,7 +280,7 @@ impl Client {
             Ok(stream) => Ok(AccessoryMapStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
             }),
-            Err(_) => Err(ClientError::NotConnected),
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -247,7 +292,7 @@ impl Client {
             Ok(stream) => Ok(EventStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
             }),
-            Err(_) => Err(ClientError::NotConnected),
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -258,11 +303,11 @@ impl Client {
     ) -> Result<ShotDelayStream, ClientError> {
         let mut client = self.inner.read().await.clone();
 
-        match client.subscribe_shot_delay(device.into()).await {
+        match client.subscribe_shot_delay(device.try_into()?).await {
             Ok(stream) => Ok(ShotDelayStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
             }),
-            Err(_) => Err(ClientError::NotConnected),
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -276,9 +321,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .write_vendor(device.into(), tag, data)
+            .write_vendor(device.try_into()?, tag, data)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|_| ())
     }
 
@@ -287,9 +332,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .reset_zero(device.into())
+            .reset_zero(device.try_into()?)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|_| ())
     }
 
@@ -313,9 +358,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .zero(device.into(), translation, target, None)
+            .zero(device.try_into()?, translation, target, None)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|_| ())
     }
 
@@ -324,21 +369,19 @@ impl Client {
         self.inner
             .write()
             .await
-            .reset_shot_delay(device.into())
+            .reset_shot_delay(device.try_into()?)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
     }
 
-    // TODO: every RPC failure maps to ClientError::NotConnected; ClientError has no
-    // variant for the other errors.
     #[uniffi::method]
     pub async fn get_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
         self.inner
             .write()
             .await
-            .get_shot_delay(device.into())
+            .get_shot_delay(device.try_into()?)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
@@ -346,9 +389,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .set_shot_delay(device.into(), delay_ms)
+            .set_shot_delay(device.try_into()?, delay_ms)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|_| ())
     }
 
@@ -357,9 +400,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .save_shot_delay(device.into())
+            .save_shot_delay(device.try_into()?)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|_| ())
     }
 
@@ -370,7 +413,7 @@ impl Client {
             .await
             .get_screen_info_by_id(screen_id)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|info| info.into())
     }
 
@@ -385,9 +428,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .read_register(device.into(), port, bank, address)
+            .read_register(device.try_into()?, port, bank, address)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
@@ -402,9 +445,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .write_register(device.into(), port, bank, address, data)
+            .write_register(device.try_into()?, port, bank, address, data)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
@@ -412,9 +455,9 @@ impl Client {
         self.inner
             .write()
             .await
-            .flash_settings(device.into())
+            .flash_settings(device.try_into()?)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
     }
 
     #[uniffi::method]
@@ -424,20 +467,77 @@ impl Client {
     ) -> Result<(), ClientError> {
         let map: odyssey_hub_common::accessory::AccessoryInfoMap = entries
             .into_iter()
-            .map(|e| {
-                let mut buf = [0u8; 8];
-                buf.copy_from_slice(&e.key.to_le_bytes());
-                let k6: [u8; 6] = buf[..6].try_into().unwrap();
-                (k6, e.info.into())
+            .map(|entry| {
+                if entry.key >> 48 != 0 {
+                    return Err(ClientError::InvalidArgument {
+                        message: "accessory key must fit in 48 bits".to_string(),
+                    });
+                }
+                let bytes = entry.key.to_le_bytes();
+                let key = [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]];
+                Ok((key, entry.info.try_into()?))
             })
-            .collect();
+            .collect::<Result<_, ClientError>>()?;
 
         self.inner
             .write()
             .await
             .update_accessory_info_map(map)
             .await
-            .map_err(|_| ClientError::NotConnected)
+            .map_err(ClientError::from)
             .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_errors_preserve_status_and_differ_from_eof() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let stream = EventStream {
+            inner: Arc::new(Mutex::new(Box::pin(futures::stream::iter([Err(
+                RpcError::from(tonic::Status::permission_denied("device is locked")),
+            )])))),
+        };
+
+        runtime.block_on(async {
+            match stream.next().await {
+                Err(ClientError::RpcFailure { source }) => {
+                    assert_eq!(source.code(), tonic::Code::PermissionDenied as u32);
+                    assert_eq!(source.message(), "device is locked");
+                    let status = std::error::Error::source(source.as_ref())
+                        .expect("typed status source")
+                        .downcast_ref::<tonic::Status>()
+                        .expect("original gRPC status");
+                    assert_eq!(status.code(), tonic::Code::PermissionDenied);
+                }
+                _ => panic!("expected an RPC failure, not EOF or NotConnected"),
+            }
+            assert!(matches!(stream.next().await, Err(ClientError::StreamEnd)));
+        });
+    }
+
+    #[test]
+    fn oversized_accessory_keys_are_rejected_before_rpc() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let result = runtime.block_on(Client::new().update_accessory_info_map(vec![
+            AccessoryInfoMapEntry {
+                key: 1 << 48,
+                info: AccessoryInfo {
+                    name: "accessory".to_string(),
+                    ty: AccessoryType::DryFireMag,
+                    assignment: None,
+                },
+            },
+        ]));
+        assert!(matches!(result, Err(ClientError::InvalidArgument { .. })));
     }
 }

@@ -54,26 +54,22 @@ namespace OdysseyArm.HubClient
         {
             return Task.Run(async () =>
             {
-                var stream = await _inner.SubscribeEvents();
-                while (true)
+                try
                 {
-                    try
+                    using var stream = await _inner.SubscribeEvents();
+                    while (true)
                     {
                         var @event = await stream.Next();
                         await channelWriter.WriteAsync((@event, null));
                     }
-                    catch (uniffi.ClientException @error)
-                    {
-                        await channelWriter.WriteAsync((null, @error));
-                        switch (error)
-                        {
-                            case uniffi.ClientException.NotConnected:
-                            case uniffi.ClientException.StreamEnd:
-                            default:
-                                channelWriter.Complete();
-                                return;
-                        }
-                    }
+                }
+                catch (uniffi.ClientException error)
+                {
+                    await channelWriter.WriteAsync((null, error));
+                }
+                finally
+                {
+                    channelWriter.TryComplete();
                 }
             });
         }
@@ -86,26 +82,22 @@ namespace OdysseyArm.HubClient
         {
             return Task.Run(async () =>
             {
-                var stream = await _inner.SubscribeDeviceList();
-                while (true)
+                try
                 {
-                    try
+                    using var stream = await _inner.SubscribeDeviceList();
+                    while (true)
                     {
                         var deviceList = await stream.Next();
                         await channelWriter.WriteAsync((deviceList, null));
                     }
-                    catch (uniffi.ClientException error)
-                    {
-                        await channelWriter.WriteAsync((null, error));
-                        switch (error)
-                        {
-                            case uniffi.ClientException.NotConnected:
-                            case uniffi.ClientException.StreamEnd:
-                            default:
-                                channelWriter.Complete();
-                                return;
-                        }
-                    }
+                }
+                catch (uniffi.ClientException error)
+                {
+                    await channelWriter.WriteAsync((null, error));
+                }
+                finally
+                {
+                    channelWriter.TryComplete();
                 }
             });
         }
@@ -118,26 +110,22 @@ namespace OdysseyArm.HubClient
         {
             return Task.Run(async () =>
             {
-                var stream = await _inner.SubscribeAccessoryMap();
-                while (true)
+                try
                 {
-                    try
+                    using var stream = await _inner.SubscribeAccessoryMap();
+                    while (true)
                     {
                         var snapshot = await stream.Next();
                         await channelWriter.WriteAsync((snapshot, null));
                     }
-                    catch (uniffi.ClientException error)
-                    {
-                        await channelWriter.WriteAsync((null, error));
-                        switch (error)
-                        {
-                            case uniffi.ClientException.NotConnected:
-                            case uniffi.ClientException.StreamEnd:
-                            default:
-                                channelWriter.Complete();
-                                return;
-                        }
-                    }
+                }
+                catch (uniffi.ClientException error)
+                {
+                    await channelWriter.WriteAsync((null, error));
+                }
+                finally
+                {
+                    channelWriter.TryComplete();
                 }
             });
         }
@@ -146,26 +134,22 @@ namespace OdysseyArm.HubClient
         {
             return Task.Run(async () =>
             {
-                var stream = await _inner.SubscribeShotDelay(device);
-                while (true)
+                try
                 {
-                    try
+                    using var stream = await _inner.SubscribeShotDelay(device);
+                    while (true)
                     {
                         var delay = await stream.Next();
                         await channelWriter.WriteAsync((delay, null));
                     }
-                    catch (uniffi.ClientException error)
-                    {
-                        await channelWriter.WriteAsync((null, error));
-                        switch (error)
-                        {
-                            case uniffi.ClientException.NotConnected:
-                            case uniffi.ClientException.StreamEnd:
-                            default:
-                                channelWriter.Complete();
-                                return;
-                        }
-                    }
+                }
+                catch (uniffi.ClientException error)
+                {
+                    await channelWriter.WriteAsync((null, error));
+                }
+                finally
+                {
+                    channelWriter.TryComplete();
                 }
             });
         }
