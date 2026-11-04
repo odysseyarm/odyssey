@@ -142,7 +142,7 @@ fn apply_display(name: &str, screen: &mut SceneScreen) {
         let on_surface = {
             let geometry = screen.geometry().expect("authored grid");
             screen.calibration.object_points.map(|p| {
-                let uv = homography * nalgebra::Vector3::new(f64::from(p.x), f64::from(p.y), 1.0);
+                let uv = homography * Vector3::new(f64::from(p.x), f64::from(p.y), 1.0);
                 let world = geometry
                     .point_at_uv([uv.x / uv.z, uv.y / uv.z])
                     .expect("marker UV inside display");

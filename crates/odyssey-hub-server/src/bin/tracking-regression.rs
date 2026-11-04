@@ -69,9 +69,9 @@ async fn run(args: &[String]) -> Result<bool, Error> {
         [command, trace, model, seed, output] if command == "apply-marker-noise" => {
             let trace: Trace = load_cbor(trace)?;
             let model: regression::marker_noise::MarkerNoise = load(model)?;
-            let seed = seed
-                .parse()
-                .map_err(|_| Error::Invalid("SEED must be an unsigned 64-bit integer".into()))?;
+            let seed = seed.parse().map_err(|_error| {
+                Error::Invalid("SEED must be an unsigned 64-bit integer".into())
+            })?;
             let noisy = regression::marker_noise::apply(&trace, model, seed)?;
             save_cbor(&noisy, Path::new(output))?;
             Ok(true)

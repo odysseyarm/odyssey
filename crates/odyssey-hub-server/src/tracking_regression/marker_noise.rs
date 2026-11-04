@@ -50,9 +50,11 @@ impl MarkerNoise {
     }
 }
 
+type MarkerReports = Vec<Vec<[f64; 2]>>;
+
 /// One report channel per source and camera, each a sequence of detected points.
-fn channels(trace: &Trace) -> Vec<Vec<Vec<[f64; 2]>>> {
-    let mut channels: Vec<(String, &'static str, Vec<Vec<[f64; 2]>>)> = Vec::new();
+fn channels(trace: &Trace) -> Vec<MarkerReports> {
+    let mut channels: Vec<(String, &'static str, MarkerReports)> = Vec::new();
     for sample in &trace.samples {
         let reports: &[(&'static str, &[[u16; 2]; 16])] = match &sample.input {
             Input::Poc { points } => &[("nf", points)],
@@ -136,7 +138,7 @@ pub fn measure(trace: &Trace) -> Result<Measurement, Error> {
     Ok(Measurement {
         model: MarkerNoise {
             centroid_sigma: (sum_squares / second_differences as f64 / 6.0).sqrt(),
-            dropout_probability: dropped as f64 / dropout_opportunities as f64,
+            dropout_probability: f64::from(dropped) / dropout_opportunities as f64,
         },
         second_differences,
         dropout_opportunities,
