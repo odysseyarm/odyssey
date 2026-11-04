@@ -3,7 +3,6 @@ use embassy_nrf::peripherals::USBD;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_sync::watch::{DynReceiver, Watch};
 use embassy_usb::msos::windows_version;
 use embassy_usb::{Builder, Config as UsbConfig, msos};
@@ -32,7 +31,6 @@ pub fn usb_device(
     Builder<'static, UsbDriver>,
     Endpoint<'static, In>,
     Endpoint<'static, Out>,
-    &'static Signal<ThreadModeRawMutex, bool>,
 ) {
     let vbus = HardwareVbusDetect::new(Irqs);
     let driver = UsbDriver::new(usbd, Irqs, vbus);
@@ -81,12 +79,8 @@ pub fn usb_device(
 
     builder.msos_descriptor(windows_version::WIN8_1, 0);
 
-    static SIGNAL: ConstStaticCell<Signal<ThreadModeRawMutex, bool>> =
-        ConstStaticCell::new(Signal::new());
-    let signal = SIGNAL.take();
-
     static HANDLER: StaticCell<MyHandler> = StaticCell::new();
-    let handler = HANDLER.init(MyHandler::new(signal));
+    let handler = HANDLER.init(MyHandler);
 
     builder.handler(&mut *handler);
 
@@ -102,18 +96,10 @@ pub fn usb_device(
     let ep_out = alt.endpoint_bulk_out(Some(1u8.into()), 64);
     let ep_in = alt.endpoint_bulk_in(Some(1u8.into()), 64);
     drop(function);
-    (builder, ep_in, ep_out, signal)
+    (builder, ep_in, ep_out)
 }
 
-struct MyHandler {
-    signal: &'static Signal<ThreadModeRawMutex, bool>,
-}
-
-impl MyHandler {
-    pub fn new(signal: &'static Signal<ThreadModeRawMutex, bool>) -> Self {
-        Self { signal }
-    }
-}
+struct MyHandler;
 
 impl embassy_usb::Handler for MyHandler {
     fn reset(&mut self) {
@@ -122,7 +108,6 @@ impl embassy_usb::Handler for MyHandler {
         // starts clean when the dongle is plugged in before the PC boots or after a
         // failed enumeration.
         USB_CONFIG_WATCH.sender().send(false);
-        self.signal.signal(false);
     }
 
     fn addressed(&mut self, addr: u8) {
@@ -132,7 +117,6 @@ impl embassy_usb::Handler for MyHandler {
     fn configured(&mut self, configured: bool) {
         defmt::info!("USB configured: {}", configured);
         USB_CONFIG_WATCH.sender().send(configured);
-        self.signal.signal(configured);
     }
 
     fn suspended(&mut self, suspended: bool) {

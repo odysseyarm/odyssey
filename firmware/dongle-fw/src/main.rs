@@ -183,7 +183,7 @@ async fn main(mut spawner: Spawner) {
         use static_cell::StaticCell;
 
         // With RTT the USB device carries no serial logger.
-        let (builder, ep_in, ep_out, _usb_signal) = usb::usb_device(p.USBD);
+        let (builder, ep_in, ep_out) = usb::usb_device(p.USBD);
         let usb_device = builder.build();
 
         static USB_DEVICE: StaticCell<embassy_usb::UsbDevice<'static, usb::UsbDriver>> =
@@ -198,7 +198,7 @@ async fn main(mut spawner: Spawner) {
 
     #[cfg(not(feature = "rtt"))]
     let (ep_in, ep_out) = {
-        let (builder, ep_in, ep_out, _usb_signal) = usb::usb_device(p.USBD);
+        let (builder, ep_in, ep_out) = usb::usb_device(p.USBD);
         // Consumes the builder and spawns the USB device task.
         defmt_serial::init(&mut spawner, builder);
         defmt::info!("USB serial logger initialized");

@@ -68,17 +68,6 @@ pub fn clear_events() {
     while try_recv_event().is_some() {}
 }
 
-#[allow(dead_code)]
-/// Waits for the next event by polling every 1 ms.
-pub async fn recv_event() -> UsbMuxCtrlMsg {
-    loop {
-        if let Some(m) = try_recv_event() {
-            return m;
-        }
-        embassy_time::Timer::after_millis(1).await;
-    }
-}
-
 /// Queues a host command without blocking. Used by EP0 control_out; drops the
 /// command when the channel is full or not yet registered.
 pub fn try_send_cmd(cmd: UsbMuxCtrlMsg) {
