@@ -1,5 +1,6 @@
 //! USB enumeration shared by the `mux`, `device` and `bond` commands.
 
+use eros::Context as _;
 use nusb::{DeviceInfo, MaybeFuture as _};
 
 /// Nordic Semiconductor's USB vendor id, used by every ATS device.
@@ -9,28 +10,28 @@ const MUX_PRODUCT_ID: u16 = 0x5212;
 /// USB product ids a direct (lite/vm) device may enumerate with.
 const VM_PRODUCT_IDS: [u16; 3] = [0x520F, 0x5210, 0x5211];
 
-fn list_usb_devices(keep: impl Fn(&DeviceInfo) -> bool) -> Result<Vec<DeviceInfo>, String> {
+fn list_usb_devices(keep: impl Fn(&DeviceInfo) -> bool) -> eros::Result<Vec<DeviceInfo>> {
     Ok(nusb::list_devices()
         .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
+        .context("Failed to list USB devices")?
         .filter(keep)
         .collect())
 }
 
-pub(crate) fn list_muxes() -> Result<Vec<DeviceInfo>, String> {
+pub(crate) fn list_muxes() -> eros::Result<Vec<DeviceInfo>> {
     list_usb_devices(|info| {
         info.vendor_id() == NORDIC_VENDOR_ID && info.product_id() == MUX_PRODUCT_ID
     })
 }
 
 /// Every USB device that looks like a direct (lite/vm) device, whatever mode it is in.
-pub(crate) fn list_vm_usb_devices() -> Result<Vec<DeviceInfo>, String> {
+pub(crate) fn list_vm_usb_devices() -> eros::Result<Vec<DeviceInfo>> {
     list_usb_devices(|info| {
         info.vendor_id() == NORDIC_VENDOR_ID && VM_PRODUCT_IDS.contains(&info.product_id())
     })
 }
 
-pub(crate) fn list_nordic_devices() -> Result<Vec<DeviceInfo>, String> {
+pub(crate) fn list_nordic_devices() -> eros::Result<Vec<DeviceInfo>> {
     list_usb_devices(|info| info.vendor_id() == NORDIC_VENDOR_ID)
 }
 

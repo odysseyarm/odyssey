@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
 use eframe::egui;
+use eros::{Context as _, Result};
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::Port;
 
@@ -13,7 +13,9 @@ where
     T: std::str::FromStr,
     T::Err: std::error::Error + Send + Sync + 'static,
 {
-    text.parse().with_context(|| format!("invalid {name}"))
+    Ok(text
+        .parse::<T>()
+        .with_context(|| format!("invalid {name}"))?)
 }
 
 /// A single-line text field of the common form field width.

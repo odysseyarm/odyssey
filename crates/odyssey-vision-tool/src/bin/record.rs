@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::UNIX_EPOCH;
 
-use anyhow::{Context as _, Result};
 use clap::Parser;
+use eros::{Context as _, Result};
 use nusb::DeviceInfo;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
@@ -168,7 +168,8 @@ async fn run(output_path: &std::path::Path) -> Result<()> {
 
     eprintln!("Saving to {}", output_path.display());
     std::fs::write(output_path, &bytes)
-        .with_context(|| format!("failed to write {}", output_path.display()))
+        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -177,7 +178,7 @@ async fn main() -> ExitCode {
     match run(&args.output).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{e:#}");
+            eprintln!("{e:#?}");
             ExitCode::FAILURE
         }
     }

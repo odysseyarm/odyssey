@@ -5,8 +5,8 @@
 
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
+use eros::{Context as _, Result};
 use nusb::MaybeFuture as _;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
@@ -42,9 +42,9 @@ async fn connect_first_usb_mode_device() -> Result<VmDevice> {
     }) {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(TransportMode::Usb) => {
-                return VmDevice::connect_usb(info)
+                return Ok(VmDevice::connect_usb(info)
                     .await
-                    .context("failed to connect to device");
+                    .context("failed to connect to device")?);
             }
             Ok(mode) => {
                 eprintln!(
@@ -64,7 +64,7 @@ async fn connect_first_usb_mode_device() -> Result<VmDevice> {
         }
     }
 
-    anyhow::bail!("No device in USB mode found")
+    eros::bail!("No device in USB mode found")
 }
 
 async fn run(device: &VmDevice) -> Result<()> {
@@ -94,7 +94,7 @@ async fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{e:#}");
+            eprintln!("{e:#?}");
             ExitCode::FAILURE
         }
     }

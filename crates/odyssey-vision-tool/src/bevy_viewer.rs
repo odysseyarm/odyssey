@@ -9,7 +9,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, bail};
 use bevy::app::AppExit;
 use bevy::camera::Exposure;
 use bevy::light::AtmosphereEnvironmentMapLight;
@@ -24,6 +23,7 @@ use bevy::prelude::{
 use bevy::window::{PresentMode, PrimaryWindow, WindowCloseRequested, WindowPlugin, WindowTheme};
 use bevy::winit::WinitSettings;
 use bevy_infinite_grid::{InfiniteGridBundle, InfiniteGridPlugin};
+use eros::{Context as _, Result, bail};
 use parking_lot::Mutex;
 
 use crate::mot_runner::MotRunner;
@@ -138,7 +138,7 @@ impl Drop for ViewerProcess {
         if let Some(writer) = self.writer.take()
             && let Err(error) = join_pipe_thread(writer)
         {
-            tracing::debug!("3D viewer pipe closed during shutdown: {error:#}");
+            tracing::debug!("3D viewer pipe closed during shutdown: {error:#?}");
         }
     }
 }
@@ -146,8 +146,9 @@ impl Drop for ViewerProcess {
 fn join_pipe_thread(worker: JoinHandle<io::Result<()>>) -> Result<()> {
     worker
         .join()
-        .map_err(|_panic| anyhow::anyhow!("3D viewer pipe thread panicked"))?
-        .context("communicating with the 3D viewer")
+        .map_err(|_panic| eros::error!("3D viewer pipe thread panicked"))?
+        .context("communicating with the 3D viewer")?;
+    Ok(())
 }
 
 fn write_poses(

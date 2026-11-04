@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use clap::Parser;
+use eros::Context as _;
 use futures::StreamExt as _;
 use nalgebra::Vector3;
 use nusb::MaybeFuture as _;
@@ -60,11 +61,11 @@ async fn main() -> ExitCode {
 
 /// Match the requested serial port to the same physical USB device, or require
 /// exactly one direct USB device when no path was given.
-fn resolve_usb_device(requested: Option<&str>) -> Result<nusb::DeviceInfo, String> {
+fn resolve_usb_device(requested: Option<&str>) -> eros::Result<nusb::DeviceInfo> {
     let identity = requested.map(serial_ports::usb_identity).transpose()?;
     let mut devices = nusb::list_devices()
         .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
+        .context("Failed to list USB devices")?
         .filter(|info| usb_ids::is_vm_device(info.vendor_id(), info.product_id()))
         .filter(|info| {
             identity.as_ref().is_none_or(|identity| {
@@ -75,16 +76,14 @@ fn resolve_usb_device(requested: Option<&str>) -> Result<nusb::DeviceInfo, Strin
         });
     let device = devices
         .next()
-        .ok_or_else(|| "No matching Odyssey USB device found".to_string())?;
+        .ok_or_else(|| eros::error!("No matching Odyssey USB device found"))?;
     if devices.next().is_some() {
-        return Err(
-            "Multiple matching USB devices found; select a unique device with --path".to_string(),
-        );
+        eros::bail!("Multiple matching USB devices found; select a unique device with --path");
     }
     Ok(device)
 }
 
-async fn run(args: Args) -> Result<(), String> {
+async fn run(args: Args) -> eros::Result<()> {
     if args.accel.is_some() || args.gyro.is_some() {
         calibration::validate_sample_count(args.num_samples)?;
     }
@@ -99,7 +98,7 @@ async fn run(args: Args) -> Result<(), String> {
 
     let mut device = VmDevice::connect_usb(device_info)
         .await
-        .map_err(|e| format!("Failed to connect to device: {e}"))?;
+        .context("Failed to connect to device")?;
     println!("Connected to device");
 
     if let Some(gyro_path) = args.gyro {
@@ -116,7 +115,7 @@ async fn run(args: Args) -> Result<(), String> {
         let mut samples = device
             .stream_accel()
             .await
-            .map_err(|e| format!("Failed to start accel stream: {e}"))?;
+            .context("Failed to start accel stream")?;
         normal_streaming(&mut samples).await
     }
 }
@@ -146,14 +145,14 @@ impl SampleRateEstimator {
 
 async fn normal_streaming(
     samples: &mut (impl futures::Stream<Item = AccelReport> + Unpin),
-) -> Result<(), String> {
+) -> eros::Result<()> {
     let mut accel_sum = Vector3::<f64>::zeros();
     let mut gyro_sum = Vector3::<f64>::zeros();
     let mut count = 0.0;
 
     let stream_ended = tokio::select! {
         signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|e| format!("Failed to listen for Ctrl+C: {e}"))?;
+            signal.context("Failed to listen for Ctrl+C")?;
             false
         },
         () = async {
@@ -192,7 +191,7 @@ async fn normal_streaming(
     println!("Samples: {count}");
 
     if stream_ended {
-        return Err("Accel stream ended unexpectedly".to_string());
+        eros::bail!("Accel stream ended unexpectedly");
     }
     Ok(())
 }
@@ -227,9 +226,6 @@ mod tests {
                 ..AccelReport::default()
             },
         ]);
-        assert_eq!(
-            normal_streaming(&mut samples).await,
-            Err("Accel stream ended unexpectedly".to_string())
-        );
+        assert!(normal_streaming(&mut samples).await.is_err());
     }
 }

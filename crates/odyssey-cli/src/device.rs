@@ -1,6 +1,7 @@
 //! Commands for lite/vm devices connected directly over USB.
 
 use clap::Subcommand;
+use eros::Context as _;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
 
@@ -46,7 +47,7 @@ pub(crate) enum DeviceCommands {
     Stream,
 }
 
-async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, String> {
+async fn list_devices(require_usb_mode: bool) -> eros::Result<Vec<nusb::DeviceInfo>> {
     let mut devices = Vec::new();
     let mut non_usb_devices = 0usize;
     for info in list_vm_usb_devices()? {
@@ -86,14 +87,14 @@ async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, S
 async fn connect_to_device(
     device_index: Option<usize>,
     require_usb_mode: bool,
-) -> Result<VmDevice, String> {
+) -> eros::Result<VmDevice> {
     // Explicit indices refer to the unfiltered enumeration printed by
     // `list-devices`; probing or filtering first would renumber devices.
     let device_info = if let Some(idx) = device_index {
         list_vm_usb_devices()?
             .get(idx)
             .ok_or_else(|| {
-                format!(
+                eros::error!(
                     "Device index {idx} not found. Use 'device list-devices' to see available devices."
                 )
             })?
@@ -101,29 +102,29 @@ async fn connect_to_device(
     } else {
         let devices = list_devices(require_usb_mode).await?;
         if devices.is_empty() {
-            return Err("No device found. Please connect a device.".to_string());
+            eros::bail!("No device found. Please connect a device.");
         }
         if devices.len() > 1 {
-            return Err(format!(
+            eros::bail!(
                 "Multiple devices found ({}). Please specify which one to use with --device <index>. Use 'device list-devices' to list them.",
                 devices.len()
-            ));
+            );
         }
         devices[0].clone()
     };
 
     if require_usb_mode {
-        VmDevice::connect_usb(device_info)
+        Ok(VmDevice::connect_usb(device_info)
             .await
-            .map_err(|e| format!("Failed to connect to device: {e}"))
+            .context("Failed to connect to device")?)
     } else {
-        VmDevice::connect_usb_any_mode(device_info)
+        Ok(VmDevice::connect_usb_any_mode(device_info)
             .await
-            .map_err(|e| format!("Failed to connect to device: {e}"))
+            .context("Failed to connect to device")?)
     }
 }
 
-async fn cmd_list_devices() -> Result<(), String> {
+async fn cmd_list_devices() -> eros::Result<()> {
     let all_usb_devices = list_vm_usb_devices()?;
 
     if all_usb_devices.is_empty() {
@@ -180,11 +181,11 @@ async fn cmd_list_devices() -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_version(device: &VmDevice) -> Result<(), String> {
+async fn cmd_version(device: &VmDevice) -> eros::Result<()> {
     let version = device
         .read_version()
         .await
-        .map_err(|e| format!("Failed to read version: {e}"))?;
+        .context("Failed to read version")?;
 
     println!(
         "Firmware version: {}.{}.{}",
@@ -197,19 +198,19 @@ async fn cmd_version(device: &VmDevice) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_pair(device: &VmDevice, timeout: u32) -> Result<(), String> {
+async fn cmd_pair(device: &VmDevice, timeout: u32) -> eros::Result<()> {
     println!("Starting pairing mode (timeout: {timeout}ms)...");
 
     device
         .start_pairing(timeout)
         .await
-        .map_err(|e| format!("Failed to start pairing: {e}"))?;
+        .context("Failed to start pairing")?;
     println!("Pairing mode started, waiting for device...");
 
     let bond = device
         .wait_pairing_event()
         .await
-        .map_err(|e| format!("Pairing failed: {e}"))?;
+        .context("Pairing failed")?;
     println!(
         "Successfully paired with device: {}",
         format_bd_addr(&bond.uuid)
@@ -217,29 +218,24 @@ async fn cmd_pair(device: &VmDevice, timeout: u32) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_pair_cancel(device: &VmDevice) -> Result<(), String> {
-    match device.cancel_pairing().await {
-        Ok(()) => {
-            println!("Pairing cancelled");
-            Ok(())
-        }
-        Err(e) => Err(format!("Failed to cancel pairing: {e}")),
-    }
+async fn cmd_pair_cancel(device: &VmDevice) -> eros::Result<()> {
+    device
+        .cancel_pairing()
+        .await
+        .context("Failed to cancel pairing")?;
+    println!("Pairing cancelled");
+    Ok(())
 }
 
-async fn cmd_clear_bond(device: &VmDevice) -> Result<(), String> {
-    match device.clear_bond().await {
-        Ok(()) => {
-            println!("Bond cleared successfully");
-            Ok(())
-        }
-        Err(e) => Err(format!("Failed to clear bond: {e}")),
-    }
+async fn cmd_clear_bond(device: &VmDevice) -> eros::Result<()> {
+    device.clear_bond().await.context("Failed to clear bond")?;
+    println!("Bond cleared successfully");
+    Ok(())
 }
 pub(crate) async fn handle_command(
     device_index: Option<usize>,
     command: DeviceCommands,
-) -> Result<(), String> {
+) -> eros::Result<()> {
     match command {
         DeviceCommands::ListDevices => cmd_list_devices().await,
         DeviceCommands::Version => {

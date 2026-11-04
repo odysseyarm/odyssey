@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use anyhow::Result;
 use eframe::egui;
+use eros::Result;
 use odyssey_usb::device::{ProductId, VmDevice};
-use odyssey_usb::packets::vm::{Mode, Port};
+use odyssey_usb::packets::vm::Port;
 
 use super::{FIELD_WIDTH, form_grid, form_row, register_value, retry_checked};
 
@@ -36,7 +36,7 @@ pub(super) struct PagSensorSettingsForm {
 /// The effect of a click inside the form that the owner has to carry out.
 pub(super) enum PagAction {
     None,
-    /// Switch the sensor to image mode.
+    /// Open integrated USB image inspection and camera calibration.
     CaptureImage,
 }
 
@@ -161,8 +161,8 @@ impl PagSensorSettingsForm {
             match result {
                 Ok(values) => (values, None),
                 Err(error) => {
-                    tracing::warn!("Could not read optional circle settings: {error:#}");
-                    ((0, 0, 0, 0), Some(format!("{error:#}")))
+                    tracing::warn!("Could not read optional circle settings: {error:#?}");
+                    ((0, 0, 0, 0), Some(format!("{error:#?}")))
                 }
             }
         } else {
@@ -299,16 +299,6 @@ impl PagSensorSettingsForm {
             register_value(self.circle_k_min, "circle K min")?,
             register_value(self.circle_k_max, "circle K max")?,
         ]))
-    }
-
-    /// Switches the sensor to image mode; the owner displays any failure.
-    pub(super) async fn capture_image(device: &VmDevice) -> Result<()> {
-        retry_checked(
-            || device.write_mode(Mode::Image),
-            Duration::from_millis(2000),
-            3,
-        )
-        .await
     }
 
     pub(super) fn clear(&mut self) {

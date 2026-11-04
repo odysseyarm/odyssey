@@ -10,6 +10,7 @@ pub struct ScreenInfo {
 impl From<ScreenInfo> for odyssey_common::ScreenCalibration<f32> {
     fn from(screen_info: ScreenInfo) -> Self {
         Self {
+            surface: None,
             rotation: Default::default(),
             homography: {
                 Matrix3::new(

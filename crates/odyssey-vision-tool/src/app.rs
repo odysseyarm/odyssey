@@ -13,10 +13,10 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll, Waker};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow};
 use app_dirs2::{AppDataType, get_app_root};
 use arrayvec::ArrayVec;
 use eframe::egui;
+use eros::{Context as _, Result};
 use odyssey_common::ScreenCalibration;
 use odyssey_usb::device::GeneralSettings;
 use odyssey_usb::packets::vm::{AccelConfig, PacketData};
@@ -27,6 +27,7 @@ use tracing::{error, info, warn};
 
 use crate::config_window::ConfigWindow;
 use crate::consts::APP_INFO;
+use crate::imaging::ImageWindow;
 use crate::mot_runner::{self, MotRunner};
 use crate::plots_window::PlotsWindow;
 use crate::recording::encode_recording;
@@ -45,50 +46,45 @@ const MAIN_WINDOW_SIZE: [f32; 2] = [760.0, 560.0];
 /// Completion polling while no display-rate visualization is visible.
 const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Command-line choice of where the device comes from.
-#[derive(Debug, Default)]
-pub struct Launch {
-    /// `<addr>`: connect to a simulator at this address.
-    pub simulator_addr: Option<String>,
-    /// `-u <addr>`: connect over UDP to this address.
-    pub udp_addr: Option<String>,
-}
-
-impl Launch {
-    /// Parses the arguments after the program name.
-    ///
-    /// # Errors
-    ///
-    /// Returns the usage text when the arguments are not `[]`, `<addr>` or `-u <addr>`.
-    pub fn from_args(args: &[String]) -> Result<Self> {
-        match args {
-            [] => Ok(Self::default()),
-            [flag, addr] if flag == "-u" => Ok(Self {
-                simulator_addr: None,
-                udp_addr: Some(addr.clone()),
-            }),
-            [addr] => Ok(Self {
-                simulator_addr: Some(addr.clone()),
-                udp_addr: None,
-            }),
-            _ => Err(anyhow!(
-                "unrecognized arguments; usage: odyssey-vision-tool [-u <udp addr> | <simulator addr>]"
-            )),
-        }
-    }
-}
-
 /// Starts the tool and blocks until its main window closes.
 ///
 /// # Errors
 ///
 /// Fails if the async runtime or the window system cannot start.
-pub fn run(launch: Launch) -> Result<()> {
+pub fn run(simulate: bool, legacy_sim: bool) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to start the async runtime")?;
     let _enter = runtime.enter();
+    #[cfg(not(feature = "sim"))]
+    if simulate || legacy_sim {
+        eros::bail!(
+            "--sim / --sim-legacy requires building odyssey-vision-tool with the sim feature"
+        );
+    }
+    #[cfg(feature = "sim")]
+    let simulator = if simulate || legacy_sim {
+        let simulator = Arc::new(odyssey_sim::Simulator::with_sensor_model(if legacy_sim {
+            odyssey_sim::SensorModel::Paj7025
+        } else {
+            odyssey_sim::SensorModel::Pag7665qn
+        }));
+        runtime.block_on(
+            simulator
+                .handle()
+                .execute(odyssey_sim::Command::UnitUsb { plugged: true }),
+        )?;
+        Some(simulator)
+    } else {
+        None
+    };
+    #[cfg(feature = "sim")]
+    let simulated_device = simulator
+        .as_ref()
+        .map(|simulator| simulator.connect_unit_usb());
+    #[cfg(not(feature = "sim"))]
+    let simulated_device: Option<odyssey_usb::device::VmDevice> = None;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -104,12 +100,14 @@ pub fn run(launch: Launch) -> Result<()> {
             theme::apply(&creation.egui_ctx);
             Ok(Box::new(VisionTool::new(
                 &creation.egui_ctx,
-                launch,
                 runtime.handle().clone(),
+                simulated_device,
+                #[cfg(feature = "sim")]
+                simulator.clone(),
             )))
         }),
     )
-    .map_err(|e| anyhow!("the window system failed: {e}"))
+    .map_err(|e| eros::error!("the window system failed: {e}"))
 }
 
 /// What the user has switched on. Tracking, raw tracking and the aimpoint test
@@ -180,7 +178,7 @@ impl LiveTask {
                     Ok(result) => {
                         result?;
                         if !stopping {
-                            return Err(anyhow!("device stream ended"));
+                            return Err(eros::error!("device stream ended"));
                         }
                     }
                 }
@@ -218,6 +216,7 @@ struct VisionTool {
     packets: Arc<Mutex<Vec<(u128, PacketData)>>>,
     recorded_settings: Option<RecordedSettings>,
     config: ConfigWindow,
+    imaging: ImageWindow,
     plots: PlotsWindow,
     windows: OpenWindows,
     modes: Modes,
@@ -225,6 +224,10 @@ struct VisionTool {
     /// Whether the aimpoint test window is a normal window rather than fullscreen.
     test_windowed: bool,
     runtime: Handle,
+    #[cfg(feature = "sim")]
+    simulator: Option<Arc<odyssey_sim::Simulator>>,
+    #[cfg(feature = "sim")]
+    simulator_generation: u64,
     /// Last device revision pushed into the runner.
     seen_device_revision: u64,
     /// Last accelerometer config the Madgwick filter was built for.
@@ -236,7 +239,12 @@ struct VisionTool {
 }
 
 impl VisionTool {
-    fn new(ctx: &egui::Context, launch: Launch, runtime: Handle) -> Self {
+    fn new(
+        ctx: &egui::Context,
+        runtime: Handle,
+        simulated_device: Option<odyssey_usb::device::VmDevice>,
+        #[cfg(feature = "sim")] simulator: Option<Arc<odyssey_sim::Simulator>>,
+    ) -> Self {
         let datapoints = Arc::new(Mutex::new(Vec::new()));
         let packets = Arc::new(Mutex::new(Vec::new()));
         let runner = Arc::new(Mutex::new(MotRunner {
@@ -250,13 +258,20 @@ impl VisionTool {
             wfnf_realign: true,
             screen_calibrations: load_screen_calibrations(),
         }));
-        let config = ConfigWindow::new(
-            launch.simulator_addr,
-            launch.udp_addr,
+        let imaging = ImageWindow::new(runtime.clone(), ctx.clone());
+        let mut config = ConfigWindow::new(
             Arc::clone(&runner),
             runtime.clone(),
             ctx.clone(),
+            simulated_device.is_none(),
         );
+        config.set_image_control(imaging.control());
+        #[cfg(feature = "sim")]
+        if let Some(device) = simulated_device {
+            config.connect_simulated(device);
+        }
+        #[cfg(not(feature = "sim"))]
+        let _ = simulated_device;
         Self {
             #[cfg(feature = "bevy")]
             bevy: crate::bevy_viewer::BevyViewer::new(Arc::clone(&runner)),
@@ -265,12 +280,19 @@ impl VisionTool {
             packets,
             recorded_settings: None,
             config,
+            imaging,
             plots: PlotsWindow::new(),
             windows: OpenWindows::default(),
             modes: Modes::default(),
             tasks: Tasks::default(),
             test_windowed: false,
             runtime,
+            #[cfg(feature = "sim")]
+            simulator_generation: simulator.as_ref().map_or(0, |simulator| {
+                simulator.handle().snapshot().unit_usb_generation
+            }),
+            #[cfg(feature = "sim")]
+            simulator,
             seen_device_revision: u64::MAX,
             seen_accel: None,
             notice: None,
@@ -322,7 +344,7 @@ impl VisionTool {
                 runtime.spawn(mot_runner::run(Arc::clone(runner)))
             })
         {
-            self.notice = Some(format!("Tracking stopped: {error:#}"));
+            self.notice = Some(format!("Tracking stopped: {error:#?}"));
             self.modes = Modes::default();
             self.runner.lock().record_packets = false;
         }
@@ -333,29 +355,38 @@ impl VisionTool {
                 runtime.spawn(mot_runner::frame_loop(Arc::clone(runner)))
             })
         {
-            self.notice = Some(format!("Raw tracking stopped: {error:#}"));
+            self.notice = Some(format!("Raw tracking stopped: {error:#?}"));
             self.modes.tracking_raw = false;
         }
         if let Some(handle) = &mut self.tasks.save {
             let mut context = TaskContext::from_waker(Waker::noop());
             if let Poll::Ready(result) = Pin::new(handle).poll(&mut context) {
                 self.tasks.save = None;
-                if let Err(error) = result.context("save task failed").and_then(|result| result) {
-                    error!("Saving failed: {error:#}");
-                    self.notice = Some(format!("Saving failed: {error:#}"));
+                if let Err(error) = result
+                    .context("save task failed")
+                    .map_err(Into::into)
+                    .and_then(|result| result)
+                {
+                    error!("Saving failed: {error:#?}");
+                    self.notice = Some(format!("Saving failed: {error:#?}"));
                 }
             }
         }
     }
 
     fn has_live_view(&self) -> bool {
-        self.modes.tracking_raw || self.modes.tracking || self.modes.testing || self.windows.plots
+        self.imaging.open
+            || self.modes.tracking_raw
+            || self.modes.tracking
+            || self.modes.testing
+            || self.windows.plots
     }
 
     fn has_background_work(&self) -> bool {
         let running = self.tasks.stream.handle.is_some()
             || self.tasks.raw_frames.handle.is_some()
-            || self.tasks.save.is_some();
+            || self.tasks.save.is_some()
+            || self.imaging.busy();
         #[cfg(feature = "bevy")]
         let running = running || self.bevy.is_running();
         running
@@ -462,11 +493,20 @@ impl VisionTool {
             if ui.button("Plots").clicked() {
                 self.windows.plots = true;
             }
+            if ui
+                .add_enabled(connected, egui::Button::new("Image / camera calibration"))
+                .clicked()
+            {
+                self.imaging.open = true;
+            }
+            if self.config.is_synthetic() {
+                ui.colored_label(egui::Color32::YELLOW, "SYNTHETIC SIMULATOR — not hardware");
+            }
             #[cfg(feature = "bevy")]
             if ui.button("Launch Bevy").clicked()
                 && let Err(error) = self.bevy.open()
             {
-                self.notice = Some(format!("Could not open the 3D viewer: {error:#}"));
+                self.notice = Some(format!("Could not open the 3D viewer: {error:#?}"));
             }
         });
 
@@ -610,6 +650,10 @@ impl VisionTool {
             self.windows.plots = !close;
         }
 
+        if self.config.take_capture_request() {
+            self.imaging.open = true;
+        }
+
         if self.modes.testing {
             let runner = &self.runner;
             let exit = ctx.show_viewport_immediate(
@@ -633,13 +677,36 @@ impl VisionTool {
 }
 
 impl eframe::App for VisionTool {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Err(error) = self.imaging.shutdown() {
+            error!("Image workflow shutdown failed: {error:#?}");
+        }
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.config.poll_events();
+        #[cfg(feature = "sim")]
+        if let Some(simulator) = &self.simulator {
+            let snapshot = simulator.handle().snapshot();
+            if snapshot.unit_usb
+                && snapshot.unit_usb_generation != self.simulator_generation
+                && !self.config.busy()
+            {
+                self.simulator_generation = snapshot.unit_usb_generation;
+                self.config.connect_simulated(simulator.connect_unit_usb());
+            }
+            ctx.request_repaint_after(BACKGROUND_POLL_INTERVAL);
+        }
         self.sync_config();
+        self.imaging.poll(
+            self.config.device_revision(),
+            self.config.device_identity(),
+            ctx,
+        );
         self.sync_tasks();
         #[cfg(feature = "bevy")]
         if let Err(error) = self.bevy.poll() {
-            self.notice = Some(format!("3D viewer stopped: {error:#}"));
+            self.notice = Some(format!("3D viewer stopped: {error:#?}"));
         }
         if self.has_live_view() {
             ctx.request_repaint();
@@ -654,13 +721,38 @@ impl eframe::App for VisionTool {
         let connected = self.connected();
         egui::CentralPanel::default().show(ui, |ui| {
             self.show_notice(ui);
+            if self.imaging.reboot_required() && !self.imaging.open {
+                ui.colored_label(ui.visuals().warn_fg_color, "Legacy image mode: tracking has NOT been restored. Reopen Image / camera calibration to stop/reboot, then reconnect, or fully power-cycle the unit.");
+            }
             self.show_controls(ui, connected);
             if self.modes.testing {
                 self.show_dataset(ui);
             } else {
                 ui.add_space(4.0);
             }
-            self.show_views(ui);
+            if self.imaging.open && ui.button("Back to tracking").clicked() {
+                self.imaging.open = false;
+                self.imaging.control().stop();
+            }
+            if self.imaging.open {
+                // Keep calibration in the main surface: immediate native child viewports
+                // stop receiving UI passes when Wayland withholds the occluded parent's frames.
+                let device = self.config.device();
+                let (two_cameras, scale) = self.config.image_capabilities();
+                let busy = self.config.busy() || self.modes.recording;
+                let action = egui::ScrollArea::vertical()
+                    .show(ui, |ui| {
+                        self.imaging
+                            .show(ui, device.as_ref(), two_cameras, scale, busy)
+                    })
+                    .inner;
+                if let Some(action) = action {
+                    self.config.apply_calibration(action);
+                    self.windows.config = true;
+                }
+            } else {
+                self.show_views(ui);
+            }
         });
         self.show_child_windows(&ui.ctx().clone());
     }
@@ -702,7 +794,7 @@ async fn write_datapoints(frames: Vec<TestFrame>) -> Result<()> {
         return Ok(());
     };
     let path = with_extension(file.path().to_owned(), "csv");
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<()> {
         let mut writer = csv::Writer::from_path(&path)
             .with_context(|| format!("creating {}", path.display()))?;
         for frame in frames {
@@ -710,7 +802,8 @@ async fn write_datapoints(frames: Vec<TestFrame>) -> Result<()> {
         }
         writer
             .flush()
-            .with_context(|| format!("writing {}", path.display()))
+            .with_context(|| format!("writing {}", path.display()))?;
+        Ok(())
     })
     .await
     .context("datapoint writer failed")?
@@ -725,9 +818,10 @@ async fn write_recording(config: GeneralSettings, packets: Vec<(u128, PacketData
         return Ok(());
     };
     let path = with_extension(file.path().to_owned(), "bin");
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<()> {
         let bytes = encode_recording(&config, &packets).context("encoding packets")?;
-        std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))
+        std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
+        Ok(())
     })
     .await
     .context("recording writer failed")?
@@ -820,7 +914,7 @@ mod tests {
     async fn ended_subscription_reports_failure_and_releases_slot() {
         let mut task = LiveTask::default();
         task.sync(true, || {
-            tokio::spawn(async { Err(anyhow!("camera disconnected")) })
+            tokio::spawn(async { Err(eros::error!("camera disconnected")) })
         })
         .unwrap();
         tokio::task::yield_now().await;

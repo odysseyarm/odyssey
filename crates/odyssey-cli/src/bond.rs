@@ -1,6 +1,7 @@
 //! `bond`: writes a matching bond entry to a dongle and a device by hand.
 
 use clap::Args;
+use eros::Context as _;
 use odyssey_usb::device::{MuxDevice, VmDevice};
 
 use crate::usb_discovery::{format_bd_addr, list_muxes, list_vm_usb_devices};
@@ -19,7 +20,7 @@ pub(crate) struct BondArgs {
     pub device: Option<usize>,
 }
 
-async fn list_vm_devices() -> Result<Vec<nusb::DeviceInfo>, String> {
+async fn list_vm_devices() -> eros::Result<Vec<nusb::DeviceInfo>> {
     let mut devices = Vec::new();
     for info in list_vm_usb_devices()? {
         match VmDevice::probe_transport_mode(&info).await {
@@ -36,57 +37,55 @@ async fn list_vm_devices() -> Result<Vec<nusb::DeviceInfo>, String> {
 
 /// The first 6 bytes of the FICR device ID, parsed from the USB serial number. The
 /// serial is 16 uppercase hex chars encoding 8 bytes, low word then high word.
-fn bd_addr_from_serial(serial: &str) -> Result<[u8; 6], String> {
+fn bd_addr_from_serial(serial: &str) -> eros::Result<[u8; 6]> {
     if serial.len() < 12 {
-        return Err(format!(
-            "Serial number too short to derive BD address: {serial}"
-        ));
+        eros::bail!("Serial number too short to derive BD address: {serial}");
     }
     if !serial.is_ascii() {
-        return Err("USB serial number is not ASCII hexadecimal".to_string());
+        eros::bail!("USB serial number is not ASCII hexadecimal");
     }
     let mut addr = [0u8; 6];
     for i in 0..6 {
         addr[i] = u8::from_str_radix(&serial[i * 2..i * 2 + 2], 16)
-            .map_err(|e| format!("Failed to parse serial number byte {i}: {e}"))?;
+            .with_context(|| format!("Failed to parse serial number byte {i}"))?;
     }
     Ok(addr)
 }
 
-async fn pick_mux(index: Option<usize>) -> Result<(MuxDevice, [u8; 6]), String> {
+async fn pick_mux(index: Option<usize>) -> eros::Result<(MuxDevice, [u8; 6])> {
     let muxes = list_muxes()?;
     if muxes.is_empty() {
-        return Err("No dongle found (VID:0x1915 PID:0x5212)".to_string());
+        eros::bail!("No dongle found (VID:0x1915 PID:0x5212)");
     }
     let info = match index {
         Some(i) => muxes
             .into_iter()
             .nth(i)
-            .ok_or_else(|| format!("Dongle index {i} not found"))?,
+            .ok_or_else(|| eros::error!("Dongle index {i} not found"))?,
         None => {
             if muxes.len() > 1 {
-                return Err(format!(
+                eros::bail!(
                     "Multiple dongles found ({}). Specify one with --mux <index>.",
                     muxes.len()
-                ));
+                );
             }
             muxes
                 .into_iter()
                 .next()
-                .ok_or_else(|| "No dongle found".to_string())?
+                .ok_or_else(|| eros::error!("No dongle found"))?
         }
     };
     let serial = info
         .serial_number()
-        .ok_or_else(|| "Dongle has no USB serial number".to_string())?;
+        .ok_or_else(|| eros::error!("Dongle has no USB serial number"))?;
     let dongle_bd_addr = bd_addr_from_serial(serial)?;
     let mux = MuxDevice::connect_usb(info)
         .await
-        .map_err(|e| format!("Failed to connect to dongle: {e}"))?;
+        .context("Failed to connect to dongle")?;
     Ok((mux, dongle_bd_addr))
 }
 
-async fn pick_device(index: Option<usize>) -> Result<VmDevice, String> {
+async fn pick_device(index: Option<usize>) -> eros::Result<VmDevice> {
     // Keep explicit indices aligned with `device list-devices`, even when an
     // earlier device cannot be probed.
     let devs = if index.is_some() {
@@ -95,28 +94,28 @@ async fn pick_device(index: Option<usize>) -> Result<VmDevice, String> {
         list_vm_devices().await?
     };
     if devs.is_empty() {
-        return Err("No device found.".to_string());
+        eros::bail!("No device found.");
     }
     let info = match index {
         Some(i) => devs
             .into_iter()
             .nth(i)
-            .ok_or_else(|| format!("Device index {i} not found"))?,
+            .ok_or_else(|| eros::error!("Device index {i} not found"))?,
         None => {
             if devs.len() > 1 {
-                return Err(format!(
+                eros::bail!(
                     "Multiple devices found ({}). Specify one with --device <index>.",
                     devs.len()
-                ));
+                );
             }
             devs.into_iter()
                 .next()
-                .ok_or_else(|| "No device found".to_string())?
+                .ok_or_else(|| eros::error!("No device found"))?
         }
     };
-    VmDevice::connect_usb_any_mode(info)
+    Ok(VmDevice::connect_usb_any_mode(info)
         .await
-        .map_err(|e| format!("Failed to connect to device: {e}"))
+        .context("Failed to connect to device")?)
 }
 
 fn bond_entry(
@@ -133,7 +132,7 @@ fn bond_entry(
     }
 }
 
-pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
+pub(crate) async fn handle_bond(args: BondArgs) -> eros::Result<()> {
     use rand::RngCore as _;
 
     let (mux, dongle_bd_addr) = pick_mux(args.mux).await?;
@@ -143,7 +142,7 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
     let device_bd_addr: [u8; 6] = device
         .read_uuid()
         .await
-        .map_err(|e| format!("Failed to read device UUID: {e}"))?;
+        .context("Failed to read device UUID")?;
 
     println!("Dongle BD addr: {}", format_bd_addr(&dongle_bd_addr));
     println!("Device BD addr: {}", format_bd_addr(&device_bd_addr));
@@ -164,14 +163,14 @@ pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
     println!("Sending bond to dongle...");
     mux.add_bond(dongle_entry)
         .await
-        .map_err(|e| format!("Failed to add bond to dongle: {e}"))?;
+        .context("Failed to add bond to dongle")?;
     println!("Dongle: bond added");
 
     println!("Sending bond to device...");
     device
         .add_bond(device_entry)
         .await
-        .map_err(|e| format!("Failed to add bond to device: {e}"))?;
+        .context("Failed to add bond to device")?;
     println!("Device: bond added");
 
     println!(

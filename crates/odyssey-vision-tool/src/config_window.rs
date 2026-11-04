@@ -5,9 +5,9 @@ use std::fs::File;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result};
 use backon::{ConstantBuilder, Retryable as _};
 use eframe::egui;
+use eros::{Context as _, Result};
 use nusb::{DeviceId, DeviceInfo};
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::{GeneralSettings, MuxDevice, ProductId, VmConnectionInfo, VmDevice};
@@ -17,6 +17,7 @@ use pag_sensor_settings::{PagAction, PagSensorSettingsForm};
 use paj_sensor_settings::PajSensorSettingsForm;
 use parking_lot::Mutex;
 
+use crate::imaging::{ApplyCalibration, ImageControl};
 use crate::mot_runner::MotRunner;
 
 /// Width of the label column shared by every form grid, so tabs line up.
@@ -28,8 +29,6 @@ const FLASH_DURATION: Duration = Duration::from_secs(3);
 const SUCCESS_COLOR: egui::Color32 = egui::Color32::from_rgb(0x6c, 0xc0, 0x7a);
 /// USB vendor ID of every Odyssey device.
 const VENDOR_ID: u16 = 0x1915;
-const SIMULATOR_LABEL_PREFIX: &str = "Simulator @ ";
-const M4HUB_LABEL_PREFIX: &str = "M4Hub @ ";
 
 /// The configuration window: a device picker, one tab per settings group, and
 /// the actions that write the settings to the device.
@@ -43,12 +42,10 @@ pub struct ConfigWindow {
     task_waker: std::task::Waker,
     events: mpsc::Receiver<Event>,
 
-    simulator_addr: Option<String>,
-    udp_addr: Option<String>,
     /// Connectable devices found by the last scan.
     connections: Vec<VmConnectionInfo>,
     muxes: Vec<ExistingMux>,
-    /// Discovered devices, then optional simulator and M4Hub entries.
+    /// Devices discovered on USB or through a dongle.
     choices: Vec<DeviceChoice>,
     selected: Option<usize>,
     /// Identifies the latest connection attempt so that a slow, superseded
@@ -60,6 +57,9 @@ pub struct ConfigWindow {
     device_revision: u64,
     config_revision: u64,
     applied_accel_config: AccelConfig,
+    image_control: Option<ImageControl>,
+    capture_requested: bool,
+    synthetic: bool,
 
     tab: Tab,
     general: GeneralSettingsForm,
@@ -82,13 +82,12 @@ impl std::fmt::Debug for ConfigWindow {
 }
 
 impl ConfigWindow {
-    /// Creates the window and starts scanning for devices.
+    /// Creates the window; simulation explicitly disables physical discovery.
     pub fn new(
-        simulator_addr: Option<String>,
-        udp_addr: Option<String>,
         runner: Arc<Mutex<MotRunner>>,
         runtime: tokio::runtime::Handle,
         ctx: egui::Context,
+        discover_hardware: bool,
     ) -> Self {
         let (tx, events) = mpsc::channel();
         let sender = Arc::new(EventSender { tx, ctx });
@@ -98,8 +97,6 @@ impl ConfigWindow {
             task_waker: std::task::Waker::from(Arc::clone(&sender)),
             sender,
             events,
-            simulator_addr,
-            udp_addr,
             connections: Vec::new(),
             muxes: Vec::new(),
             choices: Vec::new(),
@@ -111,6 +108,9 @@ impl ConfigWindow {
             device_revision: 0,
             config_revision: 0,
             applied_accel_config: AccelConfig::default(),
+            image_control: None,
+            capture_requested: false,
+            synthetic: false,
             tab: Tab::General,
             general: GeneralSettingsForm::default(),
             wf: PajSensorSettingsForm::new(Port::Wf),
@@ -120,7 +120,9 @@ impl ConfigWindow {
             flash: None,
         };
         window.rebuild_choices();
-        window.refresh_devices();
+        if discover_hardware {
+            window.refresh_devices();
+        }
         window
     }
 
@@ -134,6 +136,9 @@ impl ConfigWindow {
     /// disconnect, or switching to another device.
     pub fn device_revision(&self) -> u64 {
         self.device_revision
+    }
+    pub(crate) fn device_identity(&self) -> Option<[u8; 6]> {
+        self.device.as_ref().map(|_| self.general.device_uuid)
     }
 
     /// Increments when the tracker adopts settings from a connect, reload or apply.
@@ -150,6 +155,95 @@ impl ConfigWindow {
     /// pending device reads/writes and their UI-thread completion have finished.
     pub fn busy(&self) -> bool {
         self.operation.is_some()
+    }
+
+    pub(crate) fn set_image_control(&mut self, control: ImageControl) {
+        self.image_control = Some(control);
+    }
+
+    pub(crate) fn take_capture_request(&mut self) -> bool {
+        std::mem::take(&mut self.capture_requested)
+    }
+
+    /// Camera availability and the native-image to tracking coordinate scale.
+    pub(crate) fn image_capabilities(&self) -> (bool, (f64, f64)) {
+        if self.synthetic {
+            return if matches!(
+                self.general.product(),
+                Some(ProductId::AtsVm | ProductId::AtsLite)
+            ) {
+                (true, (640.0 / 98.0, 480.0 / 98.0))
+            } else {
+                (false, (2.0, 2.0))
+            };
+        }
+        match self.general.product() {
+            Some(ProductId::AtsVm | ProductId::AtsLite) => (true, (4094.0 / 97.0, 4094.0 / 97.0)),
+            _ => (false, (64.0, 64.0)),
+        }
+    }
+
+    pub(crate) fn is_synthetic(&self) -> bool {
+        self.synthetic
+    }
+
+    #[cfg(feature = "sim")]
+    pub(crate) fn connect_simulated(&mut self, device: VmDevice) {
+        self.synthetic = true;
+        self.begin_operation(Operation::Connect);
+        let attempt = self.connection_attempt;
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            let result = match load_settings(&device).await {
+                Ok(settings) => OperationResult::Connected {
+                    device,
+                    settings: Box::new(settings),
+                },
+                Err(error) => OperationResult::Failed(Notice::error(
+                    "Simulator connection failed",
+                    format!("{error:#?}"),
+                )),
+            };
+            sender.send(Event::Completed { attempt, result });
+        }));
+    }
+
+    /// Adopt fitted JSON through the same importer and apply/flash path as the
+    /// existing configuration forms; the runner receives accepted settings.
+    pub(crate) fn apply_calibration(&mut self, calibration: ApplyCalibration) {
+        if self.busy() || self.device.is_none() || self.runner.lock().record_packets {
+            return;
+        }
+        let parsed = (|| -> Result<()> {
+            if let Some(json) = calibration.nf {
+                self.general.nf_intrinsics =
+                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(
+                        json.as_bytes(),
+                    )?;
+            }
+            if let Some(json) = calibration.wf {
+                self.general.wf_intrinsics =
+                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(
+                        json.as_bytes(),
+                    )?;
+            }
+            if let Some(json) = calibration.stereo {
+                self.general.stereo_iso =
+                    odyssey_common::get_isometry_from_opencv_stereo_calibration_json(
+                        json.as_bytes(),
+                    )?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = parsed {
+            self.notify(Notice::error("Invalid calibration", format!("{error:#?}")));
+            return;
+        }
+        self.commit(if calibration.flash {
+            Commit::Save
+        } else {
+            Commit::Apply
+        });
     }
 
     /// Draws the configuration window.
@@ -210,7 +304,7 @@ impl ConfigWindow {
                     }
                     Err(error) => self.notify(Notice::error(
                         "Failed to list USB devices",
-                        format!("{error:#}"),
+                        format!("{error:#?}"),
                     )),
                 }
             }
@@ -223,6 +317,9 @@ impl ConfigWindow {
                     OperationResult::Connected { device, settings } => {
                         self.install(*settings);
                         self.set_device(Some(device));
+                        if let Some(control) = &self.image_control {
+                            control.recovered();
+                        }
                     }
                     OperationResult::Reloaded(settings) => {
                         self.install(*settings);
@@ -314,20 +411,7 @@ impl ConfigWindow {
         for connection in &self.connections {
             self.choices.push(DeviceChoice {
                 label: display_for_vm_connection(connection),
-                connection: Some(connection.clone()),
-            });
-        }
-        // The simulator and M4Hub entries have no connection path.
-        if let Some(addr) = &self.simulator_addr {
-            self.choices.push(DeviceChoice {
-                label: format!("{SIMULATOR_LABEL_PREFIX}{addr}"),
-                connection: None,
-            });
-        }
-        if let Some(addr) = &self.udp_addr {
-            self.choices.push(DeviceChoice {
-                label: format!("{M4HUB_LABEL_PREFIX}{addr}"),
-                connection: None,
+                connection: connection.clone(),
             });
         }
         self.selected =
@@ -364,24 +448,37 @@ impl ConfigWindow {
             let selected_text = self
                 .selected
                 .and_then(|index| self.choices.get(index))
-                .map_or("Select a device", |choice| choice.label.as_str());
-            ui.add_enabled_ui(!recording && self.operation.is_none(), |ui| {
-                egui::ComboBox::from_id_salt("config_device")
-                    .width(360.0)
-                    .selected_text(selected_text)
-                    .show_ui(ui, |ui| {
-                        for (index, choice) in self.choices.iter().enumerate() {
-                            let is_selected = self.selected == Some(index);
-                            if ui.selectable_label(is_selected, &choice.label).clicked()
-                                && (!is_selected || self.device.is_none())
-                            {
-                                picked = Some(index);
+                .map_or(
+                    if self.synthetic {
+                        "Synthetic simulator (USB protocol)"
+                    } else {
+                        "Select a device"
+                    },
+                    |choice| choice.label.as_str(),
+                );
+            ui.add_enabled_ui(
+                !self.synthetic && !recording && self.operation.is_none(),
+                |ui| {
+                    egui::ComboBox::from_id_salt("config_device")
+                        .width(360.0)
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            for (index, choice) in self.choices.iter().enumerate() {
+                                let is_selected = self.selected == Some(index);
+                                if ui.selectable_label(is_selected, &choice.label).clicked()
+                                    && (!is_selected || self.device.is_none())
+                                {
+                                    picked = Some(index);
+                                }
                             }
-                        }
-                    });
-            });
+                        });
+                },
+            );
             if ui
-                .add_enabled(self.operation.is_none(), egui::Button::new("Refresh"))
+                .add_enabled(
+                    !self.synthetic && self.operation.is_none(),
+                    egui::Button::new("Refresh"),
+                )
                 .clicked()
             {
                 self.refresh_devices();
@@ -497,22 +594,8 @@ impl ConfigWindow {
         if let Some(action) = general_action {
             self.general_action(action);
         }
-        if let PagAction::CaptureImage = pag_action
-            && let Some(device) = self.device.clone()
-        {
-            self.begin_operation(Operation::Capture);
-            let sender = Arc::clone(&self.sender);
-            let attempt = self.connection_attempt;
-            self.task = Some(self.runtime.spawn(async move {
-                let result = match PagSensorSettingsForm::capture_image(&device).await {
-                    Ok(()) => OperationResult::Finished,
-                    Err(error) => OperationResult::Failed(Notice::error(
-                        "Failed to capture image",
-                        format!("{error:#}"),
-                    )),
-                };
-                sender.send(Event::Completed { attempt, result });
-            }));
+        if let PagAction::CaptureImage = pag_action {
+            self.capture_requested = true;
         }
     }
 
@@ -535,6 +618,10 @@ impl ConfigWindow {
         {
             return;
         }
+        self.synthetic = false;
+        if let Some(control) = &self.image_control {
+            control.stop();
+        }
         self.selected = Some(index);
         self.general.clear();
         self.wf.clear();
@@ -545,13 +632,14 @@ impl ConfigWindow {
         self.begin_operation(Operation::Connect);
 
         let attempt = self.connection_attempt;
-        let target = self
-            .choices
-            .get(index)
-            .and_then(|choice| choice.connection.clone());
+        let target = self.choices[index].connection.clone();
         self.flash = None;
         let sender = Arc::clone(&self.sender);
+        let image_control = self.image_control.clone();
         self.task = Some(self.runtime.spawn(async move {
+            if let Some(control) = image_control {
+                control.stop_and_wait().await;
+            }
             let result = match connect(old_device, target).await {
                 Ok((device, settings)) => OperationResult::Connected {
                     device,
@@ -559,7 +647,7 @@ impl ConfigWindow {
                 },
                 Err(error) => OperationResult::Failed(Notice::error(
                     "Failed to connect",
-                    format!("{error:#}"),
+                    format!("{error:#?}"),
                 )),
             };
             sender.send(Event::Completed { attempt, result });
@@ -570,6 +658,14 @@ impl ConfigWindow {
     /// [`Commit::Save`] also flashes them.
     fn commit(&mut self, commit: Commit) {
         if self.operation.is_some() || self.runner.lock().record_packets {
+            return;
+        }
+        if self
+            .image_control
+            .as_ref()
+            .is_some_and(ImageControl::reboot_required)
+        {
+            self.notify(Notice::error("Legacy reboot required", "Stop pixels, reboot/power-cycle, then reconnect/reselect this device before applying or flashing settings. Captures and fitted calibration are retained."));
             return;
         }
         let Some(device) = self.device.clone() else {
@@ -591,8 +687,15 @@ impl ConfigWindow {
             Commit::Save => Operation::Save,
         });
         let attempt = self.connection_attempt;
+        let image_control = self.image_control.clone();
+        if let Some(control) = &image_control {
+            control.stop();
+        }
         let sender = Arc::clone(&self.sender);
         self.task = Some(self.runtime.spawn(async move {
+            if let Some(control) = image_control {
+                control.stop_and_wait().await;
+            }
             let result = match Box::pin(apply_settings(&device, &general, &sensors)).await {
                 Err(notice) => OperationResult::Failed(notice),
                 Ok(config) => {
@@ -624,6 +727,14 @@ impl ConfigWindow {
         if self.operation.is_some() || self.runner.lock().record_packets {
             return;
         }
+        if self
+            .image_control
+            .as_ref()
+            .is_some_and(ImageControl::reboot_required)
+        {
+            self.notify(Notice::error("Legacy reboot required", "Reboot/power-cycle and reconnect/reselect the device before reloading sensor settings."));
+            return;
+        }
         let Some(device) = self.device.clone() else {
             return;
         };
@@ -635,7 +746,7 @@ impl ConfigWindow {
                 Ok(settings) => OperationResult::Reloaded(Box::new(settings)),
                 Err(error) => OperationResult::Failed(Notice::error(
                     "Failed to reload settings",
-                    format!("{error:#}"),
+                    format!("{error:#?}"),
                 )),
             };
             sender.send(Event::Completed { attempt, result });
@@ -678,20 +789,17 @@ impl ConfigWindow {
             }),
             Document::NfCalibration => self.upload_file(Subject::Calibration, |file| {
                 Ok(Upload::NfIntrinsics(
-                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(file)
-                        .map_err(boxed_error)?,
+                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(file)?,
                 ))
             }),
             Document::WfCalibration => self.upload_file(Subject::Calibration, |file| {
                 Ok(Upload::WfIntrinsics(
-                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(file)
-                        .map_err(boxed_error)?,
+                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(file)?,
                 ))
             }),
             Document::StereoCalibration => self.upload_file(Subject::Calibration, |file| {
                 Ok(Upload::StereoIso(
-                    odyssey_common::get_isometry_from_opencv_stereo_calibration_json(file)
-                        .map_err(boxed_error)?,
+                    odyssey_common::get_isometry_from_opencv_stereo_calibration_json(file)?,
                 ))
             }),
         }
@@ -714,22 +822,29 @@ impl ConfigWindow {
             Document::NfCalibration => {
                 let intrinsics = self.general.nf_intrinsics.clone();
                 self.download_file(Subject::Calibration, move |file| {
-                    odyssey_common::write_opencv_minimal_camera_calibration_json(&intrinsics, file)
-                        .map_err(boxed_error)
+                    Ok(
+                        odyssey_common::write_opencv_minimal_camera_calibration_json(
+                            &intrinsics,
+                            file,
+                        )?,
+                    )
                 });
             }
             Document::WfCalibration => {
                 let intrinsics = self.general.wf_intrinsics.clone();
                 self.download_file(Subject::Calibration, move |file| {
-                    odyssey_common::write_opencv_minimal_camera_calibration_json(&intrinsics, file)
-                        .map_err(boxed_error)
+                    Ok(
+                        odyssey_common::write_opencv_minimal_camera_calibration_json(
+                            &intrinsics,
+                            file,
+                        )?,
+                    )
                 });
             }
             Document::StereoCalibration => {
                 let iso = self.general.stereo_iso;
                 self.download_file(Subject::Calibration, move |file| {
-                    odyssey_common::write_opencv_minimal_stereo_calibration_json(&iso, file)
-                        .map_err(boxed_error)
+                    Ok(odyssey_common::write_opencv_minimal_stereo_calibration_json(&iso, file)?)
                 });
             }
         }
@@ -760,10 +875,12 @@ impl ConfigWindow {
             let result = tokio::task::spawn_blocking(move || {
                 File::open(&path)
                     .with_context(|| format!("Failed to open {}", path.display()))
+                    .map_err(Into::into)
                     .and_then(read)
             })
             .await
             .context("File reader task failed")
+            .map_err(Into::into)
             .and_then(|result| result);
             let result = match result {
                 Ok(upload) => OperationResult::Uploaded {
@@ -772,7 +889,7 @@ impl ConfigWindow {
                 },
                 Err(error) => OperationResult::Failed(Notice::error(
                     format!("Failed to upload {}", subject.noun()),
-                    format!("{error:#}"),
+                    format!("{error:#?}"),
                 )),
             };
             sender.send(Event::Completed { attempt, result });
@@ -805,10 +922,12 @@ impl ConfigWindow {
             let result = tokio::task::spawn_blocking(move || {
                 File::create(&path)
                     .with_context(|| format!("Failed to create {}", path.display()))
+                    .map_err(Into::into)
                     .and_then(write)
             })
             .await
             .context("File writer task failed")
+            .map_err(Into::into)
             .and_then(|result| result);
             let notice = match result {
                 Ok(()) => Notice::info(
@@ -816,7 +935,7 @@ impl ConfigWindow {
                     format!("Successfully downloaded {noun}"),
                 ),
                 Err(error) => {
-                    Notice::error(format!("Failed to download {noun}"), format!("{error:#}"))
+                    Notice::error(format!("Failed to download {noun}"), format!("{error:#?}"))
                 }
             };
             sender.send(Event::Completed {
@@ -857,23 +976,20 @@ impl Tab {
 /// One entry of the device picker.
 struct DeviceChoice {
     label: String,
-    /// `None` for the simulator and M4Hub entries, which cannot be connected.
-    connection: Option<VmConnectionInfo>,
+    connection: VmConnectionInfo,
 }
 
 #[derive(PartialEq, Eq)]
 enum DeviceKey {
     Usb(DeviceId),
     Mux([u8; 6]),
-    Unsupported(String),
 }
 
 impl DeviceChoice {
     fn key(&self) -> DeviceKey {
         match &self.connection {
-            Some(VmConnectionInfo::DirectUsb(info)) => DeviceKey::Usb(info.id()),
-            Some(VmConnectionInfo::ViaMux { device_addr, .. }) => DeviceKey::Mux(*device_addr),
-            None => DeviceKey::Unsupported(self.label.clone()),
+            VmConnectionInfo::DirectUsb(info) => DeviceKey::Usb(info.id()),
+            VmConnectionInfo::ViaMux { device_addr, .. } => DeviceKey::Mux(*device_addr),
         }
     }
 }
@@ -889,7 +1005,6 @@ enum Operation {
     Reload,
     Upload,
     Download,
-    Capture,
 }
 
 impl Operation {
@@ -902,7 +1017,6 @@ impl Operation {
             Self::Reload => "Reloading…",
             Self::Upload => "Importing…",
             Self::Download => "Exporting…",
-            Self::Capture => "Capturing…",
         }
     }
 }
@@ -1078,7 +1192,7 @@ enum SensorSettings {
 }
 
 impl SensorSettings {
-    fn validate(&self) -> Result<(), Notice> {
+    fn validate(&self) -> std::result::Result<(), Notice> {
         let mut errors = vec![];
         match self {
             Self::Vm { wf, nf } => {
@@ -1099,25 +1213,25 @@ impl SensorSettings {
     }
 
     /// Run `validate()` first.
-    async fn apply(&self, device: &VmDevice) -> Result<(), Notice> {
+    async fn apply(&self, device: &VmDevice) -> std::result::Result<(), Notice> {
         match self {
             Self::Vm { wf, nf } => {
                 Box::pin(wf.apply(device)).await.map_err(|e| {
-                    Notice::error("Failed to apply wide field settings", format!("{e:#}"))
+                    Notice::error("Failed to apply wide field settings", format!("{e:#?}"))
                 })?;
                 Box::pin(nf.apply(device)).await.map_err(|e| {
-                    Notice::error("Failed to apply near field settings", format!("{e:#}"))
+                    Notice::error("Failed to apply near field settings", format!("{e:#?}"))
                 })
             }
             Self::Pro(pag) => Box::pin(pag.apply(device))
                 .await
-                .map_err(|e| Notice::error("Failed to apply PAG settings", format!("{e:#}"))),
+                .map_err(|e| Notice::error("Failed to apply PAG settings", format!("{e:#?}"))),
             Self::Unsupported => Ok(()),
         }
     }
 }
 
-fn check_validation(errors: &[String], title: &str) -> Result<(), Notice> {
+fn check_validation(errors: &[String], title: &str) -> std::result::Result<(), Notice> {
     if errors.is_empty() {
         Ok(())
     } else {
@@ -1129,12 +1243,12 @@ async fn apply_settings(
     device: &VmDevice,
     general: &GeneralSettingsForm,
     sensors: &SensorSettings,
-) -> Result<GeneralSettings, Notice> {
+) -> std::result::Result<GeneralSettings, Notice> {
     Box::pin(sensors.apply(device))
         .await
         .map_err(Notice::partial_apply)?;
     general.apply(device).await.map_err(|e| {
-        Notice::error("Failed to apply general settings", format!("{e:#}")).partial_apply()
+        Notice::error("Failed to apply general settings", format!("{e:#?}")).partial_apply()
     })
 }
 
@@ -1255,41 +1369,39 @@ impl GeneralSettingsForm {
 
         let config = match retry(|| device.read_all_config(), timeout, 3).await {
             Some(Ok(cfg)) => cfg,
-            Some(Err(e)) => return Err(e),
+            Some(Err(e)) => return Err(e.into()),
             None => {
-                return Err(anyhow::anyhow!(
+                return Err(eros::error!(
                     "Timeout reading device config after 3 attempts"
                 ));
             }
         };
 
         if config.accel_config.accel_odr == 0 {
-            return Err(anyhow::anyhow!(
+            return Err(eros::error!(
                 "Device reported a zero accelerometer output data rate"
             ));
         }
 
         let uuid_prop = match retry(|| device.read_prop(PropKind::Uuid), timeout, 3).await {
             Some(Ok(p)) => p,
-            Some(Err(e)) => return Err(e),
-            None => return Err(anyhow::anyhow!("Timeout reading UUID after 3 attempts")),
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(eros::error!("Timeout reading UUID after 3 attempts")),
         };
         let product_id_prop =
             match retry(|| device.read_prop(PropKind::ProductId), timeout, 3).await {
                 Some(Ok(p)) => p,
-                Some(Err(e)) => return Err(e),
+                Some(Err(e)) => return Err(e.into()),
                 None => {
-                    return Err(anyhow::anyhow!(
-                        "Timeout reading ProductId after 3 attempts"
-                    ));
+                    return Err(eros::error!("Timeout reading ProductId after 3 attempts"));
                 }
             };
 
         let Props::Uuid(uuid) = uuid_prop else {
-            return Err(anyhow::anyhow!("Unexpected prop variant for Uuid"));
+            return Err(eros::error!("Unexpected prop variant for Uuid"));
         };
         let Props::ProductId(product_id) = product_id_prop else {
-            return Err(anyhow::anyhow!("Unexpected prop variant for ProductId"));
+            return Err(eros::error!("Unexpected prop variant for ProductId"));
         };
         let form = Self {
             device_uuid: uuid,
@@ -1426,7 +1538,7 @@ fn transfer_buttons(ui: &mut egui::Ui, document: Document) -> Option<GeneralActi
 /// Connects to `target` after releasing `old_device`, and loads its settings.
 async fn connect(
     old_device: Option<VmDevice>,
-    target: Option<VmConnectionInfo>,
+    target: VmConnectionInfo,
 ) -> Result<(VmDevice, LoadedSettings)> {
     // Stop the old device's streams before the new connection opens.
     if let Some(old_device) = old_device {
@@ -1435,11 +1547,6 @@ async fn connect(
         tracing::debug!("Previous device cleaned up (slot reservation prevents conflicts)");
     }
 
-    let Some(target) = target else {
-        return Err(anyhow::anyhow!(
-            "Simulator and M4Hub connections are not supported"
-        ));
-    };
     tracing::debug!("Attempting to connect to device...");
     let device = target.connect().await.inspect_err(|e| {
         tracing::error!("Device connection failed: {e:?}");
@@ -1623,16 +1730,16 @@ where
 }
 
 /// Like `retry`, but a timeout becomes an error instead of `None`, and the
-/// operation's own error is converted to `anyhow::Error`.
+/// operation's own error is converted to an erased eros error.
 async fn retry_checked<F, G, T, E>(op: F, timeout: Duration, limit: usize) -> Result<T>
 where
     F: FnMut() -> G,
     G: Future<Output = std::result::Result<T, E>>,
-    E: Into<anyhow::Error>,
+    E: Into<eros::ErrorUnion>,
 {
     match retry(op, timeout, limit).await {
         Some(result) => result.map_err(Into::into),
-        None => Err(anyhow::anyhow!(
+        None => Err(eros::error!(
             "device did not respond after {limit} attempts"
         )),
     }
@@ -1644,7 +1751,7 @@ where
     T: TryFrom<i32>,
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    T::try_from(value).with_context(|| format!("{name} is out of range"))
+    Ok(T::try_from(value).with_context(|| format!("{name} is out of range"))?)
 }
 
 /// One line per validation error, for display in the error banner.
@@ -1693,11 +1800,6 @@ async fn load_sensor_settings(device: &VmDevice, product_id: u16) -> Result<Sens
     }
 }
 
-/// `anyhow` cannot wrap the `Box<dyn Error>` the calibration file helpers return.
-fn boxed_error(error: Box<dyn std::error::Error>) -> anyhow::Error {
-    anyhow::anyhow!("{error}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1719,11 +1821,10 @@ mod tests {
             screen_calibrations: Default::default(),
         }));
         let mut window = ConfigWindow::new(
-            None,
-            None,
             runner,
             runtime.handle().clone(),
             egui::Context::default(),
+            false,
         );
         window.operation = None;
         (window, runtime)
@@ -1823,20 +1924,6 @@ mod tests {
         assert_eq!(window.applied_accel_config(), applied);
         assert_eq!(window.runner.lock().general_config.accel_config, applied);
         assert_eq!(window.config_revision(), 0);
-    }
-
-    #[test]
-    fn recording_prevents_device_switch_even_without_drawing_ui() {
-        let (mut window, _runtime) = window();
-        window.choices.push(DeviceChoice {
-            label: "Simulator".into(),
-            connection: None,
-        });
-        window.runner.lock().record_packets = true;
-        window.select_device(0);
-        assert_eq!(window.selected, None);
-        assert_eq!(window.device_revision(), 0);
-        assert!(!window.busy());
     }
 
     #[test]

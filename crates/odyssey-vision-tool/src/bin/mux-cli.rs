@@ -9,6 +9,7 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use eros::{Context as _, Result};
 use nusb::MaybeFuture as _;
 use odyssey_usb::device::MuxDevice;
 
@@ -57,10 +58,10 @@ enum Commands {
     Clear,
 }
 
-fn list_dongles() -> Result<Vec<nusb::DeviceInfo>, String> {
+fn list_dongles() -> Result<Vec<nusb::DeviceInfo>> {
     let devices: Vec<_> = nusb::list_devices()
         .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
+        .context("Failed to list USB devices")?
         .filter(|info| info.vendor_id() == NORDIC_VENDOR_ID && info.product_id() == MUX_PRODUCT_ID)
         .collect();
 
@@ -71,37 +72,42 @@ fn list_dongles() -> Result<Vec<nusb::DeviceInfo>, String> {
 fn select_dongle(
     devices: Vec<nusb::DeviceInfo>,
     device_index: Option<usize>,
-) -> Result<nusb::DeviceInfo, String> {
+) -> Result<nusb::DeviceInfo> {
     if let Some(idx) = device_index {
-        return devices.get(idx).cloned().ok_or_else(|| {
-            format!("Device index {idx} not found. Use 'devices' command to see available devices.")
-        });
+        return devices
+            .get(idx)
+            .cloned()
+            .with_context(|| {
+                format!(
+                    "Device index {idx} not found. Use 'devices' command to see available devices."
+                )
+            })
+            .map_err(Into::into);
     }
     if devices.len() > 1 {
-        return Err(format!(
+        return Err(eros::error!(
             "Multiple dongles found ({}). Please specify which one to use with --device <index>. Use 'devices' command to list them.",
             devices.len()
         ));
     }
-    devices.into_iter().next().ok_or_else(|| {
-        "No dongle found (VID:0x1915 PID:0x5212). Please connect a dongle.".to_string()
-    })
+    Ok(devices
+        .into_iter()
+        .next()
+        .context("No dongle found (VID:0x1915 PID:0x5212). Please connect a dongle.")?)
 }
 
-async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice, String> {
+async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice> {
     let devices = list_dongles()?;
 
     if devices.is_empty() {
-        return Err(
-            "No dongle found (VID:0x1915 PID:0x5212). Please connect a dongle.".to_string(),
-        );
+        eros::bail!("No dongle found (VID:0x1915 PID:0x5212). Please connect a dongle.");
     }
 
     let device_info = select_dongle(devices, device_index)?;
 
-    MuxDevice::connect_usb(device_info)
+    Ok(MuxDevice::connect_usb(device_info)
         .await
-        .map_err(|e| format!("Failed to connect to dongle: {e}"))
+        .context("Failed to connect to dongle")?)
 }
 
 fn format_device_addr(addr: &[u8; 6]) -> String {
@@ -111,7 +117,7 @@ fn format_device_addr(addr: &[u8; 6]) -> String {
     )
 }
 
-fn cmd_devices() -> Result<(), String> {
+fn cmd_devices() -> Result<()> {
     let devices = list_dongles()?;
 
     if devices.is_empty() {
@@ -136,11 +142,11 @@ fn cmd_devices() -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_list(device: &MuxDevice) -> Result<()> {
     let devices = device
         .request_devices()
         .await
-        .map_err(|e| format!("Failed to get devices: {e}"))?;
+        .context("Failed to get devices")?;
 
     if devices.is_empty() {
         println!("No devices currently connected");
@@ -153,11 +159,11 @@ async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_version(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_version(device: &MuxDevice) -> Result<()> {
     let version = device
         .read_version()
         .await
-        .map_err(|e| format!("Failed to read version: {e}"))?;
+        .context("Failed to read version")?;
 
     println!(
         "Firmware version: {}.{}.{}",
@@ -170,17 +176,17 @@ async fn cmd_version(device: &MuxDevice) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
+async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<()> {
     println!("Starting pairing for {timeout} ms...");
     device
         .start_pairing(timeout)
         .await
-        .map_err(|e| format!("Failed to start pairing: {e}"))?;
+        .context("Failed to start pairing")?;
     println!("Pairing started. Waiting for result...");
     match device
         .wait_pairing_event()
         .await
-        .map_err(|e| format!("Error waiting for pairing event: {e}"))?
+        .context("Error waiting for pairing event")?
     {
         odyssey_usb::device::PairingEvent::Result(bond) => {
             println!(
@@ -189,43 +195,40 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
                 bond.name.as_str()
             );
         }
-        odyssey_usb::device::PairingEvent::Timeout => return Err("Pairing timed out".to_string()),
-        odyssey_usb::device::PairingEvent::Cancelled => return Err("Pairing cancelled".to_string()),
+        odyssey_usb::device::PairingEvent::Timeout => eros::bail!("Pairing timed out"),
+        odyssey_usb::device::PairingEvent::Cancelled => eros::bail!("Pairing cancelled"),
     }
     Ok(())
 }
 
-async fn cmd_pair_cancel(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_pair_cancel(device: &MuxDevice) -> Result<()> {
     println!("Cancelling pairing mode...");
     device
         .cancel_pairing()
         .await
-        .map_err(|e| format!("Failed to cancel pairing: {e}"))?;
+        .context("Failed to cancel pairing")?;
     println!("Pairing cancelled");
     Ok(())
 }
 
-async fn cmd_clear(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_clear(device: &MuxDevice) -> Result<()> {
     println!("Clearing bonds...");
     device
         .clear_bonds()
         .await
-        .map_err(|e| format!("Failed to clear bonds: {e}"))?;
+        .context("Failed to clear bonds")?;
     println!("Bonds cleared");
     Ok(())
 }
 
-async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
+async fn cmd_usb_info(device_index: Option<usize>) -> Result<()> {
     use nusb::transfer::{Bulk, In, Interrupt, Out};
     let devices = list_dongles()?;
     if devices.is_empty() {
-        return Err("No dongle found (VID:0x1915 PID:0x5212)".to_string());
+        eros::bail!("No dongle found (VID:0x1915 PID:0x5212)");
     }
     let device_info = select_dongle(devices, device_index)?;
-    let dev = device_info
-        .open()
-        .await
-        .map_err(|e| format!("Failed to open device: {e}"))?;
+    let dev = device_info.open().await.context("Failed to open device")?;
     println!(
         "Probing interfaces for VID:0x{:04X} PID:0x{:04X}",
         device_info.vendor_id(),
@@ -246,7 +249,7 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
     Ok(())
 }
 
-async fn run(cli: Cli) -> Result<(), String> {
+async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Devices => cmd_devices(),
         Commands::UsbInfo => cmd_usb_info(cli.device).await,
@@ -265,7 +268,7 @@ async fn main() -> ExitCode {
     match run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("Error: {e}");
+            eprintln!("Error: {e:#?}");
             ExitCode::FAILURE
         }
     }

@@ -5,8 +5,8 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context as _, Result};
 use app_dirs2::{AppDataType, get_app_root};
+use eros::{Context as _, Result};
 use nalgebra::{ComplexField, Point3, RealField, Scalar};
 use odyssey_common::MARKER_PATTERN_LEN;
 use odyssey_vision_tool::ScreenInfo;

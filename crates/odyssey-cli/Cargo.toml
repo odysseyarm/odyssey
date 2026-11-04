@@ -1,7 +1,7 @@
 [package]
 name = "odyssey-cli"
-version = "0.1.0"
-edition = "2024"
+version = "0.0.0"
+edition.workspace = true
 
 [lints]
 workspace = true
@@ -14,7 +14,7 @@ path = "src/main.rs"
 argmin = { workspace = true }
 argmin-math = { workspace = true, features = ["vec"] }
 odyssey-usb = { workspace = true }
-odyssey-protocol = { path = "../../crates/odyssey-protocol" }
+odyssey-protocol = { path = "../odyssey-protocol" }
 clap = { workspace = true, features = ["derive"] }
 futures = "0.3.30"
 nalgebra = "0.35"
@@ -22,5 +22,5 @@ nusb = { workspace = true }
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["signal", "io-std", "io-util", "macros", "rt-multi-thread"] }
-anyhow = { workspace = true }
+eros = { workspace = true }
 rand = "0.8"

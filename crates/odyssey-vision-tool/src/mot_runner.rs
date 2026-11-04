@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use ahrs::Ahrs as _;
-use anyhow::{Context as _, Result, bail};
 use arrayvec::ArrayVec;
+use eros::{Context as _, Result, bail};
 use nalgebra::{Isometry3, Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
 use odyssey_protocol::PocMarkersReport;
@@ -309,7 +309,7 @@ async fn accel_stream(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
             runner.push_recorded_packet(PacketData::AccelReport(accel))?;
         }
         let accel_odr = runner.general_config.accel_config.accel_odr;
-        anyhow::ensure!(accel_odr != 0, "accelerometer sample rate must be nonzero");
+        eros::ensure!(accel_odr != 0, "accelerometer sample rate must be nonzero");
 
         // Bias and scale correction from the device's stored IMU config.
         let accel = odyssey_usb::packets::vm::AccelReport {

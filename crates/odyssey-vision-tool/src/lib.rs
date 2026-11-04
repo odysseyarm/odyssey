@@ -1,8 +1,15 @@
+//! Device inspection through discovered USB and dongle links.
+//!
+//! The main executable accepts no device-address arguments. Legacy simulator
+//! and M4Hub picker entries had no transport implementation and are removed;
+//! simulation is an opt-in host transport, not a network address in this picker.
+
 pub mod app;
 #[cfg(feature = "bevy")]
 pub mod bevy_viewer;
 pub mod config_window;
 pub mod consts;
+mod imaging;
 pub mod mot_runner;
 mod mot_state;
 pub mod plots_window;

@@ -3,6 +3,7 @@
 use argmin::core::observers::ObserverMode;
 use argmin::core::{CostFunction, Error, Executor, Gradient, State as _};
 use argmin_observer_slog::SlogLogger;
+use eros::Context as _;
 use futures::StreamExt as _;
 use nalgebra::Vector3;
 use odyssey_usb::device::VmDevice;
@@ -93,36 +94,37 @@ impl Gradient for CostFn {
 
 /// Keep one reader across prompts so buffered input is not lost. EOF is not
 /// confirmation: unattended commands must not emit an unobserved calibration.
-async fn wait_for_enter(reader: &mut (impl AsyncBufRead + Unpin)) -> Result<(), String> {
+async fn wait_for_enter(reader: &mut (impl AsyncBufRead + Unpin)) -> eros::Result<()> {
     let mut input = String::new();
     let bytes = reader
         .read_line(&mut input)
         .await
-        .map_err(|e| format!("Failed to read input: {e}"))?;
+        .context("Failed to read input")?;
     if bytes == 0 {
-        return Err("Input closed before calibration was confirmed".to_string());
+        eros::bail!("Input closed before calibration was confirmed");
     }
     Ok(())
 }
 
-pub(crate) fn validate_sample_count(num_samples: usize) -> Result<(), String> {
+pub(crate) fn validate_sample_count(num_samples: usize) -> eros::Result<()> {
     if num_samples == 0 {
-        return Err("Calibration requires at least one sample".to_string());
+        eros::bail!("Calibration requires at least one sample");
     }
     Ok(())
 }
 
-pub(crate) fn validate_gravity(gravity: f64) -> Result<(), String> {
+pub(crate) fn validate_gravity(gravity: f64) -> eros::Result<()> {
     if !gravity.is_finite() || gravity <= 0.0 {
-        return Err("Gravity must be finite and positive".to_string());
+        eros::bail!("Gravity must be finite and positive");
     }
     Ok(())
 }
 
-fn save_calibration(path: &str, calibration: &impl Serialize) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(calibration)
-        .map_err(|e| format!("Unable to serialize calibration: {e}"))?;
-    std::fs::write(path, text).map_err(|e| format!("Unable to write file: {e}"))
+fn save_calibration(path: &str, calibration: &impl Serialize) -> eros::Result<()> {
+    let text =
+        serde_json::to_string_pretty(calibration).context("Unable to serialize calibration")?;
+    std::fs::write(path, text).context("Unable to write file")?;
+    Ok(())
 }
 
 pub(crate) async fn calculate_and_save_bias_scale(
@@ -130,7 +132,7 @@ pub(crate) async fn calculate_and_save_bias_scale(
     accel_path: &str,
     num_samples: usize,
     gravity: f64,
-) -> Result<(), String> {
+) -> eros::Result<()> {
     let mut measurements = Vec::new();
     let mut input = BufReader::new(tokio::io::stdin());
     for orientation in &ACCEL_ORIENTATIONS {
@@ -141,13 +143,13 @@ pub(crate) async fn calculate_and_save_bias_scale(
         let mut samples = device
             .stream_accel()
             .await
-            .map_err(|e| format!("Failed to start accel stream: {e}"))?;
+            .context("Failed to start accel stream")?;
         for _ in 0..num_samples {
             let sample = samples.next().await.ok_or_else(|| {
-                "Accel stream ended before all samples were collected".to_string()
+                eros::error!("Accel stream ended before all samples were collected")
             })?;
             if !sample.accel.iter().all(|value| value.is_finite()) {
-                return Err("Accelerometer sample contains a non-finite value".to_string());
+                eros::bail!("Accelerometer sample contains a non-finite value");
             }
             measurements.push(sample.accel.cast::<f64>());
         }
@@ -170,19 +172,18 @@ pub(crate) async fn calculate_and_save_bias_scale(
         .configure(|state| state.param(init_param).max_iters(MAX_OPTIMIZER_ITERATIONS))
         .add_observer(SlogLogger::term(), ObserverMode::Always)
         .run()
-        .map_err(|e| format!("Optimization failed: {e}"))?;
+        .map_err(eros::ErrorUnion::from_anyhow)
+        .context("Optimization failed")?;
 
     let solution = result
         .state
         .get_best_param()
-        .ok_or_else(|| "Optimization returned no solution".to_string())?;
+        .ok_or_else(|| eros::error!("Optimization returned no solution"))?;
     if !result.state.get_best_cost().is_finite()
         || !solution.iter().all(|value| value.is_finite())
         || solution[3..].iter().any(|scale| *scale <= 0.0)
     {
-        return Err(
-            "Optimization did not produce a finite, positive-scale calibration".to_string(),
-        );
+        eros::bail!("Optimization did not produce a finite, positive-scale calibration");
     }
     let calibration = AccelCalibration {
         b_x: solution[0],
@@ -202,7 +203,7 @@ pub(crate) async fn calculate_and_save_gyro_bias(
     device: &mut VmDevice,
     gyro_path: &str,
     num_samples: usize,
-) -> Result<(), String> {
+) -> eros::Result<()> {
     println!("Please make sure the device is held firmly in place.");
     println!("Press Enter when ready to start collecting samples for gyroscope calibration.");
     wait_for_enter(&mut BufReader::new(tokio::io::stdin())).await?;
@@ -210,7 +211,7 @@ pub(crate) async fn calculate_and_save_gyro_bias(
     let mut samples = device
         .stream_accel()
         .await
-        .map_err(|e| format!("Failed to start accel stream: {e}"))?;
+        .context("Failed to start accel stream")?;
 
     let gyro_bias = collect_gyro_bias(&mut samples, num_samples).await?;
 
@@ -230,16 +231,16 @@ pub(crate) async fn calculate_and_save_gyro_bias(
 async fn collect_gyro_bias(
     samples: &mut (impl futures::Stream<Item = odyssey_usb::packets::vm::AccelReport> + Unpin),
     num_samples: usize,
-) -> Result<Vector3<f64>, String> {
+) -> eros::Result<Vector3<f64>> {
     validate_sample_count(num_samples)?;
     let mut sum = Vector3::<f64>::zeros();
     for _ in 0..num_samples {
         let sample = samples
             .next()
             .await
-            .ok_or_else(|| "Gyro stream ended before all samples were collected".to_string())?;
+            .ok_or_else(|| eros::error!("Gyro stream ended before all samples were collected"))?;
         if !sample.gyro.iter().all(|value| value.is_finite()) {
-            return Err("Gyroscope sample contains a non-finite value".to_string());
+            eros::bail!("Gyroscope sample contains a non-finite value");
         }
         sum += sample.gyro.cast::<f64>();
     }

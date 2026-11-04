@@ -61,7 +61,7 @@ async fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("Error: {e}");
+            eprintln!("Error: {e:#?}");
             ExitCode::FAILURE
         }
     }

@@ -1,6 +1,7 @@
 //! Commands for the mux dongle.
 
 use clap::Subcommand;
+use eros::Context as _;
 use odyssey_usb::device::MuxDevice;
 
 use crate::usb_discovery::{format_bd_addr, list_muxes, product_name};
@@ -26,38 +27,38 @@ pub(crate) enum MuxCommands {
     ClearBonds,
 }
 
-async fn connect_to_mux(device_index: Option<usize>) -> Result<MuxDevice, String> {
+async fn connect_to_mux(device_index: Option<usize>) -> eros::Result<MuxDevice> {
     let devices = list_muxes()?;
 
     if devices.is_empty() {
-        return Err("No mux found (VID:0x1915 PID:0x5212). Please connect a mux.".to_string());
+        eros::bail!("No mux found (VID:0x1915 PID:0x5212). Please connect a mux.");
     }
 
     let device_info = if let Some(idx) = device_index {
         devices
             .get(idx)
             .ok_or_else(|| {
-                format!(
+                eros::error!(
                     "Device index {idx} not found. Use 'mux list-devices' to see available devices."
                 )
             })?
             .clone()
     } else {
         if devices.len() > 1 {
-            return Err(format!(
+            eros::bail!(
                 "Multiple muxes found ({}). Please specify which one to use with --device <index>. Use 'mux list-devices' to list them.",
                 devices.len()
-            ));
+            );
         }
         devices[0].clone()
     };
 
-    MuxDevice::connect_usb(device_info)
+    Ok(MuxDevice::connect_usb(device_info)
         .await
-        .map_err(|e| format!("Failed to connect to mux: {e}"))
+        .context("Failed to connect to mux")?)
 }
 
-fn cmd_list_devices() -> Result<(), String> {
+fn cmd_list_devices() -> eros::Result<()> {
     let devices = list_muxes()?;
 
     if devices.is_empty() {
@@ -79,11 +80,11 @@ fn cmd_list_devices() -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_list(device: &MuxDevice) -> eros::Result<()> {
     let devices = device
         .request_devices()
         .await
-        .map_err(|e| format!("Failed to get devices: {e}"))?;
+        .context("Failed to get devices")?;
 
     if devices.is_empty() {
         println!("No devices currently connected");
@@ -96,11 +97,11 @@ async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_version(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_version(device: &MuxDevice) -> eros::Result<()> {
     let version = device
         .read_version()
         .await
-        .map_err(|e| format!("Failed to read version: {e}"))?;
+        .context("Failed to read version")?;
 
     println!(
         "Firmware version: {}.{}.{}",
@@ -113,17 +114,17 @@ async fn cmd_version(device: &MuxDevice) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
+async fn cmd_pair(device: &MuxDevice, timeout: u32) -> eros::Result<()> {
     println!("Starting pairing for {timeout} ms...");
     device
         .start_pairing(timeout)
         .await
-        .map_err(|e| format!("Failed to start pairing: {e}"))?;
+        .context("Failed to start pairing")?;
     println!("Pairing started. Waiting for result...");
     match device
         .wait_pairing_event()
         .await
-        .map_err(|e| format!("Error waiting for pairing event: {e}"))?
+        .context("Error waiting for pairing event")?
     {
         odyssey_usb::device::PairingEvent::Result(bond) => {
             println!("Paired with device {}", format_bd_addr(&bond.uuid));
@@ -140,49 +141,46 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
     }
 }
 
-async fn cmd_pair_cancel(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_pair_cancel(device: &MuxDevice) -> eros::Result<()> {
     println!("Cancelling pairing mode...");
     device
         .cancel_pairing()
         .await
-        .map_err(|e| format!("Failed to cancel pairing: {e}"))?;
+        .context("Failed to cancel pairing")?;
     println!("Pairing cancelled");
     Ok(())
 }
 
-async fn cmd_clear_bonds(device: &MuxDevice) -> Result<(), String> {
+async fn cmd_clear_bonds(device: &MuxDevice) -> eros::Result<()> {
     println!("Clearing bonds...");
     device
         .clear_bonds()
         .await
-        .map_err(|e| format!("Failed to clear bonds: {e}"))?;
+        .context("Failed to clear bonds")?;
     println!("Bonds cleared");
     Ok(())
 }
 
-async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
+async fn cmd_usb_info(device_index: Option<usize>) -> eros::Result<()> {
     use nusb::transfer::{Bulk, In, Interrupt, Out};
     let devices = list_muxes()?;
     if devices.is_empty() {
-        return Err("No mux found (VID:0x1915 PID:0x5212)".to_string());
+        eros::bail!("No mux found (VID:0x1915 PID:0x5212)");
     }
     let device_info = if let Some(idx) = device_index {
         devices.get(idx).cloned().ok_or_else(|| {
-            format!("Device index {idx} not found. Use 'mux list-devices' to list.")
+            eros::error!("Device index {idx} not found. Use 'mux list-devices' to list.")
         })?
     } else {
         if devices.len() > 1 {
-            return Err(format!(
+            eros::bail!(
                 "Multiple muxes found ({}). Please specify with --device <index>.",
                 devices.len()
-            ));
+            );
         }
         devices[0].clone()
     };
-    let dev = device_info
-        .open()
-        .await
-        .map_err(|e| format!("Failed to open device: {e}"))?;
+    let dev = device_info.open().await.context("Failed to open device")?;
     println!(
         "Probing interfaces for VID:0x{:04X} PID:0x{:04X}",
         device_info.vendor_id(),
@@ -204,7 +202,7 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
 pub(crate) async fn handle_command(
     device_index: Option<usize>,
     command: MuxCommands,
-) -> Result<(), String> {
+) -> eros::Result<()> {
     match command {
         MuxCommands::ListDevices => cmd_list_devices(),
         MuxCommands::UsbInfo => cmd_usb_info(device_index).await,

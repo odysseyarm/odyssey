@@ -86,7 +86,7 @@ impl CanvasState {
                     .screen_calibrations
                     .iter()
                     .find(|(id, _)| *id == state.fv_state.screen_id)
-                    .map(|(_, calibration)| *calibration)
+                    .map(|(_, calibration)| calibration.clone())
             } else {
                 None
             },
