@@ -20,7 +20,6 @@ pub(crate) use calibrate::automatic::CalibrateAutomatic;
 pub(crate) use home::Home;
 pub(crate) use pairing::Pairing;
 pub(crate) use settings::Settings;
-pub(crate) use zero::Zero;
 
 pub(crate) fn device_label(device: &odyssey_hub_common::device::Device) -> String {
     let addr = format!(
