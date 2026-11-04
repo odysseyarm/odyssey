@@ -8,31 +8,44 @@
 //! data a review screen needs. The core returns data and enums only; the UI
 //! turns [`Hint`]s and [`Step`]s into words.
 
-use std::io;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::fmt;
+use std::time::{Duration, Instant};
 
 use image::{GrayImage, RgbImage};
-use nalgebra::{Matrix3, Point2};
-use odyssey_common::{MAX_SCREEN_ID, ScreenCalibration};
+use nalgebra::{Point2, Vector2};
+use odyssey_common::ScreenCalibration;
 
 use crate::camera::{CameraError, CameraGeometry, CameraStream, Frames};
 use crate::imu::{GravityEstimator, Tilt};
 use crate::markers::{self, MarkerBlob, MarkerError, MarkerFit};
-use crate::pattern::{DetectFailure, Pattern, check_edges, detect};
 pub use crate::pattern::{EdgeCheck, SideSet};
+use crate::pattern::{Pattern, check_edges, detect};
 pub use crate::placement::Circle;
-use crate::plane::{RansacParams, apply_homography, project_pinhole, ransac_plane};
 use crate::solve::{
     self, BURST_FRAMES, ScreenFit, SolveError, SolveOptions, build_calibration, solve_screen,
 };
 pub use crate::solve::{KnownSize, SizeCheck, SizeSource};
 
+mod analysis;
+mod storage;
+
+pub use storage::{
+    calibration_from_json, calibration_to_json, load_calibration, save_calibration,
+    screen_file_name,
+};
+
 /// Infrared frames averaged when measuring markers.
 pub const MARKER_FRAMES: usize = 5;
+
 /// Frames discarded after changing infrared exposure so the sensor has
 /// settled.
 const SETTLE_FRAMES: usize = 4;
+
+/// How many markers the tracker needs: the length of the marker arrays below.
+const MARKER_COUNT: usize = 6;
+
+/// Least time between two logged accounts of a failing marker search.
+const MARKER_REPORT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionOptions {
@@ -257,34 +270,38 @@ fn average_markers(
     bursts: &[Vec<MarkerBlob>],
 ) -> Result<(MarkerSummary, [Point2<f32>; 6]), SessionError> {
     let mut reference: Option<MarkerFit> = None;
-    let mut sums = [nalgebra::Vector2::<f64>::zeros(); 6];
+    let mut sums = [Vector2::<f64>::zeros(); MARKER_COUNT];
     let mut successes = 0usize;
     let mut last_error = None;
     for blobs in bursts {
-        match markers::locate(geometry, fit, blobs) {
-            Ok(m) => {
-                // Each frame is ordered on its own, and the markers do not move, so the
-                // later frames take the labels of the first one.
-                let points = match &reference {
-                    None => m.points_m,
-                    Some(first) => match markers::relabel(&first.points_m, &m.points_m) {
-                        Some(points) => points,
-                        None => continue,
-                    },
-                };
-                successes += 1;
-                for (sum, p) in sums.iter_mut().zip(points) {
-                    *sum += p.coords;
-                }
-                reference.get_or_insert(m);
+        let located = match markers::locate(geometry, fit, blobs) {
+            Ok(located) => located,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
             }
-            Err(e) => last_error = Some(e),
+        };
+        // Each frame is ordered on its own, and the markers do not move, so the
+        // later frames take the labels of the first one.
+        let points = match &reference {
+            None => located.points_m,
+            Some(first) => {
+                let Some(points) = markers::relabel(&first.points_m, &located.points_m) else {
+                    continue;
+                };
+                points
+            }
+        };
+        successes += 1;
+        for (sum, p) in sums.iter_mut().zip(points) {
+            *sum += p.coords;
         }
+        reference.get_or_insert(located);
     }
-    let Some(first) = reference.filter(|_| successes * 2 >= bursts.len()) else {
-        return Err(last_error
-            .map(SessionError::Markers)
-            .unwrap_or(SessionError::Markers(MarkerError::TooFewBlobs { found: 0 })));
+    let Some(first) = reference.filter(|_| solve::is_at_least_half(successes, bursts.len())) else {
+        return Err(SessionError::Markers(
+            last_error.unwrap_or(MarkerError::TooFewBlobs { found: 0 }),
+        ));
     };
     let points_m = sums.map(|s| Point2::from(s / successes as f64));
     let marker_px = points_m.map(|p| {
@@ -327,11 +344,65 @@ pub struct Session {
     /// The infrared frames of the latest marker measurement, and the latest preview.
     marker_burst_ir: Vec<GrayImage>,
     marker_preview_ir: Option<GrayImage>,
-    marker_report_at: Option<std::time::Instant>,
+    marker_report_at: Option<Instant>,
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session")
+            .field("options", &self.options)
+            .field("screen_measured", &self.screen.is_some())
+            .field("markers_measured", &self.markers.is_some())
+            .field("marker_mode", &self.marker_mode)
+            .finish_non_exhaustive()
+    }
 }
 
 fn pt32(p: Point2<f64>) -> Point2<f32> {
     Point2::new(p.x as f32, p.y as f32)
+}
+
+fn screen_summary(fit: &ScreenFit, edges: EdgeCheck) -> ScreenSummary {
+    ScreenSummary {
+        size_m: fit.size_m,
+        diagonal_in: fit.diagonal_in(),
+        size_source: fit.size_source,
+        size_check: fit.size_check,
+        edges,
+        plane_rmse_m: fit.plane_rmse_m,
+        plane_max_error_m: fit.plane_max_error_m,
+        dots_used: fit.dots_used,
+        quad_px: fit.quad_px.map(pt32),
+    }
+}
+
+/// What a failed marker search says to the user.
+fn marker_hint(error: &MarkerError) -> MarkerHint {
+    match *error {
+        MarkerError::TooFewBlobs { found } => MarkerHint::TooFewMarkers { found },
+        MarkerError::WrongCount { near_screen } => MarkerHint::WrongCount { near_screen },
+        MarkerError::Placement(_) => MarkerHint::NoRow,
+    }
+}
+
+/// Logs a failed marker search with where the spots landed on the screen, at
+/// most once per [`MARKER_REPORT_INTERVAL`]. It goes to the app's log (numbers
+/// only, no images), which the desktop app also keeps as a file.
+fn report_marker_failure(
+    last_report: &mut Option<Instant>,
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    blobs: &[MarkerBlob],
+    error: &MarkerError,
+) {
+    let due = last_report.is_none_or(|t| t.elapsed() > MARKER_REPORT_INTERVAL);
+    if due && !matches!(error, MarkerError::TooFewBlobs { .. }) {
+        *last_report = Some(Instant::now());
+        tracing::info!(
+            "marker search failed ({error}):\n{}",
+            markers::describe_spots(geometry, fit, blobs)
+        );
+    }
 }
 
 impl Session {
@@ -399,6 +470,30 @@ impl Session {
         Ok(frames)
     }
 
+    /// Grabs `total` frames, announcing each as [`Step::Capturing`] before it
+    /// is grabbed, and keeps what `keep` makes of every one.
+    fn grab_burst<T>(
+        &mut self,
+        total: usize,
+        progress: &mut dyn FnMut(Step),
+        mut keep: impl FnMut(Frames) -> T,
+    ) -> Result<Vec<T>, SessionError> {
+        let mut kept = Vec::with_capacity(total);
+        for frame in 0..total {
+            progress(Step::Capturing { frame, total });
+            kept.push(keep(self.grab()?));
+        }
+        Ok(kept)
+    }
+
+    /// Discards frames so the sensor settles after an exposure change.
+    fn settle(&mut self) -> Result<(), SessionError> {
+        for _ in 0..SETTLE_FRAMES {
+            self.grab()?;
+        }
+        Ok(())
+    }
+
     fn leave_marker_mode(&mut self) {
         if self.marker_mode {
             let _ = self.stream.set_ir_auto_exposure();
@@ -417,10 +512,7 @@ impl Session {
         // projector's dots then stay below the relative threshold anyway.
         let _ = self.stream.set_projector_enabled(false)?;
         self.marker_mode = true;
-        for _ in 0..SETTLE_FRAMES {
-            self.grab()?;
-        }
-        Ok(())
+        self.settle()
     }
 
     /// Changes the infrared exposure used for marker detection. Takes effect
@@ -431,9 +523,7 @@ impl Session {
         self.options.ir_exposure_us = exposure_us;
         if self.marker_mode {
             self.stream.set_ir_exposure_us(exposure_us)?;
-            for _ in 0..SETTLE_FRAMES {
-                self.grab()?;
-            }
+            self.settle()?;
         }
         Ok(())
     }
@@ -443,7 +533,6 @@ impl Session {
         self.leave_marker_mode();
         let frames = self.grab()?;
         let tilt = self.gravity.tilt();
-        let expected = self.pattern.dots().len();
         let detection = detect(&self.pattern, &frames.color, &self.geometry.color);
 
         let mut preview = Preview {
@@ -451,7 +540,7 @@ impl Session {
             dots: Vec::new(),
             screen_quad: None,
             dots_matched: 0,
-            dots_expected: expected,
+            dots_expected: self.pattern.dots().len(),
             depth_coverage: None,
             distance_m: None,
             tilt,
@@ -462,7 +551,7 @@ impl Session {
         let detection = match detection {
             Ok(d) => d,
             Err(failure) => {
-                preview.hint = hint_without_pattern(&frames.color, failure);
+                preview.hint = analysis::hint_without_pattern(&frames.color, failure);
                 return Ok(preview);
             }
         };
@@ -474,7 +563,7 @@ impl Session {
         preview.screen_quad = Some(detection.quad_px.map(pt32));
         preview.dots_matched = detection.quality.matched;
 
-        let depth = depth_stats(&self.geometry, &frames, &detection.homography);
+        let depth = analysis::depth_stats(&self.geometry, &frames, &detection.homography);
         preview.depth_coverage = depth.coverage;
         preview.distance_m = depth.distance_m;
 
@@ -484,35 +573,35 @@ impl Session {
             &self.geometry.color,
             &detection.homography,
         );
-        let edges_block = self.options.require_visible_edges
-            && matches!(preview.edges, EdgeCheck::Cropped { .. });
-
-        preview.hint = if !region_inside_images(&self.geometry, &detection.homography)
-            || detection.quality.completeness() < 0.8
-        {
-            Hint::ScreenPartlyVisible
-        } else if depth.distance_m.is_some_and(|d| d < MIN_DISTANCE_M) {
-            Hint::TooClose
-        } else if depth.distance_m.is_some_and(|d| d > MAX_DISTANCE_M)
-            || detection.quality.spacing_px < MIN_SPACING_PX
-        {
-            Hint::TooFar
-        } else if tilt
-            .is_some_and(|t| t.pitch_deg.abs() > MAX_PITCH_DEG || t.roll_deg.abs() > MAX_ROLL_DEG)
-        {
-            Hint::CameraTiltedTooMuch
-        } else if depth.cos_incidence.is_some_and(|c| c < MIN_INCIDENCE_COS) {
-            Hint::ScreenTooOblique
-        } else if depth.coverage.is_none_or(|c| c < MIN_DEPTH_COVERAGE)
-            || depth.plane_rmse_m.is_some_and(|e| e > MAX_PREVIEW_RMSE_M)
-        {
-            Hint::DepthPoor
-        } else if edges_block {
-            Hint::EdgesCropped
-        } else {
-            Hint::Ready
-        };
+        preview.hint = analysis::choose_hint(&analysis::Observation {
+            region_inside_images: analysis::region_inside_images(
+                &self.geometry,
+                &detection.homography,
+            ),
+            completeness: detection.quality.completeness(),
+            spacing_px: detection.quality.spacing_px,
+            depth,
+            tilt,
+            edges_block: self.options.require_visible_edges
+                && matches!(preview.edges, EdgeCheck::Cropped { .. }),
+        });
         Ok(preview)
+    }
+
+    /// Whether the last frame of a burst shows the pattern's whole border ring.
+    fn burst_edges(&self, frames: &[Frames]) -> EdgeCheck {
+        let Some(last) = frames.last() else {
+            return EdgeCheck::Unknown;
+        };
+        let Ok(detection) = detect(&self.pattern, &last.color, &self.geometry.color) else {
+            return EdgeCheck::Unknown;
+        };
+        check_edges(
+            &self.pattern,
+            &last.color,
+            &self.geometry.color,
+            &detection.homography,
+        )
     }
 
     /// Captures a burst while the pattern is shown and measures the screen.
@@ -522,25 +611,14 @@ impl Session {
     ) -> Result<ScreenSummary, SessionError> {
         self.leave_marker_mode();
         let total = self.options.burst_frames.max(1);
-        let mut frames = Vec::with_capacity(total);
-        for frame in 0..total {
-            progress(Step::Capturing { frame, total });
-            frames.push(self.grab()?);
-        }
+        let frames = self.grab_burst(total, progress, |frames| frames)?;
 
         // The declared size is only a valid scale anchor if the screen shows
         // its whole image, so check the ring before spending time on the solve.
-        let edges = frames
-            .last()
-            .and_then(|f| {
-                detect(&self.pattern, &f.color, &self.geometry.color)
-                    .ok()
-                    .map(|d| (f, d))
-            })
-            .map_or(EdgeCheck::Unknown, |(f, d)| {
-                check_edges(&self.pattern, &f.color, &self.geometry.color, &d.homography)
-            });
-        if let (true, EdgeCheck::Cropped { sides }) = (self.options.require_visible_edges, edges) {
+        let edges = self.burst_edges(&frames);
+        if self.options.require_visible_edges
+            && let EdgeCheck::Cropped { sides } = edges
+        {
             self.failed_burst = Some(frames);
             return Err(SessionError::EdgesCropped(sides));
         }
@@ -553,17 +631,7 @@ impl Session {
         };
         let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options)
             .inspect_err(|_| self.failed_burst = Some(frames.clone()))?;
-        let summary = ScreenSummary {
-            size_m: fit.size_m,
-            diagonal_in: fit.diagonal_in(),
-            size_source: fit.size_source,
-            size_check: fit.size_check,
-            edges,
-            plane_rmse_m: fit.plane_rmse_m,
-            plane_max_error_m: fit.plane_max_error_m,
-            dots_used: fit.dots_used,
-            quad_px: fit.quad_px.map(pt32),
-        };
+        let summary = screen_summary(&fit, edges);
         let color = frames
             .last()
             .map(|f| f.color.clone())
@@ -596,33 +664,26 @@ impl Session {
         };
         if blobs.is_empty() {
             preview.hint = MarkerHint::NoMarkers;
-        } else if blobs.len() < 6 {
+            return Ok(preview);
+        }
+        if blobs.len() < MARKER_COUNT {
             preview.hint = MarkerHint::TooFewMarkers { found: blobs.len() };
-        } else if let Some(screen) = &self.screen {
-            match markers::locate(&self.geometry, &screen.fit, &blobs) {
-                Ok(m) => preview.matched = Some(m.blob_for_marker),
-                Err(error) => {
-                    preview.hint = match error {
-                        MarkerError::TooFewBlobs { found } => MarkerHint::TooFewMarkers { found },
-                        MarkerError::WrongCount { near_screen } => {
-                            MarkerHint::WrongCount { near_screen }
-                        }
-                        MarkerError::Placement(_) => MarkerHint::NoRow,
-                    };
-                    // One account every few seconds is enough to see where the spots
-                    // land on the screen. It goes to the app's log (numbers only, no
-                    // images), which the desktop app also keeps as a file.
-                    let due = self
-                        .marker_report_at
-                        .is_none_or(|t| t.elapsed() > Duration::from_secs(3));
-                    if due && !matches!(error, MarkerError::TooFewBlobs { .. }) {
-                        self.marker_report_at = Some(std::time::Instant::now());
-                        tracing::info!(
-                            "marker search failed ({error}):\n{}",
-                            markers::describe_spots(&self.geometry, &screen.fit, &blobs)
-                        );
-                    }
-                }
+            return Ok(preview);
+        }
+        let Some(screen) = &self.screen else {
+            return Ok(preview);
+        };
+        match markers::locate(&self.geometry, &screen.fit, &blobs) {
+            Ok(located) => preview.matched = Some(located.blob_for_marker),
+            Err(error) => {
+                preview.hint = marker_hint(&error);
+                report_marker_failure(
+                    &mut self.marker_report_at,
+                    &self.geometry,
+                    &screen.fit,
+                    &blobs,
+                    &error,
+                );
             }
         }
         Ok(preview)
@@ -638,15 +699,10 @@ impl Session {
             return Err(SessionError::ScreenNotMeasured);
         }
         self.enter_marker_mode()?;
-        let total = MARKER_FRAMES;
-        let mut bursts = Vec::with_capacity(total);
-        let mut ir_frames = Vec::with_capacity(total);
-        for frame in 0..total {
-            progress(Step::Capturing { frame, total });
-            let frames = self.grab()?;
-            bursts.push(markers::detect_blobs(&frames.ir));
-            ir_frames.push(frames.ir);
-        }
+        let captured = self.grab_burst(MARKER_FRAMES, progress, |frames| {
+            (markers::detect_blobs(&frames.ir), frames.ir)
+        })?;
+        let (bursts, ir_frames): (Vec<_>, Vec<_>) = captured.into_iter().unzip();
         // Kept even when the solve below fails: these are the frames it used.
         self.marker_burst_ir = ir_frames;
         progress(Step::Solving);
@@ -664,8 +720,8 @@ impl Session {
         Ok(summary)
     }
 
-    /// The calibration and review data, once the screen and markers are measured.
-    pub fn finish(&self) -> Result<Calibration, SessionError> {
+    /// The screen and marker measurements, once both are made.
+    fn measurements(&self) -> Result<(&ScreenMeasurement, &MarkerMeasurement), SessionError> {
         let screen = self
             .screen
             .as_ref()
@@ -674,6 +730,12 @@ impl Session {
             .markers
             .as_ref()
             .ok_or(SessionError::MarkersNotMeasured)?;
+        Ok((screen, markers))
+    }
+
+    /// The calibration and review data, once the screen and markers are measured.
+    pub fn finish(&self) -> Result<Calibration, SessionError> {
+        let (screen, markers) = self.measurements()?;
         Ok(self.assemble(screen, &screen.fit, markers.summary, markers.marker_px))
     }
 
@@ -683,14 +745,7 @@ impl Session {
     /// review screen can offer it after the stream has stopped. Equals
     /// `finish` when no size was declared.
     pub fn finish_measured(&self) -> Result<Calibration, SessionError> {
-        let screen = self
-            .screen
-            .as_ref()
-            .ok_or(SessionError::ScreenNotMeasured)?;
-        let markers = self
-            .markers
-            .as_ref()
-            .ok_or(SessionError::MarkersNotMeasured)?;
+        let (screen, markers) = self.measurements()?;
         if self.options.known_size.is_none() {
             return self.finish();
         }
@@ -741,270 +796,5 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.leave_marker_mode();
-    }
-}
-
-const MIN_DISTANCE_M: f32 = 0.6;
-const MAX_DISTANCE_M: f32 = 5.0;
-/// Dots closer together than this many pixels are too small to localize well.
-const MIN_SPACING_PX: f64 = 12.0;
-const MAX_PITCH_DEG: f64 = 35.0;
-const MAX_ROLL_DEG: f64 = 20.0;
-/// Cosine of the largest angle between the screen normal and the line of
-/// sight.
-const MIN_INCIDENCE_COS: f64 = 0.35;
-const MIN_DEPTH_COVERAGE: f32 = 0.6;
-const MAX_PREVIEW_RMSE_M: f64 = 0.015;
-
-#[derive(Default)]
-struct DepthStats {
-    coverage: Option<f32>,
-    distance_m: Option<f32>,
-    cos_incidence: Option<f64>,
-    plane_rmse_m: Option<f64>,
-}
-
-/// Whether the inset screen region lies inside both the color and the depth
-/// image.
-fn region_inside_images(geometry: &CameraGeometry, unit_to_px: &Matrix3<f64>) -> bool {
-    let (lo, hi) = solve::SCREEN_INSET;
-    let color = &geometry.color;
-    [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
-        .into_iter()
-        .all(|(u, v)| {
-            apply_homography(unit_to_px, Point2::new(u, v)).is_some_and(|p| {
-                p.x >= 0.0
-                    && p.y >= 0.0
-                    && p.x <= f64::from(color.width - 1)
-                    && p.y <= f64::from(color.height - 1)
-            })
-        })
-}
-
-fn hint_without_pattern(color: &RgbImage, failure: DetectFailure) -> Hint {
-    let mut histogram = [0u32; 256];
-    let mut saturated = 0u32;
-    let mut count = 0u32;
-    for p in color.pixels().step_by(7) {
-        let luma =
-            ((77 * u32::from(p[0]) + 150 * u32::from(p[1]) + 29 * u32::from(p[2])) >> 8) as usize;
-        histogram[luma] += 1;
-        count += 1;
-        if luma >= 250 {
-            saturated += 1;
-        }
-    }
-    let p995 = {
-        let target = (0.995 * f64::from(count)) as u32;
-        let mut acc = 0;
-        histogram
-            .iter()
-            .position(|&n| {
-                acc += n;
-                acc >= target
-            })
-            .unwrap_or(255)
-    };
-    if f64::from(saturated) > 0.15 * f64::from(count) {
-        Hint::TooBright
-    } else if p995 < 60 {
-        Hint::TooDark
-    } else if matches!(failure, DetectFailure::NoGrid { blobs } if blobs >= 20) {
-        Hint::ScreenPartlyVisible
-    } else {
-        Hint::ScreenNotFound
-    }
-}
-
-/// Distance, depth coverage and plane quality of the screen region in one
-/// frame.
-fn depth_stats(
-    geometry: &CameraGeometry,
-    frames: &Frames,
-    unit_to_px: &Matrix3<f64>,
-) -> DepthStats {
-    let color_from_depth = geometry.color_to_depth.inverse();
-    let points = solve::screen_depth_points(
-        geometry,
-        std::slice::from_ref(frames),
-        unit_to_px,
-        &color_from_depth,
-    );
-    if points.is_empty() {
-        return DepthStats {
-            coverage: Some(0.0),
-            ..DepthStats::default()
-        };
-    }
-
-    let mut z: Vec<f64> = points.iter().map(|p| p.z).collect();
-    z.sort_by(f64::total_cmp);
-    let distance = z[z.len() / 2];
-
-    // How many samples a fully valid region would yield at this distance.
-    let (lo, hi) = solve::SCREEN_INSET;
-    let depth_corners: Option<Vec<Point2<f64>>> = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
-        .into_iter()
-        .map(|(u, v)| {
-            let px = apply_homography(unit_to_px, Point2::new(u, v))?;
-            let ray = nalgebra::Vector3::new(
-                (px.x - geometry.color.cx) / geometry.color.fx,
-                (px.y - geometry.color.cy) / geometry.color.fy,
-                1.0,
-            );
-            project_pinhole(
-                &geometry.depth,
-                &geometry.color_to_depth.apply(&(ray * distance)),
-            )
-        })
-        .collect();
-    let stride = f64::from((frames.depth.width() / 320).max(1));
-    let coverage = depth_corners.map(|c| {
-        let area: f64 = (0..4)
-            .map(|i| c[i].x * c[(i + 1) % 4].y - c[(i + 1) % 4].x * c[i].y)
-            .sum::<f64>()
-            .abs()
-            / 2.0;
-        ((points.len() as f64 * stride * stride) / area.max(1.0)).min(1.0) as f32
-    });
-
-    // A plane on a few hundred samples gives the viewing angle and a noise
-    // estimate without the full burst.
-    let step = (points.len() / 1500).max(1);
-    let subset: Vec<_> = points.iter().step_by(step).copied().collect();
-    let fit = ransac_plane(
-        &subset,
-        &RansacParams {
-            max_trials: 300,
-            score_points: 1500,
-            ..RansacParams::default()
-        },
-    );
-    DepthStats {
-        coverage,
-        distance_m: Some(distance as f32),
-        cos_incidence: fit
-            .as_ref()
-            .map(|f| f.plane.normal.dot(&f.plane.point.normalize())),
-        plane_rmse_m: fit.as_ref().map(|f| f.rmse),
-    }
-}
-
-/// File name the hub reads for screen `id`.
-pub fn screen_file_name(id: u8) -> String {
-    format!("screen_{id}.json")
-}
-
-/// Serializes a calibration the way the hub's loader expects: compact JSON
-/// with `rotation` as `[i, j, k, w]`, `homography` as nine column-major
-/// values and `object_points` as six `[x, y, z]` triples.
-pub fn calibration_to_json(
-    calibration: &ScreenCalibration<f32>,
-) -> Result<String, serde_json::Error> {
-    serde_json::to_string(calibration)
-}
-
-pub fn calibration_from_json(json: &str) -> Result<ScreenCalibration<f32>, serde_json::Error> {
-    serde_json::from_str(json)
-}
-
-fn check_id(id: u8) -> io::Result<()> {
-    if id > MAX_SCREEN_ID {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("screen id {id} is above {MAX_SCREEN_ID}"),
-        ));
-    }
-    Ok(())
-}
-
-/// Writes `screen_<id>.json` into `screens_dir`, creating the directory. The
-/// write goes through a temporary file so the hub never reads a partial
-/// calibration. Returns the file's path.
-pub fn save_calibration(
-    screens_dir: &Path,
-    id: u8,
-    calibration: &ScreenCalibration<f32>,
-) -> io::Result<PathBuf> {
-    check_id(id)?;
-    std::fs::create_dir_all(screens_dir)?;
-    let path = screens_dir.join(screen_file_name(id));
-    let temp = screens_dir.join(format!(".{}.tmp", screen_file_name(id)));
-    let json = calibration_to_json(calibration).map_err(io::Error::other)?;
-    std::fs::write(&temp, json)?;
-    std::fs::rename(&temp, &path)?;
-    Ok(path)
-}
-
-pub fn load_calibration(screens_dir: &Path, id: u8) -> io::Result<ScreenCalibration<f32>> {
-    check_id(id)?;
-    let json = std::fs::read_to_string(screens_dir.join(screen_file_name(id)))?;
-    calibration_from_json(&json).map_err(io::Error::other)
-}
-
-#[cfg(test)]
-mod tests {
-    use nalgebra::{Matrix3, Point3, UnitQuaternion};
-
-    use super::*;
-
-    fn sample() -> ScreenCalibration<f32> {
-        ScreenCalibration {
-            rotation: UnitQuaternion::from_euler_angles(0.1, -0.2, 0.05),
-            homography: Matrix3::new(0.82, 0.0, 0.0, 0.0, 1.46, 0.0, 0.0, 0.0, 1.0),
-            object_points: [
-                Point3::new(0.21, 0.2, 0.0),
-                Point3::new(0.18, 0.56, 0.0),
-                Point3::new(0.93, 0.55, 0.0),
-                Point3::new(0.62, 0.24, 0.0),
-                Point3::new(0.96, 0.17, 0.0),
-                Point3::new(0.6, 0.52, 0.0),
-            ],
-        }
-    }
-
-    #[test]
-    fn json_round_trip_keeps_corners_and_markers() {
-        let cal = sample();
-        let json = calibration_to_json(&cal).unwrap();
-        let back = calibration_from_json(&json).unwrap();
-        assert_eq!(back.homography, cal.homography);
-        assert_eq!(back.object_points, cal.object_points);
-        assert!((back.rotation.angle_to(&cal.rotation)).abs() < 1e-6);
-        let expected = [
-            Point2::new(0.0, 0.0),
-            Point2::new(1.0 / 0.82, 0.0),
-            Point2::new(0.0, 1.0 / 1.46),
-            Point2::new(1.0 / 0.82, 1.0 / 1.46),
-        ];
-        for (got, want) in back.bounds().iter().zip(expected) {
-            assert!((got - want).norm() < 1e-6, "{got:?} vs {want:?}");
-        }
-    }
-
-    #[test]
-    fn json_layout_matches_the_hub_schema() {
-        let value: serde_json::Value =
-            serde_json::from_str(&calibration_to_json(&sample()).unwrap()).unwrap();
-        assert_eq!(value["rotation"].as_array().unwrap().len(), 4);
-        assert_eq!(value["homography"].as_array().unwrap().len(), 9);
-        assert_eq!(value["object_points"].as_array().unwrap().len(), 6);
-        // Column-major: the second entry is the (row 1, col 0) element, zero here,
-        // and the 5th entry is the (1, 1) element.
-        assert!((value["homography"][4].as_f64().unwrap() - 1.46).abs() < 1e-6);
-        assert!((value["homography"][0].as_f64().unwrap() - 0.82).abs() < 1e-6);
-    }
-
-    #[test]
-    fn save_and_load_use_the_hub_file_name() {
-        let dir =
-            std::env::temp_dir().join(format!("odyssey-autocalib-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let path = save_calibration(&dir.join("screens"), 3, &sample()).unwrap();
-        assert_eq!(path.file_name().unwrap(), "screen_3.json");
-        let back = load_calibration(&dir.join("screens"), 3).unwrap();
-        assert_eq!(back.object_points, sample().object_points);
-        assert!(save_calibration(&dir, MAX_SCREEN_ID + 1, &sample()).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
