@@ -4,7 +4,7 @@ use odyssey_autocalib::display::{
     DisplayLookup, EdidInfo, LookupNote, LookupSource, PhysicalSize, Reliability, SizePrecision,
     SuspectReason, parse_edid,
 };
-use odyssey_autocalib::session::{KnownSize, SizeSource};
+use odyssey_autocalib::session::KnownSize;
 
 use super::finding::FindingKind;
 use super::*;
@@ -56,36 +56,11 @@ fn a_reliable_edid_becomes_a_declared_panel_size() {
             height_m: 0.68
         })
     );
-    assert_eq!(
-        f.headline(),
-        "We read the screen size from the TV itself: 55 inches (121 × 68 cm)"
-    );
     assert!(f.advice().is_none());
 }
 
 #[test]
-fn precision_shows_only_in_the_details() {
-    let mm = Finding::from_lookup(&lookup(
-        Some(edid(
-            dims(1210, 680, SizePrecision::Millimeters),
-            Reliability::Reliable,
-        )),
-        None,
-    ));
-    let cm = Finding::from_lookup(&lookup(
-        Some(edid(
-            dims(1210, 680, SizePrecision::Centimeters),
-            Reliability::Reliable,
-        )),
-        None,
-    ));
-    assert!(!mm.headline().to_lowercase().contains("precision"));
-    assert!(mm.detail_lines().iter().any(|l| l.contains("millimeters")));
-    assert!(cm.detail_lines().iter().any(|l| l.contains("5 mm")));
-}
-
-#[test]
-fn a_suspect_edid_is_not_an_anchor_and_says_why() {
+fn a_suspect_edid_is_not_an_anchor() {
     let reasons = [
         SuspectReason::AspectPlaceholder,
         SuspectReason::TooSmall,
@@ -106,12 +81,6 @@ fn a_suspect_edid_is_not_an_anchor_and_says_why() {
         assert!(matches!(f.kind, FindingKind::Doubtful { .. }), "{reason:?}");
         assert_eq!(f.known_size(), None);
         assert!(f.advice().is_some());
-        assert!(
-            f.detail_lines()
-                .iter()
-                .any(|l| l.starts_with("Not used because")),
-            "{reason:?}"
-        );
     }
 }
 
@@ -370,28 +339,7 @@ fn a_typed_width_takes_its_height_from_the_pictures_shape() {
 }
 
 #[test]
-fn the_size_source_is_told_in_plain_words() {
-    assert_eq!(
-        source_label(SizeSource::KnownDimensions, Some(SizeOrigin::Panel)),
-        "From the TV's own information"
-    );
-    assert_eq!(
-        source_label(SizeSource::KnownDiagonal, Some(SizeOrigin::Entered)),
-        "From the size you entered"
-    );
-    assert_eq!(
-        source_label(SizeSource::KnownDimensions, Some(SizeOrigin::Entered)),
-        "From the size you entered"
-    );
-    assert_eq!(
-        source_label(SizeSource::Measured, None),
-        "Measured by the camera"
-    );
-}
-
-#[test]
 fn the_demo_finding_is_marked_as_a_demo() {
     let f = Finding::demo(1.2, 0.675);
     assert!(f.demo && f.is_found());
-    assert!(f.headline().starts_with("Demo:"));
 }

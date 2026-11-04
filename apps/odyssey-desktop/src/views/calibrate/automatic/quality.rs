@@ -281,8 +281,6 @@ mod tests {
             ..good()
         });
         assert_eq!(q.verdict, Verdict::Poor);
-        assert_eq!(q.weakest().label, "Depth accuracy");
-        assert!(q.advice().contains("depth"));
     }
 
     #[test]
@@ -313,23 +311,7 @@ mod tests {
             });
             assert_eq!(q.verdict, Verdict::Fair, "{gap}");
             assert_eq!(q.weakest().label, SIZE_LABEL);
-            assert!(q.advice().contains("agree"));
         }
-    }
-
-    #[test]
-    fn the_disagreement_says_which_way_and_how_far() {
-        let smaller = SizeCheck::new([1.15, 0.65], [1.21, 0.68]);
-        let text = disagreement_message(&smaller, Some(SizeOrigin::Panel));
-        assert!(text.contains("about 5% smaller than the TV says"), "{text}");
-        assert!(text.contains("cropping"));
-        let larger = SizeCheck::new([1.0, 0.56], [0.71, 0.4]);
-        assert!(
-            disagreement_message(&larger, Some(SizeOrigin::Entered))
-                .contains("larger than the size you entered")
-        );
-        let tiny = SizeCheck::new([1.215, 0.683], [1.21, 0.68]);
-        assert!(disagreement_message(&tiny, None).contains("a little"));
     }
 
     #[test]

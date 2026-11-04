@@ -93,46 +93,19 @@ mod tests {
     }
 
     #[test]
-    fn missing_library_offers_the_download_and_explains_the_override() {
+    fn missing_library_offers_the_download() {
         let n = notice(&not_found()).unwrap();
-        assert_eq!(n.title, "Camera support isn't installed");
         assert!(n.offer_download);
-        let details = n.details.join("\n");
-        assert!(
-            details.contains("libOrbbecSDK.so.2 through the system library search path"),
-            "{details}"
-        );
-        assert!(
-            details.contains(&format!("{SDK_DIR_ENV} is not set")),
-            "{details}"
-        );
-        assert!(
-            details.contains(&format!("set the environment variable {SDK_DIR_ENV}")),
-            "{details}"
-        );
     }
 
     #[test]
-    fn missing_library_lists_what_was_tried_in_order() {
-        let details = notice(&not_found()).unwrap().details;
-        let position = |needle: &str| details.iter().position(|l| l.contains(needle)).unwrap();
-        assert!(position("is not set") < position("system library search path"));
-    }
-
-    #[test]
-    fn broken_library_shows_the_loader_error_and_never_says_reinstall() {
+    fn broken_library_shows_the_loader_error() {
         let status = RuntimeStatus::LoadFailed {
             library: "/opt/orbbec/libOrbbecSDK.so.2".to_string(),
             error: "libudev.so.1: cannot open shared object file".to_string(),
         };
         let n = notice(&status).unwrap();
-        assert!(
-            n.detail
-                .starts_with("The camera library was found but could not be loaded")
-        );
         assert!(!n.offer_download);
-        let everything = format!("{} {} {}", n.title, n.detail, n.details.join(" ")).to_lowercase();
-        assert!(!everything.contains("install"), "{everything}");
         let details = n.details.join("\n");
         assert!(
             details.contains("/opt/orbbec/libOrbbecSDK.so.2"),

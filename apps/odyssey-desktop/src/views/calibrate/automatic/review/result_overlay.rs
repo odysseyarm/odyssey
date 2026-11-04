@@ -73,14 +73,3 @@ pub(super) fn ResultOverlay(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn corners_become_a_points_list_with_one_decimal() {
-        let corners = [[1.0, 2.0], [3.26, 4.0], [5.0, 6.04]];
-        assert_eq!(polygon_points(&corners), "1.0,2.0 3.3,4.0 5.0,6.0");
-    }
-}

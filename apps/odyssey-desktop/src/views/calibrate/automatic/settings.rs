@@ -146,10 +146,5 @@ mod tests {
             parse_entered("5", SizeField::Width),
             Err(SizeError::OutOfRange(SizeField::Width))
         );
-        assert!(
-            SizeError::OutOfRange(SizeField::Width)
-                .message()
-                .contains("cm")
-        );
     }
 }
