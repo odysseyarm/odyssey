@@ -17,6 +17,9 @@ use mode::{Mode, ModeT};
 use spi::Pag7665QnSpi;
 use types::{CircleParams, IntOStatus, Roi};
 
+/// Maximum time spent waiting for a sensor-controlled mode or report-buffer handshake.
+const HANDSHAKE_POLLS: usize = 100;
+
 // PAG7665QN register addresses, bank 0x00 unless noted.
 mod regs {
     // Identification
@@ -265,35 +268,34 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         self.mode.mode()
     }
 
+    async fn write_mode_and_wait<EO, EM>(
+        &mut self,
+        mode: Mode,
+    ) -> Result<(), Error<I::Error, EO, EM>> {
+        // Object-ready and image-ready share one flag; do not inherit a previous mode's
+        // report as the first frame of the new mode.
+        self.set_int_o_status(IntOStatus::ZERO).await?;
+        self.write(regs::OP_MODE_HOST, &[mode as u8]).await?;
+        for _ in 0..HANDSHAKE_POLLS {
+            if self.read_byte(regs::OP_MODE_ACTIVE).await? == mode as u8 {
+                return Ok(());
+            }
+            self.timer.delay_ms(1).await;
+        }
+        Err(Error::Timeout)
+    }
+
     pub async fn switch_mode<N: ModeT>(
         mut self,
         new_mode: N,
     ) -> Result<Pag7665Qn<I, D, N>, Error<I::Error, Infallible, Infallible>> {
-        if new_mode.mode() != self.mode.mode() {
-            defmt::debug!("Switching mode to {}", new_mode.mode());
-            self._set_bank(0x00).await?;
-            if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
-                // Go through idle when changing between image and object mode.
-                self.write(regs::OP_MODE_HOST, &[Mode::Idle as u8]).await?;
-                loop {
-                    let mut current_mode = [0];
-                    self.read(regs::OP_MODE_ACTIVE, &mut current_mode).await?;
-                    if current_mode[0] == Mode::Idle as u8 {
-                        break;
-                    }
-                }
+        self._set_bank(0x00).await?;
+        let current_mode = self.read_byte(regs::OP_MODE_ACTIVE).await?;
+        if current_mode != new_mode.mode() as u8 {
+            if current_mode != Mode::Idle as u8 && new_mode.mode() != Mode::Idle {
+                self.write_mode_and_wait(Mode::Idle).await?;
             }
-
-            self.write(regs::OP_MODE_HOST, &[new_mode.mode() as u8])
-                .await?;
-            loop {
-                let mut current_mode = [0];
-                self.read(regs::OP_MODE_ACTIVE, &mut current_mode).await?;
-                if current_mode[0] == new_mode.mode() as u8 {
-                    break;
-                }
-            }
-            defmt::debug!("Switched mode to {}", new_mode.mode());
+            self.write_mode_and_wait(new_mode.mode()).await?;
         }
         Ok(Pag7665Qn {
             mode: new_mode,
@@ -553,27 +555,54 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
         image: &mut [u8; 320 * 240],
     ) -> Result<(), Error<I::Error, O::Error, M::Error>> {
         self.mode.is_image().map_err(Error::ModeError)?;
-        self._set_bank(0x00).await?;
-
         loop {
             interrupt.wait().await.map_err(Error::IntOError)?;
-            let status = self.int_o_status().await?;
-            if status.frame_ready() {
-                // Lock frame buffer
-                self.write(regs::REPORT_BUF_SEL, &[1]).await?;
-                // Spin until the lock reads back as set.
-                while self.read_byte(regs::REPORT_BUF_SEL).await? == 0 {}
-
-                self.read(regs::RPT_SRAM_DATA, image).await?;
-
-                // Unlock frame buffer
-                self.write(regs::REPORT_BUF_SEL, &[0]).await?;
-                // Clear frame ready
-                self.set_int_o_status(IntOStatus::ZERO).await?;
-                break;
+            if self.try_get_image(image).await? {
+                return Ok(());
             }
         }
-        Ok(())
+    }
+
+    /// Reads a ready 320×240 frame without waiting for INT_O.
+    ///
+    /// The report-buffer lock handshake is bounded. Unlock and status cleanup are attempted
+    /// even if locking or the image read fails. Callers can poll this with their own deadline
+    /// without cancelling an in-progress SPI transaction.
+    ///
+    /// This retains the existing 320×240 image-report contract. The encoding of
+    /// SENSOR_SIZE_SEL is not documented here, so alternative selector values have no
+    /// verified physical-size mapping. SPI reads transfer exactly the requested byte count
+    /// or return an interface error; the current interface exposes no actual frame length to
+    /// validate a different image size. Do not reinterpret a shorter image as 320×240.
+    pub async fn try_get_image<EO>(
+        &mut self,
+        image: &mut [u8; 320 * 240],
+    ) -> Result<bool, Error<I::Error, EO, M::Error>> {
+        self.mode.is_image().map_err(Error::ModeError)?;
+        self._set_bank(0x00).await?;
+        if !self.int_o_status().await?.frame_ready() {
+            return Ok(false);
+        }
+        let result: Result<bool, Error<I::Error, EO, M::Error>> = async {
+            self.write(regs::REPORT_BUF_SEL, &[1]).await?;
+            for _ in 0..HANDSHAKE_POLLS {
+                if self.read_byte(regs::REPORT_BUF_SEL).await? != 0 {
+                    self.read(regs::RPT_SRAM_DATA, image).await?;
+                    return Ok(true);
+                }
+                self.timer.delay_ms(1).await;
+            }
+            Err(Error::Timeout)
+        }
+        .await;
+        let unlock: Result<(), Error<I::Error, EO, M::Error>> =
+            self.write(regs::REPORT_BUF_SEL, &[0]).await;
+        let clear: Result<(), Error<I::Error, EO, M::Error>> =
+            self.set_int_o_status(IntOStatus::ZERO).await;
+        let ready = result?;
+        unlock?;
+        clear?;
+        Ok(ready)
     }
 }
 
@@ -597,6 +626,8 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
     /// Get a frame of object data if ready. Returns the number of objects that were detected, or
     /// `Ok(None)` if no object data was ready. Use [`Pag7665QnInterrupt::wait`] to wait until a
     /// frame is ready.
+    ///
+    /// Returns [`Error::InvalidObjectCount`] if the sensor reports more than 16 objects.
     pub async fn try_get_objects<EO>(
         &mut self,
         obj: &mut [types::Object; 16],
@@ -608,10 +639,15 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
         let mut done = false;
         let mut flag = false;
         let mut total_count = 0;
+        let mut polls = 0;
         loop {
             let status = self.int_o_status().await?;
             if status.frame_ready() {
                 let count = self.read_byte(regs::OBJ_COUNT).await?;
+                if count > 16 {
+                    self.set_int_o_status(IntOStatus::ZERO).await?;
+                    return Err(Error::InvalidObjectCount(count));
+                }
 
                 // At most 8 objects are read per report; above 8, the rest arrive in a second
                 // report.
@@ -640,7 +676,15 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
                 self.set_int_o_status(IntOStatus::ZERO).await?;
                 return Ok(None);
             }
+            polls += 1;
+            if polls == HANDSHAKE_POLLS {
+                self.set_int_o_status(IntOStatus::ZERO).await?;
+                return Err(Error::Timeout);
+            }
             self.set_int_o_status(IntOStatus::ZERO).await?;
+            if flag && !done {
+                self.timer.delay_ms(1).await;
+            }
             if done {
                 break;
             }
@@ -654,34 +698,37 @@ impl<I: Interface, D: DelayNs> Pag7665Qn<I, D, Mode> {
         &mut self,
         new_mode: Mode,
     ) -> Result<(), Error<I::Error, Infallible, Infallible>> {
-        if new_mode.mode() != self.mode.mode() {
-            defmt::debug!("Switching mode to {}", new_mode.mode());
-            self._set_bank(0x00).await?;
-            if self.mode.mode() != Mode::Idle && new_mode.mode() != Mode::Idle {
-                // Go through idle when changing between image and object mode.
-                self.write(regs::OP_MODE_HOST, &[Mode::Idle as u8]).await?;
-                loop {
-                    let mut current_mode = [0];
-                    self.read(regs::OP_MODE_ACTIVE, &mut current_mode).await?;
-                    if current_mode[0] == Mode::Idle as u8 {
-                        break;
-                    }
-                }
+        self._set_bank(0x00).await?;
+        // Read the hardware mode, not just the cache: a previous transition may have failed
+        // after the idle command was accepted.
+        let current_mode = self.read_byte(regs::OP_MODE_ACTIVE).await?;
+        if current_mode != new_mode as u8 {
+            if current_mode != Mode::Idle as u8 && new_mode != Mode::Idle {
+                self.write_mode_and_wait(Mode::Idle).await?;
+                self.mode = Mode::Idle;
             }
-
-            self.write(regs::OP_MODE_HOST, &[new_mode.mode() as u8])
-                .await?;
-            loop {
-                let mut current_mode = [0];
-                self.read(regs::OP_MODE_ACTIVE, &mut current_mode).await?;
-                if current_mode[0] == new_mode.mode() as u8 {
-                    break;
-                }
-            }
-            defmt::debug!("Switched mode to {}", new_mode.mode());
+            self.write_mode_and_wait(new_mode).await?;
         }
         self.mode = new_mode;
         Ok(())
+    }
+
+    /// Releases a possibly locked image report and returns to object mode.
+    ///
+    /// Cleanup is deliberately independent of the cached mode so a cancelled/failed image
+    /// transition cannot make restoration a no-op. Mode restoration is attempted even when
+    /// releasing the report buffer fails.
+    pub async fn restore_object_mode(
+        &mut self,
+    ) -> Result<(), Error<I::Error, Infallible, Infallible>> {
+        self._set_bank(0x00).await?;
+        let unlock: Result<(), Error<I::Error, Infallible, Infallible>> =
+            self.write(regs::REPORT_BUF_SEL, &[0]).await;
+        let clear = self.set_int_o_status(IntOStatus::ZERO).await;
+        let restore = self.switch_mode_mut(Mode::Object).await;
+        restore?;
+        unlock?;
+        clear
     }
 }
 
@@ -738,4 +785,145 @@ pub enum Error<I, O, M> {
     InterfaceError(I),
     IntOError(O),
     ModeError(M),
+    /// The sensor reported more objects than its 16-object output buffer can hold.
+    InvalidObjectCount(u8),
+    /// The sensor did not acknowledge a mode/report handshake within 100 ms.
+    Timeout,
+}
+
+#[cfg(test)]
+mod tests {
+    use core::task::{Context, Poll, Waker};
+
+    use super::*;
+
+    struct ReadyDelay {
+        polls: usize,
+    }
+
+    impl DelayNs for ReadyDelay {
+        async fn delay_ns(&mut self, _: u32) {
+            self.polls += 1;
+        }
+    }
+
+    struct Sensor {
+        active: u8,
+        refuse_image: bool,
+        refuse_object: bool,
+        refuse_lock: bool,
+        fail_image_read: bool,
+        locked: bool,
+        frame_ready: bool,
+    }
+
+    impl Interface for Sensor {
+        type Error = ();
+
+        async fn write(&mut self, address: u8, data: &[u8]) -> Result<(), ()> {
+            match address {
+                regs::OP_MODE_HOST => {
+                    if !(data[0] == Mode::Image as u8 && self.refuse_image)
+                        && !(data[0] == Mode::Object as u8 && self.refuse_object)
+                    {
+                        self.active = data[0];
+                    }
+                }
+                regs::REPORT_BUF_SEL => self.locked = data[0] != 0 && !self.refuse_lock,
+                regs::INTO_STATUS => self.frame_ready = data[0] & 2 != 0,
+                _ => {}
+            }
+            Ok(())
+        }
+
+        async fn read(&mut self, address: u8, data: &mut [u8]) -> Result<(), ()> {
+            match address {
+                regs::OP_MODE_ACTIVE => data[0] = self.active,
+                regs::REPORT_BUF_SEL => data[0] = u8::from(self.locked),
+                regs::INTO_STATUS => data[0] = if self.frame_ready { 2 } else { 0 },
+                regs::RPT_SRAM_DATA if self.fail_image_read => return Err(()),
+                _ => data.fill(0),
+            }
+            Ok(())
+        }
+    }
+
+    fn sensor(active: Mode) -> Pag7665Qn<Sensor, ReadyDelay, Mode> {
+        Pag7665Qn {
+            bus: Sensor {
+                active: active as u8,
+                refuse_image: false,
+                refuse_object: false,
+                refuse_lock: false,
+                fail_image_read: false,
+                locked: false,
+                frame_ready: true,
+            },
+            timer: ReadyDelay { polls: 0 },
+            mode: active,
+            bank: 0,
+        }
+    }
+
+    fn ready<F: Future>(future: F) -> F::Output {
+        let mut future = core::pin::pin!(future);
+        let mut context = Context::from_waker(Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("mock sensor unexpectedly suspended"),
+        }
+    }
+
+    #[test]
+    fn failed_image_transition_restores_object_from_actual_idle() {
+        let mut driver = sensor(Mode::Object);
+        driver.bus.refuse_image = true;
+        assert!(matches!(
+            ready(driver.switch_mode_mut(Mode::Image)),
+            Err(Error::Timeout)
+        ));
+        assert_eq!(driver.timer.polls, HANDSHAKE_POLLS);
+        assert_eq!(driver.bus.active, Mode::Idle as u8);
+        ready(driver.restore_object_mode()).unwrap();
+        assert_eq!(driver.bus.active, Mode::Object as u8);
+        assert!(!driver.bus.locked);
+    }
+
+    #[test]
+    fn restoration_does_not_trust_stale_object_cache() {
+        let mut driver = sensor(Mode::Object);
+        driver.bus.active = Mode::Image as u8;
+        driver.bus.locked = true;
+        ready(driver.restore_object_mode()).unwrap();
+        assert_eq!(driver.bus.active, Mode::Object as u8);
+        assert!(!driver.bus.locked);
+        assert!(!driver.bus.frame_ready);
+    }
+
+    #[test]
+    fn failed_image_read_releases_report_buffer() {
+        let mut driver = sensor(Mode::Image);
+        driver.bus.fail_image_read = true;
+        let mut image = [0; 320 * 240];
+        assert!(matches!(
+            ready(driver.try_get_image::<Infallible>(&mut image)),
+            Err(Error::InterfaceError(()))
+        ));
+        assert!(!driver.bus.locked);
+        assert!(!driver.bus.frame_ready);
+    }
+
+    #[test]
+    fn report_lock_failure_is_bounded_and_clears_ready() {
+        let mut driver = sensor(Mode::Image);
+        driver.bus.refuse_lock = true;
+        let mut image = [0; 320 * 240];
+        assert!(matches!(
+            ready(driver.try_get_image::<Infallible>(&mut image)),
+            Err(Error::Timeout)
+        ));
+        assert_eq!(driver.timer.polls, HANDSHAKE_POLLS);
+        assert!(!driver.bus.locked);
+        assert!(!driver.bus.frame_ready);
+    }
 }
