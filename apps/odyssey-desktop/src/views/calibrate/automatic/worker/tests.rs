@@ -29,24 +29,30 @@ fn run_session(
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let worker = Worker::spawn(backend, tx);
 
-    worker.send(Command::ListCameras);
-    let camera = match rx.blocking_recv() {
+    worker
+        .send(Command::ListCameras)
+        .expect("the worker is running");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let camera = match recv_event(&mut rx, deadline) {
         Some(Event::Cameras(Ok(mut cameras))) => cameras.remove(0),
         other => panic!("expected a camera list, got {other:?}"),
     };
 
-    worker.send(Command::Open {
-        session: 7,
-        request: OpenRequest {
-            camera,
-            settings: CaptureSettings::default(),
-            aspect: 16.0 / 9.0,
-            options,
-            pattern_visible: true,
-            size_origin: origin,
-        },
-    });
+    worker
+        .send(Command::Open {
+            session: 7,
+            request: OpenRequest {
+                camera,
+                settings: CaptureSettings::default(),
+                aspect: 16.0 / 9.0,
+                options,
+                pattern_visible: true,
+                size_origin: origin,
+            },
+        })
+        .expect("the worker is running");
     let mut measuring = false;
+    let mut measuring_markers = false;
     let mut outcome = None;
     let mut closed = false;
     let mut saved = None;
@@ -57,9 +63,7 @@ fn run_session(
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
     ));
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while let Some(event) = rx.blocking_recv() {
-        assert!(Instant::now() < deadline, "timed out");
+    while let Some(event) = recv_event(&mut rx, deadline) {
         let Event::Session { session, event } = event else {
             continue;
         };
@@ -73,29 +77,42 @@ fn run_session(
                     frame.hint == Hint::Ready && frame.ready_for >= Duration::from_millis(300);
                 if (ready || measure_anyway) && !measuring {
                     measuring = true;
-                    worker.send(Command::MeasureScreen);
+                    worker
+                        .send(Command::MeasureScreen)
+                        .expect("the worker is running");
                 }
             }
-            SessionEvent::ScreenMeasured => worker.send(Command::SetMode(Mode::Markers)),
+            SessionEvent::ScreenMeasured => worker
+                .send(Command::SetMode(Mode::Markers))
+                .expect("the worker is running"),
             SessionEvent::Markers(frame) => {
                 worker.frame_consumed();
-                if frame.matched.is_some() {
-                    worker.send(Command::MeasureMarkers);
+                if frame.matched.is_some() && !measuring_markers {
+                    measuring_markers = true;
+                    worker
+                        .send(Command::MeasureMarkers)
+                        .expect("the worker is running");
                 }
             }
-            SessionEvent::MarkersMeasured => worker.send(Command::Finish),
+            SessionEvent::MarkersMeasured => {
+                worker.send(Command::Finish).expect("the worker is running");
+            }
             SessionEvent::Finished(f) => {
                 outcome = Some(Ended::Finished(f));
-                worker.send(Command::SaveAttempt {
-                    path: bundle_path.clone(),
-                });
+                worker
+                    .send(Command::SaveAttempt {
+                        path: bundle_path.clone(),
+                    })
+                    .expect("the worker is running");
             }
             SessionEvent::Failed(f) => {
                 outcome = Some(Ended::Failed(f));
-                worker.send(Command::SaveAttempt {
-                    path: bundle_path.clone(),
-                });
-                worker.send(Command::Close);
+                worker
+                    .send(Command::SaveAttempt {
+                        path: bundle_path.clone(),
+                    })
+                    .expect("the worker is running");
+                worker.send(Command::Close).expect("the worker is running");
             }
             SessionEvent::Closed => closed = true,
             SessionEvent::AttemptSaved(result) => saved = Some(result),
@@ -124,6 +141,22 @@ fn run_session(
     std::fs::remove_file(&bundle_path).unwrap();
     drop(worker);
     outcome.expect("a result")
+}
+
+fn recv_event(
+    receiver: &mut tokio::sync::mpsc::UnboundedReceiver<Event>,
+    deadline: Instant,
+) -> Option<Event> {
+    loop {
+        assert!(Instant::now() < deadline, "camera worker timed out");
+        match receiver.try_recv() {
+            Ok(event) => return Some(event),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return None,
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
 }
 
 fn demo() -> Backend {

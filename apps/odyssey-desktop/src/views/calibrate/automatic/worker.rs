@@ -68,10 +68,15 @@ impl Worker {
         }
     }
 
-    pub(crate) fn send(&self, command: Command) {
-        // A send fails only once the thread has stopped, after which there is
-        // no camera left to command.
-        let _ = self.commands.send(command);
+    /// Queues a command, or returns it if the camera thread has stopped.
+    /// Callers must finish the corresponding UI operation on failure; no reply
+    /// can arrive from a disconnected thread.
+    #[expect(
+        clippy::result_large_err,
+        reason = "The UI recovers the rejected command; boxing would allocate on a channel close."
+    )]
+    pub(crate) fn send(&self, command: Command) -> Result<(), mpsc::SendError<Command>> {
+        self.commands.send(command)
     }
 
     /// Tells the thread the UI has taken the last frame and wants the next.

@@ -19,6 +19,7 @@ pub(super) fn DisagreementNotice(
     size_origin: Option<SizeOrigin>,
     can_use_measured: bool,
 ) -> Element {
+    let saving = *wizard.saving.read();
     rsx! {
         div {
             role: "alert",
@@ -37,6 +38,7 @@ pub(super) fn DisagreementNotice(
                     button {
                         class: SECONDARY_BUTTON,
                         r#type: "button",
+                        disabled: saving,
                         onclick: move |_| *wizard.use_measured.write() = true,
                         "Use the camera's measurement instead"
                     }
@@ -55,6 +57,7 @@ pub(super) fn DisagreementNotice(
                 button {
                     class: SECONDARY_BUTTON,
                     r#type: "button",
+                    disabled: saving,
                     onclick: move |_| wizard.check_by_hand(),
                     if size_origin == Some(SizeOrigin::Reference) {
                         "Measure by hand again"
@@ -88,6 +91,7 @@ pub(super) fn OverscanNotice() -> Element {
 /// The review is showing the camera's own size instead of the declared one.
 #[component]
 pub(super) fn UsingMeasuredNotice(wizard: Wizard) -> Element {
+    let saving = *wizard.saving.read();
     rsx! {
         div {
             class: "flex flex-wrap items-center justify-between gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100",
@@ -95,6 +99,7 @@ pub(super) fn UsingMeasuredNotice(wizard: Wizard) -> Element {
             button {
                 class: SECONDARY_BUTTON,
                 r#type: "button",
+                disabled: saving,
                 onclick: move |_| *wizard.use_measured.write() = false,
                 "Go back to the declared size"
             }
@@ -105,6 +110,7 @@ pub(super) fn UsingMeasuredNotice(wizard: Wizard) -> Element {
 /// Saving would overwrite a calibration that is already stored for the screen.
 #[component]
 pub(super) fn ReplaceConfirmation(wizard: Wizard, screen: String) -> Element {
+    let saving = *wizard.saving.read();
     rsx! {
         div {
             role: "alertdialog",
@@ -117,12 +123,14 @@ pub(super) fn ReplaceConfirmation(wizard: Wizard, screen: String) -> Element {
                 button {
                     class: PRIMARY_BUTTON,
                     r#type: "button",
+                    disabled: saving,
                     onclick: move |_| wizard.save(true),
                     "Replace it"
                 }
                 button {
                     class: SECONDARY_BUTTON,
                     r#type: "button",
+                    disabled: saving,
                     onclick: move |_| *wizard.confirm_replace.write() = false,
                     "Keep the old one"
                 }

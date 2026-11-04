@@ -28,6 +28,9 @@ impl Wizard {
         *self.use_measured.write() = false;
         *self.saved_to.write() = None;
         *self.confirm_replace.write() = false;
+        *self.saving.write() = false;
+        *self.attempt_saving.write() = false;
+        *self.attempt_status.write() = None;
         *self.save_error.write() = None;
         self.set_stage(Stage::Setup);
         spawn(async move { self.refresh_saved_screens().await });
@@ -54,6 +57,9 @@ impl Wizard {
     }
 
     pub(super) fn problem(mut self, failure: Failure) {
+        // A failed preview can arrive during the same-monitor countdown.
+        // Stop it before it can move the problem screen back into Measuring.
+        self.cancel_flow();
         self.close_pattern();
         self.restore_window();
         *self.failure.write() = Some(failure);

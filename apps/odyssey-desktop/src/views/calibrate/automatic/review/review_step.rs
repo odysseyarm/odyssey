@@ -36,7 +36,7 @@ fn headline(verdict: Verdict) -> (Icon, &'static str) {
 }
 
 /// The save and redo buttons, which swap places with the verdict: the
-/// recommended action sits on the right, where the eye ends.
+/// recommended action sits on the right. Neither action runs during a save.
 #[component]
 fn ReviewFooter(wizard: Wizard, poor: bool, saving: bool, confirming: bool) -> Element {
     let (save_class, redo_class) = if poor {
@@ -68,6 +68,7 @@ fn ReviewFooter(wizard: Wizard, poor: bool, saving: bool, confirming: bool) -> E
             id: redo_id,
             class: redo_class,
             r#type: "button",
+            disabled: saving,
             onclick: move |_| wizard.begin_position(),
             "Redo"
         }
@@ -93,14 +94,15 @@ fn selected_monitor_name(wizard: Wizard) -> String {
 
 #[component]
 pub fn ReviewStep(wizard: Wizard) -> Element {
-    // Enter does the obvious thing when the result is clearly good (save) or
-    // clearly bad (redo). An amber result gets no default: the tech reads first.
+    // Follow the selected size's verdict: Enter saves a clearly good result or
+    // redoes a clearly bad one. Amber gets no default: the tech reads first.
     use_effect(move || {
+        let use_measured = *wizard.use_measured.read();
         let verdict = wizard
             .finished
             .read()
             .as_ref()
-            .map(|f| assess(&f.outcome(false).measures).verdict);
+            .map(|f| assess(&f.outcome(use_measured).measures).verdict);
         if matches!(verdict, Some(Verdict::Good | Verdict::Poor)) {
             focus_primary();
         }

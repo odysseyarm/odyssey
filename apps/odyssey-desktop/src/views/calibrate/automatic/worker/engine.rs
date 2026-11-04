@@ -18,7 +18,7 @@ use odyssey_autocalib::camera::CameraError;
 use odyssey_autocalib::session::{AttemptFrames, Calibration, Session, SessionError, Step};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::backend::{Backend, OpenRequest};
+use super::backend::{Backend, ListError, OpenRequest};
 use super::command::{Command, Mode};
 use super::event::{Event, SavedAttempt, SessionEvent};
 use super::failure::{Failure, FailureKind};
@@ -102,6 +102,11 @@ impl Engine {
         let outcome = catch_unwind(AssertUnwindSafe(|| self.serve(&receiver)));
         if outcome.is_err() {
             tracing::error!("camera thread panicked");
+            // A listing has no session ID. Complete it even if the UI has
+            // already abandoned the last session, or Setup would keep waiting.
+            let _ = self.events.send(Event::Cameras(Err(ListError::Camera(
+                "the camera thread stopped unexpectedly".into(),
+            ))));
             self.emit(SessionEvent::Failed(Failure {
                 kind: FailureKind::Internal,
                 details: "the camera thread stopped unexpectedly".into(),

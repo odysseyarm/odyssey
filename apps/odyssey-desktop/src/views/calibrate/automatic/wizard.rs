@@ -10,9 +10,13 @@
 //!    └─────────┴──── Problem (any camera or measurement failure) ◀────┘
 //! ```
 //!
-//! The camera streams only in Position, Measuring, Markers and
-//! MeasuringMarkers. Every way out of those stages (back, cancel, failure,
-//! the finished result, closing the window) closes the session.
+//! Position and Markers stream previews; the measuring stages capture bursts.
+//! Leaving the flow closes the session. A measurement failure may retain an
+//! idle camera for retry, but no countdown task may advance the failed flow.
+//!
+//! Setup must finish loading remembered answers before either manual or CLI
+//! continuation. Saving snapshots one review result; returning to Setup
+//! invalidates its completion so a late disk write cannot change the new flow.
 
 mod events;
 mod helper;
@@ -44,7 +48,10 @@ use super::pattern_window::{PatternDisplay, PatternEvent};
 use super::reference::Reference;
 use super::screens::SCREEN_COUNT;
 use super::settings::SizeField;
-use super::worker::{Command, Failure, Finished, MarkerFrame, PreviewFrame, SavedAttempt, Worker};
+use super::worker::{
+    Command, Event, Failure, FailureKind, Finished, ListError, MarkerFrame, PreviewFrame,
+    SavedAttempt, SessionEvent, Worker,
+};
 use crate::ServerReady;
 use crate::components::screen_picker::MonitorSelection;
 use crate::ui_state::UiStateWriter;
@@ -155,8 +162,30 @@ pub(crate) struct Wizard {
 }
 
 impl Wizard {
-    fn send(self, command: Command) {
-        self.worker.peek().send(command);
+    fn send(mut self, command: Command) {
+        let result = self.worker.peek().send(command);
+        if let Err(error) = result {
+            let details = "the camera thread is no longer running".to_string();
+            match error.0 {
+                Command::Close => {}
+                Command::ListCameras => {
+                    self.on_event(Event::Cameras(Err(ListError::Camera(details))));
+                }
+                Command::SaveAttempt { .. } => self.on_event(Event::Session {
+                    session: *self.session.peek(),
+                    event: SessionEvent::AttemptSaved(Err(details)),
+                }),
+                _ => {
+                    *self.restarting.write() = false;
+                    self.problem(Failure {
+                        kind: FailureKind::Internal,
+                        details,
+                        camera_open: false,
+                        size_origin: None,
+                    });
+                }
+            }
+        }
     }
 
     pub(crate) fn note(mut self, text: String) {
