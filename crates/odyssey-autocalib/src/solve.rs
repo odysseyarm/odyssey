@@ -20,7 +20,7 @@
 //!    the origin to its top-left corner.
 
 use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, Vector2, Vector3};
-use odyssey_common::ScreenCalibration;
+use odyssey_common::{ScreenCalibration, ScreenCalibrationError};
 
 use crate::camera::{CameraGeometry, Extrinsics, Frames, Intrinsics};
 use crate::pattern::{Correspondence, DetectFailure, Pattern, detect};
@@ -98,10 +98,17 @@ pub const KNOWN_ASPECT_TOLERANCE: f64 = 0.015;
 impl KnownSize {
     /// Width and height in meters for a pattern of the given aspect ratio.
     pub fn size_for_aspect(&self, aspect: f64) -> Result<[f64; 2], SolveError> {
+        if !aspect.is_finite() || aspect <= 0.0 {
+            return Err(SolveError::KnownSizeInvalid);
+        }
         match *self {
             Self::Diagonal { inches } if inches.is_finite() && inches > 0.0 => {
-                let height = inches * METERS_PER_INCH / (aspect * aspect + 1.0).sqrt();
-                Ok([aspect * height, height])
+                let height = inches * METERS_PER_INCH / aspect.hypot(1.0);
+                let width = aspect * height;
+                if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+                    return Err(SolveError::KnownSizeInvalid);
+                }
+                Ok([width, height])
             }
             Self::Dimensions { width_m, height_m }
                 if width_m.is_finite()
@@ -211,6 +218,8 @@ pub enum SolveError {
     Mirrored,
     #[error("dot positions do not agree with a flat screen")]
     DotsInconsistent,
+    #[error("the solved calibration is invalid: {0}")]
+    InvalidCalibration(#[from] ScreenCalibrationError),
     #[error("the declared screen size must be positive")]
     KnownSizeInvalid,
     /// The declared width-to-height ratio differs from the displayed image's
@@ -301,7 +310,7 @@ pub fn compose(a: &Extrinsics, b: &Extrinsics) -> Extrinsics {
 /// Whether `count` is at least half of `total`: the majority rule that frames
 /// and detections must pass to count as agreeing.
 pub(crate) fn is_at_least_half(count: usize, total: usize) -> bool {
-    count * 2 >= total
+    count >= total.div_ceil(2)
 }
 
 /// Measures the screen from a burst of frames.
@@ -799,20 +808,53 @@ pub(crate) fn screen_depth_points(
 
 /// Builds the hub's calibration from the screen fit and the six marker
 /// positions, in the screen frame (meters, `z = 0`).
-pub fn build_calibration(fit: &ScreenFit, markers: &[Point2<f64>; 6]) -> ScreenCalibration<f32> {
+/// Fails instead of exporting a singular map or values that are invalid after
+/// conversion to the hub's `f32` representation.
+pub fn build_calibration(
+    fit: &ScreenFit,
+    markers: &[Point2<f64>; 6],
+) -> Result<ScreenCalibration<f32>, SolveError> {
     let mut h = fit
         .unit_to_screen
         .try_inverse()
-        .unwrap_or_else(Matrix3::identity);
+        .ok_or(SolveError::DotsInconsistent)?;
     if h[(2, 2)].abs() > HOMOGENEOUS_EPSILON {
         h /= h[(2, 2)];
     }
     let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
         fit.screen_from_aligned.rotation,
     ));
-    ScreenCalibration {
+    let calibration = ScreenCalibration {
         rotation: rotation.cast(),
         homography: h.cast(),
         object_points: markers.map(|m| Point3::new(m.x as f32, m.y as f32, 0.0)),
+    };
+    calibration.validate()?;
+    Ok(calibration)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declared_sizes_require_a_positive_finite_aspect() {
+        let diagonal = KnownSize::Diagonal { inches: 50.0 };
+        let dimensions = KnownSize::Dimensions {
+            width_m: 1.0,
+            height_m: 1.0,
+        };
+        for aspect in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            for known in [diagonal, dimensions] {
+                assert!(matches!(
+                    known.size_for_aspect(aspect),
+                    Err(SolveError::KnownSizeInvalid)
+                ));
+            }
+        }
+        // Squaring this finite aspect used to overflow and produce zero height.
+        let size = diagonal.size_for_aspect(1e200).unwrap();
+        assert!(size[0] > 0.0 && size[0].is_finite());
+        assert!(size[1] > 0.0 && size[1].is_finite());
     }
 }

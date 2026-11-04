@@ -17,4 +17,6 @@ pub use calibration_json::{
 #[cfg(feature = "std")]
 pub use intrinsics_convert::ros_opencv_intrinsics_type_convert;
 pub use plane::Plane;
-pub use screen_calibration::{MARKER_PATTERN_LEN, MAX_SCREEN_ID, ScreenCalibration};
+pub use screen_calibration::{
+    MARKER_PATTERN_LEN, MAX_SCREEN_ID, ScreenCalibration, ScreenCalibrationError,
+};

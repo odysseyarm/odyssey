@@ -71,7 +71,7 @@ fn assert_matches_truth(cal: &Calibration, truth: &Truth, alignment: &Matrix3<f6
     // bounds() order is tl, tr, bl, br.
     let corners = truth.corners_m();
     let truth_bounds = [corners[0], corners[1], corners[3], corners[2]];
-    for (g, t) in got.bounds().iter().zip(truth_bounds) {
+    for (g, t) in got.bounds().unwrap().iter().zip(truth_bounds) {
         let (gx, gy) = (f64::from(g.x), f64::from(g.y));
         let err = ((gx - t.x).powi(2) + (gy - t.y).powi(2)).sqrt();
         assert!(err < tol_m, "corner {g:?} vs {t:?}: {err} m");
@@ -751,6 +751,9 @@ fn finish_measured_drops_the_declared_size_without_the_camera() {
     let measured = session.finish_measured().unwrap();
     assert_eq!(measured.review.size_source, SizeSource::Measured);
     assert!(measured.review.size_check.is_none());
+    // Dropping a size anchor must not change the gravity frame captured with
+    // the screen, even though marker capture has supplied newer IMU readings.
+    assert_eq!(measured.calibration.rotation, declared.calibration.rotation);
     let truth = scene.truth();
     assert!(
         size_error(&measured, &truth) < 0.01,
@@ -777,4 +780,24 @@ fn finish_measured_without_a_declared_size_is_finish() {
         session.finish().unwrap().calibration.homography,
         session.finish_measured().unwrap().calibration.homography
     );
+}
+
+#[test]
+fn calibration_export_rejects_singular_screen_maps_and_nonfinite_markers() {
+    let scene = SyntheticScene::default();
+    let mut session = open(
+        &scene,
+        &CaptureSettings::default(),
+        SessionOptions::default(),
+    );
+    session.measure_screen(&mut |_| {}).unwrap();
+    let mut fit = session.screen_fit().unwrap().clone();
+    let mut markers = [Point2::origin(); 6];
+    fit.unit_to_screen = Matrix3::zeros();
+    assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
+    fit = session.screen_fit().unwrap().clone();
+    markers[0].x = f64::NAN;
+    assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
+    markers[0].x = f64::MAX;
+    assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
 }

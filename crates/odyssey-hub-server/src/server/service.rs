@@ -269,7 +269,9 @@ impl Service for HubServer {
             .iter()
             .find(|(screen_id, _)| *screen_id == id)
             .ok_or_else(|| Status::not_found("screen id"))?;
-        let bounds = calibration.bounds();
+        let bounds = calibration
+            .bounds()
+            .ok_or_else(|| Status::failed_precondition("screen calibration has invalid bounds"))?;
         Ok(Response::new(ScreenInfoReply {
             id: u32::from(id),
             bounds: Some(ScreenBounds {

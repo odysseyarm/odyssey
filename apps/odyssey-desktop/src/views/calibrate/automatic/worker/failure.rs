@@ -47,9 +47,10 @@ impl FailureKind {
         match error {
             SolveError::PatternNotFound(_) => Self::ScreenDots,
             SolveError::TooFewDepthPoints { .. } | SolveError::NoPlane => Self::ScreenDepth,
-            SolveError::DegeneratePose | SolveError::Mirrored | SolveError::DotsInconsistent => {
-                Self::ScreenGeometry
-            }
+            SolveError::DegeneratePose
+            | SolveError::Mirrored
+            | SolveError::DotsInconsistent
+            | SolveError::InvalidCalibration(_) => Self::ScreenGeometry,
             SolveError::KnownSizeInvalid => Self::SizeInvalid,
             SolveError::KnownSizeAspectMismatch { .. } => Self::SizeShape,
         }

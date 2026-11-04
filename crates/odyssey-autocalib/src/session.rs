@@ -736,20 +736,21 @@ impl Session {
     /// The calibration and review data, once the screen and markers are measured.
     pub fn finish(&self) -> Result<Calibration, SessionError> {
         let (screen, markers) = self.measurements()?;
-        Ok(self.assemble(screen, &screen.fit, markers.summary, markers.marker_px))
+        self.assemble(screen, &screen.fit, markers.summary, markers.marker_px)
     }
 
     /// The same measurement as [`finish`](Self::finish) with the declared
     /// [`SessionOptions::known_size`] ignored: the size comes from the depth
     /// camera. It solves the stored frames again and needs no camera, so a
-    /// review screen can offer it after the stream has stopped. Equals
-    /// `finish` when no size was declared.
+    /// review screen can offer it after the stream has stopped. Reuses the
+    /// gravity frame captured with the screen, not later marker-phase IMU
+    /// readings. Equals `finish` when no size was declared.
     pub fn finish_measured(&self) -> Result<Calibration, SessionError> {
         let (screen, markers) = self.measurements()?;
         if self.options.known_size.is_none() {
             return self.finish();
         }
-        let alignment = self.gravity.camera_to_aligned();
+        let alignment = screen.fit.camera_to_aligned;
         let fit = solve_screen(
             &self.geometry,
             &self.pattern,
@@ -758,7 +759,7 @@ impl Session {
             &SolveOptions::default(),
         )?;
         let (summary, marker_px) = average_markers(&self.geometry, &fit, &markers.bursts)?;
-        Ok(self.assemble(screen, &fit, summary, marker_px))
+        self.assemble(screen, &fit, summary, marker_px)
     }
 
     fn assemble(
@@ -767,8 +768,8 @@ impl Session {
         fit: &ScreenFit,
         markers: MarkerSummary,
         marker_px: [Point2<f32>; 6],
-    ) -> Calibration {
-        let calibration = build_calibration(fit, &markers.points_m);
+    ) -> Result<Calibration, SessionError> {
+        let calibration = build_calibration(fit, &markers.points_m)?;
         let review = Review {
             color: screen.color.clone(),
             plane_rmse_m: fit.plane_rmse_m,
@@ -786,10 +787,10 @@ impl Session {
             seed_circle: markers.seed_circle,
             gravity_aligned: screen.gravity_aligned,
         };
-        Calibration {
+        Ok(Calibration {
             calibration,
             review,
-        }
+        })
     }
 }
 

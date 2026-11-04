@@ -1,6 +1,6 @@
 //! Reading and writing the calibration files the hub loads.
 
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use odyssey_common::{MAX_SCREEN_ID, ScreenCalibration};
@@ -13,14 +13,23 @@ pub fn screen_file_name(id: u8) -> String {
 /// Serializes a calibration the way the hub's loader expects: compact JSON
 /// with `rotation` as `[i, j, k, w]`, `homography` as nine column-major
 /// values and `object_points` as six `[x, y, z]` triples.
+/// Rejects non-finite or otherwise invalid numeric calibration data.
 pub fn calibration_to_json(
     calibration: &ScreenCalibration<f32>,
 ) -> Result<String, serde_json::Error> {
+    calibration
+        .validate()
+        .map_err(<serde_json::Error as serde::ser::Error>::custom)?;
     serde_json::to_string(calibration)
 }
 
+/// Deserializes and validates bounds, coordinates and the rotation quaternion.
 pub fn calibration_from_json(json: &str) -> Result<ScreenCalibration<f32>, serde_json::Error> {
-    serde_json::from_str(json)
+    let calibration: ScreenCalibration<f32> = serde_json::from_str(json)?;
+    calibration
+        .validate()
+        .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+    Ok(calibration)
 }
 
 fn check_id(id: u8) -> io::Result<()> {
@@ -42,12 +51,15 @@ pub fn save_calibration(
     calibration: &ScreenCalibration<f32>,
 ) -> io::Result<PathBuf> {
     check_id(id)?;
+    let json = calibration_to_json(calibration).map_err(io::Error::other)?;
     std::fs::create_dir_all(screens_dir)?;
     let path = screens_dir.join(screen_file_name(id));
-    let temp = screens_dir.join(format!(".{}.tmp", screen_file_name(id)));
-    let json = calibration_to_json(calibration).map_err(io::Error::other)?;
-    std::fs::write(&temp, json)?;
-    std::fs::rename(&temp, &path)?;
+    // A unique, exclusively created file avoids concurrent writers sharing a
+    // scratch path (or following an existing scratch symlink). `persist`
+    // atomically replaces an existing calibration on Unix and Windows.
+    let mut temp = tempfile::NamedTempFile::new_in(screens_dir)?;
+    temp.write_all(json.as_bytes())?;
+    temp.persist(&path).map_err(|error| error.error)?;
     Ok(path)
 }
 
@@ -92,7 +104,7 @@ mod tests {
             Point2::new(0.0, 1.0 / 1.46),
             Point2::new(1.0 / 0.82, 1.0 / 1.46),
         ];
-        for (got, want) in back.bounds().iter().zip(expected) {
+        for (got, want) in back.bounds().unwrap().iter().zip(expected) {
             assert!((got - want).norm() < 1e-6, "{got:?} vs {want:?}");
         }
     }
@@ -112,14 +124,42 @@ mod tests {
 
     #[test]
     fn save_and_load_use_the_hub_file_name() {
-        let dir =
-            std::env::temp_dir().join(format!("odyssey-autocalib-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let path = save_calibration(&dir.join("screens"), 3, &sample()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let screens = dir.path().join("screens");
+        let path = save_calibration(&screens, 3, &sample()).unwrap();
         assert_eq!(path.file_name().unwrap(), "screen_3.json");
-        let back = load_calibration(&dir.join("screens"), 3).unwrap();
-        assert_eq!(back.object_points, sample().object_points);
-        assert!(save_calibration(&dir, MAX_SCREEN_ID + 1, &sample()).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
+        let mut replacement = sample();
+        replacement.object_points[0].x += 0.01;
+        save_calibration(&screens, 3, &replacement).unwrap();
+        let back = load_calibration(&screens, 3).unwrap();
+        assert_eq!(back.object_points, replacement.object_points);
+        assert!(save_calibration(dir.path(), MAX_SCREEN_ID + 1, &sample()).is_err());
+    }
+
+    #[test]
+    fn invalid_calibrations_are_not_written_or_loaded() {
+        let mut calibration = sample();
+        calibration.object_points[0].x = f32::NAN;
+        assert!(calibration_to_json(&calibration).is_err());
+        calibration = sample();
+        calibration.homography = Matrix3::zeros();
+        assert!(calibration_to_json(&calibration).is_err());
+        let invalid_json = serde_json::to_string(&calibration).unwrap();
+        assert!(calibration_from_json(&invalid_json).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_does_not_follow_a_preexisting_scratch_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = dir.path().join("unrelated");
+        std::fs::write(&unrelated, b"must stay intact").unwrap();
+        std::os::unix::fs::symlink(&unrelated, dir.path().join(".screen_3.json.tmp")).unwrap();
+        save_calibration(dir.path(), 3, &sample()).unwrap();
+        assert_eq!(std::fs::read(&unrelated).unwrap(), b"must stay intact");
+        assert_eq!(
+            load_calibration(dir.path(), 3).unwrap().object_points,
+            sample().object_points
+        );
     }
 }

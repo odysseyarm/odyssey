@@ -21,8 +21,6 @@ serde_json = { workspace = true }
 # Loads the Orbbec SDK shared library at run time; nothing links against it.
 libloading = "0.8"
 parking_lot = { workspace = true }
-
-[dev-dependencies]
 tempfile = "3"
 
 # Reads a monitor's EDID from the registry; nothing else here is Windows-specific.
