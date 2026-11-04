@@ -153,19 +153,16 @@ pub fn load_manifest(dir: &Path, channel: FirmwareChannel) -> Result<Loaded> {
     dropped.sort_by(|a, b| (&a.device, &a.version).cmp(&(&b.device, &b.version)));
 
     if manifest.devices.is_empty() {
-        let mut message = format!(
-            "The firmware pack in {} has no complete release.",
+        // Name a few of the dropped releases so the user can see why nothing is left.
+        let details: String = dropped
+            .iter()
+            .take(3)
+            .map(|d| format!(" {} {}: {}.", d.device, d.version, d.problems.join("; ")))
+            .collect();
+        bail!(
+            "The firmware pack in {} has no complete release.{details}",
             dir.display()
         );
-        for d in dropped.iter().take(3) {
-            message.push_str(&format!(
-                " {} {}: {}.",
-                d.device,
-                d.version,
-                d.problems.join("; ")
-            ));
-        }
-        bail!(message);
     }
     Ok(Loaded { manifest, dropped })
 }

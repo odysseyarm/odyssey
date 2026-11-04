@@ -465,13 +465,11 @@ pub fn find_any_known_device() -> Option<(u16, u16, &'static str)> {
 /// Check if a specific device (by UUID) is present and in application mode (not DFU mode).
 /// Returns true if device is found and is in app mode, false otherwise.
 pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
-    let info = match find_device_by_uuid(uuid, vid, pid) {
-        Ok(info) => info,
-        Err(_) => return false,
+    let Ok(info) = find_device_by_uuid(uuid, vid, pid) else {
+        return false;
     };
-    let device = match info.open().wait() {
-        Ok(device) => device,
-        Err(_) => return false,
+    let Ok(device) = info.open().wait() else {
+        return false;
     };
 
     // Check if device has a DFU interface in DFU mode
@@ -1017,11 +1015,9 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
         match inner.poll_read(cx, buf) {
             std::task::Poll::Ready(Ok(n)) => {
                 self.bytes_read += n;
-                let percent = if self.total_size > 0 {
-                    (self.bytes_read * 100) / self.total_size
-                } else {
-                    100
-                };
+                let percent = (self.bytes_read * 100)
+                    .checked_div(self.total_size)
+                    .unwrap_or(100);
 
                 // Copy values for use in logging and callback
                 let bytes_read = self.bytes_read;
@@ -1100,7 +1096,7 @@ where
     let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut progress_callback = progress_callback;
     let progress_callback = {
-        let sent = sent.clone();
+        let sent = std::sync::Arc::clone(&sent);
         move |done: usize, total: usize| {
             sent.store(done, std::sync::atomic::Ordering::Relaxed);
             progress_callback(done, total);

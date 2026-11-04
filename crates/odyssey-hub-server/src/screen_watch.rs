@@ -423,7 +423,7 @@ mod tests {
         let (mut watcher, target) = start(&dir).await;
         let cancel = CancellationToken::new();
         let task = tokio::spawn({
-            let (target, cancel) = (target.clone(), cancel.clone());
+            let (target, cancel) = (Arc::clone(&target), cancel.clone());
             async move {
                 watcher
                     .run_every(Duration::from_millis(10), target, cancel)

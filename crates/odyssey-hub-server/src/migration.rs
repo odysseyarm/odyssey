@@ -73,11 +73,6 @@ pub(crate) fn recovery_uuid(vid: u16, pid: u16) -> Option<[u8; 6]> {
     Some([0xff, 0xff, 0xff, 0xff, (pid >> 8) as u8, pid as u8])
 }
 
-/// Whether a uuid is one this module invented rather than one a device reported.
-pub(crate) fn is_recovery_uuid(uuid: &[u8; 6]) -> bool {
-    uuid[..4] == [0xff, 0xff, 0xff, 0xff]
-}
-
 /// Find a bootloader that enumerates under the application's product id.
 ///
 /// Bootloaders now take an id of their own, which is what makes the two modes
