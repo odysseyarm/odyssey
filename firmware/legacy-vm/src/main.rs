@@ -1,8 +1,6 @@
 #![no_main]
 #![no_std]
 
-use common::object_mode::{ObjectModeContext, object_mode};
-use common::{Paj, settings, usb};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::config::{Config, Reg0Voltage};
@@ -11,11 +9,13 @@ use embassy_nrf::{bind_interrupts, interrupt, pac, peripherals, spim};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::Timer;
+use legacy_common::object_mode::{ObjectModeContext, object_mode};
+use legacy_common::{Paj, settings, usb};
+use legacy_vm::l2cap::VmL2capChannels;
+use legacy_vm::pins::Board;
+use legacy_vm::{VmPlatform, imu, split_board, utils};
 use panic_probe as _;
 use static_cell::StaticCell;
-use vm_board::l2cap::VmL2capChannels;
-use vm_board::pins::Board;
-use vm_board::{VmPlatform, imu, split_board, utils};
 
 const DEVICE_INTERFACE_GUID: &str = "{4d36e96c-e325-11ce-bfc1-08002be10318}";
 
@@ -27,8 +27,8 @@ static BATTERY_CHARGING: core::sync::atomic::AtomicBool = core::sync::atomic::At
 bind_interrupts!(struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
-    TWISPI0 => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>;
-    TWISPI1 => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>;
+    TWISPI0 => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI0>, embassy_nrf::spis::InterruptHandler<peripherals::TWISPI0>;
+    TWISPI1 => embassy_nrf::spim::InterruptHandler<peripherals::TWISPI1>, embassy_nrf::spis::InterruptHandler<peripherals::TWISPI1>;
     SPI2 => embassy_nrf::spim::InterruptHandler<peripherals::SPI2>;
     TIMER1 => TimerIrq;
 });
@@ -43,7 +43,7 @@ impl
     unsafe fn on_interrupt() {
         let regs = unsafe { embassy_nrf::pac::timer::Timer::from_ptr(pac::TIMER1.as_ptr()) };
         regs.events_compare(1).write(|w| *w = 0);
-        common::fodtrigger::FOD_TICK_SIG.signal(());
+        legacy_common::fodtrigger::FOD_TICK_SIG.signal(());
     }
 }
 
@@ -76,7 +76,7 @@ async fn main(spawner: Spawner) {
     defmt::info!("Initializing PAJ7025 sensors...");
 
     // PAJ7025 R2 (Near Field) on TWISPI0
-    let paj_r2_spi_pins = common::utils::SpiPins {
+    let paj_r2_spi_pins = legacy_common::utils::SpiPins {
         sck: board.paj7025r2.sck.into(),
         miso: board.paj7025r2.miso.into(),
         mosi: board.paj7025r2.mosi.into(),
@@ -88,7 +88,7 @@ async fn main(spawner: Spawner) {
     paj_r2_config.bit_order = spim::BitOrder::LSB_FIRST;
 
     // PAJ7025 R3 (Wide Field) on TWISPI1
-    let paj_r3_spi_pins = common::utils::SpiPins {
+    let paj_r3_spi_pins = legacy_common::utils::SpiPins {
         sck: board.paj7025r3.sck.into(),
         miso: board.paj7025r3.miso.into(),
         mosi: board.paj7025r3.mosi.into(),
@@ -98,9 +98,39 @@ async fn main(spawner: Spawner) {
     paj_r3_config.frequency = spim::Frequency::M8;
     paj_r3_config.mode = spim::MODE_3;
     paj_r3_config.bit_order = spim::BitOrder::LSB_FIRST;
+    let image_receivers = legacy_common::image_mode::ImageReceivers {
+        near: legacy_common::image_mode::ImageReceiver::reserve(&paj_r2_spi_pins, |pins| {
+            let mut config = embassy_nrf::spis::Config::default();
+            config.mode = embassy_nrf::spis::MODE_3;
+            embassy_nrf::spis::Spis::new_rxonly(
+                // SAFETY: image entry has dropped all register futures and released TWISPI0.
+                unsafe { peripherals::TWISPI0::steal() },
+                Irqs,
+                pins.cs,
+                pins.sck,
+                pins.mosi,
+                config,
+            )
+        }),
+        wide: legacy_common::image_mode::ImageReceiver::reserve(&paj_r3_spi_pins, |pins| {
+            let mut config = embassy_nrf::spis::Config::default();
+            config.mode = embassy_nrf::spis::MODE_3;
+            embassy_nrf::spis::Spis::new_rxonly(
+                // SAFETY: image entry has dropped all register futures and released TWISPI1.
+                unsafe { peripherals::TWISPI1::steal() },
+                Irqs,
+                pins.cs,
+                pins.sck,
+                pins.mosi,
+                config,
+            )
+        }),
+    };
 
-    let paj_r2_dev = common::utils::make_spi_dev(p.TWISPI0, Irqs, paj_r2_spi_pins, paj_r2_config);
-    let paj_r3_dev = common::utils::make_spi_dev(p.TWISPI1, Irqs, paj_r3_spi_pins, paj_r3_config);
+    let paj_r2_dev =
+        legacy_common::utils::make_spi_dev(p.TWISPI0, Irqs, paj_r2_spi_pins, paj_r2_config);
+    let paj_r3_dev =
+        legacy_common::utils::make_spi_dev(p.TWISPI1, Irqs, paj_r3_spi_pins, paj_r3_config);
 
     // Allow the sensors to settle after SPI setup before issuing commands.
     Timer::after_millis(1).await;
@@ -143,7 +173,7 @@ async fn main(spawner: Spawner) {
 
     // BMI270 on SPI2.
     defmt::info!("Initializing BMI270 IMU...");
-    let imu_spi_pins = common::utils::SpiPins {
+    let imu_spi_pins = legacy_common::utils::SpiPins {
         sck: board.bmi270.sck.into(),
         miso: board.bmi270.miso.into(),
         mosi: board.bmi270.mosi.into(),
@@ -155,7 +185,7 @@ async fn main(spawner: Spawner) {
         Irqs,
         imu_spi_pins,
         board.bmi270.irq.into(),
-        common::settings::accel_odr(),
+        legacy_common::settings::accel_odr(),
     )
     .await
     .unwrap();
@@ -195,10 +225,11 @@ async fn main(spawner: Spawner) {
         usb_configured: usb_signal,
         settings: settings_ref,
         l2cap_channels: VmL2capChannels::new(),
-        data_mode: || common::odyssey_protocol::control::device::TransportMode::Usb,
+        data_mode: || legacy_common::odyssey_protocol::control::device::TransportMode::Usb,
         version: utils::FIRMWARE_VERSION,
         battery_soc: &BATTERY_SOC,
         battery_charging: &BATTERY_CHARGING,
+        image_receivers,
     };
 
     defmt::info!("VM initialization complete! Entering object mode...");

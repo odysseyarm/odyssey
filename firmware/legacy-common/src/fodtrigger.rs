@@ -114,7 +114,6 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         self.running = true;
     }
 
-    #[allow(dead_code)]
     pub fn stop(&mut self) {
         if !self.running {
             return;
@@ -124,5 +123,11 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         self.ppi_clr.disable();
         T::Interrupt::disable();
         self.running = false;
+    }
+}
+
+impl<T: Instance> Drop for FodTrigger<'_, T> {
+    fn drop(&mut self) {
+        self.stop();
     }
 }

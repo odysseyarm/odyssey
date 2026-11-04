@@ -1,5 +1,5 @@
 ﻿[package]
-name = "common"
+name = "legacy-common"
 version = "0.1.0"
 edition = "2024"
 
@@ -34,8 +34,8 @@ minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 # Device-specific
-paj7025 = { path = "../../paj7025", features = ["nrf"] }
-odyssey-protocol = { path = "../../../../crates/odyssey-protocol", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+paj7025 = { path = "../paj7025", features = ["nrf"] }
+odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
 trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false }
 
 # Debug

@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "atslite-netcore-bootloader"
+name = "legacy-atslite-netcore-bootloader"
 version = "0.1.0"
 description = "Network core bootloader for atslite with IPC firmware update support"
 license = "MIT OR Apache-2.0"
@@ -14,11 +14,10 @@ cortex-m-rt = "0.7.5"
 embassy-nrf = { version = "0.9.0", features = ["nrf5340-net"] }
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embedded-storage = "0.3"
-embassy-boot = "0.6.1"
 embassy-sync = "0.7.2"
 nrf-pac = { version = "0.2.0", features = ["nrf5340-net"] }
 
-pcd = { path = "../pcd" }
+legacy-atslite-pcd = { path = "../legacy-atslite-pcd" }
 defmt = { version = "1.0.1", default-features = false, optional = true }
 defmt-rtt = { version = "0.4.0", default-features = false, optional = true }
 panic-probe = { version = "0.3.1", features = ["print-defmt"], optional = true }

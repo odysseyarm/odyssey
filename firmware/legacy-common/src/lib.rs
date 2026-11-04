@@ -4,6 +4,7 @@ pub mod platform;
 
 pub mod device_control;
 pub mod fodtrigger;
+pub mod image_mode;
 pub mod object_mode;
 pub mod settings;
 pub mod usb;

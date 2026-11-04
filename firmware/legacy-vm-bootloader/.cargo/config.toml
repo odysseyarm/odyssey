@@ -19,6 +19,7 @@ target = "thumbv7em-none-eabihf"
 DEFMT_LOG = "info"
 
 [profile.release]
+debug = 2
 lto = true
 codegen-units = 1
 opt-level = "z"

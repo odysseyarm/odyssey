@@ -3,7 +3,7 @@ use crate::l2cap::AtsliteL2capChannels;
 
 pub struct AtslitePlatform;
 
-impl common::platform::Platform for AtslitePlatform {
+impl legacy_common::platform::Platform for AtslitePlatform {
     type Imu = AtsliteImu;
     type ImuInterrupt = AtsliteImuInterrupt;
     type L2capChannels = AtsliteL2capChannels;

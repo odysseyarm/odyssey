@@ -8,11 +8,11 @@ fn main() {
     let kdl_file = "memory-atslite.kdl";
 
     println!("cargo:info=Building ATSlite app using {}", kdl_file);
-    println!("cargo:rerun-if-changed=../../memory/{}", kdl_file);
+    println!("cargo:rerun-if-changed=../memory/{}", kdl_file);
     println!("cargo:rerun-if-env-changed=APP_BANK");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let memory_kdl_path = manifest_dir.join("../../memory").join(kdl_file);
+    let memory_kdl_path = manifest_dir.join("../memory").join(kdl_file);
 
     let content = fs::read_to_string(&memory_kdl_path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", kdl_file, e));
@@ -59,6 +59,9 @@ MEMORY
 }}
 
 {symbols}
+
+/* The vector table is four-byte aligned; compiled text can require eight. */
+_stext = ALIGN(ADDR(.vector_table) + SIZEOF(.vector_table), 8);
 
 ASSERT(ORIGIN(FLASH) + LENGTH(FLASH) <= ORIGIN(SETTINGS), \"
 ERROR: the FLASH and SETTINGS regions are overlapping\");

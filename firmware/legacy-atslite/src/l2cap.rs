@@ -1,22 +1,26 @@
-#![allow(static_mut_refs)]
 use core::future::Future;
-use core::sync::atomic::{AtomicBool, Ordering};
 
-use common::odyssey_protocol::Packet;
+use legacy_common::odyssey_protocol::Packet;
 
-pub use crate::ble::l2cap_bridge::{L2capChannels as Inner, get_or_init};
 use crate::ble::l2cap_bridge::{
-    L2capControlRxChannel, L2capControlTxChannel, L2capDataRxChannel, L2capDataTxChannel,
+    L2capControlRxChannel, L2capControlTxChannel, L2capDataRxChannel, L2capDataTxChannel, channels,
 };
 
 pub struct AtsliteL2capChannels {
-    inner: Inner,
+    control_rx: L2capRxWrapper,
+    data_rx: L2capRxWrapper,
+    control_tx: L2capTxWrapper,
+    data_tx: L2capTxWrapper,
 }
 
 impl AtsliteL2capChannels {
     pub fn new() -> Self {
+        let inner = channels();
         Self {
-            inner: get_or_init(),
+            control_rx: L2capRxWrapper::Control(inner.control_rx),
+            data_rx: L2capRxWrapper::Data(inner.data_rx),
+            control_tx: L2capTxWrapper::Control(inner.control_tx),
+            data_tx: L2capTxWrapper::Data(inner.data_tx),
         }
     }
 }
@@ -32,63 +36,32 @@ pub enum L2capTxWrapper {
     Data(&'static L2capDataTxChannel),
 }
 
-// The trait signatures need 'static wrappers. Initialization is guarded here
-// because reconnecting would otherwise initialize them twice and panic.
-static WRAPPERS_INIT: AtomicBool = AtomicBool::new(false);
-static mut CONTROL_RX_WRAPPER: Option<L2capRxWrapper> = None;
-static mut DATA_RX_WRAPPER: Option<L2capRxWrapper> = None;
-static mut CONTROL_TX_WRAPPER: Option<L2capTxWrapper> = None;
-static mut DATA_TX_WRAPPER: Option<L2capTxWrapper> = None;
-
-fn ensure_wrappers(inner: &Inner) {
-    if WRAPPERS_INIT.load(Ordering::Acquire) {
-        return;
-    }
-
-    if WRAPPERS_INIT
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-    {
-        unsafe {
-            CONTROL_RX_WRAPPER = Some(L2capRxWrapper::Control(inner.control_rx));
-            DATA_RX_WRAPPER = Some(L2capRxWrapper::Data(inner.data_rx));
-            CONTROL_TX_WRAPPER = Some(L2capTxWrapper::Control(inner.control_tx));
-            DATA_TX_WRAPPER = Some(L2capTxWrapper::Data(inner.data_tx));
-        }
-    } else {
-        // Another thread/task is initializing; wait until it's done.
-        while !WRAPPERS_INIT.load(Ordering::Acquire) {
-            core::hint::spin_loop();
-        }
-    }
-}
-
-impl common::platform::L2capChannels for AtsliteL2capChannels {
+impl legacy_common::platform::L2capChannels for AtsliteL2capChannels {
     type Receiver = L2capRxWrapper;
     type Sender = L2capTxWrapper;
 
     fn control_rx(&self) -> &Self::Receiver {
-        ensure_wrappers(&self.inner);
-        unsafe { CONTROL_RX_WRAPPER.as_ref().unwrap() }
+        &self.control_rx
     }
 
     fn data_rx(&self) -> &Self::Receiver {
-        ensure_wrappers(&self.inner);
-        unsafe { DATA_RX_WRAPPER.as_ref().unwrap() }
+        &self.data_rx
     }
 
     fn control_tx(&self) -> &Self::Sender {
-        ensure_wrappers(&self.inner);
-        unsafe { CONTROL_TX_WRAPPER.as_ref().unwrap() }
+        &self.control_tx
     }
 
     fn data_tx(&self) -> &Self::Sender {
-        ensure_wrappers(&self.inner);
-        unsafe { DATA_TX_WRAPPER.as_ref().unwrap() }
+        &self.data_tx
+    }
+
+    fn session_generation(&self) -> u32 {
+        crate::ble::l2cap_bridge::session_generation()
     }
 }
 
-impl common::platform::L2capReceiver for L2capRxWrapper {
+impl legacy_common::platform::L2capReceiver for L2capRxWrapper {
     fn receive(&self) -> impl Future<Output = Packet> {
         async move {
             match self {
@@ -99,7 +72,7 @@ impl common::platform::L2capReceiver for L2capRxWrapper {
     }
 }
 
-impl common::platform::L2capSender for L2capTxWrapper {
+impl legacy_common::platform::L2capSender for L2capTxWrapper {
     fn send(&self, pkt: Packet) -> impl Future<Output = ()> {
         async move {
             match self {

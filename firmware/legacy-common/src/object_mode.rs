@@ -1,29 +1,33 @@
+//! Concurrent sensor/control handling. Bulk request assembly survives BLE
+//! preemption; a terminating sensor/control error cancels the background loops.
+//! PAJ7025 image entry cancels tracking and releases register SPI permanently.
+//! Stop/disconnect ends reception; only reboot/power-cycle restores tracking.
+//!
 use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use defmt::Format;
-use embassy_futures::join::join5;
+use embassy_futures::join::join3;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
-use embassy_sync::watch::Watch;
 use embassy_usb::driver::EndpointError;
 use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
 
 use crate::fodtrigger::FodTrigger;
+use crate::image_mode::{ImageReceivers, ImageStart};
 use crate::odyssey_protocol::control::device::TransportMode;
+use crate::odyssey_protocol::image::{ImageCommand, ImageStatus, ImageStatusCode};
 use crate::odyssey_protocol::{
     self, BatteryReport, ConfigKind, Packet, PacketData, PacketType, PropKind, Props,
     ReadRegisterResponse, wire,
 };
-use crate::platform::{
-    Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform, is_control_packet,
-};
+use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform};
 use crate::settings::{PajsSettings, Settings};
 use crate::usb::{self, UsbConfigHandle};
 use crate::utils::impl_from;
@@ -32,7 +36,6 @@ use crate::{Paj, PajGroup};
 type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
 type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
-type ExitReceiver<'a> = embassy_sync::watch::Receiver<'a, NoopRawMutex, (), 4>;
 
 /// Everything object_mode needs from the board.
 pub struct ObjectModeContext<
@@ -61,9 +64,9 @@ pub struct ObjectModeContext<
     pub battery_soc: &'static AtomicU8,
     /// Whether VBUS (USB power / charging) is present, updated by power_state_task.
     pub battery_charging: &'static AtomicBool,
+    pub image_receivers: ImageReceivers,
 }
 
-#[allow(unreachable_code)]
 pub async fn object_mode<
     'd,
     P: Platform,
@@ -72,7 +75,7 @@ pub async fn object_mode<
 >(
     pid: u16,
     mut ctx: ObjectModeContext<'d, P, C1, C2>,
-) -> Result<ObjectModeContext<'d, P, C1, C2>, Paj7025Error<DeviceError<Error, Infallible>>> {
+) -> Result<(), Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode on {}", P::NAME);
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -81,11 +84,8 @@ pub async fn object_mode<
     let pkt_channel = Channel::<Packet, 64>::new();
     let stream_infos = StreamInfos::new();
     let impact_settings = ImpactSettings::new(&ctx.settings.general);
-    let exit = Watch::<_, _, 4>::new();
-    let exit0 = exit.receiver().unwrap();
-    let _exit1 = exit.receiver().unwrap();
-    let _exit2 = exit.receiver().unwrap();
-    let _exit3 = exit.receiver().unwrap();
+    let near = ctx.paj7025r2_group.0;
+    let wide = ctx.paj7025r3_group.0;
 
     let a = usb_rcv_loop(
         pid,
@@ -103,11 +103,11 @@ pub async fn object_mode<
         &impact_settings,
         P::round_accel_odr,
         P::set_ble_name,
+        ctx.data_mode,
     );
     let b = usb_snd_loop(
         pkt_writer,
         pkt_channel.receiver(),
-        exit0,
         ctx.usb_configured,
         &ctx.l2cap_channels,
         ctx.data_mode,
@@ -134,14 +134,26 @@ pub async fn object_mode<
         ctx.battery_soc,
         ctx.battery_charging,
     );
-    // TODO: run these as executor tasks instead of one join5.
-    let r = join5(a, b, c, d, e).await;
-
-    // Every loop returns Result<Infallible, Error>, so returning at all means an error.
-    match r.0 {
-        Ok(_) => unreachable!("usb_rcv_loop should never return Ok"),
-        Err(e) => Err(e),
-    }
+    // A sensor/control error must cancel the other loops, not wait forever for
+    // the background reporting loops to finish.
+    let start = match select3(a, d, join3(b, c, e)).await {
+        Either3::First(result) => result?,
+        Either3::Second(Err(error)) => return Err(error),
+        Either3::Second(Ok(never)) => match never {},
+        Either3::Third(_) => unreachable!("background reporting loops never return"),
+    };
+    // select3 has dropped tracking, register request handling and FOD before
+    // the irreversible sensor transition. No sensor-register task survives it.
+    crate::image_mode::run(
+        near,
+        wide,
+        ctx.image_receivers,
+        ctx.usb_snd,
+        ctx.usb_rcv,
+        ctx.usb_configured,
+        start,
+    )
+    .await
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -166,7 +178,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
     impact_settings: &ImpactSettings,
     round_accel_odr: fn(u16) -> u16,
     set_ble_name: fn(&str),
-) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
+    data_mode: fn() -> TransportMode,
+) -> Result<ImageStart, Paj7025Error<DeviceError<Error, Infallible>>> {
     loop {
         // Requests are taken from every transport whichever one carries reports, so neither is
         // parked on a transport choice that has gone stale.
@@ -196,6 +209,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
             Either3::Second(pkt) => (PacketSource::Ble, pkt),
             Either3::Third(pkt) => (PacketSource::Ble, pkt),
         };
+        let ble_generation =
+            matches!(src, PacketSource::Ble).then(|| l2cap_channels.session_generation());
 
         let response = match pkt.data {
             PacketData::WriteRegister(register) => {
@@ -339,12 +354,54 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     data: PacketData::Ack(),
                 })
             }
-            PacketData::WriteMode(mode) => {
-                settings.transient.mode = mode;
+            PacketData::WriteMode(odyssey_protocol::Mode::Object) => {
+                settings.transient.mode = odyssey_protocol::Mode::Object;
                 settings.transient_write();
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::Ack(),
+                })
+            }
+            PacketData::WriteMode(odyssey_protocol::Mode::Image) => Some(Packet {
+                id: pkt.id,
+                data: PacketData::ImageStatus(ImageStatus {
+                    generation: 0,
+                    status: ImageStatusCode::Unsupported,
+                }),
+            }),
+            PacketData::ImageCommand(command) => {
+                let (generation, status) = match command {
+                    ImageCommand::Renew { .. } => continue,
+                    ImageCommand::Start { generation, config }
+                        if !(1..=15).contains(&config.fps) =>
+                    {
+                        (generation, ImageStatusCode::CaptureError)
+                    }
+                    ImageCommand::Start { generation, config }
+                        if matches!(src, PacketSource::Usb)
+                            && data_mode() == TransportMode::Usb =>
+                    {
+                        return Ok(ImageStart {
+                            id: pkt.id,
+                            generation,
+                            config,
+                        });
+                    }
+                    ImageCommand::Start { generation, .. } => {
+                        (generation, ImageStatusCode::UsbRequired)
+                    }
+                    ImageCommand::Stop { generation } => (
+                        generation,
+                        if matches!(src, PacketSource::Usb) {
+                            ImageStatusCode::Stopped
+                        } else {
+                            ImageStatusCode::UsbRequired
+                        },
+                    ),
+                };
+                Some(Packet {
+                    id: pkt.id,
+                    data: PacketData::ImageStatus(ImageStatus { generation, status }),
                 })
             }
             PacketData::ReadVersion() => Some(Packet {
@@ -364,6 +421,9 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
             PacketData::BatteryReport(_) => None,
+            PacketData::ImageStatus(_) => None,
+            PacketData::ImageChunk(_) => None,
+            PacketData::ImageObject(_) => None,
             PacketData::SetDeviceName(name) => {
                 defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
                 set_ble_name(name.as_str());
@@ -387,7 +447,12 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     pkt_snd.send(r).await;
                 }
                 PacketSource::Ble => {
-                    if is_control_packet(&r) {
+                    // Sensor I/O can span a disconnect/reconnect. Never hand
+                    // the new central a response belonging to the old session.
+                    if ble_generation != Some(l2cap_channels.session_generation()) {
+                        continue;
+                    }
+                    if r.is_control() {
                         if l2cap_channels.control_tx().try_send(r).is_err() {
                             defmt::warn!("[app] Dropped control response - channel full");
                         }
@@ -408,26 +473,34 @@ async fn usb_rcv_loop<L: L2capChannels>(
 async fn usb_snd_loop<L: L2capChannels>(
     mut pkt_writer: PacketWriter<'_>,
     pkt_rcv: Receiver<'_, Packet, 64>,
-    mut exit: ExitReceiver<'_>,
     usb_configured: UsbConfigHandle,
     l2cap_channels: &L,
     data_mode: fn() -> TransportMode,
 ) -> ! {
     loop {
-        let Either::First(pkt) = select(pkt_rcv.receive(), exit.get()).await else {
-            break;
+        let pkt = pkt_rcv.receive().await;
+        // These statuses are queued here only for requests received on USB. Unlike
+        // reports, their response must not move to BLE when the report transport changes.
+        let transport = if matches!(&pkt.data, PacketData::ImageStatus(_)) {
+            TransportMode::Usb
+        } else {
+            data_mode()
         };
-        match data_mode() {
+        match transport {
             TransportMode::Usb => {
                 let write = pkt_writer.write_packet(&pkt);
-                if let Either::Second(()) =
-                    select(write, usb_configured.wait_until_inactive()).await
-                {
-                    defmt::debug!("[usb_snd_loop] USB went away mid-write, packet dropped");
+                match select(write, usb_configured.wait_until_inactive()).await {
+                    Either::First(Ok(())) => {}
+                    Either::First(Err(error)) => {
+                        defmt::warn!("[usb_snd_loop] USB write failed: {:?}", error);
+                    }
+                    Either::Second(()) => {
+                        defmt::debug!("[usb_snd_loop] USB went away mid-write, packet dropped");
+                    }
                 }
             }
             TransportMode::Ble => {
-                if is_control_packet(&pkt) {
+                if pkt.is_control() {
                     let _ = l2cap_channels.control_tx().try_send(pkt);
                 } else {
                     let _ = l2cap_channels.data_tx().try_send(pkt);
@@ -435,7 +508,6 @@ async fn usb_snd_loop<L: L2capChannels>(
             }
         }
     }
-    todo!()
 }
 
 async fn battery_loop(
@@ -479,7 +551,7 @@ async fn imu_loop<P: Platform>(
 
         let imu_data = match imu.read_data().await {
             Ok(data) => data,
-            Err(e) => {
+            Err(_error) => {
                 defmt::error!("Failed to read IMU data");
                 continue;
             }
@@ -626,24 +698,27 @@ async fn obj_loop<
 
 pub struct PacketReader<'a> {
     rcv: &'a mut Endpoint<'static, Out>,
+    transfer: usb::TransferReader<1024>,
 }
 
 impl<'a> PacketReader<'a> {
     pub fn new(rcv: &'a mut Endpoint<'static, Out>) -> Self {
-        Self { rcv }
+        Self {
+            rcv,
+            transfer: usb::TransferReader::new(),
+        }
     }
 
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
-        let mut data = [0; 1024];
         defmt::debug!("Read transfer start");
-        let n = usb::read_transfer(&mut self.rcv, &mut data).await?;
+        let data = self.transfer.read(self.rcv).await?;
         defmt::debug!("Read transfer done");
-        Ok(postcard::from_bytes(&data[..n])?)
+        Ok(postcard::from_bytes(data)?)
     }
 }
 
 pub struct PacketWriter<'a> {
-    snd: &'a mut Endpoint<'static, In>,
+    pub(crate) snd: &'a mut Endpoint<'static, In>,
 }
 
 impl PacketWriter<'_> {

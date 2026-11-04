@@ -1,19 +1,24 @@
 #![no_std]
 #![no_main]
 
+//! Copies only source ranges contained in the DFU partition into the network
+//! core's active slot. Shared PCD state is accessed atomically by both cores.
+
 use core::cell::RefCell;
+#[cfg(feature = "defmt")]
+use core::sync::atomic::Ordering;
 
 #[cfg(feature = "rtt")]
 use defmt_rtt as _;
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use legacy_atslite_pcd::{PcdRegion, PcdStatusCode};
 use nrf_pac as pac;
 #[cfg(not(feature = "rtt"))]
 use panic_halt as _;
 #[cfg(feature = "rtt")]
 use panic_probe as _;
-use pcd::{PcdRegion, PcdStatusCode};
 
 const FLASH_BASE: u32 = 0x0100_0000;
 const FLASH_SIZE: u32 = 256 * 1024;
@@ -41,7 +46,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     let flash: Mutex<NoopRawMutex, RefCell<Nvmc<'_>>> = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
-    let pcd = unsafe { PcdRegion::at_mut(pcd_region_addr()) };
+    // SAFETY: the linker reserves this aligned SRAM region for shared PCD state.
+    let pcd = unsafe { PcdRegion::at(pcd_region_addr()) };
 
     if pcd.cmd.is_valid() {
         pcd.status.set_status(PcdStatusCode::Updating);
@@ -53,8 +59,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
             "PCD valid: addr={:#x}, size={} (reserved0={}, reserved1={})",
             image_addr,
             image_size,
-            unsafe { core::ptr::read_volatile(&pcd.status.reserved[0]) },
-            unsafe { core::ptr::read_volatile(&pcd.status.reserved[1]) }
+            pcd.status.reserved[0].load(Ordering::Acquire),
+            pcd.status.reserved[1].load(Ordering::Acquire)
         );
 
         let result = flash.lock(|flash_cell| {
@@ -82,9 +88,10 @@ async fn main(_spawner: embassy_executor::Spawner) {
         }
     } else {
         #[cfg(feature = "defmt")]
-        defmt::info!("No PCD cmd: magic=0x{:08x}", unsafe {
-            core::ptr::read_volatile(&pcd.cmd.magic as *const _ as *const u32)
-        });
+        defmt::info!(
+            "No PCD cmd: magic=0x{:08x}",
+            pcd.cmd.magic.load(Ordering::Acquire)
+        );
     }
 
     #[cfg(feature = "defmt")]
@@ -154,12 +161,12 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         _dfu_len
     );
 
-    if size == 0 || size > active_len {
+    if size == 0 || size > active_len || size % 4 != 0 {
         #[cfg(feature = "defmt")]
         defmt::warn!("Invalid size {}, active_len {}", size, active_len);
         return Err(());
     }
-    if src_addr < dfu_start || src_addr + size > dfu_end {
+    if src_addr < dfu_start || src_addr > dfu_end || size > dfu_end - src_addr {
         #[cfg(feature = "defmt")]
         defmt::warn!(
             "Src out of range: addr {:#x} len {} (dfu {:#x}-{:#x})",
@@ -188,6 +195,8 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         return Err(());
     }
 
+    // SAFETY: the complete range was checked against the mapped DFU partition
+    // above, and the application core leaves that image unchanged during copy.
     let src = unsafe { core::slice::from_raw_parts(src_addr as *const u8, size as usize) };
     if let Err(_e) = write_abs(dst_addr, src) {
         #[cfg(feature = "defmt")]
@@ -197,33 +206,16 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
     // The flash write must complete before the verify.
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
-    verify_copy(dst_addr, src)
-}
-
-fn verify_copy(dst_addr: u32, src: &[u8]) -> Result<(), ()> {
-    // Compare the first 16 bytes to catch obvious failures.
-    let mut buf = [0u8; 16];
-    let len = core::cmp::min(buf.len(), src.len());
-    unsafe {
-        core::ptr::copy_nonoverlapping(dst_addr as *const u8, buf.as_mut_ptr(), len);
-    }
-    #[cfg(feature = "defmt")]
-    {
-        defmt::info!("Verify len {}", len);
-        defmt::info!("Flash head: {=[u8]:x}", &buf[..len]);
-        defmt::info!("Src   head: {=[u8]:x}", &src[..len]);
-    }
-    if buf[..len] == src[..len] {
+    // SAFETY: size was checked against the active partition above, and no
+    // writer modifies the destination after write_abs has completed.
+    let copied = unsafe { core::slice::from_raw_parts(dst_addr as *const u8, size as usize) };
+    if copied == src {
         #[cfg(feature = "defmt")]
-        defmt::info!("Verify OK ({} bytes checked)", len);
+        defmt::info!("Verify OK ({} bytes checked)", size);
         Ok(())
     } else {
         #[cfg(feature = "defmt")]
-        defmt::warn!(
-            "Verify failed: flash {:?} != src {:?}",
-            &buf[..len],
-            &src[..len]
-        );
+        defmt::warn!("Image verification failed");
         Err(())
     }
 }
@@ -273,7 +265,8 @@ fn erase_abs(start: u32, end: u32) -> Result<(), ()> {
 
 fn write_abs(addr: u32, bytes: &[u8]) -> Result<(), ()> {
     if addr < FLASH_BASE
-        || addr as usize + bytes.len() > FLASH_BASE as usize + FLASH_SIZE as usize
+        || addr > FLASH_BASE + FLASH_SIZE
+        || bytes.len() > (FLASH_BASE + FLASH_SIZE - addr) as usize
         || addr % 4 != 0
         || bytes.len() % 4 != 0
     {

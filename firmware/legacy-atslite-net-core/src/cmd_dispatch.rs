@@ -24,7 +24,7 @@ macro_rules! dispatch_cmd {
                 < $ty as bt_hci::cmd::Cmd >::OPCODE =>
                     dispatch_cmd!(@arm $ctrl, $payload, { $($async)? }, $ty, $send),
             )*
-            _ => Err(bt_hci::cmd::Error::Hci(bt_hci::param::Error::UNSUPPORTED)),
+            _ => Err(bt_hci::cmd::Error::Hci(bt_hci::param::Error::UNKNOWN_CMD)),
         }
     }};
 
@@ -46,7 +46,7 @@ macro_rules! dispatch_cmd {
             .map_err(|_| bt_hci::cmd::Error::Hci(bt_hci::param::Error::INVALID_HCI_PARAMETERS))?;
         let cmd_val = <$ty as From<<$ty as bt_hci::cmd::Cmd>::Params>>::from(params);
 
-        // Execute sync command and get the parsed Return (POD / byte-backed).
+        // Command returns are fixed-size HCI values with a safe byte view.
         let ret = bt_hci::cmd::SyncCmd::exec(&cmd_val, $ctrl).await;
 
         const RLEN: usize = < $ty as bt_hci::cmd::SyncCmd >::ReturnBuf::LEN;
@@ -73,15 +73,16 @@ macro_rules! dispatch_cmd {
             Ok(ret) => {
                 buf[6] = bt_hci::param::Status::SUCCESS.into_inner();
 
-                // TODO: bt-hci has no WriteHci for command return values, so the
-                // parsed Return is copied out as raw bytes.
-                unsafe {
-                    let src = core::slice::from_raw_parts((&ret as *const _ as *const u8), RLEN);
-                    buf[HEAD .. HEAD + RLEN].copy_from_slice(src);
-                }
+                let bytes = bt_hci::AsHciBytes::as_hci_bytes(&ret);
+                buf[HEAD .. HEAD + RLEN].copy_from_slice(bytes);
             }
             Err(bt_hci::cmd::Error::Hci(e)) => {
                 buf[6] = e.to_status().into_inner();
+                // The host needs the handle even when a command fails, to
+                // associate this completion with the outstanding request.
+                let handle = bt_hci::cmd::SyncCmd::param_handle(&cmd_val);
+                let bytes = bt_hci::AsHciBytes::as_hci_bytes(&handle);
+                buf[HEAD .. HEAD + bytes.len()].copy_from_slice(bytes);
             }
             Err(e) => {
                 return Err(e);
@@ -93,10 +94,9 @@ macro_rules! dispatch_cmd {
     }};
 
     (@arm $_c:expr, $_p:expr, {$bad:tt}, $_ty:path, $_s:expr) => {
-        compile_error!("unknown marker after '@' ΓÇö use '@async' or omit it")
+        compile_error!("unknown marker after '@': use '@async' or omit it")
     };
 }
-pub(crate) use dispatch_cmd;
 
 use crate::IpcNotify;
 use crate::icmsg_config::ALIGN;

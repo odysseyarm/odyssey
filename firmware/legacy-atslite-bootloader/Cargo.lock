@@ -27,35 +27,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "825297538d77367557b912770ca3083f778a196054b3ee63b22673c4a3cae0a5"
 
 [[package]]
-name = "atslite-bootloader"
-version = "0.2.0"
-dependencies = [
- "better-boot",
- "better-dfu",
- "cfg-if",
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.0.1",
- "defmt-rtt",
- "embassy-boot",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-hal-async",
- "embedded-storage",
- "futures",
- "icmsg",
- "memory-spec",
- "odyssey-protocol",
- "panic-probe",
- "pcd",
- "static_cell",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -865,6 +836,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "legacy-atslite-bootloader"
+version = "0.2.0"
+dependencies = [
+ "better-boot",
+ "better-dfu",
+ "cfg-if",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.0.1",
+ "defmt-rtt",
+ "embassy-boot",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal-async",
+ "embedded-storage",
+ "futures",
+ "icmsg",
+ "legacy-atslite-pcd",
+ "memory-spec",
+ "odyssey-protocol",
+ "panic-probe",
+ "static_cell",
+]
+
+[[package]]
+name = "legacy-atslite-pcd"
+version = "0.1.0"
+
+[[package]]
 name = "libc"
 version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1076,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-common"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "nalgebra",
  "num",
@@ -1086,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-protocol"
-version = "0.2.0"
+version = "0.0.0"
 dependencies = [
  "arbitrary-int",
  "bitbybit",
@@ -1096,13 +1100,11 @@ dependencies = [
  "odyssey-common",
  "odyssey-protocol-macros",
  "opencv-ros-camera",
- "static_assertions",
- "thiserror",
 ]
 
 [[package]]
 name = "odyssey-protocol-macros"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1132,10 +1134,6 @@ dependencies = [
  "cortex-m",
  "defmt 1.0.1",
 ]
-
-[[package]]
-name = "pcd"
-version = "0.1.0"
 
 [[package]]
 name = "pin-project-lite"
@@ -1303,12 +1301,6 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
-
-[[package]]
-name = "static_assertions"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "static_cell"

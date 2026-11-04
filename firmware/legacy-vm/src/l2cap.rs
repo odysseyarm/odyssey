@@ -3,7 +3,7 @@
 
 use core::future::Future;
 
-use common::odyssey_protocol::Packet;
+use legacy_common::odyssey_protocol::Packet;
 
 #[derive(Clone, Copy)]
 pub struct VmL2capChannels {
@@ -30,7 +30,7 @@ pub struct MockReceiver;
 #[derive(Clone, Copy)]
 pub struct MockSender;
 
-impl common::platform::L2capChannels for VmL2capChannels {
+impl legacy_common::platform::L2capChannels for VmL2capChannels {
     type Receiver = MockReceiver;
     type Sender = MockSender;
 
@@ -49,17 +49,20 @@ impl common::platform::L2capChannels for VmL2capChannels {
     fn data_tx(&self) -> &Self::Sender {
         &self.data_tx
     }
-}
 
-impl common::platform::L2capReceiver for MockReceiver {
-    fn receive(&self) -> impl Future<Output = Packet> {
-        async move {
-            core::future::pending().await
-        }
+    fn session_generation(&self) -> u32 {
+        // This board has no BLE connection lifecycle.
+        0
     }
 }
 
-impl common::platform::L2capSender for MockSender {
+impl legacy_common::platform::L2capReceiver for MockReceiver {
+    fn receive(&self) -> impl Future<Output = Packet> {
+        async move { core::future::pending().await }
+    }
+}
+
+impl legacy_common::platform::L2capSender for MockSender {
     fn send(&self, _pkt: Packet) -> impl Future<Output = ()> {
         async move {
             // The packet is dropped; the VM has no BLE.

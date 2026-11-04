@@ -1,5 +1,5 @@
 [package]
-name = "vm-board"
+name = "legacy-vm"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,7 @@ name = "app"
 path = "src/main.rs"
 
 [dependencies]
-common = { path = "../../common", features = ["nrf52840"] }
+legacy-common = { path = "../legacy-common", features = ["nrf52840"] }
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embassy-nrf = { version = "0.9.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "defmt", "unstable-pac"] }
 embassy-sync = "0.7.2"
@@ -30,7 +30,7 @@ nalgebra = { version = "0.35", default-features = false, features = ["libm"] }
 bmi2 = { git = "https://github.com/Abrahamh08/bmi2", branch = "async", features = ["async"] }
 
 # PAJ sensor dependencies
-paj7025 = { path = "../../../paj7025", features = ["nrf"] }
+paj7025 = { path = "../paj7025", features = ["nrf"] }
 
 # BLE (not used by VM, but required by common)
 trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["defmt", "gatt", "peripheral", "derive", "security", "default-packet-pool", "default-packet-pool-size-32"] }

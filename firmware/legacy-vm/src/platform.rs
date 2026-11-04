@@ -3,7 +3,7 @@ use crate::l2cap::VmL2capChannels;
 
 pub struct VmPlatform;
 
-impl common::platform::Platform for VmPlatform {
+impl legacy_common::platform::Platform for VmPlatform {
     type Imu = VmImu<2048>; // 2048 byte burst buffer
     type ImuInterrupt = VmImuInterrupt;
     type L2capChannels = VmL2capChannels;

@@ -1,4 +1,6 @@
-//! Settings backed by cfg-noodle.
+//! Settings backed by cfg-noodle. The object-mode task exclusively owns the
+//! initialized settings; external persistence callbacks borrow general settings
+//! from that owner rather than constructing another mutable reference.
 
 mod settings_region {
     unsafe extern "C" {
@@ -49,7 +51,7 @@ static FLUSH_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 /// another crate must register it (legacy atslite delegates to atslite-common).
 static GENERAL_WRITE_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
-pub fn register_general_write_fn(f: fn()) {
+pub fn register_general_write_fn(f: fn(&GeneralSettings)) {
     GENERAL_WRITE_FN.store(f as *mut (), Ordering::Release);
 }
 
@@ -75,21 +77,7 @@ static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("s
 
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
-
-// For BLE access.
-static SETTINGS_PTR: core::sync::atomic::AtomicPtr<Settings> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Settings for the BLE peripheral.
-///
-/// # Safety
-///
-/// Only valid after init_settings has run.
-pub unsafe fn get_settings() -> &'static mut Settings {
-    let ptr = SETTINGS_PTR.load(core::sync::atomic::Ordering::Acquire);
-    unsafe { &mut *ptr }
-}
+static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
@@ -246,12 +234,7 @@ pub async fn init_settings(
     };
 
     s.apply(pajr2, pajr3).await?;
-    let settings_ref = SETTINGS_CELL.init(s);
-    SETTINGS_PTR.store(
-        settings_ref as *mut Settings,
-        core::sync::atomic::Ordering::Release,
-    );
-    Ok(settings_ref)
+    Ok(SETTINGS_CELL.init(s))
 }
 
 /// Attaches the legacy settings nodes to an external StorageList (e.g. from
@@ -290,12 +273,7 @@ pub async fn init_legacy_settings(
     };
 
     s.apply(pajr2, pajr3).await?;
-    let settings_ref = SETTINGS_CELL.init(s);
-    SETTINGS_PTR.store(
-        settings_ref as *mut Settings,
-        core::sync::atomic::Ordering::Release,
-    );
-    Ok(settings_ref)
+    Ok(SETTINGS_CELL.init(s))
 }
 
 pub struct Settings {
@@ -323,8 +301,14 @@ impl Settings {
         // General settings may be owned by an external crate (e.g. atslite-common on legacy).
         let gw_ptr = GENERAL_WRITE_FN.load(Ordering::Acquire);
         if !gw_ptr.is_null() {
-            let f: fn() = unsafe { core::mem::transmute(gw_ptr) };
-            f();
+            // SAFETY: register_general_write_fn stores only this function-pointer type.
+            let f: fn(&GeneralSettings) = unsafe { core::mem::transmute(gw_ptr) };
+            f(&self.general);
+        } else {
+            embassy_futures::block_on(async {
+                let mut hg = NODE_GENERAL.attach(list).await.unwrap();
+                hg.write(&self.general).await.unwrap();
+            });
         }
         flush();
     }

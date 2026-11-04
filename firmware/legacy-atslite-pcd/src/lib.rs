@@ -14,6 +14,9 @@
 //! 5. If update pending, netcore copies firmware and writes PcdStatus
 //! 6. Netcore boots application
 //! 7. Netcore app confirms boot by writing PcdStatus
+//!
+//! Shared access uses atomics, including diagnostic words. Neither core creates
+//! an exclusive Rust reference to SRAM that the other core may still access.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -63,7 +66,7 @@ pub struct PcdStatus {
     /// Not part of the protocol. The app core bootloader stores the page-padded
     /// image size in `[0]` and a progress marker ('NTP'/'NTD') in `[1]`, for
     /// debugging without RTT.
-    pub reserved: [u32; 2],
+    pub reserved: [AtomicU32; 2],
 }
 
 /// Status codes for PcdStatus
@@ -90,14 +93,16 @@ pub enum PcdStatusCode {
 }
 
 impl PcdCmd {
-    /// Initialize PCD command structure at given address
+    /// Get the command structure at the given address.
+    ///
+    /// # Safety
+    ///
+    /// `addr` must be aligned for `Self` and point to initialized, readable and
+    /// writable SRAM that remains mapped for `'static`. Concurrent access must
+    /// use atomics;
+    /// the non-atomic `image_sha` must not be mutated while this reference lives.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
-    }
-
-    /// Initialize mutable PCD command structure at given address
-    pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Check if command is valid
@@ -116,7 +121,7 @@ impl PcdCmd {
     }
 
     /// Set update command (app core)
-    pub fn set_update(&mut self, addr: u32, size: u32) {
+    pub fn set_update(&self, addr: u32, size: u32) {
         self.image_addr.store(addr, Ordering::Release);
         self.image_size.store(size, Ordering::Release);
         // Write magic last to ensure command is fully written
@@ -124,20 +129,21 @@ impl PcdCmd {
     }
 
     /// Clear command (netcore after processing)
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.magic.store(0, Ordering::Release);
     }
 }
 
 impl PcdStatus {
-    /// Initialize PCD status structure at given address
+    /// Get the status structure at the given address.
+    ///
+    /// # Safety
+    ///
+    /// `addr` must be aligned for `Self` and point to initialized, readable and
+    /// writable SRAM that remains mapped for `'static`. All concurrent access
+    /// must use atomics.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
-    }
-
-    /// Initialize mutable PCD status structure at given address
-    pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Check if status is valid
@@ -160,14 +166,14 @@ impl PcdStatus {
     }
 
     /// Set status (netcore)
-    pub fn set_status(&mut self, status: PcdStatusCode) {
+    pub fn set_status(&self, status: PcdStatusCode) {
         self.status.store(status as u32, Ordering::Release);
         // Write magic last to ensure status is fully written
         self.magic.store(PCD_STATUS_MAGIC, Ordering::Release);
     }
 
     /// Clear status
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.magic.store(0, Ordering::Release);
     }
 }
@@ -180,14 +186,14 @@ pub struct PcdRegion {
 }
 
 impl PcdRegion {
-    /// Get PCD region at given address
+    /// Get the PCD region at the given address.
+    ///
+    /// # Safety
+    ///
+    /// `addr` must satisfy the requirements of [`PcdCmd::at`] and
+    /// [`PcdStatus::at`] for the corresponding fields.
     pub unsafe fn at(addr: usize) -> &'static Self {
         unsafe { &*(addr as *const Self) }
-    }
-
-    /// Get mutable PCD region at given address
-    pub unsafe fn at_mut(addr: usize) -> &'static mut Self {
-        unsafe { &mut *(addr as *mut Self) }
     }
 
     /// Whether the application core still has to run the network core
@@ -222,7 +228,7 @@ mod tests {
 
     fn region(cmd: bool, status: Option<PcdStatusCode>) -> PcdRegion {
         // SAFETY: every field is plain integers or atomics, for which all-zero is valid.
-        let mut r: PcdRegion = unsafe { core::mem::zeroed() };
+        let r: PcdRegion = unsafe { core::mem::zeroed() };
         if cmd {
             r.cmd.set_update(0x1000, 4096);
         }

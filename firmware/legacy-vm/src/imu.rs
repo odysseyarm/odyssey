@@ -29,13 +29,13 @@ pub struct VmImuInterrupt {
     irq: Input<'static>,
 }
 
-impl<const N: usize> common::platform::Imu for VmImu<N> {
+impl<const N: usize> legacy_common::platform::Imu for VmImu<N> {
     type Error = Error<DeviceError<spim::Error, Infallible>>;
     type Interrupt = VmImuInterrupt;
 
     fn read_data(
         &mut self,
-    ) -> impl Future<Output = Result<common::platform::ImuData, Self::Error>> {
+    ) -> impl Future<Output = Result<legacy_common::platform::ImuData, Self::Error>> {
         async move {
             const TS_BITS: u32 = 24;
             const TS_MASK: u32 = (1 << TS_BITS) - 1; // 0x00FF_FFFF
@@ -56,7 +56,7 @@ impl<const N: usize> common::platform::Imu for VmImu<N> {
                 (((dt_ticks_u32 as u64) * (TICK_US_NUM as u64)) >> TICK_US_DEN_SHIFT) as u32;
             self.ts_micros = self.ts_micros.wrapping_add(dt_us);
 
-            Ok(common::platform::ImuData {
+            Ok(legacy_common::platform::ImuData {
                 accel: [pkt.acc.x as i32, pkt.acc.y as i32, pkt.acc.z as i32],
                 gyro: [pkt.gyr.x as i32, pkt.gyr.y as i32, pkt.gyr.z as i32],
                 timestamp_micros: self.ts_micros,
@@ -65,7 +65,7 @@ impl<const N: usize> common::platform::Imu for VmImu<N> {
     }
 }
 
-impl common::platform::ImuInterrupt for VmImuInterrupt {
+impl legacy_common::platform::ImuInterrupt for VmImuInterrupt {
     fn wait(&mut self) -> impl Future<Output = ()> {
         self.irq.wait_for_low()
     }
@@ -118,7 +118,7 @@ pub fn round_accel_odr_hz(hz: u16) -> u16 {
 pub async fn init<SPI, IRQ, const N: usize, const MAX: u16>(
     spi: Peri<'static, SPI>,
     irqs: IRQ,
-    pins: common::utils::SpiPins,
+    pins: legacy_common::utils::SpiPins,
     irq: Peri<'static, AnyPin>,
     accel_odr: u16,
 ) -> Result<(VmImu<N>, VmImuInterrupt), Error<DeviceError<spim::Error, Infallible>>>
@@ -133,7 +133,7 @@ where
     spim_config.mode = spim::MODE_0;
     spim_config.bit_order = spim::BitOrder::MSB_FIRST;
 
-    let spi_device = common::utils::make_spi_dev(spi, irqs, pins, spim_config);
+    let spi_device = legacy_common::utils::make_spi_dev(spi, irqs, pins, spim_config);
 
     let mut imu: Bmi2Type<N> = Bmi2::new_spi(spi_device, Delay, Burst::new(MAX)).await;
 

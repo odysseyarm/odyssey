@@ -3,20 +3,9 @@
 
 use core::cell::RefCell;
 
-use atslite_board::l2cap::AtsliteL2capChannels;
-use atslite_board::pins::Board;
-use atslite_board::platform::AtslitePlatform;
-use atslite_board::pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle};
-use atslite_board::{
-    Irqs, ble, embassy_executor, embassy_nrf, imu, nrf5340_init, power, power_button, power_state,
-    split_board, utils,
-};
 use better_dfu::application::DfuMarker;
 use better_dfu::consts::DfuAttributes;
 use better_dfu::{Control, ResetImmediate, usb_dfu};
-use common::object_mode::{ObjectModeContext, object_mode};
-use common::odyssey_protocol::control::device::TransportMode;
-use common::{Paj, settings, usb};
 use defmt_rtt as _;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
@@ -29,6 +18,17 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_time::{Delay, Timer};
 use embassy_usb::msos;
+use legacy_atslite::l2cap::AtsliteL2capChannels;
+use legacy_atslite::pins::Board;
+use legacy_atslite::platform::AtslitePlatform;
+use legacy_atslite::pmic_leds::{LedIdx, LedState, PmicLedAnimator, PmicLedsHandle};
+use legacy_atslite::{
+    Irqs, ble, embassy_executor, embassy_nrf, imu, nrf5340_init, power, power_button, power_state,
+    split_board, utils,
+};
+use legacy_common::object_mode::{ObjectModeContext, object_mode};
+use legacy_common::odyssey_protocol::control::device::TransportMode;
+use legacy_common::{Paj, settings, usb};
 use npm1300_rs::{self, NPM1300};
 use panic_probe as _;
 use static_cell::StaticCell;
@@ -100,7 +100,7 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
 
         let result = self.flash.lock(|flash_cell| {
             let mut flash = flash_cell.borrow_mut();
-            atslite_boot_api::BootConfirmation::request_dfu_with(&mut flash)
+            legacy_atslite_boot_api::BootConfirmation::request_dfu_with(&mut flash)
         });
 
         match result {
@@ -119,20 +119,20 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
 /// Copies the general settings from `common::Settings` into atslite-common and
 /// persists them through atslite-common's flash node. Registered as the
 /// GENERAL_WRITE_FN, so a bulk FlashSettings over BLE ends up here.
-fn sync_and_write_general() {
-    let common_s = unsafe { common::settings::get_settings() };
-    let atslite_s = unsafe { atslite_common::settings::get_settings() };
-    atslite_s.general.impact_threshold = common_s.general.impact_threshold;
-    atslite_s.general.suppress_ms = common_s.general.suppress_ms;
-    atslite_s.general.accel_config = common_s.general.accel_config.clone();
-    atslite_s.general.gyro_config = common_s.general.gyro_config.clone();
-    atslite_s.general.camera_model_nf = common_s.general.camera_model_nf.clone();
-    atslite_s.general.camera_model_wf = common_s.general.camera_model_wf.clone();
-    atslite_s.general.stereo_iso = common_s.general.stereo_iso.clone();
-    atslite_s.general.name = common_s.general.name.clone();
-    // transport_mode is not copied: the device ignores it and picks its
-    // transport from the USB state.
-    atslite_s.general_write();
+fn sync_and_write_general(general: &settings::GeneralSettings) {
+    atslite_common::settings::with_settings(|atslite_s| {
+        atslite_s.general.impact_threshold = general.impact_threshold;
+        atslite_s.general.suppress_ms = general.suppress_ms;
+        atslite_s.general.accel_config = general.accel_config.clone();
+        atslite_s.general.gyro_config = general.gyro_config.clone();
+        atslite_s.general.camera_model_nf = general.camera_model_nf.clone();
+        atslite_s.general.camera_model_wf = general.camera_model_wf.clone();
+        atslite_s.general.stereo_iso = general.stereo_iso.clone();
+        atslite_s.general.name = general.name.clone();
+        // transport_mode is not copied: the device ignores it and picks its
+        // transport from the USB state.
+        atslite_s.general_write();
+    });
 }
 
 #[embassy_executor::main]
@@ -231,23 +231,52 @@ async fn main(spawner: Spawner) {
     paj_cfg.bit_order = embassy_nrf::spim::BitOrder::LSB_FIRST;
 
     // SPI pins built by hand so `fod` stays available for object mode.
-    let paj7025r2_spi = common::utils::SpiPins {
+    let paj7025r2_spi = legacy_common::utils::SpiPins {
         sck: board.paj7025r2.sck.into(),
         miso: board.paj7025r2.miso.into(),
         mosi: board.paj7025r2.mosi.into(),
         cs: board.paj7025r2.cs.into(),
     };
-    let paj7025r3_spi = common::utils::SpiPins {
+    let paj7025r3_spi = legacy_common::utils::SpiPins {
         sck: board.paj7025r3.sck.into(),
         miso: board.paj7025r3.miso.into(),
         mosi: board.paj7025r3.mosi.into(),
         cs: board.paj7025r3.cs.into(),
     };
+    let image_receivers = legacy_common::image_mode::ImageReceivers {
+        near: legacy_common::image_mode::ImageReceiver::reserve(&paj7025r2_spi, |pins| {
+            let mut config = embassy_nrf::spis::Config::default();
+            config.mode = embassy_nrf::spis::MODE_3;
+            embassy_nrf::spis::Spis::new_rxonly(
+                // SAFETY: image entry has dropped all register futures and released SERIAL0.
+                unsafe { peripherals::SERIAL0::steal() },
+                Irqs,
+                pins.cs,
+                pins.sck,
+                pins.mosi,
+                config,
+            )
+        }),
+        wide: legacy_common::image_mode::ImageReceiver::reserve(&paj7025r3_spi, |pins| {
+            let mut config = embassy_nrf::spis::Config::default();
+            config.mode = embassy_nrf::spis::MODE_3;
+            embassy_nrf::spis::Spis::new_rxonly(
+                // SAFETY: image entry has dropped all register futures and released SERIAL1.
+                unsafe { peripherals::SERIAL1::steal() },
+                Irqs,
+                pins.cs,
+                pins.sck,
+                pins.mosi,
+                config,
+            )
+        }),
+    };
 
     defmt::info!("Creating SPI devices...");
-    let dev_r2 = common::utils::make_spi_dev(p.SERIAL0, Irqs, paj7025r2_spi, paj_cfg.clone());
+    let dev_r2 =
+        legacy_common::utils::make_spi_dev(p.SERIAL0, Irqs, paj7025r2_spi, paj_cfg.clone());
     defmt::info!("SPI dev_r2 created");
-    let dev_r3 = common::utils::make_spi_dev(p.SERIAL1, Irqs, paj7025r3_spi, paj_cfg);
+    let dev_r3 = legacy_common::utils::make_spi_dev(p.SERIAL1, Irqs, paj7025r3_spi, paj_cfg);
     defmt::info!("SPI dev_r3 created");
 
     defmt::info!("Waiting 1ms...");
@@ -285,7 +314,7 @@ async fn main(spawner: Spawner) {
         p.TIMER1, // TIMER0 is reserved for object mode
         p.PPI_CH0.into(),
         p.GPIOTE_CH0,
-        common::settings::accel_odr(),
+        legacy_common::settings::accel_odr(),
     )
     .await;
     defmt::info!("IMU initialized");
@@ -295,7 +324,8 @@ async fn main(spawner: Spawner) {
 
     nvmc.lock(|flash_cell| {
         let mut flash = flash_cell.borrow_mut();
-        atslite_boot_api::BootConfirmation::mark_booted(&mut *flash).expect("Failed to mark boot");
+        legacy_atslite_boot_api::BootConfirmation::mark_booted(&mut *flash)
+            .expect("Failed to mark boot");
     });
 
     log_boot_state("after mark_booted");
@@ -304,8 +334,8 @@ async fn main(spawner: Spawner) {
     // requests right after enumeration. The same channels are registered in
     // common (USB handler) and atslite_common (device_control_task) so both
     // share one set of queues.
-    let (ctrl_evt_ch, ctrl_cmd_ch) = common::device_control::init();
-    common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
+    let (ctrl_evt_ch, ctrl_cmd_ch) = legacy_common::device_control::init();
+    legacy_common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
     atslite_common::device_control::register(ctrl_evt_ch, ctrl_cmd_ch);
 
     static DFU_STATE: StaticCell<Control<AppDfuMarker<'static>, ResetImmediate>> =
@@ -372,13 +402,13 @@ async fn main(spawner: Spawner) {
         .unwrap()
     };
 
-    // BLE bond node; also sets atslite-common's SETTINGS_PTR.
-    let atslite_settings = shared_settings::init_nodes().await;
+    // Load the shared settings before publishing them to other tasks.
+    let mut atslite_settings = shared_settings::init_nodes().await;
 
     // General settings node (atslite-common schema), loaded from flash. This
     // makes atslite_common own "settings/general", the key and schema that
     // device_control_task uses for FlashSettings, SetDeviceName, WriteConfig.
-    shared_settings::init_board_nodes(atslite_settings).await;
+    shared_settings::init_board_nodes(&mut atslite_settings).await;
 
     // Copy general settings into legacy common settings, which object_mode
     // reads through its &mut common::Settings.
@@ -393,6 +423,7 @@ async fn main(spawner: Spawner) {
         settings_ref.general.stereo_iso = ag.stereo_iso.clone();
         settings_ref.general.name = ag.name.clone();
     }
+    shared_settings::publish(atslite_settings);
     settings::set_accel_odr(settings_ref.general.accel_config.accel_odr);
 
     // Round accel_odr to the nearest rate this sensor supports.
@@ -410,8 +441,12 @@ async fn main(spawner: Spawner) {
 
     // Its channels were registered before USB init.
     spawner.spawn(
-        atslite_board::device_control_task::device_control_task(FIRMWARE_VERSION, active_transport)
-            .unwrap(),
+        legacy_atslite::device_control_task::device_control_task(
+            FIRMWARE_VERSION,
+            0x5210,
+            active_transport,
+        )
+        .unwrap(),
     );
 
     // Raise the PMIC current limit once USB enumerates.
@@ -448,7 +483,7 @@ async fn main(spawner: Spawner) {
         power_state::power_state_task(
             pmic,
             pmic_leds,
-            &atslite_board::battery_model::BATTERY_MODEL,
+            &legacy_atslite::battery_model::BATTERY_MODEL,
         )
         .unwrap(),
     );
@@ -468,8 +503,9 @@ async fn main(spawner: Spawner) {
         l2cap_channels,
         data_mode: active_transport,
         version: FIRMWARE_VERSION,
-        battery_soc: &atslite_board::power_state::SOC_PERCENT,
-        battery_charging: &atslite_board::power_state::VBUS_PRESENT,
+        battery_soc: &legacy_atslite::power_state::SOC_PERCENT,
+        battery_charging: &legacy_atslite::power_state::VBUS_PRESENT,
+        image_receivers,
     };
 
     defmt::info!("Initialization complete; entering object mode");
@@ -569,7 +605,7 @@ async fn ble_task(controller: ble::host::BleController, seed: [u8; 32]) {
 
 #[embassy_executor::task]
 async fn usb_pmic_config_task(
-    configured: common::usb::UsbConfigHandle,
+    configured: legacy_common::usb::UsbConfigHandle,
     pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
 ) {
     configured.wait_until_active().await;

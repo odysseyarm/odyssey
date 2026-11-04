@@ -17,6 +17,8 @@ use static_cell::{ConstStaticCell, StaticCell};
 /// `wait_until_*` call holds one receiver slot of the watch.
 const USB_STATE_WAITERS: usize = 4;
 
+const BULK_MAX_PACKET_SIZE: u16 = 64;
+
 type UsbActiveWatch = Watch<CriticalSectionRawMutex, bool, USB_STATE_WAITERS>;
 
 /// Waits on whether a USB host is using the device (see [`is_active`]). Up to
@@ -182,8 +184,8 @@ where
     ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);
-    let ep_out = alt.endpoint_bulk_out(None, 64);
-    let ep_in = alt.endpoint_bulk_in(None, 64);
+    let ep_out = alt.endpoint_bulk_out(None, BULK_MAX_PACKET_SIZE);
+    let ep_in = alt.endpoint_bulk_in(None, BULK_MAX_PACKET_SIZE);
     drop(function);
 
     let usb = builder.build();
@@ -294,26 +296,73 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
-pub async fn read_transfer<'d>(
-    ep: &mut Endpoint<'d, Out>,
-    buf: &mut [u8],
-) -> Result<usize, EndpointError> {
-    let max_packet = max(ep.info().max_packet_size, 1) as usize;
-    let mut offset = 0;
+/// Retains a partial bulk transfer when another transport cancels a pending read.
+///
+/// Use with the endpoints created by [`usb_device`]. A short packet (including a
+/// ZLP) terminates the transfer. Oversized transfers are drained to that boundary
+/// before reporting overflow, so their tail cannot become the next request.
+pub struct TransferReader<const N: usize> {
+    data: [u8; N],
+    len: usize,
+    overflow: bool,
+}
 
-    loop {
-        if offset == buf.len() {
-            return Err(EndpointError::BufferOverflow);
-        }
-        let n = ep.read(&mut buf[offset..]).await?;
-        offset += n;
-
-        if n < max_packet {
-            break;
+impl<const N: usize> TransferReader<N> {
+    pub const fn new() -> Self {
+        Self {
+            data: [0; N],
+            len: 0,
+            overflow: false,
         }
     }
 
-    Ok(offset)
+    pub async fn read<'a, 'd>(
+        &'a mut self,
+        ep: &mut Endpoint<'d, Out>,
+    ) -> Result<&'a [u8], EndpointError> {
+        let max_packet = max(ep.info().max_packet_size, 1) as usize;
+        let mut tail = [0; BULK_MAX_PACKET_SIZE as usize];
+
+        loop {
+            // Read directly into the transfer buffer whenever a full packet fits.
+            // The scratch buffer also lets an exactly-full transfer consume its
+            // terminating ZLP without incorrectly reporting overflow.
+            let direct = !self.overflow && self.data.len() - self.len >= max_packet;
+            let result = if direct {
+                ep.read(&mut self.data[self.len..]).await
+            } else {
+                ep.read(&mut tail).await
+            };
+            let n = match result {
+                Ok(n) => n,
+                Err(error) => {
+                    self.len = 0;
+                    self.overflow = false;
+                    return Err(error);
+                }
+            };
+
+            if !self.overflow {
+                if n > self.data.len() - self.len {
+                    self.overflow = true;
+                } else {
+                    if !direct {
+                        self.data[self.len..self.len + n].copy_from_slice(&tail[..n]);
+                    }
+                    self.len += n;
+                }
+            }
+
+            if n < max_packet {
+                let len = self.len;
+                self.len = 0;
+                if core::mem::replace(&mut self.overflow, false) {
+                    return Err(EndpointError::BufferOverflow);
+                }
+                return Ok(&self.data[..len]);
+            }
+        }
+    }
 }
 
 pub async fn write_transfer<'d>(

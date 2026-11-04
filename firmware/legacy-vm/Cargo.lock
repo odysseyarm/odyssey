@@ -344,42 +344,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "cfg-noodle",
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.0.1",
- "defmt-rtt",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-hal-async",
- "embedded-hal-bus",
- "embedded-storage",
- "futures-util",
- "heapless 0.9.2",
- "minicbor",
- "minicbor-serde",
- "nalgebra 0.35.0",
- "odyssey-protocol",
- "once_cell",
- "opencv-ros-camera 0.16.0",
- "paj7025",
- "panic-probe",
- "postcard",
- "serde",
- "static_cell",
- "trouble-host",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1314,6 +1278,70 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "legacy-common"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cfg-noodle",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.0.1",
+ "defmt-rtt",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "embedded-storage",
+ "futures-util",
+ "heapless 0.9.2",
+ "minicbor",
+ "minicbor-serde",
+ "nalgebra 0.35.0",
+ "odyssey-protocol",
+ "once_cell",
+ "opencv-ros-camera 0.16.0",
+ "paj7025",
+ "panic-probe",
+ "postcard",
+ "serde",
+ "static_cell",
+ "trouble-host",
+]
+
+[[package]]
+name = "legacy-vm"
+version = "0.1.0"
+dependencies = [
+ "bmi2",
+ "bt-hci 0.6.0 (git+https://github.com/embassy-rs/bt-hci)",
+ "bytemuck",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.0.1",
+ "defmt-rtt",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-nrf",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal-bus",
+ "legacy-common",
+ "memory-spec",
+ "nalgebra 0.35.0",
+ "paj7025",
+ "panic-probe",
+ "static_cell",
+ "trouble-host",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1614,7 +1642,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-common"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "nalgebra 0.35.0",
  "num",
@@ -1624,7 +1652,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-protocol"
-version = "0.2.0"
+version = "0.0.0"
 dependencies = [
  "arbitrary-int 1.3.0",
  "bitbybit",
@@ -1643,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-protocol-macros"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2304,34 +2332,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vm-board"
-version = "0.1.0"
-dependencies = [
- "bmi2",
- "bt-hci 0.6.0 (git+https://github.com/embassy-rs/bt-hci)",
- "bytemuck",
- "common",
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.0.1",
- "defmt-rtt",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-nrf",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embedded-hal-bus",
- "memory-spec",
- "nalgebra 0.35.0",
- "paj7025",
- "panic-probe",
- "static_cell",
- "trouble-host",
-]
 
 [[package]]
 name = "void"

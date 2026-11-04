@@ -23,13 +23,13 @@ pub struct AtsliteImuInterrupt {
 #[derive(Debug)]
 pub struct ImuError;
 
-impl common::platform::Imu for AtsliteImu {
+impl legacy_common::platform::Imu for AtsliteImu {
     type Error = ImuError;
     type Interrupt = AtsliteImuInterrupt;
 
     fn read_data(
         &mut self,
-    ) -> impl Future<Output = Result<common::platform::ImuData, Self::Error>> {
+    ) -> impl Future<Output = Result<legacy_common::platform::ImuData, Self::Error>> {
         async move {
             // 521 words, the FIFO buffer size the earlier firmware used.
             let mut buffer = [0u32; 521];
@@ -59,7 +59,7 @@ impl common::platform::Imu for AtsliteImu {
             let timestamp_delta = 1000 * (pkt.timestamp() as u32) / 32;
             self.ts_micros = self.ts_micros.wrapping_add(timestamp_delta);
 
-            Ok(common::platform::ImuData {
+            Ok(legacy_common::platform::ImuData {
                 accel: [ax, ay, az],
                 gyro: [gx, gy, gz],
                 timestamp_micros: self.ts_micros,
@@ -68,7 +68,7 @@ impl common::platform::Imu for AtsliteImu {
     }
 }
 
-impl common::platform::ImuInterrupt for AtsliteImuInterrupt {
+impl legacy_common::platform::ImuInterrupt for AtsliteImuInterrupt {
     fn wait(&mut self) -> impl Future<Output = ()> {
         self.int1.wait_for_low()
     }

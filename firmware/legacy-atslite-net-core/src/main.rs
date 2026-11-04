@@ -2,6 +2,9 @@
 #![no_main]
 #![recursion_limit = "256"]
 
+//! H4/ICMSG bridge for the network controller. Dispatch errors with a valid
+//! opcode return an HCI error event so the host recovers its command credit.
+
 mod cmd_dispatch;
 
 use core::cell::RefCell;
@@ -33,7 +36,7 @@ use crate::cmd_dispatch::exec_cmd_by_opcode;
 use crate::icmsg_config::ALIGN;
 
 /// Release counter of this net-core image. Release tooling reads the literal through
-/// firmware/release-counter, which ignores layout. 0 is reserved for "unknown" on the host side.
+/// `cargo xtask firmware release-counter`, which ignores layout. 0 is reserved for "unknown" on the host side.
 macro_rules! release {
     () => {
         1
@@ -75,19 +78,19 @@ mod icmsg_config {
 
     pub const ALIGN: usize = 4;
     pub fn get_icmsg_config() -> icmsg::MemoryConfig {
-        unsafe {
-            let send_buffer_len =
-                (&raw const __icmsg_tx_end).byte_offset_from(&raw const __icmsg_tx_start) as u32
-                    - size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-            let recv_buffer_len =
-                (&raw const __icmsg_rx_end).byte_offset_from(&raw const __icmsg_rx_start) as u32
-                    - size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>() as u32;
-            icmsg::MemoryConfig {
-                send_region: (&raw mut __icmsg_tx_start).cast(),
-                recv_region: (&raw mut __icmsg_rx_start).cast(),
-                send_buffer_len,
-                recv_buffer_len,
-            }
+        // Boundary symbols describe addresses, not one Rust allocation.
+        let header_len = size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>();
+        let send_buffer_len = ((&raw const __icmsg_tx_end).addr()
+            - (&raw const __icmsg_tx_start).addr()
+            - header_len) as u32;
+        let recv_buffer_len = ((&raw const __icmsg_rx_end).addr()
+            - (&raw const __icmsg_rx_start).addr()
+            - header_len) as u32;
+        icmsg::MemoryConfig {
+            send_region: (&raw mut __icmsg_tx_start).cast(),
+            recv_region: (&raw mut __icmsg_rx_start).cast(),
+            send_buffer_len,
+            recv_buffer_len,
         }
     }
 }
@@ -310,10 +313,38 @@ async fn exec_h4_to_sdc(
                     .lock(|x| x.borrow_mut().send(&reply))
                     .map_err(|_| cmd::Error::Io(sdc::Error::EIO));
             }
-            exec_cmd_by_opcode::<sdc::Error>(send, sdc, opcode, payload).await
+            match exec_cmd_by_opcode::<sdc::Error>(send, sdc, opcode, payload).await {
+                Err(cmd::Error::Hci(error)) => {
+                    let [op_lo, op_hi] = opcode.to_raw().to_le_bytes();
+                    let status = error.to_status().into_inner();
+                    let reply = if error == param::Error::UNKNOWN_CMD {
+                        // Unknown commands complete immediately with Unknown HCI Command.
+                        [0x04, 0x0E, 0x04, 0x01, op_lo, op_hi, status]
+                    } else {
+                        // Parsing or an asynchronous command failed before the controller
+                        // could produce an event. Successful async commands are untouched.
+                        [0x04, 0x0F, 0x04, status, 0x01, op_lo, op_hi]
+                    };
+                    send.lock(|x| x.borrow_mut().send(&reply))
+                        .map_err(|_| cmd::Error::Io(sdc::Error::EIO))
+                }
+                result => result,
+            }
         }
-        bt_hci::PacketKind::AclData => io!(sdc.hci_data_put(rest)),
-        bt_hci::PacketKind::IsoData => io!(sdc.hci_iso_data_put(rest)),
+        bt_hci::PacketKind::AclData | bt_hci::PacketKind::IsoData => {
+            // The SDC APIs assert their length precondition rather than
+            // returning an error. Check the untrusted ICMSG frame first.
+            if rest.len() < 4
+                || usize::from(u16::from_le_bytes([rest[2], rest[3]])) > rest.len() - 4
+            {
+                return Err(cmd::Error::Hci(param::Error::INVALID_HCI_PARAMETERS));
+            }
+            if kind == bt_hci::PacketKind::AclData {
+                io!(sdc.hci_data_put(rest))
+            } else {
+                io!(sdc.hci_iso_data_put(rest))
+            }
+        }
         bt_hci::PacketKind::SyncData => Err(cmd::Error::Hci(param::Error::UNSUPPORTED)),
         bt_hci::PacketKind::Event => Err(cmd::Error::Hci(param::Error::UNSPECIFIED)),
     }

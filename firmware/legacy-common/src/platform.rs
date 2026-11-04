@@ -1,4 +1,4 @@
-//! Traits each board crate (vm-board, atslite-board) implements so the core
+//! Traits each board crate (legacy-vm, legacy-atslite) implements so the core
 //! logic here stays board-independent.
 use core::future::Future;
 
@@ -40,6 +40,10 @@ pub trait L2capChannels: Sized {
     fn data_rx(&self) -> &Self::Receiver;
     fn control_tx(&self) -> &Self::Sender;
     fn data_tx(&self) -> &Self::Sender;
+
+    /// Changes whenever BLE queues are drained for a connection transition.
+    /// Boards without BLE can return a constant.
+    fn session_generation(&self) -> u32;
 }
 
 pub trait L2capReceiver {
@@ -99,17 +103,4 @@ pub struct PlatformContext<P: Platform> {
     pub timer: embassy_nrf::Peri<'static, P::Timer>,
     pub fod_set_ch: embassy_nrf::Peri<'static, embassy_nrf::ppi::AnyConfigurableChannel>,
     pub fod_clr_ch: embassy_nrf::Peri<'static, embassy_nrf::ppi::AnyConfigurableChannel>,
-}
-
-/// Helper function to check if a packet should go to the control channel
-pub fn is_control_packet(pkt: &Packet) -> bool {
-    match pkt.ty() {
-        PacketType::ObjectReport()
-        | PacketType::CombinedMarkersReport()
-        | PacketType::PocMarkersReport()
-        | PacketType::AccelReport()
-        | PacketType::ImpactReport()
-        | PacketType::BatteryReport() => false,
-        _ => true,
-    }
 }

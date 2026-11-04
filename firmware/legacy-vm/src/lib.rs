@@ -6,7 +6,7 @@ pub mod pins;
 pub mod platform;
 pub mod utils;
 
-pub use common;
+pub use legacy_common;
 pub use embassy_executor;
 pub use embassy_nrf;
 pub use platform::VmPlatform;
