@@ -21,7 +21,7 @@ pub fn Home() -> Element {
     let hub = use_context::<Signal<HubContext>>();
 
     // Firmware update manager - shared state between tokio tasks and UI
-    let manager = use_hook(FirmwareUpdateManager::new);
+    let manager = use_context::<FirmwareUpdateManager>();
     let firmware = use_firmware_manifest();
     let updating = use_updating_uuids(&manager)();
 

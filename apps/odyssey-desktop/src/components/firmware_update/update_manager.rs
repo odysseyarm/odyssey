@@ -48,10 +48,24 @@ impl FirmwareUpdateManager {
         self.states.lock().insert(uuid, state);
     }
 
+    /// Availability is computed during render and may already be stale when it
+    /// is ready to publish. Never let it overwrite a task's progress or result.
+    pub(super) fn set_before_update_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
+        let mut states = self.states.lock();
+        let current = states.entry(uuid).or_insert(FirmwareUpdateState::Idle);
+        if current.is_before_update() {
+            *current = state;
+        }
+    }
+
     /// Claim a device for an update. Returns false when one is already running,
     /// so the check and the insert cannot race two clicks against each other.
     pub(super) fn try_claim(&self, uuid: [u8; 6]) -> bool {
-        self.updating.lock().insert(uuid)
+        if !self.updating.lock().insert(uuid) {
+            return false;
+        }
+        self.set_state(uuid, FirmwareUpdateState::Downloading);
+        true
     }
 
     pub(super) fn is_updating(&self, uuid: &[u8; 6]) -> bool {
@@ -89,4 +103,27 @@ pub(super) fn use_polled_state(
         }
     });
     state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_availability_cannot_replace_update_progress_or_failure() {
+        let manager = FirmwareUpdateManager::new();
+        let uuid = [1; 6];
+        assert!(manager.try_claim(uuid));
+        manager.set_before_update_state(uuid, FirmwareUpdateState::Idle);
+        assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Downloading);
+        manager.set_state(uuid, FirmwareUpdateState::Failed("Disconnected".into()));
+        manager.set_before_update_state(uuid, FirmwareUpdateState::Idle);
+        assert_eq!(
+            manager.get_state(&uuid),
+            FirmwareUpdateState::Failed("Disconnected".into())
+        );
+        assert!(!manager.try_claim(uuid));
+        manager.clear_state(&uuid);
+        assert!(manager.try_claim(uuid));
+    }
 }

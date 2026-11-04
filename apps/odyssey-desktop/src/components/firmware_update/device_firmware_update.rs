@@ -47,7 +47,7 @@ pub(crate) fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element 
             Some(manifest) => check_for_update(&manifest, &device, &current_state),
             None => FirmwareUpdateState::Idle,
         };
-        manager.set_state(device_uuid, next_state);
+        manager.set_before_update_state(device_uuid, next_state);
     }
 
     let state = local_state();

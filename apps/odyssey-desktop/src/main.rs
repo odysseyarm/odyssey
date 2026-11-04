@@ -4,7 +4,7 @@ use std::io::Write as _;
 use std::rc::Rc;
 use std::time::Duration;
 
-use components::{ConfigCorruptionModal, Navbar};
+use components::{ConfigCorruptionModal, FirmwareUpdateManager, Navbar};
 use dioxus::desktop::{Config, WindowBuilder, WindowCloseBehaviour, window};
 use dioxus::history::MemoryHistory;
 use dioxus::logger::tracing;
@@ -163,6 +163,8 @@ fn app() -> Element {
     use_server_task(cancel_token, config_corruptions, server_ready);
 
     let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
+    // Firmware work survives page navigation, so its claims and progress must too.
+    use_context_provider(FirmwareUpdateManager::new);
     let ui_state_writer = ui_state::use_ui_state_writer();
     use_context_provider(|| ui_state_writer);
     use_hub_connection(hub, server_ready);

@@ -1,15 +1,15 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dioxus::logger::tracing;
-use dioxus::prelude::SyncSignal;
-use odyssey_hub_common::device::Device;
+use dioxus::prelude::{ReadableExt as _, SyncSignal};
+use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 use slab::Slab;
 
 use super::dfu_session::DfuSession;
 use super::downloads::{Downloads, published_release};
 use super::netcore::wait_for_netcore_release;
-use super::update_check::{desktop_version, is_in_bootloader};
+use super::update_check::{desktop_version, format_version, is_in_bootloader};
 use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
 
@@ -18,6 +18,9 @@ const FINAL_STATE_LINGER: Duration = Duration::from_secs(5);
 const REBOOT_SETTLE_DELAY: Duration = Duration::from_millis(500);
 /// How long the device gets to reappear in application mode after flashing.
 const APP_MODE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Allow the hub's control connection to read the returning application's version.
+const APP_VERSION_TIMEOUT: Duration = Duration::from_secs(15);
+const APP_VERSION_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Start a firmware update - runs entirely on tokio runtime
 pub(super) fn start_firmware_update(
@@ -89,6 +92,9 @@ async fn run_firmware_update(
     )
     .offered
     .ok_or("No firmware for this device type is installable by this unit and this version of Odyssey Desktop")?;
+    let expected_version = firmware_entry
+        .version_parts()
+        .ok_or("Firmware release has an unreadable application version")?;
 
     // The net core is released separately from the application, so the entry
     // only says which release it was tested with. Whether it has to be written
@@ -142,7 +148,12 @@ async fn run_firmware_update(
             }
             firmware::UpdateStep::WriteApplication => {
                 session
-                    .write_application(&mut downloads, firmware_entry.requires_bootloader)
+                    .write_application(
+                        &mut downloads,
+                        firmware_entry.requires_bootloader,
+                        &devices,
+                        expected_version,
+                    )
                     .await?;
             }
         }
@@ -161,6 +172,8 @@ impl DfuSession<'_> {
         &self,
         downloads: &mut Downloads,
         requires_bootloader: u16,
+        devices: &SyncSignal<Slab<Device>>,
+        expected_version: [u16; 3],
     ) -> Result<(), String> {
         self.ensure_bootloader(downloads.bootloader.as_ref(), requires_bootloader)
             .await?;
@@ -203,8 +216,29 @@ impl DfuSession<'_> {
         tracing::info!("Verifying firmware update...");
 
         if self.wait_for_app_mode(APP_MODE_TIMEOUT).await {
-            tracing::info!("Device reconnected in application mode");
-            Ok(())
+            // Enumeration alone also succeeds when the bootloader rejected the
+            // new image and fell back to the old application.
+            let deadline = Instant::now() + APP_VERSION_TIMEOUT;
+            let mut last_version = None;
+            while Instant::now() < deadline {
+                last_version = reported_application_version(&devices.peek(), &self.uuid);
+                if last_version == Some(expected_version) {
+                    tracing::info!(
+                        "Device reconnected running application {}",
+                        format_version(expected_version)
+                    );
+                    return Ok(());
+                }
+                tokio::time::sleep(APP_VERSION_POLL_INTERVAL).await;
+            }
+            Err(format!(
+                "Device returned but did not report firmware {} (last reading: {}). \
+                 Leave it connected and try again.",
+                format_version(expected_version),
+                last_version
+                    .map(format_version)
+                    .unwrap_or_else(|| "unknown".to_string())
+            ))
         } else {
             // The byte count above only proves the host finished feeding the
             // writer, so a device that never comes back is the one signal left
@@ -216,4 +250,14 @@ impl DfuSession<'_> {
             ))
         }
     }
+}
+
+/// Only the requested unit's live control connection can verify its application.
+fn reported_application_version(devices: &Slab<Device>, uuid: &[u8; 6]) -> Option<[u16; 3]> {
+    devices
+        .iter()
+        .find(|(_, device)| {
+            &device.uuid == uuid && device.capabilities.contains(DeviceCapabilities::CONTROL)
+        })
+        .map(|(_, device)| device.firmware_version)
 }

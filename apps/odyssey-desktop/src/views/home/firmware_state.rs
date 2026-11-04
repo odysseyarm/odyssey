@@ -40,6 +40,7 @@ pub(super) fn use_firmware_manifest() -> FirmwareManifestState {
             return;
         };
         manifest.set(None);
+        error.set(None);
         let mut delay = MANIFEST_RETRY_START;
         loop {
             match firmware::fetch_manifest(channel).await {

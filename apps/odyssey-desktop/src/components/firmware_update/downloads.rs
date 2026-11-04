@@ -38,6 +38,27 @@ async fn download_image(
         .map_err(|e| format!("Download of {name} failed: {e}"))
 }
 
+/// Both banks must be available before the device is detached: only its
+/// bootloader can tell us which one is inactive.
+fn application_files(entry: &FirmwareEntry) -> Result<[(&'static str, &FileEntry); 2], String> {
+    Ok([
+        (
+            "app-a",
+            entry
+                .files
+                .get("app-a")
+                .ok_or("Firmware release has no app-a image")?,
+        ),
+        (
+            "app-b",
+            entry
+                .files
+                .get("app-b")
+                .ok_or("Firmware release has no app-b image")?,
+        ),
+    ])
+}
+
 impl Downloads {
     /// Which bank to write is only readable once the bootloader is running, so
     /// fetch both candidates up front. Detaching is the point of no return: the
@@ -51,6 +72,10 @@ impl Downloads {
         entry: &FirmwareEntry,
         steps: &[UpdateStep],
     ) -> Result<Self, String> {
+        // The inactive bank is unknown until after detach. A one-bank release
+        // cannot safely start an update: it may leave the unit in DFU after
+        // writing its bootloader or net core with no application to finish it.
+        let application_files = application_files(entry)?;
         let netcore = match published_release(entry, "net-core") {
             Some((file, release)) if steps.contains(&UpdateStep::FlashNetCore) => {
                 tracing::info!("Downloading net-core release {}", release);
@@ -67,10 +92,7 @@ impl Downloads {
         };
 
         let mut applications = HashMap::new();
-        for slot_file in ["app-a", "app-b"] {
-            let Some(file) = entry.files.get(slot_file) else {
-                continue;
-            };
+        for (slot_file, file) in application_files {
             tracing::info!("Downloading {} for {}", slot_file, entry.version);
             let data = download_image(
                 device_type,
@@ -82,9 +104,6 @@ impl Downloads {
             )
             .await?;
             applications.insert(slot_file, data);
-        }
-        if applications.is_empty() {
-            return Err("Firmware release has no app-a or app-b image".to_string());
         }
 
         // The stage2 bootloader is versioned separately and republished unchanged
@@ -110,5 +129,35 @@ impl Downloads {
             applications,
             bootloader,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_bank_is_not_installable() {
+        for present in ["app-a", "app-b"] {
+            let entry = FirmwareEntry {
+                version: "1.0.0".into(),
+                requires_bootloader: 0,
+                requires_netcore: 0,
+                min_desktop: "0.6.0".into(),
+                files: HashMap::from([(
+                    present.into(),
+                    FileEntry {
+                        sha256: "unused".into(),
+                        size: 1,
+                        release: None,
+                    },
+                )]),
+                released: None,
+            };
+            assert!(
+                application_files(&entry).is_err(),
+                "A release with only {present} cannot cover both possible inactive banks"
+            );
+        }
     }
 }

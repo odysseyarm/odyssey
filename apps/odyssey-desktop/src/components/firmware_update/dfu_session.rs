@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use dioxus::logger::tracing;
@@ -91,30 +89,15 @@ impl DfuSession<'_> {
         let total_size = data.len();
         self.set_state(progress_state(0, total_size));
 
-        // The flash call blocks its worker thread on USB transfers, so progress
-        // is published from a separate task that reads this counter.
-        let progress_bytes = Arc::new(AtomicUsize::new(0));
-        let progress_task = {
-            let progress_bytes = Arc::clone(&progress_bytes);
-            let manager = self.manager.clone();
-            let uuid = self.uuid;
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(PROGRESS_PUBLISH_INTERVAL).await;
-                    let current = progress_bytes.load(Ordering::Relaxed);
-                    manager.set_state(uuid, progress_state(current, total_size));
-                    if current >= total_size {
-                        break;
-                    }
-                }
-            })
-        };
-
-        // Flash
-        let progress_callback = {
-            let progress_bytes = Arc::clone(&progress_bytes);
-            move |bytes_written: usize, _total: usize| {
-                progress_bytes.store(bytes_written, Ordering::Relaxed);
+        // Publish from the transfer callback itself. A detached polling task can
+        // outlive cancellation or race the next phase even after being aborted.
+        let mut final_progress = 0;
+        let mut last_publish = Instant::now();
+        let progress_callback = |bytes_written: usize, _total: usize| {
+            final_progress = bytes_written;
+            if bytes_written >= total_size || last_publish.elapsed() >= PROGRESS_PUBLISH_INTERVAL {
+                self.set_state(progress_state(bytes_written, total_size));
+                last_publish = Instant::now();
             }
         };
 
@@ -129,13 +112,9 @@ impl DfuSession<'_> {
         )
         .await;
 
-        // Stop progress updater
-        progress_task.abort();
-
         flash_result.map_err(|e| format!("{what} failed: {e}"))?;
 
         // Verify flash was complete
-        let final_progress = progress_bytes.load(Ordering::Relaxed);
         if final_progress < total_size {
             return Err(format!(
                 "{what} incomplete: {final_progress}/{total_size} bytes written"
