@@ -27,6 +27,7 @@ use std::sync::mpsc::{self, Sender};
 
 pub(crate) use backend::{Backend, DEMO_DIAGONAL_IN, ListError, OpenRequest, demo_scene};
 pub(crate) use command::{Command, Mode};
+use dioxus::logger::tracing;
 use engine::Engine;
 pub(crate) use event::{Event, SavedAttempt, SessionEvent};
 pub(crate) use failure::{Failure, FailureKind};
@@ -41,16 +42,26 @@ pub(crate) struct Worker {
 
 impl Worker {
     /// Starts an idle thread: no camera is touched until a command asks.
+    ///
+    /// If the OS cannot start the thread, the worker still exists but nothing
+    /// listens to it; the UI is told through a failed camera listing, which is
+    /// where Setup shows what stopped it.
     pub(crate) fn spawn(backend: Backend, events: UnboundedSender<Event>) -> Self {
         let (commands, receiver) = mpsc::channel();
         let in_flight = Arc::new(AtomicBool::new(false));
+        let failure_events = events.clone();
         let engine = Engine::new(backend, events, Arc::clone(&in_flight));
         // The thread is detached: it ends when `commands` drops, and closing an
         // SDK pipeline can take a moment the UI thread must not wait for.
-        std::thread::Builder::new()
+        let started = std::thread::Builder::new()
             .name("calibration-camera".into())
-            .spawn(move || engine.run(receiver))
-            .expect("the OS refused to start a thread");
+            .spawn(move || engine.run(receiver));
+        if let Err(e) = started {
+            tracing::error!("could not start the camera thread: {e}");
+            let _ = failure_events.send(Event::Cameras(Err(ListError::Camera(format!(
+                "the camera thread could not start ({e})"
+            )))));
+        }
         Self {
             commands,
             in_flight,
