@@ -16,6 +16,10 @@ Use the project's development shell. `suite` exits nonzero on regression; JSON
 reports retain metrics and observations. CI runs the same suite and contract tests
 on PRs, main/master pushes, manual dispatch and nightly, and uploads its report.
 CI needs the existing `ODYSSEY_CV_TOKEN` secret for the private solver dependency.
+`Cargo.lock` pins the solver Git commit; builds do not require a sibling checkout
+or a manifest `rev`. The solver's lockfile also pins its shared calibration
+dependency. Publish referenced commits before CI fetches them. Odyssey supplies
+its matching `odyssey-common` through the root patch.
 
 CLI operations after building the binary:
 
@@ -118,6 +122,9 @@ intersecting the aim ray with the surface when present, and zeroing targets
 through it. If the ray misses the surface it falls back to the plane, which keeps
 off-screen aim values. The homography stays the planar fit used for marker
 identification. Calibrations without a surface behave exactly as before.
+
+Zero targets use the same calibrated surface as aim raycasts, including the hub's
+tracking-event path; they are not projected onto the fitted plane.
 
 `surface-suite` replays four display cases (`calibration-plane`,
 `projective-plane`, `wavy-grid`, `nonlinear-projector-grid`) through the

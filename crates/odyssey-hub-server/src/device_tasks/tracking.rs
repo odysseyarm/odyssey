@@ -377,10 +377,7 @@ pub(super) fn calculate_zero_offset_from_tracking_event(
         Vector3::new(raw_translation.x, raw_translation.y, raw_translation.z);
 
     let screen_calibration = ats_helpers::get_screen_calibration(screen_calibrations, screen_id)?;
-    let inv_homography = screen_calibration.homography.try_inverse()?;
-
-    let zero_target_2d = inv_homography.transform_point(&zero_target_in_screen_space);
-    let zero_target_3d = Point3::new(zero_target_2d.x, zero_target_2d.y, 0.0);
+    let zero_target_3d = screen_calibration.point_at_uv(zero_target_in_screen_space)?;
     let iso = Isometry3::from_parts(position.into(), orientation);
     let zero_position = iso * Point3::from(zero_translation.vector);
 
@@ -421,6 +418,48 @@ fn build_markers_from_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zeroing_aims_at_measured_surface_instead_of_fitted_plane() {
+        let mut calibrations = ScreenCalibrationList::new();
+        calibrations.push((
+            0,
+            odyssey_common::ScreenCalibration {
+                surface: Some(odyssey_common::ScreenSurface {
+                    columns: 2,
+                    rows: 2,
+                    positions_m: vec![
+                        [0.0, 0.0, 0.5],
+                        [1.0, 0.0, 0.5],
+                        [0.0, 1.0, 0.5],
+                        [1.0, 1.0, 0.5],
+                    ],
+                }),
+                rotation: UnitQuaternion::identity(),
+                homography: Matrix3::identity(),
+                object_points: [Point3::origin(); odyssey_common::MARKER_PATTERN_LEN],
+            },
+        ));
+        let event = TrackingEvent {
+            timestamp: 0,
+            aimpoint: Vector2::zeros(),
+            pose: Pose {
+                rotation: Matrix3::identity(),
+                translation: Vector3::new(0.0, 0.0, -1.0),
+            },
+            distance: 1.0,
+            screen_id: 0,
+        };
+        let offset = calculate_zero_offset_from_tracking_event(
+            Translation3::identity(),
+            Point2::new(0.75, 0.25),
+            &calibrations,
+            &event,
+        )
+        .expect("surface target is reachable");
+        let expected = Vector3::new(0.75, 0.25, -0.5).normalize();
+        assert!((offset * Vector3::z() - expected).norm() < 1e-5);
+    }
 
     #[test]
     fn zeroing_does_not_wrap_a_screen_id_into_another_calibration() {
