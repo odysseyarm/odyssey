@@ -36,7 +36,7 @@ fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         .with_include_guard("OHC_H")
         .with_item_prefix("ohc_")
         .with_parse_deps(true)
-        .with_parse_include(&["odyssey_hub_common"])
+        .with_parse_include(&["odyssey-hub-common"])
         .generate()?
         .write_to_file(Path::new(crate_dir).join("generated/include/ohc.h"));
 
@@ -69,7 +69,7 @@ fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         .with_namespace("ohc")
         .with_include_guard("OHC_H")
         .with_parse_deps(true)
-        .with_parse_include(&["odyssey_hub_common"])
+        .with_parse_include(&["odyssey-hub-common"])
         .generate()?
         .write_to_file(Path::new(crate_dir).join("generated/include/ohc.hpp"));
 

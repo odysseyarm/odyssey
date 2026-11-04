@@ -136,44 +136,58 @@ impl From<common::ScreenInfo> for ScreenInfo {
     }
 }
 
-impl From<common::events::Event> for Event {
-    fn from(event: common::events::Event) -> Self {
+/// Events not represented by this ABI are skipped, never relabeled as another
+/// event kind. In particular, dongle pairing notifications are not device events.
+impl TryFrom<common::events::Event> for Event {
+    type Error = ();
+
+    fn try_from(event: common::events::Event) -> Result<Self, Self::Error> {
         match event {
             common::events::Event::DeviceEvent(common::events::DeviceEvent(device, kind)) => {
-                Event::DeviceEvent(DeviceEvent {
-                    device: device.clone(),
-                    kind: match kind {
-                        common::events::DeviceEventKind::AccelerometerEvent(e) => {
-                            DeviceEventKind::AccelerometerEvent(e.into())
-                        }
-                        common::events::DeviceEventKind::TrackingEvent(e) => {
-                            DeviceEventKind::TrackingEvent(e.into())
-                        }
-                        common::events::DeviceEventKind::ImpactEvent(e) => {
-                            DeviceEventKind::ImpactEvent(e.into())
-                        }
-                        common::events::DeviceEventKind::ZeroResult(b) => {
-                            DeviceEventKind::ZeroResult(b)
-                        }
-                        common::events::DeviceEventKind::SaveZeroResult(b) => {
-                            DeviceEventKind::SaveZeroResult(b)
-                        }
-                        common::events::DeviceEventKind::PacketEvent(p) => {
-                            DeviceEventKind::PacketEvent(p.into())
-                        }
-                        common::events::DeviceEventKind::CapabilitiesChanged => {
-                            DeviceEventKind::CapabilitiesChanged
-                        }
-                        _ => {
-                            return Event::DeviceEvent(DeviceEvent {
-                                device,
-                                kind: DeviceEventKind::CapabilitiesChanged,
-                            });
-                        }
-                    },
-                })
+                let kind = match kind {
+                    common::events::DeviceEventKind::AccelerometerEvent(e) => {
+                        DeviceEventKind::AccelerometerEvent(e.into())
+                    }
+                    common::events::DeviceEventKind::TrackingEvent(e) => {
+                        DeviceEventKind::TrackingEvent(e.into())
+                    }
+                    common::events::DeviceEventKind::ImpactEvent(e) => {
+                        DeviceEventKind::ImpactEvent(e.into())
+                    }
+                    common::events::DeviceEventKind::ZeroResult(b) => {
+                        DeviceEventKind::ZeroResult(b)
+                    }
+                    common::events::DeviceEventKind::SaveZeroResult(b) => {
+                        DeviceEventKind::SaveZeroResult(b)
+                    }
+                    common::events::DeviceEventKind::PacketEvent(p) => {
+                        DeviceEventKind::PacketEvent(p.into())
+                    }
+                    common::events::DeviceEventKind::CapabilitiesChanged => {
+                        DeviceEventKind::CapabilitiesChanged
+                    }
+                    _ => return Err(()),
+                };
+                Ok(Event::DeviceEvent(DeviceEvent { device, kind }))
             }
-            _ => todo!("unhandled event variant"),
+            _ => Err(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unrepresented_dongle_events_are_rejected_without_panicking() {
+        let event = common::events::Event::DonglePairingResult {
+            dongle_id: "dongle".to_string(),
+            success: true,
+            paired_address: [1, 2, 3, 4, 5, 6],
+            paired_name: "device".to_string(),
+            error: String::new(),
+        };
+        assert!(Event::try_from(event).is_err());
     }
 }

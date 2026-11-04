@@ -1,3 +1,23 @@
+//! C ABI ownership contract:
+//!
+//! Unless explicitly documented as nullable, pointers must be non-null, aligned,
+//! and valid for the duration of the call. Free functions accept null and consume
+//! non-null handles exactly once. Do not free a handle concurrently with a call
+//! borrowing it. Client calls may otherwise run concurrently.
+//!
+//! Asynchronous operations retain their own client state, so the client handle
+//! may be freed after scheduling them. Callbacks run on runtime worker threads;
+//! userdata must be thread-safe and remain valid until the operation's final
+//! callback. Keep the runtime alive until all required callbacks have completed:
+//! freeing it cancels pending work and does not guarantee terminal callbacks.
+//! Already-running callbacks may finish after `rt_free` returns.
+//! Event callback payloads are initialized only when the error is `None`.
+//! `NotConnected` means no connection has been established; `RpcFailure` means
+//! a request or stream failed. `StreamEnd` means a stream closed without an error.
+//! The C event ABI omits event kinds it cannot represent.
+//! Headers are generated with the `odyssey-hub-common` dependency parsed, so
+//! shared device layouts come from their Rust definitions rather than copies.
+//!
 pub mod client;
 pub mod event;
 pub mod funny;
@@ -9,18 +29,67 @@ pub struct Handle {
     tokio_rt: tokio::runtime::Runtime,
 }
 
+/// Creates a runtime, returning null if worker threads cannot be started.
 #[unsafe(no_mangle)]
 pub extern "C" fn rt_init() -> *mut Handle {
     let tokio_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .ok();
+    let Some(tokio_rt) = tokio_rt else {
+        return std::ptr::null_mut();
+    };
     Box::into_raw(Box::new(Handle { tokio_rt }))
 }
 
+/// # Safety
+/// `handle` must be null or an owned runtime from `rt_init`, not borrowed by
+/// another call. Pending work is cancelled; see the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn rt_free(handle: *mut Handle) {
-    unsafe {
-        drop(Box::from_raw(handle));
-    };
+pub unsafe extern "C" fn rt_free(handle: *mut Handle) {
+    if !handle.is_null() {
+        let handle = unsafe { Box::from_raw(handle) };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            // Blocking Runtime::drop panics in async contexts, including a
+            // callback on this runtime's own worker thread.
+            handle.tokio_rt.shutdown_background();
+        } else {
+            // Preserve synchronous shutdown for ordinary foreign callers.
+            drop(handle);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_can_be_released_from_its_worker_thread() {
+        fn release(userdata: client::UserObj) {
+            unsafe { rt_free(userdata.ptr as *mut Handle) };
+        }
+
+        let handle = Box::into_raw(Box::new(Handle {
+            tokio_rt: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("test runtime"),
+        }));
+        let userdata = client::UserObj { ptr: handle.cast() };
+        let (start, started) = tokio::sync::oneshot::channel();
+        let (done, completed) = std::sync::mpsc::channel();
+        unsafe { &*handle }.tokio_rt.spawn(async move {
+            if started.await.is_ok() {
+                release(userdata);
+                let _ = done.send(());
+            }
+        });
+        // Do not release the handle until the synchronous spawn borrow ends.
+        start.send(()).expect("start shutdown");
+        completed
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("worker-thread shutdown completed");
+    }
 }

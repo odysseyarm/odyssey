@@ -1,8 +1,10 @@
 use std::ffi::c_void;
+use std::sync::Arc;
 
 use futures_util::stream::StreamExt;
-use odyssey_hub_client::client::Client;
+use odyssey_hub_client::client::Client as NativeClient;
 use odyssey_hub_common as common;
+use parking_lot::Mutex;
 
 use crate::Handle;
 
@@ -12,23 +14,39 @@ pub struct UserObj {
     pub ptr: *const c_void,
 }
 
-// cbindgen emits no opaque type for the foreign `Client`; this stand-in gets one
-// declared in the generated headers.
-mod hack {
-    #[allow(unused)]
-    #[unsafe(no_mangle)]
-    pub struct Client;
+/// Opaque, thread-safe client handle. Calls borrow the handle only until they
+/// return; asynchronous work owns its connection snapshot.
+#[derive(Default)]
+pub struct Client {
+    inner: Arc<Mutex<NativeClient>>,
+}
+
+impl Client {
+    fn snapshot(&self) -> NativeClient {
+        self.inner.lock().clone()
+    }
 }
 
 // SAFETY: the C API requires callers to pass userdata that may be used from any thread.
 unsafe impl Send for UserObj {}
 
 #[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ClientError {
     None,
     NotConnected,
     StreamEnd,
     ConnectFailure,
+    RpcFailure,
+}
+
+impl From<odyssey_hub_client::client::ClientError> for ClientError {
+    fn from(error: odyssey_hub_client::client::ClientError) -> Self {
+        match error {
+            odyssey_hub_client::client::ClientError::NotConnected => Self::NotConnected,
+            _ => Self::RpcFailure,
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -36,15 +54,21 @@ pub extern "C" fn client_new() -> *mut Client {
     Box::into_raw(Box::new(Client::default()))
 }
 
+/// # Safety
+/// `client` must be null or an owned handle from `client_new`, not in use by another call.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_free(client: *mut Client) {
-    unsafe {
-        drop(Box::from_raw(client));
+pub unsafe extern "C" fn client_free(client: *mut Client) {
+    if !client.is_null() {
+        unsafe {
+            drop(Box::from_raw(client));
+        }
     }
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_connect(
+pub unsafe extern "C" fn client_connect(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -53,11 +77,17 @@ pub extern "C" fn client_connect(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &mut *client };
+    let state = unsafe { &*client }.inner.clone();
+    let mut client = state.lock().clone();
 
     tokio::spawn(async move {
         match client.connect().await {
-            Ok(_) => callback(userdata, ClientError::None),
+            Ok(_) => {
+                // Keep the cancellation token stored in the handle: stop/start
+                // may have changed it while the connection was being opened.
+                state.lock().service_client = client.service_client;
+                callback(userdata, ClientError::None);
+            }
             Err(_) => callback(userdata, ClientError::ConnectFailure),
         }
     });
@@ -65,8 +95,10 @@ pub extern "C" fn client_connect(
 
 /// The device array is borrowed only for the duration of the callback.
 /// Copy any devices needed afterward; do not free the array. An empty list is null.
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_get_device_list(
+pub unsafe extern "C" fn client_get_device_list(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -74,7 +106,7 @@ pub extern "C" fn client_get_device_list(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.get_device_list().await;
@@ -88,7 +120,7 @@ pub extern "C" fn client_get_device_list(
                 };
                 callback(userdata, ClientError::None, ptr, len);
             }
-            Err(_) => callback(userdata, ClientError::NotConnected, std::ptr::null_mut(), 0),
+            Err(error) => callback(userdata, error.into(), std::ptr::null_mut(), 0),
         }
     });
 }
@@ -96,8 +128,10 @@ pub extern "C" fn client_get_device_list(
 /// Starts an event subscription. A start after stop uses a fresh cancellation
 /// token; resetting the original client before cloning keeps subsequent stops
 /// attached to this subscription.
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_start_stream(
+pub unsafe extern "C" fn client_start_stream(
     handle: *const crate::Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -106,22 +140,24 @@ pub extern "C" fn client_start_stream(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &mut *client };
-    if client.end_token.is_cancelled() {
-        client.end_token = Default::default();
-    }
-    let mut client = client.clone();
+    let mut client = {
+        let client = unsafe { &*client };
+        let mut inner = client.inner.lock();
+        if inner.end_token.is_cancelled() {
+            inner.end_token = Default::default();
+        }
+        inner.clone()
+    };
 
     tokio::spawn(async move {
         match client.subscribe_events().await {
             Ok(mut stream) => loop {
                 match stream.next().await {
                     Some(Ok(event)) => {
-                        let event: odyssey_hub_common::events::Event = match event.try_into() {
-                            Ok(ev) => ev,
-                            Err(_) => continue,
+                        let event = match crate::event::Event::try_from(event) {
+                            Ok(event) => event,
+                            Err(()) => continue,
                         };
-                        let event: crate::event::Event = event.into();
                         callback(
                             userdata,
                             ClientError::None,
@@ -139,19 +175,15 @@ pub extern "C" fn client_start_stream(
                     Some(Err(_)) => {
                         callback(
                             userdata,
-                            ClientError::StreamEnd,
+                            ClientError::RpcFailure,
                             std::mem::MaybeUninit::uninit(),
                         );
                         break;
                     }
                 }
             },
-            Err(_) => {
-                callback(
-                    userdata,
-                    ClientError::NotConnected,
-                    std::mem::MaybeUninit::uninit(),
-                );
+            Err(error) => {
+                callback(userdata, error.into(), std::mem::MaybeUninit::uninit());
             }
         }
     });
@@ -159,14 +191,18 @@ pub extern "C" fn client_start_stream(
 
 /// Requests cancellation before returning. The stream's terminal callback is
 /// asynchronous; consumers must wait for it before freeing callback userdata.
+/// # Safety
+/// `client` must be a live handle. `_handle` is unused and may be null.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_stop_stream(_handle: *const Handle, client: *mut Client) {
+pub unsafe extern "C" fn client_stop_stream(_handle: *const Handle, client: *mut Client) {
     let client = unsafe { &*client };
-    client.end_token.cancel();
+    client.inner.lock().end_token.cancel();
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_read_register(
+pub unsafe extern "C" fn client_read_register(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -178,18 +214,20 @@ pub extern "C" fn client_read_register(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let client = unsafe { &mut *client };
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         match client.read_register(device, port, bank, address).await {
             Ok(data) => callback(userdata, ClientError::None, data),
-            Err(_) => callback(userdata, ClientError::NotConnected, 0),
+            Err(error) => callback(userdata, error.into(), 0),
         }
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_write_register(
+pub unsafe extern "C" fn client_write_register(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -202,23 +240,23 @@ pub extern "C" fn client_write_register(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client
             .write_register(device, port, bank, address, data)
             .await;
-        let error = if result.is_ok() {
-            ClientError::None
-        } else {
-            ClientError::NotConnected
-        };
+        let error = result
+            .map(|_| ClientError::None)
+            .unwrap_or_else(ClientError::from);
         callback(userdata, error);
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_flash_settings(
+pub unsafe extern "C" fn client_flash_settings(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -227,21 +265,21 @@ pub extern "C" fn client_flash_settings(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.flash_settings(device).await;
-        let error = if result.is_ok() {
-            ClientError::None
-        } else {
-            ClientError::NotConnected
-        };
+        let error = result
+            .map(|_| ClientError::None)
+            .unwrap_or_else(ClientError::from);
         callback(userdata, error);
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_reset_zero(
+pub unsafe extern "C" fn client_reset_zero(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -250,23 +288,23 @@ pub extern "C" fn client_reset_zero(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.reset_zero(device).await;
 
-        let error = if result.is_ok() {
-            ClientError::None
-        } else {
-            ClientError::NotConnected
-        };
+        let error = result
+            .map(|_| ClientError::None)
+            .unwrap_or_else(ClientError::from);
 
         callback(userdata, error);
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_zero(
+pub unsafe extern "C" fn client_zero(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -277,7 +315,7 @@ pub extern "C" fn client_zero(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     let translation = odyssey_hub_server_interface::Vector3 {
         x: translation.x,
@@ -291,17 +329,17 @@ pub extern "C" fn client_zero(
 
     tokio::spawn(async move {
         let result = client.zero(device, translation, target, None).await;
-        let error = if result.is_ok() {
-            ClientError::None
-        } else {
-            ClientError::NotConnected
-        };
+        let error = result
+            .map(|_| ClientError::None)
+            .unwrap_or_else(ClientError::from);
         callback(userdata, error);
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_reset_shot_delay(
+pub unsafe extern "C" fn client_reset_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -310,20 +348,22 @@ pub extern "C" fn client_reset_shot_delay(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let client = unsafe { &mut *client };
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.reset_shot_delay(device).await;
 
         match result {
             Ok(delay) => callback(userdata, ClientError::None, delay),
-            Err(_) => callback(userdata, ClientError::NotConnected, 0),
+            Err(error) => callback(userdata, error.into(), 0),
         }
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_get_shot_delay(
+pub unsafe extern "C" fn client_get_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -332,20 +372,22 @@ pub extern "C" fn client_get_shot_delay(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.get_shot_delay(device).await;
 
         match result {
             Ok(delay) => callback(userdata, ClientError::None, delay),
-            Err(_) => callback(userdata, ClientError::NotConnected, 0),
+            Err(error) => callback(userdata, error.into(), 0),
         }
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_set_shot_delay(
+pub unsafe extern "C" fn client_set_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -355,23 +397,23 @@ pub extern "C" fn client_set_shot_delay(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.set_shot_delay(device, delay_ms).await;
 
-        let error = if result.is_ok() {
-            ClientError::None
-        } else {
-            ClientError::NotConnected
-        };
+        let error = result
+            .map(|_| ClientError::None)
+            .unwrap_or_else(ClientError::from);
 
         callback(userdata, error);
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_get_screen_info_by_id(
+pub unsafe extern "C" fn client_get_screen_info_by_id(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -380,7 +422,7 @@ pub extern "C" fn client_get_screen_info_by_id(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         let result = client.get_screen_info_by_id(screen_id).await;
@@ -389,12 +431,12 @@ pub extern "C" fn client_get_screen_info_by_id(
                 let info: common::ScreenInfo = info.into();
                 callback(userdata, ClientError::None, info.into());
             }
-            Err(_) => {
+            Err(error) => {
                 let dummy = crate::event::ScreenInfo {
                     id: 0,
                     bounds: [crate::funny::Vector2f32 { x: 0.0, y: 0.0 }; 4],
                 };
-                callback(userdata, ClientError::NotConnected, dummy);
+                callback(userdata, error.into(), dummy);
             }
         }
     });
@@ -402,8 +444,10 @@ pub extern "C" fn client_get_screen_info_by_id(
 
 /// Each device array is borrowed only for the duration of its callback.
 /// Copy any devices needed afterward; do not free the array. An empty list is null.
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_subscribe_device_list(
+pub unsafe extern "C" fn client_subscribe_device_list(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -411,7 +455,7 @@ pub extern "C" fn client_subscribe_device_list(
 ) {
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         match client.subscribe_device_list().await {
@@ -431,20 +475,22 @@ pub extern "C" fn client_subscribe_device_list(
                         break;
                     }
                     Some(Err(_)) => {
-                        callback(userdata, ClientError::StreamEnd, std::ptr::null_mut(), 0);
+                        callback(userdata, ClientError::RpcFailure, std::ptr::null_mut(), 0);
                         break;
                     }
                 }
             },
-            Err(_) => {
-                callback(userdata, ClientError::NotConnected, std::ptr::null_mut(), 0);
+            Err(error) => {
+                callback(userdata, error.into(), std::ptr::null_mut(), 0);
             }
         }
     });
 }
 
+/// # Safety
+/// The pointers and callback userdata must satisfy the crate's ownership contract.
 #[unsafe(no_mangle)]
-pub extern "C" fn client_subscribe_shot_delay(
+pub unsafe extern "C" fn client_subscribe_shot_delay(
     handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
@@ -454,7 +500,7 @@ pub extern "C" fn client_subscribe_shot_delay(
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let mut client = unsafe { &mut *client }.clone();
+    let mut client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
         match client.subscribe_shot_delay(device).await {
@@ -468,14 +514,13 @@ pub extern "C" fn client_subscribe_shot_delay(
                         break;
                     }
                     Some(Err(_)) => {
-                        // An error also ends the stream; C sees StreamEnd either way.
-                        callback(userdata, ClientError::StreamEnd, 0);
+                        callback(userdata, ClientError::RpcFailure, 0);
                         break;
                     }
                 }
             },
-            Err(_) => {
-                callback(userdata, ClientError::NotConnected, 0);
+            Err(error) => {
+                callback(userdata, error.into(), 0);
             }
         }
     });
@@ -493,8 +538,54 @@ mod tests {
             .expect("test runtime");
         let handle = Handle { tokio_rt: runtime };
         let mut client = Client::default();
-        let subscription_token = client.end_token.clone();
-        client_stop_stream(&handle, &mut client);
+        let subscription_token = client.snapshot().end_token;
+        unsafe { client_stop_stream(&handle, &mut client) };
         assert!(subscription_token.is_cancelled());
+    }
+
+    #[test]
+    fn queued_register_read_owns_its_client_until_callback() {
+        extern "C" fn complete(userdata: UserObj, error: ClientError, value: u8) {
+            let sender = unsafe {
+                Box::from_raw(userdata.ptr as *mut tokio::sync::oneshot::Sender<(ClientError, u8)>)
+            };
+            let _ = sender.send((error, value));
+        }
+
+        let handle = Handle {
+            tokio_rt: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime"),
+        };
+        let client = client_new();
+        let (sender, receiver) = tokio::sync::oneshot::channel::<(ClientError, u8)>();
+        let userdata = UserObj {
+            ptr: Box::into_raw(Box::new(sender)).cast(),
+        };
+        let device = common::device::Device {
+            uuid: [1, 2, 3, 4, 5, 6],
+            transport: common::device::Transport::Usb,
+            capabilities: common::device::DeviceCapabilities::empty(),
+            firmware_version: [0; 3],
+            events_transport: common::device::EventsTransport::Wired,
+            events_connected: false,
+            product_id: 0,
+            name: [0; 33],
+            netcore_release: 0,
+        };
+
+        // The current-thread runtime has not polled the queued request yet.
+        unsafe {
+            client_read_register(&handle, client, userdata, device, 0, 0, 0, complete);
+            client_free(client);
+        }
+        let reply = handle.tokio_rt.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(1), receiver)
+                .await
+                .expect("callback deadline")
+                .expect("callback reply")
+        });
+        assert_eq!(reply, (ClientError::NotConnected, 0));
     }
 }
