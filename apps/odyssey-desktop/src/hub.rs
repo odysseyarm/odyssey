@@ -60,7 +60,13 @@ impl fmt::Display for StreamKind {
 }
 
 /// One message from the merged subscription stream, tagged with its origin.
+// `Event` carries a whole device event by value: it is moved once from the stream
+// into the loop, and boxing would add an allocation to every tracking event.
 #[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing would allocate once per tracking event, the hot path"
+)]
 enum HubUpdate {
     Devices(Result<Vec<Device>, RpcError>),
     Dongles(Result<Vec<DongleInfo>, RpcError>),
@@ -100,7 +106,19 @@ impl fmt::Display for ConnectStep {
 
 struct ConnectError {
     step: ConnectStep,
-    source: ClientError,
+    // Boxed: `ClientError` is large and the error is rare, so every `Result` in
+    // the connect path would otherwise pay for it.
+    source: Box<ClientError>,
+}
+
+impl ConnectStep {
+    /// Attributes a client error to this step.
+    fn failed(self, source: ClientError) -> ConnectError {
+        ConnectError {
+            step: self,
+            source: Box::new(source),
+        }
+    }
 }
 
 impl fmt::Display for ConnectError {
@@ -146,40 +164,28 @@ fn merged_updates(
 async fn connect(
     client: &mut Client,
 ) -> Result<Subscriptions<impl Stream<Item = HubUpdate> + use<>>, ConnectError> {
-    client.connect().await.map_err(|source| ConnectError {
-        step: ConnectStep::Connect,
-        source,
-    })?;
+    client
+        .connect()
+        .await
+        .map_err(|source| ConnectStep::Connect.failed(source))?;
     tracing::info!("Hub connected successfully");
 
     let initial_devices = client
         .get_device_list()
         .await
-        .map_err(|source| ConnectError {
-            step: ConnectStep::GetDeviceList,
-            source,
-        })?;
+        .map_err(|source| ConnectStep::GetDeviceList.failed(source))?;
     let devices = client
         .subscribe_device_list()
         .await
-        .map_err(|source| ConnectError {
-            step: ConnectStep::SubscribeDeviceList,
-            source,
-        })?;
+        .map_err(|source| ConnectStep::SubscribeDeviceList.failed(source))?;
     let dongles = client
         .subscribe_dongle_list()
         .await
-        .map_err(|source| ConnectError {
-            step: ConnectStep::SubscribeDongleList,
-            source,
-        })?;
+        .map_err(|source| ConnectStep::SubscribeDongleList.failed(source))?;
     let events = client
         .subscribe_events()
         .await
-        .map_err(|source| ConnectError {
-            step: ConnectStep::SubscribeEvents,
-            source,
-        })?;
+        .map_err(|source| ConnectStep::SubscribeEvents.failed(source))?;
 
     Ok(Subscriptions {
         initial_devices,
@@ -335,7 +341,7 @@ impl HubContext {
                 self.tracking_events.receiver_count()
             ),
             Err(error) => {
-                tracing::trace!("Failed to broadcast tracking event: {error} (no subscribers?)")
+                tracing::trace!("Failed to broadcast tracking event: {error} (no subscribers?)");
             }
         }
     }
