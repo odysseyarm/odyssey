@@ -40,7 +40,7 @@ pub(crate) struct Reload {
 
 pub(crate) struct ScreenCalibrationWatcher {
     dir: PathBuf,
-    /// Fingerprints of the files as of the last load.
+    /// Fingerprints of the last fully successful load.
     applied: Fingerprints,
     /// A differing scan seen once; it loads when the next scan matches it.
     pending: Option<Fingerprints>,
@@ -104,11 +104,19 @@ impl ScreenCalibrationWatcher {
             return None;
         }
         self.pending = None;
-        self.applied = current;
 
         let loaded = screen_calibrations_from_dir_async(&self.dir).await;
+        let has_unreadable = !loaded.corrupted_screens.is_empty();
         let (merged, kept_previous) = merge(&target.load(), loaded);
         target.store(Arc::new(merged));
+        if has_unreadable {
+            // Read failures can clear without changing mtime/length/inode (for
+            // example permissions, or completing a same-sized partial write).
+            // Keep the stable scan pending so the next poll can try again.
+            self.pending = Some(current);
+        } else {
+            self.applied = current;
+        }
         Some(Reload { kept_previous })
     }
 }
@@ -347,14 +355,27 @@ mod tests {
         assert_eq!(scale_of(&target.load(), 0), Some(1.0));
         assert_eq!(scale_of(&target.load(), 1), Some(5.0));
 
-        write_raw(&dir.0, 0, "{ \"rotation\": [0, 0,");
+        // Valid JSON with a singular homography is just as unusable as a partial file.
+        write_raw(&dir.0, 0, &serde_json::to_string(&cal(0.0)).unwrap());
         let reload = settle(&mut watcher, &target).await;
         assert_eq!(reload.kept_previous, vec![0]);
         assert_eq!(scale_of(&target.load(), 0), Some(1.0));
 
-        // The writer finishes.
-        save(&dir.0, 0, 9.0);
-        let reload = settle(&mut watcher, &target).await;
+        // The writer finishes within the same timestamp granularity and keeps
+        // the file length unchanged. A failed load must still be retried.
+        let path = dir.0.join(screen_file_name(0));
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, serde_json::to_string(&cal(9.0)).unwrap()).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        let reload = watcher
+            .poll_once(&target)
+            .await
+            .expect("failed load is retried");
         assert!(reload.kept_previous.is_empty());
         assert_eq!(scale_of(&target.load(), 0), Some(9.0));
     }
