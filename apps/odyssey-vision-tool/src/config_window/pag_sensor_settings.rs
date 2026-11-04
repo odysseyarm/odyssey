@@ -10,7 +10,7 @@ use leptos_reactive::{
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::Port;
 
-use super::retry;
+use super::{register_value, retry, retry_checked};
 
 #[derive(Copy, Clone)]
 pub(super) struct PagSensorSettingsForm {
@@ -79,13 +79,15 @@ impl PagSensorSettingsForm {
             let timeout = Duration::from_millis(2000);
             if let Some(device) = device.get_untracked() {
                 ui_ctx.spawn(async move {
-                    _ = retry(
+                    if let Err(e) = retry_checked(
                         || device.write_mode(odyssey_usb::packets::vm::Mode::Image),
                         timeout,
                         3,
                     )
                     .await
-                    .unwrap();
+                    {
+                        tracing::error!("Failed to switch to image mode: {e:#}");
+                    }
                 });
             }
         });
@@ -128,30 +130,19 @@ impl PagSensorSettingsForm {
         });
         let is_pag7665 = product_id == Some(odyssey_usb::device::ProductId::AtsPro);
 
-        let cid = retry(|| device.pag_chip_id(Port::Nf), timeout, 3)
-            .await
-            .unwrap()?;
-        let fps = retry(|| device.pag_fps(Port::Nf), timeout, 3)
-            .await
-            .unwrap()?;
+        let cid = retry_checked(|| device.pag_chip_id(Port::Nf), timeout, 3).await?;
+        let fps = retry_checked(|| device.pag_fps(Port::Nf), timeout, 3).await?;
 
         // Use correct register addresses based on PAG variant
         let (expo, area_threshold_min, area_threshold_max, light_threshold, gain) = if is_pag7665 {
-            let expo = retry(|| device.pag7665_exposure(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let area_threshold_min = retry(|| device.pag7665_area_lower(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let area_threshold_max = retry(|| device.pag7665_area_upper(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let light_threshold = retry(|| device.pag7665_light_threshold(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let gain = retry(|| device.pag7665_gain(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
+            let expo = retry_checked(|| device.pag7665_exposure(Port::Nf), timeout, 3).await?;
+            let area_threshold_min =
+                retry_checked(|| device.pag7665_area_lower(Port::Nf), timeout, 3).await?;
+            let area_threshold_max =
+                retry_checked(|| device.pag7665_area_upper(Port::Nf), timeout, 3).await?;
+            let light_threshold =
+                retry_checked(|| device.pag7665_light_threshold(Port::Nf), timeout, 3).await?;
+            let gain = retry_checked(|| device.pag7665_gain(Port::Nf), timeout, 3).await?;
             (
                 expo,
                 area_threshold_min,
@@ -160,21 +151,14 @@ impl PagSensorSettingsForm {
                 gain,
             )
         } else {
-            let expo = retry(|| device.pag_exposure(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let area_threshold_min = retry(|| device.pag_area_lower(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let area_threshold_max = retry(|| device.pag_area_upper(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let light_threshold = retry(|| device.pag_light_threshold(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
-            let gain = retry(|| device.pag_gain(Port::Nf), timeout, 3)
-                .await
-                .unwrap()?;
+            let expo = retry_checked(|| device.pag_exposure(Port::Nf), timeout, 3).await?;
+            let area_threshold_min =
+                retry_checked(|| device.pag_area_lower(Port::Nf), timeout, 3).await?;
+            let area_threshold_max =
+                retry_checked(|| device.pag_area_upper(Port::Nf), timeout, 3).await?;
+            let light_threshold =
+                retry_checked(|| device.pag_light_threshold(Port::Nf), timeout, 3).await?;
+            let gain = retry_checked(|| device.pag_gain(Port::Nf), timeout, 3).await?;
             (
                 expo,
                 area_threshold_min,
@@ -216,51 +200,9 @@ impl PagSensorSettingsForm {
         Ok(())
     }
 
-    pub(super) fn validate(&self, errors: &mut Vec<String>) {
-        macro_rules! validators {
-            ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
-                $(
-                    #[allow(unused_variables)]
-                    let $reg = self.$reg.with_untracked(|s| s.parse::<$ty>());
-                    match &$reg {
-                        Ok(_) => (),
-                        Err(e) => errors.push(format!("{}: {}", $display, e)),
-                    }
-                )*
-                if !errors.is_empty() {
-                    return
-                }
-                $(
-                    // SAFETY: all the values are already checked for errors. Can convert to
-                    // unwrap_unchecked if necessary.
-                    #[allow(unused_variables)]
-                    let $reg = $reg.unwrap();
-                )*
-                $(
-                    $($(
-                        let (test_result, msg) = ($check)($reg);
-                        if !test_result {
-                            errors.push(format!("{}: {}", $display, msg));
-                        }
-                    )*)?
-                )*
-            }
-        }
-        validators! {
-            // "exposure time" exposure_time: u16 {
-            //     |x| (x >= 100, "must be >= 20 µs"),
-            //     |x| ((200..=i64::from(frame_period) - 27000).contains(&(i64::from(x)*2)), "must be between 20 µs and frame period − 2.7 ms"),
-            // },
-            // "frame period" frame_period: u32 { |x| (x >= 49780, "must be >= 4.978 ms") },
-            // "brightness threshold" brightness_threshold: u8,
-            // "noise threshold" noise_threshold: u8,
-            // "area threshold min" area_threshold_min: u8,
-            // "area threshold max" area_threshold_max: u16 { |x| (x < (1 << 14), "must be < 16384") },
-            // "max object count" max_object_cnt: u8 { |x| ((1..=16).contains(&x), "must be between 1 and 16") },
-            // "scale resolution X" resolution_x: u16 { |x| ((1..=4095).contains(&x), "must be between 1 and 4095") },
-            // "scale resolution Y" resolution_y: u16 { |x| ((1..=4095).contains(&x), "must be between 1 and 4095") },
-        }
-    }
+    /// Every PAG setting is a spinbox whose range already keeps it valid, so
+    /// there is nothing to report.
+    pub(super) fn validate(&self, _errors: &mut Vec<String>) {}
 
     /// Make sure to call `validate()` before calling this method.
     pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
@@ -277,9 +219,9 @@ impl PagSensorSettingsForm {
             });
         let is_pag7665 = product_id == Some(odyssey_usb::device::ProductId::AtsPro);
 
-        let fps = u8::try_from(self.fps.get_untracked()).unwrap();
+        let fps = register_value(self.fps.get_untracked(), "fps")?;
 
-        let gain = u8::try_from(self.gain.get_untracked()).unwrap();
+        let gain = register_value(self.gain.get_untracked(), "gain")?;
 
         let exposure_us = self.exposure_us.get_untracked();
         assert!(exposure_us % 100 == 0);
@@ -288,14 +230,21 @@ impl PagSensorSettingsForm {
         let led_always_on = true;
         let exposure = (exposure_us / 100) as u8 | (u8::from(led_always_on) << 7);
 
-        let area_threshold_min = u16::try_from(self.area_threshold_min.get_untracked()).unwrap();
-        let area_threshold_max = u16::try_from(self.area_threshold_max.get_untracked()).unwrap();
-        let light_threshold = u8::try_from(self.light_threshold.get_untracked()).unwrap();
+        let area_threshold_min = register_value(
+            self.area_threshold_min.get_untracked(),
+            "area threshold min",
+        )?;
+        let area_threshold_max = register_value(
+            self.area_threshold_max.get_untracked(),
+            "area threshold max",
+        )?;
+        let light_threshold =
+            register_value(self.light_threshold.get_untracked(), "light threshold")?;
 
-        let circle_r_min = u8::try_from(self.circle_r_min.get_untracked()).unwrap();
-        let circle_r_max = u8::try_from(self.circle_r_max.get_untracked()).unwrap();
-        let circle_k_min = u8::try_from(self.circle_k_min.get_untracked()).unwrap();
-        let circle_k_max = u8::try_from(self.circle_k_max.get_untracked()).unwrap();
+        let circle_r_min = register_value(self.circle_r_min.get_untracked(), "circle R min")?;
+        let circle_r_max = register_value(self.circle_r_max.get_untracked(), "circle R max")?;
+        let circle_k_min = register_value(self.circle_k_min.get_untracked(), "circle K min")?;
+        let circle_k_max = register_value(self.circle_k_max.get_untracked(), "circle K max")?;
 
         // Use correct register addresses based on PAG variant
         if is_pag7665 {

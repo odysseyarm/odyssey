@@ -4,7 +4,7 @@ mod paj_sensor_settings;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use iui::UI;
 use iui::controls::{Button, Form};
 use iui::prelude::{Window, WindowType};
@@ -121,8 +121,6 @@ pub fn config_window(
     let device_combobox_on_selected = {
         let ui = ui.c();
         let config_win = config_win.c();
-        let sim_addr = simulator_addr.c();
-        let udp_addr = udp_addr.c();
         let general_settings = general_settings.c();
         move |i| {
             selected_index.set(Some(i));
@@ -131,85 +129,61 @@ pub fn config_window(
             nf_settings.clear();
             pag_settings.clear();
             let Ok(i) = usize::try_from(i) else { return };
-            let _device = device_list.with_untracked(|d| d.get(i).cloned());
-            let sim_addr = sim_addr.c();
-            let _udp_addr = udp_addr.c();
+            let selected_device = device_list.with_untracked(|d| d.get(i).cloned());
             let general_settings = general_settings.c();
             let device_signal = device.c(); // Clone the signal for the async task
             let task = async move {
                 // Clean up old device if it exists, BEFORE connecting to new one
                 if let Some(old_device) = device_signal.get_untracked() {
-                    eprintln!("Cleaning up previous device connection...");
+                    tracing::debug!("Cleaning up previous device connection...");
                     let _ = old_device.clear_all_streams().await;
-                    eprintln!("Previous device cleaned up (slot reservation prevents conflicts)");
+                    tracing::debug!(
+                        "Previous device cleaned up (slot reservation prevents conflicts)"
+                    );
                 }
 
                 // NOW set device to None after cleanup
                 device_signal.set(None);
 
-                let usb_device = if let Some(_device) = _device {
-                    eprintln!("Attempting to connect to device...");
-                    _device.connect().await
-                } else if let Some(_sim_addr) = sim_addr.as_ref() {
-                    unimplemented!();
-                    // Ok(VmDevice::connect_tcp(sim_addr)?)
-                } else {
-                    unimplemented!();
-                    // Ok(VmDevice::connect_hub("0.0.0.0:0", udp_addr.as_ref().unwrap()).await?)
+                // The simulator and M4Hub entries sit after the real devices in the
+                // combobox and have no connection path any more.
+                let Some(selected_device) = selected_device else {
+                    return Err(anyhow::anyhow!(
+                        "Simulator and M4Hub connections are not supported"
+                    ));
                 };
-                match usb_device {
-                    Ok(usb_device) => {
-                        eprintln!("Connection successful, disabling any active streams...");
-                        // Disable all streams from previous session to prevent flooding
-                        if let Err(e) = usb_device.clear_all_streams().await {
-                            eprintln!("WARNING: Failed to disable streams: {e:?}");
-                        }
-                        eprintln!("Streams disabled, loading general settings...");
+                tracing::debug!("Attempting to connect to device...");
+                let usb_device = selected_device.connect().await.inspect_err(|e| {
+                    tracing::error!("Device connection failed: {e:?}");
+                })?;
 
-                        let product_id_result =
-                            general_settings.load_from_device(&usb_device, true).await;
-                        if let Err(ref e) = product_id_result {
-                            eprintln!("ERROR: Failed to load general settings: {e:?}");
-                            return Err(anyhow::anyhow!("{e:?}"));
-                        }
-                        eprintln!("General settings loaded successfully");
-                        match odyssey_usb::device::ProductId::from_u16(product_id_result.unwrap()) {
-                            Some(
-                                odyssey_usb::device::ProductId::AtsLite
-                                | odyssey_usb::device::ProductId::AtsVm,
-                            ) => {
-                                eprintln!("Loading WF settings...");
-                                if let Err(e) = wf_settings.load_from_device(&usb_device).await {
-                                    eprintln!("ERROR: Failed to load WF settings: {e:?}");
-                                    return Err(e);
-                                }
-                                eprintln!("WF settings loaded, loading NF settings...");
-                                if let Err(e) = nf_settings.load_from_device(&usb_device).await {
-                                    eprintln!("ERROR: Failed to load NF settings: {e:?}");
-                                    return Err(e);
-                                }
-                                eprintln!("NF settings loaded successfully");
-                            }
-                            Some(odyssey_usb::device::ProductId::AtsPro) => {
-                                eprintln!("Loading PAG settings...");
-                                if let Err(e) = pag_settings.load_from_device(&usb_device).await {
-                                    eprintln!("ERROR: Failed to load PAG settings: {e:?}");
-                                    return Err(e);
-                                }
-                                eprintln!("PAG settings loaded successfully");
-                            }
-                            Some(odyssey_usb::device::ProductId::Mux) | None => {}
-                        }
-                        eprintln!("All settings loaded, setting device...");
-                        device.set(Some(usb_device));
-                        eprintln!("Device set successfully");
-                        Result::<()>::Ok(())
-                    }
-                    Err(e) => {
-                        eprintln!("ERROR: Device connection failed: {e:?}");
-                        Err(e)
-                    }
+                tracing::debug!("Connection successful, disabling any active streams...");
+                // Disable all streams from previous session to prevent flooding
+                if let Err(e) = usb_device.clear_all_streams().await {
+                    tracing::warn!("Failed to disable streams: {e:?}");
                 }
+                tracing::debug!("Streams disabled, loading general settings...");
+
+                let product_id = general_settings
+                    .load_from_device(&usb_device, true)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to load general settings: {e:?}");
+                        anyhow::anyhow!("{e:?}")
+                    })?;
+                tracing::debug!("General settings loaded successfully");
+                load_sensor_settings(
+                    &usb_device,
+                    product_id,
+                    &wf_settings,
+                    &nf_settings,
+                    &pag_settings,
+                )
+                .await?;
+                tracing::debug!("All settings loaded, setting device...");
+                device.set(Some(usb_device));
+                tracing::debug!("Device set successfully");
+                Result::<()>::Ok(())
             };
             ui.spawn({
                 let ui = ui.c();
@@ -267,7 +241,7 @@ pub fn config_window(
         let ui_ctx = ui.async_context();
         let _device_combobox_on_selected = device_combobox_on_selected.c();
         move || {
-            eprintln!("=== refresh_device_list called ===");
+            tracing::debug!("=== refresh_device_list called ===");
 
             let devices = nusb::list_devices().wait();
             let usb_devices: Vec<_> = match devices {
@@ -292,7 +266,7 @@ pub fn config_window(
                                 vm_connections.push(VmConnectionInfo::DirectUsb(info.clone()));
                             }
                             Ok(mode) => {
-                                eprintln!(
+                                tracing::debug!(
                                     "Skipping {:04x}:{:04x} - transport mode {:?}",
                                     info.vendor_id(),
                                     info.product_id(),
@@ -300,7 +274,7 @@ pub fn config_window(
                                 );
                             }
                             Err(e) => {
-                                eprintln!(
+                                tracing::debug!(
                                     "Skipping {:04x}:{:04x} - failed to probe mode: {e}",
                                     info.vendor_id(),
                                     info.product_id()
@@ -313,13 +287,13 @@ pub fn config_window(
                 }
             }
 
-            eprintln!(
+            tracing::debug!(
                 "Found {} USB-mode devices, {} mux devices",
                 vm_connections.len(),
                 hub_devices.len()
             );
 
-            eprintln!("Found {} mux devices", hub_devices.len());
+            tracing::debug!("Found {} mux devices", hub_devices.len());
             if !hub_devices.is_empty() {
                 // Check if we have an existing mux connection in the device list
                 // This will be reused without disrupting any active device connections
@@ -342,7 +316,7 @@ pub fn config_window(
                 });
 
                 if let Some((existing_mux, existing_mux_devices)) = existing_mux_and_devices {
-                    eprintln!(
+                    tracing::debug!(
                         "Reusing existing mux connection for refresh (with {} existing mux devices)",
                         existing_mux_devices.len()
                     );
@@ -350,18 +324,18 @@ pub fn config_window(
                     let device_list = device_list.c();
 
                     ui_ctx.spawn(async move {
-                        eprintln!("Mux refresh task started (reusing connection)");
+                        tracing::debug!("Mux refresh task started (reusing connection)");
                         let mut all_connections = vm_connections;
 
-                        eprintln!("Querying devices from existing mux...");
+                        tracing::debug!("Querying devices from existing mux...");
                         match existing_mux.request_devices().await {
                             Ok(devices) => {
-                                eprintln!(
+                                tracing::debug!(
                                     "Mux query successful, found {} device(s)",
                                     devices.len()
                                 );
                                 for device_addr in devices {
-                                    eprintln!(
+                                    tracing::debug!(
                                         "  Device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
                                         device_addr[0],
                                         device_addr[1],
@@ -377,8 +351,8 @@ pub fn config_window(
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Failed to query existing mux: {e}");
-                                eprintln!(
+                                tracing::warn!("Failed to query existing mux: {e}");
+                                tracing::debug!(
                                     "Preserving {} existing mux devices in the list",
                                     existing_mux_devices.len()
                                 );
@@ -391,43 +365,43 @@ pub fn config_window(
                             }
                         }
 
-                        eprintln!(
+                        tracing::debug!(
                             "Updating device list with {} total devices",
                             all_connections.len()
                         );
                         device_list.set(all_connections);
-                        eprintln!("Mux refresh task completed");
+                        tracing::debug!("Mux refresh task completed");
                     });
                 } else {
-                    eprintln!("No existing mux connection, creating new one");
+                    tracing::debug!("No existing mux connection, creating new one");
 
                     // Query mux devices asynchronously and update the list
                     let device_list = device_list.c();
 
-                    eprintln!("Spawning mux query task...");
+                    tracing::debug!("Spawning mux query task...");
                     ui_ctx.spawn(async move {
-                        eprintln!("Mux query task started");
+                        tracing::debug!("Mux query task started");
                         let mut all_connections = vm_connections;
 
                         // Query each mux for connected devices
                         for hub_info in hub_devices {
-                            eprintln!("Attempting to connect to mux...");
+                            tracing::debug!("Attempting to connect to mux...");
                             match MuxDevice::connect_usb(hub_info.clone()).await {
                                 Ok(hub) => {
-                                    eprintln!("Mux connected successfully, requesting devices...");
+                                    tracing::debug!("Mux connected successfully, requesting devices...");
                                     match hub.request_devices().await {
                                         Ok(devices) => {
-                                            eprintln!("Mux query successful, found {} device(s)", devices.len());
+                                            tracing::debug!("Mux query successful, found {} device(s)", devices.len());
                                             // If no devices, add a placeholder to keep mux alive for next refresh
                                             if devices.is_empty() {
-                                                eprintln!("No devices found, adding placeholder to keep mux connection alive");
+                                                tracing::debug!("No devices found, adding placeholder to keep mux connection alive");
                                                 all_connections.push(VmConnectionInfo::ViaMux {
                                                     mux: hub.clone(),
                                                     device_addr: [0, 0, 0, 0, 0, 0], // Placeholder
                                                 });
                                             } else {
                                             for device_addr in devices {
-                                                eprintln!("  Device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                                                tracing::debug!("  Device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
                                                     device_addr[0], device_addr[1], device_addr[2],
                                                     device_addr[3], device_addr[4], device_addr[5]);
                                                 all_connections.push(VmConnectionInfo::ViaMux {
@@ -438,20 +412,20 @@ pub fn config_window(
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("Failed to query mux devices: {e}");
+                                            tracing::warn!("Failed to query mux devices: {e}");
                                         }
                                     }
-                                    eprintln!("Mux devices added to connection list");
+                                    tracing::debug!("Mux devices added to connection list");
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to connect to mux: {e}");
+                                    tracing::warn!("Failed to connect to mux: {e}");
                                 }
                             }
                         }
 
-                        eprintln!("Updating device list with {} total devices", all_connections.len());
+                        tracing::debug!("Updating device list with {} total devices", all_connections.len());
                         device_list.set(all_connections);
-                        eprintln!("Mux query task completed");
+                        tracing::debug!("Mux query task completed");
                     });
                 }
             } else {
@@ -471,13 +445,12 @@ pub fn config_window(
             let mut errors = vec![];
             general_settings.validate(&mut errors);
             if !errors.is_empty() {
-                let mut message = String::new();
-                for msg in &errors {
-                    message.push_str(msg);
-                    message.push('\n');
-                }
                 config_win
-                    .modal_err_async(&ui, "General Validation Error", &message)
+                    .modal_err_async(
+                        &ui,
+                        "General Validation Error",
+                        &validation_message(&errors),
+                    )
                     .await;
                 return false;
             }
@@ -490,31 +463,29 @@ pub fn config_window(
                 ) => {
                     wf_settings.validate(&mut errors);
                     if !errors.is_empty() {
-                        let mut message = String::new();
-                        for msg in &errors {
-                            message.push_str(msg);
-                            message.push('\n');
-                        }
                         config_win
-                            .modal_err_async(&ui, "Wide Field Validation Error", &message)
+                            .modal_err_async(
+                                &ui,
+                                "Wide Field Validation Error",
+                                &validation_message(&errors),
+                            )
                             .await;
                         return false;
                     }
 
                     nf_settings.validate(&mut errors);
                     if !errors.is_empty() {
-                        let mut message = String::new();
-                        for msg in &errors {
-                            message.push_str(msg);
-                            message.push('\n');
-                        }
                         config_win
-                            .modal_err_async(&ui, "Near Field Validation Error", &message)
+                            .modal_err_async(
+                                &ui,
+                                "Near Field Validation Error",
+                                &validation_message(&errors),
+                            )
                             .await;
                         return false;
                     }
 
-                    if let Err(e) = wf_settings.apply(&device).await {
+                    if let Err(e) = Box::pin(wf_settings.apply(&device)).await {
                         config_win
                             .modal_err_async(
                                 &ui,
@@ -524,7 +495,7 @@ pub fn config_window(
                             .await;
                         return false;
                     }
-                    if let Err(e) = nf_settings.apply(&device).await {
+                    if let Err(e) = Box::pin(nf_settings.apply(&device)).await {
                         config_win
                             .modal_err_async(
                                 &ui,
@@ -538,17 +509,16 @@ pub fn config_window(
                 Some(odyssey_usb::device::ProductId::AtsPro) => {
                     pag_settings.validate(&mut errors);
                     if !errors.is_empty() {
-                        let mut message = String::new();
-                        for msg in &errors {
-                            message.push_str(msg);
-                            message.push('\n');
-                        }
                         config_win
-                            .modal_err_async(&ui, "Pag Validation Error", &message)
+                            .modal_err_async(
+                                &ui,
+                                "Pag Validation Error",
+                                &validation_message(&errors),
+                            )
                             .await;
                         return false;
                     }
-                    if let Err(e) = pag_settings.apply(&device).await {
+                    if let Err(e) = Box::pin(pag_settings.apply(&device)).await {
                         config_win
                             .modal_err_async(
                                 &ui,
@@ -582,7 +552,7 @@ pub fn config_window(
             let mut apply_button = apply_button.c();
             let ui2 = ui.c();
             ui.spawn(async move {
-                f(device).await;
+                Box::pin(f(device)).await;
                 apply_button.set_text(&ui2, "Applied!");
                 tokio::time::sleep(Duration::from_secs(3)).await;
                 apply_button.set_text(&ui2, "Apply");
@@ -603,7 +573,7 @@ pub fn config_window(
                 let apply_button_on_click = apply_button_on_click.c();
                 let mut save_button = save_button.c();
                 async move {
-                    if !apply_button_on_click(device.clone()).await {
+                    if !Box::pin(apply_button_on_click(device.clone())).await {
                         // callback should have already displayed an error modal, just return
                         return;
                     }
@@ -733,14 +703,17 @@ impl GeneralSettingsForm {
                 }
             }
         }
+        let calibration_signals = CalibrationSignals {
+            nf_intrinsics,
+            wf_intrinsics,
+            stereo_iso,
+        };
         set_calibration_upload_handlers(
             ui,
             &mut upload_nf_json,
             &mut upload_wf_json,
             &mut upload_stereo_json,
-            nf_intrinsics.c(),
-            wf_intrinsics.c(),
-            stereo_iso.c(),
+            calibration_signals,
             win.c(),
         );
         set_accel_upload_handler(ui, &mut upload_accel_config, accel_config.c(), win.c());
@@ -750,9 +723,7 @@ impl GeneralSettingsForm {
             &mut download_nf_json,
             &mut download_wf_json,
             &mut download_stereo_json,
-            nf_intrinsics.c(),
-            wf_intrinsics.c(),
-            stereo_iso.c(),
+            calibration_signals,
             win.c(),
         );
         set_accel_download_handler(ui, &mut download_accel_config, accel_config.c(), win.c());
@@ -816,13 +787,11 @@ impl GeneralSettingsForm {
             };
 
         // Extract values from enum variants
-        let uuid = match uuid_prop {
-            odyssey_usb::packets::vm::Props::Uuid(val) => val,
-            _ => return Err(anyhow::anyhow!("Unexpected prop variant for Uuid")),
+        let odyssey_usb::packets::vm::Props::Uuid(uuid) = uuid_prop else {
+            return Err(anyhow::anyhow!("Unexpected prop variant for Uuid"));
         };
-        let product_id = match product_id_prop {
-            odyssey_usb::packets::vm::Props::ProductId(val) => val,
-            _ => return Err(anyhow::anyhow!("Unexpected prop variant for ProductId")),
+        let odyssey_usb::packets::vm::Props::ProductId(product_id) = product_id_prop else {
+            return Err(anyhow::anyhow!("Unexpected prop variant for ProductId"));
         };
         self.impact_threshold
             .set(i32::from(config.impact_threshold));
@@ -842,36 +811,6 @@ impl GeneralSettingsForm {
     }
 
     fn validate(&self, errors: &mut Vec<String>) {
-        macro_rules! validators {
-            ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
-                $(
-                    #[allow(unused_variables)]
-                    let $reg = self.$reg.with_untracked(|s| s.parse::<$ty>());
-                    match &$reg {
-                        Ok(_) => (),
-                        Err(e) => errors.push(format!("{}: {}", $display, e)),
-                    }
-                )*
-                if !errors.is_empty() {
-                    return
-                }
-                $(
-                    // SAFETY: all the values are already checked for errors. Can convert to
-                    // unwrap_unchecked if necessary.
-                    #[allow(unused_variables)]
-                    let $reg = $reg.unwrap();
-                )*
-                $(
-                    $($(
-                        let (test_result, msg) = ($check)($reg);
-                        if !test_result {
-                            errors.push(format!("{}: {}", $display, msg));
-                        }
-                    )*)?
-                )*
-            }
-        }
-        validators! {}
         if !(0..256).contains(&self.impact_threshold.get_untracked()) {
             errors.push("impact threshold: must be between 0 and 255".into());
         }
@@ -970,16 +909,27 @@ impl GeneralSettingsForm {
     }
 }
 
+/// The calibration signals the upload and download buttons read and write.
+#[derive(Clone, Copy)]
+struct CalibrationSignals {
+    nf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
+    wf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
+    stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
+}
+
 fn set_calibration_upload_handlers(
     ui: &UI,
     upload_nf: &mut Button,
     upload_wf: &mut Button,
     upload_stereo: &mut Button,
-    nf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    wf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
+    signals: CalibrationSignals,
     win: Window,
 ) {
+    let CalibrationSignals {
+        nf_intrinsics,
+        wf_intrinsics,
+        stereo_iso,
+    } = signals;
     upload_nf.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
@@ -1064,11 +1014,14 @@ fn set_calibration_download_handlers(
     download_nf: &mut Button,
     download_wf: &mut Button,
     download_stereo: &mut Button,
-    nf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    wf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
+    signals: CalibrationSignals,
     win: Window,
 ) {
+    let CalibrationSignals {
+        nf_intrinsics,
+        wf_intrinsics,
+        stereo_iso,
+    } = signals;
     download_nf.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
@@ -1313,11 +1266,7 @@ fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
             if !out.is_empty() {
                 out.push(' ');
             }
-            out.push_str(&format!(
-                "({:04x}:{:04x})",
-                info.vendor_id(),
-                info.product_id()
-            ));
+            out = format!("{out}({:04x}:{:04x})", info.vendor_id(), info.product_id());
             out = out.replace('\x00', "");
             out
         }
@@ -1347,4 +1296,80 @@ where
         }
     }
     None
+}
+
+/// Like `retry`, but a timeout becomes an error instead of `None`, and the
+/// operation's own error is converted to `anyhow::Error`.
+async fn retry_checked<F, G, T, E>(op: F, timeout: Duration, limit: usize) -> Result<T>
+where
+    F: FnMut() -> G,
+    G: Future<Output = std::result::Result<T, E>>,
+    E: Into<anyhow::Error>,
+{
+    match retry(op, timeout, limit).await {
+        Some(result) => result.map_err(Into::into),
+        None => Err(anyhow::anyhow!(
+            "device did not respond after {limit} attempts"
+        )),
+    }
+}
+
+/// Converts a UI spinbox value to the register type it is written as.
+fn register_value<T>(value: i32, name: &str) -> Result<T>
+where
+    T: TryFrom<i32>,
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
+    T::try_from(value).with_context(|| format!("{name} is out of range"))
+}
+
+/// One line per validation error, for display in a modal.
+fn validation_message(errors: &[String]) -> String {
+    let mut message = String::new();
+    for msg in errors {
+        message.push_str(msg);
+        message.push('\n');
+    }
+    message
+}
+
+/// Loads the sensor tabs that apply to the connected product.
+async fn load_sensor_settings(
+    device: &VmDevice,
+    product_id: u16,
+    wf_settings: &paj_sensor_settings::PajSensorSettingsForm,
+    nf_settings: &paj_sensor_settings::PajSensorSettingsForm,
+    pag_settings: &pag_sensor_settings::PagSensorSettingsForm,
+) -> Result<()> {
+    match odyssey_usb::device::ProductId::from_u16(product_id) {
+        Some(odyssey_usb::device::ProductId::AtsLite | odyssey_usb::device::ProductId::AtsVm) => {
+            tracing::debug!("Loading WF settings...");
+            wf_settings
+                .load_from_device(device)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("Failed to load WF settings: {e:?}");
+                })?;
+            tracing::debug!("WF settings loaded, loading NF settings...");
+            nf_settings
+                .load_from_device(device)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("Failed to load NF settings: {e:?}");
+                })?;
+            tracing::debug!("NF settings loaded successfully");
+        }
+        Some(odyssey_usb::device::ProductId::AtsPro) => {
+            tracing::debug!("Loading PAG settings...");
+            pag_settings
+                .load_from_device(device)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("Failed to load PAG settings: {e:?}");
+                })?;
+            tracing::debug!("PAG settings loaded successfully");
+        }
+        Some(odyssey_usb::device::ProductId::Mux) | None => {}
+    }
+    Ok(())
 }

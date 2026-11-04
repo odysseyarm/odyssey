@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use iui::UI;
 use iui::controls::Form;
 use leptos_reactive::{
@@ -10,7 +10,18 @@ use leptos_reactive::{
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::Port;
 
-use super::retry;
+use super::{register_value, retry_checked};
+
+/// Parses a text field that `validate()` has already checked.
+fn parse_field<T>(field: RwSignal<String>, name: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    field
+        .with_untracked(|text| text.parse())
+        .with_context(|| format!("invalid {name}"))
+}
 
 #[derive(Copy, Clone)]
 pub(super) struct PajSensorSettingsForm {
@@ -120,48 +131,25 @@ impl PajSensorSettingsForm {
     pub(super) async fn load_from_device(&self, device: &VmDevice) -> Result<()> {
         self.pid.set("Connecting...".into());
         let timeout = Duration::from_millis(2000);
-        let pid = retry(|| device.product_id(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let res_x = retry(|| device.resolution_x(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let res_y = retry(|| device.resolution_y(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let expo = retry(|| device.exposure_time(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let frame_period = retry(|| device.frame_period(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let brightness_threshold = retry(|| device.brightness_threshold(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let noise_threshold = retry(|| device.noise_threshold(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let area_threshold_min = retry(|| device.area_threshold_min(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let area_threshold_max = retry(|| device.area_threshold_max(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let max_object_cnt = retry(|| device.max_object_cnt(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let operation_mode = retry(|| device.operation_mode(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let frame_subtraction = retry(|| device.frame_subtraction(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let gain_1 = retry(|| device.gain_1(self.port), timeout, 3)
-            .await
-            .unwrap()?;
-        let gain_2 = retry(|| device.gain_2(self.port), timeout, 3)
-            .await
-            .unwrap()?;
+        let pid = retry_checked(|| device.product_id(self.port), timeout, 3).await?;
+        let res_x = retry_checked(|| device.resolution_x(self.port), timeout, 3).await?;
+        let res_y = retry_checked(|| device.resolution_y(self.port), timeout, 3).await?;
+        let expo = retry_checked(|| device.exposure_time(self.port), timeout, 3).await?;
+        let frame_period = retry_checked(|| device.frame_period(self.port), timeout, 3).await?;
+        let brightness_threshold =
+            retry_checked(|| device.brightness_threshold(self.port), timeout, 3).await?;
+        let noise_threshold =
+            retry_checked(|| device.noise_threshold(self.port), timeout, 3).await?;
+        let area_threshold_min =
+            retry_checked(|| device.area_threshold_min(self.port), timeout, 3).await?;
+        let area_threshold_max =
+            retry_checked(|| device.area_threshold_max(self.port), timeout, 3).await?;
+        let max_object_cnt = retry_checked(|| device.max_object_cnt(self.port), timeout, 3).await?;
+        let operation_mode = retry_checked(|| device.operation_mode(self.port), timeout, 3).await?;
+        let frame_subtraction =
+            retry_checked(|| device.frame_subtraction(self.port), timeout, 3).await?;
+        let gain_1 = retry_checked(|| device.gain_1(self.port), timeout, 3).await?;
+        let gain_2 = retry_checked(|| device.gain_2(self.port), timeout, 3).await?;
 
         self.pid.set(format!("0x{pid:04x}"));
         self.resolution_x.set(res_x.to_string());
@@ -185,7 +173,6 @@ impl PajSensorSettingsForm {
         macro_rules! validators {
             ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
                 $(
-                    #[expect(unused_variables)]
                     let $reg = self.$reg.with_untracked(|s| s.parse::<$ty>());
                     match &$reg {
                         Ok(_) => (),
@@ -195,12 +182,10 @@ impl PajSensorSettingsForm {
                 if !errors.is_empty() {
                     return
                 }
-                $(
-                    // SAFETY: all the values are already checked for errors. Can convert to
-                    // unwrap_unchecked if necessary.
-                    #[expect(unused_variables)]
-                    let $reg = $reg.unwrap();
-                )*
+                // Every field was parsed successfully above; rebind the parsed values
+                // for the checks. Fields without a check are only referenced here.
+                $( let Ok($reg) = $reg else { return }; )*
+                let _ = ($(&$reg,)*);
                 $(
                     $($(
                         let (test_result, msg) = ($check)($reg);
@@ -229,59 +214,47 @@ impl PajSensorSettingsForm {
 
     /// Make sure to call `validate()` before calling this method.
     pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
-        let gain = usize::try_from(self.gain.get_untracked()).unwrap();
-        let gain = GAIN_TABLE[gain].1;
+        let gain = register_value::<usize>(self.gain.get_untracked(), "gain")?;
+        let gain = GAIN_TABLE
+            .get(gain)
+            .with_context(|| format!("gain index {gain} is out of range"))?
+            .1;
 
         tokio::try_join!(
-            device.set_resolution_x(
-                self.port,
-                self.resolution_x.with_untracked(|v| v.parse().unwrap())
-            ),
-            device.set_resolution_y(
-                self.port,
-                self.resolution_y.with_untracked(|v| v.parse().unwrap())
-            ),
+            device.set_resolution_x(self.port, parse_field(self.resolution_x, "resolution X")?),
+            device.set_resolution_y(self.port, parse_field(self.resolution_y, "resolution Y")?),
             device.set_gain_1(self.port, gain.b_global),
             device.set_gain_2(self.port, gain.b_ggh),
-            device.set_exposure_time(
-                self.port,
-                self.exposure_time.with_untracked(|v| v.parse().unwrap())
-            ),
+            device.set_exposure_time(self.port, parse_field(self.exposure_time, "exposure time")?),
             device.set_brightness_threshold(
                 self.port,
-                self.brightness_threshold
-                    .with_untracked(|v| v.parse().unwrap())
+                parse_field(self.brightness_threshold, "brightness threshold")?
             ),
             device.set_noise_threshold(
                 self.port,
-                self.noise_threshold.with_untracked(|v| v.parse().unwrap())
+                parse_field(self.noise_threshold, "noise threshold")?
             ),
             device.set_area_threshold_max(
                 self.port,
-                self.area_threshold_max
-                    .with_untracked(|v| v.parse().unwrap())
+                parse_field(self.area_threshold_max, "area threshold max")?
             ),
             device.set_area_threshold_min(
                 self.port,
-                self.area_threshold_min
-                    .with_untracked(|v| v.parse().unwrap())
+                parse_field(self.area_threshold_min, "area threshold min")?
             ),
             device.set_operation_mode(
                 self.port,
-                u8::try_from(self.operation_mode.get_untracked()).unwrap()
+                register_value(self.operation_mode.get_untracked(), "operation mode")?
             ),
             device.set_max_object_cnt(
                 self.port,
-                self.max_object_cnt.with_untracked(|v| v.parse().unwrap())
+                parse_field(self.max_object_cnt, "max object count")?
             ),
             device.set_frame_subtraction(
                 self.port,
-                u8::try_from(self.frame_subtraction.get_untracked()).unwrap()
+                register_value(self.frame_subtraction.get_untracked(), "frame subtraction")?
             ),
-            device.set_frame_period(
-                self.port,
-                self.frame_period.with_untracked(|v| v.parse().unwrap())
-            ),
+            device.set_frame_period(self.port, parse_field(self.frame_period, "frame period")?),
         )?;
         tokio::try_join!(
             device.set_bank1_sync_updated(self.port, 1),
