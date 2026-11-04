@@ -9,26 +9,25 @@ use tokio::sync::{mpsc, oneshot};
 /// Answer channel of a request: the value, or the reason it failed, as text for the RPC reply.
 pub(crate) type Reply<T> = oneshot::Sender<Result<T, String>>;
 
-/// Control messages sent into per-device task
+/// Commands for one device's handler task.
 #[derive(Debug)]
 pub(crate) enum DeviceTaskMessage {
     ResetZero,
     SaveZero,
     /// Send a vendor packet; the USB layer rejects invalid tags or payloads over 98 bytes.
     WriteVendor(u8, Vec<u8>),
-    /// Set the shot delay (milliseconds) for this device. Server may send this
-    /// to apply shot delay live to the running device task.
+    /// Shot delay in milliseconds, applied live to the running handler.
     SetShotDelay(u16),
     Zero(Translation3<f32>, Point2<f32>, Option<TrackingEvent>),
     ClearZero,
-    /// Read a sensor register. Reply channel returns the register value or an error.
+    /// Read a sensor register.
     ReadRegister {
         port: u8,
         bank: u8,
         address: u8,
         reply: Reply<u8>,
     },
-    /// Write a sensor register. Reply channel returns success or an error.
+    /// Write a sensor register.
     WriteRegister {
         port: u8,
         bank: u8,
@@ -36,7 +35,7 @@ pub(crate) enum DeviceTaskMessage {
         data: u8,
         reply: Reply<()>,
     },
-    /// Read a device config value (impact threshold, suppress ms, etc.)
+    /// Read a config value (impact threshold, suppress ms).
     ReadConfig {
         kind: u8,
         reply: Reply<u8>,
@@ -47,12 +46,12 @@ pub(crate) enum DeviceTaskMessage {
         value: u8,
         reply: Reply<()>,
     },
-    /// Persist current settings to device flash. Reply channel returns success or an error.
+    /// Persist the current settings to the device's flash.
     FlashSettings {
         reply: Reply<()>,
     },
-    /// Start BLE pairing mode. Reply returns Ok(()) when pairing mode is entered.
-    /// The actual pairing result arrives as a PairingResult event.
+    /// Enter BLE pairing mode. The reply comes once pairing mode is entered; the
+    /// pairing outcome arrives later as a PairingResult event.
     StartPairing {
         timeout_ms: u32,
         reply: Reply<()>,
@@ -66,21 +65,22 @@ pub(crate) enum DeviceTaskMessage {
     /// application only learns it once its BLE controller has answered. Marks the
     /// reading as settled (`NETCORE_KNOWN`), including a settled 0.
     SetNetCoreRelease(u16),
-    /// Clear bond(s) on the device. For ATS: clears single bond. For dongle: clears all bonds.
+    /// Clear bonds: an ATS clears its single bond, a dongle clears all of its bonds.
     ClearBond {
         reply: Reply<()>,
     },
-    /// Set the transport mode (USB or BLE). The device will persist this and apply after reboot.
+    /// Set the transport mode (USB or BLE). The device persists it and applies it after
+    /// a reboot.
     SetTransportMode {
         usb_mode: bool,
         reply: Reply<bool>,
     },
-    /// Set the device name. The device firmware will persist it to flash and update BLE advertising.
+    /// The device firmware persists the name to flash and updates its BLE advertising.
     SetDeviceName {
         name: String,
         reply: Reply<()>,
     },
-    /// Add an events device to enable sensor streams (for merging USB direct + BLE mux)
+    /// Attach an events device (BLE mux) to a handler, which enables its sensor streams.
     AddEventsDevice {
         device: VmDevice,
         protocol_version: [u16; 3],
@@ -88,49 +88,57 @@ pub(crate) enum DeviceTaskMessage {
         address: [u8; 6],
         owner: Arc<()>,
     },
-    /// Add a control device to enable control operations (for merging BLE mux + USB direct BLE mode)
+    /// Attach a control device (direct USB, also in BLE transport mode) to a handler.
     AddControlDevice {
         device: VmDevice,
         dfu: bool,
         events_protocol_version: [u16; 3],
     },
-    /// Remove control device when direct USB disconnects
+    /// The direct USB connection went away.
     RemoveControlDevice,
-    /// Remove events device when BLE mux disconnects
+    /// The BLE mux connection went away.
     RemoveEventsDevice(Arc<()>),
 }
 
-/// Device connection channels
+/// The channels that reach a device's handler task.
 pub(crate) struct DeviceChannels {
-    /// Commands channel for device operations (register read/write, zero, etc.)
+    /// `None` for a control-only device; a reconnect without one keeps the listed channel.
     pub commands: Option<mpsc::Sender<DeviceTaskMessage>>,
 }
 
-/// Commands that can be sent to a dongle (hub manager task).
+/// Commands for a dongle's hub manager task.
 pub(crate) enum DongleTaskMessage {
     StartPairing { timeout_ms: u32, reply: Reply<()> },
     CancelPairing { reply: Reply<()> },
     ClearBonds { reply: Reply<()> },
 }
 
-/// Dongle metadata (for dongle list).
+/// A dongle as the dongle list shows it.
 #[derive(Clone, Debug)]
 pub(crate) struct DongleInfo {
-    pub id: String,                         // USB serial number
-    pub protocol_version: [u16; 3],         // mux endpoint protocol version
-    pub control_protocol_version: [u16; 3], // control endpoint protocol version
+    /// USB serial number.
+    pub id: String,
+    /// Mux endpoint protocol version.
+    pub protocol_version: [u16; 3],
+    /// Control endpoint protocol version.
+    pub control_protocol_version: [u16; 3],
     pub firmware_version: [u16; 3],
-    pub connected_devices: Vec<[u8; 6]>, // BLE addresses of connected ATS devices
-    pub bonded_devices: Vec<[u8; 6]>,    // BLE addresses of bonded ATS devices
+    /// BLE addresses of the connected ATS units.
+    pub connected_devices: Vec<[u8; 6]>,
+    /// BLE addresses of the bonded ATS units.
+    pub bonded_devices: Vec<[u8; 6]>,
 }
 
 /// Messages emitted by device_tasks to the rest of the system.
 pub(crate) enum Message {
     Connect(Device, DeviceChannels),
     Disconnect(Device),
-    UpdateDevice(Device), // Update device metadata (e.g., capabilities changed)
-    UpdateName([u8; 6], String), // Update device name only (UUID, new name)
+    /// Device metadata changed (e.g. capabilities).
+    UpdateDevice(Device),
+    /// Only the name of the device with this UUID changed.
+    UpdateName([u8; 6], String),
     DongleConnect(DongleInfo, mpsc::Sender<DongleTaskMessage>),
     DongleUpdate(DongleInfo),
-    DongleDisconnect(String), // dongle id
+    /// Carries the dongle id.
+    DongleDisconnect(String),
 }

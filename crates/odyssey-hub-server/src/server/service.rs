@@ -77,13 +77,12 @@ fn tracking_event_from_proto(
 
 #[tonic::async_trait]
 impl Service for HubServer {
-    // Stream associated types (use concrete tokio_stream wrappers; no futures_core)
+    // Concrete tokio_stream wrappers, so the crate needs no futures_core.
     type SubscribeDeviceListStream = ReceiverStream<Result<DeviceListReply, Status>>;
     type SubscribeAccessoryMapStream = ReceiverStream<Result<AccessoryMapReply, Status>>;
     type SubscribeEventsStream = ReceiverStream<Result<Event, Status>>;
     type SubscribeShotDelayStream = ReceiverStream<Result<GetShotDelayReply, Status>>;
     type SubscribeDongleListStream = ReceiverStream<Result<DongleListReply, Status>>;
-    // -------------------- Device list --------------------
     async fn get_device_list(
         &self,
         _req: tonic::Request<DeviceListRequest>,
@@ -98,7 +97,6 @@ impl Service for HubServer {
         Ok(Response::new(self.device_list_updates()))
     }
 
-    // -------------------- Accessories --------------------
     async fn get_accessory_map(
         &self,
         _req: tonic::Request<AccessoryMapRequest>,
@@ -112,7 +110,7 @@ impl Service for HubServer {
         &self,
         _req: tonic::Request<SubscribeAccessoryMapRequest>,
     ) -> Result<Response<Self::SubscribeAccessoryMapStream>, Status> {
-        // Initial snapshot + broadcast stream that emits common::AccessoryMap
+        // The current map first, then every map the broadcast carries.
         let mut bcast = BroadcastStream::new(self.accessory_map_sender.subscribe());
         let init = self.accessory_map_snapshot();
 
@@ -150,18 +148,16 @@ impl Service for HubServer {
         &self,
         req: tonic::Request<AccessoryInfoMap>,
     ) -> Result<Response<EmptyReply>, Status> {
-        // Convert proto → common map
         let incoming: common::accessory::AccessoryInfoMap = req
             .into_inner()
             .try_into()
             .map_err(Status::invalid_argument)?;
 
-        // Persist to disk using odyssey_hub_common::config
         common::config::accessory_map_save_async(&incoming)
             .await
             .map_err(|e| Status::internal(format!("failed to save accessory info map: {e}")))?;
 
-        // Re-load (optional but keeps canonical formatting)
+        // Reloading gives the canonical form of what was saved.
         let fresh_result = common::config::accessory_map_async().await;
         let fresh = if fresh_result.is_corrupted() {
             tracing::warn!("Saved but file is corrupted on reload; using incoming");
@@ -173,7 +169,7 @@ impl Service for HubServer {
         // Publish canonical state before waking the accessory manager.
         self.merge_accessory_info(fresh.clone());
         self.accessory_info_sender.send_replace(fresh);
-        // Broadcast full status map so UI refreshes
+        // The whole status map goes out so the UI refreshes.
         let _ = self
             .accessory_map_sender
             .send(self.accessory_map_snapshot());
@@ -181,7 +177,6 @@ impl Service for HubServer {
         ok_empty()
     }
 
-    // -------------------- Shot delay --------------------
     async fn get_shot_delay(
         &self,
         req: tonic::Request<Device>,
@@ -200,7 +195,6 @@ impl Service for HubServer {
         let mut rx = self.subscribe_shot_delay_watch(uuid).await;
         let (tx, out) = mpsc::channel::<Result<GetShotDelayReply, Status>>(SUBSCRIPTION_BUFFER);
 
-        // initial
         let _ = tx.try_send(Ok(GetShotDelayReply {
             delay_ms: *rx.borrow_and_update(),
         }));
@@ -228,7 +222,6 @@ impl Service for HubServer {
         &self,
         _req: tonic::Request<EmptyRequest>,
     ) -> Result<Response<EmptyReply>, Status> {
-        // Send message to desktop app to bring window to front
         if let Err(e) = self.app_message_sender.send(crate::Message::BringToFront) {
             tracing::error!("Failed to send BringToFront message: {}", e);
             return Err(Status::internal("Failed to bring window to front"));
@@ -245,9 +238,8 @@ impl Service for HubServer {
         let ms = u16::try_from(delay_ms)
             .map_err(|_conversion_error| RpcError::InvalidField("delay_ms"))?;
 
-        // Apply live in-server state & notify watchers
         self.set_shot_delay_live(uuid, ms).await;
-        // If a device task is running for this UUID, also send it a live update
+        // Also reaches a running device task, so the delay applies live.
         self.push_shot_delay_to_task(uuid, ms, "shot delay");
 
         ok_empty()
@@ -259,9 +251,7 @@ impl Service for HubServer {
     ) -> Result<Response<ResetShotDelayReply>, Status> {
         let uuid = uuid_from_bytes(&req.into_inner().uuid)?;
 
-        // Apply live reset in-server state & notify watchers
         self.set_shot_delay_live(uuid, DEFAULT_SHOT_DELAY_MS).await;
-        // If a device task is running for this UUID, reset it as well
         self.push_shot_delay_to_task(uuid, DEFAULT_SHOT_DELAY_MS, "shot delay reset");
 
         Ok(Response::new(ResetShotDelayReply {
@@ -281,7 +271,6 @@ impl Service for HubServer {
         ok_empty()
     }
 
-    // -------------------- Screens --------------------
     async fn get_screen_info_by_id(
         &self,
         req: tonic::Request<ScreenInfoByIdRequest>,
@@ -310,7 +299,6 @@ impl Service for HubServer {
         }))
     }
 
-    // -------------------- Events passthrough --------------------
     async fn subscribe_events(
         &self,
         _req: tonic::Request<SubscribeEventsRequest>,
@@ -348,7 +336,6 @@ impl Service for HubServer {
         Ok(Response::new(ReceiverStream::new(out)))
     }
 
-    // -------------------- Device commands --------------------
     async fn write_vendor(
         &self,
         req: tonic::Request<WriteVendorRequest>,
@@ -509,7 +496,6 @@ impl Service for HubServer {
         Ok(Response::new(TransportModeReply { usb_mode }))
     }
 
-    // -------------------- Dongle RPCs --------------------
     async fn subscribe_dongle_list(
         &self,
         _req: tonic::Request<SubscribeDongleListRequest>,
@@ -558,7 +544,7 @@ impl Service for HubServer {
         let SetDeviceNameRequest { device, name } = req.into_inner();
         let uuid = requested_uuid(device)?;
 
-        // Persist name to device firmware, which stores it in flash and updates BLE advertising.
+        // The firmware stores the name in flash and updates its BLE advertising.
         let task = self.device_task("set_device_name", uuid)?;
         task.request(|reply| DeviceTaskMessage::SetDeviceName {
             name: name.clone(),
@@ -567,7 +553,6 @@ impl Service for HubServer {
         .await
         .inspect_err(|error| tracing::warn!("set_device_name: {error}"))?;
 
-        // Update device name in device list and notify subscribers
         self.device_list.rename(uuid, &name);
         let _ = self.device_list_change_sender.send(());
 

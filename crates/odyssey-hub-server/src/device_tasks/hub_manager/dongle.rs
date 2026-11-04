@@ -139,9 +139,9 @@ impl HubManager {
         }
     }
 
-    /// Adopt the names the dongle has stored for units we have no name for. Names that
-    /// were set in this session (e.g. via a USB rename) win over the dongle's possibly
-    /// stale flash copy.
+    /// Adopt the names the dongle has stored for units that have no name yet. Names set
+    /// in this session (e.g. by a USB rename) win over the dongle's possibly stale flash
+    /// copy.
     pub(super) async fn remember_missing_bond_names(&self, bonds: &[BondedDevice]) {
         let mut bond_names = self.context.bond_names.lock().await;
         for bond in bonds.iter().filter(|bond| !bond.name.is_empty()) {

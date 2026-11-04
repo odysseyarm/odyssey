@@ -1,15 +1,15 @@
 #[repr(u8)]
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Transport {
-    /// Direct USB connection
+    /// Wired USB.
     Usb,
-    /// BLE connection via mux/dongle
+    /// BLE through a mux dongle.
     UsbMux,
-    /// UDP connection via mux (not yet implemented)
+    /// UDP through a mux. Not implemented.
     UdpMux,
 }
 
-/// Device capabilities indicate what operations are available for a device
+/// Bit flags for the operations a device supports.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DeviceCapabilities {
@@ -17,16 +17,16 @@ pub struct DeviceCapabilities {
 }
 
 impl DeviceCapabilities {
-    /// Device has USB control interface (pairing, config, DFU)
+    /// USB control interface: pairing, config, DFU.
     pub const CONTROL: u8 = 0b01;
-    /// Device has packet/event streams
+    /// Packet and event streams.
     pub const EVENTS: u8 = 0b10;
-    /// Device is in DFU mode or has a broken protocol — only firmware flashing is available.
-    /// When set, firmware_version is [0,0,0] (unknown) and normal communication is unavailable.
+    /// The device is in DFU mode or speaks a broken protocol, so only firmware flashing
+    /// works. `firmware_version` is then `[0, 0, 0]` and normal communication is unavailable.
     pub const DFU: u8 = 0b100;
-    /// `netcore_release` is a settled reading rather than a read still in progress.
-    /// Without it a 0 is indistinguishable from "not answered yet", which a unit
-    /// shows for a while after every (re)boot, so it must not be judged as "behind".
+    /// `netcore_release` is a settled reading, not a read still in progress.
+    /// Without this flag a 0 can also mean "not answered yet", which a unit shows for a
+    /// while after every boot, so such a 0 must not be judged as behind.
     pub const NETCORE_KNOWN: u8 = 0b1000;
 
     pub const fn empty() -> Self {
@@ -54,13 +54,13 @@ impl DeviceCapabilities {
     }
 }
 
-/// How events/sensor data are transmitted from the device
+/// How the device sends events and sensor data.
 #[repr(u8)]
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventsTransport {
-    /// Events transmitted via wired USB connection
+    /// Over USB.
     Wired,
-    /// Events transmitted via BLE (wireless)
+    /// Over BLE.
     Bluetooth,
 }
 
@@ -70,15 +70,14 @@ pub struct Device {
     pub uuid: [u8; 6],
     pub transport: Transport,
     pub capabilities: DeviceCapabilities,
-    /// Firmware version [major, minor, patch], [0,0,0] if unknown
+    /// `[major, minor, patch]`, `[0, 0, 0]` if unknown.
     pub firmware_version: [u16; 3],
     pub events_transport: EventsTransport,
-    /// Whether events/sensor data are currently being received
+    /// True while events and sensor data are arriving.
     pub events_connected: bool,
-    /// USB Product ID (e.g. 0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0 if unknown
+    /// USB PID (0x520F = AtsVm, 0x5210 = AtsLite, 0x5211 = Lite1, 0x5212 = Mux), 0 if unknown.
     pub product_id: u16,
-    /// Human-readable device name, null-terminated, up to 32 UTF-8 bytes + null.
-    /// C/C++ layout: `uint8_t name[33]`
+    /// NUL-terminated UTF-8, at most 32 bytes plus the NUL. C layout: `uint8_t name[33]`.
     pub name: [u8; 33],
     /// Release counter of the nRF5340 net core (BLE controller) firmware, 0 if unknown.
     ///
@@ -89,7 +88,7 @@ pub struct Device {
 }
 
 impl Device {
-    /// Build a `[u8; 33]` name buffer from a &str, for use in struct literal initialization.
+    /// A `[u8; 33]` name buffer holding the first 32 bytes of `s`, for struct literals.
     pub fn name_bytes(s: &str) -> [u8; 33] {
         let mut buf = [0u8; 33];
         let bytes = s.as_bytes();
@@ -110,12 +109,11 @@ impl Device {
         self.name[..len].copy_from_slice(&bytes[..len]);
     }
 
-    /// True if `self` and `other` are snapshots of the same physical device — i.e. same
-    /// `uuid` — regardless of whether transient fields (name, capabilities, firmware
-    /// version, connection state, ...) differ between the two snapshots.
+    /// True if both snapshots have the same `uuid`, meaning the same physical device,
+    /// whatever their name, capabilities, firmware version or connection state.
     ///
-    /// Use this instead of `==` for identity lookups (e.g. correlating a `Device` embedded
-    /// in an event against a currently-known device list).
+    /// Use it instead of `==` for identity lookups, such as matching the `Device` in an
+    /// event against the known device list.
     pub fn uuid_eq(&self, other: &Self) -> bool {
         self.uuid == other.uuid
     }

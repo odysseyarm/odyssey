@@ -45,8 +45,8 @@ impl UsbDeviceManager {
         present: &mut PresentUsbDevices,
     ) {
         tracing::debug!("Failed to connect to USB device: {}", connect_error);
-        // If we already have a running handler for this USB device (interface
-        // is claimed), the connect failure is expected — skip DFU surfacing.
+        // A running handler has this USB device's interface claimed, so the connect
+        // failure is expected and the unit is not in its bootloader.
         if let Some(existing_uuid) = self.direct_usb_id_to_uuid.get(direct_usb_id)
             && self.device_handles.lock().await.contains_key(existing_uuid)
         {

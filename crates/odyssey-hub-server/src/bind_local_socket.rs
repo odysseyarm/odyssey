@@ -42,7 +42,6 @@ pub(crate) async fn bind_local_socket(
             .map_err(|error| report_error(error, app_sender))?
     };
 
-    // Check if another instance is already running by trying to connect
     if ClientStream::connect(name.clone()).await.is_ok() {
         let _ = app_sender.send(Message::ServerInit(Err(std::io::Error::new(
             std::io::ErrorKind::AddrInUse,
@@ -51,12 +50,10 @@ pub(crate) async fn bind_local_socket(
         return Err(ServerError::SocketAlreadyInUse);
     }
 
-    // Nobody answered, so the name is free as far as we're concerned. On Unix, though,
-    // bind() still fails with AddrInUse if a socket file is left over at that path from a
-    // previous run that didn't exit cleanly (crash, force-quit, kill) — nothing here ever
-    // unlinks it otherwise. try_overwrite makes the listener reclaim (delete + rebind) a
-    // stale name on AddrInUse instead of failing outright; max_spin_time bounds how long
-    // that retry loop can run under genuine contention.
+    // No hub answered, so the name is free. On Unix bind() still fails with AddrInUse
+    // when a hub that crashed or was killed left its socket file behind, and nothing
+    // else unlinks it. try_overwrite reclaims such a stale name (unlink and rebind);
+    // max_spin_time bounds that retry loop under real contention.
     let listener_opts = ListenerOptions::new()
         .name(name.clone())
         .try_overwrite(true)

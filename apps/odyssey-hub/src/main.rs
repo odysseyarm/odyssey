@@ -18,7 +18,6 @@ async fn main() -> ExitCode {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let cancel_token = CancellationToken::new();
 
-    // Spawn server in background
     let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token.clone()));
 
     let status = tokio::select! {
@@ -47,7 +46,8 @@ async fn main() -> ExitCode {
     }
 }
 
-/// `true` means an existing instance was successfully notified instead of starting.
+/// `Ok(true)` means another instance was already running and was told to come to
+/// the front, so this one should exit without starting.
 async fn handle_server_status(
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>,
 ) -> Result<bool, String> {
@@ -57,13 +57,12 @@ async fn handle_server_status(
                 tracing::info!("Server started");
             }
             Some(Message::ServerInit(Err(e))) => {
-                // Check if another instance is already running
+                // AddrInUse: another hub instance already owns the socket.
                 if e.kind() == std::io::ErrorKind::AddrInUse {
                     tracing::warn!(
                         "Another instance is already running. Notifying it to bring window to front..."
                     );
 
-                    // Try to connect to the existing instance and call BringToFront
                     let mut client = odyssey_hub_client::client::Client::default();
                     client
                         .connect()

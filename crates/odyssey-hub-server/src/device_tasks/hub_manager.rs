@@ -211,7 +211,6 @@ impl HubManager {
             }
             Some((HubEvent::Snapshot(snapshot), hub))
         });
-        // If we have initial devices, prepend them to the stream
         let snapshots = match initial_devices {
             Some(devices) => {
                 info!(
@@ -265,7 +264,7 @@ impl HubManager {
                     "Hub manager receive error - hub likely disconnected: {:?}",
                     e
                 );
-                // Exit immediately on channel closed or other errors
+                // Any receive error, a closed channel included, ends the manager.
                 ControlFlow::Break(())
             }
         }

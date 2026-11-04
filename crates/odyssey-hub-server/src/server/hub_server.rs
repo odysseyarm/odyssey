@@ -26,31 +26,32 @@ pub(crate) struct HubServer {
     /// Live devices, kept current by the message forwarder.
     pub device_list: DeviceList,
 
-    /// Pub/Sub of low-level events used by existing pipeline.
+    /// Low-level device events for every subscriber.
     pub event_sender: broadcast::Sender<common::events::Event>,
 
-    /// Notifies subscribers when device list changes (Connect/Disconnect)
+    /// Fires on every device list change (connect, disconnect, update).
     pub device_list_change_sender: broadcast::Sender<()>,
 
     pub screen_calibrations: Arc<ArcSwap<Calibrations>>,
 
-    /// Shot delay store (uuid→delay), plus per-uuid watchers for SubscribeShotDelay.
+    /// Shot delay per uuid, and the per-uuid watches behind SubscribeShotDelay.
     pub device_shot_delays: Arc<RwLock<HashMap<[u8; 6], u16>>>,
     pub shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
 
-    /// Accessory info/state
+    /// Accessory state, and the broadcast of the whole map to subscribers.
     pub accessory_map: Arc<Mutex<AccessoryMap>>,
     pub accessory_map_sender: broadcast::Sender<AccessoryMap>,
 
-    /// Live dongle list (separate from device_list).
+    /// Live dongles, kept apart from `device_list`.
     pub dongle_list: DongleList,
 
-    /// Notifies subscribers when dongle list changes
+    /// Fires on every dongle list change.
     pub dongle_list_change_sender: broadcast::Sender<()>,
 
-    /// Message sender to communicate with the desktop app
+    /// Messages to the desktop app.
     pub app_message_sender: mpsc::UnboundedSender<crate::Message>,
-    pub accessory_info_sender: watch::Sender<AccessoryInfoMap>, // incoming updates
+    /// Incoming accessory info, watched by the accessory manager.
+    pub accessory_info_sender: watch::Sender<AccessoryInfoMap>,
 }
 
 impl HubServer {
@@ -80,7 +81,7 @@ impl HubServer {
         device_list_reply_from(&self.device_list)
     }
 
-    /// Sends the device list now and again after every change.
+    /// Sends the device list at once and again after every change.
     pub(super) fn device_list_updates(&self) -> ReceiverStream<Result<DeviceListReply, Status>> {
         let device_list = self.device_list.clone();
         stream_replies(&self.device_list_change_sender, "device list", move || {
@@ -88,7 +89,7 @@ impl HubServer {
         })
     }
 
-    /// Sends the dongle list now and again after every change.
+    /// Sends the dongle list at once and again after every change.
     pub(super) fn dongle_list_updates(&self) -> ReceiverStream<Result<DongleListReply, Status>> {
         let dongle_list = self.dongle_list.clone();
         stream_replies(&self.dongle_list_change_sender, "dongle list", move || {
@@ -96,7 +97,6 @@ impl HubServer {
         })
     }
 
-    // -------------------- Shot delay helpers --------------------
     pub(super) async fn shot_delay_or_default(&self, uuid: [u8; 6]) -> u16 {
         if let Some(v) = self.device_shot_delays.read().await.get(&uuid).copied() {
             return v;
@@ -146,7 +146,6 @@ impl HubServer {
         }
     }
 
-    // -------------------- Accessory map helpers --------------------
     fn lock_accessory_map(&self) -> MutexGuard<'_, AccessoryMap> {
         // The map is only ever replaced entry by entry, so a panic elsewhere
         // cannot leave it half updated; carry on with what is there.
@@ -196,18 +195,16 @@ fn stream_replies<Reply: Send + 'static>(
             };
             match change {
                 Ok(()) => {}
-                // Lagging only means notifications were dropped while this
-                // task was busy; the next reply is rebuilt from the live list
-                // and so still authoritative. Coalesce them rather than
-                // ending the subscription and leaving the client frozen on a
-                // stale list.
+                // Lagging only means notifications were dropped while this task was
+                // busy. The next reply is rebuilt from the live list, so it is still
+                // current; ending the subscription would freeze the client on a stale list.
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     tracing::debug!("{list_name} subscriber lagged {n} notifications");
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
             if tx.send(Ok(reply())).await.is_err() {
-                break; // client gone
+                break;
             }
         }
     });

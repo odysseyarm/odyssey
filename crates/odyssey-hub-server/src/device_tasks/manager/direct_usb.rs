@@ -21,7 +21,7 @@ use crate::firmware::DFU_CLASS;
 /// Capacity of a handler's control channel.
 const HANDLER_CHANNEL_CAPACITY: usize = 32;
 
-/// A unit that answered on its USB control or packet endpoint, with what it told us.
+/// A unit that answered on its USB control or packet endpoint, with what it reported.
 struct ProbedUsbDevice {
     uuid: DeviceAddress,
     firmware: Option<odyssey_protocol::Version>,
@@ -70,21 +70,19 @@ impl UsbDeviceManager {
         let uuid = probed.uuid;
 
         let replace_control = self.direct_usb_id_to_uuid.get(&direct_usb_id) != Some(&uuid);
-        // Cache mapping from opaque nusb id() to UUID once we've successfully probed.
         self.direct_usb_id_to_uuid.insert(direct_usb_id, uuid);
         self.last_uuid_by_pid.insert(pid, uuid);
 
-        // Now check if device is already connected BEFORE creating a new connection
         if self
             .hand_to_existing_handler(&probed, replace_control)
             .await
         {
-            // Dropping `probed` drops the connection we only made to find that out.
+            // Dropping `probed` closes the connection that was only opened to find that out.
             return;
         }
 
-        // Device is not connected or we're replacing BLE mux connection
-        // Reuse the connection we already created
+        // No handler yet, or a BLE-mux handler is being replaced; the probe's connection
+        // is reused.
         info!("Connecting new USB device with UUID {uuid:02x?}, PID: 0x{pid:04x}");
         self.spawn_direct_usb_handler(dev_info, probed).await;
     }
@@ -143,16 +141,16 @@ impl UsbDeviceManager {
                 false
             }
             ExistingHandler::DirectUsb(_) if !replace_control => {
-                // Already a fully-established direct-USB handler — no merge needed.
-                // Sending AddControlDevice every scan cycle would re-read transport
-                // mode on stale VmDevice instances and corrupt the handler's state.
+                // Sending AddControlDevice to an established direct-USB handler on every
+                // scan would re-read the transport mode on stale VmDevice instances and
+                // corrupt the handler's state.
                 info!(
                     "Device {uuid:02x?} already has direct-USB handler, skipping AddControlDevice"
                 );
                 true
             }
             ExistingHandler::BleMux(commands) | ExistingHandler::DirectUsb(commands) => {
-                // BLE-mux primary handler — merge incoming USB control.
+                // A BLE-mux handler, or a direct-USB one being replaced, takes the USB control.
                 info!(
                     "Device {uuid:02x?} has BLE-mux handler, sending AddControlDevice to merge USB control"
                 );
@@ -188,10 +186,9 @@ impl UsbDeviceManager {
             handles.len()
         );
 
-        // Evict stale entries whose handler task has already finished.
-        // This can happen after SetTransportMode causes the handler to break
-        // immediately, leaving a dead entry in device_handles. Without this
-        // eviction the next scan pass would skip re-connecting the device.
+        // SetTransportMode ends its handler at once, which can leave a finished entry
+        // in device_handles; without evicting it the next scan would never reconnect
+        // the device.
         if handles
             .get(&uuid)
             .is_some_and(|device| device.task.is_finished())
@@ -260,7 +257,7 @@ impl UsbDeviceManager {
             control_rx,
             context: self.context.clone(),
             protocol_version: probed.events_protocol_version,
-            hub_device: None, // USB-direct device: no hub to update
+            hub_device: None,
             self_tx: commands.downgrade(),
         });
 
@@ -279,8 +276,8 @@ impl UsbDeviceManager {
         drop(handles);
         let netcore_probe_commands = commands.clone();
 
-        // Always pass the commands channel so server.device_list gets a working sender.
-        // The device handler task will process commands (like Zero) once events are available.
+        // The channel always goes to the device list so commands have a live sender;
+        // the handler serves those that need events (like Zero) once events are available.
         let channels = DeviceChannels {
             commands: Some(commands),
         };
@@ -295,8 +292,8 @@ impl UsbDeviceManager {
         );
     }
 
-    /// Reconcile direct USB disconnects using opaque id() keys.
-    /// This avoids requiring UUID re-probe success on every scan.
+    /// Reconcile direct USB disconnects by opaque `id()`, so a scan does not depend on
+    /// re-probing every UUID successfully.
     pub(super) async fn reconcile_direct_usb_disconnects(&mut self, present: &PresentUsbDevices) {
         let missing_ids: Vec<String> = self
             .direct_usb_id_to_uuid
@@ -355,9 +352,8 @@ impl UsbDeviceManager {
 fn direct_usb_device(dev_info: &nusb::DeviceInfo, probed: &ProbedUsbDevice) -> Device {
     let in_usb_mode = probed.transport_mode == TransportMode::Usb;
 
-    // USB direct always has CONTROL capability
-    // EVENTS capability depends on transport mode (USB mode has events, BLE mode doesn't)
-    // DFU capability is present whenever the device exposes a DFU interface (class 0xFE)
+    // CONTROL always; EVENTS only in USB transport mode; DFU whenever the device exposes
+    // a DFU interface (class 0xFE).
     let mut capabilities = DeviceCapabilities::new(DeviceCapabilities::CONTROL);
     if in_usb_mode {
         capabilities.insert(DeviceCapabilities::EVENTS);

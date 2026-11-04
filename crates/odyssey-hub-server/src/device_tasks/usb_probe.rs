@@ -113,7 +113,7 @@ pub(super) async fn read_transport_mode(vm_device: &VmDevice, uuid: [u8; 6]) -> 
         }
         Err(e) => {
             warn!("Failed to read transport mode from device {uuid:02x?}: {e}");
-            // Assume USB mode if we can't read it
+            // An unreadable mode is treated as USB.
             TransportMode::Usb
         }
     }

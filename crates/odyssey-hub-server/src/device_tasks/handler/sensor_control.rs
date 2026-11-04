@@ -71,10 +71,9 @@ impl DeviceHandler {
                 "Sensor streams ended for device {:02x?}, will retry in 5s",
                 self.device.uuid
             );
-            // Don't break — keep the handler alive so the device stays
-            // in the list and the user can still trigger a DFU update.
-            // The USB scan loop will send RemoveControlDevice when the
-            // device is physically unplugged.
+            // The handler stays alive so the device stays listed and can still be
+            // flashed over DFU. The USB scan loop sends RemoveControlDevice once the
+            // device is unplugged.
             self.sensors.stop();
             self.stream_timers.delay_retry();
             return;

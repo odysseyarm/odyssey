@@ -353,9 +353,9 @@ fn transform_pose_for_client(rotmat: Matrix3<f32>, transvec: Vector3<f32>) -> Po
     }
 }
 
-/// Compute zero offset quaternion from a client-side TrackingEvent.
-/// The TrackingEvent pose has been through `transform_pose_for_client` (flip applied),
-/// so we undo the flip to recover the raw orientation/position before computing the offset.
+/// Zero offset quaternion from a client-side TrackingEvent. Its pose has been through
+/// `transform_pose_for_client`, so the flip is undone to recover the raw orientation and
+/// position before the offset is computed.
 pub(super) fn calculate_zero_offset_from_tracking_event(
     zero_translation: Translation3<f32>,
     zero_target_in_screen_space: Point2<f32>,

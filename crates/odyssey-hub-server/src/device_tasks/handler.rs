@@ -30,11 +30,11 @@ const SLOW_CALL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Budget for reading the whole config over the control endpoint.
 const CONTROL_CONFIG_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Device connections - can have separate VmDevice instances for control vs events
+/// A unit's links. Control and events can be separate `VmDevice`s.
 pub(super) struct DeviceConnections {
-    /// VmDevice for control operations (USB direct connection)
+    /// Direct USB control connection.
     pub(super) control_device: Option<VmDevice>,
-    /// VmDevice for event streams (USB direct or BLE mux)
+    /// Event streams, over direct USB or the BLE mux.
     pub(super) events_device: Option<VmDevice>,
 }
 
@@ -114,7 +114,6 @@ impl DeviceHandler {
         let tracker = DeviceTracker::new(general_settings.as_ref());
 
         info!("Starting sensor streams for device {uuid:02x?}");
-        // Only start streams if we have an events device (USB mode or BLE mux)
         let sensors = if let Some(events_device) = connections.events_device.as_ref() {
             SensorStreams::start(events_device, uuid, protocol_version).await
         } else {
@@ -193,7 +192,6 @@ impl DeviceHandler {
             }
         }
 
-        // Always send Disconnect message when handler ends
         info!(
             "Device handler task ending for {:02x?}, sending disconnect",
             self.device.uuid
@@ -311,7 +309,7 @@ impl DeviceHandler {
     }
 }
 
-/// Ensure a shot-delay watch exists for `uuid` and subscribe to it.
+/// Subscribe to `uuid`'s shot-delay watch, creating the watch if there is none.
 async fn subscribe_to_shot_delay(
     context: &DeviceTaskContext,
     uuid: [u8; 6],

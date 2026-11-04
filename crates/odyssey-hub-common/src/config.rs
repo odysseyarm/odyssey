@@ -13,8 +13,6 @@ pub const APP_INFO: AppInfo = AppInfo {
     author: "odysseyarm",
 };
 
-/* ------------------------- Corruption Event Types -------------------------- */
-
 #[derive(Clone, Debug)]
 pub struct ConfigCorruptionEvent {
     pub file_type: ConfigFileType,
@@ -30,8 +28,6 @@ pub enum ConfigFileType {
     ScreenCalibration,
     AccessoryMap,
 }
-
-/* ----------------------------- Load result type ---------------------------- */
 
 #[derive(Debug, Clone)]
 pub enum ConfigLoadResult<T> {
@@ -64,8 +60,6 @@ impl<T> ConfigLoadResult<T> {
     }
 }
 
-/* ---------------------------- Firmware channel ----------------------------- */
-
 /// The firmware channel the user chose, by name. `None` when they never chose
 /// one or the file cannot be read, which callers treat as the default.
 pub async fn firmware_channel_async() -> Option<String> {
@@ -82,12 +76,10 @@ pub async fn firmware_channel_save_async(name: &str) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-/* -------------------------------- UI state --------------------------------- */
-
 /// Identifies a monitor across launches. Models repeat across a desk (two
 /// identical panels share a name), so the key also carries the monitor's position
-/// in the virtual desktop. Rearranging the monitors changes the key, which is
-/// the right outcome: the remembered pick no longer names the same screen.
+/// in the virtual desktop. Rearranging the monitors changes the key on purpose:
+/// after a rearrangement the remembered pick may name a different screen.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MonitorKey {
     pub name: Option<String>,
@@ -99,8 +91,8 @@ pub struct MonitorKey {
 
 /// Desktop app state that is not a setting but should survive a restart.
 ///
-/// Every field defaults when absent, so files written by older versions keep
-/// loading after new fields land.
+/// Every field defaults when absent, so a file written before a field existed
+/// still loads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct UiState {
@@ -154,7 +146,7 @@ impl UiState {
             .map(|s| s.screen_id)
     }
 
-    /// Records that `screen_id` now holds `monitor`'s calibration. A screen id
+    /// Records that `screen_id` holds `monitor`'s calibration. A screen id
     /// holds one screen, so any other monitor that pointed at it loses the
     /// claim.
     pub fn remember_calibration_screen(&mut self, monitor: MonitorKey, screen_id: u8) {
@@ -284,8 +276,6 @@ fn save_ui_state_to(path: &Path, state: &UiState) -> std::io::Result<()> {
     Ok(())
 }
 
-/* ------------------------------- Shot delays ------------------------------- */
-
 pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16>> {
     let config_dir = match get_app_root(AppDataType::UserConfig, &APP_INFO) {
         Ok(dir) => dir,
@@ -359,8 +349,6 @@ pub async fn device_shot_delay_save_async(
     device_shot_delays_save_async(&map).await
 }
 
-/* --------------------------------- Offsets -------------------------------- */
-
 pub async fn device_offsets_async() -> ConfigLoadResult<HashMap<[u8; 6], nalgebra::Isometry3<f32>>>
 {
     let config_dir = match get_app_root(AppDataType::UserConfig, &APP_INFO) {
@@ -428,8 +416,6 @@ pub async fn device_offsets_save_async(
     Ok(())
 }
 
-/* ---------------------------- Screen calibrations --------------------------- */
-
 /// Directory holding `screen_<id>.json`, one file per calibrated screen.
 pub fn screens_dir() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?.join("screens"))
@@ -465,7 +451,7 @@ pub async fn screen_calibrations_async() -> ScreenCalibrationsResult {
 
 /// Loads every `screen_<id>.json` in `dir`, ordered by id. Unreadable,
 /// malformed, or geometrically invalid calibrations are reported in
-/// `corrupted_screens` and excluded; a missing file is simply absent.
+/// `corrupted_screens` and excluded; a missing file is skipped without a report.
 pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibrationsResult {
     let mut calibrations = arrayvec::ArrayVec::new();
     let mut corrupted_screens = Vec::new();
@@ -474,7 +460,6 @@ pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibration
         let path = dir.join(screen_file_name(i));
         let txt = match fs::read_to_string(&path).await {
             Ok(txt) => txt,
-            // A file that vanishes between listing and reading counts as absent.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
                 tracing::error!(
@@ -515,8 +500,6 @@ pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibration
         corrupted_screens,
     }
 }
-
-/* ------------------------------ Accessory map ------------------------------ */
 
 type AccessoryMapWrap = HexKeyMapN<AccessoryInfo, 6>;
 

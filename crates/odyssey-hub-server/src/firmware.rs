@@ -64,14 +64,14 @@ impl FirmwareChannel {
     }
 }
 
-/// GitHub releases download base URL
+/// Base URL of GitHub release downloads.
 const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/odyssey/releases/download";
 
 /// Upper bound for one firmware download, including connection, redirects and
 /// the complete response body. A stalled transfer must release the update claim.
 const FIRMWARE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Known device types mapped by VID:PID
+/// The manifest's device type name for each known (VID, PID).
 pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
     (0x1915, 0x5210, "legacy-atslite1"),
     (0x1915, 0x5211, "atslite1"),
@@ -99,14 +99,14 @@ pub fn bootloader_release(bcd_device: u16) -> BootloaderRelease {
     BootloaderRelease::from_bcd_device(bcd_device)
 }
 
-/// Top-level firmware manifest
+/// A firmware manifest, as published per channel.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FirmwareManifest {
     pub version: u32,
     pub devices: HashMap<String, DeviceManifest>,
 }
 
-/// Per-device firmware information
+/// The firmware entries of one device type.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceManifest {
     pub firmwares: Vec<FirmwareEntry>,
@@ -155,13 +155,13 @@ pub struct FileEntry {
 }
 
 impl FirmwareEntry {
-    /// Parse version string into [major, minor, patch]
+    /// `[major, minor, patch]`, or `None` when the version string does not parse.
     pub fn version_parts(&self) -> Option<[u16; 3]> {
         parse_version(&self.version)
     }
 }
 
-/// Check if manifest version is newer than device version
+/// Whether `manifest` is a newer version than `device`.
 pub fn version_newer(device: [u16; 3], manifest: [u16; 3]) -> bool {
     if manifest[0] != device[0] {
         return manifest[0] > device[0];
@@ -172,7 +172,7 @@ pub fn version_newer(device: [u16; 3], manifest: [u16; 3]) -> bool {
     manifest[2] > device[2]
 }
 
-/// Get device type name from VID/PID
+/// The manifest device type of a VID/PID, if it is a known device.
 pub fn device_type_from_vid_pid(vid: u16, pid: u16) -> Option<&'static str> {
     DEVICE_MAP
         .iter()
@@ -180,7 +180,7 @@ pub fn device_type_from_vid_pid(vid: u16, pid: u16) -> Option<&'static str> {
         .map(|(_, _, name)| *name)
 }
 
-/// Get device type name and VID/PID from product ID alone
+/// The VID, PID and device type name of a known product id.
 pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
     DEVICE_MAP
         .iter()
@@ -191,7 +191,7 @@ pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
 /// The highest manifest version this build understands.
 ///
 /// Additive changes keep this number: unknown fields are ignored, so an older
-/// host simply does not act on them. Bump it only for a change an older host
+/// host does not act on them. Bump it only for a change an older host
 /// must not act on, which makes those hosts stop offering updates rather than
 /// act on a manifest they would misread.
 pub const SUPPORTED_MANIFEST_VERSION: u32 = 1;
@@ -368,7 +368,7 @@ impl ReleaseSource<'_> {
     }
 }
 
-/// Build the download URL for a firmware file
+/// The download URL of `filename` in the release `source` names.
 pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename: &str) -> String {
     format!(
         "{}/{}/{}.bin",
@@ -433,9 +433,9 @@ pub async fn download_firmware(
     Ok(data)
 }
 
-/// Find a USB device by its UUID (MAC address) and return its VID/PID.
-/// Compares the UUID against USB serial number descriptors, which encode the
-/// BLE MAC address as a hex string (e.g. "AABBCCDDEEFF").
+/// The VID/PID of the connected known device whose USB serial is `uuid` (its BLE MAC).
+/// Serials encode the MAC as hex (e.g. "AABBCCDDEEFF"); case, colons and dashes are
+/// ignored.
 pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
     let uuid_hex = format!(
         "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
@@ -448,7 +448,6 @@ pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
                 && dev.product_id() == pid
                 && let Some(serial) = dev.serial_number()
             {
-                // Compare case-insensitively, ignoring colons/dashes
                 let serial_clean: String = serial.chars().filter(char::is_ascii_hexdigit).collect();
                 if serial_clean.eq_ignore_ascii_case(&uuid_hex) {
                     return Some((vid, pid));
@@ -459,7 +458,7 @@ pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
     None
 }
 
-/// Get device type and VID/PID for any connected device matching known types
+/// The first known device type with a device connected, and its VID/PID.
 pub fn find_any_known_device() -> Option<(u16, u16, &'static str)> {
     for &(vid, pid, device_type) in DEVICE_MAP {
         if find_device(vid, pid).is_ok() {
@@ -469,8 +468,8 @@ pub fn find_any_known_device() -> Option<(u16, u16, &'static str)> {
     None
 }
 
-/// Check if a specific device (by UUID) is present and in application mode (not DFU mode).
-/// Returns true if device is found and is in app mode, false otherwise.
+/// Whether the device with `uuid` is connected and running its application. `false` when
+/// it is absent, cannot be opened, or exposes the DFU-mode interface.
 pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
     let Ok(info) = find_device_by_uuid(uuid, vid, pid) else {
         return false;
@@ -479,7 +478,7 @@ pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
         return false;
     };
 
-    // Check if device has a DFU interface in DFU mode
+    // A DFU interface in DFU mode means the bootloader is running.
     if let Ok(interface_num) = find_dfu_interface(&device) {
         for config in device.configurations() {
             for interface in config.interfaces() {
@@ -491,7 +490,6 @@ pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
                         && alt.subclass() == DFU_SUBCLASS
                         && alt.protocol() == DFU_PROTOCOL_DFU_MODE
                     {
-                        // Device is in DFU mode, not application mode
                         return false;
                     }
                 }
@@ -499,11 +497,9 @@ pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
         }
     }
 
-    // Device is present and not in DFU mode = app mode
     true
 }
 
-/// DFU-related errors
 #[derive(Debug, Error)]
 pub enum DfuError {
     #[error("Device not found")]
@@ -526,7 +522,7 @@ pub const DFU_CLASS: u8 = 0xFE;
 pub const DFU_SUBCLASS: u8 = 0x01;
 pub const DFU_PROTOCOL_DFU_MODE: u8 = 0x02;
 
-/// Find a USB device by VID/PID
+/// The first USB device with this VID/PID.
 pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
     nusb::list_devices()
         .wait()
@@ -570,7 +566,7 @@ pub fn find_device_by_uuid(
     crate::migration::single_unidentifiable_device(candidates).ok_or(DfuError::DeviceNotFound)
 }
 
-/// Find the DFU interface number on a device
+/// The number of the first interface with the DFU class and subclass.
 pub fn find_dfu_interface(device: &nusb::Device) -> Result<u8, DfuError> {
     for config in device.configurations() {
         for interface in config.interfaces() {
@@ -584,8 +580,7 @@ pub fn find_dfu_interface(device: &nusb::Device) -> Result<u8, DfuError> {
     Err(DfuError::DfuInterfaceNotFound)
 }
 
-/// Find the alt setting for a given slot name (e.g., "APP_A" or "APP_B")
-/// Returns the alt setting number if found
+/// The alt setting whose string descriptor contains `slot` (e.g. "APP_A" or "APP_B").
 pub fn find_alt_for_slot(
     device: &nusb::Device,
     interface_num: u8,
@@ -598,7 +593,7 @@ pub fn find_alt_for_slot(
             }
             for alt in interface.alt_settings() {
                 if alt.class() == DFU_CLASS && alt.subclass() == DFU_SUBCLASS {
-                    // Get the string descriptor for this alt setting
+                    // The alt setting's string descriptor names the slot it writes.
                     if let Some(string_index) = alt.string_index() {
                         let lang = device
                             .get_string_descriptor_supported_languages(Duration::from_secs(3))
@@ -610,8 +605,7 @@ pub fn find_alt_for_slot(
                             .get_string_descriptor(string_index, lang, Duration::from_secs(3))
                             .wait()
                         {
-                            // Check if this alt interface matches the requested slot
-                            // The string descriptor should contain the slot name (e.g., "APP_A" or "APP_B")
+                            // The descriptor contains the slot name (e.g. "APP_A").
                             if desc.contains(slot) {
                                 return Ok(alt.alternate_setting());
                             }
@@ -624,21 +618,20 @@ pub fn find_alt_for_slot(
     Err(DfuError::AltInterfaceNotFound(slot.to_string()))
 }
 
-/// Determine which slot to flash by reading the DFU interface alt settings.
-/// The bootloader exposes the inactive bank, so we read the string descriptors
-/// to find which bank (APP_A or APP_B) is available for flashing.
-/// Returns (slot_name for DFU "APP_A"/"APP_B", firmware_file "app-a"/"app-b", alt_setting)
+/// Which slot to flash, from the DFU interface's alt settings. The bootloader only
+/// exposes the inactive bank, so the string descriptor that is present names it.
+/// Returns the DFU slot name ("APP_A"/"APP_B"), the firmware file ("app-a"/"app-b")
+/// and the alt setting.
 pub fn determine_target_slot(
     device: &nusb::Device,
     interface_num: u8,
 ) -> Result<(&'static str, &'static str, u8), DfuError> {
-    // Check which slots are available by reading alt interface string descriptors
     let app_a_result = find_alt_for_slot(device, interface_num, "APP_A");
     let app_b_result = find_alt_for_slot(device, interface_num, "APP_B");
 
     match (app_a_result, app_b_result) {
         (Ok(alt), _) => {
-            // APP_A is exposed (meaning bank B is active, we flash to A)
+            // APP_A is exposed, so bank B is active.
             tracing::info!(
                 "DFU target: APP_A (alt {}), downloading app-a firmware",
                 alt
@@ -646,7 +639,7 @@ pub fn determine_target_slot(
             Ok(("APP_A", "app-a", alt))
         }
         (_, Ok(alt)) => {
-            // APP_B is exposed (meaning bank A is active, we flash to B)
+            // APP_B is exposed, so bank A is active.
             tracing::info!(
                 "DFU target: APP_B (alt {}), downloading app-b firmware",
                 alt
@@ -654,15 +647,12 @@ pub fn determine_target_slot(
             Ok(("APP_B", "app-b", alt))
         }
         _ => {
-            // No recognized slot names
             Err(DfuError::AltInterfaceNotFound("APP_A or APP_B".to_string()))
         }
     }
 }
 
-/// Determine which slot to flash for a specific device.
-/// Opens the device, reads the DFU interface, and determines the target slot.
-/// Returns (slot_name "APP_A"/"APP_B", firmware_file "app-a"/"app-b", alt_setting)
+/// [`determine_target_slot`] for the device with `uuid` while it runs its bootloader.
 pub fn determine_target_slot_for_device(
     uuid: &[u8; 6],
     vid: u16,
@@ -888,7 +878,7 @@ pub enum UpdateStep {
 /// left in that state keeps its old net core and reports it (or nothing), and
 /// running the update again retries.
 ///
-/// When nothing needs flashing the update is just the application. An
+/// When nothing needs flashing the update is only the application. An
 /// unreported net core counts as release 0, so it is replaced whenever a release
 /// is published and never satisfies a `requires` above `0`.
 pub fn plan_update_steps(
@@ -906,7 +896,7 @@ pub fn plan_update_steps(
     ])
 }
 
-/// Open a DFU device and prepare it for flashing
+/// Open the DFU interface of the device with `uuid`, in its bootloader, at alt `alt`.
 pub fn open_dfu_device(
     uuid: &[u8; 6],
     vid: u16,
@@ -921,35 +911,31 @@ pub fn open_dfu_device(
     Ok(dfu)
 }
 
-/// Send DFU detach command to a device in runtime mode.
-/// After detach, the device will reset and re-enumerate in DFU mode.
+/// Send DFU detach to a device running its application; it resets and re-enumerates
+/// in its bootloader.
 ///
-/// Note: For devices with WILL_DETACH capability (like ATS Lite), the device
-/// resets immediately upon receiving the DETACH request, before the USB control
-/// transfer completes. This causes an endpoint stall from the host's perspective,
-/// which is expected behavior per the DFU 1.1 spec.
+/// A device with the WILL_DETACH capability (like ATS Lite) resets as soon as it gets
+/// the DETACH request, before the control transfer completes. The host sees an
+/// endpoint stall, which DFU 1.1 allows and which counts as success here.
 pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), DfuError> {
     let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
 
-    // Find the DFU runtime interface
     let interface_num = find_dfu_interface(&device)?;
     let interface = device.claim_interface(interface_num).wait()?;
 
-    // Open with alt 0 (doesn't matter for detach)
+    // The alt setting does not matter for detach.
     let dfu = DfuNusb::open(device, interface, 0)?;
     let dfu_async = dfu.into_async_dfu();
 
-    // Send detach - for WILL_DETACH devices, the device resets immediately
-    // and the control transfer will fail with a stall. This is expected behavior.
+    // A WILL_DETACH device resets at once and the control transfer stalls.
     match dfu_async.detach().await {
         Ok(()) => {
-            // Device didn't reset immediately, send USB reset to trigger DFU mode
+            // The device did not reset by itself; a USB reset starts the bootloader.
             let _ = dfu_async.usb_reset().await;
         }
         Err(e) => {
-            // Check if this is an endpoint stall - expected for WILL_DETACH devices
-            // The device has already reset, so we don't need to do anything else
+            // A stall means a WILL_DETACH device has already reset.
             let is_stall = matches!(
                 &e,
                 dfu_nusb::Error::Transfer(nusb::transfer::TransferError::Stall)
@@ -966,17 +952,9 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
     Ok(())
 }
 
-/// Flash firmware to a device already in DFU mode with progress logging.
-///
-/// # Arguments
-/// * `vid` - Vendor ID
-/// * `pid` - Product ID
-/// * `slot` - Target slot ("APP_A" or "APP_B")
-/// * `alt` - Alt setting number for the target slot
-/// * `firmware` - Firmware binary data
-///
-/// # Returns
-/// Ok(()) on success
+/// Flash `firmware` into `slot` ("APP_A" or "APP_B", written through alt setting `alt`)
+/// of the device with `uuid`, which must already be in its bootloader. Progress is
+/// logged every 10%.
 pub async fn flash_firmware(
     uuid: &[u8; 6],
     vid: u16,
@@ -985,11 +963,10 @@ pub async fn flash_firmware(
     alt: u8,
     firmware: &[u8],
 ) -> Result<(), DfuError> {
-    // Use the progress version with a no-op callback
     flash_firmware_with_progress(uuid, vid, pid, slot, alt, firmware, |_, _| {}).await
 }
 
-/// A wrapper reader that logs progress and optionally calls a callback
+/// Reader that logs download progress every 10% and reports each read to `callback`.
 struct ProgressReader<R, F> {
     inner: R,
     total_size: usize,
@@ -1026,11 +1003,9 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
                     .checked_div(self.total_size)
                     .unwrap_or(100);
 
-                // Copy values for use in logging and callback
                 let bytes_read = self.bytes_read;
                 let total_size = self.total_size;
 
-                // Log every 10%
                 if percent >= self.last_logged_percent + 10 || percent == 100 {
                     tracing::info!(
                         "DFU progress: {}/{} bytes ({}%)",
@@ -1041,7 +1016,6 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
                     self.last_logged_percent = (percent / 10) * 10;
                 }
 
-                // Call progress callback if provided
                 if let Some(ref mut cb) = self.callback {
                     cb(bytes_read, total_size);
                 }
@@ -1053,18 +1027,8 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
     }
 }
 
-/// Flash firmware with progress callback.
-///
-/// # Arguments
-/// * `vid` - Vendor ID
-/// * `pid` - Product ID
-/// * `slot` - Target slot ("APP_A" or "APP_B")
-/// * `alt` - Alt setting number for the target slot
-/// * `firmware` - Firmware binary data
-/// * `progress_callback` - Called with (bytes_written, total_bytes) during flash
-///
-/// # Returns
-/// Ok(()) on success
+/// [`flash_firmware`], also calling `progress_callback` with (bytes written, total
+/// bytes) during the download.
 pub async fn flash_firmware_with_progress<F>(
     uuid: &[u8; 6],
     vid: u16,
@@ -1097,9 +1061,8 @@ where
         transfer_size
     );
 
-    // Download the firmware with progress callback. The wrapper also records how
-    // much the library has read, which decides below whether an error at the end
-    // is the handshake or a real failure.
+    // The wrapper also records how much the library has read, which decides below
+    // whether an error at the end is the handshake or a real failure.
     let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut progress_callback = progress_callback;
     let progress_callback = {
@@ -1127,9 +1090,8 @@ where
 
     tracing::info!("Firmware flash complete");
 
-    // Reset to boot into new firmware
-    // The device may reset automatically after the download completes,
-    // so errors here are expected and can be ignored.
+    // Reboot into the new firmware. The device may already have reset itself after the
+    // download, so errors here are expected.
     if let Err(e) = dfu_async.detach().await {
         tracing::debug!(
             "Post-flash detach error (expected if device auto-reset): {}",
@@ -1146,15 +1108,12 @@ where
     Ok(())
 }
 
-/// Wait for a device to appear in DFU mode after detach.
+/// Poll every 100 ms until the device with `uuid` shows its DFU-mode interface (protocol
+/// 0x02, not the application's runtime 0x01).
 ///
-/// # Arguments
-/// * `vid` - Vendor ID
-/// * `pid` - Product ID
-/// * `timeout` - Maximum time to wait
+/// # Errors
 ///
-/// # Returns
-/// Ok(()) when device is found, Err on timeout
+/// [`DfuError::DeviceNotFound`] once `timeout` has passed.
 pub async fn wait_for_dfu_device(
     uuid: &[u8; 6],
     vid: u16,
@@ -1176,11 +1135,9 @@ pub async fn wait_for_dfu_device(
 
         if let Ok(info) = find_bootloader_by_uuid(uuid, vid, pid) {
             tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
-            // Check if device is in DFU mode
             if let Ok(device) = info.open().wait()
                 && let Ok(interface_num) = find_dfu_interface(&device)
             {
-                // Check if it's in DFU mode (protocol 0x02) not runtime (0x01)
                 for config in device.configurations() {
                     for interface in config.interfaces() {
                         if interface.interface_number() != interface_num {
@@ -1211,21 +1168,9 @@ pub async fn wait_for_dfu_device(
     }
 }
 
-/// High-level firmware update function.
-///
-/// This performs the full update sequence:
-/// 1. Send DFU detach to device in runtime mode
-/// 2. Wait for device to re-enumerate in DFU mode
-/// 3. Flash the firmware to the appropriate slot
-/// 4. Device resets and boots new firmware
-///
-/// # Arguments
-/// * `vid` - Vendor ID
-/// * `pid` - Product ID
-/// * `firmware` - Firmware binary data
-///
-/// Note: This function automatically determines which slot to flash by reading
-/// the DFU interface alt settings after the device enters DFU mode.
+/// Update a device that is running its application: DFU detach, wait up to 10 s for its
+/// bootloader to enumerate, flash the slot the bootloader exposes, after which the device
+/// resets into the new firmware.
 pub async fn update_firmware(
     uuid: &[u8; 6],
     vid: u16,
@@ -1234,11 +1179,9 @@ pub async fn update_firmware(
 ) -> Result<(), DfuError> {
     tracing::info!("Starting firmware update for {:04x}:{:04x}", vid, pid);
 
-    // Step 1: Send DFU detach
     tracing::info!("Sending DFU detach...");
     send_dfu_detach(uuid, vid, pid).await?;
 
-    // Step 2: Wait for device to re-enumerate in DFU mode
     tracing::info!("Waiting for device to enter DFU mode...");
     wait_for_dfu_device(uuid, vid, pid, Duration::from_secs(10)).await?;
 
@@ -1249,11 +1192,9 @@ pub async fn update_firmware(
         Err(e) => tracing::warn!("Could not read the bootloader release: {e}"),
     }
 
-    // Step 3: Determine target slot by reading alt interface strings
     let (slot_name, _slot_file, alt) = determine_target_slot_for_device(uuid, vid, pid)?;
     tracing::info!("Target slot: {} (alt {})", slot_name, alt);
 
-    // Step 4: Flash firmware
     tracing::info!("Flashing firmware...");
     flash_firmware(uuid, vid, pid, slot_name, alt, firmware).await?;
 

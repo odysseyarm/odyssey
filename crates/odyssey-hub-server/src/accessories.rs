@@ -275,7 +275,6 @@ impl AccessoryManager {
             return false;
         }
 
-        // pick characteristic by accessory type
         let shot_characteristic = match ty {
             AccessoryType::DryFireMag => NUS_TX_UUID,
             AccessoryType::MantisX => MANTIS_SHOT_CHAR_UUID,

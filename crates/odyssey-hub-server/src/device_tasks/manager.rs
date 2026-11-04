@@ -29,11 +29,8 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 /// Pause before retrying when the USB bus cannot be enumerated at all.
 const SCAN_FAILURE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-/// Top-level entry for the device manager tasks.
-///
-/// This function runs the USB device manager which is responsible for discovering
-/// USB devices, creating per-device tasks, and managing hub/dongle multiplexing.
-/// It never returns.
+/// Runs the USB device manager: discovers USB devices, starts a handler task per unit and
+/// a hub manager per dongle. Never returns.
 pub(crate) async fn device_tasks(
     message_channel: mpsc::Sender<Message>,
     screen_calibrations: ScreenCalibrations,
@@ -132,7 +129,7 @@ impl UsbDeviceManager {
             if dev_info.vendor_id() != ODYSSEY_USB_VENDOR_ID {
                 continue;
             }
-            // Skip non-ATS devices
+            // Not an ATS product.
             let Some(product_id) = ProductId::from_u16(dev_info.product_id()) else {
                 continue;
             };
@@ -176,8 +173,8 @@ impl UsbDeviceManager {
         }
     }
 
-    /// Clean up finished device handlers before checking for new connections.
-    /// This ensures stale entries don't block reconnecting devices (e.g. after DFU).
+    /// Forget handlers whose task has finished, so a stale entry does not block a unit that
+    /// reconnects (e.g. after DFU). Runs before each check for new connections.
     async fn forget_finished_handlers(&self) {
         let mut handles = self.device_handles.lock().await;
         let finished: Vec<DeviceAddress> = handles
@@ -210,7 +207,7 @@ impl UsbDeviceManager {
                 trace!("Hub already being managed, skipping: {:?}", dev_info.id());
                 return;
             }
-            // Task finished, remove from list so we can reconnect
+            // The task finished; dropping it lets the dongle get a fresh manager.
             info!(
                 "Hub manager task finished for {:?}, removing from list to allow reconnect",
                 dev_info.id()
@@ -228,7 +225,6 @@ impl UsbDeviceManager {
         };
         info!("Connected USB hub device: {:?}", dev_info);
 
-        // Subscribe to device list changes
         if let Err(e) = hub.subscribe_device_list().await {
             tracing::error!("Failed to subscribe to device list: {}", e);
             return;

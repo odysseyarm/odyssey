@@ -48,7 +48,7 @@ impl HubManager {
             .retain(|_, device| !device.commands.is_closed());
         self.failed_adds
             .retain(|address, _| new_set.contains(address));
-        // Compare against managed addresses (BLE addresses) not device_handles (UUIDs)
+        // Managed devices are keyed by BLE address; device_handles is keyed by UUID.
         let existing_set: HashSet<DeviceAddress> = self.managed_devices.keys().copied().collect();
 
         let added: Vec<DeviceAddress> = new_set.difference(&existing_set).copied().collect();
@@ -63,7 +63,7 @@ impl HubManager {
                 .collect::<Vec<_>>()
         );
 
-        // Refresh bond names before processing new devices.
+        // Bond names are refreshed first so new devices pick up the dongle's names.
         if !added.is_empty()
             && self.dongle.supports_list_bonds()
             && let Ok(bonds) = self.hub.list_bonds().await
@@ -80,7 +80,7 @@ impl HubManager {
         }
         self.release_departed_devices(&new_set).await;
 
-        // Notify dongle list subscribers of connected device changes
+        // Dongle list subscribers see the changed set of connected devices.
         let bonded_devices = self.refresh_bonded_devices().await;
         self.context
             .send_message(Message::DongleUpdate(
@@ -104,9 +104,8 @@ impl HubManager {
         let device = Device {
             uuid,
             transport: Transport::UsbMux,
-            // EVENTS capability and events_connected will be
-            // set to true by AddEventsDevice handler once
-            // streams are actually established.
+            // AddEventsDevice sets EVENTS and events_connected once the streams are
+            // established.
             capabilities: DeviceCapabilities::empty(),
             firmware_version: identity.firmware_version,
             events_transport: EventsTransport::Bluetooth,
@@ -116,10 +115,9 @@ impl HubManager {
             netcore_release: 0,
         };
 
-        // Check if device is already connected via USB direct before creating handler
+        // A unit already connected over USB gets the BLE events merged into its handler.
         let commands = match self.existing_handler_commands(uuid).await {
             Some(commands) => {
-                // Device already exists, send AddEventsDevice to merge BLE events
                 tracing::info!(
                     "Device {uuid:02x?} found in device_handles, merging by adding BLE mux for events"
                 );
@@ -151,7 +149,7 @@ impl HubManager {
             .insert(address, ManagedDevice { uuid, commands });
     }
 
-    /// Connect via VmDevice to properly handle streaming. A failure is counted so the
+    /// Open a VmDevice connection to the unit. A failure is counted so the
     /// retry tick gives up after [`MAX_HUB_CONNECT_ATTEMPTS`].
     async fn connect_to_device(&mut self, address: DeviceAddress) -> Option<VmDevice> {
         match VmDevice::connect_via_mux(self.hub.clone(), address).await {
@@ -175,7 +173,6 @@ impl HubManager {
         vm_device: &VmDevice,
         address: DeviceAddress,
     ) -> BleDeviceIdentity {
-        // Read actual UUID from device
         let uuid = match vm_device.read_prop(PropKind::Uuid).await {
             Ok(Props::Uuid(uuid_bytes)) => uuid_bytes,
             Ok(other) => {
@@ -189,7 +186,7 @@ impl HubManager {
         };
         tracing::info!("Device {address:02x?} has UUID {uuid:02x?}");
 
-        // Firmware and events protocol version via packet interface (works over BLE)
+        // The packet interface works over BLE.
         let (firmware_version, events_protocol_version) = match vm_device
             .request(PacketData::ReadVersion())
             .await
@@ -272,9 +269,8 @@ impl HubManager {
             handles.len()
         );
 
-        // Evict stale entries whose handler task has already finished.
-        // This can happen after SetTransportMode causes the handler to
-        // break immediately, leaving a dead entry in device_handles.
+        // SetTransportMode ends its handler at once, which can leave a finished
+        // entry in device_handles.
         if handles
             .get(&uuid)
             .is_some_and(|device| device.task.is_finished())
@@ -319,9 +315,10 @@ impl HubManager {
         }
         let (commands, control_rx) = mpsc::channel(HANDLER_CHANNEL_CAPACITY);
 
-        // Start with no events device; AddEventsDevice is queued immediately below so it
-        // goes through the same handler path as USB-first+BLE (which works). This avoids a
-        // race where startup reads config before streaming, staling the vm_device.
+        // Start with no events device and queue AddEventsDevice right after, so BLE-only
+        // units take the same handler path as a USB unit that gains BLE. Starting with the
+        // events device races: startup reads config before streaming and leaves the
+        // vm_device stale.
         let task = DeviceHandler::spawn(DeviceHandlerInit {
             connections: DeviceConnections {
                 control_device: None,
@@ -358,8 +355,8 @@ impl HubManager {
             .await;
         drop(handles);
 
-        // Queue AddEventsDevice so streams are started via the handler
-        // (start_sensor_streams before read_all_config, consistent with USB-first path).
+        // The handler starts the streams from AddEventsDevice (start_sensor_streams before
+        // read_all_config), as on the USB-first path.
         let _ = commands
             .send(DeviceTaskMessage::AddEventsDevice {
                 device: vm_device,
@@ -372,7 +369,7 @@ impl HubManager {
         commands
     }
 
-    /// Release the units that were managed by THIS hub and are gone from the snapshot.
+    /// Release the units this hub managed that are gone from the snapshot.
     async fn release_departed_devices(&mut self, still_connected: &HashSet<DeviceAddress>) {
         let departed: Vec<DeviceAddress> = self
             .managed_devices

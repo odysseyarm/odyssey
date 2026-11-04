@@ -51,8 +51,7 @@ impl DeviceHandler {
         self.stream_timers.resume_armed = false;
         self.sensors = SensorStreams::start(&events_device, uuid, self.protocol_version).await;
 
-        // This is critical when a device starts in BLE mode (no config)
-        // and later gets BLE mux events added.
+        // A unit that started in BLE mode has no config yet; this is where it gets one.
         info!("Reading device config from BLE mux device for {uuid:02x?}");
         match tokio::time::timeout(SLOW_CALL_TIMEOUT, events_device.read_all_config()).await {
             Ok(Ok(settings)) => {
@@ -64,7 +63,6 @@ impl DeviceHandler {
             Err(_) => warn!("read_all_config timed out for BLE mux {uuid:02x?}"),
         }
 
-        // BLE mux streams are now active.
         self.device.events_transport = EventsTransport::Bluetooth;
         self.device.capabilities.insert(DeviceCapabilities::EVENTS);
         self.device.events_connected = true;
@@ -97,8 +95,8 @@ impl DeviceHandler {
         if let Some(mode) = read_control_transport_mode(&control_device, uuid).await {
             self.apply_transport_mode(mode);
             if mode == TransportMode::Usb {
-                // A reboot/DFU may have replaced the old wired endpoint, or this
-                // handler may have started over BLE. Use the newly probed USB link.
+                // A reboot or DFU may have replaced the old wired endpoint, or this
+                // handler may have started over BLE; the USB link probed last is current.
                 self.sensors.stop();
                 self.protocol_version = events_protocol_version;
                 self.connections.events_device = Some(control_device.clone());
@@ -114,7 +112,7 @@ impl DeviceHandler {
         } else {
             self.device.capabilities.remove(DeviceCapabilities::DFU);
         }
-        // USB control is now primary.
+        // With USB control attached, USB is the unit's primary transport.
         self.device.transport = Transport::Usb;
 
         self.send_device_update().await;
@@ -126,8 +124,8 @@ impl DeviceHandler {
         );
     }
 
-    /// Always refresh firmware version from USB control when it is (re)attached.
-    /// This is critical after DFU: device handler may still hold old version.
+    /// Re-read the firmware version over USB control whenever it is (re)attached: after
+    /// DFU the handler still holds the version from before the update.
     ///
     /// `protocol_version` is deliberately left alone: it gates events-protocol features (like
     /// the battery stream) and was set from the events protocol's ReadVersionResponse at spawn
@@ -165,7 +163,7 @@ impl DeviceHandler {
             EventsTransport::Bluetooth
         };
         if is_usb {
-            // USB transport mode: events come from USB, BLE not needed.
+            // USB transport mode: events come over USB, BLE is not needed.
             self.device.events_connected = true;
             self.device.capabilities.insert(DeviceCapabilities::EVENTS);
         } else if self.connections.events_device.is_none() {
@@ -202,17 +200,16 @@ impl DeviceHandler {
 
         self.connections.control_device = None;
         self.device.capabilities.remove(DeviceCapabilities::CONTROL);
-        // DFU interface is only accessible via USB; clear it on USB disconnect.
+        // The DFU interface is only reachable over USB.
         self.device.capabilities.remove(DeviceCapabilities::DFU);
 
-        // A device with an active BLE events connection has genuinely independent
-        // events that survive USB disconnect. A purely wired device's events are
-        // co-located with the control connection that just disappeared, so exit.
+        // Events over an active BLE connection survive the cable going away. A purely
+        // wired unit's events went with the control connection, so the handler ends.
         let has_independent_ble_events = self.connections.events_device.is_some()
             && self.device.events_transport == EventsTransport::Bluetooth
             && self.device.events_connected;
         if !has_independent_ble_events {
-            // Drop any stale wired events device and exit so the device disappears from the UI.
+            // The wired events device is stale; ending makes the device leave the UI.
             self.connections.events_device = None;
             self.sensors.stop();
             info!("Device {uuid:02x?} has no independent events after USB disconnect, exiting");
@@ -229,8 +226,8 @@ impl DeviceHandler {
         if let Some(events) = &self.connections.events_device {
             spawn_packet_netcore_probe(&self.self_tx, events, self.protocol_version);
         }
-        // No longer a direct-USB handler — USB control is gone. Remove from
-        // the set so the next USB re-plug sends AddControlDevice correctly.
+        // USB control is gone, so this is not a direct-USB handler any more; the next
+        // USB re-plug must send AddControlDevice.
         self.context
             .direct_usb_handler_uuids
             .lock()
@@ -274,7 +271,7 @@ impl DeviceHandler {
         }
 
         info!("Device {uuid:02x?} has USB control, continuing without events");
-        // No BLE events any more, so the unit is no longer reached through the mux.
+        // Without BLE events the unit is not reached through the mux.
         if self.device.transport == Transport::UsbMux {
             self.device.transport = Transport::Usb;
         }
@@ -297,8 +294,8 @@ impl DeviceHandler {
     }
 }
 
-/// Re-read the transport mode from a newly attached control device so
-/// events_transport / events_connected reflect the current firmware state.
+/// Re-read the transport mode from a freshly attached control device so
+/// events_transport / events_connected match the firmware's current state.
 async fn read_control_transport_mode(
     control_device: &VmDevice,
     uuid: [u8; 6],

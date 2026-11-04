@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(scale_of(&target.load(), 0), Some(1.0));
         assert_eq!(scale_of(&target.load(), 1), Some(5.0));
 
-        // Valid JSON with a singular homography is just as unusable as a partial file.
+        // Valid JSON with a singular homography is as unusable as a partial file.
         write_raw(&dir.0, 0, &serde_json::to_string(&cal(0.0)).unwrap());
         let reload = settle(&mut watcher, &target).await;
         assert_eq!(reload.kept_previous, vec![0]);

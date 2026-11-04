@@ -72,8 +72,8 @@ impl Client {
             "/tmp/odyhub.sock".to_fs_name::<GenericFilePath>()?
         };
 
-        // Await this here since we can't do a whole lot without a connection.
-        // URI is ignored
+        // Connect eagerly rather than lazily: no RPC works without the socket. The
+        // connector dials the local socket and ignores this URI.
         let channel = Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(service_fn(move |_: Uri| {
                 let name = name.clone();
@@ -453,8 +453,6 @@ impl Client {
             .await?;
         Ok(())
     }
-
-    // -------------------- Dongle methods --------------------
 
     pub async fn subscribe_dongle_list(
         &mut self,

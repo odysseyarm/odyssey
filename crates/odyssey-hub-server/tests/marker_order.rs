@@ -6,8 +6,8 @@
 //! the first three as the seed of a pose solve and finds the matching points in the controller's
 //! camera by testing every triple. These tests build a calibration, project the markers through
 //! a camera that faces the screen, and run the tracker's own
-//! `identify_markers_from_screen_calibration`, so the order is one the tracker accepts and not one
-//! we assumed.
+//! `identify_markers_from_screen_calibration`, so the order is one the tracker accepts, not
+//! an assumption.
 
 use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, UnitVector3, Vector3};
 use odyssey_autocalib::placement::{PlacementError, tracker_order};

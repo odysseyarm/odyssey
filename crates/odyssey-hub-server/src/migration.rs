@@ -1,9 +1,9 @@
 //! Accommodations for devices built before the current bootloader.
 //!
 //! Everything here exists only to get the devices already in the field onto a
-//! bootloader that identifies itself. Once every device has taken an update —
-//! and the fleet is small enough to know that for certain — delete this module
-//! and the call sites will fail to compile, which is the point.
+//! bootloader that identifies itself. Delete this module once every device has taken
+//! an update and the fleet is small enough to know that for certain; the call sites
+//! will then fail to compile, which is the point.
 //!
 //! Deliberately not here: comparing the installed bootloader against a known
 //! hash. The bootloaders advertise `CAN_DOWNLOAD` without `CAN_UPLOAD`, so the
@@ -55,8 +55,8 @@ pub(crate) fn single_unidentifiable_device(candidates: Vec<DeviceInfo>) -> Optio
 /// A stand-in uuid for a bootloader that cannot identify itself and was never
 /// seen running an application.
 ///
-/// A device stuck in the bootloader — because an update failed before this
-/// fleet was migrated — has no other way into the device list, and without an
+/// A device stuck in the bootloader, because an update failed before this fleet was
+/// migrated, has no other way into the device list, and without an
 /// entry there is no button to flash it. The value is derived from the product
 /// id so it is stable across scans, and the leading `ff` bytes keep it clear of
 /// a real uuid, which comes from FICR.
@@ -75,10 +75,9 @@ pub(crate) fn recovery_uuid(vid: u16, pid: u16) -> Option<[u8; 6]> {
 
 /// Find a bootloader that enumerates under the application's product id.
 ///
-/// Bootloaders now take an id of their own, which is what makes the two modes
-/// distinguishable from the descriptor alone. Anything flashed before that
-/// still answers on the application's id, so a device being recovered has to be
-/// looked for there too.
+/// Current bootloaders take an id of their own, which makes the two modes
+/// distinguishable from the descriptor alone. Older bootloaders still answer on the
+/// application's id, so a device being recovered has to be looked for there too.
 pub(crate) fn find_bootloader_sharing_app_pid(
     uuid: &[u8; 6],
     vid: u16,

@@ -127,8 +127,8 @@ impl DeviceHandler {
             let _ = reply.send(Err(format!("unknown config kind: {kind}")));
             return;
         };
-        // read_config uses packet protocol — works over BLE and USB alike.
-        // Only read_all_config (bulk camera data) is gated on USB transport mode.
+        // read_config is a packet-protocol call and works over BLE and USB alike; only
+        // read_all_config (bulk camera data) needs USB transport mode.
         if let Some(device) = self.connections.events_device.clone() {
             self.pause_sensor_streams(&device, "ReadConfig").await;
             let result =
@@ -160,7 +160,7 @@ impl DeviceHandler {
                 return;
             }
         };
-        // write_config uses packet protocol — works over BLE and USB alike.
+        // write_config is a packet-protocol call and works over BLE and USB alike.
         if let Some(device) = self.connections.events_device.clone() {
             self.pause_sensor_streams(&device, "WriteConfig").await;
             let result =
@@ -181,7 +181,7 @@ impl DeviceHandler {
     }
 
     pub(super) async fn on_flash_settings(&mut self, reply: Reply<()>) {
-        // flash_settings uses packet protocol — works over BLE and USB alike.
+        // flash_settings is a packet-protocol call and works over BLE and USB alike.
         let result = if let Some(device) = self.connections.events_device.as_ref() {
             call_with_timeout(CALL_TIMEOUT, "flash_settings", device.flash_settings()).await
         } else if let Some(device) = self.connections.control_device.as_ref() {
@@ -291,17 +291,14 @@ impl DeviceHandler {
         .map(|mode| matches!(mode, TransportMode::Usb));
         info!("SetTransportMode result for {uuid:02x?}: {result:?}");
         // The firmware's SetTransportMode handler persists the mode itself
-        // via persist_transport_mode, so no separate FlashSettings is needed.
-        // Sending FlashSettings would corrupt legacy board settings because
-        // atslite-common's GeneralSettings uses a different CBOR field layout
-        // than common's GeneralSettings (transport_mode at field #0 vs #7).
-        // Reply to the RPC caller before rebooting.
+        // (persist_transport_mode), so no FlashSettings follows. Sending one would
+        // corrupt legacy board settings: atslite-common's GeneralSettings has a
+        // different CBOR field layout from common's (transport_mode is field #0 vs #7).
+        // The caller gets its reply before the reboot.
         let _ = reply.send(result);
-        // Reboot the device so it comes back clean in the new mode.
-        // We don't wait for the full ack timeout — just fire and break
-        // immediately so the device disappears from the UI before the
-        // reboot completes. This prevents stale RPC calls (e.g.
-        // ReadRegister) from hitting a dead device while it is resetting.
+        // The reboot brings the unit back in the new mode. Not waiting for the full ack
+        // timeout makes the device leave the UI before the reboot completes, so stale
+        // RPCs (e.g. ReadRegister) do not hit it while it resets.
         info!("Rebooting device {uuid:02x?} to apply transport mode change");
         let _ = tokio::time::timeout(REBOOT_REQUEST_TIMEOUT, device.reboot()).await;
         ControlFlow::Break(())

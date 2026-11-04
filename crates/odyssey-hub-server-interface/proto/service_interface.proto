@@ -3,21 +3,17 @@ syntax = "proto3";
 package odyssey.service_interface;
 
 service Service {
-  // Devices
   rpc GetDeviceList(DeviceListRequest) returns (DeviceListReply) {}
   rpc SubscribeDeviceList(SubscribeDeviceListRequest) returns (stream DeviceListReply) {}
 
-  // Accessories
   rpc GetAccessoryMap(AccessoryMapRequest) returns (AccessoryMapReply) {}
   rpc SubscribeAccessoryMap(SubscribeAccessoryMapRequest) returns (stream AccessoryMapReply) {}
   rpc UpdateAccessoryInfoMap(AccessoryInfoMap) returns (EmptyReply) {}
 
-  // Screen info
   rpc GetScreenInfoById(ScreenInfoByIdRequest) returns (ScreenInfoReply) {}
 
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event) {}
 
-  // Vendor & zero
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
   rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
   rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
@@ -29,31 +25,26 @@ service Service {
   rpc SaveZero(Device) returns (EmptyReply) {}
   rpc Zero(ZeroRequest) returns (EmptyReply) {}
 
-  // Shot delay (get + set + save + reset) + subscribe
   rpc ResetShotDelay(Device) returns (ResetShotDelayReply) {}
   rpc GetShotDelay(Device) returns (GetShotDelayReply) {}
   rpc SetShotDelay(SetShotDelayRequest) returns (EmptyReply) {}
   rpc SaveShotDelay(Device) returns (EmptyReply) {}
   rpc SubscribeShotDelay(SubscribeShotDelayRequest) returns (stream GetShotDelayReply) {}
 
-  // Pairing & bonding (ATS devices)
+  // Pairing and bonding of ATS devices.
   rpc StartPairing(StartPairingRequest) returns (EmptyReply) {}
   rpc CancelPairing(CancelPairingRequest) returns (EmptyReply) {}
   rpc ClearBond(ClearBondRequest) returns (EmptyReply) {}
   rpc SetTransportMode(SetTransportModeRequest) returns (TransportModeReply) {}
 
-  // Dongles
   rpc SubscribeDongleList(SubscribeDongleListRequest) returns (stream DongleListReply) {}
   rpc StartDonglePairing(StartDonglePairingRequest) returns (EmptyReply) {}
   rpc CancelDonglePairing(CancelDonglePairingRequest) returns (EmptyReply) {}
   rpc ClearDongleBonds(ClearDongleBondsRequest) returns (EmptyReply) {}
   rpc SetDeviceName(SetDeviceNameRequest) returns (EmptyReply) {}
 
-  // Window control
   rpc BringToFront(EmptyRequest) returns (EmptyReply) {}
 }
-
-// --- Basic math types ---
 
 message Matrix3x3 {
   float m11 = 1;
@@ -87,8 +78,6 @@ message Pose {
   Matrix3x1 translation = 2;
 }
 
-// --- Device ---
-
 enum Transport {
   USB = 0;
   USBMux = 1;
@@ -96,19 +85,19 @@ enum Transport {
 }
 
 enum EventsTransport {
-  WIRED = 0; // Events transmitted via wired USB
-  BLUETOOTH = 1; // Events transmitted via BLE (wireless)
+  WIRED = 0; // Events arrive over USB.
+  BLUETOOTH = 1; // Events arrive over BLE.
 }
 
 message Device {
   bytes uuid = 1;
   Transport transport = 2;
-  FirmwareVersion firmware_version = 3; // Optional - check if present before using
+  FirmwareVersion firmware_version = 3; // May be unset; check presence before use.
   uint32 capabilities = 4; // Bitfield: 0x01 = CONTROL, 0x02 = EVENTS
   EventsTransport events_transport = 5;
-  bool events_connected = 6; // Whether events are currently being received
+  bool events_connected = 6; // True while events are arriving.
   uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
-  string name = 8; // Human-readable device name (BLE bond name, USB product string, or user-set)
+  string name = 8; // BLE bond name, USB product string, or a name the user set.
   uint32 netcore_release = 9; // nRF5340 net core release counter, 0=unknown or not reported
 }
 
@@ -117,8 +106,6 @@ message FirmwareVersion {
   uint32 minor = 2;
   uint32 patch = 3;
 }
-
-// --- Events ---
 
 message DeviceEvent {
   Device device = 1;
@@ -154,13 +141,13 @@ message DeviceEvent {
   }
 
   message CapabilitiesChangedEvent {
-    // Empty message - device capabilities are in the Device message
+    // The changed capabilities are in `DeviceEvent.device`.
   }
 
   message PairingResultEvent {
     bool success = 1;
     bytes paired_address = 2; // 6-byte BLE address on success
-    string error = 3; // error/status message
+    string error = 3; // Error or status text.
     string paired_name = 4; // BLE device name on success
   }
 
@@ -186,7 +173,7 @@ message DonglePairingResultEvent {
   string dongle_id = 1;
   bool success = 2;
   bytes paired_address = 3; // 6-byte BLE address on success
-  string error = 4; // error/status message
+  string error = 4; // Error or status text.
   string paired_name = 5; // BLE device name on success
 }
 
@@ -197,15 +184,11 @@ message Event {
   }
 }
 
-// --- Device list ---
-
 message DeviceListRequest {}
 message SubscribeDeviceListRequest {}
 message DeviceListReply {
   repeated Device device_list = 1;
 }
-
-// --- Accessories ---
 
 enum AccessoryType {
   DRY_FIRE_MAG = 0;
@@ -218,7 +201,7 @@ enum AccessoryFeature {
 message AccessoryInfo {
   string name = 1;
   AccessoryType ty = 2;
-  uint64 assignment = 3; // 0 means None
+  uint64 assignment = 3; // 0 = unassigned.
   repeated AccessoryFeature features = 4;
 }
 
@@ -236,8 +219,6 @@ message AccessoryInfoMap {
   map<uint64, AccessoryInfo> accessory_info_map = 1;
 }
 
-// --- Shot delay ---
-
 message SubscribeShotDelayRequest {
   Device device = 1;
 }
@@ -251,8 +232,6 @@ message SetShotDelayRequest {
   Device device = 1;
   uint32 delay_ms = 2;
 }
-
-// --- Screen info ---
 
 message ScreenBounds {
   Vector2 tl = 1;
@@ -269,8 +248,6 @@ message ScreenInfoReply {
   ScreenBounds bounds = 2;
 }
 
-// --- Misc ---
-
 message WriteVendorRequest {
   Device device = 1;
   uint32 tag = 2;
@@ -283,8 +260,6 @@ message ZeroRequest {
   Vector2 target = 3;
   DeviceEvent.TrackingEvent tracking_event = 4;
 }
-
-// --- Register / config ---
 
 message ReadRegisterRequest {
   Device device = 1;
@@ -318,8 +293,6 @@ message FlashSettingsRequest {
   Device device = 1;
 }
 
-// --- Pairing ---
-
 message StartPairingRequest {
   Device device = 1;
   uint32 timeout_ms = 2;
@@ -335,16 +308,14 @@ message SetTransportModeRequest {
   bool usb_mode = 2; // true = USB, false = BLE
 }
 message TransportModeReply {
-  bool usb_mode = 1; // confirmed mode from device
+  bool usb_mode = 1; // Mode the device confirmed.
 }
-
-// --- Dongles ---
 
 message Dongle {
   string id = 1; // USB serial number or unique identifier
   FirmwareVersion firmware_version = 2;
   repeated bytes connected_devices = 3; // BLE addresses of connected devices
-  FirmwareVersion protocol_version = 4; // mux endpoint protocol version (legacy field name)
+  FirmwareVersion protocol_version = 4; // Mux endpoint protocol version, despite the generic name.
   repeated bytes bonded_devices = 5; // BLE addresses of bonded devices
   FirmwareVersion control_protocol_version = 6; // dongle control endpoint protocol version
 }
