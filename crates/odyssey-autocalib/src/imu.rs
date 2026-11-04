@@ -55,7 +55,16 @@ impl Madgwick {
     /// Starts from the orientation that points "up" at the measured specific
     /// force, so the filter does not spend its first second converging.
     pub fn from_accelerometer(gain: f64, accel: &Vector3<f64>) -> Self {
-        let q = UnitQuaternion::rotation_between(accel, &Vector3::z()).unwrap_or_default();
+        let q = UnitQuaternion::rotation_between(accel, &Vector3::z()).unwrap_or_else(|| {
+            // Opposite vectors have infinitely many valid half-turn axes, so
+            // nalgebra returns None. Identity would leave an upside-down
+            // camera permanently at the gradient's antipodal stationary point.
+            if accel.z < 0.0 {
+                UnitQuaternion::from_axis_angle(&Vector3::x_axis(), std::f64::consts::PI)
+            } else {
+                UnitQuaternion::identity()
+            }
+        });
         Self {
             q: Vector4::new(q.w, q.i, q.j, q.k),
             gain,
@@ -71,7 +80,12 @@ impl Madgwick {
     /// Integrates `gyro` (rad/s) over `dt` seconds and corrects toward `accel`.
     /// Real inter-sample intervals matter: a fixed step mis-scales the gyro
     /// whenever the sample rate differs from the assumed one.
+    /// Non-finite readings, non-positive intervals and overflowing updates are
+    /// ignored rather than poisoning the orientation for the rest of a session.
     pub fn update(&mut self, gyro: &Vector3<f64>, accel: &Vector3<f64>, dt: f64) {
+        if !dt.is_finite() || dt <= 0.0 || !gyro.iter().chain(accel.iter()).all(|v| v.is_finite()) {
+            return;
+        }
         let mut q_dot = gyro_rate(&self.q, gyro);
         if let Some(gradient) = gravity_gradient(&self.q, accel) {
             let gradient_norm = gradient.norm();
@@ -79,8 +93,11 @@ impl Madgwick {
                 q_dot -= gradient * (self.gain / gradient_norm);
             }
         }
-        self.q += q_dot * dt;
-        self.q /= self.q.norm();
+        let next = self.q + q_dot * dt;
+        let norm = next.norm();
+        if norm.is_finite() && norm > 0.0 {
+            self.q = next / norm;
+        }
     }
 }
 
@@ -101,7 +118,7 @@ fn gyro_rate(q: &Vector4<f64>, gyro: &Vector3<f64>) -> Vector4<f64> {
 /// when `accel` has no direction.
 fn gravity_gradient(q: &Vector4<f64>, accel: &Vector3<f64>) -> Option<Vector4<f64>> {
     let norm = accel.norm();
-    if norm <= MIN_ACCEL_NORM {
+    if !norm.is_finite() || norm <= MIN_ACCEL_NORM {
         return None;
     }
     let [q0, q1, q2, q3] = [q[0], q[1], q[2], q[3]];
@@ -150,14 +167,26 @@ impl GravityEstimator {
         Self::default()
     }
 
+    /// Consumes a reading, ignoring non-finite vectors and out-of-order
+    /// timestamps. Neither may corrupt the last usable orientation or clock.
     pub fn push(&mut self, sample: &ImuSample) {
+        self.samples += 1;
+        if !sample
+            .accel
+            .iter()
+            .chain(sample.gyro.iter())
+            .all(|v| v.is_finite())
+            || self.last.is_some_and(|last| sample.timestamp <= last)
+        {
+            return;
+        }
         let to_filter = camera_to_filter();
         let accel = to_filter * sample.accel;
         let gyro = to_filter * sample.gyro;
-        self.samples += 1;
 
         let Some(filter) = self.filter.as_mut() else {
-            if accel.norm() > MIN_ACCEL_NORM_TO_START {
+            let accel_norm = accel.norm();
+            if accel_norm.is_finite() && accel_norm > MIN_ACCEL_NORM_TO_START {
                 self.filter = Some(Madgwick::from_accelerometer(MADGWICK_GAIN, &accel));
                 self.last = Some(sample.timestamp);
             }
@@ -284,5 +313,30 @@ mod tests {
             "roll {}",
             tilt.roll_deg
         );
+    }
+
+    #[test]
+    fn invalid_and_stale_samples_do_not_poison_gravity() {
+        let mut actual = GravityEstimator::new();
+        let mut expected = GravityEstimator::new();
+        let first = rest_sample(100, Vector3::new(0.1, 0.9, 0.2));
+        actual.push(&first);
+        expected.push(&first);
+        let mut invalid = rest_sample(110, Vector3::y());
+        invalid.gyro.x = f64::NAN;
+        actual.push(&invalid);
+        actual.push(&rest_sample(50, Vector3::x()));
+        let next = rest_sample(120, Vector3::new(0.1, 0.9, 0.2));
+        actual.push(&next);
+        expected.push(&next);
+        assert_eq!(actual.camera_to_aligned(), expected.camera_to_aligned());
+        assert!(actual.tilt().unwrap().pitch_deg.is_finite());
+    }
+
+    #[test]
+    fn upside_down_camera_initializes_from_gravity() {
+        let mut estimator = GravityEstimator::new();
+        estimator.push(&rest_sample(0, -Vector3::y()));
+        assert!((estimator.down_in_camera().unwrap() + Vector3::y()).norm() < 1e-12);
     }
 }
