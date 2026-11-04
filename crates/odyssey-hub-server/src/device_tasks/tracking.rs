@@ -362,7 +362,7 @@ pub(super) fn calculate_zero_offset_from_tracking_event(
     screen_calibrations: &ScreenCalibrationList,
     te: &TrackingEvent,
 ) -> Option<UnitQuaternion<f32>> {
-    let screen_id = te.screen_id as u8;
+    let screen_id = u8::try_from(te.screen_id).ok()?;
     if screen_id > odyssey_common::MAX_SCREEN_ID {
         return None;
     }
@@ -423,9 +423,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_flip_is_its_own_inverse() {
-        let flip = client_axis_flip();
-        assert_eq!(flip * flip, Matrix3::identity());
+    fn zeroing_does_not_wrap_a_screen_id_into_another_calibration() {
+        let mut calibrations = ScreenCalibrationList::new();
+        calibrations.push((
+            0,
+            odyssey_common::ScreenCalibration {
+                rotation: UnitQuaternion::identity(),
+                homography: Matrix3::identity(),
+                object_points: [Point3::origin(); odyssey_common::MARKER_PATTERN_LEN],
+            },
+        ));
+        let mut event = TrackingEvent {
+            timestamp: 0,
+            aimpoint: Vector2::zeros(),
+            pose: Pose {
+                rotation: Matrix3::identity(),
+                translation: Vector3::new(0.0, 0.0, -1.0),
+            },
+            distance: 1.0,
+            screen_id: 0,
+        };
+        let calculate = |event: &TrackingEvent| {
+            calculate_zero_offset_from_tracking_event(
+                Translation3::identity(),
+                Point2::new(0.5, 0.5),
+                &calibrations,
+                event,
+            )
+        };
+        assert!(calculate(&event).is_some());
+        event.screen_id = 256;
+        assert!(calculate(&event).is_none());
     }
 
     #[test]

@@ -28,16 +28,17 @@ impl DeviceHandler {
 
     pub(super) async fn on_save_zero(&mut self) {
         debug!("SaveZero requested for {:02x?}", self.device.uuid);
-        {
-            // The guard stays held through the write so two units saving at once cannot
-            // land an older snapshot of the map after a newer one.
-            let offsets = self.context.device_offsets.lock().await;
-            if let Err(e) = odyssey_hub_common::config::device_offsets_save_async(&offsets).await {
-                warn!("Failed to save zero offsets: {}", e);
-            }
+        // Keep the guard through the write: concurrent saves must not persist an
+        // older snapshot after a newer one.
+        let offsets = self.context.device_offsets.lock().await;
+        let result = odyssey_hub_common::config::device_offsets_save_async(&offsets).await;
+        if let Err(error) = &result {
+            warn!("Failed to save zero offsets: {error}");
         }
-        self.context
-            .emit_device_event(&self.device, DeviceEventKind::SaveZeroResult(true));
+        self.context.emit_device_event(
+            &self.device,
+            DeviceEventKind::SaveZeroResult(result.is_ok()),
+        );
     }
 
     pub(super) async fn on_zero(
