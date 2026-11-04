@@ -9,30 +9,37 @@ use crate::usb_ids::is_vm_device;
 /// subordinate interface (3).
 const CDC_ACM_MODULE_INTERFACE: u8 = 0;
 
-/// Names of the serial ports that belong to a connected device.
-pub(crate) fn list_device_serial_ports() -> Vec<String> {
-    let ports = match serialport::available_ports() {
-        Ok(ports) => ports,
-        Err(e) => {
-            eprintln!("Failed to list serial ports: {e}");
-            return vec![];
-        }
+/// Resolve an explicit CDC ACM path to its USB identity. Never guess which USB
+/// device a path belongs to: calibration must not target a different device.
+pub(crate) fn usb_identity(path: &str) -> Result<serialport::UsbPortInfo, String> {
+    let canonical_path = std::fs::canonicalize(path).ok();
+    let port = serialport::available_ports()
+        .map_err(|e| format!("Failed to list serial ports: {e}"))?
+        .into_iter()
+        .find(|port| {
+            port.port_name == path
+                || canonical_path.as_ref().is_some_and(|requested| {
+                    std::fs::canonicalize(&port.port_name)
+                        .is_ok_and(|candidate| candidate == *requested)
+                })
+        })
+        .ok_or_else(|| format!("Serial port {path:?} not found"))?;
+    let SerialPortType::UsbPort(info) = port.port_type else {
+        return Err(format!("Serial port {path:?} is not a USB device"));
     };
-
-    let mut names = Vec::new();
-    for port in ports {
-        let SerialPortType::UsbPort(port_info) = &port.port_type else {
-            continue;
-        };
-        if !is_vm_device(port_info.vid, port_info.pid) {
-            continue;
-        }
-        let is_module_port = port_info
+    if !is_vm_device(info.vid, info.pid)
+        || info
             .interface
-            .is_none_or(|interface| interface == CDC_ACM_MODULE_INTERFACE);
-        if is_module_port {
-            names.push(port.port_name);
-        }
+            .is_some_and(|interface| interface != CDC_ACM_MODULE_INTERFACE)
+    {
+        return Err(format!(
+            "Serial port {path:?} is not an Odyssey device port"
+        ));
     }
-    names
+    if info.serial_number.as_deref().is_none_or(str::is_empty) {
+        return Err(format!(
+            "Serial port {path:?} has no USB serial number; cannot identify its device safely"
+        ));
+    }
+    Ok(info)
 }

@@ -26,23 +26,23 @@ const INTERVAL_NEW_WEIGHT: f64 = 0.1 / 0.8;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Serial port path
+    /// Select a device by its CDC ACM serial port path (otherwise require exactly one USB device)
     #[arg(short, long)]
     path: Option<String>,
 
     /// Output file for accelerometer bias and scale calculation
-    #[arg(long)]
+    #[arg(long, conflicts_with = "gyro")]
     accel: Option<String>,
 
     /// Output file for gyroscope bias calculation
-    #[arg(long)]
+    #[arg(long, conflicts_with = "accel")]
     gyro: Option<String>,
 
-    /// Number of samples to use for bias and scale calculation
+    /// Positive number of samples per calibration orientation
     #[arg(short = 'n', value_name = "N", default_value_t = 400)]
     num_samples: usize,
 
-    /// Gravity value to use for calculations
+    /// Finite, positive gravity value to use for accelerometer calibration
     #[arg(short = 'g', value_name = "G", default_value_t = 9.80665)]
     gravity: f64,
 }
@@ -58,39 +58,44 @@ async fn main() -> ExitCode {
     }
 }
 
-/// The serial port the user asked for, or the only one that is connected.
-/// Explains and returns `None` when it cannot be determined.
-fn resolve_serial_path(requested: Option<String>) -> Option<String> {
-    if requested.is_some() {
-        return requested;
+/// Match the requested serial port to the same physical USB device, or require
+/// exactly one direct USB device when no path was given.
+fn resolve_usb_device(requested: Option<&str>) -> Result<nusb::DeviceInfo, String> {
+    let identity = requested.map(serial_ports::usb_identity).transpose()?;
+    let mut devices = nusb::list_devices()
+        .wait()
+        .map_err(|e| format!("Failed to list USB devices: {e}"))?
+        .filter(|info| usb_ids::is_vm_device(info.vendor_id(), info.product_id()))
+        .filter(|info| {
+            identity.as_ref().is_none_or(|identity| {
+                info.vendor_id() == identity.vid
+                    && info.product_id() == identity.pid
+                    && info.serial_number() == identity.serial_number.as_deref()
+            })
+        });
+    let device = devices
+        .next()
+        .ok_or_else(|| "No matching Odyssey USB device found".to_string())?;
+    if devices.next().is_some() {
+        return Err(
+            "Multiple matching USB devices found; select a unique device with --path".to_string(),
+        );
     }
-
-    let mut ports = serial_ports::list_device_serial_ports();
-    if ports.is_empty() {
-        eprintln!("No devices connected");
-        return None;
-    }
-    if ports.len() > 1 {
-        eprintln!("Multiple devices detected, please specify one: {ports:?}");
-        return None;
-    }
-    Some(ports.remove(0))
+    Ok(device)
 }
 
 async fn run(args: Args) -> Result<(), String> {
-    let Some(path) = resolve_serial_path(args.path) else {
-        return Ok(());
-    };
-    println!("Connecting to device at {path}");
-
-    let device_info = nusb::list_devices()
-        .wait()
-        .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .find(|info| usb_ids::is_vm_device(info.vendor_id(), info.product_id()));
-    let Some(device_info) = device_info else {
-        eprintln!("No USB device found");
-        return Ok(());
-    };
+    if args.accel.is_some() || args.gyro.is_some() {
+        calibration::validate_sample_count(args.num_samples)?;
+    }
+    if args.accel.is_some() {
+        calibration::validate_gravity(args.gravity)?;
+    }
+    let device_info = resolve_usb_device(args.path.as_deref())?;
+    println!(
+        "Connecting to USB device {}",
+        device_info.serial_number().unwrap_or("(no serial number)")
+    );
 
     let mut device = VmDevice::connect_usb(device_info)
         .await
@@ -147,13 +152,16 @@ async fn normal_streaming(
     let mut count = 0.0;
 
     let stream_ended = tokio::select! {
-        _ = tokio::signal::ctrl_c() => false,
+        signal = tokio::signal::ctrl_c() => {
+            signal.map_err(|e| format!("Failed to listen for Ctrl+C: {e}"))?;
+            false
+        },
         () = async {
             let mut rate = SampleRateEstimator::default();
             let mut prev_timestamp = None;
             while let Some(sample) = samples.next().await {
                 let output_data_rate = rate.record_sample();
-                let elapsed = prev_timestamp.map_or(0, |prev| sample.timestamp - prev);
+                let elapsed = prev_timestamp.map_or(0, |prev| sample.timestamp.wrapping_sub(prev));
                 prev_timestamp = Some(sample.timestamp);
 
                 println!(
@@ -173,16 +181,55 @@ async fn normal_streaming(
     };
 
     println!();
-    println!("Mean accel: {:.8?}", accel_sum / count);
-    println!(
-        "Mean accel magnitude: {:.8?}",
-        (accel_sum / count).magnitude()
-    );
-    println!("Mean gyro: {:.8?}", gyro_sum / count);
+    if count > 0.0 {
+        println!("Mean accel: {:.8?}", accel_sum / count);
+        println!(
+            "Mean accel magnitude: {:.8?}",
+            (accel_sum / count).magnitude()
+        );
+        println!("Mean gyro: {:.8?}", gyro_sum / count);
+    }
     println!("Samples: {count}");
 
     if stream_ended {
         return Err("Accel stream ended unexpectedly".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calibration_output_modes_are_mutually_exclusive() {
+        assert!(
+            Args::try_parse_from([
+                "odyssey-usb-cli",
+                "--accel",
+                "accel.json",
+                "--gyro",
+                "gyro.json"
+            ])
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn timestamp_rollover_reaches_the_stream_end_error() {
+        let mut samples = futures::stream::iter([
+            AccelReport {
+                timestamp: u32::MAX,
+                ..AccelReport::default()
+            },
+            AccelReport {
+                timestamp: 0,
+                ..AccelReport::default()
+            },
+        ]);
+        assert_eq!(
+            normal_streaming(&mut samples).await,
+            Err("Accel stream ended unexpectedly".to_string())
+        );
+    }
 }

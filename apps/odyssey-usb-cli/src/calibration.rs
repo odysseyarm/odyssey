@@ -1,13 +1,13 @@
 //! Accelerometer bias/scale and gyroscope bias calibration.
 
 use argmin::core::observers::ObserverMode;
-use argmin::core::{CostFunction, Error, Executor, Gradient};
+use argmin::core::{CostFunction, Error, Executor, Gradient, State as _};
 use argmin_observer_slog::SlogLogger;
 use futures::StreamExt as _;
 use nalgebra::Vector3;
 use odyssey_usb::device::VmDevice;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt as _, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, BufReader};
 
 /// The optimizer gives up after this many iterations.
 const MAX_OPTIMIZER_ITERATIONS: u64 = 1000;
@@ -91,21 +91,36 @@ impl Gradient for CostFn {
     }
 }
 
-/// Blocks until the user presses Enter.
-async fn wait_for_enter() -> Result<(), String> {
-    let mut reader = BufReader::new(tokio::io::stdin());
+/// Keep one reader across prompts so buffered input is not lost. EOF is not
+/// confirmation: unattended commands must not emit an unobserved calibration.
+async fn wait_for_enter(reader: &mut (impl AsyncBufRead + Unpin)) -> Result<(), String> {
     let mut input = String::new();
-    reader
+    let bytes = reader
         .read_line(&mut input)
         .await
         .map_err(|e| format!("Failed to read input: {e}"))?;
+    if bytes == 0 {
+        return Err("Input closed before calibration was confirmed".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_sample_count(num_samples: usize) -> Result<(), String> {
+    if num_samples == 0 {
+        return Err("Calibration requires at least one sample".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_gravity(gravity: f64) -> Result<(), String> {
+    if !gravity.is_finite() || gravity <= 0.0 {
+        return Err("Gravity must be finite and positive".to_string());
+    }
     Ok(())
 }
 
 fn save_calibration(path: &str, calibration: &impl Serialize) -> Result<(), String> {
-    let data = serde_json::to_value(calibration)
-        .map_err(|e| format!("Unable to serialize calibration: {e}"))?;
-    let text = serde_json::to_string_pretty(&data)
+    let text = serde_json::to_string_pretty(calibration)
         .map_err(|e| format!("Unable to serialize calibration: {e}"))?;
     std::fs::write(path, text).map_err(|e| format!("Unable to write file: {e}"))
 }
@@ -117,26 +132,28 @@ pub(crate) async fn calculate_and_save_bias_scale(
     gravity: f64,
 ) -> Result<(), String> {
     let mut measurements = Vec::new();
+    let mut input = BufReader::new(tokio::io::stdin());
     for orientation in &ACCEL_ORIENTATIONS {
         println!("{orientation}");
         println!("Press Enter when ready to start collecting samples for this orientation.");
-        wait_for_enter().await?;
+        wait_for_enter(&mut input).await?;
 
         let mut samples = device
             .stream_accel()
             .await
             .map_err(|e| format!("Failed to start accel stream: {e}"))?;
         for _ in 0..num_samples {
-            if let Some(sample) = samples.next().await {
-                measurements.push(sample.accel.cast::<f64>());
+            let sample = samples.next().await.ok_or_else(|| {
+                "Accel stream ended before all samples were collected".to_string()
+            })?;
+            if !sample.accel.iter().all(|value| value.is_finite()) {
+                return Err("Accelerometer sample contains a non-finite value".to_string());
             }
+            measurements.push(sample.accel.cast::<f64>());
         }
 
         println!("Collected samples for this orientation.");
     }
-
-    // Validate measurements
-    measurements.retain(|m| !m.x.is_nan() && !m.y.is_nan() && !m.z.is_nan());
 
     let cost_function = CostFn {
         measurements,
@@ -158,8 +175,16 @@ pub(crate) async fn calculate_and_save_bias_scale(
 
     let solution = result
         .state
-        .best_param
+        .get_best_param()
         .ok_or_else(|| "Optimization returned no solution".to_string())?;
+    if !result.state.get_best_cost().is_finite()
+        || !solution.iter().all(|value| value.is_finite())
+        || solution[3..].iter().any(|scale| *scale <= 0.0)
+    {
+        return Err(
+            "Optimization did not produce a finite, positive-scale calibration".to_string(),
+        );
+    }
     let calibration = AccelCalibration {
         b_x: solution[0],
         b_y: solution[1],
@@ -181,20 +206,14 @@ pub(crate) async fn calculate_and_save_gyro_bias(
 ) -> Result<(), String> {
     println!("Please make sure the device is held firmly in place.");
     println!("Press Enter when ready to start collecting samples for gyroscope calibration.");
-    wait_for_enter().await?;
+    wait_for_enter(&mut BufReader::new(tokio::io::stdin())).await?;
 
     let mut samples = device
         .stream_accel()
         .await
         .map_err(|e| format!("Failed to start accel stream: {e}"))?;
 
-    let mut gyro_sum = Vector3::<f64>::zeros();
-    for _ in 0..num_samples {
-        if let Some(sample) = samples.next().await {
-            gyro_sum += sample.gyro.cast::<f64>();
-        }
-    }
-    let gyro_bias = gyro_sum / (num_samples as f64);
+    let gyro_bias = collect_gyro_bias(&mut samples, num_samples).await?;
 
     let calibration = GyroCalibration {
         b_x: gyro_bias.x,
@@ -205,4 +224,75 @@ pub(crate) async fn calculate_and_save_gyro_bias(
     println!("Gyroscope bias saved to {gyro_path}");
 
     Ok(())
+}
+
+/// Require every requested sample; dividing a short stream by the requested
+/// count would silently underestimate the bias.
+async fn collect_gyro_bias(
+    samples: &mut (impl futures::Stream<Item = odyssey_usb::packets::vm::AccelReport> + Unpin),
+    num_samples: usize,
+) -> Result<Vector3<f64>, String> {
+    validate_sample_count(num_samples)?;
+    let mut sum = Vector3::<f64>::zeros();
+    for _ in 0..num_samples {
+        let sample = samples
+            .next()
+            .await
+            .ok_or_else(|| "Gyro stream ended before all samples were collected".to_string())?;
+        if !sample.gyro.iter().all(|value| value.is_finite()) {
+            return Err("Gyroscope sample contains a non-finite value".to_string());
+        }
+        sum += sample.gyro.cast::<f64>();
+    }
+    Ok(sum / num_samples as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use odyssey_usb::packets::vm::AccelReport;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn prompts_preserve_buffered_confirmations_and_reject_eof() {
+        let mut reader = BufReader::new(&b"\n\n"[..]);
+        assert!(wait_for_enter(&mut reader).await.is_ok());
+        assert!(wait_for_enter(&mut reader).await.is_ok());
+        assert!(wait_for_enter(&mut reader).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn gyro_bias_requires_complete_finite_samples() {
+        let first = AccelReport {
+            gyro: Vector3::new(1.0, -2.0, 3.0),
+            ..AccelReport::default()
+        };
+        let second = AccelReport {
+            gyro: Vector3::new(3.0, -4.0, 5.0),
+            ..AccelReport::default()
+        };
+        let mut complete = futures::stream::iter([first, second]);
+        assert_eq!(
+            collect_gyro_bias(&mut complete, 2).await.ok(),
+            Some(Vector3::new(2.0, -3.0, 4.0))
+        );
+        let mut short = futures::stream::iter([first]);
+        assert!(collect_gyro_bias(&mut short, 2).await.is_err());
+        let mut empty = futures::stream::empty();
+        assert!(collect_gyro_bias(&mut empty, 0).await.is_err());
+        let invalid = AccelReport {
+            gyro: Vector3::new(f32::INFINITY, 0.0, 0.0),
+            ..AccelReport::default()
+        };
+        let mut non_finite = futures::stream::iter([invalid]);
+        assert!(collect_gyro_bias(&mut non_finite, 1).await.is_err());
+    }
+
+    #[test]
+    fn gravity_must_be_finite_and_positive() {
+        for gravity in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(validate_gravity(gravity).is_err());
+        }
+        assert!(validate_gravity(9.80665).is_ok());
+    }
 }
