@@ -96,14 +96,14 @@ async fn stale_slot_does_not_clear_request_that_reused_its_id() {
     let (stale, stale_rx) = device.get_oneshot_slot().unwrap();
     let id = stale.id;
 
-    // The dispatcher took the sender to deliver the reply, freeing the id...
+    // The race: the dispatcher takes the sender to deliver the reply, which
+    // frees the id; a newer request reuses it; only then does the original
+    // request time out and drop its slot.
     let state = device.thread_state.upgrade().unwrap();
     state.response_channels.lock()[usize::from(id)] = ResponseChannel::None;
-    // ...a newer request reuses it...
     let (newer, _newer_rx) = device.get_oneshot_slot().unwrap();
     assert_eq!(newer.id, id);
 
-    // ...and only then the original request is cancelled (timeout).
     drop(stale);
     drop(stale_rx);
 
@@ -141,11 +141,11 @@ async fn late_reply_to_timed_out_request_never_reaches_a_newer_one() {
     } = harness();
     let timed_out = time_out_request(&device);
 
-    // The id is withheld, so the next request gets a different one...
+    // The id is withheld, so the next request gets a different one.
     let (newer, mut newer_rx) = device.get_oneshot_slot().unwrap();
     assert_ne!(newer.id, timed_out);
 
-    // ...and the old request's reply arriving now is dropped, not delivered.
+    // A reply for the timed-out id is dropped, not delivered.
     incoming_tx
         .send(Packet {
             id: timed_out,

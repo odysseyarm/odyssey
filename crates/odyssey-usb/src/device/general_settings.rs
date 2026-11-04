@@ -28,8 +28,8 @@ fn default_camera_intrinsics() -> RosOpenCvIntrinsics<f32> {
     .into()
 }
 
-/// A struct that holds all configuration values together
-/// This is needed because the new protodonge API returns individual config items as enum variants
+/// Every configuration value of a device in one struct. The device protocol
+/// hands them out one [`ConfigKind`] at a time.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GeneralSettings {
     pub impact_threshold: u8,

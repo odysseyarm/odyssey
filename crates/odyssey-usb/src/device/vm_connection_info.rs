@@ -5,7 +5,7 @@ use super::hex_address::HexAddress;
 use super::mux_device::MuxDevice;
 use super::vm_device::VmDevice;
 
-/// Represents either a direct USB connection or a mux-mediated connection to a vision module
+/// How to reach a vision module: directly over USB or through a dongle.
 #[derive(Clone, Debug)]
 pub enum VmConnectionInfo {
     DirectUsb(DeviceInfo),
@@ -16,7 +16,6 @@ pub enum VmConnectionInfo {
 }
 
 impl VmConnectionInfo {
-    /// Connect to the vision module using the appropriate method
     pub async fn connect(self) -> Result<VmDevice> {
         match self {
             Self::DirectUsb(info) => VmDevice::connect_usb(info).await,
@@ -24,7 +23,8 @@ impl VmConnectionInfo {
         }
     }
 
-    /// Get a display string for this device
+    /// `Vision Module VID:PID` for a direct connection, the device address for
+    /// one through a dongle.
     pub fn display_string(&self) -> String {
         match self {
             Self::DirectUsb(info) => {

@@ -44,7 +44,7 @@ impl Drop for PacketStream {
             }),
         };
         // Keep the type reserved until Disable is queued. Otherwise an
-        // immediate replacement can queue Enable before our detached Disable
+        // immediate replacement can queue Enable before this detached Disable
         // and be stopped by the old subscription.
         let Some(Some(disable)) =
             slot.with_current_stream(|| match self.sender.try_send(disable) {
@@ -61,7 +61,7 @@ impl Drop for PacketStream {
             return;
         };
         // Retain the slot until Disable has a place in the queue. A global
-        // reset may supersede it while we wait; recheck the generation before
+        // reset may supersede it during the wait; recheck the generation before
         // enqueueing so this cleanup cannot disable a replacement.
         runtime.spawn(async move {
             match sender.reserve().await {

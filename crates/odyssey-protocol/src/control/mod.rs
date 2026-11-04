@@ -36,7 +36,7 @@ pub enum AddBondError {
     Failed,
 }
 
-/// The result of an add-bond request. Serializes as the `Result` it replaces.
+/// The result of an add-bond request. Serializes as the equivalent `Result`.
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(

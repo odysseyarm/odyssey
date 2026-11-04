@@ -27,7 +27,7 @@ impl UsbDeviceRelease {
     /// Nothing is free to add later once devices ship, because a host cannot
     /// ask a device how to read a field it already published. Holding one major
     /// value back leaves room to switch to, say, a monotonic build counter
-    /// without the two encodings being indistinguishable. A host that sees it
+    /// while keeping the two encodings distinguishable. A host that sees it
     /// must treat the version as unknown rather than guessing.
     pub const RESERVED_MAJOR: u16 = 15;
 

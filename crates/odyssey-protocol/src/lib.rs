@@ -1,4 +1,4 @@
-// Assume we're running on little-endian
+// Assumes a little-endian target.
 #![no_std]
 
 #[cfg(feature = "std")]

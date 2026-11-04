@@ -30,7 +30,7 @@ macro_rules! write_register_spec {
 }
 
 impl VmDevice {
-    // paj
+    // PAJ sensor registers
     read_register_spec!(product_id: u16 = 0x00; [0x02, 0x03]);
     read_register_spec!(resolution_x: u16 = 0x0c; [0x60, 0x61]);
     read_register_spec!(resolution_y: u16 = 0x0c; [0x62, 0x63]);
@@ -88,13 +88,11 @@ impl VmDevice {
     read_register_spec!(pag7665_light_threshold: u8 = 0x00; [0x6D]);
     write_register_spec!(set_pag7665_light_threshold: u8 = 0x00; [0x6D]);
 
-    // PAG7665QN circle detection parameters
-    // R ratio bounds (Bank 0x00, regs 0x23-0x24)
+    // PAG7665QN circle detection: R ratio bounds, then K ratio bounds.
     read_register_spec!(pag_circle_r_min: u8 = 0x00; [0x23]);
     write_register_spec!(set_pag_circle_r_min: u8 = 0x00; [0x23]);
     read_register_spec!(pag_circle_r_max: u8 = 0x00; [0x24]);
     write_register_spec!(set_pag_circle_r_max: u8 = 0x00; [0x24]);
-    // K ratio bounds (Bank 0x00, regs 0x77-0x78)
     read_register_spec!(pag_circle_k_min: u8 = 0x00; [0x77]);
     write_register_spec!(set_pag_circle_k_min: u8 = 0x00; [0x77]);
     read_register_spec!(pag_circle_k_max: u8 = 0x00; [0x78]);

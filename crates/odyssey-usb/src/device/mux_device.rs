@@ -101,8 +101,8 @@ impl MuxDevice {
     pub async fn connect_usb(info: DeviceInfo) -> Result<Self> {
         let dev = info.open().await?;
 
-        // Probe the advertised interfaces, including non-contiguous or high
-        // interface numbers, to find the one with our bulk endpoints.
+        // Probe every advertised interface, including non-contiguous or high
+        // interface numbers, for the one that carries the protocol's bulk endpoints.
         for interface in info.interfaces() {
             let idx = interface.interface_number();
             let Ok(iface) = dev.claim_interface(idx).await else {
@@ -174,14 +174,12 @@ impl MuxDevice {
         Err(last_err.unwrap_or_else(|| anyhow!("request_devices failed")))
     }
 
-    /// Subscribe to device list changes. After calling this, the dongle will
-    /// automatically send DevicesSnapshot messages whenever devices connect or disconnect.
-    /// Poll [`Self::receive_snapshot`] to process these notifications.
+    /// After this the dongle sends a `DevicesSnapshot` whenever a device
+    /// connects or disconnects; read them with [`Self::receive_snapshot`].
     pub async fn subscribe_device_list(&self) -> Result<()> {
         self.send_msg(MuxMsg::SubscribeDeviceList()).await
     }
 
-    /// Unsubscribe from device list changes.
     pub async fn unsubscribe_device_list(&self) -> Result<()> {
         self.send_msg(MuxMsg::UnsubscribeDeviceList()).await
     }
@@ -236,7 +234,7 @@ impl MuxDevice {
         }
     }
 
-    /// Start pairing mode on the dongle with a timeout (ms).
+    /// Starts pairing mode on the dongle for `timeout_ms` milliseconds.
     pub async fn start_pairing(&self, timeout_ms: u32) -> Result<()> {
         let mut pending = self.ctrl.lock().await;
         *pending = None;
@@ -261,7 +259,6 @@ impl MuxDevice {
         }
     }
 
-    /// Cancel pairing mode on the dongle.
     pub async fn cancel_pairing(&self) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::CancelPairing()).await
     }

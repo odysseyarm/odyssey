@@ -7,14 +7,13 @@ pub const MAX_SCREEN_ID: u8 = 5;
 /// Number of markers in the pattern shown on a screen.
 pub const MARKER_PATTERN_LEN: usize = 6;
 
-/// `rotation` describes the rotation to transform coordinates in world space to physical screen
-/// space.
+/// `rotation` transforms coordinates from world space to physical screen space.
 ///
-/// `object_points` is the positions of the markers in meters in physical screen space, where the
-/// physical screen lies on the XY plane.
+/// `object_points` are the marker positions in meters in physical screen space, where the
+/// screen lies on the XY plane.
 ///
-/// `homography` is used to map from physical screen space to
-/// the unit square, i.e. go from `(x, y)` in meters to `(x', y')` where `x', y' ∈ [0, 1]`.
+/// `homography` maps physical screen space to the unit square: `(x, y)` in meters to
+/// `(x', y')` with `x', y' ∈ [0, 1]`.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + RealField> {

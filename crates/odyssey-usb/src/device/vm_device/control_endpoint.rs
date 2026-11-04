@@ -133,7 +133,6 @@ impl VmDevice {
         }
     }
 
-    /// Read the UUID from the device via control endpoint.
     pub async fn read_uuid(&self) -> Result<[u8; 6]> {
         match self
             .ctrl_request(DeviceMsg::ReadProp(PropKind::Uuid), REPLY_TIMEOUT, |msg| {
@@ -146,7 +145,6 @@ impl VmDevice {
         }
     }
 
-    /// Get the current transport mode of the device (USB vs BLE).
     pub async fn get_transport_mode(&self) -> Result<TransportMode> {
         match self
             .ctrl_request(DeviceMsg::GetTransportMode(), REPLY_TIMEOUT, |msg| {
@@ -159,8 +157,8 @@ impl VmDevice {
         }
     }
 
-    /// Probe the transport mode of a device by issuing a control request on the vendor interface.
-    /// This opens a temporary connection to query the device, then closes it.
+    /// Asks for the transport mode over the vendor interface of a device that
+    /// has no `VmDevice`, opening it for this one request.
     pub async fn probe_transport_mode(info: &DeviceInfo) -> Result<TransportMode> {
         let device = info.open().await?;
         let vendor_iface_num = find_vendor_interface(info)?;
@@ -270,7 +268,6 @@ impl VmDevice {
         }
     }
 
-    /// Read a single config value from the device via control endpoint.
     pub async fn read_config_ctrl(&self, kind: ConfigKind) -> Result<GeneralConfig> {
         match self
             .ctrl_request(DeviceMsg::ReadConfig(kind), REPLY_TIMEOUT, |msg| {
@@ -283,7 +280,6 @@ impl VmDevice {
         }
     }
 
-    /// Write a single config value to the device via control endpoint.
     pub async fn write_config_ctrl(&self, config: GeneralConfig) -> Result<()> {
         match self
             .ctrl_request(DeviceMsg::WriteConfig(config), REPLY_TIMEOUT, |msg| {
@@ -296,7 +292,7 @@ impl VmDevice {
         }
     }
 
-    /// Flush settings to flash on the device via control endpoint.
+    /// Persists the current settings to flash.
     pub async fn flash_settings_ctrl(&self) -> Result<()> {
         match self
             .ctrl_request(
@@ -311,8 +307,7 @@ impl VmDevice {
         }
     }
 
-    /// Request the device to reboot via control endpoint.
-    /// Sends Reboot, waits for RebootAck, then the device resets itself.
+    /// Returns once the device acknowledges; it resets itself after the ack.
     pub async fn reboot(&self) -> Result<()> {
         match self
             .ctrl_request(DeviceMsg::Reboot(), REPLY_TIMEOUT, |msg| {
@@ -325,7 +320,7 @@ impl VmDevice {
         }
     }
 
-    /// Read all config values via control endpoint (for devices that don't support bulk config).
+    /// For devices that do not answer config reads on the packet stream.
     pub async fn read_all_config_ctrl(&self) -> Result<GeneralSettings> {
         GeneralSettings::read_with(|kind| self.read_config_ctrl(kind)).await
     }

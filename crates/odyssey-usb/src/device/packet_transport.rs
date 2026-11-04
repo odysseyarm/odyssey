@@ -82,7 +82,8 @@ impl PacketTransport {
         }
     }
 
-    /// Create a PacketTransport that routes VM packets through a MuxDevice
+    /// A transport whose packets are tunnelled through `mux` to and from the
+    /// device at `device_addr`.
     pub fn mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
         use rand::Rng as _;
         let transport_id: u32 = rand::thread_rng().r#gen();
@@ -94,7 +95,6 @@ impl PacketTransport {
         let cancel_token = CancellationToken::new();
         let cancel_reader = cancel_token.clone();
 
-        // Register this device's packet channel
         let registered_route = incoming_tx.downgrade();
         register_route(
             &mux.device_packets_tx,
@@ -137,7 +137,7 @@ impl PacketTransport {
             debug!("mux writer task exits [ID:{transport_id}]");
         });
 
-        // Cleanup task - unregister when cancelled
+        // Removes the route once the transport is cancelled.
         tokio::spawn(async move {
             cancel_reader.cancelled().await;
             unregister_route(&device_packets_tx, device_addr, &registered_route);

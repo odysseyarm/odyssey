@@ -90,8 +90,8 @@ impl VmDevice {
         Self::connect_usb_inner(info, UsbModeRequirement::Required).await
     }
 
-    /// Connect over USB without requiring the device to be in USB data mode.
-    /// Useful for control-only operations (e.g., pairing) while running in BLE mode.
+    /// Connects whatever the transport mode, for control-endpoint operations
+    /// such as pairing while the device runs in BLE mode.
     pub async fn connect_usb_any_mode(info: DeviceInfo) -> Result<Self> {
         Self::connect_usb_inner(info, UsbModeRequirement::NotRequired).await
     }
@@ -322,7 +322,6 @@ impl VmDevice {
         Ok(r)
     }
 
-    /// Read all configuration values and return them as a single struct
     pub async fn read_all_config(&self) -> Result<GeneralSettings> {
         GeneralSettings::read_with(|kind| self.read_config(kind)).await
     }

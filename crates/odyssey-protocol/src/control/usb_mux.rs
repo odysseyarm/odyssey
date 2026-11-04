@@ -58,7 +58,7 @@ pub enum UsbMuxCtrlMsg {
     },
 }
 
-/// The result of a clear-bonds request. Serializes as the `Result` it replaces.
+/// The result of a clear-bonds request. Serializes as the equivalent `Result`.
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(
@@ -92,7 +92,7 @@ impl From<ClearBondsResult> for Result<(), ClearBondsError> {
     }
 }
 
-/// The result of a pairing attempt. Serializes as the `Result` it replaces.
+/// The result of a pairing attempt. Serializes as the equivalent `Result`.
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(

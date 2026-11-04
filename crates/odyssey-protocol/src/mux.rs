@@ -19,10 +19,9 @@ pub enum MuxMsg {
     SendTo(SendTo),
     ReadVersion(),
     ReadVersionResponse(Version),
-    /// Subscribe to device list changes. After subscribing, the dongle will send
-    /// DevicesSnapshot messages whenever devices connect or disconnect.
+    /// After this the dongle sends a `DevicesSnapshot` whenever a device
+    /// connects or disconnects.
     SubscribeDeviceList(),
-    /// Unsubscribe from device list changes.
     UnsubscribeDeviceList(),
 }
 
@@ -62,14 +61,9 @@ impl Version {
     }
 }
 
-/// Convenience helpers for MuxMsg to access device UUIDs when the message
-/// references a single device. This returns the 6-byte device UUID where
-/// applicable (for `DevicePacket` and `SendTo`). Other variants return `None`.
 impl MuxMsg {
-    /// If this message references a single device, return its 6-byte UUID.
-    /// - `MuxMsg::DevicePacket` -> returns `Some(dev)`
-    /// - `MuxMsg::SendTo` -> returns `Some(dev)`
-    /// - otherwise -> `None`
+    /// The device a `DevicePacket` or `SendTo` is addressed to; `None` for
+    /// every other variant.
     pub fn device_uuid(&self) -> Option<[u8; 6]> {
         match self {
             Self::DevicePacket(dp) => Some(dp.dev),
@@ -78,8 +72,7 @@ impl MuxMsg {
         }
     }
 
-    /// If this message includes a snapshot of devices, return the device UUIDs.
-    /// Useful for callers that want to examine the snapshot without matching the enum.
+    /// The device list carried by a `DevicesSnapshot`.
     pub fn devices_snapshot(&self) -> Option<&[Uuid]> {
         match self {
             Self::DevicesSnapshot(devs) => Some(devs),

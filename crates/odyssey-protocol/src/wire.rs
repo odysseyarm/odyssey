@@ -155,7 +155,7 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
     }
 }
 
-// This is also the format the POC uses on flash
+// The POC stores this same layout on flash.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]

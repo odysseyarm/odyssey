@@ -71,7 +71,7 @@ pub enum DeviceMsg {
     SetDeviceNameResponse(crate::SetDeviceNameResult),
 }
 
-/// The result of a clear-bond request. Serializes as the `Result` it replaces.
+/// The result of a clear-bond request. Serializes as the equivalent `Result`.
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(
@@ -105,7 +105,7 @@ impl From<ClearBondResult> for Result<(), ClearBondsError> {
     }
 }
 
-/// The result of a pairing attempt. Serializes as the `Result` it replaces.
+/// The result of a pairing attempt. Serializes as the equivalent `Result`.
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(

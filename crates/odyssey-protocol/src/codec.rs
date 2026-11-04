@@ -191,7 +191,6 @@ impl Parse for CombinedMarkersReport {
         let (packed_points, _) = report.as_chunks::<PACKED_POINT_SIZE>();
         let mut points = [Point2::new(0, 0); 2 * MOT_DATA_PER_CAMERA];
         for (point, packed) in points.iter_mut().zip(packed_points) {
-            // x, y is 12 bits each
             let x = u16::from_le_bytes([packed[0], packed[1] & HIGH_NIBBLE_MASK]);
             let y = u16::from(packed[1] >> 4) | (u16::from(packed[2]) << 4);
             *point = Point2::new(x, y);

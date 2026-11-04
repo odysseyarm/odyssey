@@ -65,7 +65,7 @@ pub(super) enum Delivery {
 }
 
 pub(super) struct State {
-    // id 255 is reserved for requests that don't care for a response
+    // Indexed by request id; id 255 is NO_REPLY_ID and has no slot.
     pub(super) response_channels: parking_lot::Mutex<[ResponseChannel; SLOT_COUNT]>,
     pub(super) streams_active: StreamsActive,
     pub(super) stream_control: tokio::sync::Mutex<()>,
@@ -179,7 +179,8 @@ impl State {
     }
 }
 
-/// A helper struct to deal with cancellation
+/// A reserved request id. Dropping it releases the id, so a cancelled request
+/// does not leak its slot.
 #[derive(Debug)]
 pub(super) struct ResponseSlot {
     thread_state: Weak<State>,
