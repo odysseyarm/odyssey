@@ -8,7 +8,10 @@
 //! refresh rate rather than a fixed timer.
 
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll, Waker};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use app_dirs2::{AppDataType, get_app_root};
@@ -19,7 +22,7 @@ use odyssey_usb::device::GeneralSettings;
 use odyssey_usb::packets::vm::{AccelConfig, PacketData};
 use parking_lot::Mutex;
 use tokio::runtime::Handle;
-use tokio::task::AbortHandle;
+use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 use crate::config_window::ConfigWindow;
@@ -38,6 +41,9 @@ const MADGWICK_BETA: f32 = 0.2;
 
 /// Default size of the main window, in points.
 const MAIN_WINDOW_SIZE: [f32; 2] = [760.0, 560.0];
+
+/// Completion polling while no display-rate visualization is visible.
+const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Command-line choice of where the device comes from.
 #[derive(Debug, Default)]
@@ -119,7 +125,7 @@ struct Modes {
 impl Modes {
     /// The stream task feeds every live view.
     const fn needs_stream(&self) -> bool {
-        self.tracking_raw || self.tracking || self.testing
+        self.tracking_raw || self.tracking || self.testing || self.recording
     }
 }
 
@@ -133,30 +139,84 @@ struct OpenWindows {
 /// The background tasks that follow [`Modes`].
 #[derive(Debug, Default)]
 struct Tasks {
-    stream: Option<AbortHandle>,
-    raw_frames: Option<AbortHandle>,
+    stream: LiveTask,
+    raw_frames: LiveTask,
+    save: Option<JoinHandle<Result<()>>>,
 }
 
-/// Starts `slot`'s task when it is wanted and not running, aborts it when it is
-/// running and no longer wanted.
-fn follow(slot: &mut Option<AbortHandle>, wanted: bool, start: impl FnOnce() -> AbortHandle) {
-    match (wanted, slot.is_some()) {
-        (true, false) => *slot = Some(start()),
-        (false, true) => {
-            if let Some(handle) = slot.take() {
-                handle.abort();
+impl Drop for Tasks {
+    fn drop(&mut self) {
+        if let Some(save) = &self.save {
+            save.abort();
+        }
+    }
+}
+
+/// Retains a cancelled task until it has stopped, so a replacement cannot
+/// subscribe to the same device stream while teardown is still running.
+#[derive(Debug, Default)]
+struct LiveTask {
+    handle: Option<JoinHandle<Result<()>>>,
+    stopping: bool,
+}
+
+impl LiveTask {
+    fn stop(&mut self) {
+        if let Some(handle) = &self.handle {
+            handle.abort();
+            self.stopping = true;
+        }
+    }
+
+    fn sync(&mut self, wanted: bool, start: impl FnOnce() -> JoinHandle<Result<()>>) -> Result<()> {
+        if let Some(handle) = &mut self.handle {
+            let mut context = TaskContext::from_waker(Waker::noop());
+            if let Poll::Ready(result) = Pin::new(handle).poll(&mut context) {
+                self.handle = None;
+                let stopping = std::mem::take(&mut self.stopping);
+                match result {
+                    Err(error) if stopping && error.is_cancelled() => {}
+                    Err(error) => return Err(error.into()),
+                    Ok(result) => {
+                        result?;
+                        if !stopping {
+                            return Err(anyhow!("device stream ended"));
+                        }
+                    }
+                }
             }
         }
-        (true, true) | (false, false) => {}
+        if !wanted {
+            self.stop();
+        } else if self.handle.is_none() {
+            self.handle = Some(start());
+        }
+        Ok(())
     }
+}
+
+impl Drop for LiveTask {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A recording buffer has one immutable header, even if the user later loads
+/// another device or configuration before saving it.
+#[derive(Debug)]
+struct RecordedSettings {
+    config: GeneralSettings,
+    device_revision: u64,
+    config_revision: u64,
 }
 
 /// The application state.
 #[derive(Debug)]
-pub struct VisionTool {
+struct VisionTool {
     runner: Arc<Mutex<MotRunner>>,
     datapoints: Arc<Mutex<Vec<TestFrame>>>,
     packets: Arc<Mutex<Vec<(u128, PacketData)>>>,
+    recorded_settings: Option<RecordedSettings>,
     config: ConfigWindow,
     plots: PlotsWindow,
     windows: OpenWindows,
@@ -170,8 +230,6 @@ pub struct VisionTool {
     /// Last accelerometer config the Madgwick filter was built for.
     seen_accel: Option<AccelConfig>,
     /// Failures from background work, shown in a banner until dismissed.
-    notices: mpsc::Receiver<String>,
-    notice_sender: mpsc::Sender<String>,
     notice: Option<String>,
     #[cfg(feature = "bevy")]
     bevy: crate::bevy_viewer::BevyViewer,
@@ -199,13 +257,13 @@ impl VisionTool {
             runtime.clone(),
             ctx.clone(),
         );
-        let (notice_sender, notices) = mpsc::channel();
         Self {
             #[cfg(feature = "bevy")]
             bevy: crate::bevy_viewer::BevyViewer::new(Arc::clone(&runner)),
             runner,
             datapoints,
             packets,
+            recorded_settings: None,
             config,
             plots: PlotsWindow::new(),
             windows: OpenWindows::default(),
@@ -215,8 +273,6 @@ impl VisionTool {
             runtime,
             seen_device_revision: u64::MAX,
             seen_accel: None,
-            notices,
-            notice_sender,
             notice: None,
         }
     }
@@ -235,8 +291,11 @@ impl VisionTool {
                     "none"
                 }
             );
+            self.tasks.stream.stop();
+            self.tasks.raw_frames.stop();
             if device.is_none() {
-                self.modes.testing = false;
+                self.modes = Modes::default();
+                self.runner.lock().record_packets = false;
             }
             self.runner.lock().device = device;
         }
@@ -253,29 +312,53 @@ impl VisionTool {
 
     /// Starts and stops the device-stream tasks to match [`Modes`].
     fn sync_tasks(&mut self) {
+        let connected = self.connected();
         let runner = &self.runner;
         let runtime = &self.runtime;
-        follow(&mut self.tasks.stream, self.modes.needs_stream(), || {
-            runtime
-                .spawn(mot_runner::run(Arc::clone(runner)))
-                .abort_handle()
-        });
-        follow(&mut self.tasks.raw_frames, self.modes.tracking_raw, || {
-            runtime
-                .spawn(mot_runner::frame_loop(Arc::clone(runner)))
-                .abort_handle()
-        });
-    }
-
-    fn drain_notices(&mut self) {
-        while let Ok(message) = self.notices.try_recv() {
-            error!("{message}");
-            self.notice = Some(message);
+        if let Err(error) = self
+            .tasks
+            .stream
+            .sync(self.modes.needs_stream() && connected, || {
+                runtime.spawn(mot_runner::run(Arc::clone(runner)))
+            })
+        {
+            self.notice = Some(format!("Tracking stopped: {error:#}"));
+            self.modes = Modes::default();
+            self.runner.lock().record_packets = false;
+        }
+        if let Err(error) = self
+            .tasks
+            .raw_frames
+            .sync(self.modes.tracking_raw && connected, || {
+                runtime.spawn(mot_runner::frame_loop(Arc::clone(runner)))
+            })
+        {
+            self.notice = Some(format!("Raw tracking stopped: {error:#}"));
+            self.modes.tracking_raw = false;
+        }
+        if let Some(handle) = &mut self.tasks.save {
+            let mut context = TaskContext::from_waker(Waker::noop());
+            if let Poll::Ready(result) = Pin::new(handle).poll(&mut context) {
+                self.tasks.save = None;
+                if let Err(error) = result.context("save task failed").and_then(|result| result) {
+                    error!("Saving failed: {error:#}");
+                    self.notice = Some(format!("Saving failed: {error:#}"));
+                }
+            }
         }
     }
 
     fn has_live_view(&self) -> bool {
-        self.modes.needs_stream() || self.windows.plots
+        self.modes.tracking_raw || self.modes.tracking || self.modes.testing || self.windows.plots
+    }
+
+    fn has_background_work(&self) -> bool {
+        let running = self.tasks.stream.handle.is_some()
+            || self.tasks.raw_frames.handle.is_some()
+            || self.tasks.save.is_some();
+        #[cfg(feature = "bevy")]
+        let running = running || self.bevy.is_running();
+        running
     }
 
     fn connected(&self) -> bool {
@@ -303,42 +386,51 @@ impl VisionTool {
     }
 
     /// Asks where to save, then writes the datapoints as CSV, off the UI thread.
-    fn save_datapoints(&self) {
+    fn save_datapoints(&mut self) {
         let frames = self.datapoints.lock().clone();
-        let notices = self.notice_sender.clone();
-        self.runtime.spawn_blocking(move || {
-            if let Err(e) = write_datapoints(&frames) {
-                // A closed receiver means the app is shutting down.
-                let _ = notices.send(format!("Could not save datapoints: {e:#}"));
-            }
-        });
+        self.tasks.save = Some(self.runtime.spawn(write_datapoints(frames)));
     }
 
     /// Encodes the recorded packets, asks where to save, then writes them, off the UI thread.
-    fn save_packets(&self) {
-        // Lock order is runner, then packets, as in the MotRunner tasks.
-        let encoded = {
+    fn save_packets(&mut self) {
+        let (config, packets) = {
             let runner = self.runner.lock();
-            let packets = runner.packets.lock();
-            encode_recording(&runner.general_config, &packets)
+            let config = self
+                .recorded_settings
+                .as_ref()
+                .map_or(&runner.general_config, |settings| &settings.config);
+            (config.clone(), self.packets.lock().clone())
         };
-        let bytes = match encoded {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                // A closed receiver means the app is shutting down.
-                let _ = self
-                    .notice_sender
-                    .send(format!("Could not encode packets: {e}"));
-                return;
-            }
-        };
-        let notices = self.notice_sender.clone();
-        self.runtime.spawn_blocking(move || {
-            if let Err(e) = write_recording(&bytes) {
-                // A closed receiver means the app is shutting down.
-                let _ = notices.send(format!("Could not save packets: {e:#}"));
-            }
-        });
+        self.tasks.save = Some(self.runtime.spawn(write_recording(config, packets)));
+    }
+
+    fn toggle_recording(&mut self) {
+        if self.modes.recording {
+            self.modes.recording = false;
+            self.runner.lock().record_packets = false;
+            return;
+        }
+        let device_revision = self.config.device_revision();
+        let config_revision = self.config.config_revision();
+        let mut runner = self.runner.lock();
+        if self.packets.lock().is_empty() {
+            self.recorded_settings = Some(RecordedSettings {
+                config: runner.general_config.clone(),
+                device_revision,
+                config_revision,
+            });
+        } else if self.recorded_settings.as_ref().is_none_or(|settings| {
+            settings.device_revision != device_revision
+                || settings.config_revision != config_revision
+        }) {
+            self.notice = Some(
+                "Clear the recording before capturing a different device or configuration."
+                    .to_owned(),
+            );
+            return;
+        }
+        self.modes.recording = true;
+        runner.record_packets = true;
     }
 
     fn show_notice(&mut self, ui: &mut egui::Ui) {
@@ -380,8 +472,18 @@ impl VisionTool {
 
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(connected, |ui| {
-                toggle(ui, &mut self.modes.tracking_raw, "Raw Tracking");
-                toggle(ui, &mut self.modes.tracking, "Tracking");
+                toggle(
+                    ui,
+                    &mut self.modes.tracking_raw,
+                    "Start Raw Tracking",
+                    "Stop Raw Tracking",
+                );
+                toggle(
+                    ui,
+                    &mut self.modes.tracking,
+                    "Start Tracking",
+                    "Stop Tracking",
+                );
                 if ui.button("Run Test").clicked() {
                     self.modes.testing = true;
                 }
@@ -394,6 +496,10 @@ impl VisionTool {
                     test_viewport_id(),
                     egui::ViewportCommand::Fullscreen(!self.test_windowed),
                 );
+                ui.ctx().send_viewport_cmd_to(
+                    test_viewport_id(),
+                    egui::ViewportCommand::Decorations(self.test_windowed),
+                );
             }
         });
 
@@ -403,14 +509,22 @@ impl VisionTool {
             } else {
                 "Start Recording"
             };
-            if ui.selectable_label(self.modes.recording, label).clicked() {
-                self.modes.recording = !self.modes.recording;
-                self.runner.lock().record_packets = self.modes.recording;
+            if ui
+                .add_enabled(
+                    connected && !self.config.busy(),
+                    egui::Button::selectable(self.modes.recording, label),
+                )
+                .clicked()
+            {
+                self.toggle_recording();
             }
             if ui.button("Clear").clicked() {
                 self.packets.lock().clear();
             }
-            if ui.button("Save").clicked() {
+            if ui
+                .add_enabled(self.tasks.save.is_none(), egui::Button::new("Save"))
+                .clicked()
+            {
                 self.save_packets();
             }
         });
@@ -436,7 +550,10 @@ impl VisionTool {
             if ui.checkbox(&mut record_impacts, "Record impacts").changed() {
                 self.runner.lock().record_impact = record_impacts;
             }
-            if ui.button("Save to file").clicked() {
+            if ui
+                .add_enabled(self.tasks.save.is_none(), egui::Button::new("Save to file"))
+                .clicked()
+            {
                 self.save_datapoints();
             }
         });
@@ -483,7 +600,7 @@ impl VisionTool {
             let close = ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("plots"),
                 egui::ViewportBuilder::default()
-                    .with_title("le plot")
+                    .with_title("Telemetry")
                     .with_inner_size([1100.0, 800.0]),
                 |ui, _class| {
                     egui::CentralPanel::default().show(ui, |ui| self.plots.show(ui));
@@ -500,7 +617,7 @@ impl VisionTool {
                 egui::ViewportBuilder::default()
                     .with_title("Aimpoint Test")
                     .with_inner_size([640.0, 480.0])
-                    .with_decorations(false)
+                    .with_decorations(self.test_windowed)
                     .with_fullscreen(!self.test_windowed),
                 |ui, _class| {
                     let outcome = egui::CentralPanel::default()
@@ -518,19 +635,18 @@ impl VisionTool {
 impl eframe::App for VisionTool {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.config.poll_events();
-        self.drain_notices();
+        self.sync_config();
+        self.sync_tasks();
         #[cfg(feature = "bevy")]
         if let Err(error) = self.bevy.poll() {
             self.notice = Some(format!("3D viewer stopped: {error:#}"));
         }
-        self.sync_config();
-        self.sync_tasks();
         if self.has_live_view() {
             ctx.request_repaint();
-        }
-        #[cfg(feature = "bevy")]
-        if self.bevy.is_running() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        } else if self.has_background_work() {
+            // Recording and file dialogs need completion supervision, not a
+            // display-rate redraw of an otherwise idle main window.
+            ctx.request_repaint_after(BACKGROUND_POLL_INTERVAL);
         }
     }
 
@@ -550,24 +666,9 @@ impl eframe::App for VisionTool {
     }
 }
 
-impl Drop for VisionTool {
-    fn drop(&mut self) {
-        for handle in [self.tasks.stream.take(), self.tasks.raw_frames.take()]
-            .into_iter()
-            .flatten()
-        {
-            handle.abort();
-        }
-    }
-}
-
-/// A selectable button whose label reads "Start …" or "Stop …".
-fn toggle(ui: &mut egui::Ui, on: &mut bool, what: &str) {
-    let label = if *on {
-        format!("Stop {what}")
-    } else {
-        format!("Start {what}")
-    };
+/// A selectable button with allocation-free labels for both states.
+fn toggle(ui: &mut egui::Ui, on: &mut bool, start: &'static str, stop: &'static str) {
+    let label = if *on { stop } else { start };
     if ui.selectable_label(*on, label).clicked() {
         *on = !*on;
     }
@@ -592,33 +693,44 @@ fn with_extension(mut path: PathBuf, extension: &str) -> PathBuf {
     path
 }
 
-fn write_datapoints(frames: &[TestFrame]) -> Result<()> {
-    let Some(path) = rfd::FileDialog::new()
+async fn write_datapoints(frames: Vec<TestFrame>) -> Result<()> {
+    let Some(file) = rfd::AsyncFileDialog::new()
         .add_filter("csv", &["csv"])
         .save_file()
+        .await
     else {
         return Ok(());
     };
-    let path = with_extension(path, "csv");
-    let mut writer =
-        csv::Writer::from_path(&path).with_context(|| format!("creating {}", path.display()))?;
-    for frame in frames {
-        writer.serialize(frame).context("serializing a datapoint")?;
-    }
-    writer
-        .flush()
-        .with_context(|| format!("writing {}", path.display()))
+    let path = with_extension(file.path().to_owned(), "csv");
+    tokio::task::spawn_blocking(move || {
+        let mut writer = csv::Writer::from_path(&path)
+            .with_context(|| format!("creating {}", path.display()))?;
+        for frame in frames {
+            writer.serialize(frame).context("serializing a datapoint")?;
+        }
+        writer
+            .flush()
+            .with_context(|| format!("writing {}", path.display()))
+    })
+    .await
+    .context("datapoint writer failed")?
 }
 
-fn write_recording(bytes: &[u8]) -> Result<()> {
-    let Some(path) = rfd::FileDialog::new()
+async fn write_recording(config: GeneralSettings, packets: Vec<(u128, PacketData)>) -> Result<()> {
+    let Some(file) = rfd::AsyncFileDialog::new()
         .add_filter("bin", &["bin"])
         .save_file()
+        .await
     else {
         return Ok(());
     };
-    let path = with_extension(path, "bin");
-    std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))
+    let path = with_extension(file.path().to_owned(), "bin");
+    tokio::task::spawn_blocking(move || {
+        let bytes = encode_recording(&config, &packets).context("encoding packets")?;
+        std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))
+    })
+    .await
+    .context("recording writer failed")?
 }
 
 /// The directory holding `screen_<id>.json` calibrations; `SCREEN_CALIBRATIONS_DIR` overrides it.
@@ -643,16 +755,79 @@ fn load_screen_calibrations() -> ArrayVec<(u8, ScreenCalibration<f32>), SCREEN_S
     };
     for id in 0..=odyssey_common::MAX_SCREEN_ID {
         let path = dir.join(format!("screen_{id}.json"));
-        let Ok(file) = std::fs::File::open(&path) else {
-            continue;
-        };
-        match serde_json::from_reader(file) {
-            Ok(calibration) => {
-                info!("Loaded {}", path.display());
-                calibrations.push((id, calibration));
+        let file = match std::fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                warn!(
+                    "Could not read screen calibration {}: {error}",
+                    path.display()
+                );
+                continue;
             }
+        };
+        match serde_json::from_reader::<_, ScreenCalibration<f32>>(file) {
+            Ok(calibration) => match calibration.validate() {
+                Ok(()) => {
+                    info!("Loaded {}", path.display());
+                    calibrations.push((id, calibration));
+                }
+                Err(error) => error!("Invalid screen calibration {}: {error}", path.display()),
+            },
             Err(e) => error!("Failed to deserialize screen calibration: {e}"),
         }
     }
     calibrations
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn replacement_waits_for_cancelled_subscription_to_finish() {
+        let mut task = LiveTask::default();
+        let (started, ready) = oneshot::channel();
+        task.sync(true, || {
+            tokio::spawn(async {
+                let _ = started.send(());
+                std::future::pending::<Result<()>>().await
+            })
+        })
+        .unwrap();
+        ready.await.unwrap();
+        task.stop();
+
+        // A current-thread runtime cannot process the abort until we yield.
+        task.sync(true, || panic!("old subscription is still tearing down"))
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        let (started, ready) = oneshot::channel();
+        task.sync(true, || {
+            tokio::spawn(async {
+                let _ = started.send(());
+                std::future::pending::<Result<()>>().await
+            })
+        })
+        .unwrap();
+        ready.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ended_subscription_reports_failure_and_releases_slot() {
+        let mut task = LiveTask::default();
+        task.sync(true, || {
+            tokio::spawn(async { Err(anyhow!("camera disconnected")) })
+        })
+        .unwrap();
+        tokio::task::yield_now().await;
+        let error = task
+            .sync(true, || panic!("a failed stream must not silently restart"))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "camera disconnected");
+        assert!(task.handle.is_none());
+    }
 }

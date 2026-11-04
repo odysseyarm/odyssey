@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use ahrs::Ahrs as _;
+use anyhow::{Context as _, Result, bail};
 use arrayvec::ArrayVec;
 use nalgebra::{Isometry3, Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
@@ -47,46 +48,36 @@ impl std::fmt::Debug for MotRunner {
 
 impl MotRunner {
     /// Appends `packet_data` to the recording, stamped with the current time.
-    fn push_recorded_packet(&self, packet_data: PacketData) {
+    fn push_recorded_packet(&self, packet_data: PacketData) -> Result<()> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system clock is after the Unix epoch")
+            .context("cannot record packets before the Unix epoch")?
             .as_millis();
         self.packets.lock().push((timestamp, packet_data));
+        Ok(())
     }
 }
 
-/// The device currently selected in the UI, if any.
-fn current_device(runner: &Mutex<MotRunner>) -> Option<VmDevice> {
-    runner.lock().device.clone()
+/// Starts one acquisition session for the currently selected device.
+///
+/// Ending any stream ends the session and drops the other subscriptions. The
+/// caller owns cancellation and must await it before starting a replacement.
+pub async fn run(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
+    let device = runner.lock().device.clone().context("no device selected")?;
+    tokio::select! {
+        result = markers_loop(&runner, &device) => result,
+        result = accel_stream(&runner, &device) => result,
+        result = impact_loop(&runner, &device) => result,
+    }
 }
 
-pub async fn run(runner: Arc<Mutex<MotRunner>>) {
-    tokio::join!(
-        markers_loop(Arc::clone(&runner)),
-        accel_stream(Arc::clone(&runner)),
-        impact_loop(Arc::clone(&runner)),
-    );
-}
-
-pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
-    let Some(device) = current_device(&runner) else {
-        return;
-    };
-    let mut mot_data_stream = match device.stream_mot_data().await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::error!("Failed to stream mot data: {:?}", e);
-            return;
-        }
-    };
-    loop {
-        if runner.lock().device.is_none() {
-            return;
-        }
-        let Some(mot_data) = mot_data_stream.next().await else {
-            return;
-        };
+pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
+    let device = runner.lock().device.clone().context("no device selected")?;
+    let mut mot_data_stream = device
+        .stream_mot_data()
+        .await
+        .context("failed to start object report stream")?;
+    while let Some(mot_data) = mot_data_stream.next().await {
         let nf_data = ArrayVec::<MotData, MAX_MARKERS>::from_iter(mot_data.mot_data_nf);
         let wf_data = ArrayVec::<MotData, MAX_MARKERS>::from_iter(mot_data.mot_data_wf);
 
@@ -96,17 +87,18 @@ pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
         state.wf_data = Some(wf_data);
 
         if runner.record_packets {
-            runner.push_recorded_packet(PacketData::ObjectReport(mot_data));
+            runner.push_recorded_packet(PacketData::ObjectReport(mot_data))?;
         }
     }
+    bail!("object report stream ended")
 }
 
 fn update_raycast(runner: &mut MotRunner) {
-    let screen_calibrations = runner.screen_calibrations.clone();
+    let screen_calibrations = &runner.screen_calibrations;
     let fv_state = &mut runner.state.fv_state;
     let offset = runner.state.fv_zero_offset;
     let (pose, aimpoint_and_d) =
-        odyssey_cv::helpers::raycast_update(&screen_calibrations, fv_state, Some(offset));
+        odyssey_cv::helpers::raycast_update(screen_calibrations, fv_state, Some(offset));
     if let Some(pose) = pose {
         let flip_yz = Matrix3::from_diagonal(&Vector3::new(1., -1., -1.));
 
@@ -131,7 +123,7 @@ enum MarkersReport {
 /// and normalizing them.
 struct ProcessedPoints {
     /// `(mot_id, pixel position)` of every point that was detected.
-    tuples: Vec<(u8, Point2<f32>)>,
+    tuples: ArrayVec<(u8, Point2<f32>), MAX_MARKERS>,
     normalized: ArrayVec<Point2<f32>, MAX_MARKERS>,
     markers: ArrayVec<Marker, MAX_MARKERS>,
 }
@@ -143,9 +135,9 @@ fn process_points(
     stereo_iso: Option<&Isometry3<f32>>,
 ) -> ProcessedPoints {
     let tuples = create_point_tuples(points);
-    let points_raw: Vec<_> = tuples.iter().map(|&(_, p)| p).collect();
-    let points_transformed = transform_points(&points_raw, camera_model);
+    let points_raw: ArrayVec<_, MAX_MARKERS> = tuples.iter().map(|&(_, p)| p).collect();
     let intrinsics = odyssey_common::ros_opencv_intrinsics_type_convert(camera_model);
+    let points_transformed = odyssey_cv::undistort_points(&intrinsics, &points_raw);
     let normalized: ArrayVec<_, MAX_MARKERS> = points_transformed
         .iter()
         .map(|&p| to_normalized_image_coordinates(p, &intrinsics, stereo_iso))
@@ -196,31 +188,27 @@ fn realign_stereo_rotation(
     runner.wfnf_realign = false;
 }
 
-async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
-    let Some(device) = current_device(&runner) else {
-        return;
-    };
-    let combined_markers_stream = match device.stream_combined_markers().await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::error!("Failed to stream combined markers: {:?}", e);
-            return;
-        }
-    };
-    let poc_markers_stream = match device.stream_poc_markers().await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::error!("Failed to stream poc markers: {:?}", e);
-            return;
-        }
-    };
+async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()> {
+    let mut combined_markers_stream = device
+        .stream_combined_markers()
+        .await
+        .context("failed to start combined markers stream")?;
+    let mut poc_markers_stream = device
+        .stream_poc_markers()
+        .await
+        .context("failed to start POC markers stream")?;
 
-    // The two sensors report on separate streams; handle whichever report arrives next.
-    let mut markers_stream = combined_markers_stream
-        .map(MarkersReport::Combined)
-        .merge(poc_markers_stream.map(MarkersReport::Poc));
-
-    while let Some(report) = markers_stream.next().await {
+    loop {
+        // Either subscription ending is a session failure, even while the
+        // other remains alive. Merging streams would hide that partial loss.
+        let report = tokio::select! {
+            report = combined_markers_stream.next() => {
+                MarkersReport::Combined(report.context("combined markers stream ended")?)
+            },
+            report = poc_markers_stream.next() => {
+                MarkersReport::Poc(report.context("POC markers stream ended")?)
+            },
+        };
         let (is_poc, nf_points, wf_points) = match report {
             MarkersReport::Poc(poc) => (true, poc.points, Default::default()),
             MarkersReport::Combined(combined) => (false, combined.nf_points, combined.wf_points),
@@ -279,8 +267,8 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
         // Update runner state. Nothing identifies WF markers into the
         // `*_markers` / `wf_reproj` lists any more, so every point stays
         // unmatched and those lists stay empty; the canvases still read them.
-        runner.state.nf_points = nf.tuples.into_iter().collect();
-        runner.state.wf_points = wf.tuples.into_iter().collect();
+        runner.state.nf_points = nf.tuples;
+        runner.state.wf_points = wf.tuples;
         runner.state.nf_markers.clear();
         runner.state.wf_markers.clear();
         runner.state.wf_reproj.clear();
@@ -299,12 +287,12 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
                     wf_points,
                 })
             };
-            runner.push_recorded_packet(packet_data);
+            runner.push_recorded_packet(packet_data)?;
         }
     }
 }
 
-fn create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
+fn create_point_tuples(points: &[Point2<u16>]) -> ArrayVec<(u8, Point2<f32>), MAX_MARKERS> {
     points
         .iter()
         .enumerate()
@@ -313,31 +301,20 @@ fn create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
         .collect()
 }
 
-fn transform_points(
-    points: &[Point2<f32>],
-    camera_intrinsics: &RosOpenCvIntrinsics<f32>,
-) -> Vec<Point2<f32>> {
-    odyssey_cv::undistort_points(
-        &odyssey_common::ros_opencv_intrinsics_type_convert(camera_intrinsics),
-        points,
-    )
-}
-
-async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
-    let Some(device) = current_device(&runner) else {
-        return;
-    };
-    let mut accel_stream = match device.stream_accel().await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::error!("Failed to stream accel: {:?}", e);
-            return;
-        }
-    };
+async fn accel_stream(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()> {
+    let mut accel_stream = device
+        .stream_accel()
+        .await
+        .context("failed to start accelerometer stream")?;
     let mut prev_timestamp = None;
     while let Some(accel) = accel_stream.next().await {
         let mut runner = runner.lock();
+        // Keep the raw report: playback applies the saved calibration itself.
+        if runner.record_packets {
+            runner.push_recorded_packet(PacketData::AccelReport(accel))?;
+        }
         let accel_odr = runner.general_config.accel_config.accel_odr;
+        anyhow::ensure!(accel_odr != 0, "accelerometer sample rate must be nonzero");
 
         // correct accel and gyro bias and scale
         let accel = odyssey_usb::packets::vm::AccelReport {
@@ -346,31 +323,25 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
             timestamp: accel.timestamp,
         };
 
-        // The device clock went backwards (e.g. it restarted): drop the
-        // sample and start over from the next one.
+        // The device clock went backwards (e.g. it restarted or wrapped).
+        // Use the nominal period for the first sample of the new clock.
         if prev_timestamp.is_some_and(|prev| accel.timestamp < prev) {
             prev_timestamp = None;
+        }
+
+        let period = match prev_timestamp {
+            Some(previous) => Duration::from_micros(u64::from(accel.timestamp - previous)),
+            None => Duration::from_secs_f32(1. / f32::from(accel_odr)),
+        };
+        prev_timestamp = Some(accel.timestamp);
+        if period.is_zero() {
             continue;
         }
-
-        if let Some(prev_timestamp) = prev_timestamp {
-            let elapsed = u64::from(accel.timestamp) - u64::from(prev_timestamp);
-            runner.state.fv_state.predict(
-                -accel.accel.xzy(),
-                -accel.gyro.xzy(),
-                Duration::from_micros(elapsed),
-            );
-
-            let sample_period = runner.state.madgwick.sample_period_mut();
-            *sample_period = elapsed as f32 / 1_000_000.;
-        } else {
-            runner.state.fv_state.predict(
-                -accel.accel.xzy(),
-                -accel.gyro.xzy(),
-                Duration::from_secs_f32(1. / f32::from(accel_odr)),
-            );
-        }
-        prev_timestamp = Some(accel.timestamp);
+        runner
+            .state
+            .fv_state
+            .predict(-accel.accel.xzy(), -accel.gyro.xzy(), period);
+        *runner.state.madgwick.sample_period_mut() = period.as_secs_f32();
 
         let _ = runner
             .state
@@ -384,56 +355,31 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
         );
 
         update_raycast(&mut runner);
-
-        if runner.record_packets {
-            runner.push_recorded_packet(PacketData::AccelReport(accel));
-        }
     }
+    bail!("accelerometer stream ended")
 }
 
-// todo use an aimpoint history to choose the aimpoint closest to the timestamp
-async fn impact_loop(runner: Arc<Mutex<MotRunner>>) {
-    let Some(device) = current_device(&runner) else {
-        return;
-    };
-    let mut impact_stream = match device.stream_impact().await {
-        Ok(stream) => stream,
-        Err(e) => {
-            tracing::error!("Failed to stream impact: {:?}", e);
-            return;
-        }
-    };
+async fn impact_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()> {
+    let mut impact_stream = device
+        .stream_impact()
+        .await
+        .context("failed to start impact stream")?;
     while let Some(impact) = impact_stream.next().await {
         let runner = runner.lock();
         if runner.record_impact {
-            let mut frame = TestFrame {
-                fv_aimpoint_x: None,
-                fv_aimpoint_y: None,
-                opposite_cant: None,
-                position_x: None,
-                position_y: None,
-                position_z: None,
-            };
-
-            {
-                let data = runner.state.latest_aimpoint();
-                let fv_aimpoint = data.0;
-                frame.fv_aimpoint_x = Some(fv_aimpoint.x);
-                frame.fv_aimpoint_y = Some(fv_aimpoint.y);
-                frame.opposite_cant = Some(data.1);
-                frame.position_x = Some(data.2.x);
-                frame.position_y = Some(data.2.y);
-                frame.position_z = Some(data.2.z);
-            }
-
-            if runner.datapoints.is_locked() {
-                continue;
-            }
-
-            runner.datapoints.lock().push(frame);
+            let (aimpoint, cant, position) = runner.state.latest_aimpoint();
+            runner.datapoints.lock().push(TestFrame {
+                fv_aimpoint_x: Some(aimpoint.x),
+                fv_aimpoint_y: Some(aimpoint.y),
+                opposite_cant: Some(cant),
+                position_x: Some(position.x),
+                position_y: Some(position.y),
+                position_z: Some(position.z),
+            });
         }
         if runner.record_packets {
-            runner.push_recorded_packet(PacketData::ImpactReport(impact));
+            runner.push_recorded_packet(PacketData::ImpactReport(impact))?;
         }
     }
+    bail!("impact stream ended")
 }
