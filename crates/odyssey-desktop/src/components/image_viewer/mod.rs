@@ -205,9 +205,13 @@ fn ImageDialog(
                             rebooting.set(true);
                             status.set("Stopping pixels and requesting legacy reboot; waiting for reconnect is required.".to_owned());
                             let device = reboot_device.clone();
-                            let mut client = hub.peek().client.peek().clone();
+                            let client = hub.peek().client();
                             spawn(async move {
-                                match client.reboot_device(device).await {
+                                let result = match client {
+                                    Some(client) => client.device(device).reboot_device().await.map_err(|cause| cause.to_string()),
+                                    None => Err("not connected to the hub".to_owned()),
+                                };
+                                match result {
                                     Ok(()) => status.set("Reboot acknowledged. Wait for the device to reconnect; acknowledgement alone does not confirm tracking recovery.".to_owned()),
                                     Err(cause) => error.set(Some(format!("Reboot failed: {cause}. Fully power-cycle the unit and reconnect."))),
                                 }

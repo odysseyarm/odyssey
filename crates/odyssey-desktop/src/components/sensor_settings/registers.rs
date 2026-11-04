@@ -1,4 +1,4 @@
-use dioxus::prelude::ReadableExt as _;
+use odyssey_hub_client::client::DeviceClient;
 use odyssey_hub_common::device::Device;
 
 use crate::hub::HubContext;
@@ -54,29 +54,25 @@ impl<'a> Registers<'a> {
 
     pub(super) async fn read(&self, register: Register) -> eros::Result<u8> {
         let value = self
-            .hub
-            .client
-            .peek()
-            .clone()
-            .read_register(self.device.clone(), self.port, register.bank, register.addr)
+            .device_client()?
+            .read_register(self.port, register.bank, register.addr)
             .await?;
         Ok(value)
     }
 
     pub(super) async fn write(&self, register: Register, value: u8) -> eros::Result<()> {
-        self.hub
-            .client
-            .peek()
-            .clone()
-            .write_register(
-                self.device.clone(),
-                self.port,
-                register.bank,
-                register.addr,
-                value,
-            )
+        self.device_client()?
+            .write_register(self.port, register.bank, register.addr, value)
             .await?;
         Ok(())
+    }
+
+    fn device_client(&self) -> eros::Result<DeviceClient> {
+        let client = self
+            .hub
+            .client()
+            .ok_or_else(|| eros::error!("not connected to the hub"))?;
+        Ok(client.device(self.device.clone()))
     }
 
     pub(super) async fn read_u16(&self, run: RegisterRun<2>) -> eros::Result<u16> {

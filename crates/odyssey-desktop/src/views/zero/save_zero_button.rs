@@ -58,8 +58,13 @@ pub(super) fn SaveZeroButton(
 }
 
 async fn save_zero(hub: Signal<HubContext>, device: Device, signals: DeviceSignals) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.save_zero(device.clone()).await {
+    let Some(client) = hub.peek().client() else {
+        let message = "not connected to the hub".to_owned();
+        tracing::warn!("Failed to save zero {:x?}: {}", device.uuid, message);
+        signals.set_save_status(Some(Err(message)));
+        return;
+    };
+    match client.device(device.clone()).save_zero().await {
         Ok(()) => {
             tracing::info!("Saved zero for {:x?}", device.uuid);
             signals.set_save_status(Some(Ok(())));

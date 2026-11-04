@@ -166,10 +166,16 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
                             rename_pending.set(true);
                             let name = edit_value();
                             let device = device.clone();
-                            let mut client = hub.peek().client.peek().clone();
+                            let client = hub.peek().client();
                             editing.set(false);
                             spawn(async move {
-                                match client.set_device_name(device, name).await {
+                                let Some(client) = client else {
+                                    tracing::warn!("Failed to rename device: not connected to the hub");
+                                    rename_error.set(Some("not connected to the hub".to_owned()));
+                                    rename_pending.set(false);
+                                    return;
+                                };
+                                match client.device(device).set_device_name(name).await {
                                     Ok(()) => renamed.set(true),
                                     Err(e) => {
                                         tracing::error!("Failed to rename device: {e}");

@@ -21,9 +21,16 @@ const DOT_CONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-green-500";
 // A bonded device that is switched off is normal, not an error, so it is gray.
 const DOT_DISCONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-gray-400";
 
+/// The UI-facing reason a call could not be made without a hub connection.
+const NOT_CONNECTED: &str = "not connected to the hub";
+
 async fn start(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
     state.started();
-    let mut client = hub.peek().client.peek().clone();
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to start dongle pairing: {NOT_CONNECTED}");
+        state.start_failed(NOT_CONNECTED);
+        return;
+    };
     if let Err(e) = client
         .start_dongle_pairing(dongle_id, PAIRING_TIMEOUT_MS)
         .await
@@ -34,7 +41,11 @@ async fn start(hub: Signal<HubContext>, dongle_id: String, state: PairingState) 
 }
 
 async fn cancel(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
-    let mut client = hub.peek().client.peek().clone();
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to cancel dongle pairing: {NOT_CONNECTED}");
+        state.error(NOT_CONNECTED);
+        return;
+    };
     match client.cancel_dongle_pairing(dongle_id).await {
         Ok(()) => state.cancelled(),
         Err(e) => {
@@ -45,7 +56,11 @@ async fn cancel(hub: Signal<HubContext>, dongle_id: String, state: PairingState)
 }
 
 async fn clear(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
-    let mut client = hub.peek().client.peek().clone();
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to clear dongle bonds: {NOT_CONNECTED}");
+        state.error(NOT_CONNECTED);
+        return;
+    };
     if state.is_pairing() {
         if let Err(e) = client.cancel_dongle_pairing(dongle_id.clone()).await {
             tracing::error!("Failed to cancel dongle pairing before clearing bonds: {e}");

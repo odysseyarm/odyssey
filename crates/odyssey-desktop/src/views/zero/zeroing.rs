@@ -26,14 +26,16 @@ pub(super) async fn zero_device(
     device: Device,
     sample: Option<TrackingEvent>,
 ) {
-    let mut client = hub.peek().client.peek().clone();
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!(
+            "Failed to zero device {:x?}: not connected to the hub",
+            device.uuid
+        );
+        return;
+    };
     if let Err(e) = client
-        .zero(
-            device.clone(),
-            ZERO_TRANSLATION_M.into(),
-            ZERO_TARGET.into(),
-            sample,
-        )
+        .device(device.clone())
+        .zero(ZERO_TRANSLATION_M.into(), ZERO_TARGET.into(), sample)
         .await
     {
         tracing::error!("Failed to zero device {:x?}: {}", device.uuid, e);

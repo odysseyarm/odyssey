@@ -14,6 +14,9 @@
 //! Event callback payloads are initialized only when the error is `None`.
 //! `NotConnected` means no connection has been established; `RpcFailure` means
 //! a request or stream failed. `StreamEnd` means a stream closed without an error.
+//! A client's connection runs on the runtime passed to `client_connect`; after
+//! that runtime is freed, calls on the client fail with `RpcFailure` until it
+//! connects again on a live runtime.
 //! The C event ABI omits event kinds it cannot represent.
 //! Headers are generated with the `odyssey-hub-common` dependency parsed, so
 //! shared device layouts come from their Rust definitions rather than copies.

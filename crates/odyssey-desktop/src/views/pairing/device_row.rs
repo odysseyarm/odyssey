@@ -11,18 +11,33 @@ use super::pairing_state::{PAIRING_TIMEOUT_MS, PairingState, result_status};
 use crate::hub::HubContext;
 use crate::views::device_label;
 
+/// The UI-facing reason a call could not be made without a hub connection.
+const NOT_CONNECTED: &str = "not connected to the hub";
+
 async fn start(hub: Signal<HubContext>, device: Device, state: PairingState) {
     state.started();
-    let mut client = hub.peek().client.peek().clone();
-    if let Err(e) = client.start_pairing(device, PAIRING_TIMEOUT_MS).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to start pairing: {NOT_CONNECTED}");
+        state.start_failed(NOT_CONNECTED);
+        return;
+    };
+    if let Err(e) = client
+        .device(device)
+        .start_pairing(PAIRING_TIMEOUT_MS)
+        .await
+    {
         tracing::error!("Failed to start pairing: {e}");
         state.start_failed(e);
     }
 }
 
 async fn cancel(hub: Signal<HubContext>, device: Device, state: PairingState) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.cancel_pairing(device).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to cancel pairing: {NOT_CONNECTED}");
+        state.error(NOT_CONNECTED);
+        return;
+    };
+    match client.device(device).cancel_pairing().await {
         Ok(()) => state.cancelled(),
         Err(e) => {
             tracing::error!("Failed to cancel pairing: {e}");
@@ -32,16 +47,21 @@ async fn cancel(hub: Signal<HubContext>, device: Device, state: PairingState) {
 }
 
 async fn clear(hub: Signal<HubContext>, device: Device, state: PairingState) {
-    let mut client = hub.peek().client.peek().clone();
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to clear bond: {NOT_CONNECTED}");
+        state.error(NOT_CONNECTED);
+        return;
+    };
+    let client = client.device(device);
     if state.is_pairing() {
-        if let Err(e) = client.cancel_pairing(device.clone()).await {
+        if let Err(e) = client.cancel_pairing().await {
             tracing::error!("Failed to cancel pairing before clearing bond: {e}");
             state.error(e);
             return;
         }
         state.stopped();
     }
-    match client.clear_bond(device).await {
+    match client.clear_bond().await {
         Ok(()) => state.bonds_cleared("Bond cleared"),
         Err(e) => {
             tracing::error!("Failed to clear bond: {e}");

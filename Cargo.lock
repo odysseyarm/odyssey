@@ -7752,7 +7752,6 @@ dependencies = [
  "odyssey-protocol",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util",
  "tonic",
  "tower 0.4.13",
  "tracing",

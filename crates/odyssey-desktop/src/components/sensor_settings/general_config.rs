@@ -1,4 +1,3 @@
-use dioxus::prelude::ReadableExt as _;
 use odyssey_hub_common::device::Device;
 
 use super::field_issue::{FieldChecker, FieldIssue};
@@ -53,20 +52,17 @@ pub(super) async fn write_general_config(
     device: &Device,
     values: GeneralValues,
 ) -> eros::Result<()> {
-    let mut client = hub.client.peek().clone();
+    let client = hub
+        .client()
+        .ok_or_else(|| eros::error!("not connected to the hub"))?
+        .device(device.clone());
     client
-        .write_config(
-            device.clone(),
-            IMPACT_THRESHOLD_CONFIG,
-            values.impact_threshold,
-        )
+        .write_config(IMPACT_THRESHOLD_CONFIG, values.impact_threshold)
         .await?;
     client
-        .write_config(device.clone(), SUPPRESS_CONFIG, values.suppress_ms)
+        .write_config(SUPPRESS_CONFIG, values.suppress_ms)
         .await?;
-    client
-        .set_shot_delay(device.clone(), values.shot_delay)
-        .await?;
+    client.set_shot_delay(values.shot_delay).await?;
     Ok(())
 }
 

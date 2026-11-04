@@ -54,8 +54,11 @@ async fn load_shot_delay(
     signals: DeviceSignals,
     revision: u64,
 ) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.get_shot_delay(device.clone()).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("Failed to get shot delay: not connected to the hub");
+        return;
+    };
+    match client.device(device.clone()).get_shot_delay().await {
         Ok(delay) => {
             let still_present = device_signals
                 .peek()

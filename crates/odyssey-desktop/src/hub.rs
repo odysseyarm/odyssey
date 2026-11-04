@@ -25,7 +25,8 @@ const PAIRING_CHANNEL_CAPACITY: usize = 16;
 
 #[derive(Clone)]
 pub(crate) struct HubContext {
-    pub client: SyncSignal<Client>,
+    /// `None` until the first connection to the hub server succeeds.
+    pub client: SyncSignal<Option<Client>>,
     pub devices: SyncSignal<Slab<Device>>,
     pub dongles: SyncSignal<Vec<DongleInfo>>,
     /// Not `Sync`, so it is reactive only inside the main window's VirtualDom. A
@@ -122,12 +123,11 @@ fn merged_updates(
         .merge()
 }
 
-/// Connects `client` and subscribes to every stream the hub needs. The client
-/// is a plain `&mut`, not a signal guard, so nothing is locked across the awaits.
-async fn connect(
-    client: &mut Client,
-) -> eros::Result<Subscriptions<impl Stream<Item = HubUpdate> + use<>>> {
-    eros::Context::context(client.connect().await, "Failed to connect to hub server")?;
+/// Connects to the hub and subscribes to every stream the hub needs. The client
+/// is a plain value, not a signal guard, so nothing is locked across the awaits.
+async fn connect() -> eros::Result<(Client, Subscriptions<impl Stream<Item = HubUpdate> + use<>>)> {
+    let client =
+        eros::Context::context(Client::connect().await, "Failed to connect to hub server")?;
     tracing::info!("Hub connected successfully");
 
     let initial_devices =
@@ -145,10 +145,13 @@ async fn connect(
         "Failed to subscribe to events",
     )?;
 
-    Ok(Subscriptions {
-        initial_devices,
-        updates: merged_updates(devices, dongles, events),
-    })
+    Ok((
+        client,
+        Subscriptions {
+            initial_devices,
+            updates: merged_updates(devices, dongles, events),
+        },
+    ))
 }
 
 /// Whether `event` is a one-shot pairing outcome that row components wait for.
@@ -169,7 +172,7 @@ impl HubContext {
         let (impact_events, _) = broadcast::channel(IMPACT_CHANNEL_CAPACITY);
         let (pairing_events, _) = broadcast::channel(PAIRING_CHANNEL_CAPACITY);
         Self {
-            client: SyncSignal::new_maybe_sync(Client::default()),
+            client: SyncSignal::new_maybe_sync(None),
             devices: SyncSignal::new_maybe_sync(Slab::new()),
             dongles: SyncSignal::new_maybe_sync(Vec::new()),
             latest_event: Signal::new(None),
@@ -211,11 +214,10 @@ impl HubContext {
     /// Dials the server and applies its updates until the session ends.
     async fn follow_server(&mut self) -> Result<Infallible, LinkDown> {
         tracing::info!("Hub connecting to server...");
-        let mut client = Client::clone(&self.client.peek());
-        let subscriptions = connect(&mut client).await.map_err(LinkDown::Connect)?;
+        let (client, subscriptions) = connect().await.map_err(LinkDown::Connect)?;
         // Publish only once connected, so readers never see a half-dialled
         // client.
-        self.client.set(client);
+        self.client.set(Some(client));
         Err(LinkDown::Session(self.run_session(subscriptions).await))
     }
 
@@ -328,6 +330,12 @@ impl HubContext {
 
     pub(crate) fn device_key(&self, device: &Device) -> Option<usize> {
         self.device_keys.peek().get(&device.uuid).copied()
+    }
+
+    /// The connected client, or `None` before the hub server first answers.
+    /// Peeks, so the caller is not subscribed to reconnects.
+    pub(crate) fn client(&self) -> Option<Client> {
+        self.client.peek().clone()
     }
 
     pub(crate) fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {

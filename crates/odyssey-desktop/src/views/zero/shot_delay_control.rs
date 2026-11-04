@@ -159,8 +159,14 @@ fn run_command(mut pending: Signal<bool>, command: impl Future<Output = ()> + 's
 }
 
 async fn set_shot_delay(hub: Signal<HubContext>, device: Device, delay_ms: u16) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.set_shot_delay(device.clone(), delay_ms).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!(
+            "Failed to set shot delay {:x?}: not connected to the hub",
+            device.uuid
+        );
+        return;
+    };
+    match client.device(device.clone()).set_shot_delay(delay_ms).await {
         Ok(()) => tracing::info!("Set shot delay {}ms for {:x?}", delay_ms, device.uuid),
         Err(e) => tracing::error!("Failed to set shot delay {:x?}: {}", device.uuid, e),
     }
@@ -172,8 +178,14 @@ async fn reset_shot_delay(
     signals: DeviceSignals,
     revision: u64,
 ) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.reset_shot_delay(device.clone()).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!(
+            "Failed to reset shot delay {:x?}: not connected to the hub",
+            device.uuid
+        );
+        return;
+    };
+    match client.device(device.clone()).reset_shot_delay().await {
         Ok(delay_ms) => {
             tracing::info!("Reset shot delay for {:x?}", device.uuid);
             if signals.shot_delay_revision() == revision {
@@ -185,13 +197,20 @@ async fn reset_shot_delay(
 }
 
 async fn set_and_save_shot_delay(hub: Signal<HubContext>, device: Device, delay_ms: u16) {
-    let mut client = hub.peek().client.peek().clone();
-    if let Err(e) = client.set_shot_delay(device.clone(), delay_ms).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!(
+            "Failed to set shot delay {:x?}: not connected to the hub",
+            device.uuid
+        );
+        return;
+    };
+    let client = client.device(device.clone());
+    if let Err(e) = client.set_shot_delay(delay_ms).await {
         tracing::error!("Failed to set shot delay {:x?}: {}", device.uuid, e);
         return;
     }
     tracing::info!("Set shot delay {}ms for {:x?}", delay_ms, device.uuid);
-    match client.save_shot_delay(device.clone()).await {
+    match client.save_shot_delay().await {
         Ok(()) => tracing::info!("Saved shot delay for {:x?}", device.uuid),
         Err(e) => tracing::error!("Failed to save shot delay {:x?}: {}", device.uuid, e),
     }

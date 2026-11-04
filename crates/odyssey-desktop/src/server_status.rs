@@ -19,10 +19,9 @@ pub(crate) enum ServerExit {
 
 /// Asks the instance that already owns the hub socket to raise its window.
 async fn bring_existing_instance_to_front() {
-    let mut client = Client::default();
-    if client.connect().await.is_err() {
+    let Ok(client) = Client::connect().await else {
         return;
-    }
+    };
     match client.bring_to_front().await {
         Ok(()) => tracing::info!("Successfully brought existing instance to front"),
         Err(_) => tracing::warn!("Failed to bring existing instance to front"),

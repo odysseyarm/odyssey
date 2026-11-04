@@ -26,13 +26,18 @@ pub(super) fn LiveSession(
 ) -> Element {
     use_future(move || {
         let device = device.clone();
-        let mut client = hub.peek().client.peek().clone();
+        let client = hub.peek().client();
         async move {
             let legacy = matches!(device.product_id, 0x520f | 0x5210);
-            let mut stream = match client
-                .stream_images(device, ImageStreamConfig { camera, fps })
-                .await
-            {
+            let started = match client {
+                Some(client) => client
+                    .device(device)
+                    .stream_images(ImageStreamConfig { camera, fps })
+                    .await
+                    .map_err(|cause| cause.to_string()),
+                None => Err("not connected to the hub".to_owned()),
+            };
+            let mut stream = match started {
                 Ok(stream) => stream,
                 Err(cause) => {
                     error.set(Some(format!("Could not start USB image capture: {cause}")));

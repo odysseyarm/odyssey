@@ -60,7 +60,11 @@ impl AccessoryEdits {
         let mut next = self.infos.read().clone();
         edit(&mut next);
 
-        let mut client = self.hub.read().client.read().clone();
+        let Some(client) = self.hub.read().client.read().clone() else {
+            tracing::warn!("Failed to {action} accessory: not connected to the hub");
+            self.pending.set(false);
+            return;
+        };
         spawn(async move {
             // The hub replaces the whole map, so showing the edit before it
             // is accepted leaves the UI claiming a change the hub rejected.

@@ -75,16 +75,28 @@ pub(super) fn DeviceControls(
 }
 
 async fn reset_zero(hub: Signal<HubContext>, device: Device) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.reset_zero(device.clone()).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!(
+            "Failed to reset zero {:x?}: not connected to the hub",
+            device.uuid
+        );
+        return;
+    };
+    match client.device(device.clone()).reset_zero().await {
         Ok(()) => tracing::info!("Cleared zero for {:x?}", device.uuid),
         Err(e) => tracing::error!("Failed to reset zero {:x?}: {}", device.uuid, e),
     }
 }
 
 async fn clear_zero(hub: Signal<HubContext>, device: Device) {
-    let mut client = hub.peek().client.peek().clone();
-    match client.clear_zero(device.clone()).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!(
+            "Failed to clear zero {:x?}: not connected to the hub",
+            device.uuid
+        );
+        return;
+    };
+    match client.device(device.clone()).clear_zero().await {
         Ok(()) => tracing::info!("Cleared zero for {:x?}", device.uuid),
         Err(e) => tracing::error!("Failed to clear zero {:x?}: {}", device.uuid, e),
     }

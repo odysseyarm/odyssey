@@ -40,8 +40,6 @@ fn rpc_message(status: &tonic::Status) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("not connected to the hub")]
-    NotConnected,
     #[error(transparent)]
     Rpc(#[from] RpcError),
     #[error(transparent)]

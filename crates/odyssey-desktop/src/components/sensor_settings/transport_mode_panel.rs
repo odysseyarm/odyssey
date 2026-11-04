@@ -33,9 +33,17 @@ async fn switch_transport_mode(
     }
     switching.set(true);
     status.set(OpStatus::Busy("Switching...".into()));
-    let hub_ctx = hub.peek().clone();
-    let mut client = hub_ctx.client.peek().clone();
-    match client.set_transport_mode(device, usb_mode).await {
+    let Some(client) = hub.peek().client() else {
+        tracing::warn!("set_transport_mode failed: not connected to the hub");
+        user_pending_usb.set(None);
+        status.set(rpc_failure(
+            "switch the transport mode",
+            &"not connected to the hub",
+        ));
+        switching.set(false);
+        return;
+    };
+    match client.device(device).set_transport_mode(usb_mode).await {
         Ok(confirmed_usb) => {
             user_pending_usb.set(Some(confirmed_usb));
             let mode_str = if confirmed_usb { "USB" } else { "Bluetooth" };

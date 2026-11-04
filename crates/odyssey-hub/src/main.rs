@@ -100,9 +100,7 @@ async fn handle_server_status(
                         "Another instance is already running. Notifying it to bring window to front..."
                     );
 
-                    let mut client = odyssey_hub_client::client::Client::default();
-                    client
-                        .connect()
+                    let client = odyssey_hub_client::client::Client::connect()
                         .await
                         .context("connecting to the instance that owns the hub socket")?;
                     client

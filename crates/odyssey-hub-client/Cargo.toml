@@ -15,7 +15,6 @@ odyssey-hub-server-interface = { workspace = true }
 odyssey-hub-common = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "net", "signal", "rt-multi-thread", "time"] }
-tokio-util = { workspace = true }
 tonic = { workspace = true }
 tower = "0.4.13"
 tracing = { workspace = true }

@@ -63,7 +63,6 @@ pub enum ClientError {
 impl From<odyssey_hub_client::client::ClientError> for ClientError {
     fn from(error: odyssey_hub_client::client::ClientError) -> Self {
         match error {
-            odyssey_hub_client::client::ClientError::NotConnected => Self::NotConnected,
             odyssey_hub_client::client::ClientError::Rpc(error) => error.into(),
             source => Self::ConnectionFailure {
                 source: Arc::new(ConnectionFailure { source }),
@@ -84,7 +83,26 @@ impl From<RpcError> for ClientError {
 
 #[derive(uniffi::Object)]
 pub struct Client {
-    inner: Arc<RwLock<odyssey_hub_client::client::Client>>,
+    inner: Arc<RwLock<Option<odyssey_hub_client::client::Client>>>,
+}
+
+impl Client {
+    async fn client(&self) -> Result<odyssey_hub_client::client::Client, ClientError> {
+        self.inner
+            .read()
+            .await
+            .clone()
+            .ok_or(ClientError::NotConnected)
+    }
+
+    // Device validation precedes the connection check, matching the argument-first order of the RPC path.
+    async fn device(
+        &self,
+        device: Device,
+    ) -> Result<odyssey_hub_client::client::DeviceClient, ClientError> {
+        let device = device.try_into()?;
+        Ok(self.client().await?.device(device))
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -207,25 +225,21 @@ impl Client {
     #[uniffi::constructor]
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(odyssey_hub_client::client::Client::default())),
+            inner: Arc::new(RwLock::new(None)),
         }
     }
 
     #[uniffi::method]
     pub async fn connect(&self) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .connect()
-            .await
-            .map_err(ClientError::from)
+        let client = odyssey_hub_client::client::Client::connect().await?;
+        *self.inner.write().await = Some(client);
+        Ok(())
     }
 
     #[uniffi::method]
     pub async fn get_device_list(&self) -> Result<Vec<Device>, ClientError> {
-        self.inner
-            .write()
-            .await
+        self.client()
+            .await?
             .get_device_list()
             .await
             .map_err(ClientError::from)
@@ -234,7 +248,7 @@ impl Client {
 
     #[uniffi::method]
     pub async fn subscribe_device_list(&self) -> Result<DeviceListStream, ClientError> {
-        let mut client = self.inner.read().await.clone();
+        let client = self.client().await?;
 
         match client.subscribe_device_list().await {
             Ok(stream) => Ok(DeviceListStream {
@@ -248,9 +262,8 @@ impl Client {
     pub async fn get_accessory_map(
         &self,
     ) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
-        self.inner
-            .write()
-            .await
+        self.client()
+            .await?
             .get_accessory_map()
             .await
             .map(|map| {
@@ -274,7 +287,7 @@ impl Client {
 
     #[uniffi::method]
     pub async fn subscribe_accessory_map(&self) -> Result<AccessoryMapStream, ClientError> {
-        let mut client = self.inner.read().await.clone();
+        let client = self.client().await?;
 
         match client.subscribe_accessory_map().await {
             Ok(stream) => Ok(AccessoryMapStream {
@@ -286,7 +299,7 @@ impl Client {
 
     #[uniffi::method]
     pub async fn subscribe_events(&self) -> Result<EventStream, ClientError> {
-        let mut client = self.inner.read().await.clone();
+        let client = self.client().await?;
 
         match client.subscribe_events().await {
             Ok(stream) => Ok(EventStream {
@@ -301,9 +314,7 @@ impl Client {
         &self,
         device: Device,
     ) -> Result<ShotDelayStream, ClientError> {
-        let mut client = self.inner.read().await.clone();
-
-        match client.subscribe_shot_delay(device.try_into()?).await {
+        match self.device(device).await?.subscribe_shot_delay().await {
             Ok(stream) => Ok(ShotDelayStream {
                 inner: Arc::new(Mutex::new(Box::pin(stream))),
             }),
@@ -318,10 +329,9 @@ impl Client {
         tag: u8,
         data: Vec<u8>,
     ) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .write_vendor(device.try_into()?, tag, data)
+        self.device(device)
+            .await?
+            .write_vendor(tag, data)
             .await
             .map_err(ClientError::from)
             .map(|_| ())
@@ -329,10 +339,9 @@ impl Client {
 
     #[uniffi::method]
     pub async fn reset_zero(&self, device: Device) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .reset_zero(device.try_into()?)
+        self.device(device)
+            .await?
+            .reset_zero()
             .await
             .map_err(ClientError::from)
             .map(|_| ())
@@ -355,10 +364,9 @@ impl Client {
             y: target.y,
         };
 
-        self.inner
-            .write()
-            .await
-            .zero(device.try_into()?, translation, target, None)
+        self.device(device)
+            .await?
+            .zero(translation, target, None)
             .await
             .map_err(ClientError::from)
             .map(|_| ())
@@ -366,30 +374,27 @@ impl Client {
 
     #[uniffi::method]
     pub async fn reset_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
-        self.inner
-            .write()
-            .await
-            .reset_shot_delay(device.try_into()?)
+        self.device(device)
+            .await?
+            .reset_shot_delay()
             .await
             .map_err(ClientError::from)
     }
 
     #[uniffi::method]
     pub async fn get_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
-        self.inner
-            .write()
-            .await
-            .get_shot_delay(device.try_into()?)
+        self.device(device)
+            .await?
+            .get_shot_delay()
             .await
             .map_err(ClientError::from)
     }
 
     #[uniffi::method]
     pub async fn set_shot_delay(&self, device: Device, delay_ms: u16) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .set_shot_delay(device.try_into()?, delay_ms)
+        self.device(device)
+            .await?
+            .set_shot_delay(delay_ms)
             .await
             .map_err(ClientError::from)
             .map(|_| ())
@@ -397,10 +402,9 @@ impl Client {
 
     #[uniffi::method]
     pub async fn save_shot_delay(&self, device: Device) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .save_shot_delay(device.try_into()?)
+        self.device(device)
+            .await?
+            .save_shot_delay()
             .await
             .map_err(ClientError::from)
             .map(|_| ())
@@ -408,9 +412,8 @@ impl Client {
 
     #[uniffi::method]
     pub async fn get_screen_info_by_id(&self, screen_id: u8) -> Result<ScreenInfo, ClientError> {
-        self.inner
-            .write()
-            .await
+        self.client()
+            .await?
             .get_screen_info_by_id(screen_id)
             .await
             .map_err(ClientError::from)
@@ -425,10 +428,9 @@ impl Client {
         bank: u8,
         address: u8,
     ) -> Result<u8, ClientError> {
-        self.inner
-            .write()
-            .await
-            .read_register(device.try_into()?, port, bank, address)
+        self.device(device)
+            .await?
+            .read_register(port, bank, address)
             .await
             .map_err(ClientError::from)
     }
@@ -442,20 +444,18 @@ impl Client {
         address: u8,
         data: u8,
     ) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .write_register(device.try_into()?, port, bank, address, data)
+        self.device(device)
+            .await?
+            .write_register(port, bank, address, data)
             .await
             .map_err(ClientError::from)
     }
 
     #[uniffi::method]
     pub async fn flash_settings(&self, device: Device) -> Result<(), ClientError> {
-        self.inner
-            .write()
-            .await
-            .flash_settings(device.try_into()?)
+        self.device(device)
+            .await?
+            .flash_settings()
             .await
             .map_err(ClientError::from)
     }
@@ -479,9 +479,8 @@ impl Client {
             })
             .collect::<Result<_, ClientError>>()?;
 
-        self.inner
-            .write()
-            .await
+        self.client()
+            .await?
             .update_accessory_info_map(map)
             .await
             .map_err(ClientError::from)
@@ -539,5 +538,22 @@ mod tests {
             },
         ]));
         assert!(matches!(result, Err(ClientError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn unconnected_client_reports_not_connected() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let client = Client::new();
+        assert!(matches!(
+            runtime.block_on(client.get_device_list()),
+            Err(ClientError::NotConnected)
+        ));
+        assert!(matches!(
+            runtime.block_on(client.subscribe_events()),
+            Err(ClientError::NotConnected)
+        ));
     }
 }

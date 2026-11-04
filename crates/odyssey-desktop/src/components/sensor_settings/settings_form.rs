@@ -221,13 +221,20 @@ impl SettingsForm {
         device: &Device,
         failure: &mut Option<OpStatus>,
     ) {
-        match hub_ctx
-            .client
-            .peek()
-            .clone()
-            .read_config(device.clone(), IMPACT_THRESHOLD_CONFIG)
-            .await
-        {
+        let Some(client) = hub_ctx.client() else {
+            self.impact_threshold.set(String::new());
+            self.suppress_ms.set(String::new());
+            self.shot_delay.set(String::new());
+            record_failure(
+                failure,
+                "reading impact threshold",
+                "read the impact threshold",
+                &"not connected to the hub",
+            );
+            return;
+        };
+        let client = client.device(device.clone());
+        match client.read_config(IMPACT_THRESHOLD_CONFIG).await {
             Ok(value) => self.impact_threshold.set(value.to_string()),
             Err(error) => {
                 self.impact_threshold.set(String::new());
@@ -239,13 +246,7 @@ impl SettingsForm {
                 );
             }
         }
-        match hub_ctx
-            .client
-            .peek()
-            .clone()
-            .read_config(device.clone(), SUPPRESS_CONFIG)
-            .await
-        {
+        match client.read_config(SUPPRESS_CONFIG).await {
             Ok(value) => self.suppress_ms.set(value.to_string()),
             Err(error) => {
                 self.suppress_ms.set(String::new());
@@ -257,13 +258,7 @@ impl SettingsForm {
                 );
             }
         }
-        match hub_ctx
-            .client
-            .peek()
-            .clone()
-            .get_shot_delay(device.clone())
-            .await
-        {
+        match client.get_shot_delay().await {
             Ok(value) => self.shot_delay.set(value.to_string()),
             Err(error) => {
                 self.shot_delay.set(String::new());
@@ -368,11 +363,16 @@ impl SettingsForm {
                 "Applied for this session. Power cycling restores the saved values.".into(),
             ));
         }
-        hub_ctx
-            .client
-            .peek()
-            .clone()
-            .flash_settings(device.clone())
+        let client = hub_ctx.client().ok_or_else(|| {
+            write_failure(
+                "flashing settings",
+                "save the settings to the device",
+                &"not connected to the hub",
+            )
+        })?;
+        client
+            .device(device.clone())
+            .flash_settings()
             .await
             .map_err(|error| {
                 write_failure(
