@@ -8,6 +8,7 @@
 // The bt-hci macros test their own `defmt` feature name, which this crate does not declare.
 #![allow(unexpected_cfgs)]
 
+use backon::{EmbassySleeper, ExponentialBuilder, Retryable};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use bt_hci::cmd;
@@ -34,10 +35,22 @@ pub fn netcore_release() -> u16 {
     NETCORE_RELEASE.load(Ordering::Relaxed)
 }
 
-/// Gives the net core a few seconds to start answering before giving up.
-const BACKOFF_MS: [u64; 5] = [100, 250, 500, 1000, 2000];
+/// Pause before the first query, so the net core has a moment to start answering.
+const INITIAL_DELAY_MS: u64 = 100;
+/// Delay before the second query; each later retry waits twice as long as the one before. The
+/// retries together give the net core a few seconds to start answering before giving up.
+const RETRY_MIN_DELAY: core::time::Duration = core::time::Duration::from_millis(250);
+/// Queries made in total, the first included.
+const MAX_ATTEMPTS: usize = 5;
 /// `Stack::command` first waits for the host to finish initializing, so this covers that too.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
+
+enum QueryError {
+    /// The controller answered but does not implement the command; retrying cannot help.
+    Unavailable(bt_hci::param::Error),
+    /// The query failed or timed out; the net core may still be starting.
+    Transient,
+}
 
 /// Query the net-core release once the host runner is being polled, and store it for
 /// [`netcore_release`]. Retries with backoff because the net core may still be starting; gives up
@@ -47,29 +60,49 @@ where
     C: Controller + ControllerCmdSync<ReadNetCoreRelease>,
     P: PacketPool,
 {
-    for (attempt, backoff) in BACKOFF_MS.iter().enumerate() {
-        Timer::after_millis(*backoff).await;
-        match with_timeout(ATTEMPT_TIMEOUT, stack.command(ReadNetCoreRelease::new())).await {
-            Ok(Ok(ret)) => {
-                let release = { ret.release };
-                NETCORE_RELEASE.store(release, Ordering::Relaxed);
-                defmt::info!("[ble] net-core release {}", release);
-                return;
-            }
-            Ok(Err(trouble_host::BleHostError::BleHost(trouble_host::Error::Hci(e)))) => {
-                // The controller answered but does not implement the command.
-                defmt::info!("[ble] net-core release unavailable: {:?}", e);
-                return;
-            }
-            Ok(Err(_)) => {
-                defmt::warn!("[ble] net-core release query failed (attempt {})", attempt);
-            }
-            Err(_) => {
-                defmt::warn!(
-                    "[ble] net-core release query timed out (attempt {})",
-                    attempt
-                );
+    Timer::after_millis(INITIAL_DELAY_MS).await;
+    let mut attempts = 0usize;
+    let result = (|| {
+        let attempt = attempts;
+        attempts += 1;
+        async move {
+            match with_timeout(ATTEMPT_TIMEOUT, stack.command(ReadNetCoreRelease::new())).await {
+                Ok(Ok(ret)) => Ok(ret),
+                Ok(Err(trouble_host::BleHostError::BleHost(trouble_host::Error::Hci(e)))) => {
+                    Err(QueryError::Unavailable(e))
+                }
+                Ok(Err(_)) => {
+                    defmt::warn!("[ble] net-core release query failed (attempt {})", attempt);
+                    Err(QueryError::Transient)
+                }
+                Err(_) => {
+                    defmt::warn!(
+                        "[ble] net-core release query timed out (attempt {})",
+                        attempt
+                    );
+                    Err(QueryError::Transient)
+                }
             }
         }
+    })
+    .retry(
+        ExponentialBuilder::default()
+            .with_min_delay(RETRY_MIN_DELAY)
+            .with_factor(2.0)
+            .with_max_times(MAX_ATTEMPTS - 1),
+    )
+    .sleep(EmbassySleeper)
+    .when(|e| matches!(e, QueryError::Transient))
+    .await;
+    match result {
+        Ok(ret) => {
+            let release = { ret.release };
+            NETCORE_RELEASE.store(release, Ordering::Relaxed);
+            defmt::info!("[ble] net-core release {}", release);
+        }
+        Err(QueryError::Unavailable(e)) => {
+            defmt::info!("[ble] net-core release unavailable: {:?}", e);
+        }
+        Err(QueryError::Transient) => {}
     }
 }

@@ -1,8 +1,9 @@
+use backon::{ConstantBuilder, EmbassySleeper, Retryable};
 use embassy_futures::join::join3;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use odyssey_protocol::control::device::TransportMode;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -335,6 +336,80 @@ async fn advertise<'values, 'server, C: Controller>(
     Ok(conn)
 }
 
+/// How long one L2CAP accept waits for the central to open the channel.
+const L2CAP_ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Attempts to accept one L2CAP channel; only timeouts are retried.
+const MAX_L2CAP_ACCEPT_ATTEMPTS: usize = 5;
+
+enum AcceptError<E> {
+    TimedOut,
+    Failed(E),
+}
+
+/// Accepts L2CAP channel number `which` (for logging), retrying on timeout with no delay. Logs and
+/// returns `None` when the accept fails or every attempt times out.
+async fn accept_l2cap<'a, C: Controller, P: PacketPool>(
+    stack: &'a Stack<'a, C, P>,
+    conn: &GattConnection<'_, '_, P>,
+    psms: &[u16],
+    config: &L2capChannelConfig,
+    which: u8,
+) -> Option<L2capChannel<'a, P>> {
+    let mut attempts = 0usize;
+    let accepted = (|| {
+        attempts += 1;
+        let attempt = attempts;
+        async move {
+            match embassy_time::with_timeout(
+                L2CAP_ACCEPT_TIMEOUT,
+                L2capChannel::accept(stack, conn.raw(), psms, config),
+            )
+            .await
+            {
+                Ok(Ok(ch)) => Ok(ch),
+                Ok(Err(e)) => Err(AcceptError::Failed(e)),
+                Err(_) => {
+                    defmt::warn!(
+                        "[custom_task] L2CAP channel {} accept timeout (attempt {}/{})",
+                        which,
+                        attempt,
+                        MAX_L2CAP_ACCEPT_ATTEMPTS
+                    );
+                    Err(AcceptError::TimedOut)
+                }
+            }
+        }
+    })
+    .retry(
+        ConstantBuilder::default()
+            .with_delay(core::time::Duration::ZERO)
+            .with_max_times(MAX_L2CAP_ACCEPT_ATTEMPTS - 1),
+    )
+    .sleep(EmbassySleeper)
+    .when(|e| matches!(e, AcceptError::TimedOut))
+    .await;
+    match accepted {
+        Ok(ch) => Some(ch),
+        Err(AcceptError::Failed(e)) => {
+            defmt::error!(
+                "[custom_task] Failed to accept L2CAP channel {}: {:?}",
+                which,
+                defmt::Debug2Format(&e)
+            );
+            None
+        }
+        Err(AcceptError::TimedOut) => {
+            defmt::error!(
+                "[custom_task] Failed to accept L2CAP channel {} after {} attempts, giving up",
+                which,
+                MAX_L2CAP_ACCEPT_ATTEMPTS
+            );
+            None
+        }
+    }
+}
+
 async fn custom_task<'a, C: Controller, P: PacketPool>(
     _server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
@@ -372,93 +447,31 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         L2CAP_PSM_DATA
     );
 
-    const MAX_L2CAP_ACCEPT_ATTEMPTS: u8 = 5;
-    let mut accept_attempts = 0u8;
-
-    let l2cap_control_channel = loop {
-        match embassy_time::with_timeout(
-            embassy_time::Duration::from_secs(10),
-            L2capChannel::accept(
-                stack,
-                conn.raw(),
-                &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
-                &l2cap_control_config,
-            ),
-        )
-        .await
-        {
-            Ok(Ok(ch)) => {
-                defmt::info!("[custom_task] L2CAP channel 1 accepted (control PSM 0x0080)");
-                break ch;
-            }
-            Ok(Err(e)) => {
-                defmt::error!(
-                    "[custom_task] Failed to accept L2CAP channel 1: {:?}",
-                    defmt::Debug2Format(&e)
-                );
-                return;
-            }
-            Err(_) => {
-                accept_attempts += 1;
-                defmt::warn!(
-                    "[custom_task] L2CAP channel 1 accept timeout (attempt {}/{})",
-                    accept_attempts,
-                    MAX_L2CAP_ACCEPT_ATTEMPTS
-                );
-                if accept_attempts >= MAX_L2CAP_ACCEPT_ATTEMPTS {
-                    defmt::error!(
-                        "[custom_task] Failed to accept L2CAP channel 1 after {} attempts, giving up",
-                        MAX_L2CAP_ACCEPT_ATTEMPTS
-                    );
-                    return;
-                }
-                continue;
-            }
-        }
+    let Some(l2cap_control_channel) = accept_l2cap(
+        stack,
+        conn,
+        &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
+        &l2cap_control_config,
+        1,
+    )
+    .await
+    else {
+        return;
     };
+    defmt::info!("[custom_task] L2CAP channel 1 accepted (control PSM 0x0080)");
 
-    accept_attempts = 0;
-    let l2cap_data_channel = loop {
-        match embassy_time::with_timeout(
-            embassy_time::Duration::from_secs(10),
-            L2capChannel::accept(
-                stack,
-                conn.raw(),
-                &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
-                &l2cap_data_config,
-            ),
-        )
-        .await
-        {
-            Ok(Ok(ch)) => {
-                defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
-                break ch;
-            }
-            Ok(Err(e)) => {
-                defmt::error!(
-                    "[custom_task] Failed to accept L2CAP channel 2: {:?}",
-                    defmt::Debug2Format(&e)
-                );
-                return;
-            }
-            Err(_) => {
-                accept_attempts += 1;
-                defmt::warn!(
-                    "[custom_task] L2CAP channel 2 accept timeout (attempt {}/{})",
-                    accept_attempts,
-                    MAX_L2CAP_ACCEPT_ATTEMPTS
-                );
-                if accept_attempts >= MAX_L2CAP_ACCEPT_ATTEMPTS {
-                    defmt::error!(
-                        "[custom_task] Failed to accept L2CAP channel 2 after {} attempts, giving up",
-                        MAX_L2CAP_ACCEPT_ATTEMPTS
-                    );
-                    return;
-                }
-                continue;
-            }
-        }
+    let Some(l2cap_data_channel) = accept_l2cap(
+        stack,
+        conn,
+        &[L2CAP_PSM_CTRL, L2CAP_PSM_DATA],
+        &l2cap_data_config,
+        2,
+    )
+    .await
+    else {
+        return;
     };
+    defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
 
     while transport_mode::get() != TransportMode::Ble {
         let mode = transport_mode::get();

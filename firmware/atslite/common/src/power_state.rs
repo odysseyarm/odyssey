@@ -1,3 +1,4 @@
+use backon::{ConstantBuilder, EmbassySleeper, Retryable};
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_nrf::twim::Twim;
@@ -32,17 +33,29 @@ pub async fn power_state_task(
 ) -> ! {
     use embassy_time::Instant;
 
-    let (v0, t0) = loop {
+    // The ADC reports an invalid battery voltage until its first conversion completes.
+    struct AdcNotReady(f32);
+    let (v0, t0) = (|| async {
         let mut guard = pmic.lock().await;
         let v = guard.measure_vbat().await.unwrap();
         if v > 2.5 {
             let t = guard.measure_die_temperature().await.unwrap();
-            break (v, t);
+            Ok((v, t))
+        } else {
+            Err(AdcNotReady(v))
         }
-        drop(guard);
-        defmt::trace!("[fg] vbat={} V invalid, waiting for ADC...", v);
-        embassy_time::Timer::after_millis(50).await;
-    };
+    })
+    .retry(
+        ConstantBuilder::default()
+            .with_delay(core::time::Duration::from_millis(50))
+            .without_max_times(),
+    )
+    .sleep(EmbassySleeper)
+    .notify(|e: &AdcNotReady, _| {
+        defmt::trace!("[fg] vbat={} V invalid, waiting for ADC...", e.0);
+    })
+    .await
+    .unwrap_or_else(|AdcNotReady(v)| defmt::unreachable!("unbounded retry gave up at {} V", v));
 
     defmt::trace!("[fg] init: v0={} V, t0={} °C", v0, t0);
 
