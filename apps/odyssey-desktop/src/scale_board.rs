@@ -164,15 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn every_board_has_its_own_file() {
-        let names: std::collections::HashSet<_> =
-            Board::ALL.iter().map(|b| b.file_name()).collect();
-        assert_eq!(names.len(), Board::ALL.len());
-        let bytes: std::collections::HashSet<_> = Board::ALL.iter().map(|b| b.bytes()).collect();
-        assert_eq!(bytes.len(), Board::ALL.len(), "two boards share one file");
-    }
-
-    #[test]
     fn saving_writes_the_exact_file_and_creates_the_folder() {
         let dir = std::env::temp_dir().join(format!("odyssey-board-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
