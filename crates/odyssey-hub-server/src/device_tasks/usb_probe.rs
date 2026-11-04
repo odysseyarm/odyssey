@@ -12,19 +12,18 @@ const UUID_READ_RETRY_DELAY: Duration = Duration::from_millis(500);
 const EVENTS_VERSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENTS_VERSION_REQUEST_ATTEMPTS: usize = 3;
 
-/// Parse a [u8; 6] UUID from a USB serial number string (e.g. "AABBCCDDEEFF" or "AA:BB:CC:DD:EE:FF").
-/// Returns None if the serial is absent or not a valid 12-hex-digit MAC address.
+/// Parse a six-byte UUID from a USB serial, allowing colon or dash separators.
+/// Missing, malformed, or non-twelve-hex-digit serials have no usable UUID.
 pub(super) fn uuid_from_usb_serial(serial: Option<&str>) -> Option<[u8; 6]> {
     let serial = serial?;
-    let digits: Vec<u8> = serial
-        .chars()
-        .filter_map(|c| c.to_digit(16))
-        .map(|digit| digit as u8)
-        .collect();
-    let digits: [u8; 12] = digits.try_into().ok()?;
-    Some(std::array::from_fn(|i| {
-        digits[i * 2] << 4 | digits[i * 2 + 1]
-    }))
+    let mut digits = serial.bytes().filter(|byte| !matches!(byte, b':' | b'-'));
+    let mut uuid = [0; 6];
+    for byte in &mut uuid {
+        let high = char::from(digits.next()?).to_digit(16)? as u8;
+        let low = char::from(digits.next()?).to_digit(16)? as u8;
+        *byte = high << 4 | low;
+    }
+    digits.next().is_none().then_some(uuid)
 }
 
 /// Read a device UUID, retrying a few times.
@@ -158,6 +157,7 @@ mod tests {
         let expected = Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
         assert_eq!(uuid_from_usb_serial(Some("AABBCCDDEEFF")), expected);
         assert_eq!(uuid_from_usb_serial(Some("aa:bb:cc:dd:ee:ff")), expected);
+        assert_eq!(uuid_from_usb_serial(Some("aa-bb-cc-dd-ee-ff")), expected);
     }
 
     #[test]
@@ -166,5 +166,7 @@ mod tests {
         assert_eq!(uuid_from_usb_serial(Some("AABBCCDDEE")), None);
         assert_eq!(uuid_from_usb_serial(Some("AABBCCDDEEFF00")), None);
         assert_eq!(uuid_from_usb_serial(Some("not a serial")), None);
+        assert_eq!(uuid_from_usb_serial(Some("zzAABBCCDDEEFF")), None);
+        assert_eq!(uuid_from_usb_serial(Some("AABB CCDDEEFF")), None);
     }
 }

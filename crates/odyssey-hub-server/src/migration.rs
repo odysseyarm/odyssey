@@ -33,14 +33,14 @@ pub(crate) fn is_placeholder_serial(serial: Option<&str>) -> bool {
 /// so the result is unambiguous: with a second device present there is no way to
 /// tell which one was asked for, and guessing would flash the wrong unit.
 pub(crate) fn single_unidentifiable_device(candidates: Vec<DeviceInfo>) -> Option<DeviceInfo> {
-    let mut unidentifiable = candidates
-        .into_iter()
-        .filter(|dev| is_placeholder_serial(dev.serial_number()));
-    let only = unidentifiable.next()?;
-    if unidentifiable.next().is_some() {
+    if candidates.len() > 1 {
         tracing::warn!(
-            "Several devices report an unusable serial; refusing to guess which one to use"
+            "Several matching devices are attached; refusing to guess which one has the requested UUID"
         );
+        return None;
+    }
+    let only = candidates.into_iter().next()?;
+    if !is_placeholder_serial(only.serial_number()) {
         return None;
     }
     tracing::warn!(
