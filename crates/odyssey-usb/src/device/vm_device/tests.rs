@@ -107,6 +107,27 @@ async fn pending_request_fails_fast_when_transport_closes() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn zero_retry_attempts_send_no_packet() {
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx: _keep_open,
+    } = harness();
+    let err = device
+        .request_with_retry(PacketData::ReadVersion(), Duration::from_secs(2), 0)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::NoResponse { attempts: 0, .. }),
+        "{err:?}"
+    );
+    assert!(matches!(
+        sent.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
 async fn retry_resends_once_per_silent_attempt_then_gives_up() {
     let Harness {
         device,

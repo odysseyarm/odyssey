@@ -268,13 +268,19 @@ impl VmDevice {
     /// up to `limit` attempts. Only a missing reply is retried; any other error
     /// (send failure, closed transport) is returned immediately. Only for
     /// idempotent requests: the first packet after a device (re)boots is sometimes
-    /// lost.
+    /// lost. A zero limit sends nothing and returns [`Error::NoResponse`].
     pub async fn request_with_retry(
         &self,
         data: PacketData,
         timeout: Duration,
         limit: usize,
     ) -> Result<PacketData> {
+        if limit == 0 {
+            return Err(Error::NoResponse {
+                attempts: 0,
+                per_attempt: timeout,
+            });
+        }
         (async || tokio::time::timeout(timeout, self.request_unbounded(data.clone())).await)
             .retry(resend_schedule(limit))
             .await
