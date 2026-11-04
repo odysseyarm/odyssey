@@ -202,7 +202,7 @@ impl VisionTool {
         let (notice_sender, notices) = mpsc::channel();
         Self {
             #[cfg(feature = "bevy")]
-            bevy: crate::bevy_viewer::BevyViewer::spawn(Arc::clone(&runner)),
+            bevy: crate::bevy_viewer::BevyViewer::new(Arc::clone(&runner)),
             runner,
             datapoints,
             packets,
@@ -371,8 +371,10 @@ impl VisionTool {
                 self.windows.plots = true;
             }
             #[cfg(feature = "bevy")]
-            if ui.button("Launch Bevy").clicked() {
-                self.bevy.open();
+            if ui.button("Launch Bevy").clicked()
+                && let Err(error) = self.bevy.open()
+            {
+                self.notice = Some(format!("Could not open the 3D viewer: {error:#}"));
             }
         });
 
@@ -516,10 +518,18 @@ impl VisionTool {
 impl eframe::App for VisionTool {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_notices();
+        #[cfg(feature = "bevy")]
+        if let Err(error) = self.bevy.poll() {
+            self.notice = Some(format!("3D viewer stopped: {error:#}"));
+        }
         self.sync_config();
         self.sync_tasks();
         if self.has_live_view() {
             ctx.request_repaint();
+        }
+        #[cfg(feature = "bevy")]
+        if self.bevy.is_running() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
     }
 

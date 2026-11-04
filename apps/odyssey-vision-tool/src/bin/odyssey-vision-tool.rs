@@ -14,5 +14,11 @@ fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(feature = "bevy")]
+    if let [argument] = args.as_slice()
+        && argument == odyssey_vision_tool::bevy_viewer::VIEWER_ARGUMENT
+    {
+        return odyssey_vision_tool::bevy_viewer::run_viewer();
+    }
     app::run(Launch::from_args(&args)?)
 }
