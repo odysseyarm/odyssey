@@ -45,7 +45,7 @@ pub unsafe trait Serialize {
     #[cfg(feature = "std")]
     #[expect(
         unsafe_code,
-        reason = "set_len over the spare capacity that serialize just filled"
+        reason = "set_len over the spare capacity that serialize has filled"
     )]
     fn serialize_to_vec(&self, buf: &mut Vec<u8>) {
         buf.reserve(Self::SIZE);
