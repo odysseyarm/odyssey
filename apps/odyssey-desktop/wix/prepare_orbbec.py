@@ -10,7 +10,7 @@ variant also the files it installs. `dx bundle` is run afterwards with these set
     ODYSSEY_ORBBEC_STAGE=<DIR>      (absolute path; the template reads EULA.rtf from it)
 
 online   A fragment with a hidden, empty feature. The installer carries nothing; the app
-         downloads the SDK itself (see src/sdk_install.rs).
+         downloads the SDK itself (see src/sdk_install/).
 offline  Downloads the SDK release in ../orbbec-sdk.json, checks its sha256, unpacks the
          listed files into DIR/orbbec-sdk, fetches the EULA (checked too), turns it into
          the installer's licence page, and writes a fragment that installs it all as an
