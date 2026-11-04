@@ -6,11 +6,13 @@
     reason = "command-line tool: stderr is its interface"
 )]
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context as _, Result};
-use nusb::{DeviceInfo, MaybeFuture as _};
+use clap::Parser;
+use nusb::DeviceInfo;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::{PacketData, PacketType};
@@ -21,19 +23,22 @@ use tokio_stream::StreamExt as _;
 /// Nordic Semiconductor's USB vendor id.
 const NORDIC_VENDOR_ID: u16 = 0x1915;
 /// Product ids of the devices that can be recorded.
-const RECORDABLE_PRODUCT_IDS: [u16; 2] = [0x520F, 0x5210];
+const RECORDABLE_PRODUCT_IDS: [u16; 3] = [0x520F, 0x5210, 0x5211];
 
 /// Capacity of the channel carrying "Enter was pressed" events.
 const STDIN_EVENT_CAPACITY: usize = 50;
 
-async fn get_devices() -> Vec<DeviceInfo> {
-    let devices = match nusb::list_devices().wait() {
-        Ok(devs) => devs,
-        Err(e) => {
-            eprintln!("Failed to list USB devices: {e}");
-            return vec![];
-        }
-    };
+#[derive(Parser)]
+#[command(about = "Record a USB device's raw packets for odyssey-playback")]
+struct Args {
+    /// Output recording file.
+    output: PathBuf,
+}
+
+async fn get_devices() -> Result<Vec<DeviceInfo>> {
+    let devices = nusb::list_devices()
+        .await
+        .context("failed to list USB devices")?;
 
     let mut filtered = Vec::new();
     for info in devices.into_iter().filter(|info| {
@@ -55,7 +60,7 @@ async fn get_devices() -> Vec<DeviceInfo> {
         }
     }
 
-    filtered
+    Ok(filtered)
 }
 
 /// Sends one event per line read from stdin. Runs on its own thread because
@@ -94,18 +99,29 @@ async fn record_packets(
         .stream(PacketType::CombinedMarkersReport())
         .await
         .context("failed to start combined markers stream")?;
-    // One merged stream so a single select! arm waits for any of the three.
-    let mut merged_stream = accel_stream.merge(mot_stream).merge(comb_stream);
+    let poc_stream = device
+        .stream(PacketType::PocMarkersReport())
+        .await
+        .context("failed to start POC markers stream")?;
+    let impact_stream = device
+        .stream(PacketType::ImpactReport())
+        .await
+        .context("failed to start impact stream")?;
+    let mut merged_stream = accel_stream
+        .merge(mot_stream)
+        .merge(comb_stream)
+        .merge(poc_stream)
+        .merge(impact_stream);
 
     let mut packets = vec![];
     loop {
         tokio::select! {
             _ = stdin_line.recv() => break,
             packet = merged_stream.next() => {
-                let Some(packet) = packet else { break };
+                let packet = packet.context("device packet streams ended while recording")?;
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .expect("system clock is after the Unix epoch")
+                    .context("cannot record packets before the Unix epoch")?
                     .as_millis();
                 packets.push((timestamp, packet));
             }
@@ -114,12 +130,9 @@ async fn record_packets(
     Ok(packets)
 }
 
-async fn run(output_path: &str, port_arg: Option<&str>) -> Result<()> {
-    if port_arg.is_some() {
-        eprintln!("Port argument is no longer supported, using first available device");
-    }
-    let devices = get_devices().await;
-    if port_arg.is_none() && devices.len() > 1 {
+async fn run(output_path: &std::path::Path) -> Result<()> {
+    let devices = get_devices().await?;
+    if devices.len() > 1 {
         eprintln!("Multiple devices found, using first one");
     }
     let device_info = devices
@@ -143,26 +156,25 @@ async fn run(output_path: &str, port_arg: Option<&str>) -> Result<()> {
     std::thread::spawn(move || stdin_thread(snd));
     eprintln!("Press enter to start recording");
 
-    stdin_line.recv().await;
+    stdin_line
+        .recv()
+        .await
+        .context("stdin closed before recording started")?;
     eprintln!("Press enter to stop recording");
 
     let packets = record_packets(&device, &mut stdin_line).await?;
     let bytes =
         encode_recording(&general_config, &packets).context("failed to encode recording")?;
 
-    eprintln!("Saving to {output_path}");
-    std::fs::write(output_path, &bytes).with_context(|| format!("failed to write {output_path}"))
+    eprintln!("Saving to {}", output_path.display());
+    std::fs::write(output_path, &bytes)
+        .with_context(|| format!("failed to write {}", output_path.display()))
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let Some(output_path) = std::env::args().nth(1) else {
-        eprintln!("No output path");
-        return ExitCode::FAILURE;
-    };
-    let port_arg = std::env::args().nth(2);
-
-    match run(&output_path, port_arg.as_deref()).await {
+    let args = Args::parse();
+    match run(&args.output).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e:#}");
