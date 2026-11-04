@@ -7,6 +7,8 @@ mod intrinsics_convert;
 pub mod ocv_types;
 mod plane;
 mod screen_calibration;
+#[cfg(feature = "std")]
+mod screen_surface;
 
 #[cfg(feature = "std")]
 pub use calibration_json::{
@@ -19,4 +21,9 @@ pub use intrinsics_convert::ros_opencv_intrinsics_type_convert;
 pub use plane::Plane;
 pub use screen_calibration::{
     MARKER_PATTERN_LEN, MAX_SCREEN_ID, ScreenCalibration, ScreenCalibrationError,
+};
+#[cfg(feature = "std")]
+pub use screen_surface::{
+    MAX_GRID_DIMENSION, MAX_GRID_VERTICES, ScreenSurface, ScreenSurfaceError, SurfaceHit,
+    triangle_hit,
 };

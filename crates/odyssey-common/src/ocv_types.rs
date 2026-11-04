@@ -209,14 +209,26 @@ pub struct MinimalStereoCalibrationParams<R: RealField> {
     pub t: OpenCVMatrix3x1<R>,
 }
 
+/// The buffer ended before a whole calibration was read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnexpectedEnd;
+
+impl core::fmt::Display for UnexpectedEnd {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("calibration data ended early")
+    }
+}
+
+impl core::error::Error for UnexpectedEnd {}
+
 /// Reads `N` little-endian `f32`s off the front of `data`, advancing it.
 #[cfg(feature = "std")]
-fn take_f32s<const N: usize>(data: &mut &[u8]) -> Result<[f32; N], Box<dyn std::error::Error>> {
+fn take_f32s<const N: usize>(data: &mut &[u8]) -> Result<[f32; N], UnexpectedEnd> {
     let mut values = [0.0; N];
     for value in &mut values {
         let (bytes, rest) = data
             .split_first_chunk::<{ size_of::<f32>() }>()
-            .ok_or("Unexpected end of data")?;
+            .ok_or(UnexpectedEnd)?;
         *value = f32::from_le_bytes(*bytes);
         *data = rest;
     }
@@ -233,7 +245,7 @@ fn put_f32s(buf: &mut Vec<u8>, values: &[f32]) {
 impl MinimalCameraCalibrationParams<f32> {
     /// `data` is left untouched when it is too short.
     #[cfg(feature = "std")]
-    pub fn parse(data: &mut &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn parse(data: &mut &[u8]) -> Result<Self, UnexpectedEnd> {
         let mut cursor = *data;
         let camera_matrix = OpenCVMatrix3 {
             data: take_f32s(&mut cursor)?,
@@ -258,7 +270,7 @@ impl MinimalCameraCalibrationParams<f32> {
 impl MinimalStereoCalibrationParams<f32> {
     /// `data` is left untouched when it is too short.
     #[cfg(feature = "std")]
-    pub fn parse(data: &mut &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn parse(data: &mut &[u8]) -> Result<Self, UnexpectedEnd> {
         let mut cursor = *data;
         let r = OpenCVMatrix3 {
             data: take_f32s(&mut cursor)?,

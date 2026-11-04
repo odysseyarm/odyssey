@@ -31,6 +31,7 @@ struct View {
 
 fn calibration(points: &[Point2<f64>; 6]) -> ScreenCalibration<f32> {
     ScreenCalibration {
+        surface: None,
         rotation: UnitQuaternion::identity(),
         homography: Matrix3::identity(),
         object_points: points.map(|p| Point3::new(p.x as f32, p.y as f32, 0.0)),

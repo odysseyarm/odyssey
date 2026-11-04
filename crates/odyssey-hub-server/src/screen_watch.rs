@@ -142,9 +142,9 @@ fn merge(previous: &Calibrations, loaded: ScreenCalibrationsResult) -> (Calibrat
     for id in 0..=odyssey_common::MAX_SCREEN_ID {
         let fresh = loaded.calibrations.iter().find(|(i, _)| *i == id);
         let entry = if let Some(entry) = fresh {
-            Some(*entry)
+            Some(entry.clone())
         } else if loaded.corrupted_screens.iter().any(|(i, _, _)| *i == id) {
-            let old = previous.iter().find(|(i, _)| *i == id).copied();
+            let old = previous.iter().find(|(i, _)| *i == id).cloned();
             if old.is_some() {
                 kept_previous.push(id);
             }
@@ -215,6 +215,7 @@ mod tests {
     /// versions apart.
     fn cal(scale: f32) -> ScreenCalibration<f32> {
         ScreenCalibration {
+            surface: None,
             rotation: UnitQuaternion::identity(),
             homography: Matrix3::new(scale, 0.0, 0.0, 0.0, scale, 0.0, 0.0, 0.0, 1.0),
             object_points: [Point3::new(0.0, 0.0, 0.0); 6],

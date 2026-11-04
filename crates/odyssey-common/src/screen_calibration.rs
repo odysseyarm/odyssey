@@ -2,6 +2,9 @@ use nalgebra::{Point2, RealField, Scalar};
 use num::FromPrimitive;
 use num::traits::Float;
 
+#[cfg(feature = "std")]
+use crate::screen_surface::{ScreenSurface, ScreenSurfaceError, SurfaceHit, plane_hit};
+
 /// Highest screen id a hub tracks; ids run `0..=MAX_SCREEN_ID`.
 pub const MAX_SCREEN_ID: u8 = 5;
 /// Number of markers in the pattern shown on a screen.
@@ -13,14 +16,24 @@ pub const MARKER_PATTERN_LEN: usize = 6;
 /// screen lies on the XY plane.
 ///
 /// `homography` maps physical screen space to the unit square: `(x, y)` in meters to
-/// `(x', y')` with `x', y' ∈ [0, 1]`.
+/// `(x', y')` with `x', y' ∈ [0, 1]`. It is the planar fit of the display.
+///
+/// `surface`, when present, is the measured display: it replaces the plane and
+/// homography for aim mapping wherever the aim ray hits it.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(feature = "std"), derive(Copy))]
+#[derive(Debug, Clone)]
 pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + RealField> {
     #[cfg_attr(feature = "serde", serde(default))]
     pub rotation: nalgebra::UnitQuaternion<F>,
     pub homography: nalgebra::Matrix3<F>,
     pub object_points: [nalgebra::Point3<F>; MARKER_PATTERN_LEN],
+    #[cfg(feature = "std")]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub surface: Option<ScreenSurface>,
 }
 
 impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
@@ -33,9 +46,75 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
             rotation: self.rotation.cast(),
             homography: self.homography.cast(),
             object_points: self.object_points.map(nalgebra::OPoint::cast),
+            #[cfg(feature = "std")]
+            surface: self.surface.clone(),
         }
     }
 
+    /// Aim on the display for a ray in physical-screen space.
+    ///
+    /// With a surface: the nearest hit on it, inside `[0, 1]^2`. Without one, or
+    /// when the ray misses it: the `z = 0` plane through `homography`, which may
+    /// fall outside the unit square (off-screen aim). The distance is along the
+    /// ray in units of `direction`'s length, matching the planar path.
+    #[cfg(feature = "std")]
+    pub fn aim_from_ray(
+        &self,
+        origin: &nalgebra::Vector3<F>,
+        direction: &nalgebra::Vector3<F>,
+    ) -> Option<(Point2<F>, F)> {
+        if let Some(surface) = &self.surface
+            && let Some(hit) = surface.raycast(origin.map(as_f64), direction.map(as_f64))
+        {
+            let length = as_f64(direction.norm());
+            return Some((
+                hit.uv.map(|v| F::from_f64(v).unwrap_or_else(F::nan)),
+                F::from_f64(hit.distance_m / length)?,
+            ));
+        }
+        let t = -origin.z / direction.z;
+        let intersection = origin + direction.scale(t);
+        Some((
+            self.homography
+                .transform_point(&Point2::new(intersection.x, intersection.y)),
+            t,
+        ))
+    }
+
+    /// Physical-screen point shown at `uv`, on the surface when present.
+    #[cfg(feature = "std")]
+    pub fn point_at_uv(&self, uv: Point2<F>) -> Option<nalgebra::Point3<F>> {
+        if let Some(surface) = &self.surface {
+            let uv = uv.map(as_f64);
+            return surface
+                .point_at_uv(uv)
+                .map(|p| nalgebra::Point3::from(p.map(|v| F::from_f64(v).unwrap_or_else(F::nan))));
+        }
+        let p = self.homography.try_inverse()?.transform_point(&uv);
+        Some(nalgebra::Point3::new(p.x, p.y, F::zero()))
+    }
+
+    /// Nearest display hit inside `[0, 1]^2`, with distance in meters. Unlike
+    /// [`Self::aim_from_ray`], a miss is `None`; used for reference labels.
+    #[cfg(feature = "std")]
+    pub fn surface_hit(
+        &self,
+        origin: nalgebra::Vector3<f64>,
+        direction: nalgebra::Vector3<f64>,
+    ) -> Option<SurfaceHit> {
+        match &self.surface {
+            Some(surface) => surface.raycast(origin, direction),
+            None => plane_hit(&self.homography.map(as_f64), origin, direction),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+fn as_f64<F: num::ToPrimitive>(value: F) -> f64 {
+    value.to_f64().unwrap_or(f64::NAN)
+}
+
+impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
     /// Top-left, top-right, bottom-left and bottom-right corners.
     ///
     /// Returns `None` for a singular homography, non-finite corners, or a
@@ -76,6 +155,8 @@ pub enum ScreenCalibrationError {
     NonFiniteCoordinates,
     InvalidBounds,
     InvalidRotation,
+    #[cfg(feature = "std")]
+    Surface(ScreenSurfaceError),
 }
 
 impl core::fmt::Display for ScreenCalibrationError {
@@ -84,6 +165,8 @@ impl core::fmt::Display for ScreenCalibrationError {
             Self::NonFiniteCoordinates => "screen calibration contains non-finite coordinates",
             Self::InvalidBounds => "screen calibration has singular or infinite bounds",
             Self::InvalidRotation => "screen calibration rotation is not a finite unit quaternion",
+            #[cfg(feature = "std")]
+            Self::Surface(error) => return write!(f, "screen calibration surface: {error}"),
         })
     }
 }
@@ -112,6 +195,12 @@ impl ScreenCalibration<f32> {
         {
             return Err(ScreenCalibrationError::InvalidRotation);
         }
+        #[cfg(feature = "std")]
+        if let Some(surface) = &self.surface {
+            surface
+                .validate()
+                .map_err(ScreenCalibrationError::Surface)?;
+        }
         Ok(())
     }
 }
@@ -128,6 +217,7 @@ mod tests {
             rotation: UnitQuaternion::<f32>::identity(),
             homography: Matrix3::zeros(),
             object_points: [Point3::origin(); MARKER_PATTERN_LEN],
+            surface: None,
         };
         assert!(calibration.bounds().is_none());
         // Inverse maps the right-hand corners to z = 0.
@@ -154,6 +244,7 @@ mod tests {
             rotation: UnitQuaternion::<f32>::identity(),
             homography: Matrix3::identity(),
             object_points: [Point3::origin(); MARKER_PATTERN_LEN],
+            surface: None,
         };
         assert_eq!(calibration.validate(), Ok(()));
         calibration.object_points[0].x = f32::NAN;

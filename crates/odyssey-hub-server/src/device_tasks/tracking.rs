@@ -428,6 +428,7 @@ mod tests {
         calibrations.push((
             0,
             odyssey_common::ScreenCalibration {
+                surface: None,
                 rotation: UnitQuaternion::identity(),
                 homography: Matrix3::identity(),
                 object_points: [Point3::origin(); odyssey_common::MARKER_PATTERN_LEN],
