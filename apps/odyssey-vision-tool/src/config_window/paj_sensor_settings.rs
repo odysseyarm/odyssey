@@ -37,7 +37,9 @@ pub(super) struct PajSensorSettingsForm {
 
     operation_mode: i32,
     frame_subtraction: i32,
-    gain: usize,
+    // Retain the device's raw pair, including valid values between table
+    // entries. Loading and saving must not silently select a different gain.
+    gain: Gain,
 }
 
 impl PajSensorSettingsForm {
@@ -56,7 +58,7 @@ impl PajSensorSettingsForm {
             max_object_cnt: String::new(),
             operation_mode: 0,
             frame_subtraction: 0,
-            gain: 0,
+            gain: Gain::new(0, 0),
         }
     }
 
@@ -134,10 +136,10 @@ impl PajSensorSettingsForm {
             form_row(ui, "Gain", |ui| {
                 egui::ComboBox::from_id_salt("gain")
                     .width(FIELD_WIDTH)
-                    .selected_text(GAIN_TABLE.get(self.gain).map_or("???", |gain| gain.0))
+                    .selected_text(self.gain.label())
                     .show_ui(ui, |ui| {
-                        for (index, (label, _)) in GAIN_TABLE.iter().enumerate() {
-                            ui.selectable_value(&mut self.gain, index, *label);
+                        for &(label, gain) in &GAIN_TABLE {
+                            ui.selectable_value(&mut self.gain, gain, label);
                         }
                     });
             });
@@ -185,7 +187,7 @@ impl PajSensorSettingsForm {
             max_object_cnt: max_object_cnt.to_string(),
             operation_mode: i32::from(operation_mode),
             frame_subtraction: i32::from(frame_subtraction),
-            gain: Gain::index_from_reg(gain_1, gain_2),
+            gain: Gain::new(gain_1, gain_2),
         })
     }
 
@@ -221,7 +223,10 @@ impl PajSensorSettingsForm {
                 |x| (x >= 100, "must be >= 20 µs"),
                 |x| ((200..=i64::from(frame_period) - 27000).contains(&(i64::from(x)*2)), "must be between 20 µs and frame period − 2.7 ms"),
             },
-            "frame period" frame_period: u32 { |x| (x >= 49780, "must be >= 4.978 ms") },
+            "frame period" frame_period: u32 {
+                |x| (x >= 49780, "must be >= 4.978 ms"),
+                |x| (x <= 0x00ff_ffff, "must fit the 24-bit frame-period register"),
+            },
             "brightness threshold" brightness_threshold: u8,
             "noise threshold" noise_threshold: u8,
             "area threshold min" area_threshold_min: u8,
@@ -230,14 +235,26 @@ impl PajSensorSettingsForm {
             "scale resolution X" resolution_x: u16 { |x| ((1..=4095).contains(&x), "must be between 1 and 4095") },
             "scale resolution Y" resolution_y: u16 { |x| ((1..=4095).contains(&x), "must be between 1 and 4095") },
         }
+        if u16::from(area_threshold_min) > area_threshold_max {
+            errors.push("area threshold min: must not exceed area threshold max".into());
+        }
+        if !matches!(self.operation_mode, 0 | 1) {
+            errors.push("operation mode: must be Normal or Tracking".into());
+        }
+        if !matches!(self.frame_subtraction, 0 | 1) {
+            errors.push("frame subtraction: must be Off or On".into());
+        }
+        if self.gain.b_global > 16 || !matches!(self.gain.b_ggh, 0 | 2 | 3) {
+            errors.push(format!(
+                "gain: unsupported register values ({}, {}); select a supported gain",
+                self.gain.b_global, self.gain.b_ggh,
+            ));
+        }
     }
 
     /// Make sure to call `validate()` before calling this method.
     pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
-        let gain = GAIN_TABLE
-            .get(self.gain)
-            .with_context(|| format!("gain index {} is out of range", self.gain))?
-            .1;
+        let gain = self.gain;
 
         tokio::try_join!(
             device.set_resolution_x(self.port, parse_field(&self.resolution_x, "resolution X")?),
@@ -305,12 +322,12 @@ impl PajSensorSettingsForm {
             Port::Nf => {
                 self.area_threshold_min = "10".into();
                 self.exposure_time = "8192".into();
-                self.gain = Gain::index_from_reg(16, 0);
+                self.gain = Gain::new(16, 0);
             }
             Port::Wf => {
                 self.area_threshold_min = "5".into();
                 self.exposure_time = "11365".into();
-                self.gain = Gain::index_from_reg(8, 3);
+                self.gain = Gain::new(8, 3);
             }
         }
     }
@@ -329,14 +346,14 @@ impl Gain {
 }
 
 impl Gain {
-    fn index_from_reg(b_global: u8, mut b_ggh: u8) -> usize {
-        // change b_ggh from 0,2,3 to 0,1,2
-        b_ggh = b_ggh.saturating_sub(1);
-        usize::from(b_ggh) * 16 + usize::from(b_global)
+    fn label(self) -> std::borrow::Cow<'static, str> {
+        if let Some((label, _)) = GAIN_TABLE.iter().find(|(_, gain)| *gain == self) {
+            std::borrow::Cow::Borrowed(label)
+        } else {
+            std::borrow::Cow::Owned(format!("Custom ({}, {})", self.b_global, self.b_ggh))
+        }
     }
 }
-
-// funny
 
 const fn n_to_bstr(n: usize) -> [u8; 6] {
     [
@@ -348,13 +365,6 @@ const fn n_to_bstr(n: usize) -> [u8; 6] {
         b'0' + (n % 10) as u8,
     ]
 }
-
-// static GAIN_TABLE: [(&'static str, Gain); 16 * 3] = [
-// for j, k in zip([0, 2, 3], [1, 2, 4]):
-//     for i in range(16):
-//         value = (1 + i/16) * k
-//         print(f'    ("{value:.4f}", Gain::new(0x{i:02x}, 0x{j:02x})),')
-// ];
 
 pub(super) static GAIN_TABLE: [(&str, Gain); 16 * 3 + 1] = {
     const BACKING: [[u8; 6]; 16 * 3] = {
@@ -383,3 +393,72 @@ pub(super) static GAIN_TABLE: [(&str, Gain); 16 * 3 + 1] = {
     table[16 * 3] = ("8.0000", Gain::new(16, 3));
     table
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form() -> PajSensorSettingsForm {
+        let mut form = PajSensorSettingsForm::new(Port::Nf);
+        form.load_defaults();
+        form
+    }
+
+    #[test]
+    fn frame_period_must_fit_the_three_byte_register() {
+        let mut form = form();
+        form.frame_period = "16777215".into();
+        let mut errors = Vec::new();
+        form.validate(&mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+        form.frame_period = "16777216".into();
+        form.validate(&mut errors);
+        assert!(errors.iter().any(|error| error.starts_with("frame period")));
+    }
+
+    #[test]
+    fn exposure_must_leave_the_sensor_readout_interval() {
+        let mut form = form();
+        form.frame_period = "49780".into();
+        form.exposure_time = "11390".into();
+        let mut errors = Vec::new();
+        form.validate(&mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+        form.exposure_time = "11391".into();
+        form.validate(&mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.starts_with("exposure time"))
+        );
+    }
+
+    #[test]
+    fn reversed_area_thresholds_are_rejected() {
+        let mut form = form();
+        form.area_threshold_min = "101".into();
+        form.area_threshold_max = "100".into();
+        let mut errors = Vec::new();
+        form.validate(&mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.starts_with("area threshold min"))
+        );
+    }
+
+    #[test]
+    fn unsupported_gain_registers_require_an_explicit_user_choice() {
+        let mut form = form();
+        form.gain = Gain::new(255, 1);
+        let mut errors = Vec::new();
+        form.validate(&mut errors);
+        assert!(errors.iter().any(|error| error.starts_with("gain")));
+        errors.clear();
+        // This valid custom pair was previously decoded as a different table
+        // entry. Keep it valid without silently normalizing the registers.
+        form.gain = Gain::new(16, 0);
+        form.validate(&mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+}
