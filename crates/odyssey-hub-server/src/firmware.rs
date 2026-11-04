@@ -646,9 +646,7 @@ pub fn determine_target_slot(
             );
             Ok(("APP_B", "app-b", alt))
         }
-        _ => {
-            Err(DfuError::AltInterfaceNotFound("APP_A or APP_B".to_string()))
-        }
+        _ => Err(DfuError::AltInterfaceNotFound("APP_A or APP_B".to_string())),
     }
 }
 

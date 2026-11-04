@@ -27,9 +27,15 @@ pub(super) enum FirmwareUpdateState {
     Detaching,
     WaitingForDfu,
     /// Writing the application image.
-    Flashing { progress: usize, total: usize },
+    Flashing {
+        progress: usize,
+        total: usize,
+    },
     /// Writing the net core (BLE controller) image.
-    FlashingNetCore { progress: usize, total: usize },
+    FlashingNetCore {
+        progress: usize,
+        total: usize,
+    },
     /// Waiting for the net core to report the release that was just written.
     VerifyingNetCore,
     /// Waiting for the net core bootloader to copy the staged net core image and
