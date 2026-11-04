@@ -16,6 +16,7 @@ use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryTy
 use status_chip::StatusChip;
 
 use crate::hub::HubContext;
+use crate::views::device_label::format_address;
 
 /// The slot color shown for an accessory whose device is unknown.
 const UNASSIGNED_SLOT: usize = 5;
@@ -29,13 +30,6 @@ fn slot_color_dot(slot: usize) -> &'static str {
         4 => "bg-orange-500",
         _ => "bg-gray-400",
     }
-}
-
-fn format_mac(mac: &[u8; 6]) -> String {
-    mac.iter()
-        .map(|byte| format!("{byte:02X}"))
-        .collect::<Vec<_>>()
-        .join(":")
 }
 
 /// What the assignment dropdown reports: `None` for a value that is not a
@@ -115,7 +109,7 @@ pub fn Accessories() -> Element {
                     ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
                         for id in added_ids {
                             AddedAccessory {
-                                key: "{format_mac(&id)}",
+                                key: "{format_address(&id)}",
                                 id,
                                 info: added_info(&known_snapshot, &info_snapshot, &id),
                                 connected: is_connected(&id),
@@ -134,7 +128,7 @@ pub fn Accessories() -> Element {
                 } else {
                     ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
                         for (id, (label, ty)) in nearby_addable {
-                            NearbyAccessory { key: "{format_mac(&id)}", id, label, ty, edits }
+                            NearbyAccessory { key: "{format_address(&id)}", id, label, ty, edits }
                         }
                     }
                 }
@@ -163,7 +157,7 @@ fn AddedAccessory(
     device_choices: Vec<(NonZeroU64, String, usize)>,
     edits: AccessoryEdits,
 ) -> Element {
-    let mac = format_mac(&id);
+    let mac = format_address(&id);
     let assigned_uuid = info.assignment.map(NonZeroU64::get);
 
     let (assigned_slot, assigned_label) = match assigned_uuid {
@@ -225,7 +219,7 @@ fn NearbyAccessory(
     ty: AccessoryType,
     edits: AccessoryEdits,
 ) -> Element {
-    let mac = format_mac(&id);
+    let mac = format_address(&id);
     rsx! {
         li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
             div { class: "min-w-0",
@@ -252,13 +246,5 @@ mod tests {
         // Zero is not a device and text is not a choice: the edit is ignored.
         assert_eq!(parse_assignment("0"), None);
         assert_eq!(parse_assignment("abc"), None);
-    }
-
-    #[test]
-    fn macs_read_as_colon_separated_hex() {
-        assert_eq!(
-            format_mac(&[0, 1, 0xAB, 0xCD, 0xEF, 0xFF]),
-            "00:01:AB:CD:EF:FF"
-        );
     }
 }
