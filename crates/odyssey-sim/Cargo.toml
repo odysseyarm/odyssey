@@ -1,0 +1,22 @@
+[package]
+name = "odyssey-sim"
+version = "0.0.0"
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+odyssey-usb = { workspace = true, features = ["sim"] }
+odyssey-protocol = { path = "../odyssey-protocol" }
+odyssey-common = { path = "../odyssey-common" }
+nalgebra = "0.35"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "extras", "names"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+eros = { workspace = true }
+tokio-stream = { workspace = true }
