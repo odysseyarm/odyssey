@@ -680,6 +680,11 @@ impl Frame {
         if data.is_null() || len == 0 {
             return Err(CameraError::Sdk("frame carries no data".into()));
         }
+        if len > isize::MAX as usize {
+            return Err(CameraError::Sdk(
+                "frame data exceeds the addressable slice size".into(),
+            ));
+        }
         // SAFETY: `data` is non-null (checked above) and, by the C API's
         // contract that this crate cannot check, points at the frame's
         // `len`-byte buffer, which lives as long as the frame. The slice
@@ -696,23 +701,7 @@ impl Frame {
     fn pixels(&self, bytes_per_pixel: usize) -> Result<(u32, u32, Vec<u8>), CameraError> {
         let w = ob!(self.sdk, ob_video_frame_get_width(self.as_ptr()))?;
         let h = ob!(self.sdk, ob_video_frame_get_height(self.as_ptr()))?;
-        let (wu, hu) = (w as usize, h as usize);
-        let data = self.data()?;
-        let row = wu * bytes_per_pixel;
-        if hu == 0 || data.len() < row * hu {
-            return Err(CameraError::Sdk(format!(
-                "frame of {w}x{h} holds {} bytes, expected at least {}",
-                data.len(),
-                row * hu
-            )));
-        }
-        // The SDK exposes no stride, so derive it from the payload size.
-        let stride = data.len() / hu;
-        let mut out = Vec::with_capacity(row * hu);
-        for y in 0..hu {
-            out.extend_from_slice(&data[y * stride..y * stride + row]);
-        }
-        Ok((w, h, out))
+        unpack_pixels(w, h, self.data()?, bytes_per_pixel)
     }
 
     /// The sub-frame of a frameset, or `None` if the set lacks that stream.
@@ -720,6 +709,42 @@ impl Frame {
         let raw = ob!(self.sdk, ob_frameset_get_frame(self.as_ptr(), kind)).ok()?;
         Self::adopt(&self.sdk, raw)
     }
+}
+
+/// Removes row padding only when the payload describes whole, sufficiently
+/// wide rows. Checked arithmetic also covers 32-bit SDK consumers.
+fn unpack_pixels(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    bytes_per_pixel: usize,
+) -> Result<(u32, u32, Vec<u8>), CameraError> {
+    let invalid = || {
+        CameraError::Sdk(format!(
+            "invalid {width}x{height} frame with {} bytes and {bytes_per_pixel} bytes per pixel",
+            data.len(),
+        ))
+    };
+    if width == 0 || height == 0 || bytes_per_pixel == 0 {
+        return Err(invalid());
+    }
+    let row = (width as usize)
+        .checked_mul(bytes_per_pixel)
+        .ok_or_else(invalid)?;
+    let size = row.checked_mul(height as usize).ok_or_else(invalid)?;
+    if size > isize::MAX as usize
+        || data.len() < size
+        || !data.len().is_multiple_of(height as usize)
+    {
+        return Err(invalid());
+    }
+    // The SDK exposes no stride, so derive it from the whole-row payload.
+    let stride = data.len() / height as usize;
+    let mut out = Vec::with_capacity(size);
+    for source in data.chunks_exact(stride) {
+        out.extend_from_slice(&source[..row]);
+    }
+    Ok((width, height, out))
 }
 
 fn gray_from_frame(frame: &Frame) -> Result<GrayImage, CameraError> {
@@ -746,7 +771,13 @@ fn depth_from_frame(frame: &Frame) -> Result<(DepthImage, f32), CameraError> {
         .ok_or_else(|| CameraError::Sdk("depth frame size mismatch".into()))?;
     // The SDK's value scale is millimeters per raw unit.
     let scale_mm = ob!(frame.sdk, ob_depth_frame_get_value_scale(frame.as_ptr()))?;
-    Ok((image, scale_mm / 1000.0))
+    let scale_m = scale_mm / 1000.0;
+    if !scale_m.is_finite() || scale_m <= 0.0 {
+        return Err(CameraError::Sdk(format!(
+            "invalid depth value scale: {scale_mm} mm"
+        )));
+    }
+    Ok((image, scale_m))
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,9 +1431,9 @@ impl CameraStream for OrbbecStream {
     }
 
     fn next_frames(&mut self, timeout: Duration) -> Result<Frames, CameraError> {
-        let deadline = Instant::now() + timeout;
+        let started = Instant::now();
         loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = timeout.saturating_sub(started.elapsed());
             let wait_ms = u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX);
             let raw = ob!(
                 self.pipeline.sdk,
@@ -1413,7 +1444,7 @@ impl CameraStream for OrbbecStream {
             {
                 return Ok(frames);
             }
-            if Instant::now() >= deadline {
+            if started.elapsed() >= timeout {
                 return Err(CameraError::Timeout);
             }
         }
@@ -1458,5 +1489,22 @@ impl CameraStream for OrbbecStream {
             Some(projector) => projector.set(&self.device, enabled).map(|()| true),
             None => Ok(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_pixels_strip_padding_without_including_it_in_rows() {
+        let (_, _, pixels) = unpack_pixels(2, 2, &[1, 2, 99, 3, 4, 88], 1).unwrap();
+        assert_eq!(pixels, [1, 2, 3, 4]);
+        assert!(unpack_pixels(2, 2, &[1, 2, 3], 1).is_err());
+        assert!(unpack_pixels(2, 2, &[1, 2, 3, 4, 5], 1).is_err());
+        assert!(unpack_pixels(0, 2, &[], 1).is_err());
+        assert!(unpack_pixels(2, 0, &[], 1).is_err());
+        assert!(unpack_pixels(u32::MAX, u32::MAX, &[], 3).is_err());
+        assert!(unpack_pixels(2, 2, &[], usize::MAX).is_err());
     }
 }

@@ -237,9 +237,13 @@ pub struct Frames {
 
 impl Frames {
     /// Depth at a pixel in meters, or `None` outside the image or where the
-    /// sensor reported no measurement.
+    /// sensor reported no measurement or an invalid depth scale.
     pub fn depth_m(&self, x: u32, y: u32) -> Option<f64> {
-        if x >= self.depth.width() || y >= self.depth.height() {
+        if x >= self.depth.width()
+            || y >= self.depth.height()
+            || !self.depth_unit_m.is_finite()
+            || self.depth_unit_m <= 0.0
+        {
             return None;
         }
         match self.depth.get_pixel(x, y).0[0] {
@@ -287,6 +291,22 @@ mod tests {
         assert_eq!(Link::parse(" Ethernet "), Link::Other("Ethernet".into()));
         for link in [Link::parse("USB"), Link::parse("GMSL2"), Link::parse("")] {
             assert!(!link.is_capped(), "{link}");
+        }
+    }
+
+    #[test]
+    fn depth_samples_require_positive_finite_units() {
+        let mut frames = Frames {
+            color: RgbImage::new(0, 0),
+            depth: DepthImage::from_pixel(1, 1, Luma([1000])),
+            depth_unit_m: 0.001,
+            ir: GrayImage::new(0, 0),
+        };
+        assert!((frames.depth_m(0, 0).unwrap() - 1.0).abs() < 1e-6);
+        assert_eq!(frames.depth_m(1, 0), None);
+        for unit in [0.0, -0.001, f32::NAN, f32::INFINITY] {
+            frames.depth_unit_m = unit;
+            assert_eq!(frames.depth_m(0, 0), None);
         }
     }
 }

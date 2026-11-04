@@ -283,7 +283,7 @@ impl BoardPose {
             .dot(&(-center_m / distance_m))
             .clamp(-1.0, 1.0);
         let view_angle_deg = cos.acos().to_degrees();
-        if cos <= 0.0 {
+        if !cos.is_finite() || cos <= 0.0 {
             return Err(BoardError::DegeneratePose(
                 "the board faces away from the camera".into(),
             ));

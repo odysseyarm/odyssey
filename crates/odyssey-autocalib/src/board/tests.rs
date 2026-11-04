@@ -838,3 +838,13 @@ fn board_scale_reports_missing_depth_and_missing_board() {
         Err(BoardError::DegeneratePose(_))
     ));
 }
+
+#[test]
+fn nonfinite_board_normals_do_not_produce_a_pose() {
+    let mut rotation = Matrix3::identity();
+    rotation[(0, 2)] = f64::NAN;
+    assert!(matches!(
+        BoardPose::new(rotation, Vector3::new(0.0, 0.0, 1.0), 40.0),
+        Err(BoardError::DegeneratePose(_))
+    ));
+}
