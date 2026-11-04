@@ -28,7 +28,7 @@ const ACCESSORY_MAP_CAPACITY: usize = 12;
 /// Which of the hub's long-running parts ended, as seen by the supervising loop.
 #[derive(Debug)]
 enum ServerEvent {
-    DeviceTasks(anyhow::Result<()>),
+    DeviceTasks(Result<(), std::convert::Infallible>),
     /// A device task message was applied to the device and dongle lists.
     MessageForwarded,
     TonicServer(Result<(), tonic::transport::Error>),
@@ -45,6 +45,29 @@ pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
 ) -> Result<(), ServerError> {
+    run_server_inner(
+        sender,
+        cancel_token,
+        #[cfg(feature = "sim")]
+        crate::sim::enabled(),
+    )
+    .await
+}
+
+/// Run the hub with its opt-in simulator, regardless of `ODYSSEY_SIM`.
+#[cfg(feature = "sim")]
+pub async fn run_server_with_sim(
+    sender: mpsc::UnboundedSender<Message>,
+    cancel_token: CancellationToken,
+) -> Result<(), ServerError> {
+    run_server_inner(sender, cancel_token, true).await
+}
+
+async fn run_server_inner(
+    sender: mpsc::UnboundedSender<Message>,
+    cancel_token: CancellationToken,
+    #[cfg(feature = "sim")] simulation_enabled: bool,
+) -> Result<(), ServerError> {
     let (name, connections) = bind_local_socket(&sender).await?;
 
     let (device_sender, device_messages) = mpsc::channel(DEVICE_MESSAGE_CAPACITY);
@@ -56,7 +79,28 @@ pub async fn run_server(
     // Both background tasks also stop if the run_server future itself is dropped.
     let background_cancel = cancel_token.child_token();
     let _background_stop = background_cancel.clone().drop_guard();
+    #[cfg(feature = "sim")]
+    if simulation_enabled {
+        crate::sim::initialize_config()?;
+    }
     let config = StartupConfig::load(background_cancel.clone()).await;
+    #[cfg(feature = "sim")]
+    let simulator = simulation_enabled.then(|| {
+        odyssey_sim::Simulator::with_sensor_model(
+            if std::env::args().any(|argument| argument == "--sim-legacy") {
+                odyssey_sim::SensorModel::Paj7025
+            } else {
+                odyssey_sim::SensorModel::Pag7665qn
+            },
+        )
+    });
+    #[cfg(feature = "sim")]
+    let simulator_control = match simulator.as_ref() {
+        Some(simulator) => {
+            Some(crate::sim::start(simulator.handle(), background_cancel.clone()).await?)
+        }
+        None => None,
+    };
 
     let shot_delay_watch = Arc::new(RwLock::new(HashMap::new()));
     let (accessory_info_sender, accessory_info_receiver) =
@@ -102,6 +146,10 @@ pub async fn run_server(
     // owns its connections and is given time to disconnect during shutdown.
     let accessory_cancel = background_cancel.clone();
     let accessory_task = tokio::spawn(async move {
+        #[cfg(feature = "sim")]
+        if simulation_enabled {
+            return;
+        }
         accessory_manager(
             event_sender,
             accessory_info_receiver,
@@ -122,6 +170,8 @@ pub async fn run_server(
             config.device_shot_delays,
             shot_delay_watch,
             device_task_events,
+            #[cfg(feature = "sim")]
+            simulator,
         )
         .await;
         ServerEvent::DeviceTasks(result)
@@ -161,18 +211,24 @@ pub async fn run_server(
         tracing::debug!("Server loop event: {:?}", event);
         match event {
             ServerEvent::DeviceTasks(result) => {
-                break Err(ServerError::Other(match result {
-                    Ok(()) => anyhow::anyhow!("Device tasks exited unexpectedly"),
-                    Err(error) => error.context("Device tasks exited"),
-                }));
+                break Err(match result {
+                    Ok(()) => ServerError::DeviceTasksExited,
+                    Err(never) => match never {},
+                });
             }
             ServerEvent::MessageForwarded => tracing::trace!("Event forwarded"),
             ServerEvent::TonicServer(result) => {
-                break result.map_err(|error| ServerError::Other(error.into()));
+                break result.map_err(ServerError::Transport);
             }
         }
     };
     background_cancel.cancel();
+    #[cfg(feature = "sim")]
+    if let Some(task) = simulator_control
+        && let Err(error) = task.await
+    {
+        tracing::warn!("Simulator control task failed: {error}");
+    }
     if let Err(error) = accessory_task.await {
         tracing::warn!("Accessory manager task failed: {error}");
     }

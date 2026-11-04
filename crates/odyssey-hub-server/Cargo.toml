@@ -1,14 +1,16 @@
 [package]
 name = "odyssey-hub-server"
-version = "0.1.0"
-edition = "2024"
+version = "0.0.0"
+edition.workspace = true
 
 [lints]
 workspace = true
 
+[features]
+sim = ["dep:odyssey-sim", "odyssey-usb/sim", "odyssey-hub-common/sim"]
+
 [dependencies]
 ahrs = { workspace = true, features = ["field_access"] }
-anyhow = { workspace = true }
 backon = { workspace = true }
 futures = { version = "0.3.30", default-features = false, features = ["alloc", "async-await", "std"] }
 futures-concurrency = { workspace = true }
@@ -23,6 +25,7 @@ parking_lot = { workspace = true }
 tokio-util = { workspace = true }
 pin-project = { workspace = true }
 odyssey-usb = { workspace = true }
+odyssey-sim = { path = "../odyssey-sim", optional = true }
 nusb = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 nalgebra = "0.35"

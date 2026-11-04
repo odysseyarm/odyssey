@@ -1,5 +1,12 @@
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "CLI usage and argument errors go to the terminal"
+)]
+
 use std::process::ExitCode;
 
+use eros::Context as _;
 use odyssey_hub_server::{self, Message};
 use tokio_util::sync::CancellationToken;
 use tracing::Level;
@@ -7,6 +14,29 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    let mut simulation_requested = false;
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--sim" => simulation_requested = true,
+            "--help" | "-h" => {
+                println!(
+                    "Usage: odyssey-hub [--sim]\n\n--sim  Enable the simulator (requires the sim compile feature).\n       ODYSSEY_SIM=1 also enables it in sim builds."
+                );
+                return ExitCode::SUCCESS;
+            }
+            _ => {
+                eprintln!("Unknown argument: {argument}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    #[cfg(not(feature = "sim"))]
+    if simulation_requested {
+        eprintln!("--sim requires a build with the sim feature");
+        return ExitCode::FAILURE;
+    }
+    #[cfg(feature = "sim")]
+    let simulation_enabled = simulation_requested || odyssey_hub_server::sim::enabled();
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
@@ -18,20 +48,27 @@ async fn main() -> ExitCode {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let cancel_token = CancellationToken::new();
 
-    let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, cancel_token.clone()));
+    let server_cancel = cancel_token.clone();
+    let server_handle = tokio::spawn(async move {
+        #[cfg(feature = "sim")]
+        if simulation_enabled {
+            return odyssey_hub_server::run_server_with_sim(sender, server_cancel).await;
+        }
+        odyssey_hub_server::run_server(sender, server_cancel).await
+    });
 
     let status = tokio::select! {
         status = handle_server_status(receiver) => status,
         signal = tokio::signal::ctrl_c() => {
             cancel_token.cancel();
-            signal.map(|()| false).map_err(|e| format!("Failed to listen for Ctrl+C: {e}"))
+            signal.map(|()| false).context("listening for Ctrl+C").map_err(Into::into)
         }
     };
     cancel_token.cancel();
     let result = server_handle.await;
     match (status, result) {
         (Err(error), _) => {
-            tracing::error!("{error}");
+            tracing::error!("{error:?}");
             ExitCode::FAILURE
         }
         (Ok(true), Ok(_)) | (Ok(false), Ok(Ok(()))) => ExitCode::SUCCESS,
@@ -50,7 +87,7 @@ async fn main() -> ExitCode {
 /// the front, so this one should exit without starting.
 async fn handle_server_status(
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>,
-) -> Result<bool, String> {
+) -> eros::Result<bool> {
     loop {
         match receiver.recv().await {
             Some(Message::ServerInit(Ok(_))) => {
@@ -67,15 +104,17 @@ async fn handle_server_status(
                     client
                         .connect()
                         .await
-                        .map_err(|e| format!("Failed to connect to existing instance: {e}"))?;
+                        .context("connecting to the instance that owns the hub socket")?;
                     client
                         .bring_to_front()
                         .await
-                        .map_err(|e| format!("Failed to notify existing instance: {e}"))?;
+                        .context("asking the running instance to come to the front")?;
                     tracing::info!("Successfully notified existing instance");
                     return Ok(true);
                 }
-                return Err(format!("Server start error: {e}"));
+                return Err(e)
+                    .context("starting the hub server")
+                    .map_err(Into::into);
             }
             Some(Message::Stop) => {
                 tracing::info!("Server stopped");

@@ -13,6 +13,52 @@ pub const APP_INFO: AppInfo = AppInfo {
     author: "odysseyarm",
 };
 
+/// Why a settings file could not be located, written or encoded.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("the user config directory is unavailable")]
+    ConfigDir(#[from] app_dirs2::AppDirsError),
+    #[error("reading or writing a settings file failed")]
+    Io(#[from] std::io::Error),
+    #[error("encoding the settings failed")]
+    Json5(#[from] json5::Error),
+    /// The UI-state writer thread panicked; the edit may not have been saved.
+    #[error("the settings writer stopped")]
+    Writer(#[from] tokio::task::JoinError),
+    #[cfg(feature = "sim")]
+    #[error("the simulation config directory was already initialized")]
+    SimulationRootAlreadySet,
+}
+
+#[cfg(feature = "sim")]
+static SIMULATION_CONFIG_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Select an isolated config directory before starting simulated hub/UI tasks.
+///
+/// # Errors
+/// Fails if the directory cannot be created or a different root was already set.
+#[cfg(feature = "sim")]
+pub fn set_simulation_config_root(path: PathBuf) -> Result<(), ConfigError> {
+    std::fs::create_dir_all(&path)?;
+    if SIMULATION_CONFIG_ROOT
+        .get()
+        .is_some_and(|root| *root == path)
+    {
+        return Ok(());
+    }
+    SIMULATION_CONFIG_ROOT
+        .set(path)
+        .map_err(|_already_set| ConfigError::SimulationRootAlreadySet)
+}
+
+fn config_root() -> Result<PathBuf, ConfigError> {
+    #[cfg(feature = "sim")]
+    if let Some(root) = SIMULATION_CONFIG_ROOT.get() {
+        return Ok(root.clone());
+    }
+    Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?)
+}
+
 #[derive(Clone, Debug)]
 pub struct ConfigCorruptionEvent {
     pub file_type: ConfigFileType,
@@ -63,15 +109,13 @@ impl<T> ConfigLoadResult<T> {
 /// The firmware channel the user chose, by name. `None` when they never chose
 /// one or the file cannot be read, which callers treat as the default.
 pub async fn firmware_channel_async() -> Option<String> {
-    let path = get_app_root(AppDataType::UserConfig, &APP_INFO)
-        .ok()?
-        .join("firmware_channel");
+    let path = config_root().ok()?.join("firmware_channel");
     let name = fs::read_to_string(&path).await.ok()?;
     Some(name.trim().to_string())
 }
 
-pub async fn firmware_channel_save_async(name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+pub async fn firmware_channel_save_async(name: &str) -> Result<(), ConfigError> {
+    let config_dir = config_root()?;
     fs::write(config_dir.join("firmware_channel"), name).await?;
     Ok(())
 }
@@ -171,8 +215,8 @@ impl UiState {
     }
 }
 
-fn ui_state_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?.join("ui_state.json"))
+fn ui_state_path() -> Result<PathBuf, ConfigError> {
+    Ok(config_root()?.join("ui_state.json"))
 }
 
 pub async fn ui_state_async() -> ConfigLoadResult<UiState> {
@@ -193,7 +237,7 @@ pub async fn ui_state_async() -> ConfigLoadResult<UiState> {
 /// and await them serially (a future is not scheduled until it is polled).
 pub async fn ui_state_update_async(
     edit: impl FnOnce(&mut UiState) + Send + 'static,
-) -> Result<UiState, Box<dyn std::error::Error>> {
+) -> Result<UiState, ConfigError> {
     let path = ui_state_path()?;
     Ok(tokio::task::spawn_blocking(move || update_ui_state_at(&path, edit)).await??)
 }
@@ -277,7 +321,7 @@ fn save_ui_state_to(path: &Path, state: &UiState) -> std::io::Result<()> {
 }
 
 pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16>> {
-    let config_dir = match get_app_root(AppDataType::UserConfig, &APP_INFO) {
+    let config_dir = match config_root() {
         Ok(dir) => dir,
         Err(e) => {
             tracing::error!("Failed to get config directory: {}", e);
@@ -330,8 +374,8 @@ pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16
 
 pub async fn device_shot_delays_save_async(
     device_shot_delays: &HashMap<[u8; 6], u16>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+) -> Result<(), ConfigError> {
+    let config_dir = config_root()?;
     let path = config_dir.join("device_shot_delays.json");
 
     let wrapped = HexKeyMapN(device_shot_delays.clone());
@@ -340,10 +384,7 @@ pub async fn device_shot_delays_save_async(
     Ok(())
 }
 
-pub async fn device_shot_delay_save_async(
-    uuid: [u8; 6],
-    delay: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn device_shot_delay_save_async(uuid: [u8; 6], delay: u16) -> Result<(), ConfigError> {
     let mut map = device_shot_delays_async().await.into_value();
     map.insert(uuid, delay);
     device_shot_delays_save_async(&map).await
@@ -351,7 +392,7 @@ pub async fn device_shot_delay_save_async(
 
 pub async fn device_offsets_async() -> ConfigLoadResult<HashMap<[u8; 6], nalgebra::Isometry3<f32>>>
 {
-    let config_dir = match get_app_root(AppDataType::UserConfig, &APP_INFO) {
+    let config_dir = match config_root() {
         Ok(dir) => dir,
         Err(e) => {
             tracing::error!("Failed to get config directory: {}", e);
@@ -406,8 +447,8 @@ pub async fn device_offsets_async() -> ConfigLoadResult<HashMap<[u8; 6], nalgebr
 
 pub async fn device_offsets_save_async(
     device_offsets: &HashMap<[u8; 6], nalgebra::Isometry3<f32>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+) -> Result<(), ConfigError> {
+    let config_dir = config_root()?;
     let path = config_dir.join("device_offsets.json");
 
     let wrapped = HexKeyMapN(device_offsets.clone());
@@ -417,8 +458,8 @@ pub async fn device_offsets_save_async(
 }
 
 /// Directory holding `screen_<id>.json`, one file per calibrated screen.
-pub fn screens_dir() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-    Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?.join("screens"))
+pub fn screens_dir() -> Result<PathBuf, ConfigError> {
+    Ok(config_root()?.join("screens"))
 }
 
 /// File name of the calibration for screen `id` inside [`screens_dir`].
@@ -503,8 +544,8 @@ pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibration
 
 type AccessoryMapWrap = HexKeyMapN<AccessoryInfo, 6>;
 
-fn accessory_map_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let dir = get_app_root(AppDataType::UserConfig, &APP_INFO)?;
+fn accessory_map_path() -> Result<PathBuf, ConfigError> {
+    let dir = config_root()?;
     Ok(dir.join("accessory_map.json"))
 }
 
@@ -558,7 +599,7 @@ pub async fn accessory_map_async() -> ConfigLoadResult<HashMap<[u8; 6], Accessor
 
 pub async fn accessory_map_save_async(
     map: &HashMap<[u8; 6], AccessoryInfo>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ConfigError> {
     let path = accessory_map_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;

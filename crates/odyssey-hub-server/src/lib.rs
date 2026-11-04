@@ -13,9 +13,13 @@ mod run_server;
 mod screen_watch;
 mod server;
 mod server_error;
+#[cfg(feature = "sim")]
+pub mod sim;
 mod startup_config;
 
 pub use local_socket_stream::LocalSocketStream;
 pub use message::Message;
 pub use run_server::run_server;
+#[cfg(feature = "sim")]
+pub use run_server::run_server_with_sim;
 pub use server_error::ServerError;
