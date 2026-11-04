@@ -15,26 +15,27 @@ use trouble_host::Stack;
 use crate::DEVICE_LIST_SUBSCRIBED;
 use crate::storage::Settings;
 
-// Lightweight diagnostics
+// Counters read when diagnosing link drops and host backpressure.
 pub static DROPPED_DATA_TO_HOST: AtomicU32 = AtomicU32::new(0);
 pub static DISCONNECT_COUNT: AtomicU32 = AtomicU32::new(0);
 
-// L2CAP PSM (Protocol Service Multiplexer) for our custom protocol
+// L2CAP PSMs for the ATS control and data channels. 0x0080 and up is the
+// dynamic LE PSM range.
 pub const L2CAP_PSM_CONTROL: u16 = 0x0080;
 pub const L2CAP_PSM_DATA: u16 = 0x0081;
 
-// Pairing filter: Company Identifier and ATS product prefixes
+// Pairing only accepts advertisements whose Manufacturer Specific Data carries
+// this company ID followed by one of these product prefixes.
 pub const TARGET_COMPANY_ID: u16 = 1674; // 0x068A Raytac
 pub const PRODUCT_ID_PREFIXES: &[&[u8]] = &[b"ATS", b"ATS-LEG"];
 
 pub type Uuid = [u8; 6];
 
-/// Helper to determine if a packet is a control packet (vs streaming data)
 pub fn is_control_packet(pkt: &odyssey_protocol::Packet) -> bool {
     use odyssey_protocol::PacketData as P;
 
     match &pkt.data {
-        // Control packets
+        // Request/response traffic goes on the control channel.
         P::StreamUpdate(_)
         | P::WriteMode(_)
         | P::ReadVersion()
@@ -54,7 +55,7 @@ pub fn is_control_packet(pkt: &odyssey_protocol::Packet) -> bool {
         | P::SetDeviceName(_)
         | P::SetDeviceNameResponse(_) => true,
 
-        // Streaming data packets
+        // Reports go on the data channel.
         P::ObjectReport(_)
         | P::CombinedMarkersReport(_)
         | P::PocMarkersReport(_)
@@ -64,15 +65,14 @@ pub fn is_control_packet(pkt: &odyssey_protocol::Packet) -> bool {
     }
 }
 
-// Pairing discovery signal
 pub static PAIRING_FOUND_ADDR: Signal<ThreadModeRawMutex, [u8; 6]> = Signal::new();
 static PAIRING_CAPTURED: AtomicBool = AtomicBool::new(false);
 
-// Captured BLE name for the device found during pairing (used for PairingResult)
+// Name of the device found during pairing, sent back in PairingResult.
 static PAIRING_FOUND_NAME: BlockingMutex<CriticalSectionRawMutex, RefCell<heapless::String<32>>> =
     BlockingMutex::new(RefCell::new(heapless::String::new()));
 
-// In-memory cache of BLE device names by address; populated whenever a device is seen advertising
+// BLE names by address, refreshed from every advertisement seen.
 static DEVICE_NAMES: BlockingMutex<
     CriticalSectionRawMutex,
     RefCell<heapless::LinearMap<[u8; 6], heapless::String<32>, MAX_DEVICES>>,
@@ -93,19 +93,20 @@ pub fn clear_device_names() {
     DEVICE_NAMES.lock(|m| m.borrow_mut().clear());
 }
 
-// Signal to restart central loop (e.g., when bonds are cleared)
+// Wakes the central loop early, e.g. after bonds are cleared.
 pub static RESTART_CENTRAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-// Background scanner coordination.
-// CONNECT_PENDING counts device tasks currently calling central.connect().
-// The background scanner pauses when this is > 0.
+// CONNECT_PENDING counts device tasks inside central.connect(). The background
+// scanner pauses while it is nonzero, because the controller rejects a connect
+// while a scan is running.
 pub static CONNECT_PENDING: AtomicU8 = AtomicU8::new(0);
 pub static SCAN_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static SCAN_STOPPED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub static SCAN_RESUME: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Called by device tasks before calling central.connect().
-/// Waits for the background scanner to stop its scan session.
+/// Registers a pending connect and waits until the background scanner has
+/// stopped its scan session. Call before `central.connect()` and pair with
+/// [`end_connect`].
 pub async fn begin_connect() {
     CONNECT_PENDING.fetch_add(1, Ordering::Release);
     while SCAN_ACTIVE.load(Ordering::Acquire) {
@@ -113,7 +114,8 @@ pub async fn begin_connect() {
     }
 }
 
-/// Called by device tasks after central.connect() returns (success or failure).
+/// Releases a pending connect after `central.connect()` returns, success or
+/// failure. The last one out resumes the background scanner.
 pub fn end_connect() {
     let prev = CONNECT_PENDING.fetch_sub(1, Ordering::AcqRel);
     if prev == 1 {
@@ -134,17 +136,18 @@ pub fn report_scan_address(addr: [u8; 6], name: heapless::String<32>) {
     }
 }
 
-/// Get the cached BLE name for a device by address (from DEVICE_NAMES in-memory cache).
+/// Name last advertised by `addr`, or empty if it has not been seen.
 pub fn get_cached_device_name(addr: &[u8; 6]) -> heapless::String<32> {
     DEVICE_NAMES.lock(|m| m.borrow().get(addr).cloned().unwrap_or_default())
 }
 
-/// Get the BLE name captured during the last pairing scan.
+/// Name captured during the last pairing scan.
 pub fn get_pairing_name() -> heapless::String<32> {
     PAIRING_FOUND_NAME.lock(|n| n.borrow().clone())
 }
 
-/// Parse BLE local name (type 0x08 shortened or 0x09 complete) from AD structures.
+/// Parses the local name (AD type 0x08 shortened or 0x09 complete) from AD
+/// structures. Non-printable bytes are dropped.
 pub fn extract_local_name(data: &[u8]) -> heapless::String<32> {
     let mut i = 0;
     while i < data.len() {
@@ -171,7 +174,8 @@ pub fn extract_local_name(data: &[u8]) -> heapless::String<32> {
     heapless::String::new()
 }
 
-// Check adv payload for Manufacturer Specific Data matching our target
+/// True when the advertisement carries Manufacturer Specific Data with
+/// [`TARGET_COMPANY_ID`] and one of [`PRODUCT_ID_PREFIXES`].
 pub fn adv_matches(data: &[u8]) -> bool {
     let mut i = 0;
     while i < data.len() {
@@ -208,7 +212,6 @@ pub fn adv_matches_pairing(data: &[u8]) -> bool {
     adv_matches(data)
 }
 
-// Device queue and connection tracking
 pub type DeviceQueue = Channel<ThreadModeRawMutex, DevicePacket, 32>;
 
 pub struct DeviceQueues {
@@ -332,7 +335,7 @@ impl ActiveConnections {
 
 pub static ACTIVE_CONNECTIONS: StaticCell<ActiveConnections> = StaticCell::new();
 
-// Global references for control task
+// Set once at boot so the control task can reach the tracker and queues.
 static GLOBAL_ACTIVE_CONNECTIONS: AsyncMutex<
     ThreadModeRawMutex,
     Option<&'static ActiveConnections>,
@@ -356,7 +359,7 @@ pub async fn get_device_queues() -> Option<&'static DeviceQueues> {
     *GLOBAL_DEVICE_QUEUES.lock().await
 }
 
-/// Simplified BLE Manager - just spawns device tasks
+/// Spawns one connection task per scan target.
 pub struct BleManager {
     device_packets: &'static crate::ble::DevicePacketChannel,
     device_queues: &'static DeviceQueues,
@@ -386,21 +389,20 @@ impl BleManager {
         }
     }
 
-    /// Run the BLE central manager - spawns device tasks
+    /// Re-reads the scan targets every 2 s, or on [`RESTART_CENTRAL`], and
+    /// spawns a task for each target that has none.
     pub async fn run(&mut self) -> ! {
         info!("Starting BLE central manager");
 
-        // Track which devices have active tasks
         let mut spawned_tasks: heapless::Vec<[u8; 6], MAX_DEVICES> = heapless::Vec::new();
 
         loop {
             let targets = self.settings.get_scan_targets().await;
 
-            // Remove addresses from spawned_tasks that are no longer in targets
-            // (their tasks have exited after bond was cleared)
+            // A target missing from the list had its bond cleared and its task
+            // has exited, so forget it.
             spawned_tasks.retain(|addr| targets.contains(addr));
 
-            // Spawn tasks for any existing targets (not newly paired during this session)
             for addr in targets.iter() {
                 if !spawned_tasks.contains(addr) {
                     info!("Spawning device task for {:02x}", *addr);
@@ -424,7 +426,6 @@ impl BleManager {
                 }
             }
 
-            // Wait before next check
             let _ =
                 embassy_time::with_timeout(Duration::from_secs(2), RESTART_CENTRAL.wait()).await;
         }

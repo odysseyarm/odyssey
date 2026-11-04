@@ -5,13 +5,13 @@ use embassy_sync::channel::Channel;
 use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 use static_cell::StaticCell;
 
-// Event channel: device -> host control messages (responses, async events)
+// Device -> host: responses and async events.
 pub static CONTROL_EVT_CH: StaticCell<Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4>> =
     StaticCell::new();
 static EVT_PTR: AtomicPtr<Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4>> =
     AtomicPtr::new(core::ptr::null_mut());
 
-// Command channel: host -> device control messages (requests)
+// Host -> device: requests.
 pub static CONTROL_CMD_CH: StaticCell<Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4>> =
     StaticCell::new();
 static CMD_PTR: AtomicPtr<Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4>> =
@@ -35,7 +35,8 @@ pub fn register(
     CMD_PTR.store(cmd_ch as *const _ as *mut _, Ordering::Release);
 }
 
-// Non-blocking send of an event to host
+/// Queues an event for the host without blocking. Drops it, with a log line,
+/// when the channel is full or not yet registered.
 pub fn try_send_event(evt: UsbMuxCtrlMsg) {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -49,7 +50,7 @@ pub fn try_send_event(evt: UsbMuxCtrlMsg) {
     }
 }
 
-// Non-blocking receive of a pending event (used by EP0 control_in)
+/// Takes a pending event without blocking. Used by EP0 control_in.
 pub fn try_recv_event() -> Option<UsbMuxCtrlMsg> {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -61,24 +62,25 @@ pub fn try_recv_event() -> Option<UsbMuxCtrlMsg> {
     None
 }
 
-/// Drop all pending events (used to clear stale responses before handling a new request)
+/// Drops every pending event, so stale responses are not read as replies to a
+/// new request.
 pub fn clear_events() {
     while try_recv_event().is_some() {}
 }
 
 #[allow(dead_code)]
-// Async receive of events (device -> host)
+/// Waits for the next event by polling every 1 ms.
 pub async fn recv_event() -> UsbMuxCtrlMsg {
     loop {
         if let Some(m) = try_recv_event() {
             return m;
         }
-        // avoid busy spinning
         embassy_time::Timer::after_millis(1).await;
     }
 }
 
-// Non-blocking send of a command from host (used by EP0 control_out)
+/// Queues a host command without blocking. Used by EP0 control_out; drops the
+/// command when the channel is full or not yet registered.
 pub fn try_send_cmd(cmd: UsbMuxCtrlMsg) {
     let p = CMD_PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -92,18 +94,17 @@ pub fn try_send_cmd(cmd: UsbMuxCtrlMsg) {
     }
 }
 
-// Async receive of commands (for the executor task)
+/// Waits for the next host command by polling every 1 ms.
 pub async fn recv_cmd() -> UsbMuxCtrlMsg {
-    // Safety: CMD_PTR initialized in register
     loop {
         let p = CMD_PTR.load(Ordering::Acquire);
         if !p.is_null() {
+            // SAFETY: a non-null CMD_PTR was stored by `register` from a `&'static` channel.
             let ch: &Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4> = unsafe { &*p };
             if let Ok(m) = ch.try_receive() {
                 return m;
             }
         }
-        // simple yield to avoid busy-spin
         embassy_time::Timer::after_millis(1).await;
     }
 }

@@ -8,9 +8,9 @@ use super::central::{
     reset_pairing_capture,
 };
 
-/// Background scanner — runs an active scan whenever no device task is connecting.
-/// The on_adv_reports callback in HostEventHandler handles both name caching and
-/// pairing device detection, so this task just needs to keep the scan running.
+/// Runs an active scan whenever no device task is connecting. Name caching and
+/// pairing detection both happen in the HostEventHandler's `on_adv_reports`
+/// callback; this task only keeps the scan running.
 #[embassy_executor::task]
 pub async fn background_scanner_task(
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
@@ -27,7 +27,6 @@ pub async fn background_scanner_task(
     };
 
     loop {
-        // Wait until no device task is connecting
         while CONNECT_PENDING.load(core::sync::atomic::Ordering::Acquire) > 0 {
             SCAN_RESUME.wait().await;
         }
@@ -36,7 +35,6 @@ pub async fn background_scanner_task(
 
         match scanner.scan(&config).await {
             Ok(session) => {
-                // Keep scanning until a connect is initiated
                 loop {
                     if CONNECT_PENDING.load(core::sync::atomic::Ordering::Acquire) > 0 {
                         break;
@@ -45,10 +43,10 @@ pub async fn background_scanner_task(
                 }
                 drop(session);
                 // drop(session) calls scan_command_state.cancel(), which wakes host_ctrl_task.
-                // Wait here so host_ctrl_task can run sdc_hci_cmd_le_set_scan_enable(false)
-                // before we signal SCAN_STOPPED. Without this, LIFO scheduling causes the
-                // device task to call central.connect() before the scan is disabled at the
-                // hardware level, resulting in "Command Disallowed".
+                // Yield so host_ctrl_task can run sdc_hci_cmd_le_set_scan_enable(false)
+                // before SCAN_STOPPED is signalled. Without this, LIFO scheduling lets the
+                // device task call central.connect() before the controller has disabled the
+                // scan, and the connect fails with "Command Disallowed".
                 embassy_time::Timer::after_millis(5).await;
             }
             Err(e) => {
@@ -62,9 +60,9 @@ pub async fn background_scanner_task(
     }
 }
 
-/// Pairing monitor — waits for a device found during pairing and adds it to scan targets.
-/// The actual scanning is done by background_scanner_task; on_adv_reports fires
-/// report_scan_address which signals PAIRING_FOUND_ADDR.
+/// Adds the device found during pairing to the scan targets and ends pairing.
+/// Scanning itself happens in [`background_scanner_task`]; `on_adv_reports`
+/// calls `report_scan_address`, which signals `PAIRING_FOUND_ADDR`.
 #[embassy_executor::task]
 pub async fn pairing_monitor_task(settings: &'static crate::storage::Settings) -> ! {
     loop {
@@ -76,7 +74,7 @@ pub async fn pairing_monitor_task(settings: &'static crate::storage::Settings) -
     }
 }
 
-/// Called when pairing mode starts to reset the pairing capture state.
+/// Clears the pairing capture state. Call when pairing mode starts.
 pub fn on_pairing_start() {
     reset_pairing_capture();
 }

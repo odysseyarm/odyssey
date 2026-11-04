@@ -5,8 +5,8 @@ use std::{env, fs};
 use memory_spec::MemorySpec;
 
 fn main() {
-    // Determine which memory layout to use based on BOARD env var
-    // (set in .cargo/config.toml or .cargo/config-dk.toml)
+    // BOARD comes from .cargo/config.toml or .cargo/config-dk.toml and picks
+    // memory-<board>.kdl.
     let board = env::var("BOARD").unwrap_or_else(|_| "dongle".to_string());
     let memory_file = format!("memory-{}.kdl", board);
 

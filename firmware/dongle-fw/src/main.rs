@@ -22,16 +22,14 @@ use embassy_sync::signal::Signal as SyncSignal;
 #[cfg(feature = "rtt")]
 use {defmt_rtt as _, panic_probe as _};
 
-// Channel for sending host responses (RequestDevices, ReadVersion, etc.)
+// Control-plane replies to the host (RequestDevices, ReadVersion, ...).
 type HostResponseChannel = Channel<ThreadModeRawMutex, MuxMsg, 8>;
 pub static HOST_RESPONSES: HostResponseChannel = Channel::new();
 
-// Device list subscription flag
+// Set while the host wants a DevicesSnapshot on every connect and disconnect.
 pub static DEVICE_LIST_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
-// use embassy_time::Timer;
 use embassy_usb::driver::{EndpointError, EndpointOut};
 use nrf_sdc::{self as sdc, mpsl};
-// Using trouble-host + nrf-sdc
 use odyssey_protocol::control::usb_mux::{
     BondStoreError, ClearBondsResult, PairingError, PairingOutcome, UsbMuxCtrlMsg,
 };
@@ -50,9 +48,9 @@ use heapless::Vec as HVec;
 use crate::ble::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager, DevicePacketChannel};
 use crate::storage::{BondData, Settings};
 
-// Host management channel to handle bond purge requests while keeping
-// preloading at boot. ClearBonds will send to this channel and wait for
-// completion before responding.
+// Commands for the task that owns the host's bond database, which is preloaded
+// at boot. ClearBonds sends PurgeBonds here and waits on HOST_MGMT_DONE before
+// replying, so the host never keeps an LTK the dongle has forgotten.
 enum HostMgmtCmd {
     PurgeBonds(HVec<BondData, { MAX_DEVICES }>),
     AddBond(BondData),
@@ -61,7 +59,8 @@ enum HostMgmtCmd {
 static HOST_MGMT_CH: Channel<ThreadModeRawMutex, HostMgmtCmd, 2> = Channel::new();
 static HOST_MGMT_DONE: SyncSignal<ThreadModeRawMutex, ()> = SyncSignal::new();
 static HOST_MGMT_ADD_RESULT: SyncSignal<ThreadModeRawMutex, Result<(), ()>> = SyncSignal::new();
-// Capture scan reports during pairing using a host event handler
+// Feeds every advertisement into the name cache and, while pairing, reports
+// the first one that matches the pairing filter.
 struct HostEventHandler;
 impl trouble_host::prelude::EventHandler for HostEventHandler {
     fn on_adv_reports(&self, reports: trouble_host::scan::LeAdvReportsIter) {
@@ -71,7 +70,7 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 let mut addr = [0u8; 6];
                 addr.copy_from_slice(raw);
                 let name = crate::ble::central::extract_local_name(rep.data);
-                // Always update the name cache so ListBondsResponse can return names
+                // Cache names even outside pairing; ListBondsResponse reads them.
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
@@ -107,10 +106,9 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
 static HOST_HANDLER: HostEventHandler = HostEventHandler;
 
 bind_interrupts!(pub struct Irqs {
-    // CLOCK_POWER for both USB VBUS detect and MPSL
+    // CLOCK_POWER is shared by USB VBUS detect and MPSL.
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler, mpsl::ClockInterruptHandler;
 
-    // MPSL interrupt handlers
     EGU0_SWI0 => mpsl::LowPrioInterruptHandler;
     RADIO => mpsl::HighPrioInterruptHandler;
     TIMER0 => mpsl::HighPrioInterruptHandler;
@@ -119,8 +117,6 @@ bind_interrupts!(pub struct Irqs {
     RNG => rng::InterruptHandler<NRF_RNG>;
     USBD => nrf_usb::InterruptHandler<peripherals::USBD>;
 });
-
-// Hardware VBUS detect is used; no SoftwareVbusDetect needed.
 
 const fn parse_firmware_semver(version: &str) -> [u16; 3] {
     let bytes = version.as_bytes();
@@ -159,7 +155,7 @@ const FIRMWARE_SEMVER: [u16; 3] = parse_firmware_semver(env!("CARGO_PKG_VERSION"
 
 #[exception]
 unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
-    // Reset the device on hard fault (typically from panic)
+    // A panic ends up here too; reset rather than hang.
     cortex_m::peripheral::SCB::sys_reset();
 }
 
@@ -168,10 +164,8 @@ async fn main(mut spawner: Spawner) {
     defmt::info!("Booted");
     let p = embassy_nrf::init(Default::default());
 
-    // embassy_time::Timer::after_millis(2000).await;
-
-    // nRF52840-DK LEDs: P0.13, P0.14, P0.15, P0.16 (all white)
-    // Using P0.13 as "red" (status), P0.14 as "blue" (pairing)
+    // "Red" status LED on P0.08, "blue" pairing LED on P0.14. The nRF52840-DK's
+    // LEDs (all white) are on P0.13-P0.16.
     let red = p.P0_08;
 
     let mut red = embassy_nrf::gpio::Output::new(
@@ -182,16 +176,13 @@ async fn main(mut spawner: Spawner) {
 
     red.set_low();
 
-    // Default interrupt priorities are fine; no overrides needed.
+    // Default interrupt priorities are fine.
 
-    // Flash blue LED while pairing is active
-
-    // Initialize USB device and logging
     #[cfg(feature = "rtt")]
     let (ep_in, ep_out) = {
         use static_cell::StaticCell;
 
-        // When using RTT, build USB device without serial logger
+        // With RTT the USB device carries no serial logger.
         let (builder, ep_in, ep_out, _usb_signal) = usb::usb_device(p.USBD);
         let usb_device = builder.build();
 
@@ -199,7 +190,6 @@ async fn main(mut spawner: Spawner) {
             StaticCell::new();
         let usb = USB_DEVICE.init(usb_device);
 
-        // Spawn USB device task
         spawner.spawn(unwrap!(usb_device_task(usb)));
 
         defmt::info!("RTT logger ready");
@@ -209,21 +199,15 @@ async fn main(mut spawner: Spawner) {
     #[cfg(not(feature = "rtt"))]
     let (ep_in, ep_out) = {
         let (builder, ep_in, ep_out, _usb_signal) = usb::usb_device(p.USBD);
-        // Initialize USB serial logger (consumes builder and spawns USB device task)
+        // Consumes the builder and spawns the USB device task.
         defmt_serial::init(&mut spawner, builder);
         defmt::info!("USB serial logger initialized");
         (ep_in, ep_out)
     };
 
-    // for _ in 0..3 {
-    //     defmt::info!("Hello, World!");
-    //     Timer::after_secs(1).await;
-    // }
-
-    // Initialize nrf-mpsl (required even without BLE for flash access coordination)
+    // MPSL is needed even without BLE, to coordinate flash access with the radio.
     info!("MPSL initialization");
 
-    // MPSL init
     let mpsl_p =
         mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
@@ -233,7 +217,7 @@ async fn main(mut spawner: Spawner) {
         accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
         skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
-    // Initialize MPSL with timeslots so nrf_mpsl::Flash can schedule NVMC operations safely.
+    // Timeslots let nrf_mpsl::Flash schedule NVMC operations between radio events.
     static MPSL: StaticCell<mpsl::MultiprotocolServiceLayer> = StaticCell::new();
     static MPSL_SESSION: StaticCell<mpsl::SessionMem<1>> = StaticCell::new();
     let session_mem = MPSL_SESSION.init(mpsl::SessionMem::<1>::new());
@@ -247,7 +231,6 @@ async fn main(mut spawner: Spawner) {
     );
     spawner.spawn(unwrap!(mpsl_task(mpsl)));
 
-    // SDC init
     info!("SDC initialization");
     let sdc_p = sdc::Peripherals::new(
         p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
@@ -281,9 +264,8 @@ async fn main(mut spawner: Spawner) {
         .build(sdc_p, rng, mpsl, &mut *sdc_mem)
         .unwrap();
 
-    // Host resources and stack
+    // 8 L2CAP channels rather than 16 to save RAM.
     info!("trouble-host initialization");
-    // Reduced L2CAP channel count to save RAM (was 16)
     static RESOURCES: StaticCell<trouble_host::HostResources<Pool, { MAX_DEVICES }, 8>> =
         StaticCell::new();
     let resources = RESOURCES.init(trouble_host::HostResources::new());
@@ -302,11 +284,11 @@ async fn main(mut spawner: Spawner) {
             .set_random_generator_seed(&mut host_seed_rng),
     );
 
-    // Defer stack.build() until after settings are initialized so we can preload bonds.
+    // stack.build() waits until settings are up, so bonds can be preloaded first.
 
     red.set_high();
 
-    // Start pairing LED task (flash "blue" while pairing) - using LED2 (P0.14)
+    // Flashes "blue" (LED2, P0.14) while pairing.
     let blue = embassy_nrf::gpio::Output::new(
         p.P0_14,
         embassy_nrf::gpio::Level::High,
@@ -314,18 +296,15 @@ async fn main(mut spawner: Spawner) {
     );
     spawner.spawn(unwrap!(pairing::pairing_led_task(blue)));
 
-    // Initialize settings using MPSL-coordinated flash access
     let flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
     let settings = storage::init_settings(&spawner, flash).await;
 
-    // Initialize active connections tracker
     let active_connections = ACTIVE_CONNECTIONS.init(ActiveConnections::new());
 
-    // Load bonds into cache for reconnection
     ble::security::load_bond_cache(settings).await;
 
-    // Preload bonds into the host at runtime for convenient auto-encryption on reconnects.
-    // Runtime ClearBonds will also purge the host DB via HOST_MGMT_CH to avoid stale LTKs.
+    // Preloaded bonds let reconnects encrypt without re-pairing. ClearBonds
+    // purges them from the host through HOST_MGMT_CH so no stale LTK survives.
     {
         let bonds = settings.get_all_bonds().await;
         for opt in bonds.slots.iter() {
@@ -336,7 +315,6 @@ async fn main(mut spawner: Spawner) {
         }
     }
 
-    // Now build the host and start its tasks
     let host = stack.build();
     let (rx, control, tx) = host.runner.split();
     info!("Spawning host_rx_task");
@@ -348,17 +326,15 @@ async fn main(mut spawner: Spawner) {
     info!("Spawning host_mgmt_task");
     spawner.spawn(unwrap!(host_mgmt_task(stack)));
 
-    // Initialize channels for BLE <-> USB communication
     static DEVICE_PACKETS: StaticCell<DevicePacketChannel> = StaticCell::new();
     let device_packets = DEVICE_PACKETS.init(Channel::new());
     let (evt_ch, cmd_ch) = control::init();
     control::register(evt_ch, cmd_ch);
 
-    // Initialize per-device queue registry
     use ble::central::DEVICE_QUEUES;
     let device_queues = DEVICE_QUEUES.init(ble::central::DeviceQueues::new());
 
-    // Store global references for use in control task
+    // The control task looks these up at runtime.
     ble::central::set_global_refs(active_connections, device_queues).await;
 
     spawner.spawn(unwrap!(usb_rx_task(
@@ -366,12 +342,11 @@ async fn main(mut spawner: Spawner) {
         device_queues,
         active_connections
     )));
-    // Initialize shared EP mutex and spawn independent TX tasks
+    // Both TX tasks share ep_in through EP_MUTEX.
     let ep_mutex = EP_MUTEX.init(embassy_sync::mutex::Mutex::new(Some(ep_in)));
     spawner.spawn(unwrap!(host_responses_tx_task(ep_mutex)));
     spawner.spawn(unwrap!(device_packets_tx_task(ep_mutex, device_packets)));
     spawner.spawn(unwrap!(control_exec_task(settings)));
-    // Start BLE manager (central)
     info!("Starting BLE manager task");
     spawner.spawn(unwrap!(ble_task(
         device_packets,
@@ -382,7 +357,7 @@ async fn main(mut spawner: Spawner) {
         spawner,
     )));
 
-    // Start background scanner (always-on active scan for name caching + pairing detection)
+    // Always-on active scan; feeds the name cache and pairing detection.
     spawner.spawn(unwrap!(ble::pairing_scanner::background_scanner_task(
         stack
     )));
@@ -392,8 +367,6 @@ async fn main(mut spawner: Spawner) {
 
     spawner.spawn(unwrap!(bond_storage_task(settings)));
 }
-
-// Hardware VBUS detect is used; no SoftDevice VBUS forwarding needed.
 
 #[embassy_executor::task]
 async fn bond_storage_task(settings: &'static Settings) -> ! {
@@ -412,10 +385,9 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
                 let _ = settings.add_scan_target(bond.bd_addr).await;
                 ble::security::update_bond_cache(bond).await;
 
-                // Persist the device name to flash.
-                // Prefer the in-memory DEVICE_NAMES cache (updated from all adv reports including
-                // scan responses) over PAIRING_FOUND_NAME (which may have been captured from the
-                // primary ADV_IND before the scan response with the actual name arrived).
+                // Prefer DEVICE_NAMES, which sees every adv report including scan
+                // responses, over PAIRING_FOUND_NAME, which may come from the primary
+                // ADV_IND before the scan response carrying the name arrived.
                 let paired_name = {
                     let cached = crate::ble::central::get_cached_device_name(&bond.bd_addr);
                     let pairing = crate::ble::central::get_pairing_name();
@@ -464,8 +436,6 @@ async fn mpsl_task(mpsl: &'static mpsl::MultiprotocolServiceLayer<'static>) -> !
 async fn usb_device_task(usb: &'static mut embassy_usb::UsbDevice<'static, usb::UsbDriver>) -> ! {
     usb.run().await
 }
-
-// Type aliases used across tasks
 
 #[embassy_executor::task]
 async fn host_rx_task(mut rx: trouble_host::prelude::RxRunner<'static, Controller, Pool>) -> ! {
@@ -546,7 +516,8 @@ async fn ble_task(
     ble_manager.run().await
 }
 
-// USB RX task: receives commands from host
+// Reads host commands from the bulk OUT endpoint, re-arming after every
+// deconfigure.
 #[embassy_executor::task]
 async fn usb_rx_task(
     mut ep_out: embassy_nrf::usb::Endpoint<'static, embassy_nrf::usb::Out>,
@@ -556,9 +527,7 @@ async fn usb_rx_task(
     loop {
         info!("USB RX task: waiting for USB configuration");
         let mut cfg = crate::usb::usb_config_receiver();
-        // First check if already configured, otherwise wait for change to true
         if cfg.try_get().unwrap_or(false) {
-            // Already configured
         } else {
             cfg.changed_and(|&v| v).await;
         }
@@ -566,7 +535,7 @@ async fn usb_rx_task(
         let mut read_buf = [0u8; 512];
 
         loop {
-            // Bound the read to periodically check pairing timeout or deconfigure
+            // 250 ms bound so pairing timeouts and deconfigure are noticed while idle.
             match embassy_time::with_timeout(
                 embassy_time::Duration::from_millis(250),
                 EndpointOut::read_transfer(&mut ep_out, &mut read_buf),
@@ -589,12 +558,11 @@ async fn usb_rx_task(
                     warn!("USB RX: read error");
                 }
                 Err(_) => {
-                    // timeout: fall through to pairing timeout check
+                    // Timed out; fall through to the pairing timeout check.
                 }
             }
 
             if pairing::take_timeout() {
-                // Emit control-plane timeout event
                 control::try_send_event(UsbMuxCtrlMsg::PairingResult(PairingOutcome::Err(
                     PairingError::Timeout,
                 )));
@@ -603,8 +571,7 @@ async fn usb_rx_task(
     }
 }
 
-// USB TX task: sends device packets to host
-// Static mutex shared by USB TX subtasks
+// The bulk IN endpoint, shared by both USB TX tasks.
 static EP_MUTEX: StaticCell<
     embassy_sync::mutex::Mutex<
         ThreadModeRawMutex,
@@ -612,7 +579,7 @@ static EP_MUTEX: StaticCell<
     >,
 > = StaticCell::new();
 
-// Sends host responses (RequestDevices, ReadVersion, etc.) to USB endpoint
+// Sends HOST_RESPONSES (RequestDevices, ReadVersion, ...) on the IN endpoint.
 #[embassy_executor::task]
 async fn host_responses_tx_task(
     ep_mutex: &'static embassy_sync::mutex::Mutex<
@@ -623,19 +590,15 @@ async fn host_responses_tx_task(
     let mut write_buf = [0u8; 256];
 
     loop {
-        // Wait for configuration
         let mut cfg = crate::usb::usb_config_receiver();
-        // First check if already configured, otherwise wait for change to true
         if cfg.try_get().unwrap_or(false) {
-            // Already configured
         } else {
             cfg.changed_and(|&v| v).await;
         }
         info!("USB TX host task: configured");
 
-        // Inner running loop
         loop {
-            // Bounded wait to detect deconfigure while idle
+            // Bounded wait so a deconfigure is noticed while idle.
             let response = match embassy_time::with_timeout(
                 embassy_time::Duration::from_millis(250),
                 HOST_RESPONSES.receive(),
@@ -653,12 +616,12 @@ async fn host_responses_tx_task(
                 }
             };
 
-            // Hold the mutex lock while doing I/O - the other task will wait for the lock
-            // rather than getting None and dropping its message
+            // Hold the lock across the write. The other task then waits for the
+            // endpoint instead of finding None and dropping its message.
             let mut ep_guard = ep_mutex.lock().await;
             if let Some(ref mut endpoint) = *ep_guard {
                 let result = send_mux_msg(&response, &mut write_buf, endpoint).await;
-                drop(ep_guard); // Release lock after I/O
+                drop(ep_guard);
                 if result.is_err() {
                     warn!("USB TX: error sending host response");
                     break;
@@ -671,7 +634,7 @@ async fn host_responses_tx_task(
         warn!("USB TX host task: deconfigured");
     }
 }
-// Sends device packets to USB endpoint
+// Forwards packets from BLE devices to the IN endpoint.
 #[embassy_executor::task]
 async fn device_packets_tx_task(
     ep_mutex: &'static embassy_sync::mutex::Mutex<
@@ -683,11 +646,8 @@ async fn device_packets_tx_task(
     let mut write_buf = [0u8; 256];
 
     loop {
-        // Wait for configuration
         let mut cfg = crate::usb::usb_config_receiver();
-        // First check if already configured, otherwise wait for change to true
         if cfg.try_get().unwrap_or(false) {
-            // Already configured
         } else {
             cfg.changed_and(|&v| v).await;
         }
@@ -696,7 +656,7 @@ async fn device_packets_tx_task(
         let mut idle_count: u32 = 0;
         let mut tx_count: u32 = 0;
         loop {
-            // Bounded wait to detect deconfigure while idle
+            // Bounded wait so a deconfigure is noticed while idle.
             let device_pkt = match embassy_time::with_timeout(
                 embassy_time::Duration::from_millis(250),
                 device_packets.receive(),
@@ -706,7 +666,7 @@ async fn device_packets_tx_task(
                 Ok(pkt) => pkt,
                 Err(_) => {
                     idle_count += 1;
-                    // Log every ~5 seconds of idle (20 * 250ms)
+                    // Log every 20 timeouts, about 5 s of idle.
                     if idle_count % 20 == 0 {
                         info!("USB TX data: idle {}s, sent {}", idle_count / 4, tx_count);
                     }
@@ -721,16 +681,16 @@ async fn device_packets_tx_task(
             idle_count = 0;
             let msg = MuxMsg::DevicePacket(device_pkt);
 
-            // Hold the mutex lock while doing I/O - the other task will wait for the lock
-            // rather than getting None and dropping its message
+            // Hold the lock across the write. The other task then waits for the
+            // endpoint instead of finding None and dropping its message.
             let mut ep_guard = ep_mutex.lock().await;
             if let Some(ref mut endpoint) = *ep_guard {
                 let result = send_mux_msg(&msg, &mut write_buf, endpoint).await;
-                drop(ep_guard); // Release lock after I/O
+                drop(ep_guard);
                 if result.is_ok() {
                     tx_count += 1;
                 } else {
-                    // Actual error from USB driver - endpoint likely disabled/stalled
+                    // A real driver error; the endpoint is likely disabled or stalled.
                     warn!("USB TX data: write failed after {} sent", tx_count);
                     break;
                 }
@@ -750,7 +710,7 @@ async fn handle_usb_rx(
 ) -> Result<(), ()> {
     defmt::trace!("handle_usb_rx: {} bytes", data.len());
 
-    // Parse potentially multiple postcard messages from one USB transfer
+    // One USB transfer can carry several postcard messages back to back.
     let mut remaining = data;
     while !remaining.is_empty() {
         let (msg, rest): (MuxMsg, &[u8]) = postcard::take_from_bytes(remaining).map_err(|e| {
@@ -775,7 +735,7 @@ async fn handle_usb_msg(
     device_queues: &ble::central::DeviceQueues,
     active_connections: &ActiveConnections,
 ) {
-    // Only log WriteConfig/FlashSettings to avoid RTT overflow
+    // Logging every message overflows RTT, so only config writes are logged.
     if let MuxMsg::SendTo(s) = &msg {
         if matches!(
             s.pkt.data,
@@ -795,7 +755,6 @@ async fn handle_usb_msg(
             }
         }
         MuxMsg::SendTo(send_to_msg) => {
-            // Route message to the specific device's queue
             let device_uuid = &send_to_msg.dev;
             defmt::trace!("SendTo message for device {:02x}", device_uuid);
             if let Some(queue) = device_queues.get_queue(device_uuid).await {
@@ -841,7 +800,7 @@ async fn send_mux_msg(
 ) -> Result<(), ()> {
     use embassy_usb::driver::EndpointIn;
 
-    // Encode using postcard (standard for USB in ats_usb)
+    // Postcard, as ats_usb expects on this endpoint.
     let data = postcard::to_slice(msg, write_buf).map_err(|_| ())?;
 
     defmt::trace!("write_transfer start, {} bytes", data.len());
@@ -860,7 +819,8 @@ async fn send_mux_msg(
 
 #[embassy_executor::task]
 async fn control_exec_task(settings: &'static Settings) -> ! {
-    // Drop any stale events once at startup, but do not clear per-iteration or we risk racing the host and dropping responses (e.g., ClearBondsResponse).
+    // Drop stale events once at startup only. Clearing on every command would race
+    // the host and lose responses such as ClearBondsResponse.
     control::clear_events();
     loop {
         use UsbMuxCtrlMsg as C;
@@ -877,9 +837,8 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 let mut bonded = HVec::new();
                 for opt in bonds.slots.iter() {
                     if let Some(bd) = opt {
-                        // Prefer in-memory adv cache (updated from BLE advertisements,
-                        // so it reflects the current name even after a USB rename).
-                        // Fall back to flash if cache is empty.
+                        // The adv cache tracks the name the device advertises now,
+                        // including after a USB rename; flash is the fallback.
                         let cached = crate::ble::central::get_cached_device_name(&bd.bd_addr);
                         let name = if !cached.is_empty() {
                             cached
@@ -913,9 +872,8 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
             }
             C::ClearBonds() => {
                 info!("CTL ClearBonds received");
-                // Cancel any in-progress pairing to avoid overlapping control events
+                // Stop pairing so its events cannot interleave with the clear.
                 pairing::cancel();
-                // Capture current bonds to purge from host DB
                 let bonds = settings.get_all_bonds().await;
                 let mut to_purge: HVec<BondData, { MAX_DEVICES }> = HVec::new();
                 for opt in bonds.slots.iter() {
@@ -923,17 +881,17 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                         let _ = to_purge.push(*bd);
                     }
                 }
-                // Ask host task to purge; wait for completion to avoid desync
+                // Wait for the host purge so its bond DB and flash cannot disagree.
                 HOST_MGMT_CH.send(HostMgmtCmd::PurgeBonds(to_purge)).await;
                 HOST_MGMT_DONE.wait().await;
-                // Now clear persisted + runtime state
                 settings.bonds_clear().await;
                 settings.scan_list_clear().await;
                 ble::security::clear_bond_cache().await;
                 ble::central::clear_device_names();
                 settings.clear_device_names().await;
 
-                // Disconnect all active BLE connections
+                // Forget every live connection and its queue. This does not send a
+                // BLE disconnect itself.
                 if let (Some(active_connections), Some(device_queues)) = (
                     ble::central::get_active_connections().await,
                     ble::central::get_device_queues().await,
@@ -949,7 +907,7 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                     }
                 }
 
-                // Signal central loop to restart immediately (cancel any in-flight operations)
+                // Restart the central loop now rather than at its next 2 s poll.
                 ble::central::RESTART_CENTRAL.signal(());
 
                 control::try_send_event(C::ClearBondsResponse(ClearBondsResult::Ok()));

@@ -33,7 +33,6 @@ pub fn init(spawner: &mut Spawner, mut builder: Builder<'static, Driver>) {
     static USB_DEVICE: StaticCell<UsbDevice<'static, Driver>> = StaticCell::new();
     let usb = USB_DEVICE.init(usb);
 
-    // Run the USB device.
     unsafe {
         USB_FUT.init(usb.run());
         spawner.spawn(unwrap!(usb_task()));
@@ -151,13 +150,14 @@ fn panic(info: &PanicInfo) -> ! {
 
     cortex_m::interrupt::disable();
 
-    // Guard against infinite recursion, just in case.
+    // A panic inside the logging below would recurse.
     if !PANICKED.load(Ordering::Relaxed) {
         PANICKED.store(true, Ordering::Relaxed);
 
         defmt::error!("{}", defmt::Display2Format(info));
 
-        // Try to keep usb alive for logs
+        // Keep polling the USB and log futures by hand so the panic message
+        // still reaches the host.
         let mut cx = Context::from_waker(NOOP_WAKER);
         loop {
             unsafe {

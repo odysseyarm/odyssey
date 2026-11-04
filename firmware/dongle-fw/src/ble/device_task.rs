@@ -17,8 +17,10 @@ use super::central::{
     L2CAP_PSM_CONTROL, L2CAP_PSM_DATA, is_control_packet,
 };
 
-/// Per-device connection task - handles complete lifecycle for one device
-/// Each task builds its own Central instance from the shared stack
+/// Owns one device for its whole lifetime: connect, pair or encrypt, open the
+/// L2CAP channels, relay packets, and reconnect 5 s after a disconnect. Builds
+/// its own Central from the shared stack. Returns once the device leaves the
+/// scan targets.
 #[embassy_executor::task(pool_size = odyssey_protocol::mux::MAX_DEVICES)]
 pub async fn device_connection_task(
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
@@ -30,13 +32,11 @@ pub async fn device_connection_task(
 ) {
     info!("Device task started for {:02x}", target);
 
-    // Build our own Central instance for this device
     let host = stack.build();
     let mut central = host.central;
 
     loop {
-        // Check if we're still supposed to be connecting to this device
-        // (bond may have been cleared while we were disconnected)
+        // The bond may have been cleared while disconnected.
         let targets = settings.get_scan_targets().await;
         if !targets.contains(&target.into_inner()) {
             info!(
@@ -46,7 +46,6 @@ pub async fn device_connection_task(
             return;
         }
 
-        // Connect to the device
         let config = ConnectConfig {
             connect_params: ConnectParams {
                 min_connection_interval: Duration::from_micros(7500),
@@ -90,7 +89,6 @@ pub async fn device_connection_task(
             }
         };
 
-        // Handle pairing/encryption
         let has_bond = settings.get_bond(target).await.is_some();
         let _ = conn.set_bondable(true);
 
@@ -180,7 +178,6 @@ pub async fn device_connection_task(
             }
         }
 
-        // Request 2M PHY
         match conn
             .set_phy(stack, trouble_host::prelude::PhyKind::Le2M)
             .await
@@ -196,7 +193,6 @@ pub async fn device_connection_task(
             },
         }
 
-        // Create L2CAP channels
         const PAYLOAD_LEN: u16 = 2510;
         const L2CAP_MTU: u16 = 251;
 
@@ -262,7 +258,6 @@ pub async fn device_connection_task(
             }
         };
 
-        // Register device queue
         let device_queue = match device_queues.register(&target.into_inner()).await {
             Some(queue) => queue,
             None => {
@@ -271,7 +266,6 @@ pub async fn device_connection_task(
             }
         };
 
-        // Add to active connections
         if !active_connections.add(&target.into_inner()).await {
             error!("Failed to add device to active connections");
             device_queues.unregister(&target.into_inner()).await;
@@ -283,7 +277,6 @@ pub async fn device_connection_task(
             target
         );
 
-        // Run connection handler
         run_connection(
             conn,
             l2cap_control_channel,
@@ -298,16 +291,15 @@ pub async fn device_connection_task(
 
         info!("Device {:02x} disconnected, cleaning up", target);
 
-        // Cleanup
         active_connections.remove(&target.into_inner()).await;
         device_queues.unregister(&target.into_inner()).await;
 
-        // Wait before reconnecting
         Timer::after_secs(5).await;
     }
 }
 
-/// Run the connection handler loop until disconnection
+/// Relays packets in both directions until the link drops or either L2CAP
+/// channel fails.
 async fn run_connection(
     conn: trouble_host::prelude::Connection<'static, crate::Pool>,
     l2cap_control_channel: L2capChannel<'static, crate::Pool>,
@@ -323,7 +315,6 @@ async fn run_connection(
 
     let shutdown = Signal::<ThreadModeRawMutex, ()>::new();
 
-    // TX future
     let tx_fut = async {
         let mut tx_buf = [0u8; 1024];
         loop {
@@ -338,7 +329,7 @@ async fn run_connection(
             };
             let is_control = is_control_packet(&device_pkt.pkt);
 
-            // Intercept SetDeviceName to keep dongle bond_names in sync
+            // Mirror SetDeviceName into the dongle's stored name and name cache.
             if let odyssey_protocol::PacketData::SetDeviceName(name) = &device_pkt.pkt.data {
                 settings.set_device_name(target.into_inner(), &name.0).await;
                 crate::ble::central::update_device_name(target.into_inner(), name.0.clone());
@@ -390,7 +381,6 @@ async fn run_connection(
         }
     };
 
-    // Control RX future
     let ctrl_rx_fut = async {
         let mut rx_buf = [0u8; 1024];
         loop {
@@ -414,7 +404,6 @@ async fn run_connection(
         }
     };
 
-    // Data RX future
     let data_rx_fut = async {
         let mut rx_buf = [0u8; 1024];
         loop {
@@ -443,7 +432,6 @@ async fn run_connection(
         }
     };
 
-    // Connection event future - returns disconnect reason
     let conn_fut = async {
         loop {
             match conn.next().await {
@@ -475,7 +463,7 @@ async fn run_connection(
         }
     };
 
-    // Run all futures until one completes (usually conn_fut when disconnected)
+    // Usually conn_fut finishes first, on disconnect.
     use embassy_futures::select::select4;
     let _ = select4(tx_fut, ctrl_rx_fut, data_rx_fut, conn_fut).await;
 }

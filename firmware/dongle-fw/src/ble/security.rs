@@ -7,17 +7,18 @@ use odyssey_protocol::mux::MAX_DEVICES;
 
 use crate::storage::{BondData, Settings};
 
-/// Signal to notify async task that a new bond needs to be stored
+/// Bond waiting to be written to flash by the storage task.
 pub static BOND_TO_STORE: Signal<CriticalSectionRawMutex, BondData> = Signal::new();
 
-/// In-memory cache of bonds for fast synchronous lookup
-/// Loaded at startup and updated when bonds are added/removed
+/// Bonds mirrored from flash for synchronous lookup. Filled at startup and
+/// kept in step as bonds are added or removed.
 pub static BOND_CACHE: Mutex<CriticalSectionRawMutex, Vec<BondData, MAX_DEVICES>> =
     Mutex::new(Vec::new());
 
-// Security is handled by trouble-host's built-in manager; no extra handler needed here.
+// trouble-host's built-in security manager handles pairing; there is no
+// handler of our own.
 
-/// Convert trouble-host BondInformation into our persisted BondData format.
+/// Converts a trouble-host bond into the form persisted in flash.
 pub fn bonddata_from_info(info: &trouble_host::prelude::BondInformation) -> BondData {
     let mut bd_addr = [0u8; 6];
     bd_addr.copy_from_slice(info.identity.bd_addr.raw());
@@ -39,7 +40,8 @@ pub fn bonddata_from_info(info: &trouble_host::prelude::BondInformation) -> Bond
     }
 }
 
-/// Convert our persisted BondData into trouble-host BondInformation.
+/// Converts a persisted bond back into trouble-host's form. An unknown
+/// `security_level` maps to `NoEncryption`.
 pub fn info_from_bonddata(bd: &BondData) -> trouble_host::prelude::BondInformation {
     let security_level = match bd.security_level {
         0 => trouble_host::prelude::SecurityLevel::NoEncryption,
@@ -62,8 +64,8 @@ pub fn info_from_bonddata(bd: &BondData) -> trouble_host::prelude::BondInformati
     }
 }
 
-/// Load all bonds from flash into the in-memory cache
-/// Should be called at startup before BLE operations begin
+/// Replaces the cache with the bonds in flash. Call at startup before any BLE
+/// operation; bonds past `MAX_DEVICES` are logged and skipped.
 pub async fn load_bond_cache(settings: &Settings) {
     info!("Loading bonds into cache...");
 
@@ -85,12 +87,11 @@ pub async fn load_bond_cache(settings: &Settings) {
     info!("Loaded {} bonds into cache", cache.len());
 }
 
-/// Update the bond cache with a new or updated bond
-/// Should be called after storing a bond to flash
+/// Inserts or replaces the cached bond for `bond.bd_addr`. Call after the bond
+/// is stored to flash.
 pub async fn update_bond_cache(bond: BondData) {
     let mut cache = BOND_CACHE.lock().await;
 
-    // Check if bond already exists (update)
     for existing in cache.iter_mut() {
         if existing.bd_addr == bond.bd_addr {
             *existing = bond;
@@ -99,7 +100,6 @@ pub async fn update_bond_cache(bond: BondData) {
         }
     }
 
-    // Add new bond
     if let Err(_) = cache.push(bond) {
         defmt::error!(
             "Bond cache full - cannot add bond for device {:02x}",
@@ -110,8 +110,8 @@ pub async fn update_bond_cache(bond: BondData) {
     }
 }
 
-/// Clear all bonds from the cache
-/// Should be called when clearing bonds to prevent stale bonds from being used
+/// Empties the cache. Call when clearing bonds, or reconnects would use the
+/// stale keys.
 pub async fn clear_bond_cache() {
     let mut cache = BOND_CACHE.lock().await;
     cache.clear();

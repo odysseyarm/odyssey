@@ -11,7 +11,7 @@ regions {
     }
 
     ram origin=0x2000_0000 length="256K" {
-        // DK doesn't need bootloader RAM reservation
+        // No bootloader on the DK, so no RAM to reserve.
         app_ram origin=0x2000_0000 end="ram.end"
     }
 }

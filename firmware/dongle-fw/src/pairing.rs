@@ -18,21 +18,16 @@ pub fn is_active() -> bool {
 
 pub fn enter() {
     PAIRING.store(true, Ordering::Relaxed);
-    // Reset pairing capture flag for new pairing session
     crate::ble::central::reset_pairing_capture();
-    // Wake any waiters
     PAIRING_DONE.signal(());
-    // Signal scan to restart
     SCAN_RESTART_COUNTER.fetch_add(1, Ordering::Relaxed);
     SCAN_RESTART.signal(());
-    // Signal central loop to restart immediately
     defmt::info!("Signaling RESTART_CENTRAL from pairing::enter()");
     crate::ble::central::RESTART_CENTRAL.signal(());
 }
 
 pub fn cancel() {
     PAIRING.store(false, Ordering::Relaxed);
-    // Signal scan to restart
     SCAN_RESTART_COUNTER.fetch_add(1, Ordering::Relaxed);
     SCAN_RESTART.signal(());
 }
@@ -62,12 +57,11 @@ pub async fn wait_for_scan_restart() {
 pub async fn pairing_led_task(mut blue: embassy_nrf::gpio::Output<'static>) -> ! {
     loop {
         if is_active() {
-            // Flash blue while pairing
+            // The LED is active-low.
             blue.set_low();
             Timer::after(Duration::from_millis(200)).await;
             blue.set_high();
             Timer::after(Duration::from_millis(200)).await;
-            // Check timeout
             if let Ok(mut deadline) = DEADLINE.try_lock() {
                 if let Some(dl) = *deadline {
                     if Instant::now() >= dl {
@@ -78,7 +72,6 @@ pub async fn pairing_led_task(mut blue: embassy_nrf::gpio::Output<'static>) -> !
                 }
             }
         } else {
-            // Idle: ensure LED off
             blue.set_high();
             Timer::after(Duration::from_millis(500)).await;
         }

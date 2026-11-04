@@ -1,6 +1,4 @@
-//! BLE module using trouble-host + nrf-sdc
-//!
-//! This replaces the previous nrf-softdevice implementation with trouble-host (pure Rust BLE host).
+//! BLE central built on trouble-host (pure Rust host) over nrf-sdc.
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
@@ -12,7 +10,7 @@ pub mod security;
 
 pub use central::{ACTIVE_CONNECTIONS, ActiveConnections, BleManager};
 
-/// Channel for sending packets from BLE devices to USB
-/// Reduced to 32 to save RAM (was 64)
+/// Packets from BLE devices on their way to USB. Depth 32 rather than 64 to
+/// save RAM.
 pub type DevicePacketChannel = Channel<ThreadModeRawMutex, odyssey_protocol::mux::DevicePacket, 32>;
-// Device queues and connection tracking are defined in `ble::central`.
+// Per-device queues and connection tracking live in `ble::central`.

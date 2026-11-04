@@ -4,7 +4,8 @@ use core::task::{Context, Poll, Waker};
 
 use embassy_time::{Duration, Instant};
 
-/// Copy of [`embassy_time::Timer`] that tolerates noop wakers
+/// Copy of [`embassy_time::Timer`] that can be polled with [`NOOP_WAKER`], as
+/// the panic handler does: it skips scheduling a wake for that waker.
 pub struct Timer {
     expires_at: Instant,
     yielded_once: bool,
@@ -100,5 +101,5 @@ impl Future for Timer {
     }
 }
 
-// Use this waker to make sure it has the same address
+// One static so the timer can recognise it by address.
 pub static NOOP_WAKER: &'static Waker = Waker::noop();

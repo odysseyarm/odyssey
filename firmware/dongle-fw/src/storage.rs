@@ -1,4 +1,4 @@
-//! Storage backed by cfg-noodle for BLE bonds.
+//! Flash-backed settings (bonds and device names) stored with cfg-noodle.
 
 mod settings_region {
     unsafe extern "C" {
@@ -36,40 +36,40 @@ static NODE_BONDS: StorageListNode<BondsSettings> = StorageListNode::new("settin
 static NODE_DEVICE_NAMES: StorageListNode<DeviceNamesSettings> =
     StorageListNode::new("settings/device_names");
 
-// Scan list is no longer persisted - it's derived from bonds on boot
-// and only holds temporary pairing targets during runtime
+// The scan list is not persisted: it is rebuilt from the bonds at boot and
+// otherwise only holds pairing targets added at runtime.
 
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-// Flash access is coordinated through MPSL to avoid conflicts with radio operations
+// Flash goes through nrf_mpsl::Flash so NVMC operations do not collide with
+// radio events.
 
 pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
-// Use a static scratch buffer for cfg-noodle to avoid large task stack usage
+// cfg-noodle's scratch buffer is static; on the task stack it would overflow.
 const STORAGE_BUF_SIZE: usize =
     <Flash<nrf_mpsl::Flash<'static>, NoCache> as NdlDataStorage>::MAX_ELEM_SIZE;
 static STORAGE_BUF: StaticCell<[u8; STORAGE_BUF_SIZE]> = StaticCell::new();
 static STORAGE_FLASH: StaticCell<Flash<nrf_mpsl::Flash<'static>, NoCache>> = StaticCell::new();
 
-/// BLE bond information for a single device
+/// One device's bond: address, LTK, IRK and security level.
 pub type BondData = odyssey_protocol::control::BondEntry;
 
-/// Storage for all BLE bonds (up to MAX_DEVICES)
+/// Bond slots for up to `MAX_DEVICES` devices.
 #[derive(Debug, Clone, Encode, Decode, CborLen)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cbor(map)]
 pub struct BondsSettings {
-    /// Array of bond slots (Some = bond present, None = empty slot)
+    /// `None` marks a free slot.
     #[n(0)]
     pub slots: [Option<BondData>; MAX_DEVICES],
 }
 
-/// List of device addresses to scan for and connect to
+/// Addresses the central connects to. Runtime only, never written to flash.
 #[derive(Debug, Clone, Encode, Decode, CborLen)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cbor(map)]
 pub struct ScanListSettings {
-    /// Array of addresses to scan for
     #[n(0)]
     pub addresses: [Option<[u8; 6]>; MAX_DEVICES],
 }
@@ -90,7 +90,7 @@ impl Default for BondsSettings {
     }
 }
 
-/// A single device name entry: BLE address paired with a UTF-8 name.
+/// A device's BLE address and its UTF-8 name, up to 32 bytes.
 #[derive(Debug, Clone, Copy, Encode, Decode, CborLen)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cbor(map)]
@@ -116,7 +116,7 @@ impl DeviceNameEntry {
     }
 }
 
-/// Storage for device names (up to MAX_DEVICES)
+/// Name slots for up to `MAX_DEVICES` devices.
 #[derive(Debug, Clone, Encode, Decode, CborLen)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cbor(map)]
@@ -141,11 +141,10 @@ async fn settings_worker(
 ) {
     let flash = STORAGE_FLASH.init(Flash::new(flash_dev, region, NoCache::new()));
 
-    // Buffer for cfg-noodle operations (static to prevent task stack overflow)
+    // Static rather than on the task stack, which it would overflow.
     let buffer = STORAGE_BUF.init([0u8; STORAGE_BUF_SIZE]);
 
-    // Wait until SoftDevice task signals readiness before using flash
-    // Start immediately; no need to wait for SoftDevice readiness.
+    // The worker starts at once; there is no SoftDevice readiness to wait for.
     loop {
         let read_fut = async {
             LIST.needs_read().await;
@@ -175,18 +174,17 @@ async fn settings_worker(
                     }
                 }
             };
-            // Queued write OR explicit flush signal to wake
+            // Wakes on a queued write or an explicit flush.
             match select(wait_write, SETTINGS_FLUSH.wait()).await {
                 Either::First(_) => {}
                 Either::Second(_) => {}
             }
         };
 
-        // Periodic tick so data eventually flushes without signals
+        // Flushes eventually even if nothing signals.
         let tick_fut = Timer::after(auto_interval);
 
         match embassy_futures::select::select(read_fut, select(write_fut, tick_fut)).await {
-            // Reads ready
             Either::First(_) => {
                 defmt::debug!("Storage: starting process_reads");
                 match LIST.process_reads(&mut *flash, &mut buffer[..]).await {
@@ -195,7 +193,6 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_reads");
             }
-            // Write wake (queued write or explicit flush)
             Either::Second(Either::First(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
                 let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
@@ -205,7 +202,6 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_writes");
 
-                // GC after writes
                 defmt::debug!("Storage: starting process_garbage");
                 match LIST.process_garbage(&mut *flash, &mut buffer[..]).await {
                     Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
@@ -213,7 +209,7 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_garbage");
 
-                // If write failed (e.g. NeedsGarbageCollect), retry now that GC has run
+                // A failed write (e.g. NeedsGarbageCollect) gets one retry after GC.
                 if write_result.is_err() {
                     defmt::debug!("Storage: retrying process_writes after GC");
                     match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
@@ -222,7 +218,6 @@ async fn settings_worker(
                     }
                 }
             }
-            // Periodic tick: attempt a single write pass
             Either::Second(Either::Second(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
                 let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
@@ -232,7 +227,6 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_writes");
 
-                // GC after writes
                 defmt::debug!("Storage: starting process_garbage");
                 match LIST.process_garbage(&mut *flash, &mut buffer[..]).await {
                     Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
@@ -240,7 +234,7 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_garbage");
 
-                // If write failed (e.g. NeedsGarbageCollect), retry now that GC has run
+                // A failed write (e.g. NeedsGarbageCollect) gets one retry after GC.
                 if write_result.is_err() {
                     defmt::debug!("Storage: retrying process_writes after GC");
                     match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
@@ -266,7 +260,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Write bonds to flash
     #[allow(dead_code)]
     async fn bonds_write(&self) {
         let bonds = self.bonds.lock().await;
@@ -276,7 +269,6 @@ impl Settings {
         settings_flush_now();
     }
 
-    /// Clear all bonds
     #[allow(dead_code)]
     pub async fn bonds_clear(&self) {
         let mut bonds = self.bonds.lock().await;
@@ -285,16 +277,19 @@ impl Settings {
         self.bonds_write().await;
     }
 
-    /// Add or update a bond for a device
+    /// Replaces the bond for `bond.bd_addr` or takes a free slot, then queues a
+    /// flash write.
+    ///
+    /// # Errors
+    ///
+    /// Fails when every slot is taken by another device.
     #[allow(dead_code)]
     pub async fn add_bond(&self, bond: BondData) -> Result<(), ()> {
         let mut bonds = self.bonds.lock().await;
 
-        // Find existing slot or empty slot
         for slot in bonds.slots.iter_mut() {
             if let Some(existing) = slot {
                 if existing.bd_addr == bond.bd_addr {
-                    // Update existing
                     *existing = bond;
                     info!("Updated bond for device {:02x}", bond.bd_addr);
                     drop(bonds);
@@ -304,7 +299,6 @@ impl Settings {
             }
         }
 
-        // Find empty slot
         for slot in bonds.slots.iter_mut() {
             if slot.is_none() {
                 *slot = Some(bond);
@@ -319,7 +313,11 @@ impl Settings {
         Err(())
     }
 
-    /// Remove a bond for a device
+    /// Frees the slot for `bd_addr` and queues a flash write.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no bond for `bd_addr` exists.
     #[allow(dead_code)]
     pub async fn remove_bond(&self, bd_addr: &[u8; 6]) -> Result<(), ()> {
         let mut bonds = self.bonds.lock().await;
@@ -340,7 +338,6 @@ impl Settings {
         Err(())
     }
 
-    /// Get bond for a device
     #[allow(dead_code)]
     pub async fn get_bond(&self, bd_addr: BdAddr) -> Option<BondData> {
         let bonds = self.bonds.lock().await;
@@ -354,21 +351,18 @@ impl Settings {
         None
     }
 
-    /// Get all bonds
     #[allow(dead_code)]
     pub async fn get_all_bonds(&self) -> BondsSettings {
         let bonds = self.bonds.lock().await;
         bonds.clone()
     }
 
-    // scan_list_write removed - scan list is no longer persisted to flash
-
-    /// Add an address to the scan list (runtime only, not persisted)
+    /// Adds `address` to the in-memory scan list. When the list is full the
+    /// oldest entry (index 0) is dropped. Always succeeds.
     #[allow(dead_code)]
     pub async fn add_scan_target(&self, address: [u8; 6]) -> Result<(), ()> {
         let mut scan_list = self.scan_list.lock().await;
 
-        // Check if already exists
         for slot in scan_list.addresses.iter() {
             if let Some(addr) = slot {
                 if addr == &address {
@@ -378,11 +372,9 @@ impl Settings {
             }
         }
 
-        // Find empty slot, otherwise overwrite oldest entry (index 0) by shifting left
         if let Some(slot) = scan_list.addresses.iter_mut().find(|s| s.is_none()) {
             *slot = Some(address);
         } else {
-            // shift left and place at end
             for i in 0..(scan_list.addresses.len() - 1) {
                 scan_list.addresses[i] = scan_list.addresses[i + 1];
             }
@@ -394,7 +386,11 @@ impl Settings {
         Ok(())
     }
 
-    /// Remove an address from the scan list (runtime only)
+    /// Removes `address` from the in-memory scan list.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `address` is not in the list.
     #[allow(dead_code)]
     pub async fn remove_scan_target(&self, address: &[u8; 6]) -> Result<(), ()> {
         let mut scan_list = self.scan_list.lock().await;
@@ -413,7 +409,6 @@ impl Settings {
         Err(())
     }
 
-    /// Get all addresses in the scan list
     pub async fn get_scan_targets(&self) -> heapless::Vec<[u8; 6], MAX_DEVICES> {
         let scan_list = self.scan_list.lock().await;
         scan_list
@@ -423,7 +418,6 @@ impl Settings {
             .collect()
     }
 
-    /// Clear all scan targets (runtime only)
     pub async fn scan_list_clear(&self) {
         let mut scan_list = self.scan_list.lock().await;
         *scan_list = ScanListSettings::default();
@@ -440,7 +434,6 @@ impl Settings {
 
     pub async fn set_device_name(&self, bd_addr: [u8; 6], name: &heapless::String<32>) {
         let mut names = self.device_names.lock().await;
-        // Update existing entry for this address if present
         for entry in names.entries.iter_mut() {
             if let Some(e) = entry {
                 if e.bd_addr == bd_addr {
@@ -454,7 +447,6 @@ impl Settings {
                 }
             }
         }
-        // Find empty slot
         for entry in names.entries.iter_mut() {
             if entry.is_none() {
                 let bytes = name.as_bytes();
@@ -497,7 +489,13 @@ impl Settings {
     }
 }
 
-/// Initialize settings subsystem
+/// Spawns the flash worker, loads bonds and names, and seeds the scan list
+/// from the bonds. Call once.
+///
+/// # Panics
+///
+/// Panics if the linker-provided settings region is smaller than two flash
+/// pages, or if called twice.
 pub async fn init_settings(
     spawner: &Spawner,
     flash_dev: nrf_mpsl::Flash<'static>,
@@ -514,15 +512,15 @@ pub async fn init_settings(
         STORAGE_BUF_SIZE, STORAGE_BUF_SIZE
     );
 
-    // Start I/O worker first so it can service read hydration for attached nodes
-    // TEMP: Use very long interval to avoid periodic flash writes during debugging
+    // Spawn the worker before attaching nodes so it can service their initial reads.
+    // Periodic write pass every 10 s.
     spawner.spawn(unwrap!(settings_worker(
         flash_dev,
         region.clone(),
         Duration::from_secs(10),
     )));
 
-    // Attach nodes (worker will hydrate once SoftDevice is ready)
+    // The worker fills these in from flash as they attach.
     let h_bonds = NODE_BONDS
         .attach_with_default(&LIST, BondsSettings::default)
         .await
@@ -540,7 +538,6 @@ pub async fn init_settings(
     let names_count = names_data.entries.iter().filter(|e| e.is_some()).count();
     info!("Loaded {} device names from flash", names_count);
 
-    // Populate scan list from bonds (not persisted to flash)
     let mut scan_list_data = ScanListSettings::default();
     for (i, bond_opt) in bonds_data.slots.iter().enumerate() {
         if let Some(bond) = bond_opt {
@@ -562,5 +559,3 @@ pub async fn init_settings(
 
     SETTINGS_CELL.init(settings)
 }
-
-// Softdevice gating removed: storage starts immediately.

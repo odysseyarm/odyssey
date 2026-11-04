@@ -14,7 +14,7 @@ use crate::Irqs;
 pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
 
 pub const VID: u16 = 0x1915;
-pub const PID: u16 = 0x5212; // Dongle PID
+pub const PID: u16 = 0x5212;
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{B0714FF4-0D68-4222-A73A-7CE3B8B9A601}"];
 
@@ -37,7 +37,7 @@ pub fn usb_device(
     let vbus = HardwareVbusDetect::new(Irqs);
     let driver = UsbDriver::new(usbd, Irqs, vbus);
 
-    // Read unique device ID from FICR and format as hex serial number
+    // Serial number is the 64-bit FICR DEVICEID as 16 hex digits.
     static SERIAL_BUF: ConstStaticCell<[u8; 16]> = ConstStaticCell::new([0; 16]);
     let serial_buf = SERIAL_BUF.take();
     let ficr = embassy_nrf::pac::FICR;
@@ -51,7 +51,7 @@ pub fn usb_device(
         serial_buf[i * 2] = HEX[(b >> 4) as usize];
         serial_buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
     }
-    // SAFETY: serial_buf contains only ASCII hex digits
+    // SAFETY: serial_buf holds only ASCII hex digits, which are valid UTF-8.
     let serial = unsafe { core::str::from_utf8_unchecked(serial_buf) };
 
     let mut config = UsbConfig::new(VID, PID);
@@ -90,7 +90,7 @@ pub fn usb_device(
 
     builder.handler(&mut *handler);
 
-    // Add a vendor-specific function (class 0xFF)
+    // Vendor-specific class 0xFF; the MS OS descriptors bind it to WinUSB.
     let mut function = builder.function(0xFF, 0, 0);
     function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -118,8 +118,9 @@ impl MyHandler {
 impl embassy_usb::Handler for MyHandler {
     fn reset(&mut self) {
         defmt::warn!("USB bus reset");
-        // Clear configured state on bus reset - this ensures clean re-enumeration
-        // when device is plugged in before PC boot or after failed enumeration
+        // Report deconfigured on bus reset so the tasks re-arm and re-enumeration
+        // starts clean when the dongle is plugged in before the PC boots or after a
+        // failed enumeration.
         USB_CONFIG_WATCH.sender().send(false);
         self.signal.signal(false);
     }
@@ -146,7 +147,7 @@ impl embassy_usb::Handler for MyHandler {
         use embassy_usb::control::{OutResponse, Recipient, RequestType};
         use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 
-        // Vendor|Interface, request SEND=0x30, wIndex=1
+        // Vendor|Interface, request SEND=0x30, wIndex=0
         if req.request_type == RequestType::Vendor
             && req.recipient == Recipient::Interface
             && req.request == 0x30
@@ -192,7 +193,7 @@ impl embassy_usb::Handler for MyHandler {
                 }
             } else {
                 defmt::trace!("Control IN: no event pending");
-                // No event pending: return zero-length success to indicate "no data".
+                // A zero-length reply means "no event".
                 Some(InResponse::Accepted(&[]))
             }
         } else {
@@ -201,7 +202,8 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
-// Global watch for multi-task gating (Signal is single-consumer)
+// A Watch rather than a Signal because several tasks gate on it and Signal has
+// a single consumer.
 static USB_CONFIG_WATCH: Watch<ThreadModeRawMutex, bool, 4> = Watch::new();
 
 pub fn usb_config_receiver() -> DynReceiver<'static, bool> {

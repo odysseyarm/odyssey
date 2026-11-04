@@ -6,17 +6,15 @@ vars {
 
 regions {
     flash origin=0x0000_0000 length="1M" {
-        // Reserve Nordic MBR (4KB) at start. Application starts at 0x0000_1000.
+        // Nordic MBR occupies the first 4 KB; the application starts at 0x0000_1000.
         mbr         origin=0x0000_0000 length="4K"
-        // App region excluding your reserved settings area
         app_flash   origin=0x0000_1000 length="0xCB000"
-        // Last 72 KB of the application-usable area
+        // 72 KB of settings right after the app, ending 8 KB below the bootloader.
         settings    origin=0x000C_C000 length="72K" align="page_size"
         bootloader  origin=0x000E_0000 end="0x000F_DFFF"
     }
 
-    // The bootloader uses the first 8 bytes of RAM to preserve state so don't
-    // touch them
+    // The bootloader keeps state in the first 8 bytes of RAM across resets.
     ram origin=0x2000_0000 length="256K" {
         app_ram origin=0x2000_0008 end="ram.end"
     }

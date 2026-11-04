@@ -8,9 +8,8 @@ bin       := "dongle-fw"
 
 version   := `awk -F'"' '/^version/ { print $2; exit }' Cargo.toml`
 
-# nrfutil
 hw        := "52"
-# SoftDevice requirement for DFU package. Set to 0x00 when no SoftDevice is present.
+# nrf-sdc links no SoftDevice, so the DFU package requires none (0x00).
 sd_req    := "0x00"
 # The bootloader refuses a package whose application-version is below the one
 # already flashed, so this has to rise with every release. major*10000 +
@@ -21,11 +20,8 @@ app_ver   := `awk -F'"' '/^version/ { split($2, v, "."); print v[1] * 10000 + v[
 # rejected without a chip erase.
 key_file  := "fanstel-debug.pem"
 
-# Serial
 dfu_port  := "COM78"
-# dfu_port  := "COM76"
 baud      := "115200"
-# dev_port  := "COM71"
 dev_port  := "COM79"
 
 ROOT      := "."
