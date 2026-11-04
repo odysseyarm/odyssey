@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use eframe::egui;
-use nusb::DeviceInfo;
+use nusb::{DeviceId, DeviceInfo};
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::{GeneralSettings, MuxDevice, ProductId, VmConnectionInfo, VmDevice};
 use odyssey_usb::packets::vm::{AccelConfig, GeneralConfig, GyroConfig, Port, PropKind, Props};
@@ -29,35 +29,36 @@ const SUCCESS_COLOR: egui::Color32 = egui::Color32::from_rgb(0x6c, 0xc0, 0x7a);
 const VENDOR_ID: u16 = 0x1915;
 const SIMULATOR_LABEL_PREFIX: &str = "Simulator @ ";
 const M4HUB_LABEL_PREFIX: &str = "M4Hub @ ";
-/// A mux with no devices is kept in the list under this address so the next
-/// refresh can reuse its connection.
-const MUX_PLACEHOLDER_ADDR: [u8; 6] = [0; 6];
 
 /// The configuration window: a device picker, one tab per settings group, and
 /// the actions that write the settings to the device.
 ///
-/// Device IO runs on the tokio runtime; results come back over a channel that
-/// [`ConfigWindow::show`] drains at the top of every frame.
+/// Device IO runs on the tokio runtime; [`ConfigWindow::poll_events`] applies
+/// results even when this window is hidden.
 pub struct ConfigWindow {
     runtime: tokio::runtime::Handle,
     runner: Arc<Mutex<MotRunner>>,
-    sender: EventSender,
+    sender: Arc<EventSender>,
+    task_waker: std::task::Waker,
     events: mpsc::Receiver<Event>,
 
     simulator_addr: Option<String>,
     udp_addr: Option<String>,
-    /// Every connection the last scan found, including mux placeholders.
+    /// Connectable devices found by the last scan.
     connections: Vec<VmConnectionInfo>,
-    /// What the picker lists: `connections` without placeholders, then the
-    /// simulator and M4Hub entries.
+    muxes: Vec<ExistingMux>,
+    /// Discovered devices, then optional simulator and M4Hub entries.
     choices: Vec<DeviceChoice>,
     selected: Option<usize>,
     /// Identifies the latest connection attempt so that a slow, superseded
     /// attempt cannot install its device.
     connection_attempt: u64,
-    connecting: bool,
+    operation: Option<Operation>,
+    task: Option<tokio::task::JoinHandle<()>>,
     device: Option<VmDevice>,
     device_revision: u64,
+    config_revision: u64,
+    applied_accel_config: AccelConfig,
 
     tab: Tab,
     general: GeneralSettingsForm,
@@ -89,20 +90,26 @@ impl ConfigWindow {
         ctx: egui::Context,
     ) -> Self {
         let (tx, events) = mpsc::channel();
+        let sender = Arc::new(EventSender { tx, ctx });
         let mut window = Self {
             runtime,
             runner,
-            sender: EventSender { tx, ctx },
+            task_waker: std::task::Waker::from(Arc::clone(&sender)),
+            sender,
             events,
             simulator_addr,
             udp_addr,
             connections: Vec::new(),
+            muxes: Vec::new(),
             choices: Vec::new(),
             selected: None,
             connection_attempt: 0,
-            connecting: false,
+            operation: None,
+            task: None,
             device: None,
             device_revision: 0,
+            config_revision: 0,
+            applied_accel_config: AccelConfig::default(),
             tab: Tab::General,
             general: GeneralSettingsForm::default(),
             wf: PajSensorSettingsForm::new(Port::Wf),
@@ -128,14 +135,25 @@ impl ConfigWindow {
         self.device_revision
     }
 
-    /// The accelerometer configuration as currently shown in the form.
-    pub fn accel_config(&self) -> AccelConfig {
-        self.general.accel_config
+    /// Increments when the tracker adopts settings from a connect, reload or apply.
+    pub fn config_revision(&self) -> u64 {
+        self.config_revision
     }
 
-    /// Applies pending async results, then draws the window.
+    /// The device's accepted configuration, never an unapplied form edit.
+    pub fn applied_accel_config(&self) -> AccelConfig {
+        self.applied_accel_config
+    }
+
+    /// Whether async config work is pending. Recording must not start until
+    /// pending device reads/writes and their UI-thread completion have finished.
+    pub fn busy(&self) -> bool {
+        self.operation.is_some()
+    }
+
+    /// Draws the configuration window.
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        self.drain_events();
+        self.poll_events();
         self.expire_flash(ui.ctx());
 
         egui::Panel::top("config_device_bar").show(ui, |ui| {
@@ -146,54 +164,107 @@ impl ConfigWindow {
         egui::CentralPanel::default().show(ui, |ui| self.tabs(ui));
     }
 
-    fn drain_events(&mut self) {
+    /// Applies async results independently of whether the viewport is visible.
+    pub fn poll_events(&mut self) {
+        let completed = self.task.as_mut().and_then(|task| {
+            let mut context = std::task::Context::from_waker(&self.task_waker);
+            match std::pin::Pin::new(task).poll(&mut context) {
+                std::task::Poll::Ready(result) => Some(result),
+                std::task::Poll::Pending => None,
+            }
+        });
         while let Ok(event) = self.events.try_recv() {
             self.handle(event);
+        }
+        if let Some(result) = completed {
+            self.task = None;
+            match result {
+                Err(error) => {
+                    self.operation = None;
+                    self.notify(Notice::error(
+                        "Configuration operation failed",
+                        error.to_string(),
+                    ));
+                }
+                Ok(()) if self.operation.take().is_some() => {
+                    self.notify(Notice::error(
+                        "Configuration operation failed",
+                        "The background operation finished without returning a result.",
+                    ));
+                }
+                Ok(()) => {}
+            }
         }
     }
 
     fn handle(&mut self, event: Event) {
         match event {
-            Event::Devices(connections) => {
-                self.connections = connections;
-                self.rebuild_choices();
+            Event::Devices(result) => {
+                self.operation = None;
+                match result {
+                    Ok(scan) => {
+                        self.connections = scan.connections;
+                        self.muxes = scan.muxes;
+                        self.rebuild_choices();
+                    }
+                    Err(error) => self.notify(Notice::error(
+                        "Failed to list USB devices",
+                        format!("{error:#}"),
+                    )),
+                }
             }
-            Event::Connected {
-                attempt,
-                device,
-                settings,
-            } => {
+            Event::Completed { attempt, result } => {
                 if attempt != self.connection_attempt {
                     return;
                 }
-                self.connecting = false;
-                self.install(*settings);
-                self.set_device(Some(device));
-            }
-            Event::ConnectFailed { attempt, error } => {
-                if attempt != self.connection_attempt {
-                    return;
+                self.operation = None;
+                match result {
+                    OperationResult::Connected { device, settings } => {
+                        self.install(*settings);
+                        self.set_device(Some(device));
+                    }
+                    OperationResult::Reloaded(settings) => {
+                        self.install(*settings);
+                    }
+                    OperationResult::Applied {
+                        config,
+                        flash,
+                        error,
+                    } => {
+                        self.applied_accel_config = config.accel_config;
+                        self.runner.lock().general_config = *config;
+                        self.config_revision += 1;
+                        if let Some(flash) = flash {
+                            self.flash = Some((flash, Instant::now() + FLASH_DURATION));
+                        }
+                        if let Some(error) = error {
+                            self.notify(error);
+                        }
+                    }
+                    OperationResult::Uploaded { subject, upload } => {
+                        match *upload {
+                            Upload::Accel(config) => self.general.accel_config = config,
+                            Upload::Gyro(config) => self.general.gyro_config = config,
+                            Upload::NfIntrinsics(intrinsics) => {
+                                self.general.nf_intrinsics = intrinsics;
+                            }
+                            Upload::WfIntrinsics(intrinsics) => {
+                                self.general.wf_intrinsics = intrinsics;
+                            }
+                            Upload::StereoIso(iso) => self.general.stereo_iso = iso,
+                        }
+                        let noun = subject.noun();
+                        self.notify(Notice::info(
+                            format!("Uploaded {noun}"),
+                            format!("Successfully uploaded {noun} into the form; Apply or Save to write it to the device."),
+                        ));
+                    }
+                    OperationResult::Failed(notice) | OperationResult::Downloaded(notice) => {
+                        self.notify(notice);
+                    }
+                    OperationResult::Finished => {}
                 }
-                self.connecting = false;
-                self.notify(Notice::error("Failed to connect", format!("{error:#}")));
             }
-            Event::Reloaded(settings) => self.install(*settings),
-            Event::Uploaded { subject, upload } => {
-                match *upload {
-                    Upload::Accel(config) => self.general.accel_config = config,
-                    Upload::Gyro(config) => self.general.gyro_config = config,
-                    Upload::NfIntrinsics(intrinsics) => self.general.nf_intrinsics = intrinsics,
-                    Upload::WfIntrinsics(intrinsics) => self.general.wf_intrinsics = intrinsics,
-                    Upload::StereoIso(iso) => self.general.stereo_iso = iso,
-                }
-                let noun = subject.noun();
-                self.notify(Notice::info(
-                    format!("Uploaded {noun}"),
-                    format!("Successfully uploaded {noun}"),
-                ));
-            }
-            Event::Flash(flash) => self.flash = Some((flash, Instant::now() + FLASH_DURATION)),
-            Event::Notice(notice) => self.notify(notice),
         }
     }
 
@@ -219,6 +290,9 @@ impl ConfigWindow {
     }
 
     fn install(&mut self, settings: LoadedSettings) {
+        self.applied_accel_config = settings.config.accel_config;
+        self.runner.lock().general_config = settings.config;
+        self.config_revision += 1;
         self.general = settings.general;
         match settings.sensors {
             SensorSettings::Vm { wf, nf } => {
@@ -231,14 +305,12 @@ impl ConfigWindow {
     }
 
     fn rebuild_choices(&mut self) {
+        let selected = self
+            .selected
+            .and_then(|index| self.choices.get(index))
+            .map(DeviceChoice::key);
         self.choices.clear();
         for connection in &self.connections {
-            // Skip placeholder mux entries (used to keep connection alive when 0 devices)
-            if let VmConnectionInfo::ViaMux { device_addr, .. } = connection
-                && *device_addr == MUX_PLACEHOLDER_ADDR
-            {
-                continue;
-            }
             self.choices.push(DeviceChoice {
                 label: display_for_vm_connection(connection),
                 connection: Some(connection.clone()),
@@ -257,12 +329,8 @@ impl ConfigWindow {
                 connection: None,
             });
         }
-        if self
-            .selected
-            .is_some_and(|index| index >= self.choices.len())
-        {
-            self.selected = None;
-        }
+        self.selected =
+            selected.and_then(|key| self.choices.iter().position(|choice| choice.key() == key));
     }
 
     fn visible_tabs(&self) -> &'static [Tab] {
@@ -291,36 +359,44 @@ impl ConfigWindow {
 
     fn device_bar(&mut self, ui: &mut egui::Ui) {
         let mut picked = None;
-        ui.horizontal(|ui| {
+        let recording = self.runner.lock().record_packets;
+        ui.horizontal_wrapped(|ui| {
             ui.label("Device");
             let selected_text = self
                 .selected
                 .and_then(|index| self.choices.get(index))
                 .map_or("Select a device", |choice| choice.label.as_str());
-            egui::ComboBox::from_id_salt("config_device")
-                .width(360.0)
-                .selected_text(selected_text)
-                .show_ui(ui, |ui| {
-                    for (index, choice) in self.choices.iter().enumerate() {
-                        let is_selected = self.selected == Some(index);
-                        if ui.selectable_label(is_selected, &choice.label).clicked() {
-                            // Picking the shown entry again retries a failed connection.
-                            if !is_selected || (self.device.is_none() && !self.connecting) {
+            ui.add_enabled_ui(!recording && self.operation.is_none(), |ui| {
+                egui::ComboBox::from_id_salt("config_device")
+                    .width(360.0)
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        for (index, choice) in self.choices.iter().enumerate() {
+                            let is_selected = self.selected == Some(index);
+                            if ui.selectable_label(is_selected, &choice.label).clicked()
+                                && (!is_selected || self.device.is_none())
+                            {
                                 picked = Some(index);
                             }
                         }
-                    }
-                });
-            if ui.button("Refresh").clicked() {
+                    });
+            });
+            if ui
+                .add_enabled(self.operation.is_none(), egui::Button::new("Refresh"))
+                .clicked()
+            {
                 self.refresh_devices();
             }
-            if self.connecting {
+            if let Some(operation) = self.operation {
                 ui.spinner();
-                ui.label("Connecting…");
+                ui.label(operation.label());
             }
         });
         if let Some(index) = picked {
             self.select_device(index);
+        }
+        if recording {
+            ui.weak("Stop recording to change device settings");
         }
         ui.add_space(4.0);
     }
@@ -364,18 +440,21 @@ impl ConfigWindow {
         } else {
             "Save"
         };
+        let recording = self.runner.lock().record_packets;
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.add_enabled_ui(self.device.is_some(), |ui| {
-                if ui.button(apply_label).clicked() {
-                    self.commit(Commit::Apply);
-                }
-                if ui.button(save_label).clicked() {
-                    self.commit(Commit::Save);
-                }
-                if ui.button("Reload").clicked() {
-                    self.reload();
-                }
+            ui.add_enabled_ui(self.device.is_some() && self.operation.is_none(), |ui| {
+                ui.add_enabled_ui(!recording, |ui| {
+                    if ui.button(apply_label).clicked() {
+                        self.commit(Commit::Apply);
+                    }
+                    if ui.button(save_label).clicked() {
+                        self.commit(Commit::Save);
+                    }
+                    if ui.button("Reload").clicked() {
+                        self.reload();
+                    }
+                });
                 if ui.button("Load defaults").clicked() {
                     self.load_defaults();
                 }
@@ -401,17 +480,19 @@ impl ConfigWindow {
         let mut pag_action = PagAction::None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| match self.tab {
-                Tab::General => general_action = self.general.ui(ui, connected),
-                Tab::WideField => {
-                    ui.add_enabled_ui(connected, |ui| self.wf.ui(ui));
-                }
-                Tab::NearField => {
-                    ui.add_enabled_ui(connected, |ui| self.nf.ui(ui));
-                }
-                Tab::Pag => {
-                    pag_action = ui.add_enabled_ui(connected, |ui| self.pag.ui(ui)).inner;
-                }
+            .show(ui, |ui| {
+                ui.add_enabled_ui(self.operation.is_none(), |ui| match self.tab {
+                    Tab::General => general_action = self.general.ui(ui, connected),
+                    Tab::WideField => {
+                        ui.add_enabled_ui(connected, |ui| self.wf.ui(ui));
+                    }
+                    Tab::NearField => {
+                        ui.add_enabled_ui(connected, |ui| self.nf.ui(ui));
+                    }
+                    Tab::Pag => {
+                        pag_action = ui.add_enabled_ui(connected, |ui| self.pag.ui(ui)).inner;
+                    }
+                });
             });
 
         if let Some(action) = general_action {
@@ -420,30 +501,43 @@ impl ConfigWindow {
         if let PagAction::CaptureImage = pag_action
             && let Some(device) = self.device.clone()
         {
-            self.runtime.spawn(async move {
-                PagSensorSettingsForm::capture_image(&device).await;
-            });
+            self.begin_operation(Operation::Capture);
+            let sender = Arc::clone(&self.sender);
+            let attempt = self.connection_attempt;
+            self.task = Some(self.runtime.spawn(async move {
+                let result = match PagSensorSettingsForm::capture_image(&device).await {
+                    Ok(()) => OperationResult::Finished,
+                    Err(error) => OperationResult::Failed(Notice::error(
+                        "Failed to capture image",
+                        format!("{error:#}"),
+                    )),
+                };
+                sender.send(Event::Completed { attempt, result });
+            }));
         }
     }
 
     // ---- device connection ----
 
-    fn refresh_devices(&self) {
-        tracing::debug!("=== refresh_device_list called ===");
-        let existing_mux = ExistingMux::find(&self.connections);
-        let sender = self.sender.clone();
-        self.runtime.spawn(async move {
-            match scan_devices(existing_mux).await {
-                Ok(connections) => sender.send(Event::Devices(connections)),
-                Err(e) => sender.send(Event::Notice(Notice::error(
-                    "Failed to list usb devices",
-                    e.to_string(),
-                ))),
-            }
-        });
+    fn refresh_devices(&mut self) {
+        if self.operation.is_some() {
+            return;
+        }
+        self.begin_operation(Operation::Refresh);
+        let existing_muxes = self.muxes.clone();
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            sender.send(Event::Devices(scan_devices(existing_muxes).await));
+        }));
     }
 
     fn select_device(&mut self, index: usize) {
+        if self.operation.is_some()
+            || self.runner.lock().record_packets
+            || index >= self.choices.len()
+        {
+            return;
+        }
         self.selected = Some(index);
         self.general.clear();
         self.wf.clear();
@@ -451,26 +545,28 @@ impl ConfigWindow {
         self.pag.clear();
         let old_device = self.set_device(None);
         self.connection_attempt += 1;
-        self.connecting = true;
+        self.begin_operation(Operation::Connect);
 
         let attempt = self.connection_attempt;
         let target = self
             .choices
             .get(index)
             .and_then(|choice| choice.connection.clone());
-        let runner = Arc::clone(&self.runner);
-        let sender = self.sender.clone();
-        self.runtime.spawn(async move {
-            let event = match connect(old_device, target, &runner).await {
-                Ok((device, settings)) => Event::Connected {
-                    attempt,
+        self.flash = None;
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            let result = match connect(old_device, target).await {
+                Ok((device, settings)) => OperationResult::Connected {
                     device,
                     settings: Box::new(settings),
                 },
-                Err(error) => Event::ConnectFailed { attempt, error },
+                Err(error) => OperationResult::Failed(Notice::error(
+                    "Failed to connect",
+                    format!("{error:#}"),
+                )),
             };
-            sender.send(event);
-        });
+            sender.send(Event::Completed { attempt, result });
+        }));
     }
 
     // ---- toolbar actions ----
@@ -478,6 +574,9 @@ impl ConfigWindow {
     /// Validates the forms, writes them to the device, and for
     /// [`Commit::Save`] also flashes them.
     fn commit(&mut self, commit: Commit) {
+        if self.operation.is_some() || self.runner.lock().record_packets {
+            return;
+        }
         let Some(device) = self.device.clone() else {
             return;
         };
@@ -492,43 +591,60 @@ impl ConfigWindow {
         }
 
         let general = self.general.clone();
-        let runner = Arc::clone(&self.runner);
-        let sender = self.sender.clone();
-        self.runtime.spawn(async move {
-            if let Err(notice) =
-                Box::pin(apply_settings(&device, &general, &sensors, &runner)).await
-            {
-                sender.send(Event::Notice(notice));
-                return;
-            }
-            match commit {
-                Commit::Apply => sender.send(Event::Flash(Flash::Applied)),
-                Commit::Save => match device.flash_settings().await {
-                    Ok(()) => sender.send(Event::Flash(Flash::Saved)),
-                    Err(e) => sender.send(Event::Notice(Notice::error(
-                        "Failed to request flash settings",
-                        e.to_string(),
-                    ))),
-                },
-            }
+        self.begin_operation(match commit {
+            Commit::Apply => Operation::Apply,
+            Commit::Save => Operation::Save,
         });
+        let attempt = self.connection_attempt;
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            let result = match Box::pin(apply_settings(&device, &general, &sensors)).await {
+                Err(notice) => OperationResult::Failed(notice),
+                Ok(config) => {
+                    let (flash, error) = match commit {
+                        Commit::Apply => (Some(Flash::Applied), None),
+                        Commit::Save => match device.flash_settings().await {
+                            Ok(()) => (Some(Flash::Saved), None),
+                            Err(error) => (
+                                None,
+                                Some(Notice::error(
+                                    "Settings applied but not saved",
+                                    format!("Failed to flash settings: {error:#}"),
+                                )),
+                            ),
+                        },
+                    };
+                    OperationResult::Applied {
+                        config: Box::new(config),
+                        flash,
+                        error,
+                    }
+                }
+            };
+            sender.send(Event::Completed { attempt, result });
+        }));
     }
 
-    fn reload(&self) {
+    fn reload(&mut self) {
+        if self.operation.is_some() || self.runner.lock().record_packets {
+            return;
+        }
         let Some(device) = self.device.clone() else {
             return;
         };
-        let runner = Arc::clone(&self.runner);
-        let sender = self.sender.clone();
-        self.runtime.spawn(async move {
-            match load_settings(&device, &runner, LoadKind::Reload).await {
-                Ok(settings) => sender.send(Event::Reloaded(Box::new(settings))),
-                Err(e) => sender.send(Event::Notice(Notice::error(
+        self.begin_operation(Operation::Reload);
+        let attempt = self.connection_attempt;
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            let result = match load_settings(&device).await {
+                Ok(settings) => OperationResult::Reloaded(Box::new(settings)),
+                Err(error) => OperationResult::Failed(Notice::error(
                     "Failed to reload settings",
-                    format!("{e:#}"),
-                ))),
-            }
-        });
+                    format!("{error:#}"),
+                )),
+            };
+            sender.send(Event::Completed { attempt, result });
+        }));
     }
 
     fn load_defaults(&mut self) {
@@ -536,6 +652,15 @@ impl ConfigWindow {
         self.nf.load_defaults();
         self.wf.load_defaults();
         self.pag.load_defaults();
+    }
+
+    fn begin_operation(&mut self, operation: Operation) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        self.operation = Some(operation);
+        self.notice = None;
+        self.flash = None;
     }
 
     // ---- calibration and configuration files ----
@@ -550,7 +675,7 @@ impl ConfigWindow {
         }
     }
 
-    fn upload(&self, document: Document) {
+    fn upload(&mut self, document: Document) {
         match document {
             Document::Accel => self.upload_file(Subject::Configuration, |file| {
                 Ok(Upload::Accel(serde_json::from_reader(file)?))
@@ -579,7 +704,7 @@ impl ConfigWindow {
         }
     }
 
-    fn download(&self, document: Document) {
+    fn download(&mut self, document: Document) {
         match document {
             Document::Accel => {
                 let config = self.general.accel_config;
@@ -617,61 +742,103 @@ impl ConfigWindow {
         }
     }
 
-    /// Asks for a file on the blocking pool (the dialog blocks), parses it and
-    /// reports the result as an event. Cancelling the dialog does nothing.
+    /// Opens a cancellable async dialog, then parses the chosen file on the
+    /// blocking pool. Cancelling the dialog leaves the draft unchanged.
     fn upload_file(
-        &self,
+        &mut self,
         subject: Subject,
         read: impl FnOnce(File) -> Result<Upload> + Send + 'static,
     ) {
-        let sender = self.sender.clone();
-        self.runtime.spawn_blocking(move || {
-            let Some(path) = rfd::FileDialog::new().pick_file() else {
+        if self.operation.is_some() {
+            return;
+        }
+        self.begin_operation(Operation::Upload);
+        let attempt = self.connection_attempt;
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            let Some(file) = rfd::AsyncFileDialog::new().pick_file().await else {
+                sender.send(Event::Completed {
+                    attempt,
+                    result: OperationResult::Finished,
+                });
                 return;
             };
-            let result = File::open(&path)
-                .map_err(anyhow::Error::from)
-                .and_then(read);
-            sender.send(match result {
-                Ok(upload) => Event::Uploaded {
+            let path = file.path().to_path_buf();
+            let result = tokio::task::spawn_blocking(move || {
+                File::open(&path)
+                    .with_context(|| format!("Failed to open {}", path.display()))
+                    .and_then(read)
+            })
+            .await
+            .context("File reader task failed")
+            .and_then(|result| result);
+            let result = match result {
+                Ok(upload) => OperationResult::Uploaded {
                     subject,
                     upload: Box::new(upload),
                 },
-                Err(e) => Event::Notice(Notice::error(
+                Err(error) => OperationResult::Failed(Notice::error(
                     format!("Failed to upload {}", subject.noun()),
-                    format!("Failed to read {}: {e:#}", path.display()),
+                    format!("{error:#}"),
                 )),
-            });
-        });
+            };
+            sender.send(Event::Completed { attempt, result });
+        }));
     }
 
-    /// Asks for a destination on the blocking pool and writes it. Cancelling
-    /// the dialog does nothing.
+    /// Opens a cancellable async save dialog. Only the actual file write runs
+    /// on the blocking pool, so an open dialog cannot hold runtime shutdown.
     fn download_file(
-        &self,
+        &mut self,
         subject: Subject,
         write: impl FnOnce(File) -> Result<()> + Send + 'static,
     ) {
-        let sender = self.sender.clone();
-        self.runtime.spawn_blocking(move || {
-            let Some(path) = rfd::FileDialog::new().save_file() else {
+        if self.operation.is_some() {
+            return;
+        }
+        self.begin_operation(Operation::Download);
+        let attempt = self.connection_attempt;
+        let sender = Arc::clone(&self.sender);
+        self.task = Some(self.runtime.spawn(async move {
+            let Some(file) = rfd::AsyncFileDialog::new().save_file().await else {
+                sender.send(Event::Completed {
+                    attempt,
+                    result: OperationResult::Finished,
+                });
                 return;
             };
             let noun = subject.noun();
-            let result = File::create(&path)
-                .map_err(anyhow::Error::from)
-                .and_then(write);
-            sender.send(Event::Notice(match result {
+            let path = file.path().to_path_buf();
+            let result = tokio::task::spawn_blocking(move || {
+                File::create(&path)
+                    .with_context(|| format!("Failed to create {}", path.display()))
+                    .and_then(write)
+            })
+            .await
+            .context("File writer task failed")
+            .and_then(|result| result);
+            let notice = match result {
                 Ok(()) => Notice::info(
                     format!("Downloaded {noun}"),
                     format!("Successfully downloaded {noun}"),
                 ),
-                Err(e) => Notice::error(
-                    format!("Failed to download {noun}"),
-                    format!("Failed to write {}: {e:#}", path.display()),
-                ),
-            }));
-        });
+                Err(error) => {
+                    Notice::error(format!("Failed to download {noun}"), format!("{error:#}"))
+                }
+            };
+            sender.send(Event::Completed {
+                attempt,
+                result: OperationResult::Downloaded(notice),
+            });
+        }));
+    }
+}
+
+impl Drop for ConfigWindow {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
     }
 }
 
@@ -699,6 +866,52 @@ struct DeviceChoice {
     label: String,
     /// `None` for the simulator and M4Hub entries, which cannot be connected.
     connection: Option<VmConnectionInfo>,
+}
+
+#[derive(PartialEq, Eq)]
+enum DeviceKey {
+    Usb(DeviceId),
+    Mux([u8; 6]),
+    Unsupported(String),
+}
+
+impl DeviceChoice {
+    fn key(&self) -> DeviceKey {
+        match &self.connection {
+            Some(VmConnectionInfo::DirectUsb(info)) => DeviceKey::Usb(info.id()),
+            Some(VmConnectionInfo::ViaMux { device_addr, .. }) => DeviceKey::Mux(*device_addr),
+            None => DeviceKey::Unsupported(self.label.clone()),
+        }
+    }
+}
+
+/// Device operations are single-flight: writes, reloads, scans and file uploads
+/// cannot race one another or replace a form while it is being edited.
+#[derive(Clone, Copy)]
+enum Operation {
+    Refresh,
+    Connect,
+    Apply,
+    Save,
+    Reload,
+    Upload,
+    Download,
+    Capture,
+}
+
+impl Operation {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Refresh => "Scanning…",
+            Self::Connect => "Connecting…",
+            Self::Apply => "Applying…",
+            Self::Save => "Saving…",
+            Self::Reload => "Reloading…",
+            Self::Upload => "Importing…",
+            Self::Download => "Exporting…",
+            Self::Capture => "Capturing…",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -742,6 +955,11 @@ impl Notice {
             title: title.into(),
             message: message.into(),
         }
+    }
+
+    fn partial_apply(mut self) -> Self {
+        self.message.push_str("\nSome settings may already have been written. Reload to read the device's current settings before trying again.");
+        self
     }
 }
 
@@ -787,29 +1005,36 @@ enum Upload {
     StereoIso(nalgebra::Isometry3<f32>),
 }
 
-/// Results of background work, applied by [`ConfigWindow::show`].
+/// Results of background work, applied by [`ConfigWindow::poll_events`].
 enum Event {
-    Devices(Vec<VmConnectionInfo>),
-    Connected {
+    Devices(Result<ScannedDevices>),
+    Completed {
         attempt: u64,
+        result: OperationResult,
+    },
+}
+
+enum OperationResult {
+    Connected {
         device: VmDevice,
         settings: Box<LoadedSettings>,
     },
-    ConnectFailed {
-        attempt: u64,
-        error: anyhow::Error,
-    },
     Reloaded(Box<LoadedSettings>),
+    Applied {
+        config: Box<GeneralSettings>,
+        flash: Option<Flash>,
+        error: Option<Notice>,
+    },
     Uploaded {
         subject: Subject,
         upload: Box<Upload>,
     },
-    Flash(Flash),
-    Notice(Notice),
+    Failed(Notice),
+    Downloaded(Notice),
+    Finished,
 }
 
 /// Posts events to the window and wakes the UI up to show them.
-#[derive(Clone)]
 struct EventSender {
     tx: mpsc::Sender<Event>,
     ctx: egui::Context,
@@ -819,8 +1044,26 @@ impl EventSender {
     fn send(&self, event: Event) {
         // The receiver is gone only when the window was dropped.
         if self.tx.send(event).is_ok() {
-            self.ctx.request_repaint();
+            self.repaint();
         }
+    }
+
+    fn repaint(&self) {
+        self.ctx.request_repaint_of(egui::ViewportId::ROOT);
+        self.ctx
+            .request_repaint_of(egui::ViewportId::from_hash_of("config"));
+    }
+}
+
+// JoinHandle polling must wake the UI even when a worker panics before it can
+// send an event. Keep this waker for the window's lifetime, not one per frame.
+impl std::task::Wake for EventSender {
+    fn wake(self: Arc<Self>) {
+        self.repaint();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.repaint();
     }
 }
 
@@ -828,6 +1071,7 @@ impl EventSender {
 struct LoadedSettings {
     general: GeneralSettingsForm,
     sensors: SensorSettings,
+    config: GeneralSettings,
 }
 
 /// The sensor forms that apply to a product.
@@ -866,15 +1110,15 @@ impl SensorSettings {
         match self {
             Self::Vm { wf, nf } => {
                 Box::pin(wf.apply(device)).await.map_err(|e| {
-                    Notice::error("Failed to apply wide field settings", e.to_string())
+                    Notice::error("Failed to apply wide field settings", format!("{e:#}"))
                 })?;
                 Box::pin(nf.apply(device)).await.map_err(|e| {
-                    Notice::error("Failed to apply near field settings", e.to_string())
+                    Notice::error("Failed to apply near field settings", format!("{e:#}"))
                 })
             }
             Self::Pro(pag) => Box::pin(pag.apply(device))
                 .await
-                .map_err(|e| Notice::error("Failed to apply PAG settings", e.to_string())),
+                .map_err(|e| Notice::error("Failed to apply PAG settings", format!("{e:#}"))),
             Self::Unsupported => Ok(()),
         }
     }
@@ -892,21 +1136,13 @@ async fn apply_settings(
     device: &VmDevice,
     general: &GeneralSettingsForm,
     sensors: &SensorSettings,
-    runner: &Mutex<MotRunner>,
-) -> Result<(), Notice> {
-    Box::pin(sensors.apply(device)).await?;
-    general
-        .apply(device, runner)
+) -> Result<GeneralSettings, Notice> {
+    Box::pin(sensors.apply(device))
         .await
-        .map_err(|e| Notice::error("Failed to apply general settings", e.to_string()))
-}
-
-/// Whether the tracker's own copy of the config is replaced by the load.
-#[derive(Clone, Copy)]
-enum LoadKind {
-    /// First load after connecting: the tracker adopts the device's config.
-    Initial,
-    Reload,
+        .map_err(Notice::partial_apply)?;
+    general.apply(device).await.map_err(|e| {
+        Notice::error("Failed to apply general settings", format!("{e:#}")).partial_apply()
+    })
 }
 
 /// Lays out a `label | widget` form; every tab uses the same column widths.
@@ -1021,11 +1257,7 @@ impl GeneralSettingsForm {
         action
     }
 
-    async fn load_from_device(
-        device: &VmDevice,
-        runner: &Mutex<MotRunner>,
-        kind: LoadKind,
-    ) -> Result<Self> {
+    async fn load_from_device(device: &VmDevice) -> Result<(Self, GeneralSettings)> {
         let timeout = Duration::from_millis(5000);
 
         // Read all config values at once
@@ -1038,6 +1270,12 @@ impl GeneralSettingsForm {
                 ));
             }
         };
+
+        if config.accel_config.accel_odr == 0 {
+            return Err(anyhow::anyhow!(
+                "Device reported a zero accelerometer output data rate"
+            ));
+        }
 
         // Read individual prop fields
         let uuid_prop = match retry(|| device.read_prop(PropKind::Uuid), timeout, 3).await {
@@ -1075,10 +1313,7 @@ impl GeneralSettingsForm {
             stereo_iso: config.stereo_iso,
         };
 
-        if let LoadKind::Initial = kind {
-            runner.lock().general_config = config;
-        }
-        Ok(form)
+        Ok((form, config))
     }
 
     fn validate(&self, errors: &mut Vec<String>) {
@@ -1088,11 +1323,13 @@ impl GeneralSettingsForm {
         if !(0..256).contains(&self.suppress_ms) {
             errors.push("suppress (ms): must be between 0 and 255".into());
         }
+        if self.accel_config.accel_odr == 0 {
+            errors.push("accelerometer output data rate: must be greater than zero".into());
+        }
     }
 
-    /// Make sure to call `validate()` before calling this method.
-    async fn apply(&self, device: &VmDevice, runner: &Mutex<MotRunner>) -> Result<()> {
-        let config = GeneralSettings {
+    fn config(&self) -> Result<GeneralSettings> {
+        Ok(GeneralSettings {
             impact_threshold: register_value(self.impact_threshold, "impact threshold")?,
             suppress_ms: register_value(self.suppress_ms, "suppress (ms)")?,
             accel_config: self.accel_config,
@@ -1100,7 +1337,12 @@ impl GeneralSettingsForm {
             camera_model_nf: self.nf_intrinsics.clone(),
             camera_model_wf: self.wf_intrinsics.clone(),
             stereo_iso: self.stereo_iso,
-        };
+        })
+    }
+
+    /// Make sure to call `validate()` before calling this method.
+    async fn apply(&self, device: &VmDevice) -> Result<GeneralSettings> {
+        let config = self.config()?;
 
         // Write each config field separately using the new API
         device
@@ -1129,17 +1371,7 @@ impl GeneralSettingsForm {
             .write_config(GeneralConfig::StereoIso(config.stereo_iso))
             .await?;
 
-        {
-            let general_config = &mut runner.lock().general_config;
-            general_config.impact_threshold = config.impact_threshold;
-            general_config.suppress_ms = config.suppress_ms;
-            general_config.accel_config = config.accel_config;
-            general_config.gyro_config = config.gyro_config;
-            general_config.camera_model_nf = config.camera_model_nf;
-            general_config.camera_model_wf = config.camera_model_wf;
-            general_config.stereo_iso = config.stereo_iso;
-        }
-        Ok(())
+        Ok(config)
     }
 
     /// Forgets the previous device: its sensor configs and product, which also
@@ -1205,7 +1437,6 @@ fn transfer_buttons(ui: &mut egui::Ui, document: Document) -> Option<GeneralActi
 async fn connect(
     old_device: Option<VmDevice>,
     target: Option<VmConnectionInfo>,
-    runner: &Mutex<MotRunner>,
 ) -> Result<(VmDevice, LoadedSettings)> {
     // Clean up old device if it exists, BEFORE connecting to new one
     if let Some(old_device) = old_device {
@@ -1231,54 +1462,41 @@ async fn connect(
     }
     tracing::debug!("Streams disabled, loading general settings...");
 
-    let settings = load_settings(&device, runner, LoadKind::Initial).await?;
+    let settings = load_settings(&device).await?;
     tracing::debug!("All settings loaded, setting device...");
     Ok((device, settings))
 }
 
-async fn load_settings(
-    device: &VmDevice,
-    runner: &Mutex<MotRunner>,
-    kind: LoadKind,
-) -> Result<LoadedSettings> {
-    let general = GeneralSettingsForm::load_from_device(device, runner, kind)
+async fn load_settings(device: &VmDevice) -> Result<LoadedSettings> {
+    let (general, config) = GeneralSettingsForm::load_from_device(device)
         .await
         .inspect_err(|e| tracing::error!("Failed to load general settings: {e:?}"))?;
     tracing::debug!("General settings loaded successfully");
     let sensors = load_sensor_settings(device, general.device_pid).await?;
-    Ok(LoadedSettings { general, sensors })
+    Ok(LoadedSettings {
+        general,
+        sensors,
+        config,
+    })
 }
 
-/// A mux connection from the previous scan, reused so that it does not
-/// disrupt devices that are connected through it.
+/// An open mux and its last successful device list. Retaining every mux,
+/// including an empty one, avoids reopening its USB interface during refresh.
+#[derive(Clone)]
 struct ExistingMux {
+    id: DeviceId,
     mux: MuxDevice,
     device_addrs: Vec<[u8; 6]>,
 }
 
-impl ExistingMux {
-    fn find(connections: &[VmConnectionInfo]) -> Option<Self> {
-        let mut mux = None;
-        let mut device_addrs = Vec::new();
-        for connection in connections {
-            if let VmConnectionInfo::ViaMux {
-                mux: found,
-                device_addr,
-            } = connection
-            {
-                if mux.is_none() {
-                    mux = Some(found.clone());
-                }
-                device_addrs.push(*device_addr);
-            }
-        }
-        mux.map(|mux| Self { mux, device_addrs })
-    }
+struct ScannedDevices {
+    connections: Vec<VmConnectionInfo>,
+    muxes: Vec<ExistingMux>,
 }
 
 /// Lists the connectable devices: vision modules on USB, and the vision
 /// modules behind every mux.
-async fn scan_devices(existing_mux: Option<ExistingMux>) -> Result<Vec<VmConnectionInfo>> {
+async fn scan_devices(mut existing_muxes: Vec<ExistingMux>) -> Result<ScannedDevices> {
     let usb_devices: Vec<DeviceInfo> = nusb::list_devices()
         .await?
         .filter(|info| info.vendor_id() == VENDOR_ID)
@@ -1321,95 +1539,46 @@ async fn scan_devices(existing_mux: Option<ExistingMux>) -> Result<Vec<VmConnect
         hub_devices.len()
     );
 
-    // No muxes found, just use direct USB connections
-    if hub_devices.is_empty() {
-        return Ok(vm_connections);
-    }
-
-    let mut all_connections = vm_connections;
-    if let Some(existing) = existing_mux {
-        tracing::debug!(
-            "Reusing existing mux connection for refresh (with {} existing mux devices)",
-            existing.device_addrs.len()
-        );
-        scan_existing_mux(existing, &mut all_connections).await;
-    } else {
-        tracing::debug!("No existing mux connection, creating new one");
-        // Query each mux for connected devices
-        for hub_info in hub_devices {
-            scan_new_mux(hub_info, &mut all_connections).await;
-        }
-    }
-    tracing::debug!(
-        "Updating device list with {} total devices",
-        all_connections.len()
-    );
-    Ok(all_connections)
-}
-
-async fn scan_existing_mux(existing: ExistingMux, connections: &mut Vec<VmConnectionInfo>) {
-    let ExistingMux { mux, device_addrs } = existing;
-    tracing::debug!("Querying devices from existing mux...");
-    let device_addrs = match mux.request_devices().await {
-        Ok(devices) => {
-            tracing::debug!("Mux query successful, found {} device(s)", devices.len());
-            devices.into_iter().collect()
-        }
-        Err(e) => {
-            tracing::warn!("Failed to query existing mux: {e}");
-            tracing::debug!(
-                "Preserving {} existing mux devices in the list",
-                device_addrs.len()
-            );
-            device_addrs
-        }
-    };
-    for device_addr in device_addrs {
-        tracing::debug!("  Device: {}", format_device_addr(device_addr));
-        connections.push(VmConnectionInfo::ViaMux {
-            mux: mux.clone(),
-            device_addr,
-        });
-    }
-}
-
-async fn scan_new_mux(hub_info: DeviceInfo, connections: &mut Vec<VmConnectionInfo>) {
-    tracing::debug!("Attempting to connect to mux...");
-    let hub = match MuxDevice::connect_usb(hub_info).await {
-        Ok(hub) => hub,
-        Err(e) => {
-            tracing::warn!("Failed to connect to mux: {e}");
-            return;
-        }
-    };
-    tracing::debug!("Mux connected successfully, requesting devices...");
-    match hub.request_devices().await {
-        Ok(devices) => {
-            tracing::debug!("Mux query successful, found {} device(s)", devices.len());
-            // If no devices, add a placeholder to keep mux alive for next refresh
-            if devices.is_empty() {
-                tracing::debug!(
-                    "No devices found, adding placeholder to keep mux connection alive"
-                );
-                connections.push(VmConnectionInfo::ViaMux {
-                    mux: hub,
-                    device_addr: MUX_PLACEHOLDER_ADDR,
-                });
-            } else {
-                for device_addr in devices {
-                    tracing::debug!("  Device: {}", format_device_addr(device_addr));
-                    connections.push(VmConnectionInfo::ViaMux {
-                        mux: hub.clone(),
-                        device_addr,
-                    });
+    let mut muxes = Vec::with_capacity(hub_devices.len());
+    for hub_info in hub_devices {
+        let mut existing = if let Some(index) = existing_muxes
+            .iter()
+            .position(|mux| mux.id == hub_info.id())
+        {
+            existing_muxes.swap_remove(index)
+        } else {
+            let id = hub_info.id();
+            let mux = match MuxDevice::connect_usb(hub_info).await {
+                Ok(mux) => mux,
+                Err(error) => {
+                    tracing::warn!("Failed to connect to mux: {error:#}");
+                    continue;
                 }
+            };
+            ExistingMux {
+                id,
+                mux,
+                device_addrs: Vec::new(),
+            }
+        };
+        match existing.mux.request_devices().await {
+            Ok(devices) => existing.device_addrs = devices.into_iter().collect(),
+            Err(error) => {
+                tracing::warn!("Failed to query mux; retaining its previous devices: {error:#}");
             }
         }
-        Err(e) => {
-            tracing::warn!("Failed to query mux devices: {e}");
-        }
+        vm_connections.extend(existing.device_addrs.iter().map(|device_addr| {
+            VmConnectionInfo::ViaMux {
+                mux: existing.mux.clone(),
+                device_addr: *device_addr,
+            }
+        }));
+        muxes.push(existing);
     }
-    tracing::debug!("Mux devices added to connection list");
+    Ok(ScannedDevices {
+        connections: vm_connections,
+        muxes,
+    })
 }
 
 fn format_device_addr(addr: [u8; 6]) -> String {
@@ -1518,7 +1687,7 @@ async fn load_sensor_settings(device: &VmDevice, product_id: u16) -> Result<Sens
         }
         Some(ProductId::AtsPro) => {
             tracing::debug!("Loading PAG settings...");
-            let pag = PagSensorSettingsForm::load_from_device(device)
+            let pag = PagSensorSettingsForm::load_from_device(device, product_id)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("Failed to load PAG settings: {e:?}");
@@ -1533,4 +1702,181 @@ async fn load_sensor_settings(device: &VmDevice, product_id: u16) -> Result<Sens
 /// `anyhow` cannot wrap the `Box<dyn Error>` the calibration file helpers return.
 fn boxed_error(error: Box<dyn std::error::Error>) -> anyhow::Error {
     anyhow::anyhow!("{error}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window() -> (ConfigWindow, tokio::runtime::Runtime) {
+        // This runtime is deliberately never driven: no USB scan is performed.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let runner = Arc::new(Mutex::new(MotRunner {
+            state: crate::MotState::default(),
+            device: None,
+            general_config: GeneralSettings::default(),
+            record_impact: false,
+            record_packets: false,
+            datapoints: Arc::new(Mutex::new(Vec::new())),
+            packets: Arc::new(Mutex::new(Vec::new())),
+            wfnf_realign: true,
+            screen_calibrations: Default::default(),
+        }));
+        let mut window = ConfigWindow::new(
+            None,
+            None,
+            runner,
+            runtime.handle().clone(),
+            egui::Context::default(),
+        );
+        window.operation = None;
+        (window, runtime)
+    }
+
+    fn settings(impact_threshold: i32, odr: u16) -> LoadedSettings {
+        let general = GeneralSettingsForm {
+            impact_threshold,
+            accel_config: AccelConfig {
+                accel_odr: odr,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = general.config().unwrap();
+        LoadedSettings {
+            general,
+            config,
+            sensors: SensorSettings::Unsupported,
+        }
+    }
+
+    #[test]
+    fn hidden_event_pump_rejects_stale_reload_without_touching_tracker() {
+        let (mut window, _runtime) = window();
+        window.connection_attempt = 2;
+        window.operation = Some(Operation::Reload);
+        let original = window.runner.lock().general_config.impact_threshold;
+        window.sender.send(Event::Completed {
+            attempt: 1,
+            result: OperationResult::Reloaded(Box::new(settings(17, 200))),
+        });
+        window.poll_events();
+        assert_eq!(window.config_revision(), 0);
+        assert_eq!(
+            window.runner.lock().general_config.impact_threshold,
+            original
+        );
+        assert!(window.busy());
+
+        window.sender.send(Event::Completed {
+            attempt: 2,
+            result: OperationResult::Reloaded(Box::new(settings(17, 200))),
+        });
+        window.poll_events();
+        assert!(!window.busy());
+        assert_eq!(window.config_revision(), 1);
+        assert_eq!(window.device_revision(), 0);
+        assert_eq!(window.general.impact_threshold, 17);
+        assert_eq!(window.applied_accel_config().accel_odr, 200);
+        assert_eq!(window.runner.lock().general_config.impact_threshold, 17);
+    }
+
+    #[test]
+    fn save_failure_keeps_successfully_applied_runtime_settings() {
+        let (mut window, _runtime) = window();
+        window.operation = Some(Operation::Save);
+        window.sender.send(Event::Completed {
+            attempt: 0,
+            result: OperationResult::Applied {
+                config: Box::new(settings(19, 400).config),
+                flash: None,
+                error: Some(Notice::error("Not saved", "Flash failed")),
+            },
+        });
+        window.poll_events();
+        assert_eq!(window.runner.lock().general_config.impact_threshold, 19);
+        assert_eq!(window.applied_accel_config().accel_odr, 400);
+        assert_eq!(window.config_revision(), 1);
+        assert!(window.flash.is_none());
+        assert!(matches!(
+            window.notice,
+            Some(Notice {
+                kind: NoticeKind::Error,
+                ..
+            })
+        ));
+        assert!(!window.busy());
+    }
+
+    #[test]
+    fn uploaded_draft_does_not_change_applied_accelerometer_config() {
+        let (mut window, _runtime) = window();
+        let applied = window.applied_accel_config();
+        window.sender.send(Event::Completed {
+            attempt: 0,
+            result: OperationResult::Uploaded {
+                subject: Subject::Configuration,
+                upload: Box::new(Upload::Accel(AccelConfig {
+                    accel_odr: 800,
+                    ..Default::default()
+                })),
+            },
+        });
+        window.poll_events();
+        assert_eq!(window.general.accel_config.accel_odr, 800);
+        assert_eq!(window.applied_accel_config(), applied);
+        assert_eq!(window.runner.lock().general_config.accel_config, applied);
+        assert_eq!(window.config_revision(), 0);
+    }
+
+    #[test]
+    fn recording_prevents_device_switch_even_without_drawing_ui() {
+        let (mut window, _runtime) = window();
+        window.choices.push(DeviceChoice {
+            label: "Simulator".into(),
+            connection: None,
+        });
+        window.runner.lock().record_packets = true;
+        window.select_device(0);
+        assert_eq!(window.selected, None);
+        assert_eq!(window.device_revision(), 0);
+        assert!(!window.busy());
+    }
+
+    #[test]
+    fn worker_panic_releases_busy_state_without_a_completion_event() {
+        let (mut window, runtime) = window();
+        window.begin_operation(Operation::Reload);
+        let (started, received) = tokio::sync::oneshot::channel();
+        window.task = Some(runtime.spawn(async move {
+            started.send(()).unwrap();
+            panic!("simulated configuration worker panic");
+        }));
+        runtime.block_on(received).unwrap();
+        window.poll_events();
+        assert!(!window.busy());
+        assert!(matches!(
+            window.notice,
+            Some(Notice {
+                kind: NoticeKind::Error,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn zero_accelerometer_rate_is_rejected_before_apply() {
+        let general = GeneralSettingsForm {
+            accel_config: AccelConfig {
+                accel_odr: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut errors = Vec::new();
+        general.validate(&mut errors);
+        assert!(errors.iter().any(|error| error.contains("data rate")));
+    }
 }

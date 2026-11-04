@@ -241,7 +241,7 @@ impl VisionTool {
             self.runner.lock().device = device;
         }
 
-        let accel = self.config.accel_config();
+        let accel = self.config.applied_accel_config();
         if self.seen_accel != Some(accel) {
             self.seen_accel = Some(accel);
             let mut runner = self.runner.lock();
@@ -472,7 +472,7 @@ impl VisionTool {
                     .with_title("Config")
                     .with_inner_size([520.0, 640.0]),
                 |ui, _class| {
-                    egui::CentralPanel::default().show(ui, |ui| self.config.show(ui));
+                    self.config.show(ui);
                     close_requested(ui)
                 },
             );
@@ -517,6 +517,7 @@ impl VisionTool {
 
 impl eframe::App for VisionTool {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.config.poll_events();
         self.drain_notices();
         #[cfg(feature = "bevy")]
         if let Err(error) = self.bevy.poll() {
