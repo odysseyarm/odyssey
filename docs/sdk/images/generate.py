@@ -29,12 +29,12 @@ LIGHT = dict(fg="#1f2328", muted="#59636e", line="#d1d9e0", faint="#eef1f4", sur
              panel="#ffffff", x="#cf222e", y="#1a7f37", z="#0969da", accent="#bc4c00",
              accentsoft="#fff4ea", dev="#57606a", devtop="#8c959f", devside="#424a53",
              trk="#d97a1e", trktop="#f0a25a", trkside="#a85a12",
-             hand="#e4e8ec", handline="#424a53", handshade="#c4ccd4")
+             hand="#e4e8ec", handline="#424a53")
 DARK = dict(fg="#e6edf3", muted="#9198a1", line="#3d444d", faint="#1c2128", surface="#161b22",
             panel="#0d1117", x="#ff7b72", y="#3fb950", z="#58a6ff", accent="#ffa657",
             accentsoft="#2b1d10", dev="#8b949e", devtop="#b1bac4", devside="#6e7681",
             trk="#e8893a", trktop="#ffb877", trkside="#b8661c",
-            hand="#59616b", handline="#d4dae0", handshade="#454c55")
+            hand="#59616b", handline="#d4dae0")
 
 
 def style():
@@ -412,65 +412,174 @@ def gizmo(s, c, axes, L=60):
     circle(s, c, 4.5, fill="var(--fg)")
 
 
-def capsule(s, a, b, width, fill, outline="var(--handline)", ow=3):
-    """A rounded bar from a to b: drawn as an outline stroke under a fill stroke."""
-    d = f"M{f(a[0])} {f(a[1])}L{f(b[0])} {f(b[1])}"
-    s.add(f'<path d="{d}" fill="none" style="stroke:{outline}" stroke-width="{f(width + 2 * ow)}" stroke-linecap="round"/>')
-    s.add(f'<path d="{d}" fill="none" style="stroke:{fill}" stroke-width="{f(width)}" stroke-linecap="round"/>')
+# ------------------------------------------------------------- hands
+
+# Right hand, palm toward the viewer (+Z), fingers up (+Y), thumb to +X. Millimeters.
+# Each finger: list of (point, radius) from the knuckle to the tip.
+FINGERS = {
+    "index": ([(25, 40, 0), (26, 78, 0), (26, 100, 0), (26, 118, 0)], [12, 11.2, 10.4, 9.6]),
+    "middle": ([(6, 42, 0), (6, 46, 40), (6, 47, 64), (6, 47, 82)], [12.6, 11.8, 11, 10.2]),
+    "ring": ([(-13, 40, 3), (-13, 45, 32), (-13, 22, 40), (-13, 8, 28)], [12, 11.2, 10.4, 9.6]),
+    "little": ([(-30, 33, 3), (-31, 36, 25), (-31, 18, 30), (-30, 8, 22)], [10.8, 10, 9.4, 8.8]),
+    "thumb": ([(28, -24, 6), (52, -9, 12), (75, -1, 13), (97, 1, 11)], [17, 13.5, 12.4, 11.4]),
+}
+PALM_W, PALM_TOP, PALM_BOTTOM, PALM_T = 42, 42, -44, 14
 
 
-def hand(s, cx, cy, side, k=1.0):
-    """A hand making the axis sign: thumb +X to the right, index +Y up, middle
-    finger +Z. side="right" shows a right hand's palm, its middle finger
-    pointing at the viewer; side="left" shows a left hand's back, its middle
-    finger pointing away. Both have the same outline, so only Z differs.
-    Drawn around (0, 0), the middle of the palm, then moved and scaled."""
-    H, L, SH = "var(--hand)", "var(--handline)", "var(--handshade)"
-    X, Y, Z = "var(--x)", "var(--y)", "var(--z)"
-    s.add(f'<g transform="translate({f(cx)} {f(cy)}) scale({k:.3f})">')
+def tapered(a, ra, b, rb):
+    """Outline of two circles joined by their outer tangents, as a path."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    d = math.hypot(dx, dy)
+    if d <= abs(ra - rb) + 0.01:  # one circle inside the other
+        c, r = (a, ra) if ra >= rb else (b, rb)
+        return (f"M{f(c[0] - r)} {f(c[1])}a{f(r)} {f(r)} 0 1 0 {f(2 * r)} 0"
+                f"a{f(r)} {f(r)} 0 1 0 {f(-2 * r)} 0Z")
+    th = math.atan2(dy, dx)
+    ph = math.acos(max(-1, min(1, (ra - rb) / d)))
+    p = lambda c, r, ang: (c[0] + r * math.cos(ang), c[1] + r * math.sin(ang))
+    a1, a2 = p(a, ra, th + ph), p(a, ra, th - ph)
+    b1, b2 = p(b, rb, th + ph), p(b, rb, th - ph)
+    large_a = 1 if ph < math.pi / 2 else 0
+    large_b = 1 - large_a
+    return (f"M{f(a1[0])} {f(a1[1])}A{f(ra)} {f(ra)} 0 {large_a} 1 {f(a2[0])} {f(a2[1])}"
+            f"L{f(b2[0])} {f(b2[1])}A{f(rb)} {f(rb)} 0 {large_b} 1 {f(b1[0])} {f(b1[1])}Z")
 
-    def bar(a, b, w, color):
-        s.add(f'<path d="M{f(a[0])} {f(a[1])}L{f(b[0])} {f(b[1])}" fill="none" '
-              f'style="stroke:{color}" stroke-width="{f(w)}" stroke-linecap="round"/>')
 
-    # Every part: outline stroke first, then the fills, so parts merge into one shape.
-    parts = [((-2, 44), (-3, 62), 46, H),            # wrist
-             ((22, 14), (70, 2), 24, X),             # thumb, +X
-             ((12, -26), (13, -82), 24, Y)]          # index, +Y
-    if side == "left":
-        parts += [((-12, -28), (-12, -40), 23, Z),   # middle, going away: only its base shows
-                  ((-30, -24), (-30, -30), 20, H)]   # ring and little finger knuckles
-    for a, b, w, _ in parts:
-        bar(a, b, w + 6, L)
-    palm = "M-38 -14Q-40 -36 -20 -36L18 -36Q38 -36 38 -14L36 22Q32 50 0 50Q-34 50 -38 22Z"
-    s.add(f'<path d="{palm}" style="fill:{H};stroke:{L}" stroke-width="3" stroke-linejoin="round"/>')
-    for a, b, w, color in parts:
-        bar(a, b, w, color)
-    bar((22, 14), (40, 9), 24, X)                    # thumb fill over the palm's edge
-    bar((12, -26), (12, -40), 24, Y)                 # index fill over the palm's edge
-    for jy in (-52, -68):                            # finger joints, faint creases
-        s.add(f'<path d="M5 {jy}Q12 {jy + 3} 19 {jy}" fill="none" style="stroke:{L}" '
-              f'stroke-width="2" stroke-linecap="round" opacity="0.35"/>')
-    s.add(f'<path d="M51 -1Q54 6 53 13" fill="none" style="stroke:{L}" '
-          f'stroke-width="2" stroke-linecap="round" opacity="0.35"/>')
-    if side == "right":
-        # Palm side: ring and little finger curled across the palm, a crease,
-        # and the middle finger pointing straight at the viewer: its tip.
-        for y0 in (-6, 14):
-            bar((-28, y0), (-2, y0 + 4), 21, L)
-            bar((-28, y0), (-2, y0 + 4), 15, H)
-        bar((-22, 36), (16, 30), 3, SH)
-        circle(s, (-10, -32), 17, fill=Z, stroke=L, width=3)
-        circle(s, (-10, -32), 7.5, fill="var(--panel)")
-        circle(s, (-10, -32), 3.5, fill=Z)
-    else:
-        # Back of the hand: knuckle lines, a nail on the index finger, and
-        # the middle finger's base marked as pointing into the page.
-        for kx in (-30, -12, 12):
-            bar((kx - 6, -14), (kx + 6, -14), 3, SH)
-        rect(s, 6, -96, 13, 14, rx=5, fill="var(--panel)", stroke=L, width=2)
-        into_page(s, (-12, -40), Z, r=10)
-    s.add("</g>")
+def convex_hull(pts):
+    pts = sorted(set(pts))
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lo, hi = [], []
+    for p in pts:
+        while len(lo) >= 2 and cross(lo[-2], lo[-1], p) <= 0:
+            lo.pop()
+        lo.append(p)
+    for p in reversed(pts):
+        while len(hi) >= 2 and cross(hi[-2], hi[-1], p) <= 0:
+            hi.pop()
+        hi.append(p)
+    return lo[:-1] + hi[:-1]
+
+
+YAW, PITCH, CAM = math.radians(-18), math.radians(24), 360.0
+
+
+def view(v, mirror):
+    """Model -> camera space: mirror for the left hand, then turn the hand so
+    the camera sees it from above, and from the right for the right hand or
+    the left for the left hand, so its middle finger is never hidden."""
+    x, y, z = v[0], v[1], -v[2] if mirror else v[2]
+    yaw = -YAW if mirror else YAW
+    x, z = x * math.cos(yaw) + z * math.sin(yaw), -x * math.sin(yaw) + z * math.cos(yaw)
+    y, z = y * math.cos(PITCH) - z * math.sin(PITCH), y * math.sin(PITCH) + z * math.cos(PITCH)
+    return (x, y, z)
+
+
+def hand3d(s, ox, oy, k, mirror=False, colors=None):
+    """A right hand (palm toward the viewer, middle finger toward them) or,
+    mirrored, a left hand seen from the back with the middle finger pointing
+    away. Returns, per finger, the projected tip, its screen direction, and a
+    projector for further points."""
+    colors = colors or {}
+
+    def proj(v):
+        x, y, z = view(v, mirror)
+        sc = CAM / (CAM - z)
+        return (ox + k * x * sc, oy - k * y * sc), sc, z
+
+    H, L = "var(--hand)", "var(--handline)"
+    items = []
+    pts = []
+    for z in (-PALM_T, PALM_T):
+        for cx, cy, a0 in ((PALM_W - 14, PALM_TOP - 14, 0), (-PALM_W + 14, PALM_TOP - 14, 90),
+                           (-PALM_W + 18, PALM_BOTTOM + 18, 180), (PALM_W - 18, PALM_BOTTOM + 18, 270)):
+            r = 14 if cy > 0 else 18
+            for i in range(7):
+                a = math.radians(a0 + i * 15)
+                pts.append(proj((cx + r * math.cos(a), cy + r * math.sin(a), z))[0])
+    hull = convex_hull([(round(x, 1), round(y, 1)) for x, y in pts])
+    items.append((proj((0, 0, 0))[2] - 4, "palm", hull))
+    items.append((proj((0, -60, 0))[2] - 30, "seg", ((0, -40, 0), 32, (0, -96, 0), 29, H)))
+    for name, (joints, radii) in FINGERS.items():
+        if name != "thumb":   # knuckle on the back of the hand
+            j = joints[0]
+            kn = (j[0], j[1] - 4, -9)
+            items.append((proj(kn)[2], "seg", (kn, radii[0] * 0.95, kn, radii[0] * 0.95, H)))
+        for i in range(3):
+            a, b = joints[i], joints[i + 1]
+            color = colors.get(name, H) if (name != "thumb" or i > 0) else H
+            items.append(((proj(a)[2] + proj(b)[2]) / 2 + 0.1, "seg", (a, radii[i], b, radii[i + 1], color)))
+        # Nail, on the back of the last segment.
+        a, b = joints[-2], joints[-1]
+        u = [b[i] - a[i] for i in range(3)]
+        n = math.sqrt(sum(c * c for c in u)) or 1
+        nail_c = (b[0] - u[0] / n * 6, b[1] - u[1] / n * 6, b[2] - u[2] / n * 6)
+        # The back of a finger is its -Z side in the model, except for the
+        # thumb (its nail faces +X/+Y-ish) and the bent middle finger (+Y).
+        off = {"thumb": (0, 4, -9), "middle": (0, 8.5, 0)}.get(name, (0, 0, -8.5))
+        nail = tuple(nail_c[i] + off[i] for i in range(3))
+        items.append((proj(nail)[2] + 0.2, "nail", (nail, radii[-1] * 0.62)))
+    items.sort(key=lambda t: t[0])
+    for _, kind, data in items:
+        if kind == "palm":
+            d = "M" + "L".join(f"{f(x)} {f(y)}" for x, y in data) + "Z"
+            s.add(f'<path d="{d}" style="fill:{H};stroke:{L}" stroke-width="2.5" stroke-linejoin="round"/>')
+        elif kind == "nail":
+            c, r = data
+            (px, py), sc, z = proj(c)
+            if z < proj((c[0], c[1], 0))[2] - 100:
+                continue
+            s.add(f'<ellipse cx="{f(px)}" cy="{f(py)}" rx="{f(r * k * sc)}" ry="{f(r * k * sc * 1.15)}" '
+                  f'style="fill:var(--panel);stroke:{L}" stroke-width="1.6" opacity="0.9"/>')
+        else:
+            a, ra, b, rb, color = data
+            (pa, sa, _), (pb, sb, _) = proj(a), proj(b)
+            d = tapered(pa, ra * k * sa, pb, rb * k * sb)
+            s.add(f'<path d="{d}" style="fill:{color};stroke:{L}" stroke-width="2.5" stroke-linejoin="round"/>')
+            ha, hb = ra * k * sa, rb * k * sb
+            off = lambda q, r: (q[0] - 0.32 * r, q[1] - 0.32 * r)
+            d = tapered(off(pa, ha), ha * 0.42, off(pb, hb), hb * 0.42)
+            s.add(f'<path d="{d}" style="fill:#fff" opacity="0.28"/>')
+    tips = {}
+    for name, (joints, _) in FINGERS.items():
+        a, b = joints[-2], joints[-1]
+        tips[name] = (a, b)
+    return tips, proj
+
+
+
+def axis_hand(s, ox, oy, k, side):
+    """The axis sign with an arrow from each fingertip: thumb +X, index +Y,
+    middle finger +Z. side="right": right hand, palm toward the viewer, +Z at
+    them. side="left": left hand from the back, +Z away from them."""
+    mirror = side == "left"
+    colors = {"thumb": "var(--x)", "index": "var(--y)", "middle": "var(--z)"}
+    arrows = [("thumb", (1, 0, 0), "X", "var(--x)"), ("index", (0, 1, 0), "Y", "var(--y)"),
+              ("middle", (0, 0, 1), "Z", "var(--z)")]
+
+    def ends(name, u, start, length):
+        joints, radii = FINGERS[name]
+        tip, r = joints[-1], radii[-1]
+        return [proj(tuple(tip[i] + u[i] * (r + d) for i in range(3)))[0] for d in (start, length, length + 18)]
+
+    tmp = Svg(1, 1, "")
+    _, proj = hand3d(tmp, ox, oy, k, mirror)   # the projector only depends on the view
+    hand3d(s, ox, oy, k, mirror, colors)
+    for name, u, label, color in arrows:
+        if name == "middle" and mirror:
+            # Points away, behind the hand: dashed while hidden, then solid.
+            p0, p1, pl = ends(name, u, -10, 64)
+            mid = (p0[0] + (p1[0] - p0[0]) * 0.55, p0[1] + (p1[1] - p0[1]) * 0.55)
+            line(s, p0, mid, color, 2.5, dash="4 5")
+            arrow(s, mid, p1, color, 3.5, head=13)
+        else:
+            p0, p1, pl = ends(name, u, 6, 30 if name == "index" else 44)
+            arrow(s, p0, p1, color, 3.5, head=13)
+        if name == "index":
+            text(s, p1[0] + 12, p1[1] + 12, label, "l b", color=color, halo=True)
+        else:
+            text(s, pl[0], pl[1] + 7, label, "l b", anchor="middle", color=color, halo=True)
+    return proj
 
 
 def up_glyph(s, c, up, color):
@@ -483,7 +592,7 @@ def up_glyph(s, c, up, color):
 
 
 def engines():
-    s = Svg(760, 650, "Axis conventions in common engines",
+    s = Svg(760, 700, "Axis conventions in common engines",
             "Two hands make the axis sign: thumb +X pointing right, index finger +Y up, "
             "middle finger +Z. On the right hand, palm toward you, the middle finger points at "
             "you; on the left hand, back toward you, it points away. Below them, a two-by-two "
@@ -492,18 +601,13 @@ def engines():
             "OpenGL. Unity is left-handed with Y up and forward along +Z. Blender is "
             "right-handed with Z up and forward along -Y. Unreal Engine is left-handed with Z "
             "up and forward along +X.")
-    X0, Y0, CW, CH, G = 136, 272, 297, 156, 14
-    heads = [("Right-handed", "right", "toward you"), ("Left-handed", "left", "away from you")]
+    X0, Y0, CW, CH, G = 136, 322, 297, 156, 14
+    heads = [("Right-handed", "right", "Z points toward you"), ("Left-handed", "left", "Z points away from you")]
     for i, (title, side, ztext) in enumerate(heads):
         mx = X0 + i * (CW + G) + CW / 2
         text(s, mx, 30, title, "l b", anchor="middle")
-        hx, hy, k = mx - 10, 158, 1.12
-        hand(s, hx, hy, side, k)
-        text(s, hx + 92 * k, hy + 10 * k, "X", "l b", color="var(--x)")
-        text(s, hx + 34 * k, hy - 86 * k, "Y", "l b", color="var(--y)")
-        s.add(f'<text x="{f(hx - 52 * k)}" y="{f(hy - 26 * k)}" text-anchor="end">'
-              f'<tspan class="l b" style="fill:var(--z)">Z</tspan>'
-              f'<tspan class="s m" dx="6">{ztext}</tspan></text>')
+        text(s, mx, 52, ztext, "s m", anchor="middle")
+        axis_hand(s, mx - 10, 222, 0.86, side)
     up_glyph(s, (64, Y0 + 92), "Y", "var(--y)")
     up_glyph(s, (64, Y0 + CH + G + 92), "Z", "var(--z)")
     cells = [
