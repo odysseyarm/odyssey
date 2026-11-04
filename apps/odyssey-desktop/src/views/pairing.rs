@@ -208,7 +208,7 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                     class: "ml-4 space-y-1",
                     div {
                         class: "text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400",
-                        "{list_label}"
+                        {list_label}
                     }
                     for addr in listed_addrs {
                         {
@@ -226,11 +226,11 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                                 div {
                                     class: "flex items-center gap-2",
                                     span {
-                                        class: "{dot_class}",
+                                        class: dot_class,
                                     }
                                     span {
                                         class: "text-xs font-mono text-gray-600 dark:text-gray-300",
-                                        "{label}"
+                                        {label}
                                     }
                                 }
                             }

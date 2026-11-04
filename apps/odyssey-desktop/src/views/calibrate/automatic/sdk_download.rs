@@ -232,7 +232,7 @@ pub fn DownloadedSdkRow(wizard: Wizard) -> Element {
                 }
             }
             if let Some(message) = error() {
-                span { role: "alert", class: "text-red-700 dark:text-red-300", "{message}" }
+                span { role: "alert", class: "text-red-700 dark:text-red-300", {message} }
             }
         }
     }

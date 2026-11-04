@@ -42,7 +42,7 @@ pub fn ScaleBoardInfo() -> Element {
             }
         }
         if open() {
-            ScaleBoardWindow { on_close: move |_| open.set(false) }
+            ScaleBoardWindow { on_close: move |()| open.set(false) }
         }
     }
 }
@@ -142,7 +142,7 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
                             p { role: "status", class: "text-sm text-gray-600 dark:text-gray-300", "Saved {path.display()}." }
                         },
                         Some(Err(message)) => rsx! {
-                            p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", "{message}" }
+                            p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", {message} }
                         },
                         None => rsx! {},
                     }

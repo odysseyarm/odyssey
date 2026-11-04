@@ -30,9 +30,9 @@ pub fn StepPage(
         div {
             class: "flex flex-col gap-5",
             div {
-                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white", "{title}" }
+                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white", {title} }
                 if let Some(subtitle) = subtitle {
-                    p { class: "mt-1 text-lg text-gray-600 dark:text-gray-300", "{subtitle}" }
+                    p { class: "mt-1 text-lg text-gray-600 dark:text-gray-300", {subtitle} }
                 }
             }
             {children}
@@ -50,7 +50,7 @@ pub fn Details(summary: Option<String>, children: Element) -> Element {
             class: "group rounded-xl border border-gray-200 bg-white/60 px-4 py-3 dark:border-gray-600 dark:bg-gray-700/50",
             summary {
                 class: "cursor-pointer select-none text-base font-medium text-gray-700 dark:text-gray-200",
-                "{summary}"
+                {summary}
             }
             div { class: "mt-3 flex flex-col gap-2 text-sm text-gray-700 dark:text-gray-200", {children} }
         }
@@ -63,8 +63,8 @@ pub fn Fact(label: String, value: String) -> Element {
     rsx! {
         div {
             class: "flex justify-between gap-4",
-            span { class: "text-gray-500 dark:text-gray-400", "{label}" }
-            span { class: "text-right tabular-nums", "{value}" }
+            span { class: "text-gray-500 dark:text-gray-400", {label} }
+            span { class: "text-right tabular-nums", {value} }
         }
     }
 }

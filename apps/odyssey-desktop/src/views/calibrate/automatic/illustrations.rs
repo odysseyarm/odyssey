@@ -11,7 +11,7 @@ pub fn TvIllustration(class: Option<String>) -> Element {
     let class = class.unwrap_or_else(|| "h-28".into());
     rsx! {
         svg {
-            class: "{class}",
+            class: class,
             view_box: "0 0 160 120",
             fill: "none",
             "aria-hidden": "true",
@@ -45,7 +45,7 @@ pub fn ProjectorIllustration(class: Option<String>) -> Element {
     let class = class.unwrap_or_else(|| "h-28".into());
     rsx! {
         svg {
-            class: "{class}",
+            class: class,
             view_box: "0 0 160 120",
             fill: "none",
             "aria-hidden": "true",

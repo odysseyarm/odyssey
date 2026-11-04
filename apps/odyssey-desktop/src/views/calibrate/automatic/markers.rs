@@ -143,14 +143,14 @@ fn MarkerPreviewView(wizard: Wizard) -> Element {
                             cy: "{blob[1]}",
                             r: "{radius}",
                             fill: "none",
-                            stroke: "{color}",
+                            stroke: color,
                             stroke_width: "{line}",
                         }
                         if let Some(marker) = marker {
                             text {
                                 x: "{f64::from(blob[0]) + radius * 1.3}",
                                 y: "{f64::from(blob[1]) - radius * 1.1}",
-                                fill: "{color}",
+                                fill: color,
                                 font_size: "{radius * 1.7}",
                                 font_weight: "700",
                                 "{marker + 1}"
@@ -190,8 +190,8 @@ fn MarkerRules() -> Element {
                 div {
                     key: "{title}",
                     class: "flex flex-col gap-0.5",
-                    span { class: "font-medium", "{title}" }
-                    span { class: "text-gray-600 dark:text-gray-300", "{text}" }
+                    span { class: "font-medium", {title} }
+                    span { class: "text-gray-600 dark:text-gray-300", {text} }
                 }
             }
         }

@@ -36,8 +36,8 @@ fn StatusChip(props: StatusChipProps) -> Element {
 
     rsx! {
         span { class: "inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs border {pill_cls}",
-            span { class: "{dot_cls}" }
-            "{label}"
+            span { class: dot_cls }
+            {label}
         }
     }
 }
@@ -331,7 +331,7 @@ pub fn Accessories() -> Element {
 
                                     div { class: "min-w-0",
                                         div { class: "font-medium truncate", "{info.name}" }
-                                        div { class: "text-xs opacity-70 truncate", "{mac}" }
+                                        div { class: "text-xs opacity-70 truncate", {mac} }
                                     }
 
                                     div { class: "flex items-center gap-3 flex-wrap justify-end",
@@ -342,7 +342,7 @@ pub fn Accessories() -> Element {
                                             rsx!{
                                                 span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200/70 dark:border-white/10",
                                                     span { class: "h-2.5 w-2.5 rounded-full {dot_class}" }
-                                                    "{assigned_label}"
+                                                    {assigned_label}
                                                 }
                                             }
                                         }
@@ -368,7 +368,7 @@ pub fn Accessories() -> Element {
                                             {device_choices.iter().map(|(nz, label, slot)| {
                                                 let display = format!("{label} (slot {})", slot + 1);
                                                 rsx!{
-                                                    option { value: "{nz.get()}", "{display}" }
+                                                    option { value: "{nz.get()}", {display} }
                                                 }
                                             })}
                                         }
@@ -401,8 +401,8 @@ pub fn Accessories() -> Element {
                             rsx! {
                                 li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
                                     div { class: "min-w-0",
-                                        div { class: "font-medium truncate", "{label}" }
-                                        div { class: "text-xs opacity-70 truncate", "{mac}" }
+                                        div { class: "font-medium truncate", {label.as_str()} }
+                                        div { class: "text-xs opacity-70 truncate", {mac} }
                                     }
                                     button {
                                         class: "px-3 py-1.5 text-sm rounded-lg border border-emerald-600/60 hover:bg-emerald-600 hover:text-white transition",

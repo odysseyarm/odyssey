@@ -274,7 +274,7 @@ fn ConnectedDeviceRow(props: ConnectedDeviceRowProps) -> Element {
                     } else {
                         span {
                             class: "text-sm font-mono text-gray-700 dark:text-gray-200",
-                            "{label}"
+                            {label}
                         }
                         button {
                             class: "text-xs text-gray-400 hover:text-blue-500 dark:hover:text-blue-400",
@@ -389,11 +389,11 @@ fn OfflineNotice(error: Option<String>) -> Element {
                     "Odyssey won't connect to the internet. Firmware updates come from the firmware pack in {dir}."
                 }
                 if let Some(error) = error {
-                    span { role: "alert", class: "font-medium", "{error}" }
+                    span { role: "alert", class: "font-medium", {error} }
                 }
             }
             for issue in policy.issues.iter() {
-                span { key: "{issue}", role: "alert", class: "font-medium", "{issue}" }
+                span { key: "{issue}", role: "alert", class: "font-medium", {issue.as_str()} }
             }
         }
     }

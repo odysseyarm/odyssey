@@ -48,7 +48,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                     key: "{note}",
                     role: "alert",
                     class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
-                    "{note}"
+                    {note}
                 }
             }
 
@@ -222,7 +222,7 @@ fn CameraPicker(wizard: Wizard) -> Element {
                                     key: "{camera.id}-link",
                                     role: "alert",
                                     class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
-                                    "{warning}"
+                                    {warning}
                                 }
                             }
                         }
@@ -239,8 +239,8 @@ fn NoCamera(title: String, detail: String, technical: Vec<String>, children: Ele
         div {
             class: "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-gray-300 px-4 py-6 text-center dark:border-gray-500",
             IconView { icon: Icon::Camera, class: "size-10 text-gray-400".to_string() }
-            div { class: "text-xl font-semibold text-gray-900 dark:text-white", "{title}" }
-            div { class: "text-base text-gray-600 dark:text-gray-300", "{detail}" }
+            div { class: "text-xl font-semibold text-gray-900 dark:text-white", {title} }
+            div { class: "text-base text-gray-600 dark:text-gray-300", {detail} }
             {children}
             if !technical.is_empty() {
                 details {
@@ -249,7 +249,7 @@ fn NoCamera(title: String, detail: String, technical: Vec<String>, children: Ele
                     div {
                         class: "mt-2 flex flex-col gap-1",
                         for (i, line) in technical.iter().enumerate() {
-                            code { key: "{i}", class: "break-words", "{line}" }
+                            code { key: "{i}", class: "break-words", {line.as_str()} }
                         }
                     }
                 }
@@ -395,6 +395,12 @@ fn SizeSection(wizard: Wizard) -> Element {
     }
 }
 
+const FOUND_ICON: &str = "mt-0.5 size-6 shrink-0 text-emerald-600 dark:text-emerald-400";
+const MISSING_ICON: &str = "mt-0.5 size-6 shrink-0 text-gray-500 dark:text-gray-400";
+
+const SIZE_FIELD_SELECTED: &str = "bg-blue-600 px-4 py-2 text-base font-medium text-white focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300";
+const SIZE_FIELD_IDLE: &str = "bg-white px-4 py-2 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700";
+
 #[component]
 fn FlatSize(wizard: Wizard) -> Element {
     let Some(finding) = wizard.finding.read().clone() else {
@@ -415,6 +421,11 @@ fn FlatSize(wizard: Wizard) -> Element {
     let by_hand = wizard.reference().is_some();
     let aside = finding.projector_aside();
     let lines = finding.detail_lines();
+    let icon_class = if finding.is_found() {
+        FOUND_ICON
+    } else {
+        MISSING_ICON
+    };
 
     rsx! {
         div {
@@ -423,11 +434,7 @@ fn FlatSize(wizard: Wizard) -> Element {
                 class: "flex items-start gap-3",
                 IconView {
                     icon: if finding.is_found() { Icon::Check } else { Icon::Viewfinder },
-                    class: if finding.is_found() {
-                        "mt-0.5 size-6 shrink-0 text-emerald-600 dark:text-emerald-400".to_string()
-                    } else {
-                        "mt-0.5 size-6 shrink-0 text-gray-500 dark:text-gray-400".to_string()
-                    },
+                    class: icon_class.to_string(),
                 }
                 div {
                     class: "flex flex-col gap-1",
@@ -444,10 +451,10 @@ fn FlatSize(wizard: Wizard) -> Element {
                         }
                     }
                     if let Some(advice) = advice {
-                        p { class: "text-base text-gray-600 dark:text-gray-300", "{advice}" }
+                        p { class: "text-base text-gray-600 dark:text-gray-300", {advice} }
                     }
                     if let Some(aside) = aside {
-                        p { class: "text-base text-gray-600 dark:text-gray-300", "{aside}" }
+                        p { class: "text-base text-gray-600 dark:text-gray-300", {aside} }
                     }
                 }
             }
@@ -517,7 +524,7 @@ fn FlatSize(wizard: Wizard) -> Element {
                 ul {
                     class: "mt-2 flex flex-col gap-1",
                     for line in lines {
-                        li { key: "{line}", "{line}" }
+                        li { key: "{line}", {line} }
                     }
                 }
             }
@@ -549,18 +556,14 @@ fn ProjectorSize(wizard: Wizard) -> Element {
                         r#type: "button",
                         role: "radio",
                         aria_checked: option == field,
-                        class: if option == field {
-                            "bg-blue-600 px-4 py-2 text-base font-medium text-white focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300"
-                        } else {
-                            "bg-white px-4 py-2 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
-                        },
+                        class: if option == field { SIZE_FIELD_SELECTED } else { SIZE_FIELD_IDLE },
                         onclick: move |_| {
                             if *wizard.size_field.peek() != option {
                                 wizard.size_text.write().clear();
                                 *wizard.size_field.write() = option;
                             }
                         },
-                        "{label}"
+                        {label}
                     }
                 }
             }
@@ -586,7 +589,7 @@ fn SizeBox(wizard: Wizard, label: String) -> Element {
         .entered()
         .err()
         .filter(|e| *left_box.read() || matches!(e, SizeError::NotANumber))
-        .map(super::settings::SizeError::message);
+        .map(SizeError::message);
     let (unit, placeholder, range) = match field {
         SizeField::Diagonal => (
             "inches",
@@ -605,7 +608,7 @@ fn SizeBox(wizard: Wizard, label: String) -> Element {
             label {
                 r#for: "size-input",
                 class: "text-base font-medium text-gray-900 dark:text-white",
-                "{label}"
+                {label}
             }
             div {
                 class: "flex items-center gap-2",
@@ -614,7 +617,7 @@ fn SizeBox(wizard: Wizard, label: String) -> Element {
                     r#type: "text",
                     inputmode: "decimal",
                     autocomplete: "off",
-                    placeholder: "{placeholder}",
+                    placeholder,
                     title: "{range} {unit}",
                     class: "w-48 rounded-lg border border-gray-300 bg-white px-3 py-2 text-lg text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-200 dark:border-gray-500 dark:bg-gray-800 dark:text-white dark:focus:ring-blue-900",
                     value: "{wizard.size_text}",
@@ -624,10 +627,10 @@ fn SizeBox(wizard: Wizard, label: String) -> Element {
                     },
                     onblur: move |_| left_box.set(true),
                 }
-                span { class: "text-lg text-gray-600 dark:text-gray-300", "{unit}" }
+                span { class: "text-lg text-gray-600 dark:text-gray-300", {unit} }
             }
             if let Some(error) = error {
-                span { role: "alert", class: "text-sm text-red-700 dark:text-red-300", "{error}" }
+                span { role: "alert", class: "text-sm text-red-700 dark:text-red-300", {error} }
             }
         }
     }

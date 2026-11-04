@@ -33,7 +33,7 @@ pub fn ReferenceHelper(wizard: Wizard) -> Element {
             div {
                 role: "alert",
                 class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
-                "{problem}"
+                {problem}
             }
         }
     }
@@ -110,8 +110,8 @@ fn Prompt(wizard: Wizard) -> Element {
                 IconView { icon: Icon::Bulb, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
                 div {
                     class: "flex flex-col gap-1",
-                    p { class: "text-lg font-medium text-gray-900 dark:text-white", "{title}" }
-                    p { class: "text-base text-gray-600 dark:text-gray-300", "{detail}" }
+                    p { class: "text-lg font-medium text-gray-900 dark:text-white", {title} }
+                    p { class: "text-base text-gray-600 dark:text-gray-300", {detail} }
                 }
             }
             div {
@@ -164,7 +164,7 @@ fn Measured(wizard: Wizard) -> Element {
                     if let Some((text, warn)) = note {
                         p {
                             class: if warn { "text-base text-amber-800 dark:text-amber-200" } else { "text-base text-gray-600 dark:text-gray-300" },
-                            "{text}"
+                            {text}
                         }
                     }
                 }
@@ -227,7 +227,7 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
                                     aria_checked: option == method,
                                     class: "px-4 py-2 text-base font-medium focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 {tone}",
                                     onclick: move |_| wizard.set_helper_method(option),
-                                    "{label}"
+                                    {label}
                                 }
                             }
                         }
@@ -247,13 +247,13 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
                     if let Some((text, warn)) = note {
                         p {
                             class: if warn { "text-base text-amber-800 dark:text-amber-200" } else { "text-sm text-gray-600 dark:text-gray-300" },
-                            "{text}"
+                            {text}
                         }
                     }
                 }
             }
             if let Some(error) = error {
-                p { role: "alert", class: "text-base text-red-700 dark:text-red-300", "{error}" }
+                p { role: "alert", class: "text-base text-red-700 dark:text-red-300", {error} }
             }
 
             div {
@@ -332,7 +332,7 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
                                     aria_checked: option == unit,
                                     class: "px-3 py-2 text-base font-medium focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 {tone}",
                                     onclick: move |_| wizard.set_tape(text.clone(), option),
-                                    "{label}"
+                                    {label}
                                 }
                             }
                         }

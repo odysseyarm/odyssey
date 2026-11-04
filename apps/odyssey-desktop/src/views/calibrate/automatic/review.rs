@@ -104,7 +104,7 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                         r#type: "button",
                         disabled: saving || confirming,
                         onclick: move |_| wizard.save(false),
-                        "{save_label}"
+                        {save_label}
                     }
                     button {
                         id: PRIMARY_ID,
@@ -126,7 +126,7 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                         r#type: "button",
                         disabled: saving || confirming,
                         onclick: move |_| wizard.save(false),
-                        "{save_label}"
+                        {save_label}
                     }
                 }
             },
@@ -218,9 +218,9 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                 height: finished.height,
                 alt: "The screen as the camera saw it, with the measured outline",
                 polygon {
-                    points: "{quad}",
+                    points: quad,
                     fill: "none",
-                    stroke: "{outline}",
+                    stroke: outline,
                     stroke_width: "{3.0 * unit}",
                     stroke_linejoin: "round",
                 }
@@ -258,13 +258,13 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
                         class: "text-sm text-gray-600 dark:text-gray-300",
                         "{outcome.size_m[0] * 100.0:.0} × {outcome.size_m[1] * 100.0:.0} cm"
                     }
-                    div { class: "mt-1 text-sm font-medium text-gray-700 dark:text-gray-200", "{source}" }
+                    div { class: "mt-1 text-sm font-medium text-gray-700 dark:text-gray-200", {source} }
                 }
                 div {
                     class: "rounded-xl bg-white p-4 shadow dark:bg-gray-700",
                     div { class: "text-sm text-gray-500 dark:text-gray-400", "Will be saved as" }
-                    div { class: "text-2xl font-semibold text-gray-900 dark:text-white", "{screen}" }
-                    div { class: "truncate text-sm text-gray-600 dark:text-gray-300", "{monitor}" }
+                    div { class: "text-2xl font-semibold text-gray-900 dark:text-white", {screen.as_str()} }
+                    div { class: "truncate text-sm text-gray-600 dark:text-gray-300", {monitor} }
                 }
             }
 
