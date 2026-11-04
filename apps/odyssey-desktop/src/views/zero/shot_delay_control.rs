@@ -112,7 +112,6 @@ pub(super) fn ShotDelayControl(
                 }
             }
 
-            // Set button
             button {
                 class: BUTTON,
                 disabled: pending(),
@@ -123,7 +122,6 @@ pub(super) fn ShotDelayControl(
                 "Set"
             }
 
-            // Reset button
             button {
                 class: BUTTON,
                 disabled: pending(),
@@ -137,7 +135,6 @@ pub(super) fn ShotDelayControl(
                 "Reset"
             }
 
-            // Save button (sets before saving)
             button {
                 class: BUTTON,
                 disabled: pending(),

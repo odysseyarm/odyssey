@@ -22,7 +22,8 @@ const APP_MODE_TIMEOUT: Duration = Duration::from_secs(15);
 const APP_VERSION_TIMEOUT: Duration = Duration::from_secs(15);
 const APP_VERSION_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
-/// Start a firmware update - runs entirely on tokio runtime
+/// Start a firmware update on the tokio runtime, outside any component's
+/// lifetime. Does nothing when an update for the device is already running.
 pub(super) fn start_firmware_update(
     manager: FirmwareUpdateManager,
     manifest: Option<FirmwareManifest>,
@@ -41,7 +42,7 @@ pub(super) fn start_firmware_update(
         return;
     }
 
-    // Spawn the entire update on tokio - completely independent of Dioxus. The
+    // The update runs on tokio, independent of Dioxus. The
     // task records its own failure in the manager, which is what the UI polls;
     // nothing awaits the handle.
     tokio::spawn(async move {
@@ -53,13 +54,11 @@ pub(super) fn start_firmware_update(
             manager.set_state(device_uuid, FirmwareUpdateState::Failed(e));
         }
 
-        // Clean up after a delay so user can see final state
         tokio::time::sleep(FINAL_STATE_LINGER).await;
         manager.clear_state(&device_uuid);
     });
 }
 
-/// Run the actual firmware update sequence
 async fn run_firmware_update(
     manager: &FirmwareUpdateManager,
     manifest: Option<FirmwareManifest>,
@@ -178,7 +177,6 @@ impl DfuSession<'_> {
         self.ensure_bootloader(downloads.bootloader.as_ref(), requires_bootloader)
             .await?;
 
-        // Determine target slot
         let (slot_name, slot_file, alt) =
             firmware::determine_target_slot_for_device(&self.uuid, self.vid, self.pid)
                 .map_err(|e| format!("Failed to determine target slot: {e}"))?;
@@ -195,7 +193,6 @@ impl DfuSession<'_> {
             .remove(slot_file)
             .ok_or_else(|| format!("Firmware file {slot_file} not found in manifest"))?;
 
-        // Flash firmware with progress updates
         tracing::info!("Flashing firmware to {}", slot_name);
         self.flash_with_progress(
             slot_name,
@@ -206,12 +203,10 @@ impl DfuSession<'_> {
         )
         .await?;
 
-        // Wait for reboot
         self.set_state(FirmwareUpdateState::Rebooting);
         tracing::info!("Waiting for device to reboot...");
         tokio::time::sleep(REBOOT_SETTLE_DELAY).await;
 
-        // Verify device reconnected
         self.set_state(FirmwareUpdateState::Verifying);
         tracing::info!("Verifying firmware update...");
 

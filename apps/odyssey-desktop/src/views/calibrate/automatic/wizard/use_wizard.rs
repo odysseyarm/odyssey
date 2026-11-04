@@ -203,7 +203,6 @@ async fn read_finding(key: MonitorKey, demo: bool) -> Finding {
     }
 }
 
-/// Camera events arrive from the camera thread.
 fn use_camera_events(wizard: Wizard, pump: Pump<Event>) {
     use_future(move || {
         let receiver = pump.receiver.borrow_mut().take();
@@ -216,7 +215,6 @@ fn use_camera_events(wizard: Wizard, pump: Pump<Event>) {
     });
 }
 
-/// Pattern window events arrive from the pattern window's own page.
 fn use_pattern_events(wizard: Wizard, pump: Pump<PatternEvent>) {
     use_future(move || {
         let receiver = pump.receiver.borrow_mut().take();

@@ -10,7 +10,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::hub::HubContext;
 
-/// Tracking history ring buffer capacity per device (~2 seconds at 100Hz)
+/// Samples kept per device, about 2 seconds at 100 Hz.
 const TRACKING_HISTORY_CAP: usize = 200;
 
 /// Milliseconds to the microseconds of the device's timestamps.
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn a_key_press_looks_back_from_the_newest_sample() {
         let history = history_of(&[1_000_000, 1_010_000, 1_020_000, 1_030_000]);
-        // 20 ms of delay before the newest sample lands on the third one.
+        // 20 ms before the newest sample lands on the second one.
         let sample = closest_sample(&history, &[1; 6], 20, None).expect("a sample");
         assert_eq!(sample.timestamp, 1_010_000);
     }

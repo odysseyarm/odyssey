@@ -51,8 +51,8 @@ pub(crate) struct CalibrateArgs {
     /// Display number as the screen picker shows it, starting at 1.
     pub monitor: Option<usize>,
     pub screen_id: Option<u8>,
-    /// Matches a camera's id or serial number.
     pub kind: Option<DisplayKind>,
+    /// Matches a camera's id or serial number.
     pub camera: Option<String>,
     pub diagonal_in: Option<f64>,
     pub rgb_exposure_us: Option<u32>,

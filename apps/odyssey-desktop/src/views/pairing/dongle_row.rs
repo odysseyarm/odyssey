@@ -14,7 +14,7 @@ use crate::views::device_label::format_address;
 
 /// The dongle control protocol that can list its bonds.
 const BONDS_PROTOCOL_VERSION: [u16; 3] = [0, 1, 1];
-/// What a dongle reports before it has told us its firmware version.
+/// The firmware version shown for a dongle until it reports its own.
 const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
 
 const DOT_CONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-green-500";
@@ -45,7 +45,6 @@ async fn cancel(hub: Signal<HubContext>, dongle_id: String, state: PairingState)
 
 async fn clear(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
     let mut client = hub.peek().client.peek().clone();
-    // Cancel pairing first if in progress
     if state.is_pairing() {
         if let Err(e) = client.cancel_dongle_pairing(dongle_id.clone()).await {
             tracing::error!("Failed to cancel dongle pairing before clearing bonds: {e}");

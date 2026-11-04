@@ -93,7 +93,7 @@ pub(crate) fn open(
         // another monitor anyway, the wizard must not go on with the camera
         // looking at the wrong screen.
         tokio::time::sleep(PLACEMENT_CHECK_DELAY).await;
-        // The wizard dropping its display means it no longer cares.
+        // An error means the wizard dropped its display and wants no window.
         if wizard_side.has_changed().is_err() {
             return;
         }

@@ -29,8 +29,8 @@ pub(super) fn use_accessory_map(
             publish(map, &mut known, &mut infos);
         }
 
-        // A single stream error used to end this loop for the rest of the
-        // session, freezing the list. Resubscribe instead.
+        // Resubscribe after a stream error: ending the loop would freeze the
+        // list for the rest of the session.
         loop {
             match client.subscribe_accessory_map().await {
                 Ok(mut stream) => {

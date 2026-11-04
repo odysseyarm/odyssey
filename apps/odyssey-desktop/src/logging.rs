@@ -54,7 +54,7 @@ fn open_log_file(dir: &Path) -> io::Result<File> {
 
     let latest = dir.join(LATEST);
     if latest.exists() {
-        // A rename over an existing file replaces it on every platform we ship.
+        // A rename over an existing file replaces it on every platform the app ships on.
         let _ = fs::rename(&latest, dir.join(PREVIOUS));
     }
     let mut options = fs::OpenOptions::new();

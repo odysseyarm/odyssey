@@ -1,10 +1,8 @@
-//! Firmware update UI components for individual devices.
+//! Firmware update UI for individual devices.
 //!
-//! Architecture:
-//! - Firmware update state is stored in a shared `Arc<Mutex<HashMap>>` between
-//!   the tokio runtime and Dioxus components
-//! - The actual update runs entirely on `tokio::spawn`, independent of Dioxus component lifecycle
-//! - Dioxus components poll the shared state periodically to update the UI
+//! Update state lives in a shared `Arc<Mutex<HashMap>>`. The update itself runs
+//! on `tokio::spawn`, outside any component's lifetime, and components poll the
+//! shared state to redraw.
 
 mod bootloader;
 mod device_firmware_update;

@@ -30,8 +30,8 @@ impl Wizard {
         default_screen(remembered, &self.saved.read())
     }
 
-    /// The camera Setup shows as chosen: the picked one if it is still
-    /// attached, otherwise the only one there is.
+    /// The camera Setup shows as chosen: the picked one if it is attached, or
+    /// with nothing picked, the only one there is.
     pub(crate) fn camera(self) -> Option<CameraInfo> {
         let CameraList::Found(list) = &*self.cameras.read() else {
             return None;
@@ -59,8 +59,8 @@ impl Wizard {
         kind::default_kind(remembered)
     }
 
-    /// Answers "What are you calibrating?". The size typed for the other kind
-    /// no longer applies.
+    /// Answers "What are you calibrating?". Switching kind clears the size typed
+    /// for the other kind.
     pub(crate) fn set_kind(mut self, kind: DisplayKind) {
         if self.kind() != kind {
             self.size_text.write().clear();
@@ -93,7 +93,7 @@ impl Wizard {
     /// Turns the camera-size preference on or off and remembers it.
     pub(crate) fn set_prefer_camera_size(mut self, on: bool) {
         self.ui_state.write().prefer_camera_size = on;
-        // Enqueue before spawning so rapid toggles persist in UI intent order.
+        // Enqueue before spawning so rapid toggles are saved in the order they were made.
         let update = self
             .ui_state_writer
             .update(move |state| state.prefer_camera_size = on);

@@ -56,7 +56,7 @@ fn main() {
     }
 
     // A downloaded camera SDK that could not be removed or replaced while it was
-    // loaded is dealt with now, before anything can load it again.
+    // loaded is dealt with here, before anything can load it again.
     sdk_install::finish_pending();
 
     let config = match desktop_config() {
@@ -123,7 +123,7 @@ fn use_server_task(
             let _stop_server = server_cancel.clone().drop_guard();
             let server_handle = tokio::spawn(odyssey_hub_server::run_server(sender, server_cancel));
 
-            // Handle status messages (this future has access to Signal)
+            // Status handling stays in this future because it writes the signals.
             let exit = handle_server_status(receiver, config_corruptions, server_ready).await;
 
             match server_handle.await {
@@ -132,7 +132,6 @@ fn use_server_task(
                 Err(error) => tracing::error!("Hub server task failed: {error}"),
             }
 
-            // If we detected another instance, close the app
             if exit == ServerExit::AnotherInstanceRunning {
                 tracing::info!("Closing app due to another instance running");
                 window().close();
@@ -162,7 +161,7 @@ fn app() -> Element {
     let server_ready = use_signal(|| false);
 
     use_hook(|| {
-        // Hide window to tray on close
+        // Closing the window hides it to the tray.
         window().set_close_behavior(WindowCloseBehaviour::WindowHides);
     });
 
@@ -190,7 +189,6 @@ fn app() -> Element {
 
         div {
             if open_wizard {
-                // The command line asked for the wizard, so start on it.
                 HistoryProvider {
                     history: |()| {
                         Rc::new(MemoryHistory::with_initial_path(

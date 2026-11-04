@@ -33,7 +33,7 @@ const ZERO_TARGET: nalgebra::Vector2<f32> = nalgebra::Vector2::new(0.5, 0.5);
 #[component]
 pub(crate) fn Zero(
     hub: Signal<HubContext>,
-    /// Pass the tracking sender directly to work across VirtualDoms
+    /// A plain sender rather than a `Signal`, because this runs in its own VirtualDom.
     tracking_sender: TrackingSender,
 ) -> Element {
     let devices = (hub().devices)();

@@ -1,7 +1,7 @@
 //! Building blocks for step-by-step flows: a stepper, a big status banner,
 //! labelled sliders and a live image with an overlay. They hold no flow logic,
-//! so any wizard (the automatic calibration today, others later) can reuse
-//! them.
+//! so any wizard can reuse them; the automatic calibration is the one that
+//! does.
 
 use dioxus::prelude::*;
 

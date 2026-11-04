@@ -68,7 +68,6 @@ fn WizardHeader(wizard: Wizard) -> Element {
     }
 }
 
-/// The step for the wizard's current stage.
 #[component]
 fn StageView(wizard: Wizard, stage: Stage) -> Element {
     match stage {

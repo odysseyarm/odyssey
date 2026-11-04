@@ -46,7 +46,6 @@ pub(super) fn UpdateAvailable(
                 disabled: manager.is_updating(&device.uuid),
                 class: "btn-primary-sm",
                 onclick: move |_| {
-                    // Start the update - runs entirely on tokio
                     start_firmware_update(
                         manager.clone(),
                         manifest(),

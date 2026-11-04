@@ -16,7 +16,7 @@
 //!
 //! Setup must finish loading remembered answers before either manual or CLI
 //! continuation. Saving snapshots one review result; returning to Setup
-//! invalidates its completion so a late disk write cannot change the new flow.
+//! invalidates its completion so a late disk write cannot change the next flow.
 
 mod events;
 mod helper;
@@ -92,7 +92,6 @@ pub(crate) struct Wizard {
     worker: Signal<Rc<Worker>>,
     server_ready: Option<ServerReady>,
 
-    // Setup answers.
     pub screen_choice: Signal<Option<u8>>,
     pub saved: Signal<[bool; SCREEN_COUNT]>,
     ui_state: Signal<UiState>,
@@ -132,7 +131,6 @@ pub(crate) struct Wizard {
     /// known.
     auto_start: Signal<bool>,
 
-    // Live camera state.
     pub color_exposure: Signal<u32>,
     pub ir_exposure: Signal<u32>,
     session: Signal<u64>,
@@ -141,7 +139,6 @@ pub(crate) struct Wizard {
     pub markers: Signal<Option<MarkerFrame>>,
     pub progress: Signal<Option<Step>>,
 
-    // Outcome.
     pub finished: Signal<Option<Rc<Finished>>>,
     pub failure: Signal<Option<Failure>>,
     pub saved_to: Signal<Option<SavedInfo>>,
@@ -152,7 +149,6 @@ pub(crate) struct Wizard {
     pub attempt_status: Signal<Option<Result<SavedAttempt, String>>>,
     pub attempt_saving: Signal<bool>,
 
-    // The pattern window and the wizard window stepping aside for it.
     pattern: Signal<Option<PatternDisplay>>,
     pattern_loss: Signal<UnboundedSender<PatternEvent>>,
     /// The pattern would cover the wizard, so the wizard hides while it shows.

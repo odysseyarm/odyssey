@@ -26,7 +26,7 @@ fn main() {
 
 /// Installs the packages in package.json, preferring yarn over npm.
 ///
-/// # Panic
+/// # Panics
 /// Panics if neither is installed, or if the install fails.
 fn install_packages() {
     let yarn = if_windows("yarn.cmd", "yarn");

@@ -20,7 +20,7 @@ pub(crate) enum PatternMode {
     Card { width_px: f64, covers_wizard: bool },
 }
 
-/// Why the pattern window can no longer do its job.
+/// Why the pattern window cannot do its job any more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PatternLoss {
     /// Someone closed the window (Escape or Alt+F4).

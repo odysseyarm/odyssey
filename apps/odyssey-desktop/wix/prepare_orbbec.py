@@ -136,7 +136,6 @@ def offline_fragment(stage: pathlib.Path, installed: list[str]) -> str:
     ids = [wix_id("C", p) for p in installed] + [wix_id("F", p) for p in installed]
     if len(set(ids)) != len(ids):
         sys.exit("two SDK files map to the same WiX id; make wix_id tell them apart")
-    # The directory tree, from the install paths.
     tree: dict = {}
     for p in installed:
         node = tree

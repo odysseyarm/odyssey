@@ -57,14 +57,12 @@ pub(crate) async fn handle_server_status(
                     tracing::info!("Server started successfully");
                 } else {
                     report_corruptions(&corruptions);
-                    // Update signal to show modal dialog
+                    // A non-empty list opens the config-corruption dialog.
                     config_corruptions.set(corruptions);
                 }
-                // Signal that server is ready for connections
                 server_ready.set(true);
             }
             Some(Message::ServerInit(Err(e))) => {
-                // "Address already in use" means another instance is running.
                 if e.kind() == ErrorKind::AddrInUse {
                     tracing::warn!("Another instance is already running. Bringing it to front...");
                     bring_existing_instance_to_front().await;
@@ -75,7 +73,6 @@ pub(crate) async fn handle_server_status(
             }
             Some(Message::BringToFront) => {
                 tracing::info!("Received BringToFront request");
-                // Bring window to front using Dioxus window API
                 window().set_focus();
                 window().set_visible(true);
             }

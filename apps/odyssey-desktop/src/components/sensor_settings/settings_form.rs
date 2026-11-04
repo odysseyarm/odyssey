@@ -322,7 +322,7 @@ impl SettingsForm {
         ));
         let hub_ctx = hub.peek().clone();
 
-        // Both outcomes are a status for the user; the error side is just the
+        // Both outcomes are a status for the user; the error side is the
         // early-exit path.
         let outcome = self.try_write_all(&hub_ctx, target, persist).await;
         self.status.set(outcome.unwrap_or_else(|failed| failed));

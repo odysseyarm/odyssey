@@ -10,20 +10,17 @@ use super::update_manager::{FirmwareUpdateManager, use_polled_state};
 use super::update_notes::{held_back_note, net_core_blocked_note};
 use super::update_state::{BYTES_PER_KB, FirmwareUpdateState, percent_complete};
 
-/// Props for the device firmware update button/indicator
 #[derive(Props, Clone, PartialEq)]
 pub(crate) struct DeviceFirmwareUpdateProps {
-    /// The device to check/update
     pub device: Device,
-    /// Cached firmware manifest (shared across all devices)
+    /// Shared by every device row.
     pub manifest: Signal<Option<FirmwareManifest>>,
-    /// Firmware update manager
     pub manager: FirmwareUpdateManager,
     /// Live device list, for reading the net core release back after it is written
     pub devices: SyncSignal<Slab<Device>>,
 }
 
-/// A component that shows firmware update status and allows updating a single device
+/// Firmware update status for one device, with the button that starts the update.
 #[component]
 pub(crate) fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
     let DeviceFirmwareUpdateProps {
@@ -34,14 +31,12 @@ pub(crate) fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element 
     } = props;
     let device_uuid = device.uuid;
 
-    // Local state that we poll from the manager
     let local_state = use_polled_state(&manager, device_uuid);
 
-    // Check if update is available - runs on every render when props change
-    // We do this synchronously during render rather than in use_effect because
-    // use_effect captures values and won't see prop changes
+    // Checked during render rather than in `use_effect`: an effect captures its
+    // values and would not see prop changes.
     let current_state = manager.get_state(&device_uuid);
-    // Only update state if we're not in the middle of an update
+    // A running update owns the state; availability must not overwrite it.
     if current_state.is_before_update() {
         let next_state = match manifest() {
             Some(manifest) => check_for_update(&manifest, &device, &current_state),

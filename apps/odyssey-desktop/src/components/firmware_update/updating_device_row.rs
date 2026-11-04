@@ -4,7 +4,6 @@ use super::progress_bar::ProgressBar;
 use super::update_manager::{FirmwareUpdateManager, use_polled_state};
 use super::update_state::{BYTES_PER_KB, FirmwareUpdateState, percent_complete};
 
-/// Props for the updating device row component
 #[derive(Props, Clone, PartialEq)]
 pub(crate) struct UpdatingDeviceRowProps {
     pub uuid: [u8; 6],
@@ -27,12 +26,11 @@ fn state_display(state: &FirmwareUpdateState) -> String {
     }
 }
 
-/// A component that displays a device being updated (when not in device list)
+/// A device whose update is running while it is absent from the device list.
 #[component]
 pub(crate) fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
     let uuid = props.uuid;
 
-    // Poll state from manager
     let current_state = use_polled_state(&props.manager, uuid)();
     let state_display = state_display(&current_state);
 

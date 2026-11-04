@@ -28,7 +28,6 @@ use odyssey_autocalib::solve::{SIZE_DISAGREEMENT, SizeCheck};
 
 use super::kind::SizeOrigin;
 
-/// Label of the size-agreement check, which the review also looks up.
 /// What to tell the tech when the camera and the declared size disagree: how
 /// far apart they are, and why that might be.
 pub(crate) fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>) -> String {
@@ -53,6 +52,7 @@ pub(crate) fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>
     }
 }
 
+/// Label of the size-agreement check, which the review also looks up.
 pub(crate) const SIZE_LABEL: &str = "Size agreement";
 
 pub(crate) const RMSE_GOOD_M: f64 = 0.005;

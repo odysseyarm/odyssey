@@ -32,7 +32,7 @@ pub(crate) struct SizePlan {
     pub known_size: Option<KnownSize>,
     pub origin: Option<SizeOrigin>,
     /// A size declared for a flat screen describes its panel, so the picture
-    /// must be shown whole or the two no longer match. A size the camera
+    /// must be shown whole or the two do not match. A size the camera
     /// measures needs no such rule: it is the picture's own, hidden edge
     /// included, so a TV that crops its picture can still be calibrated.
     pub require_visible_edges: bool,

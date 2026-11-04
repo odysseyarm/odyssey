@@ -1,5 +1,3 @@
-// src/components/crosshair_manager.rs
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,8 +12,8 @@ use tokio::sync::broadcast;
 
 use crate::hub::HubContext;
 
-/// Wrapper for broadcast::Sender that implements PartialEq (always false, triggers re-render)
-/// This is needed because Dioxus #[component] requires PartialEq on all props
+/// A `broadcast::Sender` usable as a prop: Dioxus `#[component]` props must be
+/// `PartialEq`, and this one always compares unequal so a change re-renders.
 #[derive(Clone)]
 pub(crate) struct TrackingSender(pub broadcast::Sender<(Device, TrackingEvent)>);
 
@@ -34,7 +32,7 @@ const CROSSHAIR_IMAGES: [Asset; 6] = [
     asset!("/assets/images/crosshairs/crosshair-gray.png"),
 ];
 
-/// Unique ID counter for CrosshairManager instances to ensure fresh subscriptions
+/// Gives each `CrosshairManager` instance its own id so it gets a fresh subscription.
 static CROSSHAIR_MANAGER_ID: AtomicU64 = AtomicU64::new(0);
 
 /// A crosshair's place in the container, in pixels, and its palette slot.
@@ -115,7 +113,7 @@ async fn follow_tracking(
 #[component]
 pub fn CrosshairManager(
     hub: Signal<HubContext>,
-    /// Pass the broadcast sender directly to avoid Signal issues across VirtualDoms
+    /// Passed as a prop rather than a `Signal`, which does not work across VirtualDoms.
     #[props(optional)]
     tracking_sender: Option<TrackingSender>,
 ) -> Element {

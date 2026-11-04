@@ -87,7 +87,7 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        // Stop the stream now; the thread then sees the channel close and exits.
+        // Stop the stream first; the thread then sees the channel close and exits.
         let _ = self.commands.send(Command::Close);
     }
 }

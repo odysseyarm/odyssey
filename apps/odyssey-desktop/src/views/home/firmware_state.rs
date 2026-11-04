@@ -26,9 +26,9 @@ pub(super) struct FirmwareManifestState {
 /// Fetches the manifest for the selected channel, again whenever the channel
 /// changes.
 ///
-/// Without the manifest no update is ever offered, and one failed fetch used
-/// to disable updates for the rest of the session. This keeps trying, backing
-/// off so an offline machine is not hammering the network.
+/// Without the manifest no update is ever offered, so a failed fetch is
+/// retried for the whole session, backing off so an offline machine does not
+/// hammer the network.
 pub(super) fn use_firmware_manifest() -> FirmwareManifestState {
     let mut manifest: Signal<Option<FirmwareManifest>> = use_signal(|| None);
     let mut error: Signal<Option<String>> = use_signal(|| None);

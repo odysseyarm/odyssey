@@ -20,8 +20,8 @@ pub(super) fn format_version(version: [u16; 3]) -> String {
     format!("{}.{}.{}", version[0], version[1], version[2])
 }
 
-/// True only when the device is stuck in the DFU bootloader (no CONTROL).
-/// App-mode devices expose a DFU interface too but are NOT in bootloader mode.
+/// Whether the device is sitting in the DFU bootloader: DFU without CONTROL.
+/// Application-mode devices expose a DFU interface too.
 pub(super) fn is_in_bootloader(device: &Device) -> bool {
     device.capabilities.contains(DeviceCapabilities::DFU)
         && !device.capabilities.contains(DeviceCapabilities::CONTROL)
@@ -39,21 +39,19 @@ pub(super) fn check_for_update(
     let device_version = device.firmware_version;
     let is_dfu_device = is_in_bootloader(device);
 
-    // Skip if no product ID or no version (version is always readable via control protocol,
-    // so [0,0,0] only occurs for devices that are already in DFU bootloader mode).
+    // The control protocol always reads a version, so [0,0,0] only comes from a
+    // device already in the DFU bootloader.
     if device.product_id == 0 || device_version == [0, 0, 0] && !is_dfu_device {
         return FirmwareUpdateState::Idle;
     }
-    // Look up device type from its product ID
     let Some((vid, pid, device_type)) = firmware::device_info_from_pid(device.product_id) else {
         return FirmwareUpdateState::Idle;
     };
 
-    // DFU-bootloader devices (no CONTROL, version [0,0,0]) — show latest firmware.
-    // Connected devices — show latest firmware only if it is actually newer,
-    // allowing cross-major/minor updates (e.g. protocol upgrades).
-    // The same net core reading feeds `run_firmware_update`, so the
-    // entry shown here is the entry that gets installed.
+    // A device in the DFU bootloader is offered the latest firmware. A connected
+    // device is offered it only when it is newer, across major and minor
+    // versions too (protocol upgrades). `run_firmware_update` selects from the
+    // same net core reading, so the entry shown here is the one installed.
     let offer = firmware::select_firmware(
         manifest,
         device_type,
@@ -99,8 +97,8 @@ pub(super) fn check_for_update(
     let available_version = available_fw.version.clone();
     let device_uuid = device.uuid;
 
-    // DFU devices always show the update button (they need to be flashed to
-    // recover).  Normal devices need CONTROL capability for USB flashing.
+    // A device in the DFU bootloader needs flashing to recover, so it always
+    // gets the button. Anything else needs CONTROL to be flashed over USB.
     if is_dfu_device || device.capabilities.contains(DeviceCapabilities::CONTROL) {
         if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
             if is_dfu_device {
@@ -130,7 +128,6 @@ pub(super) fn check_for_update(
         };
     }
 
-    // Device doesn't have USB control - prompt user to plug in USB
     if !matches!(
         current_state,
         FirmwareUpdateState::NeedsUsbConnection { .. }

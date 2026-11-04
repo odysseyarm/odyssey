@@ -26,7 +26,7 @@ pub(crate) enum Phase {
 /// How an install ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Installed {
-    /// The new copy is in place; the loader finds it from now on.
+    /// The replacement is in place and the loader picks it up on its next search.
     Ready,
     /// The copy it replaces is loaded and cannot be moved, so the new one waits
     /// beside it and takes over the next time the app starts.

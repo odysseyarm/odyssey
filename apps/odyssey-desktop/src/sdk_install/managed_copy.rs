@@ -123,8 +123,8 @@ fn move_aside(dir: &Path, rename: Rename<'_>) -> io::Result<MoveAside> {
 /// Puts the finished copy in place, restoring the old one on failure. If even
 /// rollback fails, retain the backup and report both failures and its location.
 pub(super) fn swap_in(staging: &Path, dest: &Path, rename: Rename<'_>) -> io::Result<Swap> {
-    // Startup checks a pending removal before calling us. Reaching this path
-    // after a new download therefore supersedes the earlier removal request.
+    // Startup acts on a pending removal before any download can run, so reaching
+    // this point means the download supersedes that earlier removal request.
     remove_file_if_present(&removal_marker(dest))?;
     let old = match move_aside(dest, rename)? {
         MoveAside::Missing => None,

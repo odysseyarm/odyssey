@@ -58,7 +58,7 @@ impl Wizard {
     }
 
     /// The helper's picture went away. When it covered the wizard's window,
-    /// closing it is how you come back.
+    /// closing it is the way back to the wizard.
     fn on_helper_pattern_lost(mut self, covers_wizard: bool, loss: PatternLoss) {
         if !covers_wizard {
             self.cancel_helper();

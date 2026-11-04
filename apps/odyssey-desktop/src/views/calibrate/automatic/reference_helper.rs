@@ -47,7 +47,8 @@ fn width_words(size_m: [f64; 2]) -> String {
     )
 }
 
-/// How a hand measurement compares with the size the display reported.
+/// How a hand measurement compares with the size the display reported; the
+/// flag is set when the gap is large enough to warn about.
 fn agreement_note(wizard: Wizard, size_m: [f64; 2]) -> Option<(String, bool)> {
     let gap = reference::size_gap(size_m, wizard.panel_size_m()?);
     let percent = gap * 100.0;
@@ -71,8 +72,8 @@ fn agreement_note(wizard: Wizard, size_m: [f64; 2]) -> Option<(String, bool)> {
     })
 }
 
-/// The invitation: always there for a flat screen or a projector, louder when
-/// the display told us nothing usable.
+/// The invitation: always there for a flat screen or a projector, louder for a
+/// projector or a display that reported no usable size.
 #[component]
 fn Prompt(wizard: Wizard) -> Element {
     let Some(finding) = wizard.finding.read().clone() else {

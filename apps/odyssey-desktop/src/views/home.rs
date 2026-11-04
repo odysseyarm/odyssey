@@ -20,7 +20,7 @@ use crate::hub::HubContext;
 pub fn Home() -> Element {
     let hub = use_context::<Signal<HubContext>>();
 
-    // Firmware update manager - shared state between tokio tasks and UI
+    // Shared by the tokio update tasks and the UI.
     let manager = use_context::<FirmwareUpdateManager>();
     let firmware = use_firmware_manifest();
     let updating = use_updating_uuids(&manager)();

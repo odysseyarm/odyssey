@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 
 /// Removes corrupted files and returns the entries that could not be deleted.
-/// A file already removed outside the app no longer needs a warning.
+/// A file that is already gone needs no warning.
 async fn delete_corrupted_files(
     corruptions: Vec<ConfigCorruptionEvent>,
 ) -> Vec<ConfigCorruptionEvent> {
@@ -37,7 +37,6 @@ pub(crate) fn ConfigCorruptionModal(
     let corruption_count = corruptions.read().len();
 
     rsx! {
-        // Modal backdrop
         div {
             class: "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4",
             onclick: move |_| {
@@ -46,12 +45,10 @@ pub(crate) fn ConfigCorruptionModal(
                 }
             },
 
-            // Modal content
             div {
                 class: "bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden",
                 onclick: move |e| e.stop_propagation(),
 
-                // Header
                 div {
                     class: "bg-yellow-500 dark:bg-yellow-600 px-6 py-4 flex-shrink-0",
                     h2 {
@@ -60,7 +57,6 @@ pub(crate) fn ConfigCorruptionModal(
                     }
                 }
 
-                // Body (scrollable)
                 div {
                     class: "p-6 overflow-y-auto flex-1 min-h-0",
                     p {
@@ -118,7 +114,6 @@ pub(crate) fn ConfigCorruptionModal(
                     }
                 }
 
-                // Footer
                 div {
                     class: "bg-gray-50 dark:bg-gray-900 px-6 py-4 flex justify-end gap-3 flex-shrink-0",
                     button {

@@ -57,7 +57,6 @@ impl DfuSession<'_> {
             return Ok(());
         }
 
-        // Send DFU detach
         tracing::info!(
             "Sending DFU detach to {:04x}:{:04x} (uuid {:02x?})",
             self.vid,
@@ -69,7 +68,6 @@ impl DfuSession<'_> {
             .await
             .map_err(|e| format!("DFU detach failed: {e}"))?;
 
-        // Wait for device to enter DFU mode
         tracing::info!("Waiting for device to enter DFU mode");
         self.set_state(FirmwareUpdateState::WaitingForDfu);
         firmware::wait_for_dfu_device(&self.uuid, self.vid, self.pid, DFU_ENUMERATION_TIMEOUT)
@@ -114,7 +112,6 @@ impl DfuSession<'_> {
 
         flash_result.map_err(|e| format!("{what} failed: {e}"))?;
 
-        // Verify flash was complete
         if final_progress < total_size {
             return Err(format!(
                 "{what} incomplete: {final_progress}/{total_size} bytes written"

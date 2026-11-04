@@ -45,7 +45,6 @@ async fn cancel(hub: Signal<HubContext>, device: Device, state: PairingState) {
 
 async fn clear(hub: Signal<HubContext>, device: Device, state: PairingState) {
     let mut client = hub.peek().client.peek().clone();
-    // Cancel pairing first if in progress
     if state.is_pairing() {
         if let Err(e) = client.cancel_pairing(device.clone()).await {
             tracing::error!("Failed to cancel pairing before clearing bond: {e}");

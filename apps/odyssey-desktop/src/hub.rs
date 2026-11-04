@@ -26,8 +26,8 @@ pub(crate) struct HubContext {
     pub client: SyncSignal<Client>,
     pub devices: SyncSignal<Slab<Device>>,
     pub dongles: SyncSignal<Vec<DongleInfo>>,
-    /// Non-Sync signal — only reactive within the same VirtualDom (main window).
-    /// Do NOT subscribe from a separate window (e.g. Zero); use a broadcast channel instead.
+    /// Not `Sync`, so it is reactive only inside the main window's VirtualDom. A
+    /// separate window such as Zero must use a broadcast channel instead.
     pub latest_event: Signal<Option<oe::Event>>,
     pub tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     pub impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
@@ -36,7 +36,7 @@ pub(crate) struct HubContext {
     /// it within milliseconds, so the row would wait for a result that already
     /// came and went.
     pub pairing_events: broadcast::Sender<oe::Event>,
-    /// Most recent battery state (percent, charging) per device UUID
+    /// Most recent battery state (percent, charging) per device UUID.
     pub battery_states: SyncSignal<HashMap<[u8; 6], (u8, bool)>>,
     device_keys: SyncSignal<HashMap<[u8; 6], usize>>,
 }

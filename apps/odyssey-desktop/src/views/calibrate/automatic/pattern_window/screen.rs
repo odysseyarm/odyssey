@@ -76,7 +76,7 @@ pub(super) fn PatternScreen(link: Link) -> Element {
 }
 
 /// Escape closes the window; Enter does too, but only on a helper picture,
-/// where it is how you come back. The arrow and page keys resize the card.
+/// where it is the way back to the wizard. The arrow and page keys resize the card.
 fn handle_key(key: &Key, mode: PatternMode, events: &UnboundedSender<PatternEvent>) {
     let helper_picture = matches!(mode, PatternMode::Ruler { .. } | PatternMode::Card { .. });
     let card = matches!(mode, PatternMode::Card { .. });

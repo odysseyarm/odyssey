@@ -54,7 +54,6 @@ pub fn Accessories() -> Element {
     use_ble_scan(nearby);
     let edits = AccessoryEdits::use_new(hub, infos);
 
-    // Snapshots for render
     let info_snapshot = infos.read().clone();
     let known_snapshot = known.read().clone();
     let is_connected = |id: &[u8; 6]| {

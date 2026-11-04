@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 
-/// Save zero result: None = idle, Some(Ok(())) = saved, Some(Err(msg)) = error
+/// `None` while idle, `Some(Ok(()))` once saved, `Some(Err(msg))` when saving failed.
 pub(super) type SaveStatus = Option<Result<(), String>>;
 
 /// Zeroing state by device uuid. Slab slots are reused as devices come and

@@ -1,11 +1,10 @@
 //! A single row in the connected devices list.
 //!
-//! A component of its own (rather than a loop in the page's render body with
-//! `use_signal` calls per iteration) because Dioxus hooks must be called the same
-//! number of times, in the same order, on every render of a component instance.
-//! Calling `use_signal` inside a `for` loop whose length tracks the number of
-//! connected devices breaks that invariant as soon as the device count changes,
-//! which is exactly when a device (and its settings panel) would first appear.
+//! A component of its own because Dioxus hooks must run the same number of
+//! times, in the same order, on every render of a component instance. A
+//! `use_signal` per iteration of a loop over connected devices breaks that as
+//! soon as the device count changes, which is when a device and its settings
+//! panel first appear.
 
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
@@ -17,7 +16,7 @@ use crate::components::{
 };
 use crate::hub::HubContext;
 
-/// The firmware version a device reports before it has told us its own.
+/// The firmware version shown for a device until it reports its own.
 const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
 
 fn transport_name(transport: Transport) -> &'static str {

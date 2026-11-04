@@ -171,8 +171,6 @@ impl Engine {
         }
     }
 
-    // ---- Opening and closing ----
-
     fn open(&mut self, session: u64, request: &OpenRequest) {
         self.close_quietly();
         self.session = session;
@@ -229,8 +227,6 @@ impl Engine {
         }
     }
 
-    // ---- Failing ----
-
     fn fail(&mut self, kind: FailureKind, details: String, keep_camera: bool) {
         tracing::warn!("calibration failed ({kind:?}): {details}");
         self.remember_attempt(format!("failed ({kind:?}): {details}"));
@@ -253,8 +249,6 @@ impl Engine {
         let keep = kind != FailureKind::CameraLost;
         self.fail(kind, error.to_string(), keep);
     }
-
-    // ---- Measuring ----
 
     /// Runs one blocking measurement, reporting each of its steps as it goes,
     /// then `done` on success. The camera stops streaming while it measures.
@@ -287,7 +281,7 @@ impl Engine {
             u32::MAX,
             encode::REVIEW_JPEG_QUALITY,
         );
-        // Kept for the user to save after the camera closes just below.
+        // Kept so the user can save it after `close` below releases the camera.
         self.remember_attempt(report::finished_summary(&declared, measured.as_ref()));
         let finished = Finished {
             image,
@@ -298,11 +292,8 @@ impl Engine {
             measured: measured.map(frame::outcome),
         };
         self.emit(SessionEvent::Finished(Box::new(finished)));
-        // The measurement is complete; the camera has nothing left to do.
         self.close();
     }
-
-    // ---- Streaming ----
 
     /// Grabs and processes one frame in the current mode.
     fn stream_one(&mut self) {
@@ -358,8 +349,6 @@ impl Engine {
         }
         self.fail(FailureKind::of_session(&error), error.to_string(), false);
     }
-
-    // ---- The attempt bundle ----
 
     /// Keeps what the attempt looked at and how it ended, so the user can save it
     /// after the camera is closed. Replaced by the next attempt.

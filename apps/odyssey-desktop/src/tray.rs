@@ -28,10 +28,10 @@ fn show_window() {
     window.set_focus();
 }
 
-/// Build the tray icon and wire up its menu.
+/// Builds the tray icon and its menu.
 ///
-/// Must be called from a component so the hooks run inside the Dioxus event
-/// loop; the main App component is the natural place.
+/// Call it from a component, such as the main App, so the hooks run inside the
+/// Dioxus event loop.
 pub(crate) fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) {
     platform::use_tray(cancellation_token);
 }

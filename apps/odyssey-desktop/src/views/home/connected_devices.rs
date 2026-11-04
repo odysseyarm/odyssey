@@ -20,7 +20,6 @@ pub(super) fn ConnectedDevices(
         return rsx! {};
     }
 
-    // Devices being updated but not in the device list.
     let updating_not_in_list: Vec<[u8; 6]> = updating
         .iter()
         .filter(|uuid| !devices.iter().any(|(_, device)| &device.uuid == *uuid))

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The WiX template for the Odyssey installer: dioxus-cli's built-in one (0.7.10), changed in
-  two places, both marked below. It is rendered by `dx bundle` (Handlebars), then compiled
+  The WiX template for the Odyssey installer: dioxus-cli's built-in one (0.7.10), with the
+  changes marked by comments below. It is rendered by `dx bundle` (Handlebars), then compiled
   by WiX's candle, which reads two environment variables the caller must set:
 
     ODYSSEY_MSI_VARIANT   "online" or "offline". Offline carries the Orbbec camera SDK as an
@@ -11,7 +11,7 @@
 
   Both variants accept OFFLINE_MODE=1 at install time (the offline one defaults to it).
 
-  Run `just bundle-msi online|offline`, or see .github/workflows/desktop-release.yml.
+  Run `just bundle online|offline`, or see .github/workflows/desktop-release.yml.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
     <Product

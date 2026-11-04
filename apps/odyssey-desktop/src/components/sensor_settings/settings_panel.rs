@@ -34,9 +34,8 @@ pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element
     let can_tune_sensors = has_events && device.events_connected;
     let tunable_sensors = family.filter(|_| can_tune_sensors);
 
-    // All hooks must be called unconditionally before any early returns.
+    // Hooks must all run, in the same order, before any early return.
     let form = use_settings_form();
-    // Tracks the open/closed state of the Device Settings section.
     let mut is_open = use_signal(|| false);
 
     // Serialize all form operations so a queued reload cannot race a save or
@@ -87,7 +86,6 @@ pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element
         load_co.send(SettingsOperation::Write(persist));
     });
 
-    // Guards applied after all hooks have been called.
     if !should_render {
         return rsx! {};
     }

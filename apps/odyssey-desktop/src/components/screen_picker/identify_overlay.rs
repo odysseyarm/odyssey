@@ -9,8 +9,6 @@ use super::monitor_layout::{MonitorInfo, monitor_key};
 /// How long the numbered overlay stays on each monitor.
 pub(super) const IDENTIFY_DURATION: Duration = Duration::from_millis(1800);
 
-/* -------------------------------- Identify -------------------------------- */
-
 /// Puts a numbered overlay on every physical monitor for a moment. The numbers
 /// match the ones on the picker's tiles because both follow the OS's order.
 pub(super) fn identify_monitors(window: &DesktopContext) {

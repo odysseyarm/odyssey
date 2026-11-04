@@ -7,8 +7,8 @@ use parking_lot::Mutex;
 
 use super::update_state::FirmwareUpdateState;
 
-/// Global state manager for firmware updates
-/// This is shared between tokio tasks and Dioxus components
+/// Firmware update state per device, shared between the tokio update tasks
+/// and the Dioxus components that poll it.
 #[derive(Clone)]
 pub(crate) struct FirmwareUpdateManager {
     states: Arc<Mutex<HashMap<[u8; 6], FirmwareUpdateState>>>,
@@ -17,7 +17,6 @@ pub(crate) struct FirmwareUpdateManager {
 
 impl PartialEq for FirmwareUpdateManager {
     fn eq(&self, other: &Self) -> bool {
-        // Compare by Arc pointer - same manager instance
         Arc::ptr_eq(&self.states, &other.states)
     }
 }

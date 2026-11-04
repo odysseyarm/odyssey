@@ -61,13 +61,13 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
         && device.capabilities.contains(DeviceCapabilities::CONTROL);
 
     let mut status = use_signal(OpStatus::default);
-    // user_pending_usb tracks the mode the user explicitly requested (None = no override).
-    // It is cleared when the device prop reflects the new mode (i.e. after reboot).
+    // The mode the user asked for, `None` when there is no override. Cleared once
+    // the device prop shows that mode, which happens after the reboot.
     let mut user_pending_usb = use_signal(|| Option::<bool>::None);
     let switching = use_signal(|| false);
 
-    // Derive the displayed mode: prefer the user override while waiting for reboot,
-    // otherwise use the actual device state from the prop (updates on every render).
+    // The displayed mode prefers the user's request while the reboot is pending,
+    // and otherwise follows the device prop.
     let device_is_usb =
         device.events_transport == odyssey_hub_common::device::EventsTransport::Wired;
     // Observe both the prop and pending request without spawning signal writes

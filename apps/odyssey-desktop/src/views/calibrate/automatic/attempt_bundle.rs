@@ -15,7 +15,6 @@ use std::path::Path;
 use image::ImageFormat;
 use odyssey_autocalib::session::AttemptFrames;
 
-/// What goes into a bundle.
 pub(super) struct Bundle<'a> {
     pub summary: &'a str,
     /// `None` when no camera was open, e.g. when it would not start.
@@ -99,7 +98,6 @@ where
     Ok(bytes)
 }
 
-/// Whether a log line's source is part of calibrating.
 fn is_calibration(line: &str) -> bool {
     line.contains("odyssey_autocalib") || line.contains("views::calibrate")
 }
