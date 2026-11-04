@@ -1,3 +1,7 @@
+#[expect(
+    clippy::large_enum_variant,
+    reason = "wraps DeviceEvent, whose kind enum is large; boxing would change every constructor and pattern of this public enum in the hub server and the desktop app"
+)]
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -15,6 +19,10 @@ pub enum Event {
 #[derive(Clone, Debug)]
 pub struct DeviceEvent(pub crate::device::Device, pub DeviceEventKind);
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the packet variant is the large one; boxing it would change every constructor and pattern of this public enum in the hub server and the desktop app"
+)]
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub enum DeviceEventKind {

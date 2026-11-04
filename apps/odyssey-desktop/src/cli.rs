@@ -91,6 +91,73 @@ where
     }
 }
 
+fn parse_monitor(value: &str) -> Result<usize, CliError> {
+    match value.parse::<usize>() {
+        Ok(n) if n >= 1 => Ok(n),
+        _ => err(format!(
+            "--monitor must be a display number starting at 1, got '{value}'"
+        )),
+    }
+}
+
+fn parse_screen_id(value: &str) -> Result<u8, CliError> {
+    match value.parse::<u8>() {
+        Ok(n) if n <= odyssey_common::MAX_SCREEN_ID => Ok(n),
+        _ => err(format!(
+            "--screen-id must be between 0 and {}, got '{value}'",
+            odyssey_common::MAX_SCREEN_ID
+        )),
+    }
+}
+
+fn parse_kind(value: &str) -> Result<DisplayKind, CliError> {
+    match value {
+        "flat" => Ok(DisplayKind::Flat),
+        "projector" => Ok(DisplayKind::Projector),
+        _ => err(format!(
+            "--kind must be 'flat' or 'projector', got '{value}'"
+        )),
+    }
+}
+
+fn parse_demo_overscan(value: &str) -> Result<f64, CliError> {
+    match value.parse::<f64>() {
+        Ok(percent) if (0.0..=DEMO_OVERSCAN_MAX_PERCENT).contains(&percent) => Ok(percent),
+        _ => err(format!(
+            "--demo-overscan must be a percentage between 0 and {DEMO_OVERSCAN_MAX_PERCENT}, got '{value}'"
+        )),
+    }
+}
+
+fn parse_camera(value: String) -> Result<String, CliError> {
+    if value.is_empty() {
+        return err("--camera needs a camera id or serial number");
+    }
+    Ok(value)
+}
+
+fn parse_diagonal(value: &str) -> Result<f64, CliError> {
+    match value.parse::<f64>() {
+        Ok(inches) if DIAGONAL_RANGE_IN.contains(&inches) => Ok(inches),
+        _ => err(format!(
+            "--diagonal must be between {} and {} inches, got '{value}'",
+            DIAGONAL_RANGE_IN.start(),
+            DIAGONAL_RANGE_IN.end()
+        )),
+    }
+}
+
+fn parse_rgb_exposure(value: &str) -> Result<u32, CliError> {
+    match value.parse::<u32>() {
+        Ok(us) if COLOR_EXPOSURE_RANGE_US.contains(&us) => Ok(us),
+        _ => err(format!(
+            "--rgb-exposure must be between {} and {} microseconds, got '{value}'",
+            COLOR_EXPOSURE_RANGE_US.start(),
+            COLOR_EXPOSURE_RANGE_US.end()
+        )),
+    }
+}
+
 fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, CliError> {
     let mut out = CalibrateArgs::default();
     while let Some(arg) = args.next() {
@@ -115,84 +182,16 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                 }
                 out.demo = true;
             }
-            "--monitor" => {
-                let v = value("--monitor")?;
-                match v.parse::<usize>() {
-                    Ok(n) if n >= 1 => out.monitor = Some(n),
-                    _ => {
-                        return err(format!(
-                            "--monitor must be a display number starting at 1, got '{v}'"
-                        ));
-                    }
-                }
-            }
-            "--screen-id" => {
-                let v = value("--screen-id")?;
-                match v.parse::<u8>() {
-                    Ok(n) if n <= odyssey_common::MAX_SCREEN_ID => out.screen_id = Some(n),
-                    _ => {
-                        return err(format!(
-                            "--screen-id must be between 0 and {}, got '{v}'",
-                            odyssey_common::MAX_SCREEN_ID
-                        ));
-                    }
-                }
-            }
-            "--kind" => {
-                let v = value("--kind")?;
-                out.kind = Some(match v.as_str() {
-                    "flat" => DisplayKind::Flat,
-                    "projector" => DisplayKind::Projector,
-                    _ => return err(format!("--kind must be 'flat' or 'projector', got '{v}'")),
-                });
-            }
+            "--monitor" => out.monitor = Some(parse_monitor(&value("--monitor")?)?),
+            "--screen-id" => out.screen_id = Some(parse_screen_id(&value("--screen-id")?)?),
+            "--kind" => out.kind = Some(parse_kind(&value("--kind")?)?),
             "--demo-overscan" => {
-                let v = value("--demo-overscan")?;
-                match v.parse::<f64>() {
-                    Ok(p) if (0.0..=DEMO_OVERSCAN_MAX_PERCENT).contains(&p) => {
-                        out.demo_overscan_percent = Some(p);
-                    }
-                    _ => {
-                        return err(format!(
-                            "--demo-overscan must be a percentage between 0 and {DEMO_OVERSCAN_MAX_PERCENT}, got '{v}'"
-                        ));
-                    }
-                }
+                out.demo_overscan_percent = Some(parse_demo_overscan(&value("--demo-overscan")?)?);
             }
-            "--camera" => {
-                let v = value("--camera")?;
-                if v.is_empty() {
-                    return err("--camera needs a camera id or serial number");
-                }
-                out.camera = Some(v);
-            }
-            "--diagonal" => {
-                let v = value("--diagonal")?;
-                match v.parse::<f64>() {
-                    Ok(d) if DIAGONAL_RANGE_IN.contains(&d) => out.diagonal_in = Some(d),
-                    _ => {
-                        return err(format!(
-                            "--diagonal must be between {} and {} inches, got '{v}'",
-                            DIAGONAL_RANGE_IN.start(),
-                            DIAGONAL_RANGE_IN.end()
-                        ));
-                    }
-                }
-            }
+            "--camera" => out.camera = Some(parse_camera(value("--camera")?)?),
+            "--diagonal" => out.diagonal_in = Some(parse_diagonal(&value("--diagonal")?)?),
             "--rgb-exposure" => {
-                let v = value("--rgb-exposure")?;
-                match v.parse::<u32>() {
-                    Ok(us) if COLOR_EXPOSURE_RANGE_US.contains(&us) => {
-                        out.rgb_exposure_us = Some(us);
-                    }
-                    _ => {
-                        return err(format!(
-                            "--rgb-exposure must be between {} and {} microseconds, got '{v}'",
-                            COLOR_EXPOSURE_RANGE_US.start(),
-                            COLOR_EXPOSURE_RANGE_US.end()
-                        ));
-                    }
-                }
+                out.rgb_exposure_us = Some(parse_rgb_exposure(&value("--rgb-exposure")?)?);
             }
             other => return err(format!("unknown option '{other}' for 'calibrate'")),
         }

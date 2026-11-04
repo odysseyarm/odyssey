@@ -11,6 +11,23 @@ use rand::seq::index::sample;
 
 use crate::camera::{Extrinsics, Intrinsics};
 
+/// Camera-frame depth (meters) at or below which a point counts as behind the
+/// image plane and has no pixel.
+const MIN_PROJECTION_DEPTH_M: f64 = 1e-9;
+
+/// A ray whose direction has a dot product with the plane normal below this
+/// is parallel to the plane and never meets it.
+const PARALLEL_EPSILON: f64 = 1e-9;
+
+/// A point set whose spread (a variance or a mean distance, in the points'
+/// own units) is below this is a single point or a line, which fixes no plane
+/// or homography.
+const DEGENERATE_EPSILON: f64 = 1e-12;
+
+/// A homogeneous coordinate or overall homography scale below this magnitude
+/// counts as zero: the point is at infinity.
+pub(crate) const HOMOGENEOUS_EPSILON: f64 = 1e-12;
+
 /// Applies the Brown-Conrady model to normalized image coordinates.
 fn distort_normalized(intr: &Intrinsics, n: Vector2<f64>) -> Vector2<f64> {
     let [k1, k2, k3, k4, k5, k6] = intr.k;
@@ -30,26 +47,31 @@ fn normalized_to_pixel(intr: &Intrinsics, n: Vector2<f64>) -> Point2<f64> {
     Point2::new(n.x * intr.fx + intr.cx, n.y * intr.fy + intr.cy)
 }
 
+fn pixel_to_normalized(intr: &Intrinsics, pixel: Point2<f64>) -> Vector2<f64> {
+    Vector2::new((pixel.x - intr.cx) / intr.fx, (pixel.y - intr.cy) / intr.fy)
+}
+
+/// Normalized image coordinates `(x / z, y / z)` of a camera-frame point, or
+/// `None` at or behind the image plane.
+fn normalized_coordinates(p: &Vector3<f64>) -> Option<Vector2<f64>> {
+    if p.z <= MIN_PROJECTION_DEPTH_M {
+        return None;
+    }
+    Some(Vector2::new(p.x / p.z, p.y / p.z))
+}
+
 /// Projects a camera-frame point to a pixel, including lens distortion.
 /// `None` for points at or behind the image plane.
 pub fn project(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
-    if p.z <= 1e-9 {
-        return None;
-    }
-    let n = Vector2::new(p.x / p.z, p.y / p.z);
+    let n = normalized_coordinates(p)?;
     Some(normalized_to_pixel(intr, distort_normalized(intr, n)))
 }
 
 /// Projects a camera-frame point with the pinhole model only. This is the
 /// pixel grid that [`undistort_pixel`] produces.
 pub fn project_pinhole(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
-    if p.z <= 1e-9 {
-        return None;
-    }
-    Some(Point2::new(
-        p.x / p.z * intr.fx + intr.cx,
-        p.y / p.z * intr.fy + intr.cy,
-    ))
+    let n = normalized_coordinates(p)?;
+    Some(normalized_to_pixel(intr, n))
 }
 
 const UNDISTORT_ITERATIONS: usize = 40;
@@ -64,11 +86,11 @@ const UNDISTORT_ACCEPT_PX: f64 = 0.5;
 pub fn undistort(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector2<f64>> {
     let [k1, k2, k3, k4, k5, k6] = intr.k;
     let [p1, p2] = intr.p;
-    let xd = (pixel.x - intr.cx) / intr.fx;
-    let yd = (pixel.y - intr.cy) / intr.fy;
+    let distorted = pixel_to_normalized(intr, pixel);
+    let (xd, yd) = (distorted.x, distorted.y);
 
     let (mut x, mut y) = (xd, yd);
-    let mut best = (Vector2::new(xd, yd), f64::INFINITY);
+    let mut best = (distorted, f64::INFINITY);
     for _ in 0..UNDISTORT_ITERATIONS {
         let r2 = x * x + y * y;
         let r4 = r2 * r2;
@@ -97,12 +119,12 @@ pub fn undistort(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector2<f64>> 
 
 /// The pinhole pixel that sees the same ray as the distorted `pixel`.
 pub fn undistort_pixel(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Point2<f64>> {
-    undistort(intr, pixel).map(|n| Point2::new(n.x * intr.fx + intr.cx, n.y * intr.fy + intr.cy))
+    undistort(intr, pixel).map(|n| normalized_to_pixel(intr, n))
 }
 
 /// The inverse of [`undistort_pixel`]: where the lens puts a pinhole pixel.
 pub fn distort_pixel(intr: &Intrinsics, pixel: Point2<f64>) -> Point2<f64> {
-    let n = Vector2::new((pixel.x - intr.cx) / intr.fx, (pixel.y - intr.cy) / intr.fy);
+    let n = pixel_to_normalized(intr, pixel);
     normalized_to_pixel(intr, distort_normalized(intr, n))
 }
 
@@ -110,6 +132,13 @@ pub fn distort_pixel(intr: &Intrinsics, pixel: Point2<f64>) -> Point2<f64> {
 /// frame. Scaling it by a depth gives the point at that z-depth.
 pub fn pixel_ray(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector3<f64>> {
     undistort(intr, pixel).map(|n| Vector3::new(n.x, n.y, 1.0))
+}
+
+/// Direction `(x, y, 1)` of the ray through `pixel` under the pinhole model,
+/// which is how undistorted pixels map to rays.
+pub(crate) fn pinhole_ray(intr: &Intrinsics, pixel: Point2<f64>) -> Vector3<f64> {
+    let n = pixel_to_normalized(intr, pixel);
+    Vector3::new(n.x, n.y, 1.0)
 }
 
 /// A plane through `point` with unit `normal`.
@@ -132,20 +161,29 @@ impl Plane {
         self.normal.dot(&(p - self.point))
     }
 
+    /// The `t > 0` at which `origin + t * direction` meets the plane. Closed
+    /// form: the depth along a ray is linear in `t`, so no search is needed.
+    pub(crate) fn ray_parameter(
+        &self,
+        origin: &Vector3<f64>,
+        direction: &Vector3<f64>,
+    ) -> Option<f64> {
+        let denom = self.normal.dot(direction);
+        if denom.abs() < PARALLEL_EPSILON {
+            return None;
+        }
+        let t = self.normal.dot(&(self.point - origin)) / denom;
+        (t > 0.0).then_some(t)
+    }
+
     /// Where the ray `origin + t * direction` meets the plane, for `t > 0`.
-    /// Closed form: the depth along a ray is linear in `t`, so no search is
-    /// needed.
     pub fn intersect_ray(
         &self,
         origin: &Vector3<f64>,
         direction: &Vector3<f64>,
     ) -> Option<Vector3<f64>> {
-        let denom = self.normal.dot(direction);
-        if denom.abs() < 1e-9 {
-            return None;
-        }
-        let t = self.normal.dot(&(self.point - origin)) / denom;
-        (t > 0.0).then(|| origin + direction * t)
+        self.ray_parameter(origin, direction)
+            .map(|t| origin + direction * t)
     }
 
     /// The same plane expressed in another frame.
@@ -175,7 +213,7 @@ pub fn fit_plane(points: &[Vector3<f64>]) -> Option<Plane> {
     let mut order = [0usize, 1, 2];
     order.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
     let (smallest, middle) = (eig.eigenvalues[order[0]], eig.eigenvalues[order[1]]);
-    if middle.is_nan() || middle <= 1e-12 || !smallest.is_finite() {
+    if middle.is_nan() || middle <= DEGENERATE_EPSILON || !smallest.is_finite() {
         return None;
     }
     let normal = eig.eigenvectors.column(order[0]).into_owned();
@@ -224,24 +262,107 @@ pub struct PlaneFit {
     pub inliers: Vec<usize>,
 }
 
-fn inlier_stats(plane: &Plane, points: &[Vector3<f64>], threshold: f64) -> (Vec<usize>, f64, f64) {
-    let mut inliers = Vec::new();
-    let (mut sum_sq, mut max) = (0.0, 0.0f64);
+/// The points within a threshold of a plane, and how closely they hug it.
+struct InlierStats {
+    indices: Vec<usize>,
+    rmse: f64,
+    max_error: f64,
+}
+
+fn inlier_stats(plane: &Plane, points: &[Vector3<f64>], threshold: f64) -> InlierStats {
+    let mut indices = Vec::new();
+    let (mut sum_sq, mut max_error) = (0.0, 0.0f64);
     for (i, p) in points.iter().enumerate() {
         let e = plane.signed_distance(p).abs();
         if e <= threshold {
-            inliers.push(i);
+            indices.push(i);
             sum_sq += e * e;
-            max = max.max(e);
+            max_error = max_error.max(e);
         }
     }
-    let rmse = if inliers.is_empty() {
+    let rmse = if indices.is_empty() {
         0.0
     } else {
-        (sum_sq / inliers.len() as f64).sqrt()
+        (sum_sq / indices.len() as f64).sqrt()
     };
-    (inliers, rmse, max)
+    InlierStats {
+        indices,
+        rmse,
+        max_error,
+    }
 }
+
+/// Tolerance below which an inlier share of `1` counts as "every sample is
+/// outlier-free", ending the trial search at once.
+const ALL_INLIERS_TOLERANCE: f64 = 1e-12;
+
+/// How many RANSAC trials are needed to have drawn at least one outlier-free
+/// sample of `sample_size` with probability `confidence`, when a share
+/// `inlier_share` of the data supports the best hypothesis so far.
+/// `trial` is the number of trials done, `max_trials` the cap.
+fn trials_for_confidence(
+    inlier_share: f64,
+    sample_size: usize,
+    confidence: f64,
+    trial: usize,
+    max_trials: usize,
+) -> usize {
+    let all_good = inlier_share.powi(sample_size as i32);
+    if all_good >= 1.0 - ALL_INLIERS_TOLERANCE {
+        trial
+    } else if all_good <= 0.0 {
+        max_trials
+    } else {
+        ((1.0 - confidence).ln() / (-all_good).ln_1p())
+            .ceil()
+            .max(1.0) as usize
+    }
+}
+
+/// Plane hypotheses from random samples of `points`, scored by how many of
+/// `score_set` they support. Returns the best one, which is still noisy.
+fn best_plane_hypothesis(
+    points: &[Vector3<f64>],
+    score_set: &[Vector3<f64>],
+    params: &RansacParams,
+    rng: &mut StdRng,
+) -> Option<Plane> {
+    let mut best: Option<(Plane, usize)> = None;
+    let mut trials_needed = params.max_trials;
+    let mut trial = 0;
+    let mut sample_points = Vec::with_capacity(params.sample_size);
+    while trial < trials_needed.min(params.max_trials) {
+        trial += 1;
+        sample_points.clear();
+        sample_points.extend(
+            sample(rng, points.len(), params.sample_size)
+                .into_iter()
+                .map(|i| points[i]),
+        );
+        let Some(plane) = fit_plane(&sample_points) else {
+            continue;
+        };
+        let support = score_set
+            .iter()
+            .filter(|p| plane.signed_distance(p).abs() <= params.threshold)
+            .count();
+        if best.as_ref().is_none_or(|(_, s)| support > *s) {
+            best = Some((plane, support));
+            trials_needed = trials_for_confidence(
+                support as f64 / score_set.len() as f64,
+                params.sample_size,
+                params.confidence,
+                trial,
+                params.max_trials,
+            );
+        }
+    }
+    best.map(|(plane, _)| plane)
+}
+
+/// Refit rounds of the winning plane on its own inliers. Two let the inlier
+/// set settle on the refined plane instead of the noisy sample hypothesis.
+const PLANE_REFIT_ROUNDS: usize = 2;
 
 /// Robust plane fit.
 ///
@@ -266,50 +387,17 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
         points.to_vec()
     };
 
-    let mut best: Option<(Plane, usize)> = None;
-    let mut trials_needed = params.max_trials;
-    let mut trial = 0;
-    let mut sample_points = Vec::with_capacity(params.sample_size);
-    while trial < trials_needed.min(params.max_trials) {
-        trial += 1;
-        sample_points.clear();
-        sample_points.extend(
-            sample(&mut rng, n, params.sample_size)
-                .into_iter()
-                .map(|i| points[i]),
-        );
-        let Some(plane) = fit_plane(&sample_points) else {
-            continue;
-        };
-        let support = score_set
-            .iter()
-            .filter(|p| plane.signed_distance(p).abs() <= params.threshold)
-            .count();
-        if best.as_ref().is_none_or(|(_, s)| support > *s) {
-            best = Some((plane, support));
-            let w = support as f64 / score_set.len() as f64;
-            let all_good = w.powi(params.sample_size as i32);
-            trials_needed = if all_good >= 1.0 - 1e-12 {
-                trial
-            } else if all_good <= 0.0 {
-                params.max_trials
-            } else {
-                ((1.0 - params.confidence).ln() / (-all_good).ln_1p())
-                    .ceil()
-                    .max(1.0) as usize
-            };
-        }
-    }
-
-    let (mut plane, _) = best?;
-    // Two refit rounds let the inlier set settle on the refined plane instead
-    // of the noisy sample hypothesis.
-    for _ in 0..2 {
-        let (inliers, _, _) = inlier_stats(&plane, points, params.threshold);
+    let mut plane = best_plane_hypothesis(points, &score_set, params, &mut rng)?;
+    for _ in 0..PLANE_REFIT_ROUNDS {
+        let inliers = inlier_stats(&plane, points, params.threshold).indices;
         let inlier_points: Vec<_> = inliers.iter().map(|&i| points[i]).collect();
         plane = fit_plane(&inlier_points)?;
     }
-    let (inliers, rmse, max_error) = inlier_stats(&plane, points, params.threshold);
+    let InlierStats {
+        indices: inliers,
+        rmse,
+        max_error,
+    } = inlier_stats(&plane, points, params.threshold);
     if inliers.len() < 3 {
         return None;
     }
@@ -328,7 +416,7 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
 /// Applies a 3x3 homography to a point.
 pub fn apply_homography(h: &Matrix3<f64>, p: Point2<f64>) -> Option<Point2<f64>> {
     let v = h * Vector3::new(p.x, p.y, 1.0);
-    (v.z.abs() > 1e-12).then(|| Point2::new(v.x / v.z, v.y / v.z))
+    (v.z.abs() > HOMOGENEOUS_EPSILON).then(|| Point2::new(v.x / v.z, v.y / v.z))
 }
 
 /// Hartley normalization: translates the centroid to the origin and scales the
@@ -336,7 +424,7 @@ pub fn apply_homography(h: &Matrix3<f64>, p: Point2<f64>) -> Option<Point2<f64>>
 fn normalization(points: &[Point2<f64>]) -> Option<Matrix3<f64>> {
     let c = points.iter().map(|p| p.coords).sum::<Vector2<f64>>() / points.len() as f64;
     let mean_dist = points.iter().map(|p| (p.coords - c).norm()).sum::<f64>() / points.len() as f64;
-    if mean_dist.is_nan() || mean_dist <= 1e-12 {
+    if mean_dist.is_nan() || mean_dist <= DEGENERATE_EPSILON {
         return None;
     }
     let s = std::f64::consts::SQRT_2 / mean_dist;
@@ -353,33 +441,48 @@ fn normalization(points: &[Point2<f64>]) -> Option<Matrix3<f64>> {
     ))
 }
 
+/// Fewest point pairs that determine a homography.
+const MIN_HOMOGRAPHY_PAIRS: usize = 4;
+
+/// The direct-linear-transform system `A h = 0` for the normalized pairs, two
+/// rows per pair.
+///
+/// It has 2n rows but nalgebra's thin SVD only yields as many right singular
+/// vectors as rows, so it is padded with zero rows to nine to keep the null
+/// vector.
+fn dlt_system(
+    src: &[Point2<f64>],
+    dst: &[Point2<f64>],
+    src_normalization: &Matrix3<f64>,
+    dst_normalization: &Matrix3<f64>,
+) -> DMatrix<f64> {
+    let rows = (2 * src.len()).max(9);
+    let mut a = DMatrix::<f64>::zeros(rows, 9);
+    for (i, (s, d)) in src.iter().zip(dst).enumerate() {
+        let s = src_normalization * Vector3::new(s.x, s.y, 1.0);
+        let d = dst_normalization * Vector3::new(d.x, d.y, 1.0);
+        let r0 = [-s.x, -s.y, -1.0, 0.0, 0.0, 0.0, d.x * s.x, d.x * s.y, d.x];
+        let r1 = [0.0, 0.0, 0.0, -s.x, -s.y, -1.0, d.y * s.x, d.y * s.y, d.y];
+        for (j, (&first, &second)) in r0.iter().zip(&r1).enumerate() {
+            a[(2 * i, j)] = first;
+            a[(2 * i + 1, j)] = second;
+        }
+    }
+    a
+}
+
 /// Normalized direct linear transform: the homography `H` with `dst ~ H src`
 /// that minimizes the algebraic error over all pairs. Needs at least four pairs
 /// with no three collinear.
 pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix3<f64>> {
     assert_eq!(src.len(), dst.len());
-    let n = src.len();
-    if n < 4 {
+    if src.len() < MIN_HOMOGRAPHY_PAIRS {
         return None;
     }
     let ts = normalization(src)?;
     let td = normalization(dst)?;
 
-    // The system has 2n rows but nalgebra's thin SVD only yields as many right
-    // singular vectors as rows, so pad to nine rows to keep the null vector.
-    let rows = (2 * n).max(9);
-    let mut a = DMatrix::<f64>::zeros(rows, 9);
-    for (i, (s, d)) in src.iter().zip(dst).enumerate() {
-        let s = ts * Vector3::new(s.x, s.y, 1.0);
-        let d = td * Vector3::new(d.x, d.y, 1.0);
-        let r0 = [-s.x, -s.y, -1.0, 0.0, 0.0, 0.0, d.x * s.x, d.x * s.y, d.x];
-        let r1 = [0.0, 0.0, 0.0, -s.x, -s.y, -1.0, d.y * s.x, d.y * s.y, d.y];
-        for j in 0..9 {
-            a[(2 * i, j)] = r0[j];
-            a[(2 * i + 1, j)] = r1[j];
-        }
-    }
-    let svd = a.svd(false, true);
+    let svd = dlt_system(src, dst, &ts, &td).svd(false, true);
     let v_t = svd.v_t?;
     let (min_idx, _) = svd
         .singular_values
@@ -392,7 +495,7 @@ pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix
     if !h.iter().all(|v| v.is_finite()) {
         return None;
     }
-    let scale = if h[(2, 2)].abs() > 1e-12 {
+    let scale = if h[(2, 2)].abs() > HOMOGENEOUS_EPSILON {
         h[(2, 2)]
     } else {
         h.norm()
@@ -415,16 +518,107 @@ fn transfer_errors(h: &Matrix3<f64>, src: &[Point2<f64>], dst: &[Point2<f64>]) -
         .collect()
 }
 
+/// Indices of the errors that are at most `threshold`.
+fn indices_within(errors: &[f64], threshold: f64) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for (i, &error) in errors.iter().enumerate() {
+        if error <= threshold {
+            indices.push(i);
+        }
+    }
+    indices
+}
+
+/// Smallest sine of the angle at the first vertex of any three of four points
+/// for them to count as in general position.
+const MIN_TRIANGLE_SINE: f64 = 1e-3;
+
+/// Whether no three of the four points are (nearly) collinear.
 fn non_degenerate(points: &[Point2<f64>; 4]) -> bool {
     for skip in 0..4 {
         let t: Vec<_> = (0..4).filter(|&i| i != skip).map(|i| points[i]).collect();
         let area2 = (t[1] - t[0]).perp(&(t[2] - t[0])).abs();
         let scale = (t[1] - t[0]).norm() * (t[2] - t[0]).norm();
-        if area2 < 1e-3 * scale.max(1e-12) {
+        if area2 < MIN_TRIANGLE_SINE * scale.max(DEGENERATE_EPSILON) {
             return false;
         }
     }
     true
+}
+
+/// Probability, in [`ransac_homography`], of having drawn one outlier-free
+/// sample before stopping.
+const HOMOGRAPHY_CONFIDENCE: f64 = 0.999;
+
+/// Refits of the winning homography on its own inliers, before the final fit.
+const HOMOGRAPHY_REFIT_ROUNDS: usize = 3;
+
+/// Hypotheses from four random pairs; returns the inliers (by transfer error)
+/// of the one with the most support, ties broken by the smaller error sum.
+/// `None` when four pairs are all there is and they are degenerate.
+fn best_homography_inliers(
+    src: &[Point2<f64>],
+    dst: &[Point2<f64>],
+    threshold: f64,
+    max_trials: usize,
+    seed: u64,
+) -> Option<Vec<usize>> {
+    let n = src.len();
+    // With exactly four pairs there is one hypothesis and nothing to sample.
+    let exact = n == MIN_HOMOGRAPHY_PAIRS;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut best: Option<(usize, f64)> = None;
+    let mut best_inliers: Vec<usize> = Vec::new();
+    let mut trials_needed = max_trials;
+    let mut trial = 0;
+    while trial < trials_needed.min(max_trials) {
+        trial += 1;
+        let idx: [usize; 4] = if exact {
+            [0, 1, 2, 3]
+        } else {
+            let picked = sample(&mut rng, n, MIN_HOMOGRAPHY_PAIRS);
+            [
+                picked.index(0),
+                picked.index(1),
+                picked.index(2),
+                picked.index(3),
+            ]
+        };
+        let s = idx.map(|i| src[i]);
+        let d = idx.map(|i| dst[i]);
+        if !non_degenerate(&s) || !non_degenerate(&d) {
+            if exact {
+                return None;
+            }
+            continue;
+        }
+        let Some(h) = fit_homography(&s, &d) else {
+            continue;
+        };
+        let errors = transfer_errors(&h, src, dst);
+        let (mut count, mut sum) = (0usize, 0.0);
+        for &error in errors.iter().filter(|&&e| e <= threshold) {
+            count += 1;
+            sum += error;
+        }
+        if best.is_none_or(|(best_count, best_sum)| {
+            count > best_count || (count == best_count && sum < best_sum)
+        }) {
+            best = Some((count, sum));
+            best_inliers = indices_within(&errors, threshold);
+            trials_needed = trials_for_confidence(
+                count as f64 / n as f64,
+                MIN_HOMOGRAPHY_PAIRS,
+                HOMOGRAPHY_CONFIDENCE,
+                trial,
+                max_trials,
+            );
+        }
+        if exact {
+            break;
+        }
+    }
+    Some(best_inliers)
 }
 
 /// RANSAC around [`fit_homography`]: hypotheses come from four random pairs, a
@@ -437,83 +631,24 @@ pub fn ransac_homography(
     max_trials: usize,
     seed: u64,
 ) -> Option<HomographyFit> {
-    let n = src.len();
-    if n < 4 {
+    if src.len() < MIN_HOMOGRAPHY_PAIRS {
         return None;
     }
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut best: Option<(usize, f64)> = None;
-    let mut best_inliers: Vec<usize> = Vec::new();
-    let mut trials_needed = max_trials;
-    let mut trial = 0;
-    while trial < trials_needed.min(max_trials) {
-        trial += 1;
-        let idx = if n == 4 {
-            vec![0, 1, 2, 3]
-        } else {
-            sample(&mut rng, n, 4).into_vec()
-        };
-        let s = [src[idx[0]], src[idx[1]], src[idx[2]], src[idx[3]]];
-        let d = [dst[idx[0]], dst[idx[1]], dst[idx[2]], dst[idx[3]]];
-        if !non_degenerate(&s) || !non_degenerate(&d) {
-            if n == 4 {
-                return None;
-            }
-            continue;
-        }
-        let Some(h) = fit_homography(&s, &d) else {
-            continue;
-        };
-        let errors = transfer_errors(&h, src, dst);
-        let (count, sum) = errors
-            .iter()
-            .filter(|e| **e <= threshold)
-            .fold((0usize, 0.0), |(c, s), e| (c + 1, s + e));
-        if best.is_none_or(|(bc, bs)| count > bc || (count == bc && sum < bs)) {
-            best = Some((count, sum));
-            best_inliers = errors
-                .iter()
-                .enumerate()
-                .filter(|(_, e)| **e <= threshold)
-                .map(|(i, _)| i)
-                .collect();
-            let w = count as f64 / n as f64;
-            let all_good = w.powi(4);
-            trials_needed = if all_good >= 1.0 - 1e-12 {
-                trial
-            } else if all_good <= 0.0 {
-                max_trials
-            } else {
-                ((1.0 - 0.999f64).ln() / (-all_good).ln_1p())
-                    .ceil()
-                    .max(1.0) as usize
-            };
-        }
-        if n == 4 {
-            break;
-        }
-    }
+    let mut inliers = best_homography_inliers(src, dst, threshold, max_trials, seed)?;
 
     let refit = |ids: &[usize]| {
         let s: Vec<_> = ids.iter().map(|&i| src[i]).collect();
         let d: Vec<_> = ids.iter().map(|&i| dst[i]).collect();
         fit_homography(&s, &d)
     };
-    let mut inliers = best_inliers;
-    for _ in 0..3 {
-        if inliers.len() < 4 {
+    for _ in 0..HOMOGRAPHY_REFIT_ROUNDS {
+        if inliers.len() < MIN_HOMOGRAPHY_PAIRS {
             return None;
         }
         let h = refit(&inliers)?;
-        let errors = transfer_errors(&h, src, dst);
-        inliers = errors
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| **e <= threshold)
-            .map(|(i, _)| i)
-            .collect();
+        inliers = indices_within(&transfer_errors(&h, src, dst), threshold);
     }
-    if inliers.len() < 4 {
+    if inliers.len() < MIN_HOMOGRAPHY_PAIRS {
         return None;
     }
     let h = refit(&inliers)?;
@@ -527,167 +662,4 @@ pub fn ransac_homography(
 }
 
 #[cfg(test)]
-mod tests {
-    use rand::Rng as _;
-
-    use super::*;
-
-    fn intrinsics() -> Intrinsics {
-        Intrinsics {
-            width: 1280,
-            height: 720,
-            fx: 900.0,
-            fy: 905.0,
-            cx: 641.0,
-            cy: 358.0,
-            k: [-0.08, 0.02, -0.003, 0.0, 0.0, 0.0],
-            p: [0.0008, -0.0005],
-        }
-    }
-
-    #[test]
-    fn distortion_round_trips_across_the_image() {
-        let intr = intrinsics();
-        for &(u, v) in &[
-            (0.0, 0.0),
-            (1279.0, 719.0),
-            (640.0, 360.0),
-            (10.5, 700.2),
-            (1200.0, 30.0),
-        ] {
-            let pixel = Point2::new(u, v);
-            let ray = pixel_ray(&intr, pixel).unwrap();
-            let back = project(&intr, &(ray * 2.5)).unwrap();
-            assert!((back - pixel).norm() < 0.02, "{pixel:?} -> {back:?}");
-        }
-    }
-
-    #[test]
-    fn undistort_pixel_matches_pinhole_projection() {
-        let intr = intrinsics();
-        let p = Vector3::new(0.4, -0.2, 2.0);
-        let distorted = project(&intr, &p).unwrap();
-        let pinhole = project_pinhole(&intr, &p).unwrap();
-        let undistorted = undistort_pixel(&intr, distorted).unwrap();
-        assert!((undistorted - pinhole).norm() < 0.02);
-    }
-
-    #[test]
-    fn plane_fit_recovers_known_plane_with_outliers() {
-        let truth = Plane::new(Vector3::new(0.1, -0.05, 2.0), Vector3::new(0.2, -0.1, -1.0));
-        let mut rng = StdRng::seed_from_u64(7);
-        let u = truth.normal.cross(&Vector3::x()).normalize();
-        let v = truth.normal.cross(&u);
-        let mut points = Vec::new();
-        for _ in 0..4000 {
-            let (a, b): (f64, f64) = (rng.random_range(-0.6..0.6), rng.random_range(-0.4..0.4));
-            let noise: f64 = rng.random_range(-0.002..0.002);
-            points.push(truth.point + u * a + v * b + truth.normal * noise);
-        }
-        for _ in 0..200 {
-            points.push(Vector3::new(
-                rng.random_range(-1.0..1.0),
-                rng.random_range(-1.0..1.0),
-                rng.random_range(1.0..3.0),
-            ));
-        }
-        let fit = ransac_plane(&points, &RansacParams::default()).unwrap();
-        assert!(
-            fit.plane.normal.dot(&fit.plane.point) > 0.0,
-            "normal points away from the camera"
-        );
-        assert!(fit.plane.normal.dot(&truth.normal).abs() > 1.0 - 1e-5);
-        assert!(fit.plane.signed_distance(&truth.point).abs() < 5e-4);
-        assert!(fit.rmse < 0.0015, "rmse {}", fit.rmse);
-        assert!(fit.inliers.len() >= 4000 - 20);
-    }
-
-    #[test]
-    fn ray_plane_intersection_is_exact() {
-        let plane = Plane::new(Vector3::new(0.0, 0.0, 3.0), Vector3::new(0.0, 0.3, 1.0));
-        let dir = Vector3::new(0.12, -0.2, 1.0);
-        let hit = plane.intersect_ray(&Vector3::zeros(), &dir).unwrap();
-        assert!(plane.signed_distance(&hit).abs() < 1e-12);
-        assert!((hit.xy() / hit.z - dir.xy()).norm() < 1e-12);
-        assert!(
-            plane
-                .intersect_ray(&Vector3::zeros(), &Vector3::new(1.0, 0.0, 0.0))
-                .is_none()
-        );
-        assert!(
-            plane
-                .intersect_ray(&Vector3::zeros(), &Vector3::new(0.0, 0.0, -1.0))
-                .is_none()
-        );
-    }
-
-    fn truth_homography() -> Matrix3<f64> {
-        Matrix3::new(120.0, 14.0, 300.0, -9.0, 95.0, 120.0, 0.0004, 0.0002, 1.0)
-    }
-
-    #[test]
-    fn dlt_recovers_exact_homography() {
-        let h = truth_homography();
-        let src: Vec<_> = (0..6)
-            .flat_map(|i| (0..4).map(move |j| Point2::new(f64::from(i) * 0.2, f64::from(j) * 0.3)))
-            .collect();
-        let dst: Vec<_> = src
-            .iter()
-            .map(|p| apply_homography(&h, *p).unwrap())
-            .collect();
-        let fit = fit_homography(&src, &dst).unwrap();
-        for p in &src {
-            let a = apply_homography(&h, *p).unwrap();
-            let b = apply_homography(&fit, *p).unwrap();
-            assert!((a - b).norm() < 1e-8);
-        }
-    }
-
-    #[test]
-    fn dlt_with_four_points_matches_truth() {
-        let h = truth_homography();
-        let src = [
-            Point2::new(0.0, 0.0),
-            Point2::new(1.0, 0.0),
-            Point2::new(1.0, 1.0),
-            Point2::new(0.0, 1.0),
-        ];
-        let dst = src.map(|p| apply_homography(&h, p).unwrap());
-        let fit = fit_homography(&src, &dst).unwrap();
-        let probe = Point2::new(0.37, 0.61);
-        let a = apply_homography(&h, probe).unwrap();
-        let b = apply_homography(&fit, probe).unwrap();
-        assert!((a - b).norm() < 1e-8);
-    }
-
-    #[test]
-    fn ransac_homography_rejects_gross_outliers() {
-        let h = truth_homography();
-        let mut rng = StdRng::seed_from_u64(3);
-        let mut src = Vec::new();
-        let mut dst = Vec::new();
-        for i in 0..15 {
-            for j in 0..9 {
-                let p = Point2::new(f64::from(i) / 14.0, f64::from(j) / 8.0);
-                let mut q = apply_homography(&h, p).unwrap();
-                q += Vector2::new(rng.random_range(-0.1..0.1), rng.random_range(-0.1..0.1));
-                src.push(p);
-                dst.push(q);
-            }
-        }
-        let bad = [3usize, 17, 40, 41, 77, 100];
-        for &i in &bad {
-            dst[i] += Vector2::new(35.0, -22.0);
-        }
-        let fit = ransac_homography(&src, &dst, 1.0, 500, 11).unwrap();
-        for &i in &bad {
-            assert!(!fit.inliers.contains(&i), "outlier {i} accepted");
-        }
-        assert_eq!(fit.inliers.len(), src.len() - bad.len());
-        let probe = Point2::new(0.5, 0.5);
-        let err = (apply_homography(&fit.h, probe).unwrap() - apply_homography(&h, probe).unwrap())
-            .norm();
-        assert!(err < 0.2, "err {err}");
-        assert!(fit.rmse < 0.15);
-    }
-}
+mod tests;

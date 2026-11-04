@@ -72,10 +72,9 @@ pub(crate) fn parse_entered(text: &str, field: SizeField) -> Result<Option<Enter
         return Ok(None);
     }
     // Accept a decimal comma, which is how many keyboards' locales type it.
-    let value: f64 = text
-        .replace(',', ".")
-        .parse()
-        .map_err(|_| SizeError::NotANumber)?;
+    let Ok(value) = text.replace(',', ".").parse::<f64>() else {
+        return Err(SizeError::NotANumber);
+    };
     if !value.is_finite() {
         return Err(SizeError::NotANumber);
     }

@@ -2,7 +2,7 @@
 //! complex enum needs every variant field convertible, and the orphan rule
 //! blocks that for `heapless` types and `Result`.
 
-use pyo3::types::{PyAnyMethods, PyList, PyString, PyStringMethods};
+use pyo3::types::{PyAnyMethods as _, PyList, PyString, PyStringMethods as _};
 use pyo3::{Borrowed, Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python};
 
 use crate::{DeviceName, GeneralConfig, List};
@@ -28,7 +28,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for DeviceName {
                 "device name must be at most 32 bytes",
             ));
         }
-        Ok(DeviceName::from_str_lossy(&s))
+        Ok(Self::from_str_lossy(&s))
     }
 }
 
@@ -58,11 +58,11 @@ where
             let item = item
                 .extract::<T>()
                 .map_err(|e| -> PyErr { Into::<PyErr>::into(e) })?;
-            out.push(item).map_err(|_| {
+            out.push(item).map_err(|_rejected_item| {
                 pyo3::exceptions::PyValueError::new_err("too many items for this message")
             })?;
         }
-        Ok(List(out))
+        Ok(Self(out))
     }
 }
 
@@ -73,7 +73,7 @@ impl<'py> IntoPyObject<'py> for GeneralConfig {
     type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-        use pyo3::IntoPyObjectExt;
+        use pyo3::IntoPyObjectExt as _;
         crate::wire::GeneralConfig::from(self).into_bound_py_any(py)
     }
 }

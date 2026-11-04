@@ -10,7 +10,6 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-argmin = { workspace = true }
 odyssey-common = { path = "../odyssey-common", features = ["std"] }
 enumn = { workspace = true }
 nalgebra = "0.35"
@@ -24,12 +23,10 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", features = ["std", "serde-std", "minicbor"] }
 num-traits = { workspace = true }
-num-derive = { workspace = true }
 nusb = { workspace = true, features = ["tokio"] }
 postcard = { workspace = true, features = ["use-std"] }
 minicbor = { workspace = true }
 heapless = { workspace = true }
-futures = "0.3.31"
 rand = "0.8"
 parking_lot = { workspace = true }
 

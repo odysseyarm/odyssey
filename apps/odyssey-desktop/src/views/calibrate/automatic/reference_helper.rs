@@ -10,11 +10,10 @@ use dioxus::prelude::*;
 
 use super::kind::DisplayKind;
 use super::reference::{self, Agreement, CARD_STEP_PX, Method, Unit};
-use super::ui::{PRIMARY_BUTTON, SECONDARY_BUTTON};
+use super::ui::{AMBER_ALERT, LINK_BUTTON, PRIMARY_BUTTON, SECONDARY_BUTTON};
 use super::wizard::{Helper, Wizard};
 use crate::components::wizard::{Icon, IconView};
 
-const LINK: &str = "text-base font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:text-blue-300 dark:hover:text-blue-100";
 const SEGMENT_ON: &str = "bg-blue-600 text-white";
 const SEGMENT_OFF: &str = "bg-white text-gray-800 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700";
 
@@ -32,8 +31,8 @@ pub fn ReferenceHelper(wizard: Wizard) -> Element {
         if let Some(problem) = problem {
             div {
                 role: "alert",
-                class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
-                "{problem}"
+                class: AMBER_ALERT,
+                {problem}
             }
         }
     }
@@ -110,8 +109,8 @@ fn Prompt(wizard: Wizard) -> Element {
                 IconView { icon: Icon::Bulb, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
                 div {
                     class: "flex flex-col gap-1",
-                    p { class: "text-lg font-medium text-gray-900 dark:text-white", "{title}" }
-                    p { class: "text-base text-gray-600 dark:text-gray-300", "{detail}" }
+                    p { class: "text-lg font-medium text-gray-900 dark:text-white", {title} }
+                    p { class: "text-base text-gray-600 dark:text-gray-300", {detail} }
                 }
             }
             div {
@@ -164,7 +163,7 @@ fn Measured(wizard: Wizard) -> Element {
                     if let Some((text, warn)) = note {
                         p {
                             class: if warn { "text-base text-amber-800 dark:text-amber-200" } else { "text-base text-gray-600 dark:text-gray-300" },
-                            "{text}"
+                            {text}
                         }
                     }
                 }
@@ -172,13 +171,13 @@ fn Measured(wizard: Wizard) -> Element {
             div {
                 class: "flex flex-wrap gap-4",
                 button {
-                    class: LINK,
+                    class: LINK_BUTTON,
                     r#type: "button",
                     onclick: move |_| wizard.open_helper(reading.method),
                     "Measure again"
                 }
                 button {
-                    class: LINK,
+                    class: LINK_BUTTON,
                     r#type: "button",
                     onclick: move |_| wizard.clear_reference(),
                     "Don't use it"
@@ -227,7 +226,7 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
                                     aria_checked: option == method,
                                     class: "px-4 py-2 text-base font-medium focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 {tone}",
                                     onclick: move |_| wizard.set_helper_method(option),
-                                    "{label}"
+                                    {label}
                                 }
                             }
                         }
@@ -247,13 +246,13 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
                     if let Some((text, warn)) = note {
                         p {
                             class: if warn { "text-base text-amber-800 dark:text-amber-200" } else { "text-sm text-gray-600 dark:text-gray-300" },
-                            "{text}"
+                            {text}
                         }
                     }
                 }
             }
             if let Some(error) = error {
-                p { role: "alert", class: "text-base text-red-700 dark:text-red-300", "{error}" }
+                p { role: "alert", class: "text-base text-red-700 dark:text-red-300", {error} }
             }
 
             div {
@@ -332,7 +331,7 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
                                     aria_checked: option == unit,
                                     class: "px-3 py-2 text-base font-medium focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 {tone}",
                                     onclick: move |_| wizard.set_tape(text.clone(), option),
-                                    "{label}"
+                                    {label}
                                 }
                             }
                         }

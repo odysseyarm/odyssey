@@ -21,6 +21,10 @@ const PREVIOUS: &str = "previous.log";
 
 /// Starts logging to the terminal and, when its folder can be made, to `latest.log`.
 /// A missing or read-only log folder must not stop the app, so it only costs the file.
+#[expect(
+    clippy::print_stderr,
+    reason = "the logger is not running yet, so stderr is the only place to say the log file failed"
+)]
 pub(crate) fn init() {
     let file = paths::log_dir().and_then(|dir| match open_log_file(&dir) {
         Ok(file) => Some(file),

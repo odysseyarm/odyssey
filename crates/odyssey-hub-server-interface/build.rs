@@ -1,3 +1,3 @@
-fn main() {
-    tonic_build::compile_protos("proto/service_interface.proto").unwrap();
+fn main() -> std::io::Result<()> {
+    tonic_build::compile_protos("proto/service_interface.proto")
 }

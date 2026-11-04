@@ -19,6 +19,8 @@ on:
   push:
     tags:
       - 'odyssey-desktop-v*.*.*'
+    branches:
+      - msi-test
   workflow_dispatch:
 
 permissions:

@@ -9,7 +9,8 @@ use odyssey_autocalib::session::Hint;
 use super::hints::{OVERSCAN_HELP, screen_hint};
 use super::settings::{COLOR_EXPOSURE_RANGE_US, COLOR_EXPOSURE_STEP_US};
 use super::ui::{
-    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+    CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
+    focus_primary,
 };
 use super::wizard::Wizard;
 use super::worker::PreviewFrame;
@@ -45,15 +46,16 @@ pub fn PositionStep(wizard: Wizard) -> Element {
 
     let exposure = *wizard.color_exposure.read();
     let restarting = *wizard.restarting.read();
+    let subtitle = if same_monitor {
+        "Aim the camera at the screen, then press Start. The screen counts down and then shows the pattern, over this window, while it is measured."
+    } else {
+        "Hold the camera in front of the screen so the whole dot pattern is in view."
+    };
 
     rsx! {
         StepPage {
             title: "Point the camera at the screen",
-            subtitle: if same_monitor {
-                "Aim the camera at the screen, then press Start. The screen counts down and then shows the pattern, over this window, while it is measured."
-            } else {
-                "Hold the camera in front of the screen so the whole dot pattern is in view."
-            },
+            subtitle,
             footer: rsx! {
                 button {
                     class: SECONDARY_BUTTON,
@@ -166,7 +168,7 @@ fn LivePreview(wizard: Wizard) -> Element {
     let Some(frame) = preview.as_ref() else {
         return rsx! {
             div {
-                class: "flex aspect-video w-full items-center justify-center rounded-xl bg-gray-900 text-gray-400",
+                class: CAMERA_PLACEHOLDER,
                 "Waiting for the camera…"
             }
         };
@@ -193,8 +195,8 @@ fn LivePreview(wizard: Wizard) -> Element {
             (sides.left, 3),
         ]
         .into_iter()
-        .filter(|&(on, i)| on)
-        .map(|(on, i)| [q[i], q[(i + 1) % 4]])
+        .filter(|&(is_cropped, _)| is_cropped)
+        .map(|(_, i)| [q[i], q[(i + 1) % 4]])
         .collect(),
         _ => Vec::new(),
     };
@@ -206,9 +208,9 @@ fn LivePreview(wizard: Wizard) -> Element {
             alt: "Live camera picture",
             if let Some(points) = quad {
                 polygon {
-                    points: "{points}",
+                    points: points,
                     fill: "none",
-                    stroke: "{color}",
+                    stroke: color,
                     stroke_width: "{line}",
                     stroke_linejoin: "round",
                 }
@@ -232,7 +234,7 @@ fn LivePreview(wizard: Wizard) -> Element {
                     cy: "{dot[1]}",
                     r: "{dot_radius}",
                     fill: "none",
-                    stroke: "{color}",
+                    stroke: color,
                     stroke_width: "{line * 0.7}",
                 }
             }
@@ -282,7 +284,7 @@ fn PositionDetails(wizard: Wizard) -> Element {
                         div {
                             key: "{brand}",
                             span { class: "font-semibold", "{brand}: " }
-                            "{steps}"
+                            {steps}
                         }
                     }
                 }

@@ -58,13 +58,6 @@ fn tailwind_bin() -> PathBuf {
         .join(if_windows("tailwindcss.cmd", "tailwindcss"))
 }
 
-const fn if_windows(_windows: &'static str, _unix: &'static str) -> &'static str {
-    #[cfg(windows)]
-    {
-        _windows
-    }
-    #[cfg(unix)]
-    {
-        _unix
-    }
+fn if_windows(windows: &'static str, unix: &'static str) -> &'static str {
+    if cfg!(windows) { windows } else { unix }
 }

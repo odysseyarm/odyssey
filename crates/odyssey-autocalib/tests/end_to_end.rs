@@ -1,6 +1,11 @@
 //! Drives a whole calibration against the synthetic camera and compares the
 //! result with the scene's ground truth.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "clippy.toml exempts only `#[test]` bodies, not this file's helpers; a failed unwrap is the failure report"
+)]
+
 use nalgebra::{Matrix3, Point2};
 use odyssey_autocalib::camera::{CameraBackend as _, CaptureSettings};
 use odyssey_autocalib::markers::MarkerError;

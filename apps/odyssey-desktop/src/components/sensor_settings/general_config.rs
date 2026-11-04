@@ -1,0 +1,92 @@
+use dioxus::prelude::ReadableExt as _;
+use odyssey_hub_common::device::Device;
+
+use super::field_issue::{FieldChecker, FieldIssue};
+use crate::hub::HubContext;
+
+/// Config `kind` ids understood by the hub's read/write config calls.
+pub(super) const IMPACT_THRESHOLD_CONFIG: u8 = 0;
+pub(super) const SUPPRESS_CONFIG: u8 = 1;
+
+// Field names are shared between the validator and the form so an issue can be
+// routed back to the input that produced it.
+pub(super) const IMPACT_THRESHOLD_FIELD: &str = "Impact threshold";
+pub(super) const SUPPRESS_FIELD: &str = "Suppress";
+pub(super) const SHOT_DELAY_FIELD: &str = "Shot delay";
+
+/// The fields that live in the device's general config, already validated.
+/// The shot delay rides along because the form edits it together with them,
+/// although the hub stores it on this computer rather than in the device.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct GeneralValues {
+    pub(super) impact_threshold: u8,
+    pub(super) suppress_ms: u8,
+    pub(super) shot_delay: u16,
+}
+
+pub(super) fn general_validate(
+    impact_threshold: &str,
+    suppress_ms: &str,
+    shot_delay: &str,
+) -> Result<GeneralValues, Vec<FieldIssue>> {
+    let mut check = FieldChecker::default();
+    let impact_threshold = check.check_u8(IMPACT_THRESHOLD_FIELD, impact_threshold);
+    let suppress_ms = check.check_u8(SUPPRESS_FIELD, suppress_ms);
+    let shot_delay = check.check_u16(SHOT_DELAY_FIELD, shot_delay);
+
+    let (Some(impact_threshold), Some(suppress_ms), Some(shot_delay)) =
+        (impact_threshold, suppress_ms, shot_delay)
+    else {
+        return Err(check.into_issues());
+    };
+    Ok(GeneralValues {
+        impact_threshold,
+        suppress_ms,
+        shot_delay,
+    })
+}
+
+/// Write the general config. Callers validate first, so a typo in one field
+/// cannot leave the device holding a half-applied set.
+pub(super) async fn write_general_config(
+    hub: &HubContext,
+    device: &Device,
+    values: GeneralValues,
+) -> anyhow::Result<()> {
+    let mut client = hub.client.peek().clone();
+    client
+        .write_config(
+            device.clone(),
+            IMPACT_THRESHOLD_CONFIG,
+            values.impact_threshold,
+        )
+        .await?;
+    client
+        .write_config(device.clone(), SUPPRESS_CONFIG, values.suppress_ms)
+        .await?;
+    client
+        .set_shot_delay(device.clone(), values.shot_delay)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::sensor_settings::field_issue::invalid_status;
+    use crate::components::sensor_settings::field_issue::test_support::issues;
+    use crate::components::sensor_settings::op_status::OpStatus;
+
+    #[test]
+    fn general_collects_every_issue() {
+        let found = issues(general_validate("300", "", "x"));
+        assert_eq!(found.len(), 3);
+        match invalid_status(&found) {
+            OpStatus::Failed { summary, detail } => {
+                assert!(summary.contains("Impact threshold"), "{summary}");
+                assert!(detail.is_none());
+            }
+            _ => panic!("expected failure"),
+        }
+    }
+}

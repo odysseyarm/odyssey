@@ -5,65 +5,28 @@ use interprocess::local_socket::{
     GenericFilePath, GenericNamespaced, NameType as _, ToFsName as _, ToNsName as _,
 };
 use odyssey_hub_common as common;
-use odyssey_hub_server_interface::DeviceListRequest;
+use odyssey_hub_server_interface as proto;
 use odyssey_hub_server_interface::service_client::ServiceClient;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::{Endpoint, Uri};
+use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 
-/// Transport error with the gRPC status preserved.
+pub use crate::dongle::DongleInfo;
+pub use crate::error::{ClientError, RpcError};
+
+/// Connection to the hub's local gRPC socket.
 ///
-/// Renders only the message the server sent; `tonic::Status`'s own Display
-/// appends the code, details and gRPC metadata, which ends up verbatim in UI
-/// error text. `into_status` hands back the original for anything that needs
-/// the code or metadata.
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("{}", rpc_message(.0))]
-pub struct RpcError(tonic::Status);
-
-impl RpcError {
-    pub fn into_status(self) -> tonic::Status {
-        self.0
-    }
-}
-
-impl From<tonic::Status> for RpcError {
-    fn from(status: tonic::Status) -> Self {
-        Self(status)
-    }
-}
-
-impl From<RpcError> for tonic::Status {
-    fn from(error: RpcError) -> Self {
-        error.0
-    }
-}
-
-fn rpc_message(status: &tonic::Status) -> String {
-    let message = status.message().trim();
-    if message.is_empty() {
-        status.code().to_string()
-    } else {
-        message.to_owned()
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ClientError {
-    #[error("not connected to the hub")]
-    NotConnected,
-    #[error(transparent)]
-    Rpc(#[from] RpcError),
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-
-#[derive(Clone, Default)]
+/// Every RPC method fails with [`ClientError::NotConnected`] until
+/// [`Client::connect`] has succeeded. The generated gRPC client needs `&mut`
+/// for every call, hence `&mut self` throughout.
+#[derive(Clone, Debug, Default)]
 pub struct Client {
     pub end_token: CancellationToken,
-    pub service_client: Option<ServiceClient<tonic::transport::Channel>>,
+    pub service_client: Option<ServiceClient<Channel>>,
+}
+
+fn devices_from_reply(reply: proto::DeviceListReply) -> Vec<common::device::Device> {
+    reply.device_list.into_iter().map(Into::into).collect()
 }
 
 impl Client {
@@ -91,36 +54,26 @@ impl Client {
         Ok(())
     }
 
+    fn connected(&mut self) -> Result<&mut ServiceClient<Channel>, ClientError> {
+        self.service_client
+            .as_mut()
+            .ok_or(ClientError::NotConnected)
+    }
+
     pub async fn get_device_list(&mut self) -> Result<Vec<common::device::Device>, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(DeviceListRequest {});
-            // for whatever insane reason get_device_list requires mutable service_client
-            let response = service_client
-                .get_device_list(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(response
-                .into_inner()
-                .device_list
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<common::device::Device>>())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let reply = self
+            .connected()?
+            .get_device_list(proto::DeviceListRequest {})
+            .await?
+            .into_inner();
+        Ok(devices_from_reply(reply))
     }
 
     pub async fn bring_to_front(&mut self) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::EmptyRequest {});
-            service_client
-                .bring_to_front(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .bring_to_front(proto::EmptyRequest {})
+            .await?;
+        Ok(())
     }
 
     pub async fn subscribe_device_list(
@@ -129,42 +82,24 @@ impl Client {
         impl futures::Stream<Item = Result<Vec<common::device::Device>, RpcError>> + use<>,
         ClientError,
     > {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SubscribeDeviceListRequest {});
-            let stream = service_client
-                .subscribe_device_list(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
+        let stream = self
+            .connected()?
+            .subscribe_device_list(proto::SubscribeDeviceListRequest {})
+            .await?
+            .into_inner();
 
-            Ok(stream.map(|item| {
-                item.map_err(RpcError::from).map(|reply| {
-                    reply
-                        .device_list
-                        .into_iter()
-                        .map(Into::into)
-                        .collect::<Vec<common::device::Device>>()
-                })
-            }))
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        Ok(stream.map(|item| item.map_err(RpcError::from).map(devices_from_reply)))
     }
 
     pub async fn get_accessory_map(
         &mut self,
     ) -> Result<common::accessory::AccessoryMap, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::AccessoryMapRequest {});
-            let response = service_client
-                .get_accessory_map(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(response.into_inner().into())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let reply = self
+            .connected()?
+            .get_accessory_map(proto::AccessoryMapRequest {})
+            .await?
+            .into_inner();
+        Ok(reply.into())
     }
 
     pub async fn subscribe_accessory_map(
@@ -173,19 +108,13 @@ impl Client {
         impl futures::Stream<Item = Result<common::accessory::AccessoryMap, RpcError>> + use<>,
         ClientError,
     > {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SubscribeAccessoryMapRequest {});
-            let stream = service_client
-                .subscribe_accessory_map(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
+        let stream = self
+            .connected()?
+            .subscribe_accessory_map(proto::SubscribeAccessoryMapRequest {})
+            .await?
+            .into_inner();
 
-            Ok(stream.map(|item| item.map_err(RpcError::from).map(Into::into)))
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        Ok(stream.map(|item| item.map_err(RpcError::from).map(Into::into)))
     }
 
     pub async fn subscribe_events(
@@ -194,24 +123,20 @@ impl Client {
         impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin + use<>,
         ClientError,
     > {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SubscribeEventsRequest {});
-            let stream = service_client
-                .subscribe_events(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
+        let stream = self
+            .connected()?
+            .subscribe_events(proto::SubscribeEventsRequest {})
+            .await?
+            .into_inner();
 
-            Ok(Box::pin(stream.filter_map(|item| async move {
-                match item {
-                    Ok(ev) => common::events::Event::try_from(ev).ok().map(Ok),
-                    Err(e) => Some(Err(RpcError::from(e))),
-                }
-            })))
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        // An event that fails to convert is skipped rather than ending the
+        // subscription.
+        Ok(Box::pin(stream.filter_map(|item| async move {
+            match item {
+                Ok(event) => common::events::Event::try_from(event).ok().map(Ok),
+                Err(status) => Some(Err(RpcError::from(status))),
+            }
+        })))
     }
 
     pub async fn write_vendor(
@@ -220,20 +145,14 @@ impl Client {
         tag: u8,
         data: Vec<u8>,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::WriteVendorRequest {
+        self.connected()?
+            .write_vendor(proto::WriteVendorRequest {
                 device: Some(device.into()),
                 tag: tag.into(),
                 data,
-            });
-            service_client
-                .write_vendor(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn read_register(
@@ -243,22 +162,17 @@ impl Client {
         bank: u8,
         address: u8,
     ) -> Result<u8, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::ReadRegisterRequest {
+        let reply = self
+            .connected()?
+            .read_register(proto::ReadRegisterRequest {
                 device: Some(device.into()),
                 port: u32::from(port),
                 bank: u32::from(bank),
                 address: u32::from(address),
-            });
-            let reply = service_client
-                .read_register(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
-            Ok(reply.data as u8)
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?
+            .into_inner();
+        Ok(reply.data as u8)
     }
 
     pub async fn write_register(
@@ -269,22 +183,16 @@ impl Client {
         address: u8,
         data: u8,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::WriteRegisterRequest {
+        self.connected()?
+            .write_register(proto::WriteRegisterRequest {
                 device: Some(device.into()),
                 port: u32::from(port),
                 bank: u32::from(bank),
                 address: u32::from(address),
                 data: u32::from(data),
-            });
-            service_client
-                .write_register(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn read_config(
@@ -292,20 +200,15 @@ impl Client {
         device: common::device::Device,
         kind: u8,
     ) -> Result<u8, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::ReadConfigRequest {
+        let reply = self
+            .connected()?
+            .read_config(proto::ReadConfigRequest {
                 device: Some(device.into()),
                 kind: u32::from(kind),
-            });
-            let reply = service_client
-                .read_config(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
-            Ok(reply.value as u8)
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?
+            .into_inner();
+        Ok(reply.value as u8)
     }
 
     pub async fn write_config(
@@ -314,20 +217,14 @@ impl Client {
         kind: u8,
         value: u8,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::WriteConfigRequest {
+        self.connected()?
+            .write_config(proto::WriteConfigRequest {
                 device: Some(device.into()),
                 kind: u32::from(kind),
                 value: u32::from(value),
-            });
-            service_client
-                .write_config(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn start_pairing(
@@ -335,52 +232,34 @@ impl Client {
         device: common::device::Device,
         timeout_ms: u32,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::StartPairingRequest {
+        self.connected()?
+            .start_pairing(proto::StartPairingRequest {
                 device: Some(device.into()),
                 timeout_ms,
-            });
-            service_client
-                .start_pairing(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn cancel_pairing(
         &mut self,
         device: common::device::Device,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::CancelPairingRequest {
+        self.connected()?
+            .cancel_pairing(proto::CancelPairingRequest {
                 device: Some(device.into()),
-            });
-            service_client
-                .cancel_pairing(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn clear_bond(&mut self, device: common::device::Device) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::ClearBondRequest {
+        self.connected()?
+            .clear_bond(proto::ClearBondRequest {
                 device: Some(device.into()),
-            });
-            service_client
-                .clear_bond(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn set_transport_mode(
@@ -388,150 +267,90 @@ impl Client {
         device: common::device::Device,
         usb_mode: bool,
     ) -> Result<bool, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SetTransportModeRequest {
-                    device: Some(device.into()),
-                    usb_mode,
-                });
-            let reply = service_client
-                .set_transport_mode(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
-            Ok(reply.usb_mode)
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let reply = self
+            .connected()?
+            .set_transport_mode(proto::SetTransportModeRequest {
+                device: Some(device.into()),
+                usb_mode,
+            })
+            .await?
+            .into_inner();
+        Ok(reply.usb_mode)
     }
 
     pub async fn flash_settings(
         &mut self,
         device: common::device::Device,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::FlashSettingsRequest {
+        self.connected()?
+            .flash_settings(proto::FlashSettingsRequest {
                 device: Some(device.into()),
-            });
-            service_client
-                .flash_settings(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn reset_zero(&mut self, device: common::device::Device) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(device.into());
-            service_client
-                .reset_zero(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .reset_zero(proto::Device::from(device))
+            .await?;
+        Ok(())
     }
 
     pub async fn zero(
         &mut self,
         device: common::device::Device,
-        translation: odyssey_hub_server_interface::Vector3,
-        target: odyssey_hub_server_interface::Vector2,
+        translation: proto::Vector3,
+        target: proto::Vector2,
         tracking_event: Option<common::events::TrackingEvent>,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let tracking_event_pb = tracking_event.map(|te| {
-                odyssey_hub_server_interface::device_event::TrackingEvent {
-                    timestamp: te.timestamp,
-                    aimpoint: Some(odyssey_hub_server_interface::Vector2::from(te.aimpoint)),
-                    pose: Some(odyssey_hub_server_interface::Pose {
-                        rotation: Some(odyssey_hub_server_interface::Matrix3x3::from(
-                            te.pose.rotation,
-                        )),
-                        translation: Some(odyssey_hub_server_interface::Matrix3x1::from(
-                            te.pose.translation,
-                        )),
-                    }),
-                    distance: te.distance,
-                    screen_id: te.screen_id,
-                }
-            });
-            let request = tonic::Request::new(odyssey_hub_server_interface::ZeroRequest {
+        self.connected()?
+            .zero(proto::ZeroRequest {
                 device: Some(device.into()),
                 translation: Some(translation),
                 target: Some(target),
-                tracking_event: tracking_event_pb,
-            });
-            service_client.zero(request).await.map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+                tracking_event: tracking_event.map(Into::into),
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn save_zero(&mut self, device: common::device::Device) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(device.into());
-            service_client
-                .save_zero(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .save_zero(proto::Device::from(device))
+            .await?;
+        Ok(())
     }
 
     pub async fn clear_zero(&mut self, device: common::device::Device) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(device.into());
-            service_client
-                .clear_zero(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .clear_zero(proto::Device::from(device))
+            .await?;
+        Ok(())
     }
 
     pub async fn reset_shot_delay(
         &mut self,
         device: common::device::Device,
     ) -> Result<u16, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(device.into());
-            Ok(service_client
-                .reset_shot_delay(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner()
-                .delay_ms as u16)
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let reply = self
+            .connected()?
+            .reset_shot_delay(proto::Device::from(device))
+            .await?
+            .into_inner();
+        Ok(reply.delay_ms as u16)
     }
 
     pub async fn get_shot_delay(
         &mut self,
         device: common::device::Device,
     ) -> Result<u16, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            Ok(service_client
-                .get_shot_delay(tonic::Request::new(device.into()))
-                .await
-                .map_err(RpcError::from)?
-                .into_inner()
-                .delay_ms as u16)
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let reply = self
+            .connected()?
+            .get_shot_delay(proto::Device::from(device))
+            .await?
+            .into_inner();
+        Ok(reply.delay_ms as u16)
     }
 
     pub async fn set_shot_delay(
@@ -539,90 +358,62 @@ impl Client {
         device: common::device::Device,
         delay_ms: u16,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::SetShotDelayRequest {
+        self.connected()?
+            .set_shot_delay(proto::SetShotDelayRequest {
                 device: Some(device.into()),
                 delay_ms: delay_ms.into(),
-            });
-            service_client
-                .set_shot_delay(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn subscribe_shot_delay(
         &mut self,
         device: common::device::Device,
     ) -> Result<impl futures::Stream<Item = Result<u16, RpcError>> + use<>, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SubscribeShotDelayRequest {
-                    device: Some(device.into()),
-                });
-            let stream = service_client
-                .subscribe_shot_delay(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
-            Ok(stream.map(|item| item.map_err(RpcError::from).map(|r| r.delay_ms as u16)))
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let stream = self
+            .connected()?
+            .subscribe_shot_delay(proto::SubscribeShotDelayRequest {
+                device: Some(device.into()),
+            })
+            .await?
+            .into_inner();
+        Ok(stream.map(|item| {
+            item.map_err(RpcError::from)
+                .map(|reply| reply.delay_ms as u16)
+        }))
     }
 
     pub async fn save_shot_delay(
         &mut self,
         device: common::device::Device,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            service_client
-                .save_shot_delay(tonic::Request::new(device.into()))
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .save_shot_delay(proto::Device::from(device))
+            .await?;
+        Ok(())
     }
 
     pub async fn get_screen_info_by_id(
         &mut self,
         id: u8,
     ) -> Result<common::ScreenInfo, ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::ScreenInfoByIdRequest {
-                    id: id.into(),
-                });
-            Ok(service_client
-                .get_screen_info_by_id(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner()
-                .into())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let reply = self
+            .connected()?
+            .get_screen_info_by_id(proto::ScreenInfoByIdRequest { id: id.into() })
+            .await?
+            .into_inner();
+        Ok(reply.into())
     }
 
     pub async fn update_accessory_info_map(
         &mut self,
         map: common::accessory::AccessoryInfoMap,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(map.into());
-            service_client
-                .update_accessory_info_map(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .update_accessory_info_map(proto::AccessoryInfoMap::from(map))
+            .await?;
+        Ok(())
     }
 
     // -------------------- Dongle methods --------------------
@@ -631,61 +422,21 @@ impl Client {
         &mut self,
     ) -> Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, RpcError>> + use<>, ClientError>
     {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::SubscribeDongleListRequest {});
-            let stream = service_client
-                .subscribe_dongle_list(request)
-                .await
-                .map_err(RpcError::from)?
-                .into_inner();
+        let stream = self
+            .connected()?
+            .subscribe_dongle_list(proto::SubscribeDongleListRequest {})
+            .await?
+            .into_inner();
 
-            Ok(stream.map(|item| {
-                item.map_err(RpcError::from).map(|reply| {
-                    reply
-                        .dongle_list
-                        .into_iter()
-                        .map(|d| DongleInfo {
-                            id: d.id,
-                            protocol_version: d
-                                .protocol_version
-                                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
-                                .unwrap_or([0, 0, 0]),
-                            control_protocol_version: d
-                                .control_protocol_version
-                                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
-                                .unwrap_or([0, 0, 0]),
-                            firmware_version: d
-                                .firmware_version
-                                .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
-                                .unwrap_or([0, 0, 0]),
-                            connected_devices: d
-                                .connected_devices
-                                .iter()
-                                .filter(|&bytes| bytes.len() == 6)
-                                .map(|bytes| {
-                                    let mut addr = [0u8; 6];
-                                    addr.copy_from_slice(bytes);
-                                    addr
-                                })
-                                .collect(),
-                            bonded_devices: d
-                                .bonded_devices
-                                .iter()
-                                .filter(|&bytes| bytes.len() == 6)
-                                .map(|bytes| {
-                                    let mut addr = [0u8; 6];
-                                    addr.copy_from_slice(bytes);
-                                    addr
-                                })
-                                .collect(),
-                        })
-                        .collect()
-                })
-            }))
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        Ok(stream.map(|item| {
+            item.map_err(RpcError::from).map(|reply| {
+                reply
+                    .dongle_list
+                    .into_iter()
+                    .map(DongleInfo::from)
+                    .collect()
+            })
+        }))
     }
 
     pub async fn start_dongle_pairing(
@@ -693,52 +444,27 @@ impl Client {
         dongle_id: String,
         timeout_ms: u32,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::StartDonglePairingRequest {
-                    dongle_id,
-                    timeout_ms,
-                });
-            service_client
-                .start_dongle_pairing(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .start_dongle_pairing(proto::StartDonglePairingRequest {
+                dongle_id,
+                timeout_ms,
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn cancel_dongle_pairing(&mut self, dongle_id: String) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::CancelDonglePairingRequest {
-                    dongle_id,
-                });
-            service_client
-                .cancel_dongle_pairing(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .cancel_dongle_pairing(proto::CancelDonglePairingRequest { dongle_id })
+            .await?;
+        Ok(())
     }
 
     pub async fn clear_dongle_bonds(&mut self, dongle_id: String) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request =
-                tonic::Request::new(odyssey_hub_server_interface::ClearDongleBondsRequest {
-                    dongle_id,
-                });
-            service_client
-                .clear_dongle_bonds(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        self.connected()?
+            .clear_dongle_bonds(proto::ClearDongleBondsRequest { dongle_id })
+            .await?;
+        Ok(())
     }
 
     pub async fn set_device_name(
@@ -746,29 +472,12 @@ impl Client {
         device: common::device::Device,
         name: String,
     ) -> Result<(), ClientError> {
-        if let Some(service_client) = &mut self.service_client {
-            let request = tonic::Request::new(odyssey_hub_server_interface::SetDeviceNameRequest {
+        self.connected()?
+            .set_device_name(proto::SetDeviceNameRequest {
                 device: Some(device.into()),
                 name,
-            });
-            service_client
-                .set_device_name(request)
-                .await
-                .map_err(RpcError::from)?;
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+            })
+            .await?;
+        Ok(())
     }
-}
-
-/// Dongle metadata returned by the dongle list subscription.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DongleInfo {
-    pub id: String,
-    pub protocol_version: [u16; 3],         // mux endpoint protocol
-    pub control_protocol_version: [u16; 3], // control endpoint protocol
-    pub firmware_version: [u16; 3],
-    pub connected_devices: Vec<[u8; 6]>,
-    pub bonded_devices: Vec<[u8; 6]>,
 }

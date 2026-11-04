@@ -22,9 +22,9 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
-use std::slice;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{fmt, slice};
 
 use image::{GrayImage, RgbImage};
 use nalgebra::{Matrix3, Vector3};
@@ -68,20 +68,48 @@ unsafe fn c_str(p: *const c_char) -> String {
     unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
 }
 
+/// An error object the SDK filled in through an out-parameter. It owns the
+/// object and deletes it on drop, so every path out of [`check`] frees it once.
+struct SdkError<'sdk> {
+    sdk: &'sdk Sdk,
+    /// Invariant: points to a live `ob_error` that nothing else frees.
+    ptr: NonNull<ffi::ob_error>,
+}
+
+impl SdkError<'_> {
+    fn message(&self) -> String {
+        // SAFETY: `ptr` is a live error object (field invariant).
+        let text = unsafe { self.sdk.ob_error_get_message(self.ptr.as_ptr()) };
+        // SAFETY: the SDK returns null or a NUL-terminated string that belongs
+        // to the error object; `self` keeps that alive and `c_str` copies it.
+        unsafe { c_str(text) }
+    }
+
+    fn function(&self) -> String {
+        // SAFETY: `ptr` is a live error object (field invariant).
+        let text = unsafe { self.sdk.ob_error_get_function(self.ptr.as_ptr()) };
+        // SAFETY: as in `message`: null or a string owned by the live error.
+        unsafe { c_str(text) }
+    }
+}
+
+impl Drop for SdkError<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` is live (field invariant) and this is the only place
+        // that deletes it, once, as `SdkError` is neither `Clone` nor `Copy`.
+        unsafe { self.sdk.ob_delete_error(self.ptr.as_ptr()) };
+    }
+}
+
 /// Converts the SDK's out-parameter error into a `CameraError`, freeing it.
 fn check(sdk: &Sdk, err: *mut ffi::ob_error) -> Result<(), CameraError> {
-    if err.is_null() {
+    let Some(ptr) = NonNull::new(err) else {
         return Ok(());
-    }
-    // SAFETY: a non-null `ob_error` from the SDK stays valid until
-    // `ob_delete_error`, which runs exactly once here. The message and function
-    // strings belong to the error object and are copied before it is deleted.
-    let (message, function) = unsafe {
-        let message = c_str(sdk.ob_error_get_message(err));
-        let function = c_str(sdk.ob_error_get_function(err));
-        sdk.ob_delete_error(err);
-        (message, function)
     };
+    // The SDK's C API gives the caller any non-null error to delete with
+    // `ob_delete_error`; `ob` hands each one here exactly once.
+    let error = SdkError { sdk, ptr };
+    let (message, function) = (error.message(), error.function());
     Err(CameraError::Sdk(if function.is_empty() {
         message
     } else {
@@ -100,12 +128,18 @@ fn ob<T>(sdk: &Sdk, call: impl FnOnce(*mut *mut ffi::ob_error) -> T) -> Result<T
 
 /// `ob!(sdk, ob_fn(a, b))` calls `sdk.ob_fn(a, b, &mut error)` and yields a
 /// `Result`. `sdk` is a loaded [`Sdk`], usually the one inside a handle wrapper.
+///
+/// The macro is the module's single gate to the SDK, but it cannot check its
+/// arguments: it is sound only because every call site in this module passes
+/// pointers that come from the RAII handles below (`as_ptr()`), or from
+/// values (`CString`s, locals) that outlive the statement. Keep it private.
 macro_rules! ob {
     ($sdk:expr_2021, $f:ident($($a:expr_2021),* $(,)?)) => {{
         let sdk: &Sdk = &$sdk;
-        // SAFETY: every call site passes handles borrowed from the RAII
-        // wrappers below, which keep them alive for the duration of the call,
-        // and pointers to values that outlive it.
+        // SAFETY: the module-level rule above. Each handle is alive for the
+        // whole call because the caller borrows the wrapper that owns it; the
+        // library is loaded because `sdk` is the `Arc` the handle holds; and
+        // the out-parameter is a fresh local that `ob` passes in.
         ob(sdk, |e| unsafe { sdk.$f($($a,)* e) })
     }};
 }
@@ -157,6 +191,8 @@ macro_rules! handle {
     ($name:ident, $raw:ty, $delete:ident) => {
         struct $name {
             sdk: Sdk,
+            /// Invariant: a live SDK object this wrapper owns and nothing else
+            /// frees; `Drop` deletes it exactly once.
             ptr: NonNull<$raw>,
         }
 
@@ -178,9 +214,10 @@ macro_rules! handle {
 
         impl Drop for $name {
             fn drop(&mut self) {
-                // SAFETY: `self` owns the single reference the SDK handed out
-                // and drop runs once, so the handle is valid and freed once.
-                let result = ob!(self.sdk, $delete(self.ptr.as_ptr() as _));
+                // `ptr` is the single reference the SDK handed out and drop
+                // runs once, so the handle is valid here and freed exactly once.
+                // (`ob!` coerces the pointer to the `*const` some deleters take.)
+                let result = ob!(self.sdk, $delete(self.ptr.as_ptr()));
                 best_effort(stringify!($delete), result);
             }
         }
@@ -643,8 +680,10 @@ impl Frame {
         if data.is_null() || len == 0 {
             return Err(CameraError::Sdk("frame carries no data".into()));
         }
-        // SAFETY: the SDK documents `data` as `len` readable bytes owned by the
-        // frame; the slice borrows `self`, which keeps the frame alive.
+        // SAFETY: `data` is non-null (checked above) and, by the C API's
+        // contract that this crate cannot check, points at the frame's
+        // `len`-byte buffer, which lives as long as the frame. The slice
+        // borrows `self`, which owns the frame, and `u8` has no alignment need.
         Ok(unsafe { slice::from_raw_parts(data, len) })
     }
 
@@ -762,10 +801,17 @@ fn imu_hz(rate: ffi::ob_accel_sample_rate) -> f64 {
 }
 
 /// SDK entry point for IMU frames. It owns the frame it receives.
+///
+/// # Safety
+/// `user_data` must be the `ImuCallbackCtx` pointer that was passed to
+/// `ob_sensor_start` with this callback, and the context must stay allocated
+/// until the call returns. `frame` must be null or a frame the SDK hands over.
 unsafe extern "C" fn imu_callback(frame: *mut ffi::ob_frame, user_data: *mut c_void) {
-    // SAFETY: `user_data` is the `ImuCallbackCtx` leaked in `ImuSensor::start`.
-    // It is freed only after `ob_sensor_stop` returns, which ends callbacks.
-    let ctx = unsafe { &*(user_data as *const ImuCallbackCtx) };
+    // SAFETY: the caller's contract. `ImuSensor::start` passes a leaked
+    // `Box<ImuCallbackCtx>` and `ImuSensor::drop` frees it only after
+    // `ob_sensor_stop` returns, which ends callbacks. The SDK calls from its
+    // own threads, so only shared access is taken (`ImuCallbackCtx: Sync`).
+    let ctx = unsafe { &*user_data.cast::<ImuCallbackCtx>() };
     let Some(frame) = Frame::adopt(&ctx.sdk, frame) else {
         return;
     };
@@ -870,8 +916,8 @@ impl ImuSensor {
             shared: Arc::clone(shared),
             sdk: Arc::clone(sdk),
         }));
-        // SAFETY: `ctx` stays allocated until `ImuSensor::drop`, which stops the
-        // sensor first; the callback is the only other user of it.
+        // `ctx` stays allocated until `ImuSensor::drop`, which stops the sensor
+        // first; the callback is the only other user of it.
         let started = ob!(
             sdk,
             ob_sensor_start(
@@ -892,12 +938,19 @@ impl ImuSensor {
 
 impl Drop for ImuSensor {
     fn drop(&mut self) {
-        best_effort(
+        let stopped = best_effort(
             "ob_sensor_stop",
             ob!(self.sensor.sdk, ob_sensor_stop(self.sensor.as_ptr())),
         );
-        // SAFETY: `ctx` came from `Box::into_raw` and the sensor is stopped, so
-        // no callback can still be reading it.
+        if stopped.is_none() {
+            // The sensor may still be streaming into `ctx`. Leaking the few
+            // bytes is the only way to keep a late callback sound.
+            return;
+        }
+        // SAFETY: `ctx` came from `Box::into_raw` in `start` and is freed only
+        // here. The sensor is stopped, and `ob_sensor_stop` is relied on to
+        // return only once its callbacks have finished (the SDK's guarantee;
+        // nothing in this crate can check it).
         drop(unsafe { Box::from_raw(self.ctx) });
     }
 }
@@ -1052,7 +1105,9 @@ impl Opened {
     fn open(sdk: &Sdk, camera: &CameraInfo) -> Result<Self, CameraError> {
         let context = Context::create(sdk)?;
         let devices = DeviceList::query(&context)?;
-        let uid = CString::new(camera.id.as_str()).map_err(|_| CameraError::NoDevice)?;
+        let Ok(uid) = CString::new(camera.id.as_str()) else {
+            return Err(CameraError::NoDevice);
+        };
         let raw = ob!(
             sdk,
             ob_device_list_get_device_by_uid(devices.as_ptr(), uid.as_ptr())
@@ -1094,10 +1149,29 @@ pub struct OrbbecStream {
     _context: Context,
 }
 
-// SAFETY: the raw SDK handles are plain pointers to objects the SDK documents as
-// usable from any thread, and `OrbbecStream` is not `Sync`, so a single thread
-// uses them at a time. The IMU callback context is shared only through a mutex.
+impl fmt::Debug for OrbbecStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The SDK handles are opaque pointers; the geometry is what identifies a stream.
+        f.debug_struct("OrbbecStream")
+            .field("geometry", &self.geometry)
+            .finish_non_exhaustive()
+    }
+}
+
+// SAFETY: `CameraStream: Send` requires this, and it rests on an assumption
+// this crate cannot check: that SDK objects have no thread affinity, so the
+// whole stream (every handle together with the `Sdk` that keeps the library
+// mapped) may move to another thread. `OrbbecStream` is not `Sync` (its
+// handles are `NonNull`) and its API takes `&mut self`, so one thread at a
+// time uses the handles. The IMU callback context is the only thing the SDK's
+// own threads touch; it is `Send + Sync` (asserted below) and holds shared
+// state behind a mutex.
 unsafe impl Send for OrbbecStream {}
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ImuCallbackCtx>();
+};
 
 impl OrbbecStream {
     fn open(
@@ -1131,8 +1205,11 @@ impl OrbbecStream {
         // that fit are not searched for, and there is no fallback when frames do not
         // arrive.
         let color_formats: Vec<_> = COLOR_FORMATS.iter().map(|(f, _)| *f).collect();
-        let color_list = ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
-            .map_err(|_| CameraError::Unsupported("a color stream"))?;
+        let Ok(color_list) =
+            ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_COLOR)
+        else {
+            return Err(CameraError::Unsupported("a color stream"));
+        };
         let color = color_list
             .best(&color_formats)?
             .ok_or(CameraError::Unsupported(
@@ -1157,8 +1234,11 @@ impl OrbbecStream {
             "a Y8 infrared stream at the streaming frame rate",
         ))?;
 
-        let depth_list = ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_DEPTH)
-            .map_err(|_| CameraError::Unsupported("a depth stream"))?;
+        let Ok(depth_list) =
+            ProfileList::for_sensor_type(&pipeline, ffi::OBSensorType_OB_SENSOR_DEPTH)
+        else {
+            return Err(CameraError::Unsupported("a depth stream"));
+        };
         let depth =
             depth_list
                 .best(&[ffi::OBFormat_OB_FORMAT_Y16])?

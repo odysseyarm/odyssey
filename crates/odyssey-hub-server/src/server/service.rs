@@ -1,0 +1,581 @@
+use odyssey_hub_common as common;
+use odyssey_hub_server_interface::service_server::Service;
+use odyssey_hub_server_interface::{
+    AccessoryInfoMap, AccessoryMapReply, AccessoryMapRequest, CancelDonglePairingRequest,
+    CancelPairingRequest, ClearBondRequest, ClearDongleBondsRequest, Device, DeviceListReply,
+    DeviceListRequest, DongleListReply, EmptyReply, EmptyRequest, Event, FlashSettingsRequest,
+    GetShotDelayReply, ReadConfigReply, ReadConfigRequest, ReadRegisterReply, ReadRegisterRequest,
+    ResetShotDelayReply, ScreenBounds, ScreenInfoByIdRequest, ScreenInfoReply,
+    SetDeviceNameRequest, SetShotDelayRequest, SetTransportModeRequest, StartDonglePairingRequest,
+    StartPairingRequest, SubscribeAccessoryMapRequest, SubscribeDeviceListRequest,
+    SubscribeDongleListRequest, SubscribeEventsRequest, SubscribeShotDelayRequest,
+    TransportModeReply, Vector2, WriteConfigRequest, WriteRegisterRequest, WriteVendorRequest,
+    ZeroRequest, device_event,
+};
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::StreamExt as _;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
+use tonic::{Response, Status};
+
+use super::HubServer;
+use super::device_uuid::{requested_uuid, uuid_from_bytes};
+use super::hub_server::SUBSCRIPTION_BUFFER;
+use super::rpc_error::RpcError;
+use crate::device_tasks::{DeviceTaskMessage, DongleTaskMessage};
+
+/// Capacity of the event stream. Tracking events arrive fast, so it is deeper
+/// than the other subscriptions.
+const EVENT_SUBSCRIPTION_BUFFER: usize = 128;
+
+/// Shot delay a device falls back to when reset.
+const DEFAULT_SHOT_DELAY_MS: u16 = 0;
+
+#[expect(
+    clippy::result_large_err,
+    reason = "tonic service methods return Result<_, Status>"
+)]
+fn ok_empty() -> Result<Response<EmptyReply>, Status> {
+    Ok(Response::new(EmptyReply {}))
+}
+
+fn tracking_event_from_proto(
+    event: device_event::TrackingEvent,
+) -> Result<common::events::TrackingEvent, RpcError> {
+    let pose = event
+        .pose
+        .ok_or(RpcError::MissingField("tracking_event.pose"))?;
+    Ok(common::events::TrackingEvent {
+        timestamp: event.timestamp,
+        aimpoint: event
+            .aimpoint
+            .ok_or(RpcError::MissingField("tracking_event.aimpoint"))?
+            .into(),
+        pose: common::events::Pose {
+            rotation: pose
+                .rotation
+                .ok_or(RpcError::MissingField("tracking_event.pose.rotation"))?
+                .into(),
+            translation: pose
+                .translation
+                .ok_or(RpcError::MissingField("tracking_event.pose.translation"))?
+                .into(),
+        },
+        distance: event.distance,
+        screen_id: event.screen_id,
+    })
+}
+
+#[tonic::async_trait]
+impl Service for HubServer {
+    // Stream associated types (use concrete tokio_stream wrappers; no futures_core)
+    type SubscribeDeviceListStream = ReceiverStream<Result<DeviceListReply, Status>>;
+    type SubscribeAccessoryMapStream = ReceiverStream<Result<AccessoryMapReply, Status>>;
+    type SubscribeEventsStream = ReceiverStream<Result<Event, Status>>;
+    type SubscribeShotDelayStream = ReceiverStream<Result<GetShotDelayReply, Status>>;
+    type SubscribeDongleListStream = ReceiverStream<Result<DongleListReply, Status>>;
+    // -------------------- Device list --------------------
+    async fn get_device_list(
+        &self,
+        _req: tonic::Request<DeviceListRequest>,
+    ) -> Result<Response<DeviceListReply>, Status> {
+        Ok(Response::new(self.device_list_reply()))
+    }
+
+    async fn subscribe_device_list(
+        &self,
+        _req: tonic::Request<SubscribeDeviceListRequest>,
+    ) -> Result<Response<Self::SubscribeDeviceListStream>, Status> {
+        Ok(Response::new(self.device_list_updates()))
+    }
+
+    // -------------------- Accessories --------------------
+    async fn get_accessory_map(
+        &self,
+        _req: tonic::Request<AccessoryMapRequest>,
+    ) -> Result<Response<AccessoryMapReply>, Status> {
+        Ok(Response::new(AccessoryMapReply::from(
+            self.accessory_map_snapshot(),
+        )))
+    }
+
+    async fn subscribe_accessory_map(
+        &self,
+        _req: tonic::Request<SubscribeAccessoryMapRequest>,
+    ) -> Result<Response<Self::SubscribeAccessoryMapStream>, Status> {
+        // Initial snapshot + broadcast stream that emits common::AccessoryMap
+        let init = self.accessory_map_snapshot();
+        let mut bcast = BroadcastStream::new(self.accessory_map_sender.subscribe());
+
+        let (tx, rx) = mpsc::channel::<Result<AccessoryMapReply, Status>>(SUBSCRIPTION_BUFFER);
+        let _ = tx.try_send(Ok(AccessoryMapReply::from(init)));
+
+        // Detached on purpose: ends by itself when the client goes away.
+        tokio::spawn(async move {
+            while let Some(item) = bcast.next().await {
+                match item {
+                    Ok(map) => {
+                        if tx.send(Ok(AccessoryMapReply::from(map))).await.is_err() {
+                            break;
+                        }
+                    }
+                    // The map is sent whole, so the next update supersedes
+                    // anything missed; dropping the subscription would freeze
+                    // the accessory list for the rest of the session.
+                    Err(BroadcastStreamRecvError::Lagged(n)) => {
+                        tracing::debug!("accessory map subscriber lagged {n} updates");
+                    }
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn update_accessory_info_map(
+        &self,
+        req: tonic::Request<AccessoryInfoMap>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        // Convert proto → common map
+        let incoming: common::accessory::AccessoryInfoMap = req.into_inner().into();
+
+        // Persist to disk using odyssey_hub_common::config
+        common::config::accessory_map_save_async(&incoming)
+            .await
+            .map_err(|e| Status::internal(format!("failed to save accessory info map: {e}")))?;
+
+        // Re-load (optional but keeps canonical formatting)
+        let fresh_result = common::config::accessory_map_async().await;
+        let fresh = if fresh_result.is_corrupted() {
+            tracing::warn!("Saved but file is corrupted on reload; using incoming");
+            incoming
+        } else {
+            fresh_result.into_value()
+        };
+
+        // Notify watchers of info updates
+        let _ = self.accessory_info_sender.send(fresh.clone());
+
+        // Keep connection flags while taking the new info
+        self.merge_accessory_info(fresh);
+        // Broadcast full status map so UI refreshes
+        let _ = self
+            .accessory_map_sender
+            .send(self.accessory_map_snapshot());
+
+        ok_empty()
+    }
+
+    // -------------------- Shot delay --------------------
+    async fn get_shot_delay(
+        &self,
+        req: tonic::Request<Device>,
+    ) -> Result<Response<GetShotDelayReply>, Status> {
+        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let delay_ms = u32::from(self.shot_delay_or_default(uuid).await);
+        Ok(Response::new(GetShotDelayReply { delay_ms }))
+    }
+
+    async fn subscribe_shot_delay(
+        &self,
+        req: tonic::Request<SubscribeShotDelayRequest>,
+    ) -> Result<Response<Self::SubscribeShotDelayStream>, Status> {
+        let uuid = requested_uuid(req.into_inner().device)?;
+
+        let mut rx = self.subscribe_shot_delay_watch(uuid).await;
+        let (tx, out) = mpsc::channel::<Result<GetShotDelayReply, Status>>(SUBSCRIPTION_BUFFER);
+
+        // initial
+        let _ = tx.try_send(Ok(GetShotDelayReply {
+            delay_ms: *rx.borrow(),
+        }));
+        // Detached on purpose: ends by itself when the client goes away.
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let delay_ms = *rx.borrow_and_update();
+                if tx.send(Ok(GetShotDelayReply { delay_ms })).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(out)))
+    }
+
+    async fn bring_to_front(
+        &self,
+        _req: tonic::Request<EmptyRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        // Send message to desktop app to bring window to front
+        if let Err(e) = self.app_message_sender.send(crate::Message::BringToFront) {
+            tracing::error!("Failed to send BringToFront message: {}", e);
+            return Err(Status::internal("Failed to bring window to front"));
+        }
+        ok_empty()
+    }
+
+    async fn set_shot_delay(
+        &self,
+        req: tonic::Request<SetShotDelayRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let SetShotDelayRequest { device, delay_ms } = req.into_inner();
+        let uuid = requested_uuid(device)?;
+        let ms: u16 = delay_ms as u16;
+
+        // Apply live in-server state & notify watchers
+        self.set_shot_delay_live(uuid, ms).await;
+        // If a device task is running for this UUID, also send it a live update
+        self.push_shot_delay_to_task(uuid, ms, "shot delay");
+
+        ok_empty()
+    }
+
+    async fn reset_shot_delay(
+        &self,
+        req: tonic::Request<Device>,
+    ) -> Result<Response<ResetShotDelayReply>, Status> {
+        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+
+        // Apply live reset in-server state & notify watchers
+        self.set_shot_delay_live(uuid, DEFAULT_SHOT_DELAY_MS).await;
+        // If a device task is running for this UUID, reset it as well
+        self.push_shot_delay_to_task(uuid, DEFAULT_SHOT_DELAY_MS, "shot delay reset");
+
+        Ok(Response::new(ResetShotDelayReply {
+            delay_ms: u32::from(DEFAULT_SHOT_DELAY_MS),
+        }))
+    }
+
+    async fn save_shot_delay(
+        &self,
+        req: tonic::Request<Device>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let uuid = uuid_from_bytes(&req.into_inner().uuid);
+        let current = self.shot_delay_or_default(uuid).await;
+        common::config::device_shot_delay_save_async(uuid, current)
+            .await
+            .map_err(|e| Status::internal(format!("failed to save delay: {e}")))?;
+        ok_empty()
+    }
+
+    // -------------------- Screens --------------------
+    async fn get_screen_info_by_id(
+        &self,
+        req: tonic::Request<ScreenInfoByIdRequest>,
+    ) -> Result<Response<ScreenInfoReply>, Status> {
+        let id = req.into_inner().id as u8;
+        let calibrations = self.screen_calibrations.load();
+        let (_, calibration) = calibrations
+            .iter()
+            .find(|(screen_id, _)| *screen_id == id)
+            .ok_or_else(|| Status::not_found("screen id"))?;
+        let bounds = calibration.bounds();
+        Ok(Response::new(ScreenInfoReply {
+            id: u32::from(id),
+            bounds: Some(ScreenBounds {
+                tl: Some(Vector2::from(bounds[0].coords)),
+                tr: Some(Vector2::from(bounds[1].coords)),
+                bl: Some(Vector2::from(bounds[2].coords)),
+                br: Some(Vector2::from(bounds[3].coords)),
+            }),
+        }))
+    }
+
+    // -------------------- Events passthrough --------------------
+    async fn subscribe_events(
+        &self,
+        _req: tonic::Request<SubscribeEventsRequest>,
+    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
+        let mut rx = self.event_sender.subscribe();
+        let (tx, out) = mpsc::channel::<Result<Event, Status>>(EVENT_SUBSCRIPTION_BUFFER);
+
+        // Detached on purpose: ends by itself when the client goes away.
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(ev) => {
+                        let pb = Event::from(ev);
+                        if tx.send(Ok(pb)).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Tracking events can outrun a busy client. Skipping the
+                    // ones that were dropped is correct; tearing the
+                    // subscription down would also lose every later impact and
+                    // pairing result.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("event subscriber lagged {n} events");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(out)))
+    }
+
+    // -------------------- Device commands --------------------
+    async fn write_vendor(
+        &self,
+        req: tonic::Request<WriteVendorRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let WriteVendorRequest { device, tag, data } = req.into_inner();
+        let task = self.device_task("write_vendor", requested_uuid(device)?)?;
+        // tag is u32 in proto; device tasks expect u8 vendor tag
+        task.send_now(DeviceTaskMessage::WriteVendor(tag as u8, data))?;
+        ok_empty()
+    }
+
+    async fn read_register(
+        &self,
+        req: tonic::Request<ReadRegisterRequest>,
+    ) -> Result<Response<ReadRegisterReply>, Status> {
+        let inner = req.into_inner();
+        let task = self.device_task("read_register", requested_uuid(inner.device)?)?;
+        let data = task
+            .request(|reply| DeviceTaskMessage::ReadRegister {
+                port: inner.port as u8,
+                bank: inner.bank as u8,
+                address: inner.address as u8,
+                reply,
+            })
+            .await?;
+        Ok(Response::new(ReadRegisterReply {
+            data: u32::from(data),
+        }))
+    }
+
+    async fn write_register(
+        &self,
+        req: tonic::Request<WriteRegisterRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let task = self.device_task("write_register", requested_uuid(inner.device)?)?;
+        task.request(|reply| DeviceTaskMessage::WriteRegister {
+            port: inner.port as u8,
+            bank: inner.bank as u8,
+            address: inner.address as u8,
+            data: inner.data as u8,
+            reply,
+        })
+        .await?;
+        ok_empty()
+    }
+
+    async fn read_config(
+        &self,
+        req: tonic::Request<ReadConfigRequest>,
+    ) -> Result<Response<ReadConfigReply>, Status> {
+        let inner = req.into_inner();
+        let task = self.device_task("read_config", requested_uuid(inner.device)?)?;
+        let value = task
+            .request(|reply| DeviceTaskMessage::ReadConfig {
+                kind: inner.kind as u8,
+                reply,
+            })
+            .await?;
+        Ok(Response::new(ReadConfigReply {
+            value: u32::from(value),
+        }))
+    }
+
+    async fn write_config(
+        &self,
+        req: tonic::Request<WriteConfigRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let task = self.device_task("write_config", requested_uuid(inner.device)?)?;
+        task.request(|reply| DeviceTaskMessage::WriteConfig {
+            kind: inner.kind as u8,
+            value: inner.value as u8,
+            reply,
+        })
+        .await?;
+        ok_empty()
+    }
+
+    async fn flash_settings(
+        &self,
+        req: tonic::Request<FlashSettingsRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let task = self.device_task("flash_settings", requested_uuid(req.into_inner().device)?)?;
+        task.request(|reply| DeviceTaskMessage::FlashSettings { reply })
+            .await?;
+        ok_empty()
+    }
+
+    async fn start_pairing(
+        &self,
+        req: tonic::Request<StartPairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let uuid = requested_uuid(inner.device)?;
+        tracing::info!("start_pairing RPC for device {uuid:02x?}");
+        let task = self.device_task("start_pairing", uuid)?;
+        task.request(|reply| DeviceTaskMessage::StartPairing {
+            timeout_ms: inner.timeout_ms,
+            reply,
+        })
+        .await?;
+        ok_empty()
+    }
+
+    async fn cancel_pairing(
+        &self,
+        req: tonic::Request<CancelPairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let uuid = requested_uuid(req.into_inner().device)?;
+        tracing::info!("cancel_pairing RPC for device {uuid:02x?}");
+        let task = self.device_task("cancel_pairing", uuid)?;
+        task.request(|reply| DeviceTaskMessage::CancelPairing { reply })
+            .await?;
+        ok_empty()
+    }
+
+    async fn clear_bond(
+        &self,
+        req: tonic::Request<ClearBondRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let uuid = requested_uuid(req.into_inner().device)?;
+        tracing::info!("clear_bond RPC for device {uuid:02x?}");
+        let task = self.device_task("clear_bond", uuid)?;
+        task.request(|reply| DeviceTaskMessage::ClearBond { reply })
+            .await?;
+        ok_empty()
+    }
+
+    async fn set_transport_mode(
+        &self,
+        req: tonic::Request<SetTransportModeRequest>,
+    ) -> Result<Response<TransportModeReply>, Status> {
+        let inner = req.into_inner();
+        let uuid = requested_uuid(inner.device)?;
+        tracing::info!(
+            "set_transport_mode RPC for device {uuid:02x?}, usb_mode={}",
+            inner.usb_mode
+        );
+        let task = self.device_task("set_transport_mode", uuid)?;
+        let usb_mode = task
+            .request(|reply| DeviceTaskMessage::SetTransportMode {
+                usb_mode: inner.usb_mode,
+                reply,
+            })
+            .await
+            .inspect_err(|error| tracing::warn!("set_transport_mode: {error}"))?;
+        tracing::info!("set_transport_mode: reply ok usb_mode={usb_mode}");
+        Ok(Response::new(TransportModeReply { usb_mode }))
+    }
+
+    // -------------------- Dongle RPCs --------------------
+    async fn subscribe_dongle_list(
+        &self,
+        _req: tonic::Request<SubscribeDongleListRequest>,
+    ) -> Result<Response<Self::SubscribeDongleListStream>, Status> {
+        Ok(Response::new(self.dongle_list_updates()))
+    }
+
+    async fn start_dongle_pairing(
+        &self,
+        req: tonic::Request<StartDonglePairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let inner = req.into_inner();
+        let task = self.dongle_task(&inner.dongle_id)?;
+        task.request(|reply| DongleTaskMessage::StartPairing {
+            timeout_ms: inner.timeout_ms,
+            reply,
+        })
+        .await?;
+        ok_empty()
+    }
+
+    async fn cancel_dongle_pairing(
+        &self,
+        req: tonic::Request<CancelDonglePairingRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let task = self.dongle_task(&req.into_inner().dongle_id)?;
+        task.request(|reply| DongleTaskMessage::CancelPairing { reply })
+            .await?;
+        ok_empty()
+    }
+
+    async fn clear_dongle_bonds(
+        &self,
+        req: tonic::Request<ClearDongleBondsRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let task = self.dongle_task(&req.into_inner().dongle_id)?;
+        task.request(|reply| DongleTaskMessage::ClearBonds { reply })
+            .await?;
+        ok_empty()
+    }
+
+    async fn set_device_name(
+        &self,
+        req: tonic::Request<SetDeviceNameRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let SetDeviceNameRequest { device, name } = req.into_inner();
+        let uuid = requested_uuid(device)?;
+
+        // Persist name to device firmware, which stores it in flash and updates BLE advertising.
+        let task = self.device_task("set_device_name", uuid)?;
+        task.request(|reply| DeviceTaskMessage::SetDeviceName {
+            name: name.clone(),
+            reply,
+        })
+        .await
+        .inspect_err(|error| tracing::warn!("set_device_name: {error}"))?;
+
+        // Update device name in device list and notify subscribers
+        self.device_list.rename(uuid, &name);
+        let _ = self.device_list_change_sender.send(());
+
+        ok_empty()
+    }
+
+    async fn clear_zero(
+        &self,
+        req: tonic::Request<Device>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let task = self.device_task("clear_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        task.send_now(DeviceTaskMessage::ClearZero)?;
+        ok_empty()
+    }
+
+    async fn reset_zero(
+        &self,
+        req: tonic::Request<Device>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let task = self.device_task("reset_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        task.send_now(DeviceTaskMessage::ResetZero)?;
+        ok_empty()
+    }
+
+    async fn save_zero(&self, req: tonic::Request<Device>) -> Result<Response<EmptyReply>, Status> {
+        let task = self.device_task("save_zero", uuid_from_bytes(&req.into_inner().uuid))?;
+        task.send_now(DeviceTaskMessage::SaveZero)?;
+        ok_empty()
+    }
+
+    async fn zero(&self, req: tonic::Request<ZeroRequest>) -> Result<Response<EmptyReply>, Status> {
+        let ZeroRequest {
+            device,
+            translation,
+            target,
+            tracking_event,
+        } = req.into_inner();
+
+        let uuid = requested_uuid(device)?;
+
+        let translation: nalgebra::Vector3<f32> = translation
+            .ok_or(RpcError::MissingField("translation"))?
+            .into();
+        let target: nalgebra::Vector2<f32> = target.ok_or(RpcError::MissingField("target"))?.into();
+        let tracking_event = tracking_event.map(tracking_event_from_proto).transpose()?;
+
+        let task = self.device_task("zero", uuid)?;
+        task.send_now(DeviceTaskMessage::Zero(
+            nalgebra::Translation3::from(translation),
+            nalgebra::Point2::from(target),
+            tracking_event,
+        ))?;
+        ok_empty()
+    }
+}

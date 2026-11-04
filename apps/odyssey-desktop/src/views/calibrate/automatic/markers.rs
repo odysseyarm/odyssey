@@ -9,7 +9,8 @@ use dioxus::prelude::*;
 use super::hints::{MARKER_RULES, marker_hint};
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
 use super::ui::{
-    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+    CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
+    focus_primary,
 };
 use super::wizard::Wizard;
 use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
@@ -117,7 +118,7 @@ fn MarkerPreviewView(wizard: Wizard) -> Element {
     let Some(frame) = markers.as_ref() else {
         return rsx! {
             div {
-                class: "flex aspect-video w-full items-center justify-center rounded-xl bg-gray-900 text-gray-400",
+                class: CAMERA_PLACEHOLDER,
                 "Waiting for the camera…"
             }
         };
@@ -143,14 +144,14 @@ fn MarkerPreviewView(wizard: Wizard) -> Element {
                             cy: "{blob[1]}",
                             r: "{radius}",
                             fill: "none",
-                            stroke: "{color}",
+                            stroke: color,
                             stroke_width: "{line}",
                         }
                         if let Some(marker) = marker {
                             text {
                                 x: "{f64::from(blob[0]) + radius * 1.3}",
                                 y: "{f64::from(blob[1]) - radius * 1.1}",
-                                fill: "{color}",
+                                fill: color,
                                 font_size: "{radius * 1.7}",
                                 font_weight: "700",
                                 "{marker + 1}"
@@ -190,8 +191,8 @@ fn MarkerRules() -> Element {
                 div {
                     key: "{title}",
                     class: "flex flex-col gap-0.5",
-                    span { class: "font-medium", "{title}" }
-                    span { class: "text-gray-600 dark:text-gray-300", "{text}" }
+                    span { class: "font-medium", {title} }
+                    span { class: "text-gray-600 dark:text-gray-300", {text} }
                 }
             }
         }

@@ -1,13 +1,25 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::pin::pin;
+use std::time::Duration;
 
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
-use futures::StreamExt as _;
-use odyssey_hub_client::client::{Client, DongleInfo};
+use futures::{Stream, StreamExt as _, stream};
+use futures_concurrency::stream::Merge as _;
+use odyssey_hub_client::client::{Client, ClientError, DongleInfo, RpcError};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events as oe;
 use slab::Slab;
 use tokio::sync::broadcast;
+
+/// How long to wait before dialling the hub server again after a session ends
+/// or a connection attempt fails.
+const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+
+const TRACKING_CHANNEL_CAPACITY: usize = 128;
+const IMPACT_CHANNEL_CAPACITY: usize = 64;
+const PAIRING_CHANNEL_CAPACITY: usize = 16;
 
 #[derive(Clone)]
 pub(crate) struct HubContext {
@@ -29,11 +41,175 @@ pub(crate) struct HubContext {
     device_keys: SyncSignal<HashMap<[u8; 6], usize>>,
 }
 
+/// One of the three server-side streams the hub follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamKind {
+    DeviceList,
+    DongleList,
+    Events,
+}
+
+impl fmt::Display for StreamKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::DeviceList => "device list",
+            Self::DongleList => "dongle list",
+            Self::Events => "event",
+        })
+    }
+}
+
+/// One message from the merged subscription stream, tagged with its origin.
+// `Event` carries a whole device event by value: it is moved once from the stream
+// into the loop, and boxing would add an allocation to every tracking event.
+#[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing would allocate once per tracking event, the hot path"
+)]
+enum HubUpdate {
+    Devices(Result<Vec<Device>, RpcError>),
+    Dongles(Result<Vec<DongleInfo>, RpcError>),
+    Event(Result<oe::Event, RpcError>),
+    /// A stream ran dry. `Merge` keeps polling the others after one ends, so
+    /// the end has to be an item of its own for the session to notice it.
+    Closed(StreamKind),
+}
+
+/// Why a session stopped consuming updates.
+enum SessionEnd {
+    StreamFailed(StreamKind, RpcError),
+    StreamClosed(StreamKind),
+}
+
+/// The setup step that failed while dialling the hub.
+#[derive(Clone, Copy, Debug)]
+enum ConnectStep {
+    Connect,
+    GetDeviceList,
+    SubscribeDeviceList,
+    SubscribeDongleList,
+    SubscribeEvents,
+}
+
+impl fmt::Display for ConnectStep {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Connect => "connect to hub server",
+            Self::GetDeviceList => "get device list",
+            Self::SubscribeDeviceList => "subscribe to device list",
+            Self::SubscribeDongleList => "subscribe to dongle list",
+            Self::SubscribeEvents => "subscribe to events",
+        })
+    }
+}
+
+struct ConnectError {
+    step: ConnectStep,
+    // Boxed: `ClientError` is large and the error is rare, so every `Result` in
+    // the connect path would otherwise pay for it.
+    source: Box<ClientError>,
+}
+
+impl ConnectStep {
+    /// Attributes a client error to this step.
+    fn failed(self, source: ClientError) -> ConnectError {
+        ConnectError {
+            step: self,
+            source: Box::new(source),
+        }
+    }
+}
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Failed to {}: {}", self.step, self.source)
+    }
+}
+
+/// A connected hub: the device list as of connecting, plus every later update.
+struct Subscriptions<Updates> {
+    initial_devices: Vec<Device>,
+    updates: Updates,
+}
+
+/// Tags a stream's items with `wrap` and appends a [`HubUpdate::Closed`] marker.
+fn tagged<Item>(
+    source: impl Stream<Item = Result<Item, RpcError>>,
+    kind: StreamKind,
+    wrap: fn(Result<Item, RpcError>) -> HubUpdate,
+) -> impl Stream<Item = HubUpdate> {
+    source
+        .map(wrap)
+        .chain(stream::once(std::future::ready(HubUpdate::Closed(kind))))
+}
+
+/// Interleaves the three server streams into one. All items already share the
+/// [`HubUpdate`] type, so the differently-typed streams need no boxing.
+fn merged_updates(
+    devices: impl Stream<Item = Result<Vec<Device>, RpcError>>,
+    dongles: impl Stream<Item = Result<Vec<DongleInfo>, RpcError>>,
+    events: impl Stream<Item = Result<oe::Event, RpcError>>,
+) -> impl Stream<Item = HubUpdate> {
+    (
+        tagged(devices, StreamKind::DeviceList, HubUpdate::Devices),
+        tagged(dongles, StreamKind::DongleList, HubUpdate::Dongles),
+        tagged(events, StreamKind::Events, HubUpdate::Event),
+    )
+        .merge()
+}
+
+/// Connects `client` and subscribes to every stream the hub needs. The client
+/// is a plain `&mut`, not a signal guard, so nothing is locked across the awaits.
+async fn connect(
+    client: &mut Client,
+) -> Result<Subscriptions<impl Stream<Item = HubUpdate> + use<>>, ConnectError> {
+    client
+        .connect()
+        .await
+        .map_err(|source| ConnectStep::Connect.failed(source))?;
+    tracing::info!("Hub connected successfully");
+
+    let initial_devices = client
+        .get_device_list()
+        .await
+        .map_err(|source| ConnectStep::GetDeviceList.failed(source))?;
+    let devices = client
+        .subscribe_device_list()
+        .await
+        .map_err(|source| ConnectStep::SubscribeDeviceList.failed(source))?;
+    let dongles = client
+        .subscribe_dongle_list()
+        .await
+        .map_err(|source| ConnectStep::SubscribeDongleList.failed(source))?;
+    let events = client
+        .subscribe_events()
+        .await
+        .map_err(|source| ConnectStep::SubscribeEvents.failed(source))?;
+
+    Ok(Subscriptions {
+        initial_devices,
+        updates: merged_updates(devices, dongles, events),
+    })
+}
+
+/// Whether `event` is a one-shot pairing outcome that row components wait for.
+fn is_pairing_result(event: &oe::Event) -> bool {
+    matches!(
+        event,
+        oe::Event::DonglePairingResult { .. }
+            | oe::Event::DeviceEvent(oe::DeviceEvent(
+                _,
+                oe::DeviceEventKind::PairingResult { .. }
+            ))
+    )
+}
+
 impl HubContext {
     pub(crate) fn new() -> Self {
-        let (tracking_events, _) = broadcast::channel(128);
-        let (impact_events, _) = broadcast::channel(64);
-        let (pairing_events, _) = broadcast::channel(16);
+        let (tracking_events, _) = broadcast::channel(TRACKING_CHANNEL_CAPACITY);
+        let (impact_events, _) = broadcast::channel(IMPACT_CHANNEL_CAPACITY);
+        let (pairing_events, _) = broadcast::channel(PAIRING_CHANNEL_CAPACITY);
         Self {
             client: SyncSignal::new_maybe_sync(Client::default()),
             devices: SyncSignal::new_maybe_sync(Slab::new()),
@@ -45,6 +221,64 @@ impl HubContext {
             battery_states: SyncSignal::new_maybe_sync(HashMap::new()),
             device_keys: SyncSignal::new_maybe_sync(HashMap::new()),
         }
+    }
+
+    /// Follows the hub server for as long as the caller keeps this future
+    /// alive, reconnecting whenever a session ends.
+    pub(crate) async fn run(&mut self) {
+        loop {
+            tracing::info!("Hub connecting to server...");
+            let mut client = Client::clone(&self.client.peek());
+            match connect(&mut client).await {
+                Ok(subscriptions) => {
+                    // Publish only once connected, so readers never see a
+                    // half-dialled client.
+                    self.client.set(client);
+                    let end = self.run_session(subscriptions).await;
+                    match end {
+                        SessionEnd::StreamFailed(stream, error) => {
+                            tracing::error!("{stream} stream error: {error}");
+                        }
+                        SessionEnd::StreamClosed(stream) => {
+                            tracing::warn!("{stream} stream ended");
+                        }
+                    }
+                    tracing::warn!("Reconnecting in {RECONNECT_DELAY:?}...");
+                }
+                Err(error) => tracing::error!("{error}"),
+            }
+            tokio::time::sleep(RECONNECT_DELAY).await;
+        }
+    }
+
+    /// Applies updates until any stream fails or ends; the stale half of a
+    /// broken subscription must not keep serving the UI.
+    async fn run_session(
+        &mut self,
+        subscriptions: Subscriptions<impl Stream<Item = HubUpdate>>,
+    ) -> SessionEnd {
+        self.replace_devices(subscriptions.initial_devices);
+
+        let mut updates = pin!(subscriptions.updates);
+        while let Some(update) = updates.next().await {
+            match update {
+                HubUpdate::Devices(Ok(list)) => self.apply_device_list(list),
+                HubUpdate::Dongles(Ok(list)) => self.apply_dongles(list),
+                HubUpdate::Event(Ok(event)) => self.handle_event(event),
+                HubUpdate::Devices(Err(error)) => {
+                    return SessionEnd::StreamFailed(StreamKind::DeviceList, error);
+                }
+                HubUpdate::Dongles(Err(error)) => {
+                    return SessionEnd::StreamFailed(StreamKind::DongleList, error);
+                }
+                HubUpdate::Event(Err(error)) => {
+                    return SessionEnd::StreamFailed(StreamKind::Events, error);
+                }
+                HubUpdate::Closed(stream) => return SessionEnd::StreamClosed(stream),
+            }
+        }
+        // Every stream ends with a `Closed` marker, which returns above.
+        unreachable!("merged stream ended without a Closed marker")
     }
 
     fn replace_devices(&mut self, list: Vec<Device>) {
@@ -60,195 +294,68 @@ impl HubContext {
         }
     }
 
-    pub(crate) async fn run(&mut self) {
-        let mut device_list_task: Option<tokio::task::JoinHandle<()>> = None;
-        let mut dongle_list_task: Option<tokio::task::JoinHandle<()>> = None;
-        loop {
-            tracing::info!("Hub connecting to server...");
-            let (device_list_stream, dongle_list_stream, event_stream) = {
-                let mut client = self.client.write();
-                match client.connect().await {
-                    Ok(()) => {
-                        tracing::info!("Hub connected successfully");
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to connect to hub server: {}", e);
-                        drop(client);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
+    fn apply_device_list(&mut self, list: Vec<Device>) {
+        tracing::debug!("Device list update: {} devices", list.len());
+        self.replace_devices(list);
+    }
+
+    fn apply_dongles(&mut self, list: Vec<DongleInfo>) {
+        tracing::debug!("Dongle list update: {} dongles", list.len());
+        self.dongles.set(list);
+    }
+
+    fn handle_event(&mut self, event: oe::Event) {
+        tracing::trace!("Hub event: {:?}", event);
+        if let oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) = &event {
+            match kind {
+                oe::DeviceEventKind::TrackingEvent(tracking) => {
+                    self.broadcast_tracking(device, *tracking);
                 }
-
-                let list = match client.get_device_list().await {
-                    Ok(list) => list,
-                    Err(e) => {
-                        tracing::error!("Failed to get device list: {}", e);
-                        drop(client);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                };
-
-                let device_list_stream = match client.subscribe_device_list().await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        tracing::error!("Failed to subscribe to device list: {}", e);
-                        drop(client);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                };
-
-                let dongle_list_stream = match client.subscribe_dongle_list().await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        tracing::error!("Failed to subscribe to dongle list: {}", e);
-                        drop(client);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                };
-
-                let event_stream = match client.subscribe_events().await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        tracing::error!("Failed to subscribe to events: {}", e);
-                        drop(client);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                };
-
-                drop(client);
-                self.replace_devices(list);
-
-                (device_list_stream, dongle_list_stream, event_stream)
-            };
-
-            if let Some(handle) = device_list_task.take() {
-                handle.abort();
-            }
-            if let Some(handle) = dongle_list_task.take() {
-                handle.abort();
-            }
-
-            let mut devices_signal = self.devices;
-            let mut device_keys = self.device_keys;
-            device_list_task = Some(tokio::spawn(async move {
-                let mut device_list_stream = device_list_stream;
-                while let Some(update) = device_list_stream.next().await {
-                    match update {
-                        Ok(list) => {
-                            tracing::debug!("Device list update: {} devices", list.len());
-                            let mut devices = devices_signal.write();
-                            let mut keys = device_keys.write();
-                            devices.clear();
-                            keys.clear();
-                            for device in list {
-                                let uuid = device.uuid;
-                                let idx = devices.insert(device);
-                                keys.insert(uuid, idx);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Device list stream error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }));
-
-            let mut dongles_signal = self.dongles;
-            dongle_list_task = Some(tokio::spawn(async move {
-                let mut dongle_list_stream = dongle_list_stream;
-                while let Some(update) = dongle_list_stream.next().await {
-                    match update {
-                        Ok(list) => {
-                            tracing::debug!("Dongle list update: {} dongles", list.len());
-                            dongles_signal.set(list);
-                        }
-                        Err(e) => {
-                            tracing::error!("Dongle list stream error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }));
-
-            let mut event_stream = event_stream;
-            while let Some(evt) = event_stream.next().await {
-                let evt = match evt {
-                    Ok(raw) => raw,
-                    Err(e) => {
-                        tracing::error!("Event stream error: {}", e);
-                        break;
-                    }
-                };
-                tracing::trace!("Hub event: {:?}", evt);
-                if let oe::Event::DeviceEvent(oe::DeviceEvent(
-                    device,
-                    oe::DeviceEventKind::TrackingEvent(tracking),
-                )) = &evt
-                {
-                    tracing::trace!(
-                        "Hub received TrackingEvent for device {:?}: aimpoint=({}, {}), screen_id={}",
-                        device.uuid,
-                        tracking.aimpoint.x,
-                        tracking.aimpoint.y,
-                        tracking.screen_id
-                    );
-                    let result = self.tracking_events.send((device.clone(), *tracking));
-                    if let Err(e) = result {
-                        tracing::trace!(
-                            "Failed to broadcast tracking event: {} (no subscribers?)",
-                            e
-                        );
-                    } else {
-                        tracing::debug!(
-                            "Successfully broadcast tracking event to {} subscribers",
-                            self.tracking_events.receiver_count()
-                        );
-                    }
-                }
-                if let oe::Event::DeviceEvent(oe::DeviceEvent(
-                    device,
-                    oe::DeviceEventKind::ImpactEvent(impact),
-                )) = &evt
-                {
+                oe::DeviceEventKind::ImpactEvent(impact) => {
+                    // No subscribers is the normal case outside the zero view.
                     let _ = self.impact_events.send((device.clone(), *impact));
                 }
-                if let oe::Event::DeviceEvent(oe::DeviceEvent(
-                    device,
-                    oe::DeviceEventKind::BatteryEvent(battery),
-                )) = &evt
-                {
-                    tracing::info!(
-                        "BatteryEvent received for {:02x?}: {}% charging={}",
-                        device.uuid,
-                        battery.percent,
-                        battery.charging
-                    );
-                    self.battery_states
-                        .write()
-                        .insert(device.uuid, (battery.percent, battery.charging));
+                oe::DeviceEventKind::BatteryEvent(battery) => {
+                    self.record_battery(device, battery);
                 }
-                if matches!(
-                    &evt,
-                    oe::Event::DonglePairingResult { .. }
-                        | oe::Event::DeviceEvent(oe::DeviceEvent(
-                            _,
-                            oe::DeviceEventKind::PairingResult { .. }
-                        ))
-                ) {
-                    let _ = self.pairing_events.send(evt.clone());
-                }
-                self.latest_event.set(Some(evt));
+                _ => {}
             }
-
-            // Stream ended, reconnect after a delay
-            tracing::warn!("Event stream ended, reconnecting in 2 seconds...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         }
+        if is_pairing_result(&event) {
+            let _ = self.pairing_events.send(event.clone());
+        }
+        self.latest_event.set(Some(event));
+    }
+
+    fn broadcast_tracking(&self, device: &Device, tracking: oe::TrackingEvent) {
+        tracing::trace!(
+            "Hub received TrackingEvent for device {:?}: aimpoint=({}, {}), screen_id={}",
+            device.uuid,
+            tracking.aimpoint.x,
+            tracking.aimpoint.y,
+            tracking.screen_id
+        );
+        match self.tracking_events.send((device.clone(), tracking)) {
+            Ok(_) => tracing::debug!(
+                "Successfully broadcast tracking event to {} subscribers",
+                self.tracking_events.receiver_count()
+            ),
+            Err(error) => {
+                tracing::trace!("Failed to broadcast tracking event: {error} (no subscribers?)");
+            }
+        }
+    }
+
+    fn record_battery(&mut self, device: &Device, battery: &oe::BatteryEvent) {
+        tracing::info!(
+            "BatteryEvent received for {:02x?}: {}% charging={}",
+            device.uuid,
+            battery.percent,
+            battery.charging
+        );
+        self.battery_states
+            .write()
+            .insert(device.uuid, (battery.percent, battery.charging));
     }
 
     pub(crate) fn device_key(&self, device: &Device) -> Option<usize> {
@@ -265,5 +372,33 @@ impl HubContext {
 
     pub(crate) fn subscribe_pairing(&self) -> broadcast::Receiver<oe::Event> {
         self.pairing_events.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A list stream that ends must surface as a `Closed` item even while the
+    /// other streams stay open; this is what turns a silent stale list into a
+    /// reconnect.
+    #[tokio::test]
+    async fn ended_stream_is_reported_while_others_stay_open() {
+        let devices = stream::iter([Ok::<Vec<Device>, RpcError>(Vec::new())]);
+        let dongles = stream::pending::<Result<Vec<DongleInfo>, RpcError>>();
+        let events = stream::pending::<Result<oe::Event, RpcError>>();
+
+        let updates: Vec<HubUpdate> = merged_updates(devices, dongles, events)
+            .take(2)
+            .collect()
+            .await;
+
+        assert!(matches!(
+            updates.as_slice(),
+            [
+                HubUpdate::Devices(Ok(list)),
+                HubUpdate::Closed(StreamKind::DeviceList)
+            ] if list.is_empty()
+        ));
     }
 }

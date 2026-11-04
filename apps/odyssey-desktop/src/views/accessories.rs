@@ -1,48 +1,26 @@
-use std::collections::HashMap;
+//! The Accessories page: the accessories the hub knows, and the ones in range
+//! that can be added.
+
+mod ble_scan;
+mod edits;
+mod hub_sync;
+mod status_chip;
+
 use std::num::NonZeroU64;
-use std::time::Duration;
 
-// UI-side BLE scan (btleplug)
-use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
-use btleplug::platform::Manager;
-use dioxus::logger::tracing;
+use ble_scan::{Nearby, use_ble_scan};
 use dioxus::prelude::*;
-use futures::StreamExt as _;
-use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType};
-use uuid::Uuid;
+use edits::AccessoryEdits;
+use hub_sync::{Known, use_accessory_map};
+use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryType};
+use status_chip::StatusChip;
 
-use crate::hub; // HubContext
+use crate::hub::HubContext;
+use crate::views::device_label::format_address;
 
-#[derive(Props, PartialEq, Clone)]
-struct StatusChipProps {
-    connected: bool,
-}
+/// The slot color shown for an accessory whose device is unknown.
+const UNASSIGNED_SLOT: usize = 5;
 
-#[component]
-fn StatusChip(props: StatusChipProps) -> Element {
-    let (label, dot_cls, pill_cls) = if props.connected {
-        (
-            "Connected",
-            "h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse",
-            "bg-emerald-50 text-emerald-700 border-emerald-200",
-        )
-    } else {
-        (
-            "Disconnected",
-            "h-2.5 w-2.5 rounded-full bg-gray-400",
-            "bg-gray-50 text-gray-700 border-gray-200",
-        )
-    };
-
-    rsx! {
-        span { class: "inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs border {pill_cls}",
-            span { class: "{dot_cls}" }
-            "{label}"
-        }
-    }
-}
-
-#[inline]
 fn slot_color_dot(slot: usize) -> &'static str {
     match slot {
         0 => "bg-red-500",
@@ -50,239 +28,68 @@ fn slot_color_dot(slot: usize) -> &'static str {
         2 => "bg-yellow-400",
         3 => "bg-green-500",
         4 => "bg-orange-500",
-        5 => "bg-gray-400",
         _ => "bg-gray-400",
     }
 }
 
+/// What the assignment dropdown reports: `None` for a value that is not a
+/// choice, `Some(None)` for "(Unassigned)", `Some(Some(uuid))` for a device.
+fn parse_assignment(selected: &str) -> Option<Option<NonZeroU64>> {
+    if selected.is_empty() {
+        return Some(None);
+    }
+    let uuid = selected.parse::<u64>().ok()?;
+    NonZeroU64::new(uuid).map(Some)
+}
+
 #[component]
 pub fn Accessories() -> Element {
-    let hub = use_context::<Signal<hub::HubContext>>();
+    let hub = use_context::<Signal<HubContext>>();
 
-    // id -> (info, connected)
-    let accessory_map = use_signal(HashMap::<[u8; 6], (AccessoryInfo, bool)>::new);
-    // id -> info
-    let info_map = use_signal(HashMap::<[u8; 6], AccessoryInfo>::new);
+    let known = use_signal(Known::new);
+    let infos = use_signal(AccessoryInfoMap::new);
+    let nearby = use_signal(Nearby::new);
 
-    // Nearby discovered by BLE: id -> (label, type)
-    let nearby = use_signal(HashMap::<[u8; 6], (String, AccessoryType)>::new);
-
-    let format_mac = |mac: &[u8; 6]| -> String {
-        mac.iter()
-            .map(|b| format!("{b:02X}"))
-            .collect::<Vec<_>>()
-            .join(":")
-    };
-
-    // Seed + subscribe AccessoryMap
-    use_future({
-        let hub_sig = hub;
-        let mut accessory_map = accessory_map;
-        let mut info_map = info_map;
-        move || async move {
-            let mut client = hub_sig.read().client.read().clone();
-
-            if let Ok(m) = client.get_accessory_map().await {
-                accessory_map.set(m.clone());
-                let infos = m
-                    .iter()
-                    .map(|(id, (info, _))| (*id, info.clone()))
-                    .collect();
-                info_map.set(infos);
-            }
-
-            // A single stream error used to end this loop for the rest of the
-            // session, freezing the list. Resubscribe instead.
-            loop {
-                match client.subscribe_accessory_map().await {
-                    Ok(mut stream) => {
-                        while let Some(next) = stream.next().await {
-                            match next {
-                                Ok(m) => {
-                                    let m: AccessoryMap = m;
-                                    accessory_map.set(m.clone());
-                                    let infos = m
-                                        .iter()
-                                        .map(|(id, (info, _))| (*id, info.clone()))
-                                        .collect();
-                                    info_map.set(infos);
-                                }
-                                Err(e) => {
-                                    tracing::warn!("accessory map stream error: {e}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => tracing::warn!("accessory map subscribe failed: {e}"),
-                }
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        }
-    });
-
-    // BLE scan loop: detect DryFireMag and MantisX
-    use_future({
-        let mut nearby = nearby;
-        move || async move {
-            let _nus_uuid = Uuid::from_bytes([
-                0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc,
-                0xca, 0x9e,
-            ]);
-            let mantis_service_uuid = Uuid::from_bytes([
-                0x6e, 0x40, 0x00, 0x01, 0x20, 0x4d, 0x61, 0x6e, 0x74, 0x69, 0x73, 0x20, 0x54, 0x65,
-                0x63, 0x68,
-            ]);
-
-            let Ok(manager) = Manager::new().await else {
-                return;
-            };
-            let Ok(mut adapters) = manager.adapters().await else {
-                return;
-            };
-            let Some(adapter) = adapters.drain(..).next() else {
-                return;
-            };
-
-            let filter = ScanFilter { services: vec![] };
-
-            loop {
-                let _ = adapter.start_scan(filter.clone()).await;
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                let _ = adapter.stop_scan().await;
-
-                let mut found = HashMap::<[u8; 6], (String, AccessoryType)>::new();
-                if let Ok(peris) = adapter.peripherals().await {
-                    for p in peris {
-                        if let Ok(Some(props)) = p.properties().await {
-                            let id = props.address.into_inner();
-                            if props.local_name.as_deref() == Some("DryFireMag") {
-                                found.insert(
-                                    id,
-                                    ("DryFireMag".to_string(), AccessoryType::DryFireMag),
-                                );
-                            } else if props.services.contains(&mantis_service_uuid) {
-                                found.insert(id, ("MantisX".to_string(), AccessoryType::MantisX));
-                            }
-                        }
-                    }
-                }
-                nearby.set(found);
-
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        }
-    });
-
-    // add: ([u8;6], String, AccessoryType)
-    let add = {
-        let hub_sig = hub;
-        let info0 = info_map;
-        use_callback(move |(id, name, ty): ([u8; 6], String, AccessoryType)| {
-            let next: HashMap<[u8; 6], AccessoryInfo> = {
-                let cur = info0.read();
-                let mut m = cur.clone();
-                drop(cur);
-                m.insert(id, AccessoryInfo::with_defaults(name, ty));
-                m
-            };
-
-            let mut client = hub_sig.read().client.read().clone();
-            let mut info_map = info0;
-            spawn(async move {
-                // The hub replaces the whole map, so showing the edit before it
-                // is accepted leaves the UI claiming a change the hub rejected.
-                match client.update_accessory_info_map(next.clone()).await {
-                    Ok(()) => info_map.set(next),
-                    Err(e) => tracing::error!("Failed to add accessory: {e}"),
-                }
-            });
-        })
-    };
-
-    // remove: ([u8;6])
-    let remove = {
-        let hub_sig = hub;
-        let info0 = info_map;
-        use_callback(move |id: [u8; 6]| {
-            let next: HashMap<[u8; 6], AccessoryInfo> = {
-                let cur = info0.read();
-                let mut m = cur.clone();
-                drop(cur);
-                m.remove(&id);
-                m
-            };
-
-            let mut client = hub_sig.read().client.read().clone();
-            let mut info_map = info0;
-            spawn(async move {
-                match client.update_accessory_info_map(next.clone()).await {
-                    Ok(()) => info_map.set(next),
-                    Err(e) => tracing::error!("Failed to remove accessory: {e}"),
-                }
-            });
-        })
-    };
-
-    // assign: ([u8;6], Option<NonZeroU64>) — UUID-based
-    let assign = {
-        let hub_sig = hub;
-        let info0 = info_map;
-        use_callback(move |(id, assign_uuid): ([u8; 6], Option<NonZeroU64>)| {
-            let next: HashMap<[u8; 6], AccessoryInfo> = {
-                let cur = info0.read();
-                let mut m = cur.clone();
-                drop(cur);
-                if let Some(info) = m.get_mut(&id) {
-                    info.assignment = assign_uuid;
-                }
-                m
-            };
-
-            let mut client = hub_sig.read().client.read().clone();
-            let mut info_map = info0;
-            spawn(async move {
-                match client.update_accessory_info_map(next.clone()).await {
-                    Ok(()) => info_map.set(next),
-                    Err(e) => tracing::error!("Failed to assign accessory: {e}"),
-                }
-            });
-        })
-    };
+    use_accessory_map(hub, known, infos);
+    use_ble_scan(nearby);
+    let edits = AccessoryEdits::new(hub, infos);
 
     // Snapshots for render
-    let info_snapshot: HashMap<[u8; 6], AccessoryInfo> = { info_map.read().clone() };
-    let am_snapshot: HashMap<[u8; 6], (AccessoryInfo, bool)> = { accessory_map.read().clone() };
-    let mut added_ids: Vec<[u8; 6]> = info_snapshot.keys().copied().collect();
+    let info_snapshot = infos.read().clone();
+    let known_snapshot = known.read().clone();
+    let is_connected = |id: &[u8; 6]| {
+        known_snapshot
+            .get(id)
+            .is_some_and(|(_, connected)| *connected)
+    };
 
-    // Devices (for assignment)
-    let devices_snapshot = (hub().devices)();
-    let device_choices: Vec<(NonZeroU64, String, usize)> = devices_snapshot
+    // Connected devices an accessory can be assigned to: the uuid the hub
+    // matches on, how to label it, and its slot.
+    let device_choices: Vec<(NonZeroU64, String, usize)> = (hub().devices)()
         .iter()
-        .filter_map(|(slot, dev)| {
-            let mut buf = [0u8; 8];
-            buf[..6].copy_from_slice(&dev.uuid);
-            let uuid_u64 = u64::from_le_bytes(buf);
-            let nz = NonZeroU64::new(uuid_u64)?;
-            let label = format!("0x{uuid_u64:x}");
-            Some((nz, label, slot))
+        .filter_map(|(slot, device)| {
+            let mut bytes = [0u8; 8];
+            bytes[..6].copy_from_slice(&device.uuid);
+            let uuid_u64 = u64::from_le_bytes(bytes);
+            Some((NonZeroU64::new(uuid_u64)?, format!("0x{uuid_u64:x}"), slot))
         })
         .collect();
 
-    // Sort connected first, then MAC
-    added_ids.sort_by_key(|id| {
-        let connected = am_snapshot.get(id).map(|(_, c)| *c).unwrap_or(false);
-        (if connected { 0 } else { 1 }, *id)
-    });
+    // Connected first, then by MAC.
+    let mut added_ids: Vec<[u8; 6]> = info_snapshot.keys().copied().collect();
+    added_ids.sort_by_key(|id| (!is_connected(id), *id));
 
-    let connected_count = am_snapshot.values().filter(|(_, c)| *c).count();
+    let connected_count = known_snapshot
+        .values()
+        .filter(|(_, connected)| *connected)
+        .count();
     let total_count = added_ids.len();
 
-    let nearby_snapshot: HashMap<[u8; 6], (String, AccessoryType)> = { nearby.read().clone() };
-    let mut nearby_addable: Vec<([u8; 6], (String, AccessoryType))> = nearby_snapshot
+    let mut nearby_addable: Vec<([u8; 6], (String, AccessoryType))> = nearby
+        .read()
         .iter()
         .filter(|(id, _)| !info_snapshot.contains_key(*id))
-        .map(|(id, v)| (*id, v.clone()))
+        .map(|(id, found)| (*id, found.clone()))
         .collect();
     nearby_addable.sort_by_key(|(id, _)| *id);
 
@@ -300,92 +107,16 @@ pub fn Accessories() -> Element {
                     p { class: "text-sm opacity-70", "No accessories added yet." }
                 } else {
                     ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
-                        {added_ids.iter().map(|id| {
-                            let (info, connected) = am_snapshot.get(id)
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    (
-                                        info_snapshot.get(id).cloned().unwrap_or_else(|| AccessoryInfo::with_defaults("Unknown", AccessoryType::DryFireMag)),
-                                        false
-                                    )
-                                });
-
-                            let mac = format_mac(id);
-                            let assigned_uuid = info.assignment.map(|nz| nz.get());
-
-                            let (assigned_slot_opt, assigned_label) = if let Some(uuid_v) = assigned_uuid {
-                                if let Some((_uuid_nz, label, slot)) = device_choices
-                                    .iter()
-                                    .find(|(nz, _, _)| nz.get() == uuid_v) {
-                                    (Some(*slot), label.clone())
-                                } else {
-                                    let offline_label = format!("0x{:x} (offline)", uuid_v);
-                                    (None, offline_label)
-                                }
-                            } else {
-                                (None, "(Unassigned)".to_string())
-                            };
-
-                            rsx! {
-                                li { class: "flex flex-col gap-2 md:flex-row md:items-center md:justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
-
-                                    div { class: "min-w-0",
-                                        div { class: "font-medium truncate", "{info.name}" }
-                                        div { class: "text-xs opacity-70 truncate", "{mac}" }
-                                    }
-
-                                    div { class: "flex items-center gap-3 flex-wrap justify-end",
-                                        StatusChip { connected }
-
-                                        {
-                                            let dot_class = slot_color_dot(assigned_slot_opt.unwrap_or(5));
-                                            rsx!{
-                                                span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200/70 dark:border-white/10",
-                                                    span { class: "h-2.5 w-2.5 rounded-full {dot_class}" }
-                                                    "{assigned_label}"
-                                                }
-                                            }
-                                        }
-
-                                        select {
-                                            class: "px-2 py-1 text-sm rounded-lg border border-gray-300/70 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60",
-                                            value: assigned_uuid.map(|v| v.to_string()).unwrap_or_default(),
-                                            onchange: {
-                                                let id = *id;
-                                                let assign = assign.clone();
-                                                move |evt| {
-                                                    let s = evt.value();
-                                                    if s.is_empty() {
-                                                        assign.call((id, None));
-                                                    } else if let Ok(v) = s.parse::<u64>() {
-                                                        if let Some(nz) = NonZeroU64::new(v) {
-                                                            assign.call((id, Some(nz)));
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            option { value: "", "(Unassigned)" }
-                                            {device_choices.iter().map(|(nz, label, slot)| {
-                                                let display = format!("{label} (slot {})", slot + 1);
-                                                rsx!{
-                                                    option { value: "{nz.get()}", "{display}" }
-                                                }
-                                            })}
-                                        }
-
-                                        button {
-                                            class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 hover:bg-red-500 hover:text-white transition",
-                                            onclick: {
-                                                let id = *id;
-                                                let remove = remove.clone();
-                                                move |_| remove.call(id)
-                                            },
-                                            "Remove"
-                                        }
-                                    }
-                                }
+                        for id in added_ids {
+                            AddedAccessory {
+                                key: "{format_address(&id)}",
+                                id,
+                                info: added_info(&known_snapshot, &info_snapshot, &id),
+                                connected: is_connected(&id),
+                                device_choices: device_choices.clone(),
+                                edits,
                             }
-                        })}
+                        }
                     }
                 }
             }
@@ -396,31 +127,124 @@ pub fn Accessories() -> Element {
                     p { class: "text-sm opacity-70", "No nearby devices (or all are already added)." }
                 } else {
                     ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
-                        {nearby_addable.iter().map(|(id, (label, ty))| {
-                            let mac = format_mac(id);
-                            rsx! {
-                                li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
-                                    div { class: "min-w-0",
-                                        div { class: "font-medium truncate", "{label}" }
-                                        div { class: "text-xs opacity-70 truncate", "{mac}" }
-                                    }
-                                    button {
-                                        class: "px-3 py-1.5 text-sm rounded-lg border border-emerald-600/60 hover:bg-emerald-600 hover:text-white transition",
-                                        onclick: {
-                                            let id = *id;
-                                            let label = label.clone();
-                                            let ty = *ty;
-                                            let add = add.clone();
-                                            move |_| add.call((id, label.clone(), ty))
-                                        },
-                                        "Add"
-                                    }
-                                }
-                            }
-                        })}
+                        for (id, (label, ty)) in nearby_addable {
+                            NearbyAccessory { key: "{format_address(&id)}", id, label, ty, edits }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/// What to show for an added accessory: what the hub reports, else what was
+/// last saved, else a placeholder.
+fn added_info(known: &Known, saved: &AccessoryInfoMap, id: &[u8; 6]) -> AccessoryInfo {
+    if let Some((info, _)) = known.get(id) {
+        return info.clone();
+    }
+    saved
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| AccessoryInfo::with_defaults("Unknown", AccessoryType::DryFireMag))
+}
+
+#[component]
+fn AddedAccessory(
+    id: [u8; 6],
+    info: AccessoryInfo,
+    connected: bool,
+    device_choices: Vec<(NonZeroU64, String, usize)>,
+    edits: AccessoryEdits,
+) -> Element {
+    let mac = format_address(&id);
+    let assigned_uuid = info.assignment.map(NonZeroU64::get);
+
+    let (assigned_slot, assigned_label) = match assigned_uuid {
+        None => (None, "(Unassigned)".to_string()),
+        Some(uuid) => match device_choices
+            .iter()
+            .find(|(choice_uuid, _, _)| choice_uuid.get() == uuid)
+        {
+            Some((_, label, slot)) => (Some(*slot), label.clone()),
+            None => (None, format!("0x{uuid:x} (offline)")),
+        },
+    };
+    let dot_class = slot_color_dot(assigned_slot.unwrap_or(UNASSIGNED_SLOT));
+
+    rsx! {
+        li { class: "flex flex-col gap-2 md:flex-row md:items-center md:justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
+
+            div { class: "min-w-0",
+                div { class: "font-medium truncate", "{info.name}" }
+                div { class: "text-xs opacity-70 truncate", {mac} }
+            }
+
+            div { class: "flex items-center gap-3 flex-wrap justify-end",
+                StatusChip { connected }
+
+                span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200/70 dark:border-white/10",
+                    span { class: "h-2.5 w-2.5 rounded-full {dot_class}" }
+                    {assigned_label}
+                }
+
+                select {
+                    class: "px-2 py-1 text-sm rounded-lg border border-gray-300/70 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60",
+                    value: assigned_uuid.map(|uuid| uuid.to_string()).unwrap_or_default(),
+                    onchange: move |evt| {
+                        if let Some(assignment) = parse_assignment(&evt.value()) {
+                            edits.assign(id, assignment);
+                        }
+                    },
+                    option { value: "", "(Unassigned)" }
+                    for (uuid, label, slot) in device_choices {
+                        option { key: "{uuid}", value: "{uuid}", "{label} (slot {slot + 1})" }
+                    }
+                }
+
+                button {
+                    class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 hover:bg-red-500 hover:text-white transition",
+                    onclick: move |_| edits.remove(id),
+                    "Remove"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NearbyAccessory(
+    id: [u8; 6],
+    label: String,
+    ty: AccessoryType,
+    edits: AccessoryEdits,
+) -> Element {
+    let mac = format_address(&id);
+    rsx! {
+        li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
+            div { class: "min-w-0",
+                div { class: "font-medium truncate", {label.as_str()} }
+                div { class: "text-xs opacity-70 truncate", {mac} }
+            }
+            button {
+                class: "px-3 py-1.5 text-sm rounded-lg border border-emerald-600/60 hover:bg-emerald-600 hover:text-white transition",
+                onclick: move |_| edits.add(id, label.clone(), ty),
+                "Add"
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dropdown_value_maps_to_an_assignment() {
+        assert_eq!(parse_assignment(""), Some(None));
+        assert_eq!(parse_assignment("42"), Some(NonZeroU64::new(42)));
+        // Zero is not a device and text is not a choice: the edit is ignored.
+        assert_eq!(parse_assignment("0"), None);
+        assert_eq!(parse_assignment("abc"), None);
     }
 }

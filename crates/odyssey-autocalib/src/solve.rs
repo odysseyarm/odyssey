@@ -19,14 +19,15 @@
 //!    rotate the in-plane axes so `x` follows the screen's top edge, and move
 //!    the origin to its top-left corner.
 
-use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, Vector3};
+use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, Vector2, Vector3};
 use odyssey_common::ScreenCalibration;
 
 use crate::camera::{CameraGeometry, Extrinsics, Frames, Intrinsics};
-use crate::pattern::{DetectFailure, Pattern, detect};
+use crate::pattern::{Correspondence, DetectFailure, Pattern, detect};
 use crate::plane::{
-    Plane, RansacParams, apply_homography, distort_pixel, fit_homography, pixel_ray, project,
-    project_pinhole, ransac_homography, ransac_plane,
+    HOMOGENEOUS_EPSILON, HomographyFit, Plane, PlaneFit, RansacParams, apply_homography,
+    distort_pixel, fit_homography, pinhole_ray, pixel_ray, project, project_pinhole,
+    ransac_homography, ransac_plane,
 };
 
 /// Color and depth frames merged per measurement. Nine frames is about
@@ -45,8 +46,37 @@ pub const SCREEN_INSET: (f64, f64) = (0.05, 0.95);
 /// screen plane.
 const DOT_INLIER_M: f64 = 0.006;
 
+/// Trials the dot homography's RANSAC may spend.
+const DOT_RANSAC_TRIALS: usize = 300;
+
+/// Salt XORed into [`SolveOptions::seed`] for the screen plane's RANSAC, so
+/// that the default seed `0` gives [`RansacParams`]' own default seed.
+const PLANE_SEED_SALT: u64 = 0x0D155EA;
+
+/// Salt XORed into [`SolveOptions::seed`] for the dot homography's RANSAC, so
+/// the two searches draw different samples.
+const DOT_SEED_SALT: u64 = 0xD075;
+
+/// Fewest depth samples the screen plane may be fitted to, and fewest of them
+/// that must lie on it.
 const MIN_PLANE_POINTS: usize = 200;
+
+/// Fewest dots that must be seen, and fewest that must agree with the dot
+/// homography.
 const MIN_DOTS: usize = 12;
+
+/// Smallest cosine of the angle between the screen's normal and the ray to
+/// it. `0.1` means the line of sight meets the screen at more than about
+/// 6 degrees; a flatter view leaves the dot positions too ill-determined.
+const MIN_PLANE_INCIDENCE_COS: f64 = 0.1;
+
+/// Smallest norm of `gravity x normal`, which is the sine of the angle
+/// between the two. Below it the screen is horizontal and has no
+/// gravity-defined "across" axis.
+const MIN_HORIZONTAL_ACROSS_NORM: f64 = 1e-3;
+
+/// Meters per inch, for screen diagonals.
+pub(crate) const METERS_PER_INCH: f64 = 0.0254;
 
 /// A screen size the user or the display itself declares, used as the scale
 /// anchor instead of the depth camera's measurement.
@@ -70,7 +100,7 @@ impl KnownSize {
     pub fn size_for_aspect(&self, aspect: f64) -> Result<[f64; 2], SolveError> {
         match *self {
             Self::Diagonal { inches } if inches.is_finite() && inches > 0.0 => {
-                let height = inches * 0.0254 / (aspect * aspect + 1.0).sqrt();
+                let height = inches * METERS_PER_INCH / (aspect * aspect + 1.0).sqrt();
                 Ok([aspect * height, height])
             }
             Self::Dimensions { width_m, height_m }
@@ -245,7 +275,7 @@ pub struct ScreenFit {
 
 impl ScreenFit {
     pub fn diagonal_in(&self) -> f64 {
-        self.size_m[0].hypot(self.size_m[1]) / 0.0254
+        self.size_m[0].hypot(self.size_m[1]) / METERS_PER_INCH
     }
 
     /// Where a point on the screen, given in final screen coordinates (meters),
@@ -268,6 +298,12 @@ pub fn compose(a: &Extrinsics, b: &Extrinsics) -> Extrinsics {
     }
 }
 
+/// Whether `count` is at least half of `total`: the majority rule that frames
+/// and detections must pass to count as agreeing.
+pub(crate) fn is_at_least_half(count: usize, total: usize) -> bool {
+    count * 2 >= total
+}
+
 /// Measures the screen from a burst of frames.
 ///
 /// `camera_to_aligned` is the gravity alignment from [`crate::imu`]; pass the
@@ -287,11 +323,102 @@ pub fn solve_screen(
                 .map(|size| (k.source(), size))
         })
         .transpose()?;
-    let (dots, dots_h) = merged_dots(geometry, pattern, frames, options.perspective_correction)?;
+    let (dots, unit_to_pixel) =
+        merged_dots(geometry, pattern, frames, options.perspective_correction)?;
 
     let color_from_depth = geometry.color_to_depth.inverse();
+    let (plane_fit, depth_samples) = fit_screen_plane(
+        geometry,
+        frames,
+        &unit_to_pixel,
+        &color_from_depth,
+        options.seed,
+    )?;
+    let plane_depth = plane_fit.plane;
+    let plane_color = plane_depth.transformed(&color_from_depth);
+    let plane_frames = PlaneFrames::new(plane_color, camera_to_aligned)?;
 
-    let points = screen_depth_points(geometry, frames, &dots_h, &color_from_depth);
+    let (pattern_points, plane_points) = plane_frames.dot_positions(&dots, &geometry.color);
+    if pattern_points.len() < MIN_DOTS {
+        return Err(SolveError::DotsInconsistent);
+    }
+    let dots_fit = ransac_homography(
+        &pattern_points,
+        &plane_points,
+        DOT_INLIER_M,
+        DOT_RANSAC_TRIALS,
+        options.seed ^ DOT_SEED_SALT,
+    )
+    .filter(|fit| fit.inliers.len() >= MIN_DOTS)
+    .ok_or(SolveError::DotsInconsistent)?;
+
+    let top_edge = TopEdgeFrame::new(&dots_fit.h)?;
+    let screen_from_aligned = top_edge.screen_from_aligned(&plane_frames);
+
+    let measured_corners =
+        unit_corners(&top_edge.unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
+    if measured_corners[1].x <= 0.0 || measured_corners[3].y <= 0.0 {
+        return Err(SolveError::Mirrored);
+    }
+    let measured_size_m = rect_size(&measured_corners);
+    let ResolvedSize {
+        rectification,
+        size_m,
+        source: size_source,
+        check: size_check,
+    } = resolve_size(&measured_corners, measured_size_m, known)?;
+    let unit_to_screen = rectification * top_edge.unit_to_screen;
+    let corners_m = unit_corners(&unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
+
+    let screen_from_color = compose(
+        &screen_from_aligned,
+        &Extrinsics {
+            rotation: plane_frames.alignment,
+            translation: Vector3::zeros(),
+        },
+    );
+    let screen_from_depth = compose(&screen_from_color, &color_from_depth);
+
+    let quad_px = unit_corners(&unit_to_pixel)
+        .ok_or(SolveError::DotsInconsistent)?
+        .map(|corner| distort_pixel(&geometry.color, corner));
+
+    Ok(ScreenFit {
+        plane_depth,
+        plane_color,
+        camera_to_aligned: plane_frames.alignment,
+        screen_from_aligned,
+        screen_from_color,
+        screen_from_depth,
+        unit_to_screen,
+        rectification,
+        corners_m,
+        measured_size_m,
+        size_m,
+        plane_rmse_m: plane_fit.rmse,
+        plane_max_error_m: plane_fit.max_error,
+        plane_inliers: plane_fit.inliers.len(),
+        depth_samples,
+        dots_used: dots_fit.inliers.len(),
+        size_source,
+        size_check,
+        unit_to_pixel,
+        dot_rmse_m: dot_rmse(&dots_fit, &pattern_points, &plane_points),
+        quad_px,
+        camera_color: geometry.color,
+    })
+}
+
+/// Fits the screen plane to the depth pixels that see the screen. Returns the
+/// fit and the number of depth samples it was drawn from.
+fn fit_screen_plane(
+    geometry: &CameraGeometry,
+    frames: &[Frames],
+    unit_to_pixel: &Matrix3<f64>,
+    color_from_depth: &Extrinsics,
+    seed: u64,
+) -> Result<(PlaneFit, usize), SolveError> {
+    let points = screen_depth_points(geometry, frames, unit_to_pixel, color_from_depth);
     if points.len() < MIN_PLANE_POINTS {
         return Err(SolveError::TooFewDepthPoints {
             found: points.len(),
@@ -300,7 +427,7 @@ pub fn solve_screen(
     let fit = ransac_plane(
         &points,
         &RansacParams {
-            seed: options.seed ^ 0x0D155EA,
+            seed: seed ^ PLANE_SEED_SALT,
             ..RansacParams::default()
         },
     )
@@ -310,171 +437,242 @@ pub fn solve_screen(
             found: fit.inliers.len(),
         });
     }
-    let plane_depth = fit.plane;
-    let plane_color = plane_depth.transformed(&color_from_depth);
+    Ok((fit, points.len()))
+}
 
-    // Dots to metric positions on the plane, in the aligned frame.
-    let a = camera_to_aligned;
-    let plane_aligned = Plane::new(a * plane_color.point, a * plane_color.normal);
-    let z_axis = plane_aligned.normal;
-    let x_axis = {
+/// The screen plane in the color frame and in the gravity-aligned frame, and
+/// the rotation to coordinates whose `z` is the plane normal.
+struct PlaneFrames {
+    color: Plane,
+    /// The gravity alignment from the camera frame.
+    alignment: Matrix3<f64>,
+    aligned: Plane,
+    /// Takes aligned coordinates to in-plane coordinates: `z` is the plane
+    /// normal, `x` is horizontal (perpendicular to gravity).
+    aligned_to_plane: Matrix3<f64>,
+}
+
+impl PlaneFrames {
+    fn new(color: Plane, alignment: &Matrix3<f64>) -> Result<Self, SolveError> {
+        if color.normal.dot(&color.point.normalize()) < MIN_PLANE_INCIDENCE_COS {
+            return Err(SolveError::DegeneratePose);
+        }
+        let aligned = Plane::new(alignment * color.point, alignment * color.normal);
+        let z_axis = aligned.normal;
         let across = Vector3::y().cross(&z_axis);
-        if across.norm() > 1e-3 {
+        let x_axis = if across.norm() > MIN_HORIZONTAL_ACROSS_NORM {
             across.normalize()
         } else {
             // A horizontal screen has no gravity-defined "across"; fall back to
             // the camera's own right axis.
             (Vector3::x() - z_axis * z_axis.x).normalize()
-        }
-    };
-    let y_axis = z_axis.cross(&x_axis);
-    // The ray to the plane point must meet the plane at more than ~6 degrees.
-    if plane_color.normal.dot(&plane_color.point.normalize()) < 0.1 {
-        return Err(SolveError::DegeneratePose);
-    }
-    let r_xy = Matrix3::from_rows(&[x_axis.transpose(), y_axis.transpose(), z_axis.transpose()]);
-
-    let mut unit = Vec::new();
-    let mut flat = Vec::new();
-    for c in &dots {
-        let ray = Vector3::new(
-            (c.pixel.x - geometry.color.cx) / geometry.color.fx,
-            (c.pixel.y - geometry.color.cy) / geometry.color.fy,
-            1.0,
-        );
-        let Some(p_color) = plane_color.intersect_ray(&Vector3::zeros(), &ray) else {
-            continue;
         };
-        let p = r_xy * (a * p_color - plane_aligned.point);
-        unit.push(c.pattern);
-        flat.push(Point2::new(p.x, p.y));
-    }
-    if unit.len() < MIN_DOTS {
-        return Err(SolveError::DotsInconsistent);
-    }
-    let dots_fit = ransac_homography(&unit, &flat, DOT_INLIER_M, 300, options.seed ^ 0xD075)
-        .ok_or(SolveError::DotsInconsistent)?;
-    if dots_fit.inliers.len() < MIN_DOTS {
-        return Err(SolveError::DotsInconsistent);
-    }
-    let h_provisional = dots_fit.h;
-
-    // Orient the in-plane axes by the screen's own top edge and put the origin
-    // at its top-left corner.
-    let corner = |u, v| {
-        apply_homography(&h_provisional, Point2::new(u, v)).ok_or(SolveError::DotsInconsistent)
-    };
-    let (tl, tr) = (corner(0.0, 0.0)?, corner(1.0, 0.0)?);
-    let theta = (tr.y - tl.y).atan2(tr.x - tl.x);
-    let (s, c) = theta.sin_cos();
-    let rz = Matrix3::new(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0);
-    let shift = rz * Vector3::new(tl.x, tl.y, 1.0);
-    let to_screen_2d = Matrix3::new(c, s, -shift.x, -s, c, -shift.y, 0.0, 0.0, 1.0);
-    let measured_unit_to_screen = to_screen_2d * h_provisional;
-
-    let rot = rz * r_xy;
-    let t_shift = rz * Vector3::new(tl.x, tl.y, 0.0);
-    let screen_from_aligned = Extrinsics {
-        rotation: rot,
-        translation: -(rot * plane_aligned.point) - t_shift,
-    };
-
-    let measured_corners =
-        unit_corners(&measured_unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
-    if measured_corners[1].x <= 0.0 || measured_corners[3].y <= 0.0 {
-        return Err(SolveError::Mirrored);
-    }
-    let measured_size_m = rect_size(&measured_corners);
-
-    let (rectification, size_m, size_source, size_check) = match known {
-        Some((source, [width, height])) => {
-            let target = [
-                Point2::new(0.0, 0.0),
-                Point2::new(width, 0.0),
-                Point2::new(width, height),
-                Point2::new(0.0, height),
-            ];
-            let rect =
-                fit_homography(&measured_corners, &target).ok_or(SolveError::DotsInconsistent)?;
-            (
-                rect,
-                [width, height],
-                source,
-                Some(SizeCheck::new(measured_size_m, [width, height])),
-            )
-        }
-        None => (
-            Matrix3::identity(),
-            measured_size_m,
-            SizeSource::Measured,
-            None,
-        ),
-    };
-    let unit_to_screen = rectification * measured_unit_to_screen;
-    let corners_m = unit_corners(&unit_to_screen).ok_or(SolveError::DotsInconsistent)?;
-
-    let screen_from_color = compose(
-        &screen_from_aligned,
-        &Extrinsics {
-            rotation: *a,
-            translation: Vector3::zeros(),
-        },
-    );
-    let screen_from_depth = compose(&screen_from_color, &color_from_depth);
-
-    let mut quad_px = [Point2::origin(); 4];
-    for (slot, (u, v)) in quad_px
-        .iter_mut()
-        .zip([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
-    {
-        let p = apply_homography(&dots_h, Point2::new(u, v)).ok_or(SolveError::DotsInconsistent)?;
-        *slot = distort_pixel(&geometry.color, p);
-    }
-
-    let dot_sq: f64 = dots_fit
-        .inliers
-        .iter()
-        .map(|&i| {
-            (apply_homography(&h_provisional, unit[i]).unwrap_or(flat[i]) - flat[i]).norm_squared()
+        let y_axis = z_axis.cross(&x_axis);
+        Ok(Self {
+            color,
+            alignment: *alignment,
+            aligned,
+            aligned_to_plane: Matrix3::from_rows(&[
+                x_axis.transpose(),
+                y_axis.transpose(),
+                z_axis.transpose(),
+            ]),
         })
-        .sum();
+    }
 
-    Ok(ScreenFit {
-        plane_depth,
-        plane_color,
-        camera_to_aligned: *a,
-        screen_from_aligned,
-        screen_from_color,
-        screen_from_depth,
-        unit_to_screen,
+    /// Each dot's pattern position paired with where its color ray meets the
+    /// plane, in in-plane coordinates (meters); the two lists are parallel.
+    /// Dots whose ray misses the plane are left out.
+    fn dot_positions(
+        &self,
+        dots: &[Correspondence],
+        color: &Intrinsics,
+    ) -> (Vec<Point2<f64>>, Vec<Point2<f64>>) {
+        let mut pattern_points = Vec::new();
+        let mut plane_points = Vec::new();
+        for dot in dots {
+            let ray = pinhole_ray(color, dot.pixel);
+            let Some(on_plane_color) = self.color.intersect_ray(&Vector3::zeros(), &ray) else {
+                continue;
+            };
+            let p = self.aligned_to_plane * (self.alignment * on_plane_color - self.aligned.point);
+            pattern_points.push(dot.pattern);
+            plane_points.push(Point2::new(p.x, p.y));
+        }
+        (pattern_points, plane_points)
+    }
+}
+
+/// In-plane axes taken from the screen's own top edge, with the origin at its
+/// top-left corner.
+struct TopEdgeFrame {
+    /// Rotates in-plane coordinates so `x` follows the top edge.
+    rotation: Matrix3<f64>,
+    top_left: Point2<f64>,
+    /// Maps pattern unit coordinates to meters in the screen frame, before
+    /// rectification.
+    unit_to_screen: Matrix3<f64>,
+}
+
+impl TopEdgeFrame {
+    /// `unit_to_plane` maps pattern unit coordinates to in-plane meters.
+    fn new(unit_to_plane: &Matrix3<f64>) -> Result<Self, SolveError> {
+        let corner = |u, v| {
+            apply_homography(unit_to_plane, Point2::new(u, v)).ok_or(SolveError::DotsInconsistent)
+        };
+        let (top_left, top_right) = (corner(0.0, 0.0)?, corner(1.0, 0.0)?);
+        let theta = (top_right.y - top_left.y).atan2(top_right.x - top_left.x);
+        let (s, c) = theta.sin_cos();
+        let rotation = Matrix3::new(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0);
+        let shift = rotation * Vector3::new(top_left.x, top_left.y, 1.0);
+        let to_screen_2d = Matrix3::new(c, s, -shift.x, -s, c, -shift.y, 0.0, 0.0, 1.0);
+        Ok(Self {
+            rotation,
+            top_left,
+            unit_to_screen: to_screen_2d * unit_to_plane,
+        })
+    }
+
+    /// Takes gravity-aligned coordinates to the screen frame.
+    fn screen_from_aligned(&self, plane: &PlaneFrames) -> Extrinsics {
+        let rotation = self.rotation * plane.aligned_to_plane;
+        let shift = self.rotation * Vector3::new(self.top_left.x, self.top_left.y, 0.0);
+        Extrinsics {
+            rotation,
+            translation: -(rotation * plane.aligned.point) - shift,
+        }
+    }
+}
+
+/// The screen's final size and the rectification that imposes it.
+struct ResolvedSize {
+    rectification: Matrix3<f64>,
+    size_m: [f64; 2],
+    source: SizeSource,
+    check: Option<SizeCheck>,
+}
+
+/// Rectifies the measured screen corners to the declared size, or keeps the
+/// measurement when none was declared.
+fn resolve_size(
+    measured_corners: &[Point2<f64>; 4],
+    measured_size_m: [f64; 2],
+    known: Option<(SizeSource, [f64; 2])>,
+) -> Result<ResolvedSize, SolveError> {
+    let Some((source, [width, height])) = known else {
+        return Ok(ResolvedSize {
+            rectification: Matrix3::identity(),
+            size_m: measured_size_m,
+            source: SizeSource::Measured,
+            check: None,
+        });
+    };
+    let target = [
+        Point2::new(0.0, 0.0),
+        Point2::new(width, 0.0),
+        Point2::new(width, height),
+        Point2::new(0.0, height),
+    ];
+    let rectification =
+        fit_homography(measured_corners, &target).ok_or(SolveError::DotsInconsistent)?;
+    Ok(ResolvedSize {
         rectification,
-        corners_m,
-        measured_size_m,
-        size_m,
-        plane_rmse_m: fit.rmse,
-        plane_max_error_m: fit.max_error,
-        plane_inliers: fit.inliers.len(),
-        depth_samples: points.len(),
-        dots_used: dots_fit.inliers.len(),
-        size_source,
-        size_check,
-        unit_to_pixel: dots_h,
-        dot_rmse_m: (dot_sq / dots_fit.inliers.len() as f64).sqrt(),
-        quad_px,
-        camera_color: geometry.color,
+        size_m: [width, height],
+        source,
+        check: Some(SizeCheck::new(measured_size_m, [width, height])),
     })
 }
 
-fn unit_corners(h: &Matrix3<f64>) -> Option<[Point2<f64>; 4]> {
-    let m = |u, v| apply_homography(h, Point2::new(u, v));
-    Some([m(0.0, 0.0)?, m(1.0, 0.0)?, m(1.0, 1.0)?, m(0.0, 1.0)?])
+/// Root-mean-square distance of the homography's inlier dots from where the
+/// homography puts them, meters.
+fn dot_rmse(
+    fit: &HomographyFit,
+    pattern_points: &[Point2<f64>],
+    plane_points: &[Point2<f64>],
+) -> f64 {
+    let sum_sq: f64 = fit
+        .inliers
+        .iter()
+        .map(|&i| {
+            (apply_homography(&fit.h, pattern_points[i]).unwrap_or(plane_points[i])
+                - plane_points[i])
+                .norm_squared()
+        })
+        .sum();
+    (sum_sq / fit.inliers.len() as f64).sqrt()
 }
 
+/// Corners of the pattern's unit square, in the order of the corner arrays:
+/// top left, top right, bottom right, bottom left.
+const UNIT_SQUARE_CORNERS: [(f64, f64); 4] = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+
+fn unit_corners(h: &Matrix3<f64>) -> Option<[Point2<f64>; 4]> {
+    let mut corners = [Point2::origin(); 4];
+    for (slot, (u, v)) in corners.iter_mut().zip(UNIT_SQUARE_CORNERS) {
+        *slot = apply_homography(h, Point2::new(u, v))?;
+    }
+    Some(corners)
+}
+
+/// Width and height of a quadrilateral as the mean of its opposite sides.
 fn rect_size(c: &[Point2<f64>; 4]) -> [f64; 2] {
     [
         ((c[1] - c[0]).norm() + (c[2] - c[3]).norm()) / 2.0,
         ((c[3] - c[0]).norm() + (c[2] - c[1]).norm()) / 2.0,
     ]
+}
+
+/// One dot's detections summed over the burst.
+#[derive(Clone, Copy)]
+struct DotSum {
+    /// Undistorted centers with perspective correction.
+    corrected: Vector2<f64>,
+    /// Undistorted centers without it.
+    centroid: Vector2<f64>,
+    /// Frames that saw the dot.
+    frames: usize,
+}
+
+/// Detects the pattern in every frame and sums each dot's centers over the
+/// frames that saw it. Returns the per-dot sums and the number of frames in
+/// which the pattern was found; fails when that is under half the burst.
+fn detect_burst(
+    geometry: &CameraGeometry,
+    pattern: &Pattern,
+    frames: &[Frames],
+) -> Result<(Vec<DotSum>, usize), SolveError> {
+    let mut sums = vec![
+        DotSum {
+            corrected: Vector2::zeros(),
+            centroid: Vector2::zeros(),
+            frames: 0,
+        };
+        pattern.dots().len()
+    ];
+    let mut successes = 0usize;
+    let mut first_failure = None;
+    for frame in frames {
+        match detect(pattern, &frame.color, &geometry.color) {
+            Ok(detection) => {
+                successes += 1;
+                for c in &detection.correspondences {
+                    let sum = &mut sums[c.index];
+                    sum.corrected += c.pixel.coords;
+                    sum.centroid += c.centroid.coords;
+                    sum.frames += 1;
+                }
+            }
+            Err(failure) => {
+                first_failure.get_or_insert(failure);
+            }
+        }
+    }
+    if successes == 0 || !is_at_least_half(successes, frames.len()) {
+        return Err(SolveError::PatternNotFound(
+            first_failure.unwrap_or(DetectFailure::NoDots { blobs: 0 }),
+        ));
+    }
+    Ok((sums, successes))
 }
 
 /// Detects the pattern in every frame and averages each dot's undistorted
@@ -485,48 +683,25 @@ fn merged_dots(
     pattern: &Pattern,
     frames: &[Frames],
     perspective_correction: bool,
-) -> Result<(Vec<crate::pattern::Correspondence>, Matrix3<f64>), SolveError> {
-    // Per dot: summed corrected and uncorrected undistorted centers, and the
-    // number of frames that saw it.
-    let zero = nalgebra::Vector2::<f64>::zeros();
-    let mut sums = vec![(zero, zero, 0usize); pattern.dots().len()];
-    let mut successes = 0usize;
-    let mut first_failure = None;
-    for frame in frames {
-        match detect(pattern, &frame.color, &geometry.color) {
-            Ok(d) => {
-                successes += 1;
-                for c in &d.correspondences {
-                    sums[c.index].0 += c.pixel.coords;
-                    sums[c.index].1 += c.centroid.coords;
-                    sums[c.index].2 += 1;
-                }
-            }
-            Err(e) => {
-                first_failure.get_or_insert(e);
-            }
-        }
-    }
-    if successes == 0 || successes * 2 < frames.len() {
-        return Err(SolveError::PatternNotFound(
-            first_failure.unwrap_or(DetectFailure::NoDots { blobs: 0 }),
-        ));
-    }
+) -> Result<(Vec<Correspondence>, Matrix3<f64>), SolveError> {
+    let (sums, successes) = detect_burst(geometry, pattern, frames)?;
 
     let mut dots = Vec::new();
-    for (index, (corrected, measured, count)) in sums.iter().enumerate() {
-        if *count == 0 || *count * 2 < successes {
+    for (index, sum) in sums.iter().enumerate() {
+        // A dot that few frames saw is more likely a misdetection than a
+        // measurement.
+        if sum.frames == 0 || !is_at_least_half(sum.frames, successes) {
             continue;
         }
         let dot = &pattern.dots()[index];
-        let corrected = Point2::from(corrected / *count as f64);
-        let centroid = Point2::from(measured / *count as f64);
+        let corrected = Point2::from(sum.corrected / sum.frames as f64);
+        let centroid = Point2::from(sum.centroid / sum.frames as f64);
         let pixel = if perspective_correction {
             corrected
         } else {
             centroid
         };
-        dots.push(crate::pattern::Correspondence {
+        dots.push(Correspondence {
             index,
             pattern: Point2::new(dot.u, dot.v),
             pixel,
@@ -534,18 +709,44 @@ fn merged_dots(
             raw: distort_pixel(&geometry.color, pixel),
         });
     }
+    let grid_failure = |dots: &[Correspondence]| {
+        SolveError::PatternNotFound(DetectFailure::NoGrid { blobs: dots.len() })
+    };
     if dots.len() < MIN_DOTS {
-        return Err(SolveError::PatternNotFound(DetectFailure::NoGrid {
-            blobs: dots.len(),
-        }));
+        return Err(grid_failure(&dots));
     }
     let src: Vec<_> = dots.iter().map(|d| d.pattern).collect();
     let dst: Vec<_> = dots.iter().map(|d| d.pixel).collect();
-    let h =
-        fit_homography(&src, &dst).ok_or(SolveError::PatternNotFound(DetectFailure::NoGrid {
-            blobs: dots.len(),
-        }))?;
+    let h = fit_homography(&src, &dst).ok_or_else(|| grid_failure(&dots))?;
     Ok((dots, h))
+}
+
+/// Width of the depth image, in pixels, that the screen sampling aims at.
+/// Wider images are subsampled to about this many columns, since a plane fit
+/// gains nothing from the extra pixels.
+const DEPTH_SAMPLE_WIDTH: u32 = 320;
+
+/// Pixel step between depth samples for a depth image `width` pixels wide.
+pub(crate) fn depth_stride(width: u32) -> u32 {
+    (width / DEPTH_SAMPLE_WIDTH).max(1)
+}
+
+/// Median over the burst of the depth at pixel `(x, y)` in meters, or `None`
+/// when under half the frames have a reading there. `samples` is scratch
+/// space.
+fn median_depth_m(frames: &[Frames], x: u32, y: u32, samples: &mut Vec<f64>) -> Option<f64> {
+    samples.clear();
+    samples.extend(frames.iter().filter_map(|f| f.depth_m(x, y)));
+    if !is_at_least_half(samples.len(), frames.len()) {
+        return None;
+    }
+    samples.sort_by(f64::total_cmp);
+    Some(samples[(samples.len() - 1) / 2])
+}
+
+fn inside_screen_inset(uv: Point2<f64>) -> bool {
+    (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.x)
+        && (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.y)
 }
 
 /// Depth-frame points of the pixels that see the inset screen region. Each
@@ -565,19 +766,14 @@ pub(crate) fn screen_depth_points(
         return Vec::new();
     };
     let (w, h) = first.depth.dimensions();
-    let stride = ((w / 320).max(1)) as usize;
-    let needed = frames.len().div_ceil(2);
+    let stride = depth_stride(w) as usize;
     let mut samples = Vec::with_capacity(frames.len());
     let mut points = Vec::new();
     for y in (0..h).step_by(stride) {
         for x in (0..w).step_by(stride) {
-            samples.clear();
-            samples.extend(frames.iter().filter_map(|f| f.depth_m(x, y)));
-            if samples.len() < needed {
+            let Some(d) = median_depth_m(frames, x, y, &mut samples) else {
                 continue;
-            }
-            samples.sort_by(f64::total_cmp);
-            let d = samples[(samples.len() - 1) / 2];
+            };
             if d < DEPTH_RANGE_M.0 || d > DEPTH_RANGE_M.1 {
                 continue;
             }
@@ -593,9 +789,7 @@ pub(crate) fn screen_depth_points(
             let Some(uv) = apply_homography(&color_px_to_unit, px) else {
                 continue;
             };
-            if (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.x)
-                && (SCREEN_INSET.0..=SCREEN_INSET.1).contains(&uv.y)
-            {
+            if inside_screen_inset(uv) {
                 points.push(p_depth);
             }
         }
@@ -610,7 +804,7 @@ pub fn build_calibration(fit: &ScreenFit, markers: &[Point2<f64>; 6]) -> ScreenC
         .unit_to_screen
         .try_inverse()
         .unwrap_or_else(Matrix3::identity);
-    if h[(2, 2)].abs() > 1e-12 {
+    if h[(2, 2)].abs() > HOMOGENEOUS_EPSILON {
         h /= h[(2, 2)];
     }
     let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(

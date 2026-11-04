@@ -25,7 +25,7 @@ pub(super) struct Bundle<'a> {
 }
 
 /// Writes the bundle to `path` and returns its size in bytes.
-pub(super) fn write(path: &Path, bundle: &Bundle) -> Result<u64, String> {
+pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> Result<u64, String> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]

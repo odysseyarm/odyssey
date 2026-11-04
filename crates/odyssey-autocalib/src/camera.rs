@@ -11,6 +11,8 @@ use std::time::Duration;
 use image::{GrayImage, ImageBuffer, Luma, RgbImage};
 use nalgebra::{Matrix3, Vector3};
 
+/// Raw depth, one `u16` per pixel in sensor units; zero marks an invalid
+/// pixel. See [`Frames::depth_unit_m`].
 pub type DepthImage = ImageBuffer<Luma<u16>, Vec<u16>>;
 
 #[derive(Debug, thiserror::Error)]
@@ -121,11 +123,17 @@ pub struct CaptureSettings {
     pub color_gain: u32,
 }
 
+/// Color exposure of [`CaptureSettings::default`], microseconds: short enough
+/// that a screen brighter than the room does not bloom.
+const DEFAULT_COLOR_EXPOSURE_US: u32 = 1500;
+/// Color gain of [`CaptureSettings::default`], in the camera SDK's units.
+const DEFAULT_COLOR_GAIN: u32 = 1;
+
 impl Default for CaptureSettings {
     fn default() -> Self {
         Self {
-            color_exposure_us: 1500,
-            color_gain: 1,
+            color_exposure_us: DEFAULT_COLOR_EXPOSURE_US,
+            color_gain: DEFAULT_COLOR_GAIN,
         }
     }
 }
@@ -243,6 +251,9 @@ impl Frames {
 
 /// One inertial reading, in the camera's frame. Timestamps share an arbitrary
 /// epoch; only their differences matter.
+///
+/// Backends express the vectors in the color camera's frame, not the IMU's
+/// own, so the solver never needs the IMU extrinsics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ImuSample {
     pub timestamp: Duration,
@@ -251,9 +262,6 @@ pub struct ImuSample {
     /// Specific force in m/s^2; reads `-gravity` when the camera is at rest.
     pub accel: Vector3<f64>,
 }
-
-// Backends express `ImuSample` vectors in the color camera's frame, not the
-// IMU's own, so the solver never needs the IMU extrinsics.
 
 #[cfg(test)]
 mod tests {

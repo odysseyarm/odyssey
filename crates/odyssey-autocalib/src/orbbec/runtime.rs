@@ -346,9 +346,13 @@ fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attemp
     // Versions come first and through single lookups: the full table needs
     // every function this backend calls, which an unsupported release may lack.
     let part = |symbol: &[u8]| -> Result<u32, libloading::Error> {
-        // SAFETY: the SDK documents these as `int f(void)`.
+        // SAFETY: a missing symbol is an `Err`; a present one is trusted to be
+        // the SDK's `int ob_get_*_version(void)`, which `VersionFn` describes.
         let f: libloading::Symbol<'_, VersionFn> = unsafe { library.get(symbol) }?;
-        Ok(u32::try_from(unsafe { f() }).unwrap_or(0))
+        // SAFETY: `f` takes no arguments and `library` (borrowed by `f`)
+        // stays loaded for the call.
+        let value = unsafe { f() };
+        Ok(u32::try_from(value).unwrap_or(0))
     };
     let version = match (
         part(b"ob_get_major_version\0"),
@@ -368,7 +372,11 @@ fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attemp
             supported: SUPPORTED_VERSIONS,
         });
     }
-    // SAFETY: `from_library` only looks up symbols.
+    // SAFETY: the function-pointer types in `OrbbecSdk` come from the 2.10.6
+    // headers. Only releases the version policy accepts (2.8 and newer in the
+    // 2.x series) get here, on the assumption, stated in `SUPPORTED_VERSIONS`,
+    // that those keep the signatures of the functions the backend calls. The
+    // table keeps `library` loaded for as long as the pointers are in use.
     let sdk = match unsafe { OrbbecSdk::from_library(library) } {
         Ok(sdk) => Arc::new(sdk),
         Err(e) => return failed(e),

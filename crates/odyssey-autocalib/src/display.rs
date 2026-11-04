@@ -504,6 +504,10 @@ fn parse_monitor_device_id(device_id: &str) -> Option<(String, String)> {
 }
 
 #[cfg(windows)]
+#[expect(
+    unsafe_code,
+    reason = "Win32 registry and display-device calls to read a monitor's EDID"
+)]
 mod windows_registry {
     use std::ptr::{null, null_mut};
 
@@ -516,7 +520,9 @@ mod windows_registry {
         RegOpenKeyExW, RegQueryValueExW,
     };
 
-    use super::*;
+    use super::{
+        DisplayLookup, LookupNote, check_consistency, parse_edid, parse_monitor_device_id,
+    };
 
     /// Registry values here are a few hundred bytes; anything larger is not an EDID.
     const MAX_VALUE_BYTES: u32 = 64 * 1024;
@@ -534,13 +540,17 @@ mod windows_registry {
         String::from_utf16_lossy(&buffer[..end])
     }
 
+    /// An open registry key, closed on drop. Invariant: the handle came from a
+    /// successful `RegOpenKeyExW` and only `Drop` closes it.
     struct Key(HKEY);
 
     impl Key {
         fn open(parent: HKEY, path: &str) -> Option<Key> {
             let path = wide(path);
             let mut key: HKEY = null_mut();
-            // SAFETY: `path` is NUL-terminated and outlives the call, `key` is a valid out pointer.
+            // SAFETY: `parent` is `HKEY_LOCAL_MACHINE` or another `Key`'s open
+            // handle, `path` is NUL-terminated and outlives the call, and `key`
+            // is a valid out pointer.
             let status = unsafe { RegOpenKeyExW(parent, path.as_ptr(), 0, KEY_READ, &mut key) };
             (status == ERROR_SUCCESS).then_some(Key(key))
         }
@@ -549,7 +559,9 @@ mod windows_registry {
             let name = wide(name);
             let mut kind = 0u32;
             let mut size = 0u32;
-            // SAFETY: a null data pointer asks only for the type and size.
+            // SAFETY: `self.0` is open (struct invariant), `name` is
+            // NUL-terminated, and `kind` and `size` are valid out pointers. A
+            // null data pointer asks only for the type and size.
             let status = unsafe {
                 RegQueryValueExW(
                     self.0,
@@ -568,7 +580,8 @@ mod windows_registry {
                 return None;
             }
             let mut data = vec![0u8; size as usize];
-            // SAFETY: `data` has `size` writable bytes, which `size` tells the call.
+            // SAFETY: as above, and `data` has `size` writable bytes, which is
+            // also what `size` tells the call.
             let status = unsafe {
                 RegQueryValueExW(
                     self.0,
@@ -601,7 +614,8 @@ mod windows_registry {
             for index in 0..1024u32 {
                 let mut buffer = [0u16; MAX_KEY_NAME];
                 let mut len = MAX_KEY_NAME as u32;
-                // SAFETY: `buffer` holds `len` units; the optional outputs are null.
+                // SAFETY: `self.0` is open, `buffer` holds `len` UTF-16 units,
+                // and the optional outputs are null.
                 let status = unsafe {
                     RegEnumKeyExW(
                         self.0,
