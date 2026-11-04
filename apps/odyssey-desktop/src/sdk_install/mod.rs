@@ -17,6 +17,12 @@
 //! not rename or delete files that are mapped. Replacing or removing a copy that is
 //! in use therefore moves it aside in one step, which either works or changes
 //! nothing, and otherwise leaves a marker for the next start to act on.
+//! Only a refused move of the current copy is deferred: other filesystem errors
+//! are reported. Staging is invalidated before cleanup, and removal intent stays
+//! on disk until cleanup succeeds, so interrupted work cannot reinstall a copy
+//! the user removed. A later completed download supersedes an earlier removal.
+//! Downloads are bounded before allocation and while streaming; archive files
+//! are written only to fresh, relative destinations without overwriting files.
 
 mod advisory;
 mod delivery;
