@@ -301,7 +301,7 @@ impl VmDevice {
 
     /// Read all config values via control endpoint (for devices that don't support bulk config).
     pub async fn read_all_config_ctrl(&self) -> Result<GeneralSettings> {
-        GeneralSettings::read_with(async |kind| self.read_config_ctrl(kind).await).await
+        GeneralSettings::read_with(|kind| self.read_config_ctrl(kind)).await
     }
 
     pub async fn set_name(&self, name: &str) -> Result<()> {

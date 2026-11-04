@@ -331,7 +331,7 @@ impl VmDevice {
 
     /// Read all configuration values and return them as a single struct
     pub async fn read_all_config(&self) -> Result<GeneralSettings> {
-        GeneralSettings::read_with(async |kind| self.read_config(kind).await).await
+        GeneralSettings::read_with(|kind| self.read_config(kind)).await
     }
 
     pub async fn get_frame(&self) -> Result<([MotData; 16], [MotData; 16])> {

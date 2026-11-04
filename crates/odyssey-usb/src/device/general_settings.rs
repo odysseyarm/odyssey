@@ -58,9 +58,12 @@ impl Default for GeneralSettings {
 impl GeneralSettings {
     /// Reads every setting with `read_config`, which asks the device for one
     /// [`ConfigKind`] over whichever channel the caller has.
-    pub(super) async fn read_with(
-        read_config: impl AsyncFn(ConfigKind) -> Result<GeneralConfig>,
-    ) -> Result<Self> {
+    pub(super) async fn read_with<Read>(
+        mut read_config: impl FnMut(ConfigKind) -> Read,
+    ) -> Result<Self>
+    where
+        Read: Future<Output = Result<GeneralConfig>>,
+    {
         let impact_threshold = read_config(ConfigKind::ImpactThreshold).await?;
         let suppress_ms = read_config(ConfigKind::SuppressMs).await?;
         let accel_config = read_config(ConfigKind::AccelConfig).await?;
