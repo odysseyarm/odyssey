@@ -19,14 +19,14 @@ use slab::Slab;
 /// The firmware channel in effect, `None` until the saved choice has loaded.
 /// Settings writes it and the manifest fetch follows it, so a change applies
 /// without a restart.
-pub static FIRMWARE_CHANNEL: GlobalSignal<Option<firmware::FirmwareChannel>> =
+pub(crate) static FIRMWARE_CHANNEL: GlobalSignal<Option<firmware::FirmwareChannel>> =
     Signal::global(|| None);
 
 /// Fill [`FIRMWARE_CHANNEL`] from the saved choice if nothing has set it yet.
 ///
 /// The check repeats after the load: a user can pick a channel while the saved
 /// one is still being read, and that pick must survive.
-pub async fn ensure_firmware_channel_loaded() {
+pub(crate) async fn ensure_firmware_channel_loaded() {
     if FIRMWARE_CHANNEL.peek().is_some() {
         return;
     }
@@ -53,7 +53,7 @@ fn desktop_version() -> [u16; 3] {
 /// A firmware release newer than the one on offer that this desktop is too old
 /// to install. The user decides whether to update the desktop.
 #[derive(Clone, Debug, PartialEq)]
-pub struct HeldBack {
+pub(crate) struct HeldBack {
     pub version: String,
     pub min_desktop: String,
 }
@@ -81,7 +81,7 @@ fn held_back_note(held_back: &HeldBack) -> Element {
 /// A newer firmware release this unit cannot take yet because it must first run
 /// a newer net core than it does.
 #[derive(Clone, Debug, PartialEq)]
-pub struct NetCoreBlocked {
+pub(crate) struct NetCoreBlocked {
     pub version: String,
 }
 
@@ -101,7 +101,7 @@ fn net_core_blocked_note(blocked: &NetCoreBlocked, bridge: Option<&str>) -> Elem
 
 /// State for a single device's firmware update
 #[derive(Clone, Debug, PartialEq)]
-pub enum FirmwareUpdateState {
+pub(crate) enum FirmwareUpdateState {
     /// No update available or not yet checked
     Idle,
     /// Update is available but device lacks USB control (needs to be plugged in via USB)
@@ -151,7 +151,7 @@ pub enum FirmwareUpdateState {
 /// Global state manager for firmware updates
 /// This is shared between tokio tasks and Dioxus components
 #[derive(Clone)]
-pub struct FirmwareUpdateManager {
+pub(crate) struct FirmwareUpdateManager {
     states: Arc<Mutex<HashMap<[u8; 6], FirmwareUpdateState>>>,
     updating: Arc<Mutex<std::collections::HashSet<[u8; 6]>>>,
 }
@@ -170,14 +170,14 @@ impl Default for FirmwareUpdateManager {
 }
 
 impl FirmwareUpdateManager {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             states: Arc::new(Mutex::new(HashMap::new())),
             updating: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
-    pub fn get_state(&self, uuid: &[u8; 6]) -> FirmwareUpdateState {
+    pub(crate) fn get_state(&self, uuid: &[u8; 6]) -> FirmwareUpdateState {
         self.states
             .lock()
             .get(uuid)
@@ -185,25 +185,25 @@ impl FirmwareUpdateManager {
             .unwrap_or(FirmwareUpdateState::Idle)
     }
 
-    pub fn set_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
+    pub(crate) fn set_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
         self.states.lock().insert(uuid, state);
     }
 
     /// Claim a device for an update. Returns false when one is already running,
     /// so the check and the insert cannot race two clicks against each other.
-    pub fn try_claim(&self, uuid: [u8; 6]) -> bool {
+    pub(crate) fn try_claim(&self, uuid: [u8; 6]) -> bool {
         self.updating.lock().insert(uuid)
     }
 
-    pub fn is_updating(&self, uuid: &[u8; 6]) -> bool {
+    pub(crate) fn is_updating(&self, uuid: &[u8; 6]) -> bool {
         self.updating.lock().contains(uuid)
     }
 
-    pub fn get_all_updating(&self) -> Vec<[u8; 6]> {
+    pub(crate) fn get_all_updating(&self) -> Vec<[u8; 6]> {
         self.updating.lock().iter().copied().collect()
     }
 
-    pub fn clear_state(&self, uuid: &[u8; 6]) {
+    pub(crate) fn clear_state(&self, uuid: &[u8; 6]) {
         self.states.lock().remove(uuid);
         self.updating.lock().remove(uuid);
     }
@@ -211,7 +211,7 @@ impl FirmwareUpdateManager {
 
 /// Props for the device firmware update button/indicator
 #[derive(Props, Clone, PartialEq)]
-pub struct DeviceFirmwareUpdateProps {
+pub(crate) struct DeviceFirmwareUpdateProps {
     /// The device to check/update
     pub device: Device,
     /// Cached firmware manifest (shared across all devices)
@@ -295,9 +295,9 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
                     // not answered (e.g. right after a transport swap), so it is not
                     // judged as "behind".
                     let readable_netcore = firmware::known_netcore_release(
-                        device.capabilities.contains(
-                            odyssey_hub_common::device::DeviceCapabilities::NETCORE_KNOWN,
-                        ),
+                        device
+                            .capabilities
+                            .contains(DeviceCapabilities::NETCORE_KNOWN),
                         device.netcore_release,
                     );
                     let is_newer = |fw: &firmware::FirmwareEntry| {
@@ -423,7 +423,7 @@ pub fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element {
         } => {
             let manager = props.manager.clone();
             let devices = props.devices;
-            let manifest = manifest.clone();
+            let manifest = manifest;
             let device = device.clone();
             let is_dfu_bootloader =
                 device.capabilities.contains(DC::DFU) && !device.capabilities.contains(DC::CONTROL);
@@ -696,14 +696,14 @@ async fn enter_dfu(
     manager.set_state(device_uuid, FirmwareUpdateState::Detaching);
     firmware::send_dfu_detach(&device_uuid, vid, pid)
         .await
-        .map_err(|e| format!("DFU detach failed: {}", e))?;
+        .map_err(|e| format!("DFU detach failed: {e}"))?;
 
     // Wait for device to enter DFU mode
     tracing::info!("Waiting for device to enter DFU mode");
     manager.set_state(device_uuid, FirmwareUpdateState::WaitingForDfu);
     firmware::wait_for_dfu_device(&device_uuid, vid, pid, std::time::Duration::from_secs(10))
         .await
-        .map_err(|e| format!("Device did not enter DFU mode: {}", e))
+        .map_err(|e| format!("Device did not enter DFU mode: {e}"))
 }
 
 /// Write one image to a DFU alt setting, publishing progress as it goes.
@@ -957,8 +957,7 @@ async fn run_firmware_update(
         }
         _ => None,
     };
-    let mut images: std::collections::HashMap<&'static str, Vec<u8>> =
-        std::collections::HashMap::new();
+    let mut images: HashMap<&'static str, Vec<u8>> = HashMap::new();
     for slot_file in ["app-a", "app-b"] {
         let Some(file_entry) = firmware_entry.files.get(slot_file) else {
             continue;
@@ -1148,7 +1147,7 @@ async fn write_application(
     device_uuid: [u8; 6],
     vid: u16,
     pid: u16,
-    images: &mut std::collections::HashMap<&'static str, Vec<u8>>,
+    images: &mut HashMap<&'static str, Vec<u8>>,
     bootloader_image: Option<&(Vec<u8>, u16)>,
     requires_bootloader: u16,
 ) -> Result<(), String> {
@@ -1165,7 +1164,7 @@ async fn write_application(
     // Determine target slot
     let (slot_name, slot_file, alt) =
         firmware::determine_target_slot_for_device(&device_uuid, vid, pid)
-            .map_err(|e| format!("Failed to determine target slot: {}", e))?;
+            .map_err(|e| format!("Failed to determine target slot: {e}"))?;
 
     tracing::info!(
         "Target slot: {} (alt {}), firmware file: {}",
@@ -1176,7 +1175,7 @@ async fn write_application(
 
     let firmware_data = images
         .remove(slot_file)
-        .ok_or_else(|| format!("Firmware file {} not found in manifest", slot_file))?;
+        .ok_or_else(|| format!("Firmware file {slot_file} not found in manifest"))?;
 
     // Flash firmware with progress updates
     tracing::info!("Flashing firmware to {}", slot_name);
@@ -1220,7 +1219,7 @@ async fn write_application(
 
 /// Props for the updating device row component
 #[derive(Props, Clone, PartialEq)]
-pub struct UpdatingDeviceRowProps {
+pub(crate) struct UpdatingDeviceRowProps {
     pub uuid: [u8; 6],
     pub manager: FirmwareUpdateManager,
 }
@@ -1263,7 +1262,7 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
             } else {
                 0
             };
-            format!("Flashing... {}%", percent)
+            format!("Flashing... {percent}%")
         }
         FirmwareUpdateState::FlashingNetCore { progress, total } => {
             let percent = if *total > 0 {
@@ -1271,14 +1270,14 @@ pub fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
             } else {
                 0
             };
-            format!("Updating radio firmware... {}%", percent)
+            format!("Updating radio firmware... {percent}%")
         }
         FirmwareUpdateState::VerifyingNetCore => "Checking radio firmware...".to_string(),
         FirmwareUpdateState::InstallingNetCore => "Installing radio firmware...".to_string(),
         FirmwareUpdateState::Rebooting => "Rebooting device...".to_string(),
         FirmwareUpdateState::Verifying => "Verifying update...".to_string(),
         FirmwareUpdateState::Complete => "Update complete!".to_string(),
-        FirmwareUpdateState::Failed(e) => format!("Failed: {}", e),
+        FirmwareUpdateState::Failed(e) => format!("Failed: {e}"),
     };
 
     let is_error = matches!(current_state, FirmwareUpdateState::Failed(_));

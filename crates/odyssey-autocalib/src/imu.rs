@@ -145,7 +145,7 @@ impl GravityEstimator {
         self.last = Some(sample.timestamp);
         match dt {
             Some(dt) if !dt.is_zero() && dt <= MAX_STEP => {
-                filter.update(&gyro, &accel, dt.as_secs_f64())
+                filter.update(&gyro, &accel, dt.as_secs_f64());
             }
             _ => {}
         }

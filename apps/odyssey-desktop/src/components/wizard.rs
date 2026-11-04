@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 
 /// Shape of an icon, drawn on a 24-unit grid with a 1.5 stroke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Icon {
+pub(crate) enum Icon {
     Check,
     Camera,
     Viewfinder,
@@ -25,7 +25,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub fn path(self) -> &'static str {
+    pub(crate) fn path(self) -> &'static str {
         match self {
             Self::Check => "M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
             Self::Camera => {
@@ -69,7 +69,7 @@ impl Icon {
 
 /// How a banner is colored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tone {
+pub(crate) enum Tone {
     Good,
     Attention,
     Bad,

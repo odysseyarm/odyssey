@@ -43,7 +43,6 @@ fn list_dongles() -> Result<Vec<nusb::DeviceInfo>, String> {
     let devices: Vec<_> = nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .into_iter()
         .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
         .collect();
 
@@ -64,8 +63,7 @@ async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice, Str
             .get(idx)
             .ok_or_else(|| {
                 format!(
-                    "Device index {} not found. Use 'devices' command to see available devices.",
-                    idx
+                    "Device index {idx} not found. Use 'devices' command to see available devices."
                 )
             })?
             .clone()
@@ -101,7 +99,7 @@ async fn cmd_devices() -> Result<(), String> {
         for (i, info) in devices.iter().enumerate() {
             let product = info
                 .product_string()
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
                 .unwrap_or_else(|| "Unknown".to_string());
             println!(
                 "  [{}] VID:0x{:04X} PID:0x{:04X} - {}",
@@ -127,7 +125,7 @@ async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
         println!("No devices currently connected");
     } else {
         println!("Connected devices ({}):", devices.len());
-        for dev in devices.iter() {
+        for dev in &devices {
             println!("  {}", format_device_addr(dev));
         }
     }
@@ -211,7 +209,7 @@ async fn main() -> ExitCode {
     };
 
     match result {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {e}");
             ExitCode::FAILURE
@@ -220,7 +218,7 @@ async fn main() -> ExitCode {
 }
 
 async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
-    println!("Starting pairing for {} ms...", timeout);
+    println!("Starting pairing for {timeout} ms...");
     device
         .start_pairing(timeout)
         .await
@@ -280,7 +278,7 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
         devices
             .get(idx)
             .cloned()
-            .ok_or_else(|| format!("Device index {} not found. Use 'devices' to list.", idx))?
+            .ok_or_else(|| format!("Device index {idx} not found. Use 'devices' to list."))?
     } else {
         if devices.len() > 1 {
             return Err(format!(
@@ -300,17 +298,13 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
         device_info.product_id()
     );
     for idx in 0u8..8 {
-        match dev.claim_interface(idx).await {
-            Ok(iface) => {
-                let bulk_in = iface.endpoint::<Bulk, In>(0x81).is_ok();
-                let bulk_out = iface.endpoint::<Bulk, Out>(0x01).is_ok();
-                let intr_in = iface.endpoint::<Interrupt, In>(0x86).is_ok();
-                println!(
-                    "  iface {}: bulk_out 0x01={}, bulk_in 0x81={}, intr_in 0x86={}",
-                    idx, bulk_out, bulk_in, intr_in
-                );
-            }
-            Err(_) => {}
+        if let Ok(iface) = dev.claim_interface(idx).await {
+            let bulk_in = iface.endpoint::<Bulk, In>(0x81).is_ok();
+            let bulk_out = iface.endpoint::<Bulk, Out>(0x01).is_ok();
+            let intr_in = iface.endpoint::<Interrupt, In>(0x86).is_ok();
+            println!(
+                "  iface {idx}: bulk_out 0x01={bulk_out}, bulk_in 0x81={bulk_in}, intr_in 0x86={intr_in}"
+            );
         }
     }
     Ok(())

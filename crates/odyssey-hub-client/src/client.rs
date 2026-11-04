@@ -1,8 +1,8 @@
-use futures::StreamExt;
+use futures::StreamExt as _;
 use interprocess::local_socket::tokio::prelude::LocalSocketStream;
-use interprocess::local_socket::traits::tokio::Stream;
+use interprocess::local_socket::traits::tokio::Stream as _;
 use interprocess::local_socket::{
-    GenericFilePath, GenericNamespaced, NameType as _, ToFsName, ToNsName,
+    GenericFilePath, GenericNamespaced, NameType as _, ToFsName as _, ToNsName as _,
 };
 use odyssey_hub_common as common;
 use odyssey_hub_server_interface::DeviceListRequest;
@@ -103,7 +103,7 @@ impl Client {
                 .into_inner()
                 .device_list
                 .into_iter()
-                .map(|d| d.into())
+                .map(Into::into)
                 .collect::<Vec<common::device::Device>>())
         } else {
             Err(ClientError::NotConnected)
@@ -246,9 +246,9 @@ impl Client {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::ReadRegisterRequest {
                 device: Some(device.into()),
-                port: port as u32,
-                bank: bank as u32,
-                address: address as u32,
+                port: u32::from(port),
+                bank: u32::from(bank),
+                address: u32::from(address),
             });
             let reply = service_client
                 .read_register(request)
@@ -272,10 +272,10 @@ impl Client {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::WriteRegisterRequest {
                 device: Some(device.into()),
-                port: port as u32,
-                bank: bank as u32,
-                address: address as u32,
-                data: data as u32,
+                port: u32::from(port),
+                bank: u32::from(bank),
+                address: u32::from(address),
+                data: u32::from(data),
             });
             service_client
                 .write_register(request)
@@ -295,7 +295,7 @@ impl Client {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::ReadConfigRequest {
                 device: Some(device.into()),
-                kind: kind as u32,
+                kind: u32::from(kind),
             });
             let reply = service_client
                 .read_config(request)
@@ -317,8 +317,8 @@ impl Client {
         if let Some(service_client) = &mut self.service_client {
             let request = tonic::Request::new(odyssey_hub_server_interface::WriteConfigRequest {
                 device: Some(device.into()),
-                kind: kind as u32,
-                value: value as u32,
+                kind: u32::from(kind),
+                value: u32::from(value),
             });
             service_client
                 .write_config(request)
@@ -462,8 +462,8 @@ impl Client {
             });
             let request = tonic::Request::new(odyssey_hub_server_interface::ZeroRequest {
                 device: Some(device.into()),
-                translation: Some(translation.into()),
-                target: Some(target.into()),
+                translation: Some(translation),
+                target: Some(target),
                 tracking_event: tracking_event_pb,
             });
             service_client.zero(request).await.map_err(RpcError::from)?;
@@ -662,27 +662,21 @@ impl Client {
                             connected_devices: d
                                 .connected_devices
                                 .iter()
-                                .filter_map(|bytes| {
-                                    if bytes.len() == 6 {
-                                        let mut addr = [0u8; 6];
-                                        addr.copy_from_slice(bytes);
-                                        Some(addr)
-                                    } else {
-                                        None
-                                    }
+                                .filter(|&bytes| bytes.len() == 6)
+                                .map(|bytes| {
+                                    let mut addr = [0u8; 6];
+                                    addr.copy_from_slice(bytes);
+                                    addr
                                 })
                                 .collect(),
                             bonded_devices: d
                                 .bonded_devices
                                 .iter()
-                                .filter_map(|bytes| {
-                                    if bytes.len() == 6 {
-                                        let mut addr = [0u8; 6];
-                                        addr.copy_from_slice(bytes);
-                                        Some(addr)
-                                    } else {
-                                        None
-                                    }
+                                .filter(|&bytes| bytes.len() == 6)
+                                .map(|bytes| {
+                                    let mut addr = [0u8; 6];
+                                    addr.copy_from_slice(bytes);
+                                    addr
                                 })
                                 .collect(),
                         })

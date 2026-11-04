@@ -6,7 +6,6 @@
 use super::Control;
 use callback_helpers::{from_void_ptr, to_heap_ptr};
 use std::ffi::{CStr, CString};
-use std::i32;
 use std::mem;
 use std::os::raw::c_void;
 use str_tools::{from_toolkit_string, to_toolkit_string};

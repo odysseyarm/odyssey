@@ -6,7 +6,17 @@ use arrayvec::ArrayVec;
 use iface::Vector2;
 // -- Interface (tonic) --
 use iface::service_server::Service;
-use iface::*; // proto types re-exported from iface
+use iface::{
+    AccessoryInfoMap, AccessoryMapReply, AccessoryMapRequest, CancelDonglePairingRequest,
+    CancelPairingRequest, ClearBondRequest, ClearDongleBondsRequest, Device, DeviceListReply,
+    DeviceListRequest, Dongle, DongleListReply, EmptyReply, EmptyRequest, Event, FirmwareVersion,
+    FlashSettingsRequest, GetShotDelayReply, ReadConfigReply, ReadConfigRequest, ReadRegisterReply,
+    ReadRegisterRequest, ResetShotDelayReply, ScreenBounds, ScreenInfoByIdRequest, ScreenInfoReply,
+    SetDeviceNameRequest, SetShotDelayRequest, SetTransportModeRequest, StartDonglePairingRequest,
+    StartPairingRequest, SubscribeAccessoryMapRequest, SubscribeDeviceListRequest,
+    SubscribeDongleListRequest, SubscribeEventsRequest, SubscribeShotDelayRequest,
+    TransportModeReply, WriteConfigRequest, WriteRegisterRequest, WriteVendorRequest, ZeroRequest,
+}; // proto types re-exported from iface
 use nalgebra::Isometry3;
 use odyssey_common::ScreenCalibration;
 use odyssey_hub_common as common;
@@ -14,7 +24,7 @@ use odyssey_hub_server_interface as iface;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::{RwLock, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
+use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tonic::{Response, Status};
@@ -22,7 +32,7 @@ use tonic::{Response, Status};
 use crate::device_tasks::{DeviceTaskMessage, DongleInfo, DongleTaskMessage};
 
 /// gRPC service state
-pub struct Server {
+pub(crate) struct Server {
     /// Live device tuples pushed by lib.rs/device_tasks.
     /// NOTE: We also expose SubscribeDeviceList; we derive the snapshot from here.
     pub device_list:
@@ -43,7 +53,7 @@ pub struct Server {
             >,
         >,
     >,
-    #[allow(unused)]
+    #[expect(unused)]
     pub device_offsets: Arc<tokio::sync::Mutex<HashMap<[u8; 6], Isometry3<f32>>>>,
 
     /// Shot delay store (uuid→delay), plus per-uuid watchers for SubscribeShotDelay.
@@ -88,7 +98,7 @@ impl Server {
         // Send initial snapshot
         let snapshot = self.device_snapshot();
         let _ = tx.try_send(Ok(DeviceListReply {
-            device_list: snapshot.into_iter().map(|d| d.into()).collect(),
+            device_list: snapshot.into_iter().map(Into::into).collect(),
         }));
 
         // Clone only what the task needs so the future is 'static
@@ -117,7 +127,7 @@ impl Server {
                 };
                 if tx
                     .send(Ok(DeviceListReply {
-                        device_list: snap.into_iter().map(|d| d.into()).collect(),
+                        device_list: snap.into_iter().map(Into::into).collect(),
                     }))
                     .await
                     .is_err()
@@ -203,16 +213,16 @@ impl Server {
         self.device_shot_delays.write().await.insert(uuid, ms);
         let mut g = self.shot_delay_watch.write().await;
         if let Some(tx) = g.get(&uuid) {
-            let _ = tx.send(ms as u32);
+            let _ = tx.send(u32::from(ms));
         } else {
-            let (tx, _rx) = watch::channel(ms as u32);
-            let _ = tx.send(ms as u32);
+            let (tx, _rx) = watch::channel(u32::from(ms));
+            let _ = tx.send(u32::from(ms));
             g.insert(uuid, tx);
         }
     }
 
     async fn subscribe_shot_delay_watch(&self, uuid: [u8; 6]) -> watch::Receiver<u32> {
-        let cur = self.get_or_default_shot_delay(uuid).await as u32;
+        let cur = u32::from(self.get_or_default_shot_delay(uuid).await);
         let mut g = self.shot_delay_watch.write().await;
         if let Some(tx) = g.get(&uuid) {
             tx.subscribe()
@@ -254,15 +264,15 @@ fn dongle_list_reply_from(dongles: &[DongleInfo]) -> DongleListReply {
     DongleListReply {
         dongle_list: dongles
             .iter()
-            .map(|d| iface::Dongle {
+            .map(|d| Dongle {
                 id: d.id.clone(),
                 firmware_version: if d.firmware_version == [0, 0, 0] {
                     None
                 } else {
-                    Some(iface::FirmwareVersion {
-                        major: d.firmware_version[0] as u32,
-                        minor: d.firmware_version[1] as u32,
-                        patch: d.firmware_version[2] as u32,
+                    Some(FirmwareVersion {
+                        major: u32::from(d.firmware_version[0]),
+                        minor: u32::from(d.firmware_version[1]),
+                        patch: u32::from(d.firmware_version[2]),
                     })
                 },
                 connected_devices: d
@@ -273,19 +283,19 @@ fn dongle_list_reply_from(dongles: &[DongleInfo]) -> DongleListReply {
                 protocol_version: if d.protocol_version == [0, 0, 0] {
                     None
                 } else {
-                    Some(iface::FirmwareVersion {
-                        major: d.protocol_version[0] as u32,
-                        minor: d.protocol_version[1] as u32,
-                        patch: d.protocol_version[2] as u32,
+                    Some(FirmwareVersion {
+                        major: u32::from(d.protocol_version[0]),
+                        minor: u32::from(d.protocol_version[1]),
+                        patch: u32::from(d.protocol_version[2]),
                     })
                 },
                 control_protocol_version: if d.control_protocol_version == [0, 0, 0] {
                     None
                 } else {
-                    Some(iface::FirmwareVersion {
-                        major: d.control_protocol_version[0] as u32,
-                        minor: d.control_protocol_version[1] as u32,
-                        patch: d.control_protocol_version[2] as u32,
+                    Some(FirmwareVersion {
+                        major: u32::from(d.control_protocol_version[0]),
+                        minor: u32::from(d.control_protocol_version[1]),
+                        patch: u32::from(d.control_protocol_version[2]),
                     })
                 },
                 bonded_devices: d.bonded_devices.iter().map(|addr| addr.to_vec()).collect(),
@@ -309,7 +319,7 @@ impl Service for Server {
     ) -> Result<Response<DeviceListReply>, Status> {
         let snap = self.device_snapshot();
         Ok(Response::new(DeviceListReply {
-            device_list: snap.into_iter().map(|d| d.into()).collect(),
+            device_list: snap.into_iter().map(Into::into).collect(),
         }))
     }
 
@@ -413,11 +423,11 @@ impl Service for Server {
         let uuid_vec = req.into_inner().uuid;
         if uuid_vec.len() == 6 {
             uuid.copy_from_slice(&uuid_vec);
-        } else if uuid_vec.len() > 0 {
+        } else if !uuid_vec.is_empty() {
             let len = std::cmp::min(6, uuid_vec.len());
             uuid[..len].copy_from_slice(&uuid_vec[..len]);
         }
-        let cur = self.get_or_default_shot_delay(uuid).await as u32;
+        let cur = u32::from(self.get_or_default_shot_delay(uuid).await);
         Ok(Response::new(GetShotDelayReply { delay_ms: cur }))
     }
 
@@ -433,7 +443,7 @@ impl Service for Server {
         let mut uuid = [0u8; 6];
         if uuid_vec.len() == 6 {
             uuid.copy_from_slice(&uuid_vec);
-        } else if uuid_vec.len() > 0 {
+        } else if !uuid_vec.is_empty() {
             let len = std::cmp::min(6, uuid_vec.len());
             uuid[..len].copy_from_slice(&uuid_vec[..len]);
         }
@@ -480,7 +490,7 @@ impl Service for Server {
         let mut uuid = [0u8; 6];
         if uuid_vec.len() == 6 {
             uuid.copy_from_slice(&uuid_vec);
-        } else if uuid_vec.len() > 0 {
+        } else if !uuid_vec.is_empty() {
             let len = std::cmp::min(6, uuid_vec.len());
             uuid[..len].copy_from_slice(&uuid_vec[..len]);
         }
@@ -511,7 +521,7 @@ impl Service for Server {
         let mut uuid = [0u8; 6];
         if uuid_vec.len() == 6 {
             uuid.copy_from_slice(&uuid_vec);
-        } else if uuid_vec.len() > 0 {
+        } else if !uuid_vec.is_empty() {
             let len = std::cmp::min(6, uuid_vec.len());
             uuid[..len].copy_from_slice(&uuid_vec[..len]);
         }
@@ -533,7 +543,7 @@ impl Service for Server {
         }
 
         Ok(Response::new(ResetShotDelayReply {
-            delay_ms: default_ms as u32,
+            delay_ms: u32::from(default_ms),
         }))
     }
 
@@ -545,7 +555,7 @@ impl Service for Server {
         let mut uuid = [0u8; 6];
         if uuid_vec.len() == 6 {
             uuid.copy_from_slice(&uuid_vec);
-        } else if uuid_vec.len() > 0 {
+        } else if !uuid_vec.is_empty() {
             let len = std::cmp::min(6, uuid_vec.len());
             uuid[..len].copy_from_slice(&uuid_vec[..len]);
         }
@@ -567,12 +577,12 @@ impl Service for Server {
                 // convert bounds
                 let b = cal.bounds();
                 reply = Some(ScreenInfoReply {
-                    id: id as u32,
+                    id: u32::from(id),
                     bounds: Some(ScreenBounds {
-                        tl: Some(Vector2::from(b[0].coords).into()),
-                        tr: Some(Vector2::from(b[1].coords).into()),
-                        bl: Some(Vector2::from(b[2].coords).into()),
-                        br: Some(Vector2::from(b[3].coords).into()),
+                        tl: Some(Vector2::from(b[0].coords)),
+                        tr: Some(Vector2::from(b[1].coords)),
+                        bl: Some(Vector2::from(b[2].coords)),
+                        br: Some(Vector2::from(b[3].coords)),
                     }),
                 });
                 break;
@@ -660,7 +670,9 @@ impl Service for Server {
                 .await
                 .map_err(|_| Status::unavailable("device task not available"))?;
                 match reply_rx.await {
-                    Ok(Ok(data)) => Ok(Response::new(ReadRegisterReply { data: data as u32 })),
+                    Ok(Ok(data)) => Ok(Response::new(ReadRegisterReply {
+                        data: u32::from(data),
+                    })),
                     Ok(Err(e)) => Err(Status::internal(e)),
                     Err(_) => Err(Status::internal("device task dropped reply")),
                 }
@@ -720,7 +732,7 @@ impl Service for Server {
                 .map_err(|_| Status::unavailable("device task not available"))?;
                 match reply_rx.await {
                     Ok(Ok(value)) => Ok(Response::new(ReadConfigReply {
-                        value: value as u32,
+                        value: u32::from(value),
                     })),
                     Ok(Err(e)) => Err(Status::internal(e)),
                     Err(_) => Err(Status::internal("device task dropped reply")),

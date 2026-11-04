@@ -13,7 +13,7 @@ fn app_root() -> Option<PathBuf> {
 /// Where the app's log files go: `%LOCALAPPDATA%\Odyssey.Desktop\logs` on Windows,
 /// and off Windows the XDG state folder, `~/.local/state/odyssey-desktop/logs` by
 /// default, which is where XDG puts logs.
-pub fn log_dir() -> Option<PathBuf> {
+pub(crate) fn log_dir() -> Option<PathBuf> {
     app_root()
         .map(|dir| dir.join("logs"))
         .or_else(state_log_dir)
@@ -30,6 +30,6 @@ fn state_log_dir() -> Option<PathBuf> {
 }
 
 /// Where a downloaded Orbbec SDK is kept (see `sdk_install`).
-pub fn orbbec_sdk_dir() -> Option<PathBuf> {
+pub(crate) fn orbbec_sdk_dir() -> Option<PathBuf> {
     app_root().map(|dir| dir.join("orbbec-sdk"))
 }

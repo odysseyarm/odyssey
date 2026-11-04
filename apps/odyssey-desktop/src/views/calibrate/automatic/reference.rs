@@ -13,18 +13,18 @@ use odyssey_autocalib::session::KnownSize;
 
 /// An ISO/IEC 7810 ID-1 card: bank cards, driver's licences and most ID
 /// cards, 85.60 by 53.98 mm.
-pub const CARD_WIDTH_MM: f64 = 85.60;
-pub const CARD_HEIGHT_MM: f64 = 53.98;
+pub(crate) const CARD_WIDTH_MM: f64 = 85.60;
+pub(crate) const CARD_HEIGHT_MM: f64 = 53.98;
 /// The corner radius of an ID-1 card, 3.18 mm, as a share of its width.
-pub const CARD_CORNER_OF_WIDTH: f64 = 3.18 / CARD_WIDTH_MM;
+pub(crate) const CARD_CORNER_OF_WIDTH: f64 = 3.18 / CARD_WIDTH_MM;
 
 /// How far a card is nudged per click, in screen pixels.
-pub const CARD_STEP_PX: f64 = 0.25;
+pub(crate) const CARD_STEP_PX: f64 = 0.25;
 
 /// Pixel pitches the helper accepts, millimeters per pixel: a phone is about
 /// 0.05, a wall-sized projected picture a few tenths up to about a millimeter.
 /// Anything outside is a typo or the wrong unit.
-pub const MM_PER_PX_RANGE: RangeInclusive<f64> = 0.02..=3.0;
+pub(crate) const MM_PER_PX_RANGE: RangeInclusive<f64> = 0.02..=3.0;
 
 /// Where the card starts when nothing says how large the pixels are: a flat
 /// screen at typical TV density, or a picture thrown on a wall.
@@ -33,7 +33,7 @@ const DEFAULT_PROJECTED_MM_PER_PX: f64 = 1.0;
 
 /// How the tech measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Method {
+pub(crate) enum Method {
     /// A tape measure on a line the screen draws.
     Tape,
     /// A credit card held against the glass.
@@ -42,7 +42,7 @@ pub enum Method {
 
 /// A length in the tech's own unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Unit {
+pub(crate) enum Unit {
     Inches,
     Centimeters,
     Millimeters,
@@ -59,7 +59,7 @@ impl Unit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReferenceError {
+pub(crate) enum ReferenceError {
     NotALength,
     Implausible,
 }
@@ -79,7 +79,7 @@ impl std::error::Error for ReferenceError {}
 
 /// The size of one pixel of the picture, as measured by hand.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Reference {
+pub(crate) struct Reference {
     pub method: Method,
     pub mm_per_px: f64,
 }
@@ -87,7 +87,7 @@ pub struct Reference {
 impl Reference {
     /// From a tape measure laid along the line the screen draws: `line_px`
     /// pixels between the middles of its two ticks, `length_mm` on the tape.
-    pub fn from_tape(line_px: f64, length_mm: f64) -> Result<Self, ReferenceError> {
+    pub(crate) fn from_tape(line_px: f64, length_mm: f64) -> Result<Self, ReferenceError> {
         if !(line_px.is_finite() && line_px > 0.0 && length_mm.is_finite() && length_mm > 0.0) {
             return Err(ReferenceError::NotALength);
         }
@@ -95,7 +95,7 @@ impl Reference {
     }
 
     /// From a card matched against a frame `card_px` pixels wide.
-    pub fn from_card(card_px: f64) -> Result<Self, ReferenceError> {
+    pub(crate) fn from_card(card_px: f64) -> Result<Self, ReferenceError> {
         if !(card_px.is_finite() && card_px > 0.0) {
             return Err(ReferenceError::NotALength);
         }
@@ -110,7 +110,7 @@ impl Reference {
     }
 
     /// Width and height in meters of a picture of `width_px` by `height_px`.
-    pub fn size_m(&self, width_px: u32, height_px: u32) -> [f64; 2] {
+    pub(crate) fn size_m(&self, width_px: u32, height_px: u32) -> [f64; 2] {
         let m_per_px = self.mm_per_px / 1000.0;
         [
             f64::from(width_px) * m_per_px,
@@ -119,7 +119,7 @@ impl Reference {
     }
 
     /// The size to give the solver for a picture of `width_px` by `height_px`.
-    pub fn known_size(&self, width_px: u32, height_px: u32) -> KnownSize {
+    pub(crate) fn known_size(&self, width_px: u32, height_px: u32) -> KnownSize {
         let [width_m, height_m] = self.size_m(width_px, height_px);
         KnownSize::Dimensions { width_m, height_m }
     }
@@ -129,13 +129,13 @@ impl Reference {
 /// long enough that a millimeter on the tape is a small share of it, and
 /// always inside what an overscanning TV still shows. Even, so the line can
 /// be centered on whole pixels.
-pub fn tape_line_px(width_px: u32) -> u32 {
+pub(crate) fn tape_line_px(width_px: u32) -> u32 {
     (width_px * 7 / 10) & !1
 }
 
 /// Where the card frame starts, in pixels: from the size the display reports
 /// for itself when it does, else from a typical pixel pitch.
-pub fn card_start_px(panel_width_mm: Option<f64>, width_px: u32, projected: bool) -> f64 {
+pub(crate) fn card_start_px(panel_width_mm: Option<f64>, width_px: u32, projected: bool) -> f64 {
     let mm_per_px = match panel_width_mm.filter(|w| w.is_finite() && *w > 0.0) {
         Some(width_mm) if width_px > 0 => width_mm / f64::from(width_px),
         _ if projected => DEFAULT_PROJECTED_MM_PER_PX,
@@ -146,7 +146,7 @@ pub fn card_start_px(panel_width_mm: Option<f64>, width_px: u32, projected: bool
 
 /// The widest and narrowest the card frame may get: half to twice the start,
 /// and always inside the screen.
-pub fn card_bounds_px(start_px: f64, width_px: u32, height_px: u32) -> (f64, f64) {
+pub(crate) fn card_bounds_px(start_px: f64, width_px: u32, height_px: u32) -> (f64, f64) {
     let fits_width = f64::from(width_px) * 0.9;
     let fits_height = f64::from(height_px) * 0.8 * CARD_WIDTH_MM / CARD_HEIGHT_MM;
     let hi = (start_px * 2.0).min(fits_width).min(fits_height);
@@ -155,12 +155,12 @@ pub fn card_bounds_px(start_px: f64, width_px: u32, height_px: u32) -> (f64, f64
 }
 
 /// Rounds to the step the card moves in.
-pub fn snap(px: f64) -> f64 {
+pub(crate) fn snap(px: f64) -> f64 {
     (px / CARD_STEP_PX).round() * CARD_STEP_PX
 }
 
 /// How far apart two sizes are along the worse axis, as a share of `other`.
-pub fn size_gap(reference_m: [f64; 2], other_m: [f64; 2]) -> f64 {
+pub(crate) fn size_gap(reference_m: [f64; 2], other_m: [f64; 2]) -> f64 {
     reference_m
         .iter()
         .zip(other_m)
@@ -170,7 +170,7 @@ pub fn size_gap(reference_m: [f64; 2], other_m: [f64; 2]) -> f64 {
 
 /// How a hand measurement sits against the size the display reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Agreement {
+pub(crate) enum Agreement {
     /// Within what either figure can be trusted to.
     Close,
     /// Enough apart to notice, still within what a display's own figure can be off by.
@@ -181,7 +181,7 @@ pub enum Agreement {
 
 /// Classifies a [`size_gap`]. The first limit is the one the camera's own
 /// cross-check uses to call two sizes in disagreement.
-pub fn agreement(gap: f64) -> Agreement {
+pub(crate) fn agreement(gap: f64) -> Agreement {
     if gap < 0.02 {
         Agreement::Close
     } else if gap < 0.10 {
@@ -193,7 +193,7 @@ pub fn agreement(gap: f64) -> Agreement {
 
 /// Reads a length typed from a tape: "47.5", "47,5", "47 5/8", "47-5/8",
 /// "121 cm", `47.5"`, "1210mm". A bare number is in `default`.
-pub fn parse_length_mm(text: &str, default: Unit) -> Result<f64, ReferenceError> {
+pub(crate) fn parse_length_mm(text: &str, default: Unit) -> Result<f64, ReferenceError> {
     let lower = text.trim().to_lowercase();
     // Longer spellings first, so "inches" is not read as "in" and a bare "m"
     // (meters, which no tape on a screen reads in) is left to fail as a number.

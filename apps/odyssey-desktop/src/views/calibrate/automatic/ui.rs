@@ -2,16 +2,16 @@
 
 use dioxus::prelude::*;
 
-pub const PRIMARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-7 py-3 text-lg font-semibold text-white shadow hover:bg-blue-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 disabled:opacity-40 disabled:pointer-events-none";
-pub const SECONDARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-5 py-3 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600 dark:focus-visible:ring-gray-600 disabled:opacity-40 disabled:pointer-events-none";
-pub const CARD: &str = "rounded-xl bg-white p-5 shadow dark:bg-gray-700";
+pub(super) const PRIMARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-7 py-3 text-lg font-semibold text-white shadow hover:bg-blue-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 disabled:opacity-40 disabled:pointer-events-none";
+pub(super) const SECONDARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-5 py-3 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600 dark:focus-visible:ring-gray-600 disabled:opacity-40 disabled:pointer-events-none";
+pub(super) const CARD: &str = "rounded-xl bg-white p-5 shadow dark:bg-gray-700";
 
 /// Element id of the step's main button, so the wizard can focus it and Enter
 /// does the obvious thing.
-pub const PRIMARY_ID: &str = "primary-action";
+pub(super) const PRIMARY_ID: &str = "primary-action";
 
 /// Moves keyboard focus to the main button.
-pub fn focus_primary() {
+pub(super) fn focus_primary() {
     let _ = document::eval(&format!(
         "document.getElementById('{PRIMARY_ID}')?.focus();"
     ));

@@ -29,7 +29,7 @@ const DIAGRAM_MAX_HEIGHT: f64 = 200.0;
 
 /// What the picker knows about one monitor.
 #[derive(Clone, Debug, PartialEq)]
-pub struct MonitorInfo {
+pub(crate) struct MonitorInfo {
     pub key: MonitorKey,
     pub primary: bool,
 }
@@ -41,11 +41,11 @@ impl MonitorInfo {
         Self { key, primary }
     }
 
-    pub fn display_name(&self) -> &str {
+    pub(crate) fn display_name(&self) -> &str {
         self.key.name.as_deref().unwrap_or("Unknown display")
     }
 
-    pub fn resolution(&self) -> String {
+    pub(crate) fn resolution(&self) -> String {
         format!("{} × {}", self.key.width, self.key.height)
     }
 }
@@ -173,23 +173,23 @@ fn enumerate_monitors(window: &DesktopContext) -> Vec<MonitorInfo> {
 /// The attached monitors and the one the user picked. Copy it freely: it is a
 /// pair of signal handles.
 #[derive(Clone, Copy, PartialEq)]
-pub struct MonitorSelection {
+pub(crate) struct MonitorSelection {
     monitors: Signal<Vec<MonitorInfo>>,
     chosen: Signal<Option<MonitorKey>>,
 }
 
 impl MonitorSelection {
-    pub fn monitors(&self) -> Vec<MonitorInfo> {
+    pub(crate) fn monitors(&self) -> Vec<MonitorInfo> {
         self.monitors.read().clone()
     }
 
     /// Index into [`Self::monitors`] of the selected monitor, if any are attached.
-    pub fn selected(&self) -> Option<usize> {
+    pub(crate) fn selected(&self) -> Option<usize> {
         resolve_selected(&self.monitors.read(), self.chosen.read().as_ref())
     }
 
     /// The OS handle of the selected monitor, for placing windows on it.
-    pub fn selected_handle(&self) -> Option<MonitorHandle> {
+    pub(crate) fn selected_handle(&self) -> Option<MonitorHandle> {
         let key = self.monitors.read().get(self.selected()?)?.key.clone();
         dioxus::desktop::window()
             .available_monitors()
@@ -197,7 +197,7 @@ impl MonitorSelection {
     }
 
     /// Selects the monitor at `index` and remembers it across launches.
-    pub fn select(&self, index: usize) {
+    pub(crate) fn select(&self, index: usize) {
         let Some(key) = self.monitors.peek().get(index).map(|m| m.key.clone()) else {
             return;
         };
@@ -218,7 +218,7 @@ impl MonitorSelection {
 
 /// Tracks the attached monitors (including hot-plug) and restores the
 /// monitor the user picked last time.
-pub fn use_monitor_selection() -> MonitorSelection {
+pub(crate) fn use_monitor_selection() -> MonitorSelection {
     let window = use_window();
     let mut monitors = use_signal({
         let window = window.clone();

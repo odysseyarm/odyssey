@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use ahrs::Ahrs;
+use ahrs::Ahrs as _;
 use arrayvec::ArrayVec;
 use iui::concurrent::Context;
 use leptos_reactive::RwSignal;
@@ -13,9 +13,9 @@ use odyssey_usb::device::{GeneralSettings, VmDevice};
 use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
-use tokio_stream::StreamExt;
+use tokio_stream::StreamExt as _;
 
-use crate::{CloneButShorter, Marker, TestFrame};
+use crate::{CloneButShorter as _, Marker, TestFrame};
 
 pub fn transform_aimpoint_to_identity(
     center_aim: Point2<f64>,
@@ -116,7 +116,7 @@ pub struct MotRunner {
     pub general_config: GeneralSettings,
     pub record_impact: bool,
     pub record_packets: bool,
-    pub datapoints: Arc<Mutex<Vec<crate::TestFrame>>>,
+    pub datapoints: Arc<Mutex<Vec<TestFrame>>>,
     pub packets: Arc<Mutex<Vec<(u128, odyssey_usb::packets::vm::PacketData)>>>,
     pub ui_update: RwSignal<()>,
     pub ui_ctx: Context,
@@ -146,9 +146,9 @@ pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) {
             let nf_data = mot_data.mot_data_nf;
             let wf_data = mot_data.mot_data_wf;
             let mut runner = runner.lock();
-            let nf_data = ArrayVec::<MotData, 16>::from_iter(nf_data.into_iter());
+            let nf_data = ArrayVec::<MotData, 16>::from_iter(nf_data);
             // let nf_data = ArrayVec::<MotData,16>::from_iter(dummy_nf_data());
-            let wf_data = ArrayVec::<MotData, 16>::from_iter(wf_data.into_iter());
+            let wf_data = ArrayVec::<MotData, 16>::from_iter(wf_data);
 
             let state = &mut runner.state;
             state.nf_data = Some(nf_data);
@@ -294,22 +294,21 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
         );
 
         // Re-alignment logic
-        if runner.wfnf_realign {
-            if let Some((wf_match_ix, _, _)) = odyssey_cv::foveated::identify_markers(
+        if runner.wfnf_realign
+            && let Some((wf_match_ix, _, _)) = odyssey_cv::foveated::identify_markers(
                 &wf_normalized,
                 gravity_vec.cast(),
                 &runner.screen_calibrations.clone(),
-            ) {
-                let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
-                let (nf_match_ix, _) = odyssey_cv::foveated::match3(&nf_normalized, &wf_match);
-                if nf_match_ix.iter().all(Option::is_some) {
-                    let nf_ordered =
-                        nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
-                    let wf_ordered = wf_match_ix.map(|i| wf_normalized[i].coords.push(1.0));
-                    let q = calculate_rotational_offset(&wf_ordered, &nf_ordered);
-                    runner.general_config.stereo_iso.rotation *= q.cast();
-                    runner.wfnf_realign = false;
-                }
+            )
+        {
+            let wf_match = wf_match_ix.map(|i| wf_normalized[i].coords);
+            let (nf_match_ix, _) = odyssey_cv::foveated::match3(&nf_normalized, &wf_match);
+            if nf_match_ix.iter().all(Option::is_some) {
+                let nf_ordered = nf_match_ix.map(|i| nf_normalized[i.unwrap()].coords.push(1.0));
+                let wf_ordered = wf_match_ix.map(|i| wf_normalized[i].coords.push(1.0));
+                let q = calculate_rotational_offset(&wf_ordered, &nf_ordered);
+                runner.general_config.stereo_iso.rotation *= q.cast();
+                runner.wfnf_realign = false;
             }
         }
 
@@ -318,13 +317,13 @@ async fn markers_loop(runner: Arc<Mutex<MotRunner>>) {
             .state
             .nf_markers2
             .iter()
-            .map(|m| m.odyssey_cv_marker())
+            .map(Marker::odyssey_cv_marker)
             .collect::<ArrayVec<_, 16>>();
         let wf_markers_cv = runner
             .state
             .wf_markers2
             .iter()
-            .map(|m| m.odyssey_cv_marker())
+            .map(Marker::odyssey_cv_marker)
             .collect::<ArrayVec<_, 16>>();
         let screen_calibrations = runner.screen_calibrations.clone();
         runner.state.fv_state.observe_markers(
@@ -435,7 +434,7 @@ fn create_point_tuples(points: &[Point2<u16>]) -> Vec<(u8, Point2<f32>)> {
         .iter()
         .enumerate()
         .filter(|(_id, pos)| **pos != Point2::new(0, 0))
-        .map(|(id, pos)| (id as u8, Point2::new(pos.x as f32, pos.y as f32)))
+        .map(|(id, pos)| (id as u8, Point2::new(f32::from(pos.x), f32::from(pos.y))))
         .collect()
 }
 
@@ -481,19 +480,19 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
         // print rotation in degrees
         // println!("Rotation: {}", accel.gyro.xzy().map(|x| x.to_degrees()));
 
-        if let Some(_prev_timestamp) = prev_timestamp {
+        if let Some(_prev_timestamp) = prev_timestamp
+            && accel.timestamp < _prev_timestamp
+        {
+            prev_timestamp = None;
             if accel.timestamp < _prev_timestamp {
                 prev_timestamp = None;
-                if accel.timestamp < _prev_timestamp {
-                    prev_timestamp = None;
-                    continue;
-                }
                 continue;
             }
+            continue;
         }
 
         if let Some(prev_timestamp) = prev_timestamp {
-            let elapsed = accel.timestamp as u64 - prev_timestamp as u64;
+            let elapsed = u64::from(accel.timestamp) - u64::from(prev_timestamp);
             runner.state.fv_state.predict(
                 -accel.accel.xzy(),
                 -accel.gyro.xzy(),
@@ -506,7 +505,7 @@ async fn accel_stream(runner: Arc<Mutex<MotRunner>>) {
             runner.state.fv_state.predict(
                 -accel.accel.xzy(),
                 -accel.gyro.xzy(),
-                Duration::from_secs_f32(1. / accel_odr as f32),
+                Duration::from_secs_f32(1. / f32::from(accel_odr)),
             );
         }
         prev_timestamp = Some(accel.timestamp);

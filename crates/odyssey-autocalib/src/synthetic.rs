@@ -19,7 +19,7 @@ use image::{GrayImage, Luma, Rgb, RgbImage};
 use nalgebra::{Matrix3, Point2, Point3, Rotation3, UnitQuaternion, Vector2, Vector3};
 use odyssey_common::ScreenCalibration;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{Rng as _, SeedableRng as _};
 
 use crate::camera::{
     CameraBackend, CameraError, CameraGeometry, CameraInfo, CameraStream, CaptureSettings,
@@ -207,7 +207,7 @@ impl Truth {
         ScreenCalibration {
             rotation: rotation.cast(),
             homography: Matrix3::new(1.0 / w, 0.0, 0.0, 0.0, 1.0 / h, 0.0, 0.0, 0.0, 1.0).cast(),
-            object_points: self.markers_m.map(|p| p.cast()),
+            object_points: self.markers_m.map(nalgebra::OPoint::cast),
         }
     }
 }
@@ -453,7 +453,9 @@ impl SyntheticStream {
         // Room: a dim gradient wall.
         for y in 0..h {
             for x in 0..w {
-                let level = 60.0 + 40.0 * (x as f64 / w as f64) + 15.0 * (y as f64 / h as f64);
+                let level = 60.0
+                    + 40.0 * (f64::from(x) / f64::from(w))
+                    + 15.0 * (f64::from(y) / f64::from(h));
                 img.put_pixel(x, y, Rgb([self.scaled(level); 3]));
             }
         }
@@ -465,7 +467,7 @@ impl SyntheticStream {
         for i in 0..4 {
             let (a, b) = (corners[i], corners[(i + 1) % 4]);
             for s in 0..48 {
-                let f = s as f64 / 48.0;
+                let f = f64::from(s) / 48.0;
                 let p = to_camera.apply(&Vector3::new(
                     a.0 + (b.0 - a.0) * f,
                     a.1 + (b.1 - a.1) * f,
@@ -481,7 +483,7 @@ impl SyntheticStream {
             let mut xs: Vec<f64> = Vec::new();
             for i in 0..outline.len() {
                 let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
-                let yf = y as f64;
+                let yf = f64::from(y);
                 if (a.y <= yf) != (b.y <= yf) {
                     xs.push(a.x + (yf - a.y) / (b.y - a.y) * (b.x - a.x));
                 }
@@ -490,7 +492,7 @@ impl SyntheticStream {
             for pair in xs.as_chunks::<2>().0 {
                 let (x0, x1) = (
                     pair[0].ceil().max(0.0) as u32,
-                    (pair[1].floor().min(w as f64 - 1.0)).max(-1.0),
+                    (pair[1].floor().min(f64::from(w) - 1.0)).max(-1.0),
                 );
                 if x1 < 0.0 {
                     continue;
@@ -603,7 +605,7 @@ impl SyntheticStream {
         self.depth_persistent_outlier = vec![false; (w * h) as usize];
         for y in 0..h {
             for x in 0..w {
-                let Some(ray) = pixel_ray(&intr, Point2::new(x as f64, y as f64)) else {
+                let Some(ray) = pixel_ray(&intr, Point2::new(f64::from(x), f64::from(y))) else {
                     continue;
                 };
                 let origin = color_from_depth.translation;
@@ -681,9 +683,9 @@ impl SyntheticStream {
                     if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
                         continue;
                     }
-                    let d2 = (x as f64 - c.x).powi(2) + (y as f64 - c.y).powi(2);
+                    let d2 = (f64::from(x) - c.x).powi(2) + (f64::from(y) - c.y).powi(2);
                     let add = 255.0 * 1.8 * (-d2 / (2.0 * sigma * sigma)).exp();
-                    let cur = img.get_pixel(x as u32, y as u32)[0] as f64;
+                    let cur = f64::from(img.get_pixel(x as u32, y as u32)[0]);
                     img.put_pixel(x as u32, y as u32, Luma([(cur + add).min(255.0) as u8]));
                 }
             }

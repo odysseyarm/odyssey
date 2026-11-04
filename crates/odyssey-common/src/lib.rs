@@ -98,7 +98,7 @@ pub struct Plane<F: Float + FromPrimitive + Scalar> {
 impl<F: Float + FromPrimitive + Scalar> Plane<F> {
     pub fn cast<G>(&self) -> Plane<G>
     where
-        G: Float + FromPrimitive + Scalar + nalgebra::RealField,
+        G: Float + FromPrimitive + Scalar + RealField,
         F: simba::scalar::SubsetOf<G>,
     {
         Plane {
@@ -118,23 +118,23 @@ impl<F: Float + FromPrimitive + Scalar> Plane<F> {
 /// the unit square, i.e. go from `(x, y)` in meters to `(x', y')` where `x', y' ∈ [0, 1]`.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy)]
-pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + nalgebra::RealField> {
+pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + RealField> {
     #[cfg_attr(feature = "serde", serde(default))]
     pub rotation: nalgebra::UnitQuaternion<F>,
     pub homography: nalgebra::Matrix3<F>,
     pub object_points: [nalgebra::Point3<F>; MARKER_PATTERN_LEN],
 }
 
-impl<F: Float + FromPrimitive + Scalar + nalgebra::RealField> ScreenCalibration<F> {
+impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
     pub fn cast<G>(&self) -> ScreenCalibration<G>
     where
-        G: Float + FromPrimitive + Scalar + nalgebra::RealField,
+        G: Float + FromPrimitive + Scalar + RealField,
         F: simba::scalar::SubsetOf<G>,
     {
         ScreenCalibration {
             rotation: self.rotation.cast(),
             homography: self.homography.cast(),
-            object_points: self.object_points.map(|point| point.cast()),
+            object_points: self.object_points.map(nalgebra::OPoint::cast),
         }
     }
 

@@ -7,11 +7,11 @@ use odyssey_autocalib::orbbec::{LIBRARY_NAME, RuntimeStatus, SDK_DIR_ENV};
 
 /// Where Orbbec publishes the SDK. The latest release is always a 2.x one the
 /// backend accepts.
-pub const SDK_DOWNLOAD_URL: &str = "https://github.com/orbbec/OrbbecSDK_v2/releases/latest";
+pub(super) const SDK_DOWNLOAD_URL: &str = "https://github.com/orbbec/OrbbecSDK_v2/releases/latest";
 
 /// How Setup presents an unusable camera library.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Notice {
+pub(super) struct Notice {
     pub title: String,
     /// One or two plain sentences for everybody.
     pub detail: String,
@@ -22,7 +22,7 @@ pub struct Notice {
 }
 
 /// The message for `status`, or `None` when cameras can be listed.
-pub fn notice(status: &RuntimeStatus) -> Option<Notice> {
+pub(super) fn notice(status: &RuntimeStatus) -> Option<Notice> {
     match status {
         RuntimeStatus::Available { .. } => None,
         RuntimeStatus::NotFound { tried } => {

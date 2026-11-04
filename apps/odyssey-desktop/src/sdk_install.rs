@@ -28,7 +28,7 @@ use crate::paths;
 
 /// Directory name of an SDK copy, under the app (offline installer) or under the
 /// app's data folder (download).
-pub const DIR_NAME: &str = "orbbec-sdk";
+pub(crate) const DIR_NAME: &str = "orbbec-sdk";
 
 /// The SDK this build is tested with.
 mod pin_file {
@@ -41,7 +41,7 @@ mod pin_file {
 
     // Only the online build downloads, so only it reads the URLs, hashes and files.
     #[derive(Debug, Deserialize)]
-    pub struct Pin {
+    pub(crate) struct Pin {
         pub version: String,
         #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
         pub eula: Remote,
@@ -51,14 +51,14 @@ mod pin_file {
 
     #[derive(Debug, Deserialize)]
     #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
-    pub struct Remote {
+    pub(crate) struct Remote {
         pub url: String,
         pub sha256: String,
     }
 
     #[derive(Debug, Deserialize)]
     #[cfg_attr(not(feature = "sdk-download"), allow(dead_code))]
-    pub struct Archive {
+    pub(crate) struct Archive {
         pub url: String,
         pub sha256: String,
         pub size: u64,
@@ -66,7 +66,7 @@ mod pin_file {
         pub files: Vec<String>,
     }
 
-    pub fn pin() -> &'static Pin {
+    pub(crate) fn pin() -> &'static Pin {
         static PIN: LazyLock<Pin> = LazyLock::new(|| {
             serde_json::from_str(PIN_JSON).expect("orbbec-sdk.json is valid; a test parses it")
         });
@@ -74,7 +74,7 @@ mod pin_file {
     }
 
     /// The pinned version as the loader reports versions.
-    pub fn pinned_version() -> SdkVersion {
+    pub(crate) fn pinned_version() -> SdkVersion {
         let mut parts = pin().version.split('.').map(|part| {
             part.parse::<u32>()
                 .expect("the pinned version is major.minor.patch; a test parses it")
@@ -91,14 +91,14 @@ mod pin_file {
     /// in the archive without the leading `bin/`, so the library sits beside its
     /// `extensions/` folder, which is the layout the loader expects.
     #[cfg_attr(not(any(feature = "sdk-download", test)), allow(dead_code))]
-    pub fn install_path(archive_path: &str) -> &str {
+    pub(crate) fn install_path(archive_path: &str) -> &str {
         archive_path.strip_prefix("bin/").unwrap_or(archive_path)
     }
 }
 
-pub use pin_file::pinned_version;
+pub(crate) use pin_file::pinned_version;
 #[cfg(any(feature = "sdk-download", test))]
-pub use pin_file::{install_path, pin};
+pub(crate) use pin_file::{install_path, pin};
 
 /// The directory the offline installer puts the SDK in.
 fn bundled_dir() -> Option<PathBuf> {
@@ -106,7 +106,7 @@ fn bundled_dir() -> Option<PathBuf> {
 }
 
 /// The directory a download is kept in.
-pub fn managed_dir() -> Option<PathBuf> {
+pub(crate) fn managed_dir() -> Option<PathBuf> {
     paths::orbbec_sdk_dir()
 }
 
@@ -116,7 +116,7 @@ fn holds_library(dir: &Path) -> bool {
 
 /// The directory to hand the loader as the application's own copy, if there is
 /// one. The installer's copy wins over a download.
-pub fn search_dir() -> Option<PathBuf> {
+pub(crate) fn search_dir() -> Option<PathBuf> {
     [bundled_dir(), managed_dir()]
         .into_iter()
         .flatten()
@@ -124,13 +124,13 @@ pub fn search_dir() -> Option<PathBuf> {
 }
 
 /// Whether a download of ours is on disk, for the "Remove" action.
-pub fn has_managed_copy() -> bool {
+pub(crate) fn has_managed_copy() -> bool {
     managed_dir().is_some_and(|dir| dir.exists())
 }
 
 /// How Setup offers a missing SDK on this build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Delivery {
+pub(crate) enum Delivery {
     /// The app downloads it after the user accepts the licence.
     Download,
     /// This build never downloads the camera SDK; the installer carries it as an option.
@@ -141,7 +141,7 @@ pub enum Delivery {
     Link,
 }
 
-pub fn delivery() -> Delivery {
+pub(crate) fn delivery() -> Delivery {
     // Offline mode comes before everything: it forbids the download and the link.
     if odyssey_hub_server::policy::offline() {
         return Delivery::Offline;
@@ -162,7 +162,7 @@ pub fn delivery() -> Delivery {
 /// is tested with. A library the loader accepts (2.8 or newer) can still differ
 /// from the pin; it is only a warning.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Advisory {
+pub(crate) enum Advisory {
     /// Older than the pin. `replaceable` is set when the running copy is one this
     /// app downloaded, which a new download replaces; a copy found elsewhere is
     /// the user's to update.
@@ -180,7 +180,7 @@ pub enum Advisory {
 
 /// Compares the running SDK with `pinned`. `managed_dir` is where this app keeps
 /// its downloads, to tell its own copy from one found elsewhere.
-pub fn advisory(
+pub(crate) fn advisory(
     status: &RuntimeStatus,
     managed_dir: Option<&Path>,
     pinned: SdkVersion,
@@ -212,7 +212,7 @@ pub fn advisory(
 
 /// [`advisory`] for the SDK the app is running. Call it once cameras have been
 /// listed: the library is then loaded and cached, so this is cheap.
-pub fn current_advisory() -> Option<Advisory> {
+pub(crate) fn current_advisory() -> Option<Advisory> {
     let status = odyssey_autocalib::orbbec::runtime_status(search_dir().as_deref());
     advisory(&status, managed_dir().as_deref(), pinned_version())
 }
@@ -221,7 +221,7 @@ pub fn current_advisory() -> Option<Advisory> {
 
 /// How a removal ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Removal {
+pub(crate) enum Removal {
     Removed,
     /// The copy is in use, so nothing was touched; it is deleted the next time the
     /// app starts, by [`finish_pending`].
@@ -303,7 +303,7 @@ fn remove_at_with(dir: &Path, rename: Rename<'_>) -> io::Result<Removal> {
 
 /// Deletes the downloaded copy, or arranges for it to be deleted at the next
 /// start when it is in use.
-pub fn remove_managed_copy() -> io::Result<Removal> {
+pub(crate) fn remove_managed_copy() -> io::Result<Removal> {
     match managed_dir() {
         Some(dir) => remove_at_with(&dir, &rename_fs),
         None => Ok(Removal::Removed),
@@ -311,12 +311,12 @@ pub fn remove_managed_copy() -> io::Result<Removal> {
 }
 
 /// Whether a removal is waiting for the next start.
-pub fn removal_pending() -> bool {
+pub(crate) fn removal_pending() -> bool {
     managed_dir().is_some_and(|dir| removal_marker(&dir).exists())
 }
 
 /// Whether a downloaded replacement is waiting for the next start.
-pub fn update_pending() -> bool {
+pub(crate) fn update_pending() -> bool {
     managed_dir().is_some_and(|dir| staging_dir(&dir).join(STAGED_OK).is_file())
 }
 
@@ -331,31 +331,31 @@ fn finish_pending_at(dir: &Path, rename: Rename<'_>) {
         return;
     }
     let staging = staging_dir(dir);
-    if staging.join(STAGED_OK).is_file() {
-        if let Err(e) = swap_in(&staging, dir, rename) {
-            dioxus::logger::tracing::warn!("Could not switch to the downloaded Orbbec SDK: {e}");
-        }
+    if staging.join(STAGED_OK).is_file()
+        && let Err(e) = swap_in(&staging, dir, rename)
+    {
+        dioxus::logger::tracing::warn!("Could not switch to the downloaded Orbbec SDK: {e}");
     }
 }
 
 /// Completes what had to wait for a restart: a removal, or a downloaded
 /// replacement. Call it at startup, before anything can load the library.
-pub fn finish_pending() {
+pub(crate) fn finish_pending() {
     if let Some(dir) = managed_dir() {
         finish_pending_at(&dir, &rename_fs);
     }
 }
 
 #[cfg(feature = "sdk-download")]
-pub use download::{Installed, Phase, install};
+pub(crate) use download::{Installed, Phase, install};
 
 #[cfg(feature = "sdk-download")]
 mod download {
-    use std::io::{Cursor, Read};
+    use std::io::{Cursor, Read as _};
     use std::path::Path;
 
-    use anyhow::{Context, Result, bail};
-    use sha2::{Digest, Sha256};
+    use anyhow::{Context as _, Result, bail};
+    use sha2::{Digest as _, Sha256};
 
     use super::{STAGED_OK, install_path, managed_dir, pin, rename_fs, staging_dir, swap_in};
 
@@ -365,7 +365,7 @@ mod download {
 
     /// What the download is doing, for a progress display.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Phase {
+    pub(crate) enum Phase {
         Downloading { received: u64, total: u64 },
         Verifying,
         Installing,
@@ -373,7 +373,7 @@ mod download {
 
     /// How an install ended.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Installed {
+    pub(crate) enum Installed {
         /// The new copy is in place; the loader finds it from now on.
         Ready,
         /// The copy it replaces is loaded and cannot be moved, so the new one waits
@@ -383,7 +383,7 @@ mod download {
 
     /// Downloads, verifies and unpacks the pinned SDK into the app's data folder.
     /// The previous copy is replaced only once the new one is complete.
-    pub async fn install(mut progress: impl FnMut(Phase)) -> Result<Installed> {
+    pub(crate) async fn install(mut progress: impl FnMut(Phase)) -> Result<Installed> {
         let dest = managed_dir().context("this system has no app data folder")?;
         let pin = pin();
 
@@ -498,7 +498,7 @@ mod download {
 
     #[cfg(test)]
     mod tests {
-        use std::io::Write;
+        use std::io::Write as _;
 
         use super::*;
 
@@ -515,7 +515,7 @@ mod download {
         }
 
         fn names(list: &[&str]) -> Vec<String> {
-            list.iter().map(|s| s.to_string()).collect()
+            list.iter().map(std::string::ToString::to_string).collect()
         }
 
         fn tempdir(name: &str) -> std::path::PathBuf {

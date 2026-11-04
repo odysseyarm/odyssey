@@ -6,7 +6,7 @@ use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
 
 #[derive(Subcommand)]
-pub enum DeviceCommands {
+pub(crate) enum DeviceCommands {
     /// List all available devices
     ListDevices,
     /// Read firmware version
@@ -49,7 +49,6 @@ async fn list_devices(require_usb_mode: bool) -> Result<Vec<nusb::DeviceInfo>, S
     for info in nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .into_iter()
         .filter(|info| {
             info.vendor_id() == 0x1915
                 && (info.product_id() == 0x520F
@@ -104,8 +103,7 @@ async fn connect_to_device(
             .get(idx)
             .ok_or_else(|| {
                 format!(
-                    "Device index {} not found. Use 'device list-devices' to see available devices.",
-                    idx
+                    "Device index {idx} not found. Use 'device list-devices' to see available devices."
                 )
             })?
             .clone()
@@ -135,7 +133,6 @@ async fn cmd_list_devices() -> Result<(), String> {
     let all_usb_devices: Vec<_> = nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .into_iter()
         .filter(|info| {
             info.vendor_id() == 0x1915
                 && (info.product_id() == 0x520F
@@ -151,7 +148,6 @@ async fn cmd_list_devices() -> Result<(), String> {
         let nordic_devices: Vec<_> = nusb::list_devices()
             .wait()
             .map_err(|e| format!("Failed to list USB devices: {e}"))?
-            .into_iter()
             .filter(|info| info.vendor_id() == 0x1915)
             .collect();
 
@@ -160,7 +156,7 @@ async fn cmd_list_devices() -> Result<(), String> {
             for info in nordic_devices {
                 let product = info
                     .product_string()
-                    .map(|s| s.to_string())
+                    .map(ToString::to_string)
                     .unwrap_or_else(|| "Unknown".to_string());
                 println!(
                     "  VID:0x{:04X} PID:0x{:04X} - {}",
@@ -175,7 +171,7 @@ async fn cmd_list_devices() -> Result<(), String> {
         for (i, info) in all_usb_devices.iter().enumerate() {
             let product = info
                 .product_string()
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
                 .unwrap_or_else(|| "Unknown".to_string());
             println!(
                 "  [{}] VID:0x{:04X} PID:0x{:04X} - {}",
@@ -191,8 +187,8 @@ async fn cmd_list_devices() -> Result<(), String> {
             );
 
             // Try to probe transport mode
-            match VmDevice::probe_transport_mode(&info).await {
-                Ok(mode) => println!("      Transport mode: {:?}", mode),
+            match VmDevice::probe_transport_mode(info).await {
+                Ok(mode) => println!("      Transport mode: {mode:?}"),
                 Err(e) => println!("      Transport mode: probe failed ({e})"),
             }
 
@@ -230,7 +226,7 @@ async fn cmd_version(device: &VmDevice) -> Result<(), String> {
 }
 
 async fn cmd_pair(device: &VmDevice, timeout: u32) -> Result<(), String> {
-    println!("Starting pairing mode (timeout: {}ms)...", timeout);
+    println!("Starting pairing mode (timeout: {timeout}ms)...");
 
     match device.start_pairing(timeout).await {
         Ok(()) => {
@@ -245,10 +241,10 @@ async fn cmd_pair(device: &VmDevice, timeout: u32) -> Result<(), String> {
                     );
                     Ok(())
                 }
-                Err(e) => Err(format!("Pairing failed: {}", e)),
+                Err(e) => Err(format!("Pairing failed: {e}")),
             }
         }
-        Err(e) => Err(format!("Failed to start pairing: {}", e)),
+        Err(e) => Err(format!("Failed to start pairing: {e}")),
     }
 }
 
@@ -258,7 +254,7 @@ async fn cmd_pair_cancel(device: &VmDevice) -> Result<(), String> {
             println!("Pairing cancelled");
             Ok(())
         }
-        Err(e) => Err(format!("Failed to cancel pairing: {}", e)),
+        Err(e) => Err(format!("Failed to cancel pairing: {e}")),
     }
 }
 
@@ -268,10 +264,10 @@ async fn cmd_clear_bond(device: &VmDevice) -> Result<(), String> {
             println!("Bond cleared successfully");
             Ok(())
         }
-        Err(e) => Err(format!("Failed to clear bond: {}", e)),
+        Err(e) => Err(format!("Failed to clear bond: {e}")),
     }
 }
-pub async fn handle_command(
+pub(crate) async fn handle_command(
     device_index: Option<usize>,
     command: DeviceCommands,
 ) -> Result<(), String> {

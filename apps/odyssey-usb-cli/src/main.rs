@@ -4,13 +4,13 @@ use argmin::core::observers::ObserverMode;
 use argmin::core::{CostFunction, Error, Executor, Gradient};
 use argmin_observer_slog::SlogLogger;
 use clap::Parser;
-use futures::StreamExt;
+use futures::StreamExt as _;
 use nalgebra::Vector3;
 use nusb::MaybeFuture as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serialport::SerialPortType;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 #[derive(Serialize, Deserialize)]
 struct AccelCalibration {
@@ -126,13 +126,13 @@ async fn main() {
     // Get serial port path
     let path = args.path.or_else(|| {
         let mut ports = get_serialport_devices();
-        if ports.len() == 0 {
+        if ports.is_empty() {
             eprintln!("No devices connected");
             None
         } else if ports.len() == 1 {
             Some(ports.remove(0))
         } else {
-            eprintln!("Multiple devices detected, please specify one: {:?}", ports);
+            eprintln!("Multiple devices detected, please specify one: {ports:?}");
             None
         }
     });
@@ -142,7 +142,7 @@ async fn main() {
         None => return,
     };
 
-    println!("Connecting to device at {}", path);
+    println!("Connecting to device at {path}");
 
     // Get accelerometer and gyroscope calibration parameters
     let accel_path = args.accel;
@@ -154,7 +154,6 @@ async fn main() {
     let devices: Vec<_> = nusb::list_devices()
         .wait()
         .unwrap()
-        .into_iter()
         .filter(|info| {
             info.vendor_id() == 0x1915
                 && (info.product_id() == 0x520F
@@ -206,7 +205,7 @@ async fn calculate_and_save_bias_scale(
     let mut measurements = Vec::new();
 
     for orientation in &orientations {
-        println!("{}", orientation);
+        println!("{orientation}");
         println!("Press Enter when ready to start collecting samples for this orientation.");
         let mut reader = BufReader::new(tokio::io::stdin());
         let mut input = String::new();
@@ -261,10 +260,10 @@ async fn calculate_and_save_bias_scale(
             std::fs::write(accel_path, serde_json::to_string_pretty(&data).unwrap())
                 .expect("Unable to write file");
 
-            println!("Bias and scale saved to {}", accel_path);
+            println!("Bias and scale saved to {accel_path}");
         }
         Err(e) => {
-            eprintln!("Optimization failed: {}", e);
+            eprintln!("Optimization failed: {e}");
         }
     }
 }
@@ -304,7 +303,7 @@ async fn calculate_and_save_gyro_bias(
     std::fs::write(gyro_path, serde_json::to_string_pretty(&gyro_data).unwrap())
         .expect("Unable to write file");
 
-    println!("Gyroscope bias saved to {}", gyro_path);
+    println!("Gyroscope bias saved to {gyro_path}");
 }
 
 async fn normal_streaming(
@@ -384,30 +383,27 @@ fn get_serialport_devices() -> Vec<String> {
     match ports {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Failed to list serial ports: {}", e);
+            eprintln!("Failed to list serial ports: {e}");
             return vec![];
         }
     }
     .into_iter()
     .filter(|port| {
         match &port.port_type {
-            SerialPortType::UsbPort(port_info) => {
+            SerialPortType::UsbPort(port_info)
                 if port_info.vid == 0x1915
                     && (port_info.pid == 0x520F
                         || port_info.pid == 0x5210
-                        || port_info.pid == 0x5211)
-                {
-                    if let Some(i) = port_info.interface {
-                        // interface 0: cdc acm module
-                        // interface 1: cdc acm module functional subordinate interface
-                        // interface 2: cdc acm dfu
-                        // interface 3: cdc acm dfu subordinate interface
-                        i == 0
-                    } else {
-                        true
-                    }
+                        || port_info.pid == 0x5211) =>
+            {
+                if let Some(i) = port_info.interface {
+                    // interface 0: cdc acm module
+                    // interface 1: cdc acm module functional subordinate interface
+                    // interface 2: cdc acm dfu
+                    // interface 3: cdc acm dfu subordinate interface
+                    i == 0
                 } else {
-                    false
+                    true
                 }
             }
             _ => false,

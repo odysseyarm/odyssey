@@ -193,7 +193,8 @@ fn LivePreview(wizard: Wizard) -> Element {
             (sides.left, 3),
         ]
         .into_iter()
-        .filter_map(|(on, i)| on.then(|| [q[i], q[(i + 1) % 4]]))
+        .filter(|&(on, i)| on)
+        .map(|(on, i)| [q[i], q[(i + 1) % 4]])
         .collect(),
         _ => Vec::new(),
     };

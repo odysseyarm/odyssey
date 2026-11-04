@@ -320,7 +320,7 @@ pub(crate) fn components(
                     }
                 }
             }
-            let n = area as f64;
+            let n = f64::from(area);
             let (cx, cy) = (mx / n, my / n);
             let (vxx, vxy, vyy) = (sxx / n - cx * cx, sxy / n - cx * cy, syy / n - cy * cy);
             let half_trace = (vxx + vyy) / 2.0;
@@ -342,7 +342,7 @@ pub(crate) fn components(
 fn luma(image: &RgbImage) -> Vec<u8> {
     image
         .pixels()
-        .map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32) >> 8) as u8)
+        .map(|p| ((77 * u32::from(p[0]) + 150 * u32::from(p[1]) + 29 * u32::from(p[2])) >> 8) as u8)
         .collect()
 }
 
@@ -359,7 +359,7 @@ impl Integral {
         for y in 0..h {
             let mut row = 0u64;
             for x in 0..w {
-                row += gray[y * w + x] as u64;
+                row += u64::from(gray[y * w + x]);
                 sums[(y + 1) * stride + x + 1] = sums[y * stride + x + 1] + row;
             }
         }
@@ -412,7 +412,7 @@ fn find_blobs(image: &RgbImage, intr: &Intrinsics) -> Vec<Blob> {
     let integral = Integral::new(&gray, w, h);
 
     let weight = |x: u32, y: u32| {
-        let g = gray[y as usize * w + x as usize] as f64;
+        let g = f64::from(gray[y as usize * w + x as usize]);
         let local = integral.mean(x as usize, y as usize, half, w, h);
         if g > local + margin { g - local } else { 0.0 }
     };
@@ -421,8 +421,8 @@ fn find_blobs(image: &RgbImage, intr: &Intrinsics) -> Vec<Blob> {
     components(w as u32, h as u32, weight)
         .into_iter()
         .filter(|c| {
-            let a = c.area as f64;
-            let (bw, bh) = (c.bbox_w as f64, c.bbox_h as f64);
+            let a = f64::from(c.area);
+            let (bw, bh) = (f64::from(c.bbox_w), f64::from(c.bbox_h));
             let tiny = bw.min(bh) < 4.0;
             let fill = a / (bw * bh);
             !c.touches_border
@@ -438,7 +438,7 @@ fn find_blobs(image: &RgbImage, intr: &Intrinsics) -> Vec<Blob> {
             Some(Blob {
                 raw,
                 undistorted,
-                area: c.area as f64,
+                area: f64::from(c.area),
             })
         })
         .collect()
@@ -630,7 +630,7 @@ fn anchor_candidates(blobs: &[Blob]) -> Vec<usize> {
         }
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut areas: Vec<f64> = near.iter().take(8).map(|n| n.1).collect();
-        areas.sort_by(|a, b| a.total_cmp(b));
+        areas.sort_by(f64::total_cmp);
         let ratio = b.area / areas[areas.len() / 2];
         if (1.9..=5.0).contains(&ratio) {
             scored.push((ratio, i));
@@ -1278,7 +1278,8 @@ mod tests {
         // Screen region is darker than the surround; fill it by inverse mapping.
         for y in 0..intr.height {
             for x in 0..intr.width {
-                let Some(und) = undistort_pixel(intr, Point2::new(x as f64, y as f64)) else {
+                let Some(und) = undistort_pixel(intr, Point2::new(f64::from(x), f64::from(y)))
+                else {
                     continue;
                 };
                 let Some(uv) = apply_homography(&inv, und) else {
@@ -1331,10 +1332,10 @@ mod tests {
         let w = 1.2;
         let h_m = w / pattern.aspect();
         let r = nalgebra::Rotation3::from_euler_angles(0.0, yaw, 0.05);
-        let center = nalgebra::Vector3::new(x, 0.0, z);
+        let center = Vector3::new(x, 0.0, z);
         let intr = intrinsics();
         let to_px = |u: f64, v: f64| {
-            let local = nalgebra::Vector3::new((u - 0.5) * w, (v - 0.5) * h_m, 0.0);
+            let local = Vector3::new((u - 0.5) * w, (v - 0.5) * h_m, 0.0);
             let p = r * local + center;
             Point2::new(p.x / p.z * intr.fx + intr.cx, p.y / p.z * intr.fy + intr.cy)
         };
@@ -1698,7 +1699,7 @@ mod tests {
             }
             for y in (cy - radius).floor() as i32..=(cy + radius).ceil() as i32 {
                 for x in (cx - radius).floor() as i32..=(cx + radius).ceil() as i32 {
-                    let inside = (x as f64 - cx).hypot(y as f64 - cy) <= radius;
+                    let inside = (f64::from(x) - cx).hypot(f64::from(y) - cy) <= radius;
                     if inside && (0..1280).contains(&x) && (0..720).contains(&y) {
                         image.put_pixel(x as u32, y as u32, Rgb([235; 3]));
                     }

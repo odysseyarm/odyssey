@@ -13,9 +13,9 @@ use parking_lot::Mutex;
 use crate::views::calibrate::automatic::settings::{COLOR_EXPOSURE_RANGE_US, DIAGONAL_RANGE_IN};
 
 /// Largest overscan the demo can simulate, in percent. Real TVs crop 2-5%.
-pub const DEMO_OVERSCAN_MAX_PERCENT: f64 = 15.0;
+pub(crate) const DEMO_OVERSCAN_MAX_PERCENT: f64 = 15.0;
 
-pub const USAGE: &str = "\
+pub(crate) const USAGE: &str = "\
 Usage:
   odyssey-desktop                     Open the app
   odyssey-desktop calibrate [options] Open the automatic screen calibration
@@ -38,7 +38,7 @@ anything left out):
 
 /// What the process was asked to do.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Command {
+pub(crate) enum Command {
     /// Open the app normally.
     Run,
     Calibrate(CalibrateArgs),
@@ -47,7 +47,7 @@ pub enum Command {
 
 /// Answers to the wizard's setup questions given on the command line.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct CalibrateArgs {
+pub(crate) struct CalibrateArgs {
     /// Display number as the screen picker shows it, starting at 1.
     pub monitor: Option<usize>,
     pub screen_id: Option<u8>,
@@ -62,7 +62,7 @@ pub struct CalibrateArgs {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CliError(String);
+pub(crate) struct CliError(String);
 
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -77,7 +77,7 @@ fn err<T>(message: impl Into<String>) -> Result<T, CliError> {
 }
 
 /// Parses the arguments after the program name.
-pub fn parse<I, S>(args: I) -> Result<Command, CliError>
+pub(crate) fn parse<I, S>(args: I) -> Result<Command, CliError>
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
@@ -150,7 +150,7 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                 let v = value("--demo-overscan")?;
                 match v.parse::<f64>() {
                     Ok(p) if (0.0..=DEMO_OVERSCAN_MAX_PERCENT).contains(&p) => {
-                        out.demo_overscan_percent = Some(p)
+                        out.demo_overscan_percent = Some(p);
                     }
                     _ => {
                         return err(format!(
@@ -183,7 +183,7 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
                 let v = value("--rgb-exposure")?;
                 match v.parse::<u32>() {
                     Ok(us) if COLOR_EXPOSURE_RANGE_US.contains(&us) => {
-                        out.rgb_exposure_us = Some(us)
+                        out.rgb_exposure_us = Some(us);
                     }
                     _ => {
                         return err(format!(
@@ -206,19 +206,19 @@ fn parse_calibrate(mut args: impl Iterator<Item = String>) -> Result<Command, Cl
 /// The calibrate request from the command line, handed to the wizard once.
 static PENDING_CALIBRATE: Mutex<Option<CalibrateArgs>> = Mutex::new(None);
 
-pub fn set_pending_calibrate(args: CalibrateArgs) {
+pub(crate) fn set_pending_calibrate(args: CalibrateArgs) {
     *PENDING_CALIBRATE.lock() = Some(args);
 }
 
 /// Whether the command line asked for the wizard and nothing has taken the
 /// request yet.
-pub fn has_pending_calibrate() -> bool {
+pub(crate) fn has_pending_calibrate() -> bool {
     PENDING_CALIBRATE.lock().is_some()
 }
 
 /// Takes the command-line request. The first wizard to open gets it; later
 /// openings start from a blank setup.
-pub fn take_pending_calibrate() -> Option<CalibrateArgs> {
+pub(crate) fn take_pending_calibrate() -> Option<CalibrateArgs> {
     PENDING_CALIBRATE.lock().take()
 }
 

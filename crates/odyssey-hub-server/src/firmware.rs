@@ -5,13 +5,13 @@ pub mod pack;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use dfu_core::DfuIo;
+use dfu_core::DfuIo as _;
 use dfu_nusb::DfuNusb;
 use futures::io::Cursor;
-use nusb::MaybeFuture;
+use nusb::MaybeFuture as _;
 use odyssey_protocol::BootloaderRelease;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use crate::policy;
@@ -381,11 +381,7 @@ fn verify_sha256(data: &[u8], expected_sha256: &str) -> anyhow::Result<()> {
     let hash_hex = hex::encode(hasher.finalize());
 
     if hash_hex != expected_sha256 {
-        anyhow::bail!(
-            "SHA256 mismatch: expected {}, got {}",
-            expected_sha256,
-            hash_hex
-        );
+        anyhow::bail!("SHA256 mismatch: expected {expected_sha256}, got {hash_hex}");
     }
     Ok(())
 }
@@ -441,14 +437,14 @@ pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
     let devices = nusb::list_devices().wait().ok()?;
     for dev in devices {
         for &(vid, pid, _device_type) in DEVICE_MAP {
-            if dev.vendor_id() == vid && dev.product_id() == pid {
-                if let Some(serial) = dev.serial_number() {
-                    // Compare case-insensitively, ignoring colons/dashes
-                    let serial_clean: String =
-                        serial.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-                    if serial_clean.eq_ignore_ascii_case(&uuid_hex) {
-                        return Some((vid, pid));
-                    }
+            if dev.vendor_id() == vid
+                && dev.product_id() == pid
+                && let Some(serial) = dev.serial_number()
+            {
+                // Compare case-insensitively, ignoring colons/dashes
+                let serial_clean: String = serial.chars().filter(char::is_ascii_hexdigit).collect();
+                if serial_clean.eq_ignore_ascii_case(&uuid_hex) {
+                    return Some((vid, pid));
                 }
             }
         }
@@ -529,7 +525,7 @@ pub const DFU_PROTOCOL_DFU_MODE: u8 = 0x02;
 pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
     nusb::list_devices()
         .wait()
-        .map_err(|e| DfuError::Usb(e))?
+        .map_err(DfuError::Usb)?
         .find(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
         .ok_or(DfuError::DeviceNotFound)
 }
@@ -551,14 +547,14 @@ pub fn find_device_by_uuid(
     );
     let candidates: Vec<_> = nusb::list_devices()
         .wait()
-        .map_err(|e| DfuError::Usb(e))?
+        .map_err(DfuError::Usb)?
         .filter(|dev| dev.vendor_id() == vid && dev.product_id() == pid)
         .collect();
 
     if let Some(dev) = candidates.iter().find(|dev| {
         dev.serial_number()
             .map(|s| {
-                let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+                let clean: String = s.chars().filter(char::is_ascii_hexdigit).collect();
                 clean.eq_ignore_ascii_case(&uuid_hex)
             })
             .unwrap_or(false)
@@ -1178,29 +1174,29 @@ pub async fn wait_for_dfu_device(
         if let Ok(info) = find_bootloader_by_uuid(uuid, vid, pid) {
             tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
             // Check if device is in DFU mode
-            if let Ok(device) = info.open().wait() {
-                if let Ok(interface_num) = find_dfu_interface(&device) {
-                    // Check if it's in DFU mode (protocol 0x02) not runtime (0x01)
-                    for config in device.configurations() {
-                        for interface in config.interfaces() {
-                            if interface.interface_number() != interface_num {
-                                continue;
-                            }
-                            for alt in interface.alt_settings() {
-                                tracing::debug!(
-                                    "wait_for_dfu_device: alt {} class={:02x} subclass={:02x} protocol={:02x}",
-                                    alt.alternate_setting(),
-                                    alt.class(),
-                                    alt.subclass(),
-                                    alt.protocol()
-                                );
-                                if alt.class() == DFU_CLASS
-                                    && alt.subclass() == DFU_SUBCLASS
-                                    && alt.protocol() == DFU_PROTOCOL_DFU_MODE
-                                {
-                                    tracing::debug!("wait_for_dfu_device: device is in DFU mode!");
-                                    return Ok(());
-                                }
+            if let Ok(device) = info.open().wait()
+                && let Ok(interface_num) = find_dfu_interface(&device)
+            {
+                // Check if it's in DFU mode (protocol 0x02) not runtime (0x01)
+                for config in device.configurations() {
+                    for interface in config.interfaces() {
+                        if interface.interface_number() != interface_num {
+                            continue;
+                        }
+                        for alt in interface.alt_settings() {
+                            tracing::debug!(
+                                "wait_for_dfu_device: alt {} class={:02x} subclass={:02x} protocol={:02x}",
+                                alt.alternate_setting(),
+                                alt.class(),
+                                alt.subclass(),
+                                alt.protocol()
+                            );
+                            if alt.class() == DFU_CLASS
+                                && alt.subclass() == DFU_SUBCLASS
+                                && alt.protocol() == DFU_PROTOCOL_DFU_MODE
+                            {
+                                tracing::debug!("wait_for_dfu_device: device is in DFU mode!");
+                                return Ok(());
                             }
                         }
                     }

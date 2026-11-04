@@ -123,7 +123,7 @@ mod online {
 }
 
 #[cfg(feature = "sdk-download")]
-pub use online::DownloadSdk;
+pub(super) use online::DownloadSdk;
 
 /// Without the feature there is nothing to download; Setup never asks for this.
 #[cfg(not(feature = "sdk-download"))]

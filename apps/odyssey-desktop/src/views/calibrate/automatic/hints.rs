@@ -12,7 +12,7 @@ use crate::components::wizard::{Icon, Tone};
 
 /// A status banner: a short headline and one actionable sentence.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Message {
+pub(crate) struct Message {
     pub tone: Tone,
     pub icon: Icon,
     pub title: String,
@@ -29,7 +29,7 @@ fn message(tone: Tone, icon: Icon, title: &str, detail: &str) -> Message {
 }
 
 /// What to tell the tech about the camera's view of the dot pattern.
-pub fn screen_hint(hint: Hint) -> Message {
+pub(crate) fn screen_hint(hint: Hint) -> Message {
     use Tone::{Attention, Good};
     match hint {
         Hint::Ready => message(
@@ -102,7 +102,7 @@ pub fn screen_hint(hint: Hint) -> Message {
 }
 
 /// What to tell the tech about the tracker markers in the infrared view.
-pub fn marker_hint(hint: MarkerHint) -> Message {
+pub(crate) fn marker_hint(hint: MarkerHint) -> Message {
     use Tone::{Attention, Good};
     match hint {
         MarkerHint::Ready => message(
@@ -145,7 +145,7 @@ pub fn marker_hint(hint: MarkerHint) -> Message {
 }
 
 /// What to tell the tech when a step fails: a headline and what to do next.
-pub fn failure_message(kind: FailureKind, size_origin: Option<SizeOrigin>) -> Message {
+pub(crate) fn failure_message(kind: FailureKind, size_origin: Option<SizeOrigin>) -> Message {
     let (icon, title, detail): (Icon, &str, String) = match kind {
         FailureKind::CameraOpen => (
             Icon::Camera,
@@ -212,7 +212,7 @@ pub fn failure_message(kind: FailureKind, size_origin: Option<SizeOrigin>) -> Me
 }
 
 /// "top and left", "all four edges": which sides of the picture a display cuts off.
-pub fn sides_words(sides: SideSet) -> String {
+pub(crate) fn sides_words(sides: SideSet) -> String {
     if sides.count() == 4 {
         return "edges on all four sides".into();
     }
@@ -234,7 +234,7 @@ pub fn sides_words(sides: SideSet) -> String {
 }
 
 /// The label of the button on the problem screen that leads on from `kind`.
-pub fn retry_label(kind: FailureKind) -> &'static str {
+pub(crate) fn retry_label(kind: FailureKind) -> &'static str {
     match kind {
         FailureKind::SizeInvalid | FailureKind::SizeShape => "Change the size",
         _ => "Try again",
@@ -243,7 +243,7 @@ pub fn retry_label(kind: FailureKind) -> &'static str {
 
 /// Where to turn off overscan, for the Details section. Menu names change
 /// between models and years, so the list says so.
-pub const OVERSCAN_HELP: [(&str, &str); 5] = [
+pub(crate) const OVERSCAN_HELP: [(&str, &str); 5] = [
     (
         "Any TV",
         "Look in the picture settings for Picture Size, Aspect Ratio or Screen Fit. Choose 'Just Scan', 'Screen Fit', 'Full Pixel', 'Unscaled' or switch 'Overscan' off. Game mode or PC mode often does this for you.",
@@ -266,7 +266,7 @@ pub const OVERSCAN_HELP: [(&str, &str); 5] = [
 /// The circle through markers 1, 2 and 3 in words: where its centre is from the screen's
 /// top-left corner, and how big it is. A controller standing straight in front of a point
 /// on it is at the weak spot of the tracker's first estimate.
-pub fn circle_text(circle: &Circle) -> String {
+pub(crate) fn circle_text(circle: &Circle) -> String {
     format!(
         "centre {:.0} cm right and {:.0} cm down from the top-left corner, radius {:.0} cm",
         circle.center.x * 100.0,
@@ -279,7 +279,7 @@ pub fn circle_text(circle: &Circle) -> String {
 /// what the wizard's marker search enforces or what the tracker was run to need; see
 /// `crates/odyssey-autocalib/MARKERS.md` and `crates/odyssey-hub-server/tests/marker_order.rs`
 /// for where each comes from.
-pub const MARKER_RULES: [(&str, &str); 6] = [
+pub(crate) const MARKER_RULES: [(&str, &str); 6] = [
     (
         "Where they can go",
         "On the screen, along its edge, or behind a projector screen. The wizard finds them wherever they are, as long as they are on or just around the screen.",
@@ -308,14 +308,14 @@ pub const MARKER_RULES: [(&str, &str); 6] = [
 
 /// Text and bar position for a running measurement.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Progress {
+pub(crate) struct Progress {
     pub text: String,
     /// `0.0..=1.0`.
     pub fraction: f32,
 }
 
 /// `what` names what is being measured, e.g. "the screen" or "the markers".
-pub fn progress(step: Step, what: &str) -> Progress {
+pub(crate) fn progress(step: Step, what: &str) -> Progress {
     match step {
         Step::Capturing { frame, total } => Progress {
             text: format!("Measuring {what}… {} of {}", (frame + 1).min(total), total),
@@ -451,7 +451,7 @@ mod tests {
         for kind in all.iter().copied() {
             let m = failure_message(kind, Some(SizeOrigin::Entered));
             assert!(
-                !m.title.trim().is_empty() && m.detail.ends_with("."),
+                !m.title.trim().is_empty() && m.detail.ends_with('.'),
                 "{kind:?}"
             );
             assert_eq!(m.tone, Tone::Bad);

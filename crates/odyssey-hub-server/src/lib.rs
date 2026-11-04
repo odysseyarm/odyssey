@@ -9,11 +9,12 @@ mod server;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, StreamExt as _};
 use futures_concurrency::prelude::*;
-use interprocess::local_socket::traits::tokio::Listener;
+use interprocess::local_socket::traits::tokio::Listener as _;
 use interprocess::local_socket::{
-    GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _, ToFsName, ToNsName,
+    GenericFilePath, GenericNamespaced, ListenerOptions, NameType as _, ToFsName as _,
+    ToNsName as _,
 };
 #[cfg(target_os = "windows")]
 use interprocess::os::windows::{
@@ -45,16 +46,16 @@ pub enum ServerError {
 impl From<std::io::Error> for ServerError {
     fn from(err: std::io::Error) -> Self {
         if err.kind() == std::io::ErrorKind::AddrInUse {
-            ServerError::SocketAlreadyInUse
+            Self::SocketAlreadyInUse
         } else {
-            ServerError::IoError(err)
+            Self::IoError(err)
         }
     }
 }
 
 impl From<anyhow::Error> for ServerError {
     fn from(err: anyhow::Error) -> Self {
-        ServerError::Other(err)
+        Self::Other(err)
     }
 }
 
@@ -90,7 +91,7 @@ impl Connected for LocalSocketStream {
 
 impl AsyncWrite for LocalSocketStream {
     fn poll_write(
-        self: std::pin::Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<Result<usize, std::io::Error>> {
@@ -98,21 +99,21 @@ impl AsyncWrite for LocalSocketStream {
     }
 
     fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
+        self: Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), std::io::Error>> {
         std::task::Poll::Ready(Ok(()))
     }
 
     fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), std::io::Error>> {
         self.inner_pin().poll_shutdown(cx)
     }
 
     fn poll_write_vectored(
-        self: std::pin::Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         bufs: &[std::io::IoSlice<'_>],
     ) -> std::task::Poll<Result<usize, std::io::Error>> {
@@ -146,7 +147,7 @@ pub async fn run_server(
 
     // Check if another instance is already running by trying to connect
     use interprocess::local_socket::tokio::prelude::LocalSocketStream as ConnectStream;
-    use interprocess::local_socket::traits::tokio::Stream;
+    use interprocess::local_socket::traits::tokio::Stream as _;
     if let Ok(_) = ConnectStream::connect(name.clone()).await {
         // Another instance is running
         let _ = sender.send(Message::ServerInit(Err(std::io::Error::new(
@@ -183,7 +184,7 @@ pub async fn run_server(
             return Err(ServerError::from(std::io::Error::from(error_kind)));
         }
     };
-    let listener = futures::stream::unfold((), |()| async {
+    let listener = stream::unfold((), |()| async {
         let conn = listener.accept().await;
 
         Some((conn.map(LocalSocketStream), ()))
@@ -222,7 +223,7 @@ pub async fn run_server(
         screen_result.calibrations,
     )));
 
-    println!("Screen calibrations loaded: {:?}", screen_calibrations);
+    println!("Screen calibrations loaded: {screen_calibrations:?}");
 
     // Calibrations written while the hub runs (wizard, hand edits) apply without a
     // restart. The guard stops the poller if run_server returns without a cancel.
@@ -311,7 +312,7 @@ pub async fn run_server(
     if let Err(e) = sender.send(Message::ServerInit(Ok(startup_corruptions))) {
         tracing::warn!("Failed to send server init message: {}", e);
     }
-    println!("Server running at {:?}", name);
+    println!("Server running at {name:?}");
 
     // Clone values before moving into streams
     let device_sender_clone = device_sender.clone();
@@ -350,7 +351,7 @@ pub async fn run_server(
 
     // Convert accessory_manager to stream
     let accessory_stream = stream::once(async move {
-        let _ = accessory_manager(
+        let () = accessory_manager(
             event_sender_clone2,
             accessory_info_receiver,
             accessory_map_sender_clone2,
@@ -399,7 +400,7 @@ pub async fn run_server(
                                     dl_guard.push((d1.clone(), commands_tx));
                                 } else {
                                     // Device has no commands channel (control only), still add to list but with a dummy channel
-                                    let (dummy_tx, _dummy_rx) = tokio::sync::mpsc::channel(1);
+                                    let (dummy_tx, _dummy_rx) = mpsc::channel(1);
                                     dl_guard.push((d1.clone(), dummy_tx));
                                 }
                             }

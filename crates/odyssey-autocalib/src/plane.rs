@@ -5,7 +5,7 @@
 //! analytic answers.
 
 use nalgebra::{DMatrix, Matrix3, Point2, SymmetricEigen, Vector2, Vector3};
-use rand::SeedableRng;
+use rand::SeedableRng as _;
 use rand::rngs::StdRng;
 use rand::seq::index::sample;
 
@@ -149,8 +149,8 @@ impl Plane {
     }
 
     /// The same plane expressed in another frame.
-    pub fn transformed(&self, to: &Extrinsics) -> Plane {
-        Plane {
+    pub fn transformed(&self, to: &Extrinsics) -> Self {
+        Self {
             point: to.apply(&self.point),
             normal: to.rotation * self.normal,
         }
@@ -528,7 +528,7 @@ pub fn ransac_homography(
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
+    use rand::Rng as _;
 
     use super::*;
 
@@ -629,7 +629,7 @@ mod tests {
     fn dlt_recovers_exact_homography() {
         let h = truth_homography();
         let src: Vec<_> = (0..6)
-            .flat_map(|i| (0..4).map(move |j| Point2::new(i as f64 * 0.2, j as f64 * 0.3)))
+            .flat_map(|i| (0..4).map(move |j| Point2::new(f64::from(i) * 0.2, f64::from(j) * 0.3)))
             .collect();
         let dst: Vec<_> = src
             .iter()
@@ -668,7 +668,7 @@ mod tests {
         let mut dst = Vec::new();
         for i in 0..15 {
             for j in 0..9 {
-                let p = Point2::new(i as f64 / 14.0, j as f64 / 8.0);
+                let p = Point2::new(f64::from(i) / 14.0, f64::from(j) / 8.0);
                 let mut q = apply_homography(&h, p).unwrap();
                 q += Vector2::new(rng.random_range(-0.1..0.1), rng.random_range(-0.1..0.1));
                 src.push(p);

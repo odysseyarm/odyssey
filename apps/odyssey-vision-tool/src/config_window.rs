@@ -9,8 +9,8 @@ use iui::UI;
 use iui::controls::{Button, Form};
 use iui::prelude::{Window, WindowType};
 use leptos_reactive::{
-    ReadSignal, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalWith,
-    SignalWithUntracked, create_effect, create_rw_signal,
+    ReadSignal, RwSignal, SignalGet as _, SignalGetUntracked as _, SignalSet as _, SignalWith as _,
+    SignalWithUntracked as _, create_effect, create_rw_signal,
 };
 use nusb::MaybeFuture as _;
 use odyssey_protocol::control::device::TransportMode;
@@ -19,7 +19,7 @@ use odyssey_usb::packets::vm::{AccelConfig, GeneralConfig, GyroConfig, Port, Pro
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
 
-use crate::CloneButShorter;
+use crate::CloneButShorter as _;
 use crate::mot_runner::MotRunner;
 
 pub fn config_window(
@@ -34,10 +34,10 @@ pub fn config_window(
     ReadSignal<AccelConfig>,
 ) {
     let ui_ctx = ui.async_context();
-    let mut config_win = Window::new(&ui, "Config", 10, 10, WindowType::NoMenubar);
+    let mut config_win = Window::new(ui, "Config", 10, 10, WindowType::NoMenubar);
     let tokio_handle = tokio_handle.clone();
 
-    config_win.on_closing(&ui, {
+    config_win.on_closing(ui, {
         let ui = ui.c();
         move |win: &mut Window| {
             win.hide(&ui);
@@ -45,10 +45,10 @@ pub fn config_window(
     });
 
     let device = create_rw_signal(None);
-    let connected = move || device.with(|d| d.is_some());
+    let connected = move || device.with(Option::is_some);
 
     let (general_form, general_settings) =
-        GeneralSettingsForm::new(&ui, device.read_only(), mot_runner, config_win.c());
+        GeneralSettingsForm::new(ui, device.read_only(), mot_runner, config_win.c());
 
     crate::layout! { &ui,
         let vbox = VerticalBox(padded: true) {
@@ -66,19 +66,19 @@ pub fn config_window(
         }
     }
     let (wf_form, wf_settings) =
-        paj_sensor_settings::PajSensorSettingsForm::new(&ui, device.read_only(), Port::Wf);
+        paj_sensor_settings::PajSensorSettingsForm::new(ui, device.read_only(), Port::Wf);
     let (nf_form, nf_settings) =
-        paj_sensor_settings::PajSensorSettingsForm::new(&ui, device.read_only(), Port::Nf);
+        paj_sensor_settings::PajSensorSettingsForm::new(ui, device.read_only(), Port::Nf);
     let (pag_form, pag_settings) =
-        pag_sensor_settings::PagSensorSettingsForm::new(&ui, device.read_only());
-    tab_group.append(&ui, "General", general_form);
-    tab_group.append(&ui, "Wide field", wf_form.c());
-    tab_group.append(&ui, "Near field", nf_form.c());
-    tab_group.append(&ui, "PAG", pag_form.c());
-    tab_group.set_margined(&ui, 0, true);
-    tab_group.set_margined(&ui, 1, true);
-    tab_group.set_margined(&ui, 2, true);
-    tab_group.set_margined(&ui, 3, true);
+        pag_sensor_settings::PagSensorSettingsForm::new(ui, device.read_only());
+    tab_group.append(ui, "General", general_form);
+    tab_group.append(ui, "Wide field", wf_form.c());
+    tab_group.append(ui, "Near field", nf_form.c());
+    tab_group.append(ui, "PAG", pag_form.c());
+    tab_group.set_margined(ui, 0, true);
+    tab_group.set_margined(ui, 1, true);
+    tab_group.set_margined(ui, 2, true);
+    tab_group.set_margined(ui, 3, true);
 
     create_effect({
         let ui = ui.c();
@@ -92,8 +92,10 @@ pub fn config_window(
             general_settings
                 .device_pid
                 .with(|pid| match odyssey_usb::device::ProductId::from_u16(*pid) {
-                    Some(odyssey_usb::device::ProductId::AtsVm)
-                    | Some(odyssey_usb::device::ProductId::AtsLite) => {
+                    Some(
+                        odyssey_usb::device::ProductId::AtsVm
+                        | odyssey_usb::device::ProductId::AtsLite,
+                    ) => {
                         nf_form.show(&ui);
                         wf_form.show(&ui);
                         pag_form.hide(&ui);
@@ -112,7 +114,7 @@ pub fn config_window(
         }
     });
 
-    config_win.set_child(&ui, vbox);
+    config_win.set_child(ui, vbox);
 
     let device_list = create_rw_signal(Vec::<VmConnectionInfo>::new());
     let selected_index = create_rw_signal::<Option<i32>>(None);
@@ -131,7 +133,7 @@ pub fn config_window(
             let Ok(i) = usize::try_from(i) else { return };
             let _device = device_list.with_untracked(|d| d.get(i).cloned());
             let sim_addr = sim_addr.c();
-            let udp_addr = udp_addr.c();
+            let _udp_addr = udp_addr.c();
             let general_settings = general_settings.c();
             let device_signal = device.c(); // Clone the signal for the async task
             let task = async move {
@@ -148,7 +150,7 @@ pub fn config_window(
                 let usb_device = if let Some(_device) = _device {
                     eprintln!("Attempting to connect to device...");
                     _device.connect().await
-                } else if let Some(sim_addr) = sim_addr.as_ref() {
+                } else if let Some(_sim_addr) = sim_addr.as_ref() {
                     unimplemented!();
                     // Ok(VmDevice::connect_tcp(sim_addr)?)
                 } else {
@@ -160,28 +162,30 @@ pub fn config_window(
                         eprintln!("Connection successful, disabling any active streams...");
                         // Disable all streams from previous session to prevent flooding
                         if let Err(e) = usb_device.clear_all_streams().await {
-                            eprintln!("WARNING: Failed to disable streams: {:?}", e);
+                            eprintln!("WARNING: Failed to disable streams: {e:?}");
                         }
                         eprintln!("Streams disabled, loading general settings...");
 
                         let product_id_result =
                             general_settings.load_from_device(&usb_device, true).await;
                         if let Err(ref e) = product_id_result {
-                            eprintln!("ERROR: Failed to load general settings: {:?}", e);
-                            return Err(anyhow::anyhow!("{:?}", e));
+                            eprintln!("ERROR: Failed to load general settings: {e:?}");
+                            return Err(anyhow::anyhow!("{e:?}"));
                         }
                         eprintln!("General settings loaded successfully");
                         match odyssey_usb::device::ProductId::from_u16(product_id_result.unwrap()) {
-                            Some(odyssey_usb::device::ProductId::AtsLite)
-                            | Some(odyssey_usb::device::ProductId::AtsVm) => {
+                            Some(
+                                odyssey_usb::device::ProductId::AtsLite
+                                | odyssey_usb::device::ProductId::AtsVm,
+                            ) => {
                                 eprintln!("Loading WF settings...");
                                 if let Err(e) = wf_settings.load_from_device(&usb_device).await {
-                                    eprintln!("ERROR: Failed to load WF settings: {:?}", e);
+                                    eprintln!("ERROR: Failed to load WF settings: {e:?}");
                                     return Err(e);
                                 }
                                 eprintln!("WF settings loaded, loading NF settings...");
                                 if let Err(e) = nf_settings.load_from_device(&usb_device).await {
-                                    eprintln!("ERROR: Failed to load NF settings: {:?}", e);
+                                    eprintln!("ERROR: Failed to load NF settings: {e:?}");
                                     return Err(e);
                                 }
                                 eprintln!("NF settings loaded successfully");
@@ -189,7 +193,7 @@ pub fn config_window(
                             Some(odyssey_usb::device::ProductId::AtsPro) => {
                                 eprintln!("Loading PAG settings...");
                                 if let Err(e) = pag_settings.load_from_device(&usb_device).await {
-                                    eprintln!("ERROR: Failed to load PAG settings: {:?}", e);
+                                    eprintln!("ERROR: Failed to load PAG settings: {e:?}");
                                     return Err(e);
                                 }
                                 eprintln!("PAG settings loaded successfully");
@@ -202,7 +206,7 @@ pub fn config_window(
                         Result::<()>::Ok(())
                     }
                     Err(e) => {
-                        eprintln!("ERROR: Device connection failed: {:?}", e);
+                        eprintln!("ERROR: Device connection failed: {e:?}");
                         Err(e)
                     }
                 }
@@ -220,7 +224,7 @@ pub fn config_window(
             });
         }
     };
-    device_combobox.on_selected(&ui, device_combobox_on_selected.c());
+    device_combobox.on_selected(ui, device_combobox_on_selected.c());
 
     create_effect({
         // update device combobox when device_list changes
@@ -235,10 +239,10 @@ pub fn config_window(
             device_list.with(|device_list| {
                 for device in device_list {
                     // Skip placeholder mux entries (used to keep connection alive when 0 devices)
-                    if let VmConnectionInfo::ViaMux { device_addr, .. } = device {
-                        if device_addr == &[0, 0, 0, 0, 0, 0] {
-                            continue; // Skip placeholder
-                        }
+                    if let VmConnectionInfo::ViaMux { device_addr, .. } = device
+                        && device_addr == &[0, 0, 0, 0, 0, 0]
+                    {
+                        continue; // Skip placeholder
                     }
                     device_combobox.append(&ui, &display_for_vm_connection(device));
                 }
@@ -258,10 +262,10 @@ pub fn config_window(
     let refresh_device_list = {
         let config_win = config_win.c();
         let ui = ui.c();
-        let simulator_addr = simulator_addr.c();
-        let udp_addr = udp_addr.c();
+        let _simulator_addr = simulator_addr.c();
+        let _udp_addr = udp_addr.c();
         let ui_ctx = ui.async_context();
-        let device_combobox_on_selected = device_combobox_on_selected.c();
+        let _device_combobox_on_selected = device_combobox_on_selected.c();
         move || {
             eprintln!("=== refresh_device_list called ===");
 
@@ -273,7 +277,6 @@ pub fn config_window(
                     return;
                 }
             }
-            .into_iter()
             .filter(|info| info.vendor_id() == 0x1915)
             .collect();
 
@@ -283,10 +286,10 @@ pub fn config_window(
 
             for info in usb_devices {
                 match info.product_id() {
-                    0x520F | 0x5210 | 0x5211 => {
+                    0x520F..=0x5211 => {
                         match tokio_handle.block_on(VmDevice::probe_transport_mode(&info)) {
                             Ok(TransportMode::Usb) => {
-                                vm_connections.push(VmConnectionInfo::DirectUsb(info.clone()))
+                                vm_connections.push(VmConnectionInfo::DirectUsb(info.clone()));
                             }
                             Ok(mode) => {
                                 eprintln!(
@@ -374,7 +377,7 @@ pub fn config_window(
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Failed to query existing mux: {}", e);
+                                eprintln!("Failed to query existing mux: {e}");
                                 eprintln!(
                                     "Preserving {} existing mux devices in the list",
                                     existing_mux_devices.len()
@@ -435,13 +438,13 @@ pub fn config_window(
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("Failed to query mux devices: {}", e);
+                                            eprintln!("Failed to query mux devices: {e}");
                                         }
                                     }
                                     eprintln!("Mux devices added to connection list");
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to connect to mux: {}", e);
+                                    eprintln!("Failed to connect to mux: {e}");
                                 }
                             }
                         }
@@ -458,7 +461,7 @@ pub fn config_window(
         }
     };
     refresh_device_list();
-    refresh_button.on_clicked(&ui, move |_| refresh_device_list());
+    refresh_button.on_clicked(ui, move |_| refresh_device_list());
 
     let apply_button_on_click = {
         let config_win = config_win.c();
@@ -470,7 +473,7 @@ pub fn config_window(
             if !errors.is_empty() {
                 let mut message = String::new();
                 for msg in &errors {
-                    message.push_str(&msg);
+                    message.push_str(msg);
                     message.push('\n');
                 }
                 config_win
@@ -482,13 +485,14 @@ pub fn config_window(
             match odyssey_usb::device::ProductId::from_u16(
                 general_settings.device_pid.get_untracked(),
             ) {
-                Some(odyssey_usb::device::ProductId::AtsVm)
-                | Some(odyssey_usb::device::ProductId::AtsLite) => {
+                Some(
+                    odyssey_usb::device::ProductId::AtsVm | odyssey_usb::device::ProductId::AtsLite,
+                ) => {
                     wf_settings.validate(&mut errors);
                     if !errors.is_empty() {
                         let mut message = String::new();
                         for msg in &errors {
-                            message.push_str(&msg);
+                            message.push_str(msg);
                             message.push('\n');
                         }
                         config_win
@@ -501,7 +505,7 @@ pub fn config_window(
                     if !errors.is_empty() {
                         let mut message = String::new();
                         for msg in &errors {
-                            message.push_str(&msg);
+                            message.push_str(msg);
                             message.push('\n');
                         }
                         config_win
@@ -519,7 +523,7 @@ pub fn config_window(
                             )
                             .await;
                         return false;
-                    };
+                    }
                     if let Err(e) = nf_settings.apply(&device).await {
                         config_win
                             .modal_err_async(
@@ -529,14 +533,14 @@ pub fn config_window(
                             )
                             .await;
                         return false;
-                    };
+                    }
                 }
                 Some(odyssey_usb::device::ProductId::AtsPro) => {
                     pag_settings.validate(&mut errors);
                     if !errors.is_empty() {
                         let mut message = String::new();
                         for msg in &errors {
-                            message.push_str(&msg);
+                            message.push_str(msg);
                             message.push('\n');
                         }
                         config_win
@@ -553,7 +557,7 @@ pub fn config_window(
                             )
                             .await;
                         return false;
-                    };
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -562,11 +566,11 @@ pub fn config_window(
                     .modal_err_async(&ui, "Failed to apply general settings", &e.to_string())
                     .await;
                 return false;
-            };
-            return true;
+            }
+            true
         }
     };
-    apply_button.on_clicked(&ui, {
+    apply_button.on_clicked(ui, {
         let f = apply_button_on_click.clone();
         let device = device.c();
         let ui = ui.c();
@@ -585,7 +589,7 @@ pub fn config_window(
             });
         }
     });
-    save_button.on_clicked(&ui, {
+    save_button.on_clicked(ui, {
         let config_win = config_win.c();
         let ui = ui.c();
         let device = device.c();
@@ -616,10 +620,10 @@ pub fn config_window(
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     save_button.set_text(&ui, "Save");
                 }
-            })
+            });
         }
     });
-    load_defaults_button.on_clicked(&ui, {
+    load_defaults_button.on_clicked(ui, {
         let general_settings = general_settings.c();
         move |_| {
             if let Some(_device) = device.get_untracked() {
@@ -631,7 +635,7 @@ pub fn config_window(
         }
     });
 
-    reload_button.on_clicked(&ui, {
+    reload_button.on_clicked(ui, {
         let general_settings = general_settings.c();
         move |_| {
             if let Some(device) = device.get_untracked() {
@@ -676,7 +680,7 @@ impl GeneralSettingsForm {
     ) -> (Form, Self) {
         let device_uuid = create_rw_signal([0; 6]);
         let device_pid = create_rw_signal(0u16);
-        let connected = move || device.with(|d| d.is_some());
+        let connected = move || device.with(Option::is_some);
         let impact_threshold = create_rw_signal(0);
         let suppress_ms = create_rw_signal(0);
         let accel_config = create_rw_signal(AccelConfig::default());
@@ -730,7 +734,7 @@ impl GeneralSettingsForm {
             }
         }
         set_calibration_upload_handlers(
-            &ui,
+            ui,
             &mut upload_nf_json,
             &mut upload_wf_json,
             &mut upload_stereo_json,
@@ -739,10 +743,10 @@ impl GeneralSettingsForm {
             stereo_iso.c(),
             win.c(),
         );
-        set_accel_upload_handler(&ui, &mut upload_accel_config, accel_config.c(), win.c());
-        set_gyro_upload_handler(&ui, &mut upload_gyro_config, gyro_config.c(), win.c());
+        set_accel_upload_handler(ui, &mut upload_accel_config, accel_config.c(), win.c());
+        set_gyro_upload_handler(ui, &mut upload_gyro_config, gyro_config.c(), win.c());
         set_calibration_download_handlers(
-            &ui,
+            ui,
             &mut download_nf_json,
             &mut download_wf_json,
             &mut download_stereo_json,
@@ -751,10 +755,10 @@ impl GeneralSettingsForm {
             stereo_iso.c(),
             win.c(),
         );
-        set_accel_download_handler(&ui, &mut download_accel_config, accel_config.c(), win.c());
-        set_gyro_download_handler(&ui, &mut download_gyro_config, gyro_config.c(), win.c());
+        set_accel_download_handler(ui, &mut download_accel_config, accel_config.c(), win.c());
+        set_gyro_download_handler(ui, &mut download_gyro_config, gyro_config.c(), win.c());
 
-        sync_stereo.on_clicked(&ui, {
+        sync_stereo.on_clicked(ui, {
             let stereo_iso = stereo_iso.c();
             let mot_runner = mot_runner.c();
             move |_| {
@@ -766,6 +770,8 @@ impl GeneralSettingsForm {
         (
             form,
             Self {
+                device_uuid,
+                device_pid,
                 impact_threshold,
                 suppress_ms,
                 accel_config,
@@ -774,8 +780,6 @@ impl GeneralSettingsForm {
                 wf_intrinsics,
                 stereo_iso,
                 mot_runner,
-                device_uuid,
-                device_pid,
             },
         )
     }
@@ -786,7 +790,7 @@ impl GeneralSettingsForm {
         // Read all config values at once
         let config = match retry(|| device.read_all_config(), timeout, 3).await {
             Some(Ok(cfg)) => cfg,
-            Some(Err(e)) => return Err(e.into()),
+            Some(Err(e)) => return Err(e),
             None => {
                 return Err(anyhow::anyhow!(
                     "Timeout reading device config after 3 attempts"
@@ -797,13 +801,13 @@ impl GeneralSettingsForm {
         // Read individual prop fields
         let uuid_prop = match retry(|| device.read_prop(PropKind::Uuid), timeout, 3).await {
             Some(Ok(p)) => p,
-            Some(Err(e)) => return Err(e.into()),
+            Some(Err(e)) => return Err(e),
             None => return Err(anyhow::anyhow!("Timeout reading UUID after 3 attempts")),
         };
         let product_id_prop =
             match retry(|| device.read_prop(PropKind::ProductId), timeout, 3).await {
                 Some(Ok(p)) => p,
-                Some(Err(e)) => return Err(e.into()),
+                Some(Err(e)) => return Err(e),
                 None => {
                     return Err(anyhow::anyhow!(
                         "Timeout reading ProductId after 3 attempts"
@@ -823,11 +827,11 @@ impl GeneralSettingsForm {
         self.impact_threshold
             .set(i32::from(config.impact_threshold));
         self.suppress_ms.set(i32::from(config.suppress_ms));
-        self.accel_config.set(config.accel_config.clone());
-        self.gyro_config.set(config.gyro_config.clone());
+        self.accel_config.set(config.accel_config);
+        self.gyro_config.set(config.gyro_config);
         self.nf_intrinsics.set(config.camera_model_nf.clone());
         self.wf_intrinsics.set(config.camera_model_wf.clone());
-        self.stereo_iso.set(config.stereo_iso.clone());
+        self.stereo_iso.set(config.stereo_iso);
         self.device_uuid.set(uuid);
         self.device_pid.set(product_id);
 
@@ -899,7 +903,7 @@ impl GeneralSettingsForm {
             .write_config(GeneralConfig::AccelConfig(config.accel_config))
             .await?;
         device
-            .write_config(GeneralConfig::GyroConfig(config.gyro_config.clone()))
+            .write_config(GeneralConfig::GyroConfig(config.gyro_config))
             .await?;
         device
             .write_config(GeneralConfig::CameraModelNf(
@@ -912,7 +916,7 @@ impl GeneralSettingsForm {
             ))
             .await?;
         device
-            .write_config(GeneralConfig::StereoIso(config.stereo_iso.clone()))
+            .write_config(GeneralConfig::StereoIso(config.stereo_iso))
             .await?;
 
         {
@@ -976,7 +980,7 @@ fn set_calibration_upload_handlers(
     stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
     win: Window,
 ) {
-    upload_nf.on_clicked(&ui, {
+    upload_nf.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1002,7 +1006,7 @@ fn set_calibration_upload_handlers(
         }
     });
 
-    upload_wf.on_clicked(&ui, {
+    upload_wf.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1028,7 +1032,7 @@ fn set_calibration_upload_handlers(
         }
     });
 
-    upload_stereo.on_clicked(&ui, {
+    upload_stereo.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1065,7 +1069,7 @@ fn set_calibration_download_handlers(
     stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
     win: Window,
 ) {
-    download_nf.on_clicked(&ui, {
+    download_nf.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1096,7 +1100,7 @@ fn set_calibration_download_handlers(
         }
     });
 
-    download_wf.on_clicked(&ui, {
+    download_wf.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1127,7 +1131,7 @@ fn set_calibration_download_handlers(
         }
     });
 
-    download_stereo.on_clicked(&ui, {
+    download_stereo.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1165,7 +1169,7 @@ fn set_accel_upload_handler(
     accel_config_signal: RwSignal<AccelConfig>,
     win: Window,
 ) {
-    upload_accel.on_clicked(&ui, {
+    upload_accel.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1197,7 +1201,7 @@ fn set_accel_download_handler(
     accel_config_signal: RwSignal<AccelConfig>,
     win: Window,
 ) {
-    download_accel.on_clicked(&ui, {
+    download_accel.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1232,7 +1236,7 @@ fn set_gyro_upload_handler(
     gyro_config_signal: RwSignal<GyroConfig>,
     win: Window,
 ) {
-    upload_gyro.on_clicked(&ui, {
+    upload_gyro.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1264,7 +1268,7 @@ fn set_gyro_download_handler(
     gyro_config_signal: RwSignal<GyroConfig>,
     win: Window,
 ) {
-    download_gyro.on_clicked(&ui, {
+    download_gyro.on_clicked(ui, {
         let ui = ui.c();
         let win = win.c();
         move |_| {
@@ -1307,7 +1311,7 @@ fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
                 out.push_str(p);
             }
             if !out.is_empty() {
-                out.push_str(" ");
+                out.push(' ');
             }
             out.push_str(&format!(
                 "({:04x}:{:04x})",
@@ -1335,12 +1339,11 @@ fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
 async fn retry<F, G>(mut op: F, timeout: Duration, limit: usize) -> Option<G::Output>
 where
     F: FnMut() -> G,
-    G: std::future::Future,
+    G: Future,
 {
     for _ in 0..limit {
-        match tokio::time::timeout(timeout, op()).await {
-            Ok(r) => return Some(r),
-            Err(_) => (),
+        if let Ok(r) = tokio::time::timeout(timeout, op()).await {
+            return Some(r);
         }
     }
     None

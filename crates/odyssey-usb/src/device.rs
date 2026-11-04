@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use nalgebra::Isometry3;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient, TransferError};
@@ -14,10 +14,10 @@ use odyssey_protocol::control::device::TransportMode;
 use odyssey_protocol::control::usb_mux::{ClearBondsError, PairingError, UsbMuxCtrlMsg};
 use odyssey_protocol::{PocMarkersReport, VendorData};
 use opencv_ros_camera::RosOpenCvIntrinsics;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::{Stream, StreamExt as _};
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::packets::vm::{
@@ -94,11 +94,11 @@ const ABANDONED_ID_QUARANTINE: Duration = Duration::from_secs(30);
 impl ResponseChannel {
     fn is_free(&self, now: tokio::time::Instant) -> bool {
         match self {
-            ResponseChannel::None => true,
-            ResponseChannel::Abandoned(since) => {
+            Self::None => true,
+            Self::Abandoned(since) => {
                 now.saturating_duration_since(*since) >= ABANDONED_ID_QUARANTINE
             }
-            ResponseChannel::Oneshot(..) | ResponseChannel::Stream(_) => false,
+            Self::Oneshot(..) | Self::Stream(_) => false,
         }
     }
 }
@@ -125,30 +125,30 @@ struct ResponseSlot {
 impl Drop for ResponseSlot {
     fn drop(&mut self) {
         // If the future holding the slot was cancelled, release its channel.
-        if !self.finished {
-            if let Some(thread_state) = self.thread_state.upgrade() {
-                let mut chans = thread_state.response_channels.lock();
-                let slot = &mut chans[usize::from(self.id)];
-                // The dispatcher takes a oneshot sender out of its slot before waking
-                // the receiver, so a request cancelled by a timeout right after its
-                // reply was delivered can find the id already handed to a newer
-                // request. Only touch the oneshot this slot registered.
-                let ours = match slot {
-                    ResponseChannel::Oneshot(generation, _) => *generation == self.generation,
-                    ResponseChannel::Stream(_) => true,
-                    ResponseChannel::None | ResponseChannel::Abandoned(_) => false,
+        if !self.finished
+            && let Some(thread_state) = self.thread_state.upgrade()
+        {
+            let mut chans = thread_state.response_channels.lock();
+            let slot = &mut chans[usize::from(self.id)];
+            // The dispatcher takes a oneshot sender out of its slot before waking
+            // the receiver, so a request cancelled by a timeout right after its
+            // reply was delivered can find the id already handed to a newer
+            // request. Only touch the oneshot this slot registered.
+            let ours = match slot {
+                ResponseChannel::Oneshot(generation, _) => *generation == self.generation,
+                ResponseChannel::Stream(_) => true,
+                ResponseChannel::None | ResponseChannel::Abandoned(_) => false,
+            };
+            if ours {
+                // Replies carry only the 8-bit id, so once a request has hit the
+                // wire its id must not be reused while its reply may still be in
+                // flight: quarantine it. A request that never left the host has
+                // nothing in flight and frees the id immediately.
+                *slot = if self.sent && matches!(slot, ResponseChannel::Oneshot(..)) {
+                    ResponseChannel::Abandoned(tokio::time::Instant::now())
+                } else {
+                    ResponseChannel::None
                 };
-                if ours {
-                    // Replies carry only the 8-bit id, so once a request has hit the
-                    // wire its id must not be reused while its reply may still be in
-                    // flight: quarantine it. A request that never left the host has
-                    // nothing in flight and frees the id immediately.
-                    *slot = if self.sent && matches!(slot, ResponseChannel::Oneshot(..)) {
-                        ResponseChannel::Abandoned(tokio::time::Instant::now())
-                    } else {
-                        ResponseChannel::None
-                    };
-                }
             }
         }
     }
@@ -159,7 +159,7 @@ struct StreamsActive([AtomicBool; 256]);
 
 impl Default for StreamsActive {
     fn default() -> Self {
-        StreamsActive(std::array::from_fn(|_| AtomicBool::new(false)))
+        Self(std::array::from_fn(|_| AtomicBool::new(false)))
     }
 }
 
@@ -229,7 +229,9 @@ impl PacketTransport {
                 let mut buf = Vec::with_capacity(256);
                 match reader.read_to_end(&mut buf).await {
                     Err(e) => {
-                        use std::io::ErrorKind::*;
+                        use std::io::ErrorKind::{
+                            BrokenPipe, ConnectionReset, TimedOut, UnexpectedEof, WouldBlock,
+                        };
                         match e.kind() {
                             TimedOut | WouldBlock => {
                                 io_errs = 0;
@@ -270,7 +272,7 @@ impl PacketTransport {
             info!("usb reader exits");
         });
 
-        PacketTransport {
+        Self {
             writer,
             incoming_rx,
             cancel: Arc::new(cancel_token),
@@ -279,7 +281,7 @@ impl PacketTransport {
 
     /// Create a PacketTransport that routes VM packets through a MuxDevice
     pub fn mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
-        use rand::Rng;
+        use rand::Rng as _;
         let transport_id: u32 = rand::thread_rng().r#gen();
         debug!(
             "PacketTransport::mux() [ID:{}] called for device {:02X}:{:02X}...",
@@ -338,17 +340,14 @@ impl PacketTransport {
             );
         });
 
-        PacketTransport {
+        Self {
             writer,
             incoming_rx,
             cancel: Arc::new(cancel_token),
         }
     }
 
-    pub async fn send(
-        &self,
-        pkt: Packet,
-    ) -> Result<(), tokio::sync::mpsc::error::SendError<Packet>> {
+    pub async fn send(&self, pkt: Packet) -> Result<(), mpsc::error::SendError<Packet>> {
         self.writer.send(pkt).await
     }
 
@@ -359,7 +358,7 @@ impl PacketTransport {
         ReceiverStream<Packet>,
         Arc<tokio_util::sync::CancellationToken>,
     ) {
-        let PacketTransport {
+        let Self {
             writer,
             incoming_rx,
             cancel,
@@ -402,12 +401,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 async fn retry<F, G>(mut op: F, timeout: Duration, limit: usize) -> Option<G::Output>
 where
     F: FnMut() -> G,
-    G: std::future::Future,
+    G: Future,
 {
     for _ in 0..limit {
-        match tokio::time::timeout(timeout, op()).await {
-            Ok(r) => return Some(r),
-            Err(_) => (),
+        if let Ok(r) = tokio::time::timeout(timeout, op()).await {
+            return Some(r);
         }
     }
     None
@@ -426,7 +424,7 @@ impl VmDevice {
         let thread_state = Arc::downgrade(&state);
         let state_cloned = Arc::clone(&state);
 
-        use rand::Rng;
+        use rand::Rng as _;
         let dispatcher_id: u32 = rand::thread_rng().r#gen();
         debug!(
             "Created new VmDevice State [Dispatcher ID:{}]",
@@ -438,7 +436,7 @@ impl VmDevice {
         let cancel_token_task = cancel_token.clone();
         tokio::spawn(async move {
             debug!("Dispatcher: [ID:{}] task started", dispatcher_id_task);
-            use tokio_stream::StreamExt;
+            use tokio_stream::StreamExt as _;
             loop {
                 tokio::select! {
                     maybe_reply = incoming.next() => {
@@ -491,7 +489,7 @@ impl VmDevice {
                             debug!("Dispatcher: [ID:{}] successfully delivered packet id={}", dispatcher_id_task, reply.id);
                         }
                     }
-                    _ = cancel_token_task.cancelled() => {
+                    () = cancel_token_task.cancelled() => {
                         debug!("Dispatcher: [ID:{}] cancelled, exiting", dispatcher_id_task);
                         break;
                     }
@@ -500,7 +498,7 @@ impl VmDevice {
             debug!("Dispatcher: [ID:{}] task exits", dispatcher_id_task);
         });
 
-        VmDevice {
+        Self {
             transport: tx_only,
             thread_state,
             cancel: Arc::new(cancel_token),
@@ -526,22 +524,22 @@ impl VmDevice {
         let vendor_iface_num = info
             .interfaces()
             .find(|iface| iface.class() == 0xFF)
-            .map(|iface| iface.interface_number())
+            .map(nusb::InterfaceInfo::interface_number)
             .ok_or_else(|| anyhow!("No vendor interface (class 0xFF) found"))?;
 
         let iface = dev
             .claim_interface(vendor_iface_num)
             .await
-            .map_err(|e| anyhow!("Failed to claim interface {}: {}", vendor_iface_num, e))?;
+            .map_err(|e| anyhow!("Failed to claim interface {vendor_iface_num}: {e}"))?;
 
         let in_ep = iface
             .endpoint::<Bulk, In>(0x81)
-            .map_err(|e| anyhow!("Failed to get IN endpoint 0x81: {}", e))?
+            .map_err(|e| anyhow!("Failed to get IN endpoint 0x81: {e}"))?
             .reader(4096);
 
         let out_ep = iface
             .endpoint::<Bulk, Out>(0x01)
-            .map_err(|e| anyhow!("Failed to get OUT endpoint 0x01: {}", e))?
+            .map_err(|e| anyhow!("Failed to get OUT endpoint 0x01: {e}"))?
             .writer(4096);
 
         let transport = PacketTransport::usb(in_ep, out_ep);
@@ -552,7 +550,7 @@ impl VmDevice {
             let _ = device.clear_all_streams().await;
             let mode = device.get_transport_mode().await?;
             if !matches!(mode, TransportMode::Usb) {
-                return Err(anyhow!("device transport mode is {:?}, expected Usb", mode));
+                return Err(anyhow!("device transport mode is {mode:?}, expected Usb"));
             }
         }
         Ok(device)
@@ -603,13 +601,13 @@ impl VmDevice {
     /// Send a request and wait for its reply. A device that never answers (e.g. it
     /// rebooted or switched transport mid-request) yields an error instead of
     /// hanging the caller forever.
-    pub async fn request(&self, data: PacketData) -> anyhow::Result<PacketData> {
+    pub async fn request(&self, data: PacketData) -> Result<PacketData> {
         tokio::time::timeout(REQUEST_TIMEOUT, self.request_unbounded(data))
             .await
             .map_err(|_| anyhow!("request timed out after {REQUEST_TIMEOUT:?}"))?
     }
 
-    async fn request_unbounded(&self, data: PacketData) -> anyhow::Result<PacketData> {
+    async fn request_unbounded(&self, data: PacketData) -> Result<PacketData> {
         let (mut slot, recv) = self.get_oneshot_slot()?;
         self.send(Packet { id: slot.id, data }).await?;
         slot.sent = true;
@@ -628,7 +626,7 @@ impl VmDevice {
         data: PacketData,
         timeout: Duration,
         limit: usize,
-    ) -> anyhow::Result<PacketData> {
+    ) -> Result<PacketData> {
         retry(
             async || self.request_unbounded(data.clone()).await,
             timeout,
@@ -638,7 +636,7 @@ impl VmDevice {
         .ok_or_else(|| anyhow!("no response after {limit} attempts of {timeout:?}"))?
     }
 
-    fn get_oneshot_slot(&self) -> anyhow::Result<(ResponseSlot, oneshot::Receiver<PacketData>)> {
+    fn get_oneshot_slot(&self) -> Result<(ResponseSlot, oneshot::Receiver<PacketData>)> {
         match self.thread_state.upgrade() {
             Some(thread_state) => {
                 let mut response_channels = thread_state.response_channels.lock();
@@ -766,7 +764,7 @@ impl VmDevice {
         Ok(())
     }
 
-    pub async fn read_config(&self, kind: crate::packets::vm::ConfigKind) -> Result<GeneralConfig> {
+    pub async fn read_config(&self, kind: ConfigKind) -> Result<GeneralConfig> {
         let r = self
             .request(PacketData::ReadConfig(kind))
             .await?
@@ -886,7 +884,7 @@ impl VmDevice {
         Ok(self
             .stream(PacketType::ObjectReport())
             .await?
-            .filter_map(|x| x.object_report()))
+            .filter_map(PacketData::object_report))
     }
 
     pub async fn stream_combined_markers(
@@ -895,7 +893,7 @@ impl VmDevice {
         Ok(self
             .stream(PacketType::CombinedMarkersReport())
             .await?
-            .filter_map(|x| x.combined_markers_report()))
+            .filter_map(PacketData::combined_markers_report))
     }
 
     pub async fn stream_poc_markers(
@@ -904,7 +902,7 @@ impl VmDevice {
         Ok(self
             .stream(PacketType::PocMarkersReport())
             .await?
-            .filter_map(|x| x.poc_markers_report()))
+            .filter_map(PacketData::poc_markers_report))
     }
 
     pub async fn stream_accel(
@@ -913,7 +911,7 @@ impl VmDevice {
         Ok(self
             .stream(PacketType::AccelReport())
             .await?
-            .filter_map(|x| x.accel_report()))
+            .filter_map(PacketData::accel_report))
     }
 
     pub async fn stream_impact(
@@ -922,7 +920,7 @@ impl VmDevice {
         Ok(self
             .stream(PacketType::ImpactReport())
             .await?
-            .filter_map(|x| x.impact_report()))
+            .filter_map(PacketData::impact_report))
     }
 
     pub async fn stream_battery(
@@ -931,7 +929,7 @@ impl VmDevice {
         Ok(self
             .stream(PacketType::BatteryReport())
             .await?
-            .filter_map(|x| x.battery_report()))
+            .filter_map(PacketData::battery_report))
     }
 
     pub async fn flash_settings(&self) -> Result<()> {
@@ -1200,7 +1198,9 @@ impl MuxTransport {
                 let mut buf = Vec::with_capacity(256);
                 match reader.read_to_end(&mut buf).await {
                     Err(e) => {
-                        use std::io::ErrorKind::*;
+                        use std::io::ErrorKind::{
+                            BrokenPipe, ConnectionReset, TimedOut, UnexpectedEof, WouldBlock,
+                        };
                         match e.kind() {
                             TimedOut | WouldBlock => {
                                 io_errs = 0;
@@ -1263,7 +1263,7 @@ impl MuxTransport {
             info!("mux usb reader exits");
         });
 
-        MuxTransport {
+        Self {
             writer,
             snapshots_rx,
             msg_rx,
@@ -1279,7 +1279,7 @@ impl MuxTransport {
         ReceiverStream<MuxMsg>,
         Arc<Mutex<HashMap<[u8; 6], mpsc::Sender<Packet>>>>,
     ) {
-        let MuxTransport {
+        let Self {
             writer,
             snapshots_rx,
             msg_rx,
@@ -1304,16 +1304,16 @@ pub struct MuxDevice {
 }
 
 impl MuxDevice {
-    #[allow(dead_code)]
-    async fn ctrl_recv_polling(&self, timeout: std::time::Duration) -> Result<UsbMuxCtrlMsg> {
-        let idx = self.ctrl_if.interface_number() as u16;
+    #[expect(dead_code)]
+    async fn ctrl_recv_polling(&self, timeout: Duration) -> Result<UsbMuxCtrlMsg> {
+        let idx = u16::from(self.ctrl_if.interface_number());
         let start = std::time::Instant::now();
         loop {
             let elapsed = start.elapsed();
             if elapsed >= timeout {
                 return Err(anyhow!("timeout waiting for ctrl event"));
             }
-            let slice = (timeout - elapsed).min(std::time::Duration::from_millis(500));
+            let slice = (timeout - elapsed).min(Duration::from_millis(500));
             match self
                 .ctrl_if
                 .control_in(
@@ -1343,22 +1343,18 @@ impl MuxDevice {
         }
     }
 
-    async fn ctrl_recv_filtered<F>(
-        &self,
-        timeout: std::time::Duration,
-        mut accept: F,
-    ) -> Result<UsbMuxCtrlMsg>
+    async fn ctrl_recv_filtered<F>(&self, timeout: Duration, mut accept: F) -> Result<UsbMuxCtrlMsg>
     where
         F: FnMut(&UsbMuxCtrlMsg) -> bool,
     {
-        let idx = self.ctrl_if.interface_number() as u16;
+        let idx = u16::from(self.ctrl_if.interface_number());
         let start = std::time::Instant::now();
         loop {
             let elapsed = start.elapsed();
             if elapsed >= timeout {
                 return Err(anyhow!("timeout waiting for ctrl event"));
             }
-            let slice = (timeout - elapsed).min(std::time::Duration::from_millis(500));
+            let slice = (timeout - elapsed).min(Duration::from_millis(500));
             let reply = match self
                 .ctrl_if
                 .control_in(
@@ -1411,7 +1407,7 @@ impl MuxDevice {
                     recipient: Recipient::Interface,
                     request: Self::USB_MUX_CTRL_REQ_SEND,
                     value: 0,
-                    index: self.ctrl_if.interface_number() as u16,
+                    index: u16::from(self.ctrl_if.interface_number()),
                     data: &data,
                 },
                 Duration::from_millis(1000),
@@ -1424,7 +1420,7 @@ impl MuxDevice {
     pub fn from_transport(transport: MuxTransport, ctrl_if: Interface) -> Self {
         let (writer, snapshots, control, device_packets_tx) = transport.split();
 
-        MuxDevice {
+        Self {
             writer,
             snapshots_rx: Arc::new(tokio::sync::Mutex::new(snapshots)),
             msg_rx: Arc::new(tokio::sync::Mutex::new(control)),
@@ -1476,7 +1472,7 @@ impl MuxDevice {
     }
 
     pub async fn receive_msg(&self) -> Result<MuxMsg> {
-        use tokio_stream::StreamExt;
+        use tokio_stream::StreamExt as _;
         let mut rx = self.msg_rx.lock().await;
         let msg = rx.next().await.ok_or_else(|| anyhow!("channel closed"))?;
         debug!("MuxDevice::receive_msg got control message");
@@ -1484,7 +1480,7 @@ impl MuxDevice {
     }
 
     pub async fn receive_snapshot(&self) -> Result<HVec<[u8; 6], MAX_DEVICES>> {
-        use tokio_stream::StreamExt;
+        use tokio_stream::StreamExt as _;
         let mut rx = self.snapshots_rx.lock().await;
         let devices = rx.next().await.ok_or_else(|| anyhow!("channel closed"))?;
         debug!("MuxDevice::receive_snapshot got device snapshot");
@@ -1495,15 +1491,15 @@ impl MuxDevice {
         let mut last_err = None;
         for attempt in 0..3 {
             if attempt > 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
 
             // Drain any stale snapshots that may be in the channel
             {
-                use tokio_stream::StreamExt;
+                use tokio_stream::StreamExt as _;
                 let mut rx = self.snapshots_rx.lock().await;
                 while let Ok(Some(_)) =
-                    tokio::time::timeout(tokio::time::Duration::from_millis(10), rx.next()).await
+                    tokio::time::timeout(Duration::from_millis(10), rx.next()).await
                 {
                     debug!("Drained stale snapshot");
                 }
@@ -1516,7 +1512,7 @@ impl MuxDevice {
             }
 
             // Wait for response with a 1-second timeout
-            let total_timeout = tokio::time::Duration::from_secs(1);
+            let total_timeout = Duration::from_secs(1);
 
             match tokio::time::timeout(total_timeout, self.receive_snapshot()).await {
                 Ok(Ok(devices)) => return Ok(devices),
@@ -1556,7 +1552,7 @@ impl MuxDevice {
     pub async fn read_ctrl_version(&self) -> Result<odyssey_protocol::Version> {
         self.ctrl_send(UsbMuxCtrlMsg::ReadVersion()).await?;
         match self
-            .ctrl_recv_filtered(std::time::Duration::from_secs(2), |msg| {
+            .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
                 matches!(msg, UsbMuxCtrlMsg::ReadVersionResponse(_))
             })
             .await?
@@ -1572,7 +1568,7 @@ impl MuxDevice {
         self.ctrl_send(UsbMuxCtrlMsg::StartPairing(StartPairing { timeout_ms }))
             .await?;
         match self
-            .ctrl_recv_filtered(std::time::Duration::from_secs(2), |msg| {
+            .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
                 matches!(msg, UsbMuxCtrlMsg::StartPairingResponse())
                     || matches!(msg, UsbMuxCtrlMsg::PairingResult(_))
             })
@@ -1598,7 +1594,7 @@ impl MuxDevice {
     pub async fn wait_pairing_event(&self) -> Result<PairingEvent> {
         loop {
             match self
-                .ctrl_recv_filtered(std::time::Duration::from_secs(120), |msg| {
+                .ctrl_recv_filtered(Duration::from_secs(120), |msg| {
                     matches!(msg, UsbMuxCtrlMsg::PairingResult(_))
                 })
                 .await?
@@ -1669,7 +1665,7 @@ impl MuxDevice {
     ) -> Result<HVec<odyssey_protocol::control::BondedDevice, MAX_DEVICES>> {
         self.ctrl_send(UsbMuxCtrlMsg::ListBonds()).await?;
         match self
-            .ctrl_recv_filtered(std::time::Duration::from_secs(2), |msg| {
+            .ctrl_recv_filtered(Duration::from_secs(2), |msg| {
                 matches!(msg, UsbMuxCtrlMsg::ListBondsResponse(_))
             })
             .await?
@@ -1690,7 +1686,7 @@ impl MuxDevice {
     pub async fn add_bond(&self, entry: odyssey_protocol::control::BondEntry) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::AddBond(entry)).await?;
         match self
-            .ctrl_recv_filtered(std::time::Duration::from_secs(5), |msg| {
+            .ctrl_recv_filtered(Duration::from_secs(5), |msg| {
                 matches!(msg, UsbMuxCtrlMsg::AddBondResponse(_))
             })
             .await?
@@ -1727,24 +1723,22 @@ impl VmConnectionInfo {
     /// Connect to the vision module using the appropriate method
     pub async fn connect(self) -> Result<VmDevice> {
         match self {
-            VmConnectionInfo::DirectUsb(info) => VmDevice::connect_usb(info).await,
-            VmConnectionInfo::ViaMux { mux, device_addr } => {
-                VmDevice::connect_via_mux(mux, device_addr).await
-            }
+            Self::DirectUsb(info) => VmDevice::connect_usb(info).await,
+            Self::ViaMux { mux, device_addr } => VmDevice::connect_via_mux(mux, device_addr).await,
         }
     }
 
     /// Get a display string for this device
     pub fn display_string(&self) -> String {
         match self {
-            VmConnectionInfo::DirectUsb(info) => {
+            Self::DirectUsb(info) => {
                 format!(
                     "Vision Module {:04X}:{:04X}",
                     info.vendor_id(),
                     info.product_id()
                 )
             }
-            VmConnectionInfo::ViaMux { device_addr, .. } => {
+            Self::ViaMux { device_addr, .. } => {
                 format!(
                     "VM via Mux {:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
                     device_addr[0],
@@ -1783,7 +1777,7 @@ impl VmDevice {
                     recipient: Recipient::Interface,
                     request: Self::USB_DEVICE_CTRL_REQ_SEND,
                     value: 0,
-                    index: ctrl_if.interface_number() as u16,
+                    index: u16::from(ctrl_if.interface_number()),
                     data: &data,
                 },
                 Duration::from_millis(1000),
@@ -1792,7 +1786,7 @@ impl VmDevice {
             .map_err(|e| anyhow!("ctrl send failed: {e}"));
         tracing::info!(
             "send_ctrl_msg: control_out returned {:?}",
-            result.as_ref().map(|_| "ok").map_err(|e| e.to_string())
+            result.as_ref().map(|()| "ok").map_err(ToString::to_string)
         );
         result
     }
@@ -1805,7 +1799,7 @@ impl VmDevice {
             .ctrl_if
             .as_ref()
             .ok_or_else(|| anyhow!("No control interface available"))?;
-        let idx = ctrl_if.interface_number() as u16;
+        let idx = u16::from(ctrl_if.interface_number());
         let start = std::time::Instant::now();
         loop {
             let elapsed = start.elapsed();
@@ -1854,7 +1848,7 @@ impl VmDevice {
             .ctrl_if
             .as_ref()
             .ok_or_else(|| anyhow!("No control interface available"))?;
-        let idx = ctrl_if.interface_number() as u16;
+        let idx = u16::from(ctrl_if.interface_number());
         let start = std::time::Instant::now();
         loop {
             let elapsed = start.elapsed();
@@ -1976,7 +1970,7 @@ impl VmDevice {
 
     /// Probe the transport mode of a device by issuing a control request on the vendor interface.
     /// This opens a temporary connection to query the device, then closes it.
-    pub async fn probe_transport_mode(info: &nusb::DeviceInfo) -> Result<TransportMode> {
+    pub async fn probe_transport_mode(info: &DeviceInfo) -> Result<TransportMode> {
         use odyssey_protocol::control::device::DeviceMsg;
 
         // Open the device temporarily
@@ -1986,7 +1980,7 @@ impl VmDevice {
         let vendor_iface_num = info
             .interfaces()
             .find(|iface| iface.class() == 0xFF)
-            .map(|iface| iface.interface_number())
+            .map(nusb::InterfaceInfo::interface_number)
             .ok_or_else(|| anyhow!("No vendor interface (class 0xFF) found"))?;
 
         // Claim the control interface
@@ -2006,7 +2000,7 @@ impl VmDevice {
                     recipient: Recipient::Interface,
                     request: Self::USB_DEVICE_CTRL_REQ_SEND,
                     value: 0,
-                    index: ctrl_if.interface_number() as u16,
+                    index: u16::from(ctrl_if.interface_number()),
                     data: &data,
                 },
                 Duration::from_millis(1000),
@@ -2015,7 +2009,7 @@ impl VmDevice {
             .map_err(|e| anyhow!("ctrl send failed: {e}"))?;
 
         // Receive TransportModeStatus response
-        let idx = ctrl_if.interface_number() as u16;
+        let idx = u16::from(ctrl_if.interface_number());
         let timeout = Duration::from_secs(2);
         let start = std::time::Instant::now();
 

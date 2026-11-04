@@ -8,11 +8,11 @@ use iui::draw::{Brush, FillMode, Path, SolidBrush};
 use plotters::backend::DrawingBackend;
 use plotters::chart::ChartBuilder;
 use plotters::coord::Shift;
-use plotters::drawing::{DrawingArea, IntoDrawingArea};
+use plotters::drawing::{DrawingArea, IntoDrawingArea as _};
 use plotters::element::{Circle, EmptyElement, Rectangle, Text};
 use plotters::series::{LineSeries, PointSeries, SurfaceSeries};
 use plotters::style::colors::colormaps::VulcanoHSL;
-use plotters::style::{BLACK, Color, HSLColor, IntoFont, RED, WHITE};
+use plotters::style::{BLACK, Color as _, HSLColor, IntoFont as _, RED, WHITE};
 
 fn main() {
     let ui = UI::init().expect("Couldn't initialize UI library");
@@ -84,7 +84,7 @@ impl AreaHandler for MainCanvas {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
     root.fill(&WHITE).unwrap();
     let root = root.margin(50, 50, 50, 50);
@@ -106,7 +106,7 @@ fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
         .x_labels(5)
         .y_labels(5)
         // We can also change the format of the label text
-        .y_label_formatter(&|x| format!("{:.3}", x))
+        .y_label_formatter(&|x| format!("{x:.3}"))
         .draw()
         .expect("failed to draw chart");
 
@@ -124,15 +124,15 @@ fn example_chart<DB: DrawingBackend>(root: DrawingArea<DB, Shift>) {
             5,
             &RED,
             &|c, s, st| {
-                return EmptyElement::at(c)    // We want to construct a composed element on-the-fly
+                EmptyElement::at(c)    // We want to construct a composed element on-the-fly
             + Circle::new((0,0),s,st.filled()) // At this point, the new pixel coordinate is established
-            + Text::new(format!("{:?}", c), (10, 0), ("sans-serif", 10).into_font());
+            + Text::new(format!("{c:?}"), (10, 0), ("sans-serif", 10).into_font())
             },
         ))
         .unwrap();
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn matshow<DB: DrawingBackend>(
     root: &mut DrawingArea<DB, Shift>,
 ) -> Result<(), Box<dyn Error + '_>> {
@@ -140,7 +140,7 @@ fn matshow<DB: DrawingBackend>(
         clippy::reversed_empty_ranges,
         reason = "plotters draws a reversed y range with the axis flipped; matshow wants row 0 at the top"
     )]
-    let mut chart = ChartBuilder::on(&root)
+    let mut chart = ChartBuilder::on(root)
         .caption("Matshow Example", ("sans-serif", 80))
         .margin(5)
         .top_x_label_area_size(40)
@@ -191,11 +191,11 @@ fn gaussian_2d<DB: DrawingBackend>(
 ) -> Result<(), Box<dyn Error + '_>> {
     root.fill(&WHITE)?;
 
-    let mut chart = ChartBuilder::on(&root)
+    let mut chart = ChartBuilder::on(root)
         .caption("2D Gaussian PDF", ("sans-serif", 20))
         .build_cartesian_3d(-3.0..3.0, 0.0..6.0, -3.0..3.0)?;
     chart.with_projection(|mut p| {
-        p.pitch = 1.57 - (1.57 - pitch as f64 / 50.0).abs();
+        p.pitch = 1.57 - (1.57 - f64::from(pitch) / 50.0).abs();
         p.scale = 0.7;
         p.into_matrix() // build the projection matrix
     });
@@ -208,8 +208,8 @@ fn gaussian_2d<DB: DrawingBackend>(
 
     chart.draw_series(
         SurfaceSeries::xoz(
-            (-15..=15).map(|x| x as f64 / 5.0),
-            (-15..=15).map(|x| x as f64 / 5.0),
+            (-15..=15).map(|x| f64::from(x) / 5.0),
+            (-15..=15).map(|x| f64::from(x) / 5.0),
             pdf,
         )
         .style_func(&|&v| (VulcanoHSL::get_color(v / 5.0)).into()),

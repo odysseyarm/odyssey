@@ -23,7 +23,7 @@ pub struct StrokeParamsRef<'a> {
 }
 
 impl StrokeParams {
-    pub fn as_stroke_params_ref(&self, _ctx: &DrawContext) -> StrokeParamsRef {
+    pub fn as_stroke_params_ref(&self, _ctx: &DrawContext) -> StrokeParamsRef<'_> {
         StrokeParamsRef {
             ui_draw_stroke_params: uiDrawStrokeParams {
                 Cap: self.cap,

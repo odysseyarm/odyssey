@@ -93,7 +93,7 @@ fn check(sdk: &Sdk, err: *mut ffi::ob_error) -> Result<(), CameraError> {
 /// error into `Err`.
 fn ob<T>(sdk: &Sdk, call: impl FnOnce(*mut *mut ffi::ob_error) -> T) -> Result<T, CameraError> {
     let mut err: *mut ffi::ob_error = ptr::null_mut();
-    let value = call(&mut err);
+    let value = call(&raw mut err);
     check(sdk, err)?;
     Ok(value)
 }
@@ -444,7 +444,7 @@ impl Profile {
     }
 
     /// Takes points from this stream's camera frame to `target`'s.
-    fn extrinsics_to(&self, target: &Profile) -> Result<Extrinsics, CameraError> {
+    fn extrinsics_to(&self, target: &Self) -> Result<Extrinsics, CameraError> {
         let e = ob!(
             self.sdk,
             ob_stream_profile_get_extrinsic_to(self.as_ptr(), target.as_ptr())
@@ -677,9 +677,9 @@ impl Frame {
     }
 
     /// The sub-frame of a frameset, or `None` if the set lacks that stream.
-    fn sub_frame(&self, kind: ffi::ob_frame_type) -> Option<Frame> {
+    fn sub_frame(&self, kind: ffi::ob_frame_type) -> Option<Self> {
         let raw = ob!(self.sdk, ob_frameset_get_frame(self.as_ptr(), kind)).ok()?;
-        Frame::adopt(&self.sdk, raw)
+        Self::adopt(&self.sdk, raw)
     }
 }
 
@@ -698,7 +698,9 @@ fn depth_from_frame(frame: &Frame) -> Result<(DepthImage, f32), CameraError> {
     }
     let (w, h, bytes) = frame.pixels(2)?;
     let raw: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     let image = DepthImage::from_raw(w, h, raw)
@@ -876,7 +878,7 @@ impl ImuSensor {
                 sensor.as_ptr(),
                 profile.as_ptr(),
                 Some(imu_callback),
-                ctx as *mut c_void
+                ctx.cast::<c_void>()
             )
         );
         if let Err(e) = started {
@@ -1326,10 +1328,10 @@ impl CameraStream for OrbbecStream {
                 self.pipeline.sdk,
                 ob_pipeline_wait_for_frameset(self.pipeline.as_ptr(), wait_ms)
             )?;
-            if let Some(set) = Frame::adopt(&self.pipeline.sdk, raw) {
-                if let Some(frames) = self.assemble(&set)? {
-                    return Ok(frames);
-                }
+            if let Some(set) = Frame::adopt(&self.pipeline.sdk, raw)
+                && let Some(frames) = self.assemble(&set)?
+            {
+                return Ok(frames);
             }
             if Instant::now() >= deadline {
                 return Err(CameraError::Timeout);

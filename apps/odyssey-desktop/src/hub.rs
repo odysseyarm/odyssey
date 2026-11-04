@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
-use futures::StreamExt;
+use futures::StreamExt as _;
 use odyssey_hub_client::client::{Client, DongleInfo};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events as oe;
@@ -10,7 +10,7 @@ use slab::Slab;
 use tokio::sync::broadcast;
 
 #[derive(Clone)]
-pub struct HubContext {
+pub(crate) struct HubContext {
     pub client: SyncSignal<Client>,
     pub devices: SyncSignal<Slab<Device>>,
     pub dongles: SyncSignal<Vec<DongleInfo>>,
@@ -30,7 +30,7 @@ pub struct HubContext {
 }
 
 impl HubContext {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (tracking_events, _) = broadcast::channel(128);
         let (impact_events, _) = broadcast::channel(64);
         let (pairing_events, _) = broadcast::channel(16);
@@ -60,7 +60,7 @@ impl HubContext {
         }
     }
 
-    pub async fn run(&mut self) {
+    pub(crate) async fn run(&mut self) {
         let mut device_list_task: Option<tokio::task::JoinHandle<()>> = None;
         let mut dongle_list_task: Option<tokio::task::JoinHandle<()>> = None;
         loop {
@@ -68,7 +68,7 @@ impl HubContext {
             let (device_list_stream, dongle_list_stream, event_stream) = {
                 let mut client = self.client.write();
                 match client.connect().await {
-                    Ok(_) => {
+                    Ok(()) => {
                         tracing::info!("Hub connected successfully");
                     }
                     Err(e) => {
@@ -132,8 +132,8 @@ impl HubContext {
                 handle.abort();
             }
 
-            let mut devices_signal = self.devices.clone();
-            let mut device_keys = self.device_keys.clone();
+            let mut devices_signal = self.devices;
+            let mut device_keys = self.device_keys;
             device_list_task = Some(tokio::spawn(async move {
                 let mut device_list_stream = device_list_stream;
                 while let Some(update) = device_list_stream.next().await {
@@ -158,7 +158,7 @@ impl HubContext {
                 }
             }));
 
-            let mut dongles_signal = self.dongles.clone();
+            let mut dongles_signal = self.dongles;
             dongle_list_task = Some(tokio::spawn(async move {
                 let mut dongle_list_stream = dongle_list_stream;
                 while let Some(update) = dongle_list_stream.next().await {
@@ -178,7 +178,7 @@ impl HubContext {
             let mut event_stream = event_stream;
             while let Some(evt) = event_stream.next().await {
                 let evt = match evt {
-                    Ok(raw) => raw.into(),
+                    Ok(raw) => raw,
                     Err(e) => {
                         tracing::error!("Event stream error: {}", e);
                         break;
@@ -251,19 +251,19 @@ impl HubContext {
         }
     }
 
-    pub fn device_key(&self, device: &Device) -> Option<usize> {
-        self.device_keys.peek().get(&device.uuid).cloned()
+    pub(crate) fn device_key(&self, device: &Device) -> Option<usize> {
+        self.device_keys.peek().get(&device.uuid).copied()
     }
 
-    pub fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {
+    pub(crate) fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {
         self.tracking_events.subscribe()
     }
 
-    pub fn subscribe_impact(&self) -> broadcast::Receiver<(Device, oe::ImpactEvent)> {
+    pub(crate) fn subscribe_impact(&self) -> broadcast::Receiver<(Device, oe::ImpactEvent)> {
         self.impact_events.subscribe()
     }
 
-    pub fn subscribe_pairing(&self) -> broadcast::Receiver<oe::Event> {
+    pub(crate) fn subscribe_pairing(&self) -> broadcast::Receiver<oe::Event> {
         self.pairing_events.subscribe()
     }
 }

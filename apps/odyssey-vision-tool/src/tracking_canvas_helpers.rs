@@ -53,7 +53,7 @@ pub fn draw(
     let state = &runner.state;
 
     let gravity_vec = state.orientation.inverse_transform_vector(&Vector3::z());
-    let gravity_angle = f64::atan2(-gravity_vec.z as f64, -gravity_vec.x as f64) + PI / 2.;
+    let gravity_angle = f64::atan2(f64::from(-gravity_vec.z), f64::from(-gravity_vec.x)) + PI / 2.;
 
     // Border around the drawing area
     // For POC markers, use 4:3 aspect ratio (matching PAG7665QN 320x240 sensor)
@@ -115,7 +115,7 @@ pub fn draw(
     );
 
     draw_text(
-        &ctx,
+        ctx,
         20.0,
         20.0,
         &format!("screen_id = {}", state.fv_state.screen_id),
@@ -124,7 +124,7 @@ pub fn draw(
     let gravity_rot = Rotation2::new(-gravity_angle);
 
     draw_text(
-        &ctx,
+        ctx,
         20.0,
         40.0,
         &format!("gravity_angle = {:.3}", gravity_angle.to_degrees()),
@@ -258,21 +258,21 @@ fn draw_raw(
             nf_points.push((p + Vector2::new(0.5, 0.5)) * 4095.);
             let p = draw_tf * p;
 
-            let left = mot_data.boundary_left as f64 / 98.;
-            let down = mot_data.boundary_down as f64 / 98.;
-            let right = mot_data.boundary_right as f64 / 98.;
-            let up = mot_data.boundary_up as f64 / 98.;
+            let left = f64::from(mot_data.boundary_left) / 98.;
+            let down = f64::from(mot_data.boundary_down) / 98.;
+            let right = f64::from(mot_data.boundary_right) / 98.;
+            let up = f64::from(mot_data.boundary_up) / 98.;
 
             custom_shapes::draw_rectangle(
                 ctx,
-                &nf_path,
+                nf_path,
                 &[left, down, right, up],
                 &gravity_rot,
                 &draw_tf,
             );
             custom_shapes::draw_marker(
                 ctx,
-                &ch_path,
+                ch_path,
                 p,
                 &format!(
                     "({:.3}, {:.3}) id={} area={}",
@@ -295,14 +295,14 @@ fn draw_raw(
             let p = gravity_rot * p;
             let p = draw_tf * p;
 
-            let left = mot_data.boundary_left as f64 / 98.;
-            let down = mot_data.boundary_down as f64 / 98.;
-            let right = mot_data.boundary_right as f64 / 98.;
-            let up = mot_data.boundary_up as f64 / 98.;
+            let left = f64::from(mot_data.boundary_left) / 98.;
+            let down = f64::from(mot_data.boundary_down) / 98.;
+            let right = f64::from(mot_data.boundary_right) / 98.;
+            let up = f64::from(mot_data.boundary_up) / 98.;
 
             custom_shapes::draw_rectangle(
                 ctx,
-                &wf_path,
+                wf_path,
                 &[left, down, right, up],
                 &gravity_rot,
                 &draw_tf,
@@ -310,7 +310,7 @@ fn draw_raw(
 
             custom_shapes::draw_marker(
                 ctx,
-                &ch_path,
+                ch_path,
                 p,
                 &format!(
                     "({:.3}, {:.3}) id={} area={}",
@@ -384,7 +384,7 @@ fn draw_not_raw(
         ..thick2.clone()
     };
 
-    for marker in state.nf_markers2.iter() {
+    for marker in &state.nf_markers2 {
         let p = normalized_scale * marker.normalized;
         // Debug: print raw and scaled values
         if state.is_poc_markers {
@@ -421,7 +421,7 @@ fn draw_not_raw(
         }
     }
 
-    for marker in state.wf_markers2.iter() {
+    for marker in &state.wf_markers2 {
         let p = normalized_scale * marker.normalized;
         let p = gravity_rot * p.cast();
         let p = draw_tf * p;
@@ -452,29 +452,29 @@ fn draw_not_raw(
             let p = p / 4095.;
             let p = gravity_rot * p.cast();
             let p = draw_tf * p;
-            draw_crosshair_rotated(&ctx, &fv_reproj_path, p.x, p.y, 20.);
-            fv_reproj_path.end(&ctx);
+            draw_crosshair_rotated(ctx, &fv_reproj_path, p.x, p.y, 20.);
+            fv_reproj_path.end(ctx);
             ctx.stroke(&fv_reproj_path, &solid_brush(0.0, 0.69, 0.42), &thick3);
         }
     }
     let pnp_iso = odyssey_cv::telemetry::pnp_solutions().get_last();
-    if let Some(pnp_iso) = pnp_iso {
-        if let Some((_, screen_calibration)) = screen {
-            for p in screen_calibration.object_points {
-                // pnp reprojections
-                let reproj_tf = pnp_iso.inverse();
-                let pnp_reproj_path = Path::new(ctx, FillMode::Winding);
-                let p = reproj_tf.cast().inverse_transform_point(&p);
-                let p = p / p.z;
-                // todo don't use hardcoded 4095x4095 res assumption
-                let p = Point2::new(p.x * fx, p.y * fy);
-                let p = p / 4095.;
-                let p = gravity_rot * p.cast();
-                let p = draw_tf * p;
-                draw_crosshair_rotated(&ctx, &pnp_reproj_path, p.x, p.y, 20.);
-                pnp_reproj_path.end(&ctx);
-                ctx.stroke(&pnp_reproj_path, &solid_brush(0.3, 0.3, 0.3), &thick3);
-            }
+    if let Some(pnp_iso) = pnp_iso
+        && let Some((_, screen_calibration)) = screen
+    {
+        for p in screen_calibration.object_points {
+            // pnp reprojections
+            let reproj_tf = pnp_iso.inverse();
+            let pnp_reproj_path = Path::new(ctx, FillMode::Winding);
+            let p = reproj_tf.cast().inverse_transform_point(&p);
+            let p = p / p.z;
+            // todo don't use hardcoded 4095x4095 res assumption
+            let p = Point2::new(p.x * fx, p.y * fy);
+            let p = p / 4095.;
+            let p = gravity_rot * p.cast();
+            let p = draw_tf * p;
+            draw_crosshair_rotated(ctx, &pnp_reproj_path, p.x, p.y, 20.);
+            pnp_reproj_path.end(ctx);
+            ctx.stroke(&pnp_reproj_path, &solid_brush(0.3, 0.3, 0.3), &thick3);
         }
     }
     for p in &state.wf_reproj {
@@ -484,8 +484,8 @@ fn draw_not_raw(
         let p = p / 4095.;
         let p = gravity_rot * p.cast();
         let p = draw_tf * p;
-        draw_crosshair_rotated(&ctx, &wf_reproj_path, p.x, p.y, 20.);
-        wf_reproj_path.end(&ctx);
+        draw_crosshair_rotated(ctx, &wf_reproj_path, p.x, p.y, 20.);
+        wf_reproj_path.end(ctx);
         ctx.stroke(&wf_reproj_path, &solid_brush(0.627, 0.125, 0.941), &thick2);
     }
 }

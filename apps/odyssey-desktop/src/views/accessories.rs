@@ -3,11 +3,11 @@ use std::num::NonZeroU64;
 use std::time::Duration;
 
 // UI-side BLE scan (btleplug)
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::Manager;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
-use futures::StreamExt;
+use futures::StreamExt as _;
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap, AccessoryType};
 use uuid::Uuid;
 
@@ -60,25 +60,25 @@ pub fn Accessories() -> Element {
     let hub = use_context::<Signal<hub::HubContext>>();
 
     // id -> (info, connected)
-    let accessory_map = use_signal(|| HashMap::<[u8; 6], (AccessoryInfo, bool)>::new());
+    let accessory_map = use_signal(HashMap::<[u8; 6], (AccessoryInfo, bool)>::new);
     // id -> info
-    let info_map = use_signal(|| HashMap::<[u8; 6], AccessoryInfo>::new());
+    let info_map = use_signal(HashMap::<[u8; 6], AccessoryInfo>::new);
 
     // Nearby discovered by BLE: id -> (label, type)
-    let nearby = use_signal(|| HashMap::<[u8; 6], (String, AccessoryType)>::new());
+    let nearby = use_signal(HashMap::<[u8; 6], (String, AccessoryType)>::new);
 
     let format_mac = |mac: &[u8; 6]| -> String {
         mac.iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>()
             .join(":")
     };
 
     // Seed + subscribe AccessoryMap
     use_future({
-        let hub_sig = hub.clone();
-        let mut accessory_map = accessory_map.clone();
-        let mut info_map = info_map.clone();
+        let hub_sig = hub;
+        let mut accessory_map = accessory_map;
+        let mut info_map = info_map;
         move || async move {
             let mut client = hub_sig.read().client.read().clone();
 
@@ -116,14 +116,14 @@ pub fn Accessories() -> Element {
                     }
                     Err(e) => tracing::warn!("accessory map subscribe failed: {e}"),
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
     });
 
     // BLE scan loop: detect DryFireMag and MantisX
     use_future({
-        let mut nearby = nearby.clone();
+        let mut nearby = nearby;
         move || async move {
             let _nus_uuid = Uuid::from_bytes([
                 0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc,
@@ -176,8 +176,8 @@ pub fn Accessories() -> Element {
 
     // add: ([u8;6], String, AccessoryType)
     let add = {
-        let hub_sig = hub.clone();
-        let info0 = info_map.clone();
+        let hub_sig = hub;
+        let info0 = info_map;
         use_callback(move |(id, name, ty): ([u8; 6], String, AccessoryType)| {
             let next: HashMap<[u8; 6], AccessoryInfo> = {
                 let cur = info0.read();
@@ -188,7 +188,7 @@ pub fn Accessories() -> Element {
             };
 
             let mut client = hub_sig.read().client.read().clone();
-            let mut info_map = info0.clone();
+            let mut info_map = info0;
             spawn(async move {
                 // The hub replaces the whole map, so showing the edit before it
                 // is accepted leaves the UI claiming a change the hub rejected.
@@ -202,8 +202,8 @@ pub fn Accessories() -> Element {
 
     // remove: ([u8;6])
     let remove = {
-        let hub_sig = hub.clone();
-        let info0 = info_map.clone();
+        let hub_sig = hub;
+        let info0 = info_map;
         use_callback(move |id: [u8; 6]| {
             let next: HashMap<[u8; 6], AccessoryInfo> = {
                 let cur = info0.read();
@@ -214,7 +214,7 @@ pub fn Accessories() -> Element {
             };
 
             let mut client = hub_sig.read().client.read().clone();
-            let mut info_map = info0.clone();
+            let mut info_map = info0;
             spawn(async move {
                 match client.update_accessory_info_map(next.clone()).await {
                     Ok(()) => info_map.set(next),
@@ -226,8 +226,8 @@ pub fn Accessories() -> Element {
 
     // assign: ([u8;6], Option<NonZeroU64>) — UUID-based
     let assign = {
-        let hub_sig = hub.clone();
-        let info0 = info_map.clone();
+        let hub_sig = hub;
+        let info0 = info_map;
         use_callback(move |(id, assign_uuid): ([u8; 6], Option<NonZeroU64>)| {
             let next: HashMap<[u8; 6], AccessoryInfo> = {
                 let cur = info0.read();
@@ -240,7 +240,7 @@ pub fn Accessories() -> Element {
             };
 
             let mut client = hub_sig.read().client.read().clone();
-            let mut info_map = info0.clone();
+            let mut info_map = info0;
             spawn(async move {
                 match client.update_accessory_info_map(next.clone()).await {
                     Ok(()) => info_map.set(next),
@@ -253,7 +253,7 @@ pub fn Accessories() -> Element {
     // Snapshots for render
     let info_snapshot: HashMap<[u8; 6], AccessoryInfo> = { info_map.read().clone() };
     let am_snapshot: HashMap<[u8; 6], (AccessoryInfo, bool)> = { accessory_map.read().clone() };
-    let mut added_ids: Vec<[u8; 6]> = info_snapshot.keys().cloned().collect();
+    let mut added_ids: Vec<[u8; 6]> = info_snapshot.keys().copied().collect();
 
     // Devices (for assignment)
     let devices_snapshot = (hub().devices)();
@@ -264,7 +264,7 @@ pub fn Accessories() -> Element {
             buf[..6].copy_from_slice(&dev.uuid);
             let uuid_u64 = u64::from_le_bytes(buf);
             let nz = NonZeroU64::new(uuid_u64)?;
-            let label = format!("0x{:x}", uuid_u64);
+            let label = format!("0x{uuid_u64:x}");
             Some((nz, label, slot))
         })
         .collect();

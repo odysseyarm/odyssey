@@ -21,9 +21,9 @@ const SLOTS: usize = odyssey_common::MAX_SCREEN_ID as usize + 1;
 
 /// Time between scans. A change has to look identical on two consecutive scans
 /// before it loads, so a write takes between one and two intervals to apply.
-pub const POLL_INTERVAL: Duration = Duration::from_secs(1);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-pub type Calibrations = ArrayVec<(u8, ScreenCalibration<f32>), SLOTS>;
+pub(crate) type Calibrations = ArrayVec<(u8, ScreenCalibration<f32>), SLOTS>;
 
 /// What a scan can tell about a file without reading it. `None` means the file
 /// is absent. The inode is part of it because an atomic replace can land inside
@@ -33,12 +33,12 @@ type Fingerprints = [Fingerprint; SLOTS];
 
 /// Outcome of a reload that was applied.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Reload {
+pub(crate) struct Reload {
     /// Screens whose file failed to load and whose previous calibration stays active.
     pub kept_previous: Vec<u8>,
 }
 
-pub struct ScreenCalibrationWatcher {
+pub(crate) struct ScreenCalibrationWatcher {
     dir: PathBuf,
     /// Fingerprints of the files as of the last load.
     applied: Fingerprints,
@@ -49,7 +49,7 @@ pub struct ScreenCalibrationWatcher {
 impl ScreenCalibrationWatcher {
     /// Snapshots the directory. Call it before the initial load so a write that
     /// lands in between still counts as a change.
-    pub async fn new(dir: PathBuf) -> Self {
+    pub(crate) async fn new(dir: PathBuf) -> Self {
         let applied = scan(&dir).await;
         Self {
             dir,
@@ -59,7 +59,11 @@ impl ScreenCalibrationWatcher {
     }
 
     /// Polls until `cancel` fires, publishing changes into `target`.
-    pub async fn run(mut self, target: Arc<ArcSwap<Calibrations>>, cancel: CancellationToken) {
+    pub(crate) async fn run(
+        mut self,
+        target: Arc<ArcSwap<Calibrations>>,
+        cancel: CancellationToken,
+    ) {
         self.run_every(POLL_INTERVAL, target, cancel).await;
     }
 
@@ -73,7 +77,7 @@ impl ScreenCalibrationWatcher {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
-                _ = cancel.cancelled() => break,
+                () = cancel.cancelled() => break,
                 _ = interval.tick() => {
                     if let Some(reload) = self.poll_once(&target).await {
                         log_reload(&target.load(), &reload);

@@ -5,7 +5,7 @@ use nusb::MaybeFuture as _;
 use odyssey_usb::device::{MuxDevice, VmDevice};
 
 #[derive(Args)]
-pub struct BondArgs {
+pub(crate) struct BondArgs {
     /// Index of the dongle to use (use 'mux list-devices' to see available dongles)
     #[arg(short = 'm', long)]
     pub mux: Option<usize>,
@@ -19,7 +19,6 @@ fn list_muxes() -> Result<Vec<nusb::DeviceInfo>, String> {
     Ok(nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .into_iter()
         .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
         .collect())
 }
@@ -29,7 +28,6 @@ async fn list_vm_devices() -> Result<Vec<nusb::DeviceInfo>, String> {
     for info in nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .into_iter()
         .filter(|info| {
             info.vendor_id() == 0x1915
                 && (info.product_id() == 0x520F
@@ -127,7 +125,7 @@ fn format_addr(addr: &[u8; 6]) -> String {
     )
 }
 
-pub async fn handle_bond(args: BondArgs) -> Result<(), String> {
+pub(crate) async fn handle_bond(args: BondArgs) -> Result<(), String> {
     use rand::RngCore as _;
 
     let (mux, dongle_bd_addr) = pick_mux(args.mux).await?;

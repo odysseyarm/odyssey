@@ -189,21 +189,27 @@ pub trait Serialize {
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]);
 
     #[cfg(feature = "std")]
-    #[expect(unsafe_code, reason = "set_len over the spare capacity that serialize just filled")]
+    #[expect(
+        unsafe_code,
+        reason = "set_len over the spare capacity that serialize just filled"
+    )]
     fn serialize_to_vec(&self, buf: &mut Vec<u8>) {
         buf.reserve(Self::SIZE);
-        let _ = self.serialize(&mut buf.spare_capacity_mut());
+        let () = self.serialize(&mut buf.spare_capacity_mut());
         unsafe {
             buf.set_len(buf.len() + Self::SIZE);
         }
     }
 }
 
-#[expect(unsafe_code, reason = "raw copy into an uninitialised wire buffer, bounds asserted above")]
+#[expect(
+    unsafe_code,
+    reason = "raw copy into an uninitialised wire buffer, bounds asserted above"
+)]
 #[inline]
 fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
     assert!(buf.len() >= data.len());
-    let ptr = <[_]>::as_mut_ptr(buf) as *mut u8;
+    let ptr = <[_]>::as_mut_ptr(buf).cast::<u8>();
     unsafe {
         ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
     }
@@ -616,7 +622,7 @@ pub struct PocMarkersReport {
 
 impl From<PocMarkersReport> for CombinedMarkersReport {
     fn from(t: PocMarkersReport) -> Self {
-        CombinedMarkersReport {
+        Self {
             nf_points: t.points,
             wf_points: Default::default(),
         }
@@ -691,18 +697,17 @@ pub enum Error {
 #[cfg(feature = "std")]
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use Error as S;
         match self {
-            S::UnexpectedEof { packet_type: None } => write!(f, "unexpected eof"),
-            S::UnexpectedEof {
+            Self::UnexpectedEof { packet_type: None } => write!(f, "unexpected eof"),
+            Self::UnexpectedEof {
                 packet_type: Some(p),
             } => write!(f, "unexpected eof, packet id {p:?}"),
-            S::UnrecognizedPacketId(id) => write!(f, "unrecognized packet id {id}"),
-            S::UnrecognizedPort => write!(f, "unrecognized port"),
-            S::UnrecognizedStreamUpdateAction(n) => {
+            Self::UnrecognizedPacketId(id) => write!(f, "unrecognized packet id {id}"),
+            Self::UnrecognizedPort => write!(f, "unrecognized port"),
+            Self::UnrecognizedStreamUpdateAction(n) => {
                 write!(f, "unrecognized stream update action {n}")
             }
-            S::InvalidBitPattern => write!(f, "invalid bit pattern"),
+            Self::InvalidBitPattern => write!(f, "invalid bit pattern"),
         }
     }
 }
@@ -822,9 +827,7 @@ impl TryFrom<u8> for PacketType {
             0x17 => Ok(Self::SetDeviceNameResponse()),
             0x80 => Ok(Self::VendorStart()),
             0xff => Ok(Self::VendorEnd()),
-            n if (PacketType::VendorStart().into()..PacketType::VendorEnd().into())
-                .contains(&n) =>
-            {
+            n if (Self::VendorStart().into()..Self::VendorEnd().into()).contains(&n) => {
                 Ok(Self::Vendor(n))
             }
             _ => Err(Error::UnrecognizedPacketId(n)),
@@ -833,7 +836,7 @@ impl TryFrom<u8> for PacketType {
 }
 
 impl From<PacketType> for u8 {
-    fn from(ty: PacketType) -> u8 {
+    fn from(ty: PacketType) -> Self {
         match ty {
             PacketType::WriteRegister() => 0x00,
             PacketType::ReadRegister() => 0x01,
@@ -913,63 +916,63 @@ impl Packet {
 impl PacketData {
     pub fn read_register_response(self) -> Option<ReadRegisterResponse> {
         match self {
-            PacketData::ReadRegisterResponse(x) => Some(x),
+            Self::ReadRegisterResponse(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn read_config_response(self) -> Option<GeneralConfig> {
         match self {
-            PacketData::ReadConfigResponse(x) => Some(x),
+            Self::ReadConfigResponse(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn read_prop_response(self) -> Option<Props> {
         match self {
-            PacketData::ReadPropResponse(x) => Some(x),
+            Self::ReadPropResponse(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn object_report(self) -> Option<ObjectReport> {
         match self {
-            PacketData::ObjectReport(x) => Some(x),
+            Self::ObjectReport(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn combined_markers_report(self) -> Option<CombinedMarkersReport> {
         match self {
-            PacketData::CombinedMarkersReport(x) => Some(x),
+            Self::CombinedMarkersReport(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn poc_markers_report(self) -> Option<PocMarkersReport> {
         match self {
-            PacketData::PocMarkersReport(x) => Some(x),
+            Self::PocMarkersReport(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn accel_report(self) -> Option<AccelReport> {
         match self {
-            PacketData::AccelReport(x) => Some(x),
+            Self::AccelReport(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn impact_report(self) -> Option<ImpactReport> {
         match self {
-            PacketData::ImpactReport(x) => Some(x),
+            Self::ImpactReport(x) => Some(x),
             _ => None,
         }
     }
 
     pub fn battery_report(self) -> Option<BatteryReport> {
         match self {
-            PacketData::BatteryReport(x) => Some(x),
+            Self::BatteryReport(x) => Some(x),
             _ => None,
         }
     }
@@ -977,10 +980,10 @@ impl PacketData {
 
 impl Parse for MotData {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
-        let mot_data = MotData {
-            area: bytes[0] as u16 | ((bytes[1] as u16) << 8),
-            cx: bytes[2] as u16 | ((bytes[3] & 0x0f) as u16) << 8,
-            cy: bytes[4] as u16 | ((bytes[5] & 0x0f) as u16) << 8,
+        let mot_data = Self {
+            area: u16::from(bytes[0]) | (u16::from(bytes[1]) << 8),
+            cx: u16::from(bytes[2]) | u16::from(bytes[3] & 0x0f) << 8,
+            cy: u16::from(bytes[4]) | u16::from(bytes[5] & 0x0f) << 8,
             avg_brightness: bytes[6],
             max_brightness: bytes[7],
             radius: bytes[8] & 0x0f,
@@ -1020,7 +1023,7 @@ impl Serialize for MotData {
             self.vx,
             self.vy,
         ];
-        let ptr = <[_]>::as_mut_ptr(buf) as *mut u8;
+        let ptr = <[_]>::as_mut_ptr(buf).cast::<u8>();
         unsafe {
             ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
         }
@@ -1042,8 +1045,8 @@ impl Parse for ObjectReport {
         *bytes = &bytes[2..];
         Ok(Self {
             timestamp,
-            mot_data_nf: [(); 16].map(|_| MotData::parse(data).expect("MotData parse error")),
-            mot_data_wf: [(); 16].map(|_| MotData::parse(data).expect("MotData parse error")),
+            mot_data_nf: [(); 16].map(|()| MotData::parse(data).expect("MotData parse error")),
+            mot_data_wf: [(); 16].map(|()| MotData::parse(data).expect("MotData parse error")),
         })
     }
 }
@@ -1065,7 +1068,7 @@ impl Serialize for ObjectReport {
 impl Parse for CombinedMarkersReport {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
         use Error as E;
-        let size = Self::SIZE as usize;
+        let size = Self::SIZE;
         if bytes.len() < size {
             return Err(E::UnexpectedEof {
                 packet_type: Some(PacketType::CombinedMarkersReport()),
@@ -1079,7 +1082,7 @@ impl Parse for CombinedMarkersReport {
         for i in 0..positions.len() {
             // x, y is 12 bits each
             let x = u16::from_le_bytes([data[0], data[1] & 0x0f]);
-            let y = (data[1] >> 4) as u16 | ((data[2] as u16) << 4);
+            let y = u16::from(data[1] >> 4) | (u16::from(data[2]) << 4);
             positions[i] = Point2::new(x, y);
             *data = &data[3..];
         }
@@ -1148,7 +1151,7 @@ impl AccelReport {
 
 impl StreamUpdate {
     pub fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
-        let stream_update = StreamUpdate {
+        let stream_update = Self {
             packet_id: bytes[0].try_into()?,
             action: bytes[1].try_into()?,
         };
@@ -1165,7 +1168,7 @@ mod heapless_str32_cbor {
 
     use crate::DeviceName;
 
-    pub fn encode<Ctx, W: Write>(
+    pub(crate) fn encode<Ctx, W: Write>(
         s: &DeviceName,
         e: &mut Encoder<W>,
         _ctx: &mut Ctx,
@@ -1174,11 +1177,14 @@ mod heapless_str32_cbor {
         Ok(())
     }
 
-    pub fn decode<'b, Ctx>(d: &mut Decoder<'b>, _ctx: &mut Ctx) -> Result<DeviceName, Error> {
+    pub(crate) fn decode<'b, Ctx>(
+        d: &mut Decoder<'b>,
+        _ctx: &mut Ctx,
+    ) -> Result<DeviceName, Error> {
         Ok(DeviceName::from_str_lossy(d.str()?))
     }
 
-    pub fn cbor_len<Ctx>(s: &DeviceName, _ctx: &mut Ctx) -> usize {
+    pub(crate) fn cbor_len<Ctx>(s: &DeviceName, _ctx: &mut Ctx) -> usize {
         let n = s.as_str().len();
         let header = if n <= 23 { 1 } else { 2 };
         header + n
@@ -1191,7 +1197,7 @@ mod serde_cbor_with {
     use minicbor_serde::{Deserializer, Serializer};
     use serde::Serialize;
 
-    pub fn encode<W, C, T>(
+    pub(crate) fn encode<W, C, T>(
         v: &T,
         e: &mut Encoder<W>,
         _ctx: &mut C,
@@ -1205,7 +1211,10 @@ mod serde_cbor_with {
             .map_err(|_| minicbor::encode::Error::message("serde encode error"))
     }
 
-    pub fn decode<'b, C, T>(d: &mut Decoder<'b>, _ctx: &mut C) -> Result<T, minicbor::decode::Error>
+    pub(crate) fn decode<'b, C, T>(
+        d: &mut Decoder<'b>,
+        _ctx: &mut C,
+    ) -> Result<T, minicbor::decode::Error>
     where
         T: serde::de::DeserializeOwned, // owns its data; no borrows from input
     {
@@ -1221,7 +1230,7 @@ mod serde_cbor_with {
         Ok(v)
     }
 
-    pub fn cbor_len<C, T>(v: &T, _ctx: &mut C) -> usize
+    pub(crate) fn cbor_len<C, T>(v: &T, _ctx: &mut C) -> usize
     where
         T: Serialize,
     {
@@ -1240,7 +1249,7 @@ mod serde_cbor_with {
         {
             let mut encoder = Encoder::new(&mut writer);
             let mut ser = Serializer::new(encoder.writer_mut());
-            v.serialize(&mut ser).unwrap_or_else(|_| ());
+            v.serialize(&mut ser).unwrap_or(());
         }
         writer.0
     }
@@ -1359,7 +1368,7 @@ impl BootloaderRelease {
             counter >= 1 && counter <= Self::MAX_COUNTER,
             "bootloader release counter must be 1..=4095"
         );
-        ((UsbDeviceRelease::RESERVED_MAJOR as u16) << 12) | counter
+        (UsbDeviceRelease::RESERVED_MAJOR << 12) | counter
     }
 
     pub const fn from_bcd_device(raw: u16) -> Self {
@@ -1378,6 +1387,33 @@ impl BootloaderRelease {
             Self::Legacy => true,
             Self::Counter(running) => running < published,
         }
+    }
+}
+
+#[protocol_type(no_cbor)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum ProductId {
+    AtsVm = 0x520f,
+    AtsLite = 0x5210,
+    AtsPro = 0x5211,
+    Mux = 0x5212,
+}
+
+impl ProductId {
+    pub fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0x520f => Some(Self::AtsVm),
+            0x5210 => Some(Self::AtsLite),
+            0x5211 => Some(Self::AtsPro),
+            0x5212 => Some(Self::Mux),
+            _ => None,
+        }
+    }
+
+    pub fn supports_control_endpoint(&self) -> bool {
+        matches!(self, Self::AtsLite | Self::Mux)
     }
 }
 
@@ -1419,32 +1455,5 @@ mod bootloader_release_tests {
             BootloaderRelease::from_bcd_device(0),
             BootloaderRelease::Legacy
         );
-    }
-}
-
-#[protocol_type(no_cbor)]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u16)]
-pub enum ProductId {
-    AtsVm = 0x520f,
-    AtsLite = 0x5210,
-    AtsPro = 0x5211,
-    Mux = 0x5212,
-}
-
-impl ProductId {
-    pub fn from_u16(value: u16) -> Option<Self> {
-        match value {
-            0x520f => Some(Self::AtsVm),
-            0x5210 => Some(Self::AtsLite),
-            0x5211 => Some(Self::AtsPro),
-            0x5212 => Some(Self::Mux),
-            _ => None,
-        }
-    }
-
-    pub fn supports_control_endpoint(&self) -> bool {
-        matches!(self, Self::AtsLite | Self::Mux)
     }
 }

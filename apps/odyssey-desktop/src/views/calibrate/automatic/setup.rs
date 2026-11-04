@@ -586,7 +586,7 @@ fn SizeBox(wizard: Wizard, label: String) -> Element {
         .entered()
         .err()
         .filter(|e| *left_box.read() || matches!(e, SizeError::NotANumber))
-        .map(|e| e.message());
+        .map(super::settings::SizeError::message);
     let (unit, placeholder, range) = match field {
         SizeField::Diagonal => (
             "inches",

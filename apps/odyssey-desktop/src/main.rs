@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"]
 
-use std::io::Write;
+use std::io::Write as _;
 
 use components::Navbar;
 use dioxus::desktop::{Config, WindowBuilder, WindowCloseBehaviour, window};
@@ -52,21 +52,21 @@ fn main() {
 
     if cfg!(target_os = "windows") {
         let user_data_dir = std::env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
-        dioxus::LaunchBuilder::new()
+        LaunchBuilder::new()
             .with_cfg(
                 Config::default()
                     .with_data_directory(user_data_dir)
                     .with_menu(None)
-                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::WindowCloses)
+                    .with_close_behaviour(WindowCloseBehaviour::WindowCloses)
                     .with_window(WindowBuilder::new().with_title("Odyssey")),
             )
             .launch(app);
     } else {
-        dioxus::LaunchBuilder::new()
+        LaunchBuilder::new()
             .with_cfg(
                 Config::default()
                     .with_menu(None)
-                    .with_close_behaviour(dioxus::desktop::WindowCloseBehaviour::WindowCloses)
+                    .with_close_behaviour(WindowCloseBehaviour::WindowCloses)
                     .with_window(WindowBuilder::new().with_title("Odyssey")),
             )
             .launch(app);
@@ -99,7 +99,7 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 fn app() -> Element {
     let cancel_token = CancellationToken::new();
     let config_corruptions =
-        use_signal(|| Vec::<odyssey_hub_common::config::ConfigCorruptionEvent>::new());
+        use_signal(Vec::<odyssey_hub_common::config::ConfigCorruptionEvent>::new);
     let server_ready = use_signal(|| false);
 
     use_hook(|| {
@@ -112,8 +112,8 @@ fn app() -> Element {
     // Run server + status handling
     use_future({
         let cancel_token = cancel_token.clone();
-        let config_corruptions = config_corruptions.clone();
-        let server_ready = server_ready.clone();
+        let config_corruptions = config_corruptions;
+        let server_ready = server_ready;
         move || {
             let cancel_token = cancel_token.clone();
             async move {
@@ -148,7 +148,7 @@ fn app() -> Element {
 
     let hub = use_context_provider(|| Signal::new(hub::HubContext::new()));
     use_future({
-        let server_ready = server_ready.clone();
+        let server_ready = server_ready;
         move || {
             let mut hub = hub();
             async move {
@@ -156,7 +156,7 @@ fn app() -> Element {
                 while !*server_ready.read() {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
-                hub.run().await
+                hub.run().await;
             }
         }
     });
@@ -365,10 +365,9 @@ async fn handle_server_status(
 
                     // Return true to signal we should exit due to another instance
                     return true;
-                } else {
-                    tracing::error!("Server start error: {}", e);
-                    return false;
                 }
+                tracing::error!("Server start error: {}", e);
+                return false;
             }
             Some(Message::BringToFront) => {
                 tracing::info!("Received BringToFront request");

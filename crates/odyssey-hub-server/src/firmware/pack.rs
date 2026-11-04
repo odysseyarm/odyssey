@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 
 use super::{
     FileEntry, FirmwareChannel, FirmwareEntry, FirmwareManifest, ReleaseSource,
@@ -133,7 +133,7 @@ pub fn load_manifest(dir: &Path, channel: FirmwareChannel) -> Result<Loaded> {
     }
 
     let mut dropped = Vec::new();
-    for (device, device_manifest) in manifest.devices.iter_mut() {
+    for (device, device_manifest) in &mut manifest.devices {
         device_manifest.firmwares.retain(|entry| {
             let found = problems(dir, device, entry);
             if found.is_empty() {
@@ -187,7 +187,7 @@ pub fn read_file(
 
 #[cfg(test)]
 mod tests {
-    use sha2::{Digest, Sha256};
+    use sha2::{Digest as _, Sha256};
 
     use super::*;
 

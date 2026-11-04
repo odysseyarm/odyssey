@@ -69,11 +69,11 @@ impl KnownSize {
     /// Width and height in meters for a pattern of the given aspect ratio.
     pub fn size_for_aspect(&self, aspect: f64) -> Result<[f64; 2], SolveError> {
         match *self {
-            KnownSize::Diagonal { inches } if inches.is_finite() && inches > 0.0 => {
+            Self::Diagonal { inches } if inches.is_finite() && inches > 0.0 => {
                 let height = inches * 0.0254 / (aspect * aspect + 1.0).sqrt();
                 Ok([aspect * height, height])
             }
-            KnownSize::Dimensions { width_m, height_m }
+            Self::Dimensions { width_m, height_m }
                 if width_m.is_finite()
                     && height_m.is_finite()
                     && width_m > 0.0
@@ -94,8 +94,8 @@ impl KnownSize {
 
     fn source(&self) -> SizeSource {
         match self {
-            KnownSize::Diagonal { .. } => SizeSource::KnownDiagonal,
-            KnownSize::Dimensions { .. } => SizeSource::KnownDimensions,
+            Self::Diagonal { .. } => SizeSource::KnownDiagonal,
+            Self::Dimensions { .. } => SizeSource::KnownDimensions,
         }
     }
 }
@@ -581,7 +581,8 @@ pub(crate) fn screen_depth_points(
             if d < DEPTH_RANGE_M.0 || d > DEPTH_RANGE_M.1 {
                 continue;
             }
-            let Some(ray) = pixel_ray(&geometry.depth, Point2::new(x as f64, y as f64)) else {
+            let Some(ray) = pixel_ray(&geometry.depth, Point2::new(f64::from(x), f64::from(y)))
+            else {
                 continue;
             };
             let p_depth = ray * d;

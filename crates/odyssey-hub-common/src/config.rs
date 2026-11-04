@@ -46,21 +46,19 @@ impl<T> ConfigLoadResult<T> {
         T: Default,
     {
         match self {
-            ConfigLoadResult::Success(val) => val,
-            ConfigLoadResult::CorruptedUsingDefault { .. } => T::default(),
-            ConfigLoadResult::NotFoundUsingDefault => T::default(),
+            Self::Success(val) => val,
+            Self::CorruptedUsingDefault { .. } => T::default(),
+            Self::NotFoundUsingDefault => T::default(),
         }
     }
 
     pub fn is_corrupted(&self) -> bool {
-        matches!(self, ConfigLoadResult::CorruptedUsingDefault { .. })
+        matches!(self, Self::CorruptedUsingDefault { .. })
     }
 
     pub fn corruption_info(&self) -> Option<(PathBuf, String)> {
         match self {
-            ConfigLoadResult::CorruptedUsingDefault { path, error } => {
-                Some((path.clone(), error.clone()))
-            }
+            Self::CorruptedUsingDefault { path, error } => Some((path.clone(), error.clone())),
             _ => None,
         }
     }
@@ -235,10 +233,7 @@ async fn load_ui_state_from(path: PathBuf) -> ConfigLoadResult<UiState> {
     }
 }
 
-async fn save_ui_state_to(
-    path: &std::path::Path,
-    state: &UiState,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn save_ui_state_to(path: &Path, state: &UiState) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -544,7 +539,7 @@ pub async fn accessory_map_save_async(
 mod tests {
     use super::*;
 
-    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+    fn block_on<F: Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()

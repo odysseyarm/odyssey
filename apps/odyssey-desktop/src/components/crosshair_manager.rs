@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 /// Wrapper for broadcast::Sender that implements PartialEq (always false, triggers re-render)
 /// This is needed because Dioxus #[component] requires PartialEq on all props
 #[derive(Clone)]
-pub struct TrackingSender(pub broadcast::Sender<(Device, TrackingEvent)>);
+pub(crate) struct TrackingSender(pub broadcast::Sender<(Device, TrackingEvent)>);
 
 impl PartialEq for TrackingSender {
     fn eq(&self, _other: &Self) -> bool {
@@ -53,7 +53,7 @@ pub fn CrosshairManager(
             .clone()
             .map(|ts| ts.0)
             .unwrap_or_else(|| hub.peek().tracking_events.clone());
-        let hub = hub.clone();
+        let hub = hub;
         use_future(move || {
             let mut receiver = sender.subscribe();
             tracing::info!(
@@ -84,8 +84,8 @@ pub fn CrosshairManager(
                                 let image_src = CROSSHAIR_IMAGES
                                     [key.min(CROSSHAIR_IMAGES.len() - 1)]
                                 .to_string();
-                                let x = tracking.aimpoint.x.clamp(0.0, 1.0) as f64 * width;
-                                let y = tracking.aimpoint.y.clamp(0.0, 1.0) as f64 * height;
+                                let x = f64::from(tracking.aimpoint.x.clamp(0.0, 1.0)) * width;
+                                let y = f64::from(tracking.aimpoint.y.clamp(0.0, 1.0)) * height;
                                 crosshair_positions.write().insert(key, (x, y, image_src));
                             }
                         }
@@ -104,7 +104,7 @@ pub fn CrosshairManager(
     }
 
     {
-        let hub = hub.clone();
+        let hub = hub;
         use_effect(move || {
             let devices = (hub().devices)();
             let current_keys: Vec<usize> = devices.iter().map(|(key, _)| key).collect();

@@ -337,17 +337,13 @@ fn pt32(p: Point2<f64>) -> Point2<f32> {
 impl Session {
     /// Starts a session on an open camera. `aspect` is the screen's width over
     /// height, which fixes the pattern.
-    pub fn start(
-        mut stream: Box<dyn CameraStream>,
-        aspect: f64,
-        options: SessionOptions,
-    ) -> Session {
+    pub fn start(mut stream: Box<dyn CameraStream>, aspect: f64, options: SessionOptions) -> Self {
         let geometry = *stream.geometry();
         // Depth quality depends on the projector, and a previous session may
         // have left the infrared sensor on a short exposure.
         let _ = stream.set_ir_auto_exposure();
         let _ = stream.set_projector_enabled(true);
-        Session {
+        Self {
             stream,
             geometry,
             pattern: Pattern::new(aspect),
@@ -618,7 +614,7 @@ impl Session {
                     // images), which the desktop app also keeps as a file.
                     let due = self
                         .marker_report_at
-                        .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3));
+                        .is_none_or(|t| t.elapsed() > Duration::from_secs(3));
                     if due && !matches!(error, MarkerError::TooFewBlobs { .. }) {
                         self.marker_report_at = Some(std::time::Instant::now());
                         tracing::info!(

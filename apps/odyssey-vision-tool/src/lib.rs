@@ -43,10 +43,10 @@ pub struct ScreenInfo {
 
 impl From<ScreenInfo> for odyssey_common::ScreenCalibration<f32> {
     fn from(screen_info: ScreenInfo) -> Self {
-        odyssey_common::ScreenCalibration {
+        Self {
             rotation: Default::default(),
             homography: {
-                nalgebra::Matrix3::new(
+                Matrix3::new(
                     1. / screen_info.screen_dimensions_meters[0],
                     0.0,
                     0.0,
@@ -92,7 +92,7 @@ pub struct MotState {
     pub rotation_mat: Matrix3<f32>,
     pub translation_mat: Matrix3x1<f32>,
 
-    pub fv_state: odyssey_cv::foveated::FoveatedAimpointState,
+    pub fv_state: FoveatedAimpointState,
     pub fv_zero_offset: Isometry3<f32>,
 
     pub fv_aimpoint_history: [(Point2<f32>, f32, Matrix3x1<f32>); 80],

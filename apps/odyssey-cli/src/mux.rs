@@ -5,7 +5,7 @@ use nusb::MaybeFuture as _;
 use odyssey_usb::device::MuxDevice;
 
 #[derive(Subcommand)]
-pub enum MuxCommands {
+pub(crate) enum MuxCommands {
     /// List all available mux dongles
     ListDevices,
     /// List currently connected BLE devices
@@ -29,7 +29,6 @@ fn list_muxes() -> Result<Vec<nusb::DeviceInfo>, String> {
     let devices: Vec<_> = nusb::list_devices()
         .wait()
         .map_err(|e| format!("Failed to list USB devices: {e}"))?
-        .into_iter()
         .filter(|info| info.vendor_id() == 0x1915 && info.product_id() == 0x5212)
         .collect();
 
@@ -48,8 +47,7 @@ async fn connect_to_mux(device_index: Option<usize>) -> Result<MuxDevice, String
             .get(idx)
             .ok_or_else(|| {
                 format!(
-                    "Device index {} not found. Use 'mux list-devices' to see available devices.",
-                    idx
+                    "Device index {idx} not found. Use 'mux list-devices' to see available devices."
                 )
             })?
             .clone()
@@ -85,7 +83,7 @@ async fn cmd_list_devices() -> Result<(), String> {
         for (i, info) in devices.iter().enumerate() {
             let product = info
                 .product_string()
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
                 .unwrap_or_else(|| "Unknown".to_string());
             println!(
                 "  [{}] VID:0x{:04X} PID:0x{:04X} - {}",
@@ -111,7 +109,7 @@ async fn cmd_list(device: &MuxDevice) -> Result<(), String> {
         println!("No devices currently connected");
     } else {
         println!("Connected devices ({}):", devices.len());
-        for dev in devices.iter() {
+        for dev in &devices {
             println!("  {}", format_device_addr(dev));
         }
     }
@@ -136,7 +134,7 @@ async fn cmd_version(device: &MuxDevice) -> Result<(), String> {
 }
 
 async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
-    println!("Starting pairing for {} ms...", timeout);
+    println!("Starting pairing for {timeout} ms...");
     device
         .start_pairing(timeout)
         .await
@@ -190,10 +188,7 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
     }
     let device_info = if let Some(idx) = device_index {
         devices.get(idx).cloned().ok_or_else(|| {
-            format!(
-                "Device index {} not found. Use 'mux list-devices' to list.",
-                idx
-            )
+            format!("Device index {idx} not found. Use 'mux list-devices' to list.")
         })?
     } else {
         if devices.len() > 1 {
@@ -214,23 +209,19 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
         device_info.product_id()
     );
     for idx in 0u8..8 {
-        match dev.claim_interface(idx).await {
-            Ok(iface) => {
-                let bulk_in = iface.endpoint::<Bulk, In>(0x81).is_ok();
-                let bulk_out = iface.endpoint::<Bulk, Out>(0x01).is_ok();
-                let intr_in = iface.endpoint::<Interrupt, In>(0x86).is_ok();
-                println!(
-                    "  iface {}: bulk_out 0x01={}, bulk_in 0x81={}, intr_in 0x86={}",
-                    idx, bulk_out, bulk_in, intr_in
-                );
-            }
-            Err(_) => {}
+        if let Ok(iface) = dev.claim_interface(idx).await {
+            let bulk_in = iface.endpoint::<Bulk, In>(0x81).is_ok();
+            let bulk_out = iface.endpoint::<Bulk, Out>(0x01).is_ok();
+            let intr_in = iface.endpoint::<Interrupt, In>(0x86).is_ok();
+            println!(
+                "  iface {idx}: bulk_out 0x01={bulk_out}, bulk_in 0x81={bulk_in}, intr_in 0x86={intr_in}"
+            );
         }
     }
     Ok(())
 }
 
-pub async fn handle_command(
+pub(crate) async fn handle_command(
     device_index: Option<usize>,
     command: MuxCommands,
 ) -> Result<(), String> {

@@ -2,7 +2,7 @@
 //! with its own route; this page lists them. A new method adds a module
 //! beside [`automatic`], a route, and one entry in [`METHODS`].
 
-pub mod automatic;
+pub(crate) mod automatic;
 
 use dioxus::prelude::*;
 use dioxus_router::Link;

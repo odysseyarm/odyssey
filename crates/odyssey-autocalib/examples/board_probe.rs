@@ -24,7 +24,7 @@ use odyssey_autocalib::board::{
     BoardError, BoardScale, BoardSpec, GOOD_DOT_DIAMETER_PX, MIN_DOT_DIAMETER_PX, TargetSize,
     board_scale,
 };
-use odyssey_autocalib::camera::{CameraBackend, CameraError, CaptureSettings, Frames};
+use odyssey_autocalib::camera::{CameraBackend as _, CameraError, CaptureSettings, Frames};
 use odyssey_autocalib::orbbec::{OrbbecBackend, runtime_status};
 
 const WANTED_FRAMES: usize = 30;

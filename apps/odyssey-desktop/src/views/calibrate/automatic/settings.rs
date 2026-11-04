@@ -5,25 +5,25 @@ use std::ops::RangeInclusive;
 
 /// Physical screen diagonals the wizard accepts. The solver would take any
 /// positive number; the range rejects a typo such as 550 for 55.
-pub const DIAGONAL_RANGE_IN: RangeInclusive<f64> = 10.0..=200.0;
+pub(crate) const DIAGONAL_RANGE_IN: RangeInclusive<f64> = 10.0..=200.0;
 
 /// Color exposure in microseconds. The camera clamps to what it supports; the
 /// range covers the useful span from a bright screen in a dark room to a dim
 /// one in daylight.
-pub const COLOR_EXPOSURE_RANGE_US: RangeInclusive<u32> = 200..=10_000;
-pub const COLOR_EXPOSURE_STEP_US: u32 = 100;
+pub(crate) const COLOR_EXPOSURE_RANGE_US: RangeInclusive<u32> = 200..=10_000;
+pub(crate) const COLOR_EXPOSURE_STEP_US: u32 = 100;
 
 /// Infrared exposure for marker detection, microseconds. Short, so only the
 /// marker LEDs stay bright.
-pub const IR_EXPOSURE_RANGE_US: RangeInclusive<u32> = 20..=1_000;
-pub const IR_EXPOSURE_STEP_US: u32 = 10;
+pub(crate) const IR_EXPOSURE_RANGE_US: RangeInclusive<u32> = 20..=1_000;
+pub(crate) const IR_EXPOSURE_STEP_US: u32 = 10;
 
 /// Picture widths accepted for a projector, in centimeters.
-pub const WIDTH_RANGE_CM: RangeInclusive<f64> = 20.0..=1000.0;
+pub(crate) const WIDTH_RANGE_CM: RangeInclusive<f64> = 20.0..=1000.0;
 
 /// Which dimension the tech types in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SizeField {
+pub(crate) enum SizeField {
     /// Corner to corner in inches, how screens are sold.
     Diagonal,
     /// Left to right in centimeters, how a projected picture is measured.
@@ -32,19 +32,19 @@ pub enum SizeField {
 
 /// A size the tech typed in.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Entered {
+pub(crate) enum Entered {
     Diagonal { inches: f64 },
     Width { cm: f64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SizeError {
+pub(crate) enum SizeError {
     NotANumber,
     OutOfRange(SizeField),
 }
 
 impl SizeError {
-    pub fn message(self) -> String {
+    pub(crate) fn message(self) -> String {
         match self {
             Self::NotANumber => "Enter the size as a number, like 55.".into(),
             Self::OutOfRange(SizeField::Diagonal) => format!(
@@ -62,7 +62,7 @@ impl SizeError {
 }
 
 /// Reads the optional size field. Blank means "measure it".
-pub fn parse_entered(text: &str, field: SizeField) -> Result<Option<Entered>, SizeError> {
+pub(crate) fn parse_entered(text: &str, field: SizeField) -> Result<Option<Entered>, SizeError> {
     let text = text.trim().trim_end_matches(['"', '″']).trim();
     let text = match field {
         SizeField::Diagonal => text,

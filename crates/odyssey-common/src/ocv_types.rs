@@ -11,7 +11,7 @@ pub struct OpenCVMatrix3<R: RealField> {
 
 impl<R: RealField> From<Matrix3<R>> for OpenCVMatrix3<R> {
     fn from(mat: Matrix3<R>) -> Self {
-        OpenCVMatrix3 {
+        Self {
             data: [
                 mat[(0, 0)].clone(),
                 mat[(0, 1)].clone(),
@@ -95,31 +95,31 @@ pub struct OpenCVMatrix5x1WithRowsAndCols<R: RealField> {
 
 impl<R: RealField> From<[R; 9]> for OpenCVMatrix3<R> {
     fn from(data: [R; 9]) -> Self {
-        OpenCVMatrix3 { data }
+        Self { data }
     }
 }
 
 impl<R: RealField> From<[R; 3]> for OpenCVMatrix3x1<R> {
     fn from(data: [R; 3]) -> Self {
-        OpenCVMatrix3x1 { data }
+        Self { data }
     }
 }
 
 impl<R: RealField> From<[R; 5]> for OpenCVMatrix5x1<R> {
     fn from(data: [R; 5]) -> Self {
-        OpenCVMatrix5x1 { data }
+        Self { data }
     }
 }
 
 impl<R: RealField> From<Vector5<R>> for OpenCVMatrix5x1<R> {
     fn from(data: Vector5<R>) -> Self {
-        OpenCVMatrix5x1 { data: data.into() }
+        Self { data: data.into() }
     }
 }
 
 impl<R: RealField> From<Vector3<R>> for OpenCVMatrix3x1<R> {
     fn from(data: Vector3<R>) -> Self {
-        OpenCVMatrix3x1 { data: data.into() }
+        Self { data: data.into() }
     }
 }
 
@@ -143,19 +143,19 @@ impl<R: RealField> From<OpenCVMatrix5x1<R>> for [R; 5] {
 
 impl<R: RealField> From<OpenCVMatrix3WithRowsAndCols<R>> for OpenCVMatrix3<R> {
     fn from(mat: OpenCVMatrix3WithRowsAndCols<R>) -> Self {
-        OpenCVMatrix3 { data: mat.data }
+        Self { data: mat.data }
     }
 }
 
 impl<R: RealField> From<OpenCVMatrix3x1WithRowsAndCols<R>> for OpenCVMatrix3x1<R> {
     fn from(mat: OpenCVMatrix3x1WithRowsAndCols<R>) -> Self {
-        OpenCVMatrix3x1 { data: mat.data }
+        Self { data: mat.data }
     }
 }
 
 impl<R: RealField> From<OpenCVMatrix5x1WithRowsAndCols<R>> for OpenCVMatrix5x1<R> {
     fn from(mat: OpenCVMatrix5x1WithRowsAndCols<R>) -> Self {
-        OpenCVMatrix5x1 { data: mat.data }
+        Self { data: mat.data }
     }
 }
 
@@ -211,10 +211,8 @@ pub struct MinimalStereoCalibrationParams<R: RealField> {
 
 impl MinimalCameraCalibrationParams<f32> {
     #[cfg(feature = "std")]
-    pub fn parse(
-        data: &mut &[u8],
-    ) -> Result<MinimalCameraCalibrationParams<f32>, Box<dyn std::error::Error>> {
-        let mut params = MinimalCameraCalibrationParams {
+    pub fn parse(data: &mut &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut params = Self {
             camera_matrix: OpenCVMatrix3 { data: [0.; 9] },
             dist_coeffs: OpenCVMatrix5x1 { data: [0.; 5] },
         };
@@ -252,10 +250,8 @@ impl MinimalCameraCalibrationParams<f32> {
 
 impl MinimalStereoCalibrationParams<f32> {
     #[cfg(feature = "std")]
-    pub fn parse(
-        data: &mut &[u8],
-    ) -> Result<MinimalStereoCalibrationParams<f32>, Box<dyn std::error::Error>> {
-        let mut params = MinimalStereoCalibrationParams {
+    pub fn parse(data: &mut &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut params = Self {
             r: OpenCVMatrix3 { data: [0.; 9] },
             t: OpenCVMatrix3x1 { data: [0.; 3] },
         };
@@ -276,7 +272,7 @@ impl MinimalStereoCalibrationParams<f32> {
                 *data_iter.next().ok_or("Unexpected end of data")?,
             ]);
         }
-        *data = &data_iter.as_slice();
+        *data = data_iter.as_slice();
         Ok(params)
     }
 
@@ -293,7 +289,7 @@ impl MinimalStereoCalibrationParams<f32> {
 
 impl<R: RealField> From<MinimalCameraCalibrationParams<R>> for CameraCalibrationParams<R> {
     fn from(minimal: MinimalCameraCalibrationParams<R>) -> Self {
-        CameraCalibrationParams {
+        Self {
             camera_matrix: OpenCVMatrix3WithRowsAndCols {
                 rows: 3,
                 cols: 3,
@@ -312,7 +308,7 @@ impl<R: RealField> From<MinimalCameraCalibrationParams<R>> for CameraCalibration
 
 impl<R: RealField> From<MinimalStereoCalibrationParams<R>> for StereoCalibrationParams<R> {
     fn from(minimal: MinimalStereoCalibrationParams<R>) -> Self {
-        StereoCalibrationParams {
+        Self {
             r: OpenCVMatrix3WithRowsAndCols {
                 rows: 3,
                 cols: 3,
@@ -341,7 +337,7 @@ impl<R: RealField> From<MinimalStereoCalibrationParams<R>> for Isometry3<R> {
         let r = Matrix3::from_row_slice(&val.r.data);
         let t = Vector3::from_column_slice(&val.t.data);
 
-        Isometry3::from_parts(
+        Self::from_parts(
             Translation3::from(t),
             Rotation3::from_matrix_unchecked(r).into(),
         )
@@ -350,7 +346,7 @@ impl<R: RealField> From<MinimalStereoCalibrationParams<R>> for Isometry3<R> {
 
 impl<R: RealField> From<StereoCalibrationParams<R>> for MinimalStereoCalibrationParams<R> {
     fn from(params: StereoCalibrationParams<R>) -> Self {
-        MinimalStereoCalibrationParams {
+        Self {
             r: OpenCVMatrix3 {
                 data: params.r.data,
             },
@@ -371,7 +367,7 @@ impl<R: RealField> From<CameraCalibrationParams<R>> for RosOpenCvIntrinsics<R> {
         let cx = val.camera_matrix.data[2].clone();
         let cy = val.camera_matrix.data[5].clone();
 
-        RosOpenCvIntrinsics::from_params_with_distortion(fx, skew, fy, cx, cy, distortion)
+        Self::from_params_with_distortion(fx, skew, fy, cx, cy, distortion)
     }
 }
 
@@ -382,7 +378,7 @@ impl<R: RealField> From<RosOpenCvIntrinsics<R>> for MinimalCameraCalibrationPara
             data: intrinsics.distortion.opencv_vec().clone().cast().into(),
         };
 
-        MinimalCameraCalibrationParams {
+        Self {
             camera_matrix: OpenCVMatrix3 {
                 data: [
                     camera_matrix[(0, 0)].clone(),
@@ -406,7 +402,7 @@ impl<R: RealField> From<StereoCalibrationParams<R>> for Isometry3<R> {
         let r = Matrix3::from_row_slice(&val.r.data);
         let t = Vector3::from_column_slice(&val.t.data);
 
-        Isometry3::from_parts(
+        Self::from_parts(
             Translation3::from(t),
             Rotation3::from_matrix_unchecked(r).into(),
         )
@@ -419,7 +415,7 @@ impl<R: RealField> From<Isometry3<R>> for MinimalStereoCalibrationParams<R> {
         let r = binding.matrix().clone();
         let t = isometry.translation.vector;
 
-        MinimalStereoCalibrationParams {
+        Self {
             r: r.into(),
             t: OpenCVMatrix3x1 { data: t.into() },
         }

@@ -1,6 +1,16 @@
 use dioxus::logger::tracing;
-use dioxus::prelude::{UnboundedReceiver, *};
-use futures::StreamExt;
+use dioxus::prelude::{
+    AExtension, ActionCallback, AnyStorage, AreaExtension, BaseExtension, ButtonExtension,
+    DataExtension, Element, EventHandler, FormExtension, HasFormData, History, InputExtension,
+    LiExtension, MeterExtension, OptgroupExtension, OptionExtension, ParamExtension,
+    ProgressExtension, Props, ReadableExt, ReadableHashMapExt, ReadableHashSetExt,
+    ReadableOptionExt, ReadableResultExt, ReadableStrExt, ReadableVecExt, Result, SelectExtension,
+    Signal, Storage, SvgAttributesExtension, TextareaExtension, TrackExtension, UnboundedReceiver,
+    WritableExt, WritableOptionExt, WritableStringExt, WritableVecExt, component, dioxus_core,
+    dioxus_elements, dioxus_signals, rsx, spawn, use_coroutine, use_effect, use_reactive,
+    use_signal,
+};
+use futures::StreamExt as _;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 
 use crate::hub::HubContext;
@@ -232,9 +242,7 @@ struct GainEntry {
 }
 
 fn gain_index_from_reg(b_global: u8, mut b_ggh: u8) -> usize {
-    if b_ggh > 0 {
-        b_ggh -= 1;
-    }
+    b_ggh = b_ggh.saturating_sub(1);
     (b_ggh as usize) * 16 + (b_global as usize)
 }
 
@@ -623,9 +631,9 @@ fn general_validate(
         }
     };
 
-    let impact = take("Impact threshold", impact_threshold, u8::MAX as u32);
-    let suppress = take("Suppress", suppress_ms, u8::MAX as u32);
-    let delay = shot_delay.map(|d| take("Shot delay", d, u16::MAX as u32));
+    let impact = take("Impact threshold", impact_threshold, u32::from(u8::MAX));
+    let suppress = take("Suppress", suppress_ms, u32::from(u8::MAX));
+    let delay = shot_delay.map(|d| take("Shot delay", d, u32::from(u16::MAX)));
 
     if !issues.is_empty() {
         return Err(issues);
@@ -1036,7 +1044,7 @@ fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues: bool) -> 
 
 // --- PAG Sensor Panel ---
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Default)]
 struct PagState {
     fps: String,
     exposure_us: String,
@@ -1044,19 +1052,6 @@ struct PagState {
     light_threshold: String,
     area_lower: String,
     area_upper: String,
-}
-
-impl Default for PagState {
-    fn default() -> Self {
-        Self {
-            fps: String::new(),
-            exposure_us: String::new(),
-            gain: String::new(),
-            light_threshold: String::new(),
-            area_lower: String::new(),
-            area_upper: String::new(),
-        }
-    }
 }
 
 // PAG7665 register addresses (used for product_id 0x5211)
@@ -1090,7 +1085,7 @@ async fn pag_load_from_device(hub: &HubContext, device: &Device) -> anyhow::Resu
     let area_upper = read_u16_reg(hub, device, port, 0x00, [0x70, 0x71]).await?;
 
     // Exposure encoding: value in units of 100us, bit 7 = led_always_on
-    let exposure_us = (expo_raw & 0x7F) as u16 * 100;
+    let exposure_us = u16::from(expo_raw & 0x7F) * 100;
 
     Ok(PagState {
         fps: fps.to_string(),
@@ -1156,7 +1151,7 @@ async fn pag_apply_to_device(
 ) -> anyhow::Result<()> {
     let port: u8 = 0;
     let led_always_on = true;
-    let expo_reg = (values.exposure_us / 100) as u8 | ((led_always_on as u8) << 7);
+    let expo_reg = (values.exposure_us / 100) as u8 | (u8::from(led_always_on) << 7);
 
     hub.client
         .peek()
@@ -1297,13 +1292,13 @@ pub fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
         device.events_transport == odyssey_hub_common::device::EventsTransport::Wired;
     // Once the device reflects the user's requested mode, drop the override and clear the status.
     // We schedule this via spawn so we don't write to signals during the render phase.
-    if let Some(u) = *user_pending_usb.read() {
-        if u == device_is_usb {
-            spawn(async move {
-                user_pending_usb.set(None);
-                status.set(OpStatus::Idle);
-            });
-        }
+    if let Some(u) = *user_pending_usb.read()
+        && u == device_is_usb
+    {
+        spawn(async move {
+            user_pending_usb.set(None);
+            status.set(OpStatus::Idle);
+        });
     }
     let pending_usb = user_pending_usb.read().unwrap_or(device_is_usb);
 

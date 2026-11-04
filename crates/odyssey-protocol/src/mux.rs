@@ -72,8 +72,8 @@ impl MuxMsg {
     /// - otherwise -> `None`
     pub fn device_uuid(&self) -> Option<[u8; 6]> {
         match self {
-            MuxMsg::DevicePacket(dp) => Some(dp.dev),
-            MuxMsg::SendTo(s) => Some(s.dev),
+            Self::DevicePacket(dp) => Some(dp.dev),
+            Self::SendTo(s) => Some(s.dev),
             _ => None,
         }
     }
@@ -82,7 +82,7 @@ impl MuxMsg {
     /// Useful for callers that want to examine the snapshot without matching the enum.
     pub fn devices_snapshot(&self) -> Option<&[Uuid]> {
         match self {
-            MuxMsg::DevicesSnapshot(devs) => Some(devs),
+            Self::DevicesSnapshot(devs) => Some(devs),
             _ => None,
         }
     }

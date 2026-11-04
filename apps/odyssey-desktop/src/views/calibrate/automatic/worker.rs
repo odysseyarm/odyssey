@@ -21,7 +21,7 @@ use dioxus::logger::tracing;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{ExtendedColorType, GrayImage, RgbImage};
-use odyssey_autocalib::camera::{CameraBackend, CameraError, CameraInfo, CaptureSettings};
+use odyssey_autocalib::camera::{CameraBackend as _, CameraError, CameraInfo, CaptureSettings};
 use odyssey_autocalib::orbbec::{self, OrbbecBackend, RuntimeStatus};
 use odyssey_autocalib::session::{
     AttemptFrames, Calibration, EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, Session,
@@ -48,11 +48,11 @@ const MAX_CONSECUTIVE_TIMEOUTS: u32 = 3;
 
 /// Diagonal of the simulated screen, whatever size the tech declares: the
 /// demo needs a truth that a wrong declaration can disagree with.
-pub const DEMO_DIAGONAL_IN: f64 = 55.0;
+pub(crate) const DEMO_DIAGONAL_IN: f64 = 55.0;
 
 /// Which cameras the worker offers.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Backend {
+pub(crate) enum Backend {
     /// The simulated camera, and nothing else. `overscan_fraction` is how much
     /// the simulated TV crops its picture.
     Demo { overscan_fraction: f64 },
@@ -63,7 +63,7 @@ pub enum Backend {
 
 /// Why a camera listing has no list to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ListError {
+pub(crate) enum ListError {
     /// The camera library is missing, broken or of an unsupported version.
     Runtime(RuntimeStatus),
     /// The library is there but enumerating cameras failed.
@@ -118,7 +118,7 @@ impl Backend {
 /// renders the same dot grid the wizard draws because both derive it from this
 /// aspect ratio, and it sits farther from a larger screen so the screen fills
 /// a similar part of the picture.
-pub fn demo_scene(
+pub(crate) fn demo_scene(
     aspect: f64,
     diagonal_in: f64,
     pattern_visible: bool,
@@ -145,7 +145,7 @@ pub fn demo_scene(
 
 /// What the UI asks the camera thread to open.
 #[derive(Debug, Clone)]
-pub struct OpenRequest {
+pub(crate) struct OpenRequest {
     pub camera: CameraInfo,
     pub settings: CaptureSettings,
     /// Width over height of the screen showing the pattern.
@@ -160,7 +160,7 @@ pub struct OpenRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// The stream is open but nothing reads it.
     Hold,
     Preview,
@@ -168,7 +168,7 @@ pub enum Mode {
 }
 
 #[derive(Debug)]
-pub enum Command {
+pub(crate) enum Command {
     ListCameras,
     /// Closes any open session, opens the camera and starts previewing. Events
     /// that follow carry `session`.
@@ -190,7 +190,7 @@ pub enum Command {
 }
 
 #[derive(Debug)]
-pub enum Event {
+pub(crate) enum Event {
     Cameras(Result<Vec<CameraInfo>, ListError>),
     /// Something about the camera session `session`; the UI drops events of
     /// sessions it has already abandoned.
@@ -201,7 +201,7 @@ pub enum Event {
 }
 
 #[derive(Debug)]
-pub enum SessionEvent {
+pub(crate) enum SessionEvent {
     Opened,
     Preview(Box<PreviewFrame>),
     Markers(Box<MarkerFrame>),
@@ -218,7 +218,7 @@ pub enum SessionEvent {
 
 /// A saved diagnostic bundle.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SavedAttempt {
+pub(crate) struct SavedAttempt {
     pub path: PathBuf,
     pub bytes: u64,
 }
@@ -235,7 +235,7 @@ struct Attempt {
 /// pixels of the original image (`width` by `height`), which is also the
 /// overlay's coordinate system.
 #[derive(Debug, Clone)]
-pub struct PreviewFrame {
+pub(crate) struct PreviewFrame {
     pub image: String,
     pub width: u32,
     pub height: u32,
@@ -255,7 +255,7 @@ pub struct PreviewFrame {
 }
 
 #[derive(Debug, Clone)]
-pub struct MarkerFrame {
+pub(crate) struct MarkerFrame {
     pub image: String,
     pub width: u32,
     pub height: u32,
@@ -267,7 +267,7 @@ pub struct MarkerFrame {
 
 /// One complete result: the calibration and what the review shows about it.
 #[derive(Debug, Clone)]
-pub struct Outcome {
+pub(crate) struct Outcome {
     pub calibration: ScreenCalibration<f32>,
     pub screen_quad: [[f32; 2]; 4],
     pub markers: [[f32; 2]; 6],
@@ -288,7 +288,7 @@ pub struct Outcome {
 
 /// What the review screen needs once the calibration is done.
 #[derive(Debug, Clone)]
-pub struct Finished {
+pub(crate) struct Finished {
     pub image: String,
     pub width: u32,
     pub height: u32,
@@ -302,7 +302,7 @@ pub struct Finished {
 }
 
 impl Finished {
-    pub fn outcome(&self, use_measured: bool) -> &Outcome {
+    pub(crate) fn outcome(&self, use_measured: bool) -> &Outcome {
         match (&self.measured, use_measured) {
             (Some(measured), true) => measured,
             _ => &self.primary,
@@ -313,7 +313,7 @@ impl Finished {
 /// What went wrong, coarsely enough to give advice; `details` keeps the
 /// technical text for the Details section.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Failure {
+pub(crate) struct Failure {
     pub kind: FailureKind,
     pub details: String,
     /// Whether the camera is still open and a retry can reuse it.
@@ -324,7 +324,7 @@ pub struct Failure {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailureKind {
+pub(crate) enum FailureKind {
     /// The camera would not start.
     CameraOpen,
     /// The camera stopped delivering frames or reported an error.
@@ -374,14 +374,14 @@ impl FailureKind {
 /// How long a condition has held without a break. The camera thread feeds it
 /// every frame, so a dropped UI update cannot hide a flicker.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct Stability {
+pub(crate) struct Stability {
     since: Option<Instant>,
 }
 
 impl Stability {
     /// Records one observation at `now` and returns how long `holds` has been
     /// true in a row.
-    pub fn observe(&mut self, holds: bool, now: Instant) -> Duration {
+    pub(crate) fn observe(&mut self, holds: bool, now: Instant) -> Duration {
         if !holds {
             self.since = None;
             return Duration::ZERO;
@@ -389,20 +389,20 @@ impl Stability {
         now.saturating_duration_since(*self.since.get_or_insert(now))
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.since = None;
     }
 }
 
 /// Handle to the camera thread. Dropping it stops the camera and the thread.
-pub struct Worker {
+pub(crate) struct Worker {
     commands: Sender<Command>,
     in_flight: Arc<AtomicBool>,
 }
 
 impl Worker {
     /// Starts an idle thread: no camera is touched until a command asks.
-    pub fn spawn(backend: Backend, events: UnboundedSender<Event>) -> Self {
+    pub(crate) fn spawn(backend: Backend, events: UnboundedSender<Event>) -> Self {
         let (commands, receiver) = mpsc::channel();
         let in_flight = Arc::new(AtomicBool::new(false));
         let engine = Engine {
@@ -430,14 +430,14 @@ impl Worker {
         }
     }
 
-    pub fn send(&self, command: Command) {
+    pub(crate) fn send(&self, command: Command) {
         // A send fails only once the thread has stopped, after which there is
         // no camera left to command.
         let _ = self.commands.send(command);
     }
 
     /// Tells the thread the UI has taken the last frame and wants the next.
-    pub fn frame_consumed(&self) {
+    pub(crate) fn frame_consumed(&self) {
         self.in_flight.store(false, Ordering::Release);
     }
 }
@@ -584,10 +584,10 @@ impl Engine {
                 }
             }
             Command::SetIrExposure(us) => {
-                if let Some(live) = &mut self.live {
-                    if let Err(e) = live.session.set_ir_exposure_us(us) {
-                        self.fail(FailureKind::CameraLost, e.to_string(), false);
-                    }
+                if let Some(live) = &mut self.live
+                    && let Err(e) = live.session.set_ir_exposure_us(us)
+                {
+                    self.fail(FailureKind::CameraLost, e.to_string(), false);
                 }
             }
             Command::MeasureScreen => self.measure_screen(),
@@ -781,7 +781,7 @@ impl Engine {
 
 /// The settings an attempt was opened with, as words for the bundle.
 fn describe_request(request: &OpenRequest) -> String {
-    use std::fmt::Write;
+    use std::fmt::Write as _;
     let camera = &request.camera;
     let mut s = String::new();
     let _ = writeln!(
@@ -798,7 +798,7 @@ fn describe_request(request: &OpenRequest) -> String {
 
 /// What a finished calibration measured, as words for the bundle.
 fn result_text(c: &Calibration) -> String {
-    use std::fmt::Write;
+    use std::fmt::Write as _;
     let r = &c.review;
     let mut s = String::new();
     let _ = writeln!(
@@ -838,7 +838,7 @@ fn result_text(c: &Calibration) -> String {
 
 /// The text at the top of a bundle: what ran, with what, and how it ended.
 fn attempt_summary(attempt: &Attempt) -> String {
-    use std::fmt::Write;
+    use std::fmt::Write as _;
     let mut s = String::new();
     let _ = writeln!(
         s,
@@ -921,7 +921,7 @@ fn data_url(result: image::ImageResult<()>, bytes: Vec<u8>) -> String {
     url
 }
 
-fn outcome(done: odyssey_autocalib::session::Calibration) -> Outcome {
+fn outcome(done: Calibration) -> Outcome {
     let r = &done.review;
     Outcome {
         screen_quad: r.screen_quad_px.map(|p| [p.x, p.y]),
@@ -1223,7 +1223,8 @@ mod tests {
         let measured = f.measured.as_ref().expect("the camera's own result");
         assert_eq!(measured.size_source, SizeSource::Measured);
         assert!(
-            std::ptr::eq(f.outcome(false), &f.primary) && std::ptr::eq(f.outcome(true), measured)
+            std::ptr::eq(f.outcome(false), &raw const f.primary)
+                && std::ptr::eq(f.outcome(true), measured)
         );
     }
 

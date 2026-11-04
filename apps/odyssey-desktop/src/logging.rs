@@ -10,8 +10,8 @@ use std::io;
 use std::path::Path;
 
 use dioxus::logger::tracing;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::paths;
@@ -21,7 +21,7 @@ const PREVIOUS: &str = "previous.log";
 
 /// Starts logging to the terminal and, when its folder can be made, to `latest.log`.
 /// A missing or read-only log folder must not stop the app, so it only costs the file.
-pub fn init() {
+pub(crate) fn init() {
     let file = paths::log_dir().and_then(|dir| match open_log_file(&dir) {
         Ok(file) => Some(file),
         Err(e) => {
@@ -43,7 +43,7 @@ fn open_log_file(dir: &Path) -> io::Result<File> {
     folder.recursive(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::DirBuilderExt;
+        use std::os::unix::fs::DirBuilderExt as _;
         folder.mode(0o700);
     }
     folder.create(dir)?;
@@ -57,7 +57,7 @@ fn open_log_file(dir: &Path) -> io::Result<File> {
     options.create(true).write(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
     options.open(latest)
@@ -65,7 +65,7 @@ fn open_log_file(dir: &Path) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::Write as _;
 
     use super::*;
 
@@ -101,7 +101,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_folder_and_files_are_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
         let dir = scratch("private");
         drop(open_log_file(&dir).unwrap());
         drop(open_log_file(&dir).unwrap());

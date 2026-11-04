@@ -1,5 +1,5 @@
-#[allow(unused_imports)]
-use nalgebra::ComplexField;
+#[expect(unused_imports)]
+use nalgebra::ComplexField as _;
 use odyssey_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, OpenCVMatrix3x1};
 use odyssey_protocol_macros::protocol_type;
 use opencv_ros_camera::RosOpenCvIntrinsicsPod;
@@ -219,7 +219,7 @@ impl From<super::AccelReport> for AccelReport {
     fn from(value: super::AccelReport) -> Self {
         Self {
             timestamp: value.timestamp,
-            accel: value.accel.data.0[0].map(|a| (a / 9.806650 * 2048.0).round() as i16),
+            accel: value.accel.data.0[0].map(|a| (a / 9.806_65 * 2048.0).round() as i16),
             gyro: value.gyro.data.0[0].map(|g| (g.to_degrees() * 16.4).round() as i16),
         }
     }
@@ -229,8 +229,11 @@ impl From<AccelReport> for super::AccelReport {
     fn from(value: AccelReport) -> Self {
         Self {
             timestamp: value.timestamp,
-            accel: value.accel.map(|a| a as f32 / 2048.0 * 9.806650).into(),
-            gyro: value.gyro.map(|g| (g as f32 / 16.4).to_radians()).into(),
+            accel: value.accel.map(|a| f32::from(a) / 2048.0 * 9.806_65).into(),
+            gyro: value
+                .gyro
+                .map(|g| (f32::from(g) / 16.4).to_radians())
+                .into(),
         }
     }
 }

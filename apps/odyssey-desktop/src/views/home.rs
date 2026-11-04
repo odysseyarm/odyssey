@@ -55,7 +55,7 @@ pub fn Home() -> Element {
     // so an offline machine is not hammering the network.
     use_future(ensure_firmware_channel_loaded);
     use_resource({
-        let mut manifest = manifest.clone();
+        let mut manifest = manifest;
         let mut manifest_error = manifest_error;
         move || async move {
             // Reading the signal here re-runs this when Settings changes it.

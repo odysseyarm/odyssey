@@ -52,7 +52,9 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
     let use_measured = *wizard.use_measured.read();
     let outcome = finished.outcome(use_measured);
     let quality = assess(&outcome.measures);
-    let disagreement = outcome.size_check.filter(|c| c.disagrees());
+    let disagreement = outcome
+        .size_check
+        .filter(odyssey_autocalib::session::SizeCheck::disagrees);
     let can_use_measured = finished.measured.is_some();
     let source = source_label(outcome.size_source, finished.size_origin);
     let (icon, title) = headline(quality.verdict);

@@ -89,8 +89,8 @@ pub fn draw_rect(
 
 /// Draws a crosshair and associated text at a given position.
 pub fn draw_marker(ctx: &draw::DrawContext, path: &Path, position: Point2<f64>, label: &str) {
-    draw_crosshair(&ctx, path, position.x, position.y, 50.0);
-    draw_text(&ctx, position.x + 20.0, position.y + 20.0, label);
+    draw_crosshair(ctx, path, position.x, position.y, 50.0);
+    draw_text(ctx, position.x + 20.0, position.y + 20.0, label);
 }
 
 /// Draws a rotated crosshair and associated text at a given position.
@@ -100,8 +100,8 @@ pub fn draw_marker_rotated(
     position: Point2<f64>,
     label: &str,
 ) {
-    draw_crosshair_rotated(&ctx, path, position.x, position.y, 50.0);
-    draw_text(&ctx, position.x + 20.0, position.y + 20.0 + 30.0, label);
+    draw_crosshair_rotated(ctx, path, position.x, position.y, 50.0);
+    draw_text(ctx, position.x + 20.0, position.y + 20.0 + 30.0, label);
 }
 
 /// Handles drawing a rectangle defined by boundaries and transforms.
@@ -145,10 +145,10 @@ pub fn draw_line(
     brush: &Brush,
     thickness: f64,
 ) {
-    let path = Path::new(&ctx, FillMode::Winding);
-    path.new_figure(&ctx, x1, y1);
+    let path = Path::new(ctx, FillMode::Winding);
+    path.new_figure(ctx, x1, y1);
     path.line_to(ctx, x2, y2);
-    path.end(&ctx);
+    path.end(ctx);
     ctx.stroke(
         &path,
         brush,

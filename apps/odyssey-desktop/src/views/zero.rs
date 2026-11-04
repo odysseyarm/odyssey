@@ -41,22 +41,22 @@ pub fn Zero(
     // Per-device zeroing state, keyed by uuid. Slab slots are reused as devices
     // come and go, so keying by slot hands one device the previous occupant's
     // "zero on shot" flag and shot delay.
-    let mut device_signals = use_signal(|| HashMap::<[u8; 6], DeviceSignals>::new());
-    let last_device_snapshot = use_signal(|| Vec::<[u8; 6]>::new());
+    let mut device_signals = use_signal(HashMap::<[u8; 6], DeviceSignals>::new);
+    let last_device_snapshot = use_signal(Vec::<[u8; 6]>::new);
 
     {
         let mut w = device_signals.write();
-        for (_, device) in devices.iter() {
+        for (_, device) in &devices {
             w.entry(device.uuid).or_default();
         }
     }
 
     // Per-device ring buffer of recent tracking events for shot-delay-compensated zeroing
-    let tracking_history: Signal<HashMap<[u8; 6], TrackingHistory>> = use_signal(|| HashMap::new());
+    let tracking_history: Signal<HashMap<[u8; 6], TrackingHistory>> = use_signal(HashMap::new);
 
     // Subscribe to tracking events and buffer them per-device
     {
-        let mut tracking_history = tracking_history.clone();
+        let mut tracking_history = tracking_history;
         use_future(move || {
             let mut receiver = hub.peek().subscribe_tracking();
             async move {
@@ -87,7 +87,7 @@ pub fn Zero(
                     match receiver.recv().await {
                         Ok((device, impact)) => {
                             let hub_ctx = hub.peek().clone();
-                            if let Some(signals) = device_signals.peek().get(&device.uuid).cloned()
+                            if let Some(signals) = device_signals.peek().get(&device.uuid).copied()
                             {
                                 let shooting = *signals.shooting.peek();
                                 tracing::info!(
@@ -100,12 +100,12 @@ pub fn Zero(
                                     // Convert ms → µs (device timestamp unit). For accessories
                                     // (u32::MAX sentinel), get the latest entry's timestamp and
                                     // subtract from that, giving ~0–10ms staleness at 100Hz.
-                                    let shot_delay_us = shot_delay_ms as u32 * 1000;
+                                    let shot_delay_us = u32::from(shot_delay_ms) * 1000;
                                     let history = tracking_history.peek();
                                     let lookup_ts = if impact.timestamp == u32::MAX {
                                         history
                                             .get(&device.uuid)
-                                            .and_then(|h| h.latest())
+                                            .and_then(odyssey_hub_client::tracking_history::TrackingHistory::latest)
                                             .map(|te| te.timestamp.wrapping_sub(shot_delay_us))
                                             .unwrap_or(u32::MAX)
                                     } else {
@@ -153,16 +153,16 @@ pub fn Zero(
     }
 
     {
-        let hub = hub.clone();
-        let mut device_signals = device_signals.clone();
-        let mut last_device_snapshot = last_device_snapshot.clone();
+        let hub = hub;
+        let mut device_signals = device_signals;
+        let mut last_device_snapshot = last_device_snapshot;
         let device_entries: Vec<odyssey_hub_common::device::Device> =
             devices.iter().map(|(_, dev)| dev.clone()).collect();
         let snapshot: Vec<[u8; 6]> = device_entries.iter().map(|dev| dev.uuid).collect();
 
         use_effect(move || {
             if last_device_snapshot.peek().as_slice() == snapshot.as_slice() {
-                return ();
+                return;
             }
             last_device_snapshot.set(snapshot.clone());
 
@@ -175,8 +175,8 @@ pub fn Zero(
                         .retain(|uuid, _| present.contains(uuid));
 
                     for device in device_entries {
-                        let hub = hub.clone();
-                        let mut device_signals = device_signals.clone();
+                        let hub = hub;
+                        let mut device_signals = device_signals;
                         spawn(async move {
                             match hub
                                 .peek()
@@ -200,8 +200,6 @@ pub fn Zero(
                     }
                 }
             });
-
-            ()
         });
     }
 

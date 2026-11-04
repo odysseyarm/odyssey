@@ -1,18 +1,18 @@
 mod accessories;
-pub mod calibrate;
+pub(crate) mod calibrate;
 mod home;
-pub mod pairing;
+pub(crate) mod pairing;
 mod settings;
 mod zero;
-pub use accessories::Accessories;
-pub use calibrate::Calibrate;
-pub use calibrate::automatic::CalibrateAutomatic;
-pub use home::Home;
-pub use pairing::Pairing;
-pub use settings::Settings;
-pub use zero::Zero;
+pub(crate) use accessories::Accessories;
+pub(crate) use calibrate::Calibrate;
+pub(crate) use calibrate::automatic::CalibrateAutomatic;
+pub(crate) use home::Home;
+pub(crate) use pairing::Pairing;
+pub(crate) use settings::Settings;
+pub(crate) use zero::Zero;
 
-pub fn device_label(device: &odyssey_hub_common::device::Device) -> String {
+pub(crate) fn device_label(device: &odyssey_hub_common::device::Device) -> String {
     let addr = format!(
         "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
         device.uuid[0],
@@ -36,10 +36,10 @@ pub fn device_label(device: &odyssey_hub_common::device::Device) -> String {
             .contains(odyssey_hub_common::device::DeviceCapabilities::CONTROL);
     let name = device.name().to_string();
     if is_dfu {
-        format!("{} [DFU] ({})", device_type, addr)
+        format!("{device_type} [DFU] ({addr})")
     } else if name.is_empty() {
-        format!("{} ({})", device_type, addr)
+        format!("{device_type} ({addr})")
     } else {
-        format!("{}: {} ({})", device_type, name, addr)
+        format!("{device_type}: {name} ({addr})")
     }
 }

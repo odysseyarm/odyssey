@@ -3,10 +3,10 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use serde::de::{self, Deserializer, MapAccess, Visitor};
-use serde::ser::SerializeMap;
+use serde::ser::SerializeMap as _;
 use serde::{Deserialize, Serialize, Serializer};
 
-pub struct HexKeyMapN<T, const N: usize>(pub HashMap<[u8; N], T>);
+pub(crate) struct HexKeyMapN<T, const N: usize>(pub HashMap<[u8; N], T>);
 
 impl<T, const N: usize> Serialize for HexKeyMapN<T, N>
 where
@@ -21,10 +21,7 @@ where
             // produce e.g. "0x001122aabbcc"
             let key_str = format!(
                 "0x{}",
-                bytes
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>()
+                bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
             );
             map_ser.serialize_entry(&key_str, value)?;
         }
@@ -51,8 +48,7 @@ where
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(
                     f,
-                    "a map with {}-byte hex string keys (\"0x…\") and T values",
-                    N
+                    "a map with {N}-byte hex string keys (\"0x…\") and T values"
                 )
             }
 
@@ -63,7 +59,7 @@ where
                 let mut values = HashMap::with_capacity(access.size_hint().unwrap_or(0));
                 while let Some((key_str, value)) = access.next_entry::<String, T>()? {
                     let s = key_str.strip_prefix("0x").ok_or_else(|| {
-                        de::Error::custom(format!("Missing 0x prefix: {}", key_str))
+                        de::Error::custom(format!("Missing 0x prefix: {key_str}"))
                     })?;
                     if s.len() != 2 * N {
                         return Err(de::Error::custom(format!(
@@ -78,7 +74,7 @@ where
                     for i in 0..N {
                         let byte_str = &s[2 * i..2 * i + 2];
                         arr[i] = u8::from_str_radix(byte_str, 16).map_err(|_| {
-                            de::Error::custom(format!("Invalid hex byte: {}", byte_str))
+                            de::Error::custom(format!("Invalid hex byte: {byte_str}"))
                         })?;
                     }
                     values.insert(arr, value);

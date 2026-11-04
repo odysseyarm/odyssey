@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
+use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter, ValueNotification};
 use btleplug::platform::{Manager, Peripheral};
-use futures::stream::StreamExt;
+use futures::stream::StreamExt as _;
 use futures_concurrency::prelude::*;
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryMap, AccessoryType};
 use tokio::sync::broadcast::Sender;
@@ -24,8 +24,8 @@ enum AccessoryEvent {
     ScanComplete,
 }
 
-pub async fn accessory_manager(
-    event_tx: tokio::sync::broadcast::Sender<odyssey_hub_common::events::Event>,
+pub(crate) async fn accessory_manager(
+    event_tx: Sender<odyssey_hub_common::events::Event>,
     info_watch: Receiver<AccessoryInfoMap>,
     map_tx: Sender<AccessoryMap>,
     dl: Arc<
@@ -74,7 +74,7 @@ pub async fn accessory_manager(
     let info_stream = WatchStream::new(info_watch_clone).map(|_| AccessoryEvent::InfoChanged);
 
     // Create periodic scan interval stream (2 second intervals)
-    let scan_interval = tokio::time::interval(Duration::from_secs(2));
+    let scan_interval = time::interval(Duration::from_secs(2));
     let scan_stream = IntervalStream::new(scan_interval).then({
         let adapter = adapter.clone();
         let filter = filter.clone();

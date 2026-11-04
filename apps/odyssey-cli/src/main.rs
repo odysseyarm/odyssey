@@ -52,7 +52,7 @@ async fn main() -> ExitCode {
     };
 
     match result {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("Error: {e}");
             ExitCode::FAILURE

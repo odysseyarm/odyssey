@@ -132,7 +132,7 @@ static SPEC: LazyLock<BoardSpec> = LazyLock::new(|| {
 
 impl BoardSpec {
     /// The board described by `board.json`.
-    pub fn get() -> &'static BoardSpec {
+    pub fn get() -> &'static Self {
         &SPEC
     }
 
@@ -1716,7 +1716,7 @@ mod tests {
     use image::{GrayImage, Rgb};
     use nalgebra::UnitQuaternion;
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{Rng as _, SeedableRng as _};
 
     use super::*;
     use crate::camera::{DepthImage, Extrinsics};
@@ -1816,15 +1816,15 @@ mod tests {
     impl Shape {
         fn contains(&self, u: f64, v: f64) -> bool {
             match *self {
-                Shape::Disk { x, y, r } => (u - x).powi(2) + (v - y).powi(2) <= r * r,
-                Shape::Rect { x0, y0, x1, y1 } => u >= x0 && u <= x1 && v >= y0 && v <= y1,
+                Self::Disk { x, y, r } => (u - x).powi(2) + (v - y).powi(2) <= r * r,
+                Self::Rect { x0, y0, x1, y1 } => u >= x0 && u <= x1 && v >= y0 && v <= y1,
             }
         }
 
         fn bounds(&self) -> [f64; 4] {
             match *self {
-                Shape::Disk { x, y, r } => [x - r, y - r, x + r, y + r],
-                Shape::Rect { x0, y0, x1, y1 } => [x0, y0, x1, y1],
+                Self::Disk { x, y, r } => [x - r, y - r, x + r, y + r],
+                Self::Rect { x0, y0, x1, y1 } => [x0, y0, x1, y1],
             }
         }
     }
@@ -1882,7 +1882,7 @@ mod tests {
                 }
             }
             crossings.sort_by(f64::total_cmp);
-            for pair in crossings.chunks_exact(2) {
+            for pair in crossings.as_chunks::<2>().0 {
                 let from = pair[0].ceil().max(0.0) as usize;
                 let to = pair[1].floor().min(w as f64 - 1.0);
                 if to < 0.0 {

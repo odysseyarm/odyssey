@@ -5,10 +5,10 @@ use nusb::{DeviceInfo, MaybeFuture as _};
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
 use tokio::sync::mpsc::{self, Sender};
-use tokio_stream::StreamExt;
-#[allow(unused_imports)]
+use tokio_stream::StreamExt as _;
+#[expect(unused_imports)]
 use tracing::Level;
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use tracing_subscriber::EnvFilter;
 
 async fn get_devices() -> Vec<DeviceInfo> {
@@ -80,7 +80,7 @@ async fn main() -> ExitCode {
         }
         if devices.len() > 1 {
             eprintln!("Multiple devices found, using first one");
-        };
+        }
         devices.into_iter().next().unwrap()
     };
 
@@ -125,7 +125,7 @@ async fn main() -> ExitCode {
     }
     let mut bytes = vec![];
     postcard::to_slice(&general_config, &mut bytes).unwrap();
-    for (timestamp, packet_data) in packets.iter() {
+    for (timestamp, packet_data) in &packets {
         let packet = odyssey_usb::packets::vm::Packet {
             data: packet_data.clone(),
             id: 0,

@@ -9,7 +9,7 @@
 
 use std::time::{Duration, Instant};
 
-use odyssey_autocalib::camera::{CameraBackend, CameraError, CaptureSettings, Intrinsics};
+use odyssey_autocalib::camera::{CameraBackend as _, CameraError, CaptureSettings, Intrinsics};
 use odyssey_autocalib::orbbec::{OrbbecBackend, runtime_status};
 
 fn describe(name: &str, i: &Intrinsics) {

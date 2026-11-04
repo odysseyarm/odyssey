@@ -10,22 +10,22 @@ use std::path::Path;
 use odyssey_common::MAX_SCREEN_ID;
 use odyssey_hub_common::config::screen_file_name;
 
-pub const SCREEN_COUNT: usize = MAX_SCREEN_ID as usize + 1;
+pub(crate) const SCREEN_COUNT: usize = MAX_SCREEN_ID as usize + 1;
 
 /// The name people see for screen `id`, counted from 1.
-pub fn screen_label(id: u8) -> String {
+pub(crate) fn screen_label(id: u8) -> String {
     format!("Screen {}", u32::from(id) + 1)
 }
 
 /// For each screen id, whether a calibration file is saved in `screens_dir`.
-pub fn saved_screens(screens_dir: &Path) -> [bool; SCREEN_COUNT] {
+pub(crate) fn saved_screens(screens_dir: &Path) -> [bool; SCREEN_COUNT] {
     std::array::from_fn(|id| screens_dir.join(screen_file_name(id as u8)).is_file())
 }
 
 /// The screen id to preselect: the one last calibrated for this monitor, else
 /// the first without a calibration, else the first (everything is taken, so the
 /// tech is replacing something either way and Review asks before it does).
-pub fn default_screen(remembered: Option<u8>, saved: &[bool; SCREEN_COUNT]) -> u8 {
+pub(crate) fn default_screen(remembered: Option<u8>, saved: &[bool; SCREEN_COUNT]) -> u8 {
     remembered
         .filter(|&id| usize::from(id) < SCREEN_COUNT)
         .or_else(|| saved.iter().position(|&taken| !taken).map(|id| id as u8))

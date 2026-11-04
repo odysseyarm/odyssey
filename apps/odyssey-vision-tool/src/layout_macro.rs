@@ -42,7 +42,7 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Area ( $handler:expr_2021 )
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Area::new($ui, $handler);
     ];
 
@@ -50,7 +50,7 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Button ( $text:expr_2021 $( , enabled: $enabled:expr_2021 $(,)? )? )
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Button::new($ui, "");
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
@@ -101,7 +101,7 @@ macro_rules! layout {
         let $ctl:ident = Combobox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
         { $( $option:expr_2021 ),* }
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Combobox::new($ui);
         $( $ctl.append($ui, $option); )*
         $($crate::layout!(@args Combobox $ui; $ctl $prop $value);)*
@@ -131,7 +131,7 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Entry ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Entry::new($ui);
         $($crate::layout!(@args Entry $ui; $ctl $prop $value);)*
     ];
@@ -162,7 +162,7 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Label ( $text:expr_2021 )
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Label::new($ui, "");
         leptos_reactive::create_effect({
             let ui = iui::UI::clone($ui);
@@ -253,7 +253,7 @@ macro_rules! layout {
     [ $ui:expr_2021 ,
         let $ctl:ident = Spinbox ( $( $prop:ident: $value:expr_2021 ),* $(,)? )
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Spinbox::new_unlimited($ui);
         $($crate::layout!(@args Spinbox $ui; $ctl $prop $value);)*
     ];
@@ -287,7 +287,7 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::Form::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -321,7 +321,7 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::HorizontalBox::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -341,7 +341,7 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::LayoutGrid::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -363,7 +363,7 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::TabGroup::new($ui);
         $(
             $crate::layout! { $ui, let $child = $type ($($opt)*) $({$($body)*})? }
@@ -380,7 +380,7 @@ macro_rules! layout {
             let $child:ident = $type:ident ($($opt:tt)*) $({$($body:tt)*})?
         )* }
     ] => [
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut $ctl = iui::controls::VerticalBox::new($ui);
         $( $ctl.set_padded($ui, $padded); )?
         $(
@@ -467,20 +467,20 @@ pub trait IntoMaybeSignal<T> {
     fn from(self) -> MaybeSignal<T>;
 }
 
-impl IntoMaybeSignal<bool> for bool {
-    fn from(self) -> MaybeSignal<bool> {
+impl IntoMaybeSignal<Self> for bool {
+    fn from(self) -> MaybeSignal<Self> {
         MaybeSignal::Static(self)
     }
 }
 
-impl IntoMaybeSignal<i32> for i32 {
-    fn from(self) -> MaybeSignal<i32> {
+impl IntoMaybeSignal<Self> for i32 {
+    fn from(self) -> MaybeSignal<Self> {
         MaybeSignal::Static(self)
     }
 }
 
-impl IntoMaybeSignal<u32> for u32 {
-    fn from(self) -> MaybeSignal<u32> {
+impl IntoMaybeSignal<Self> for u32 {
+    fn from(self) -> MaybeSignal<Self> {
         MaybeSignal::Static(self)
     }
 }

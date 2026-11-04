@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,7 +8,8 @@ use app_dirs2::{AppDataType, get_app_root};
 use iui::controls::{Area, FileTypeFilter, HorizontalBox};
 use iui::prelude::*;
 use leptos_reactive::{
-    RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalWith, create_effect,
+    RwSignal, SignalGet as _, SignalGetUntracked as _, SignalSet as _, SignalWith as _,
+    create_effect,
 };
 use odyssey_common::ScreenCalibration;
 use odyssey_usb::device::GeneralSettings;
@@ -17,7 +18,7 @@ use odyssey_vision_tool::mot_runner::MotRunner;
 use odyssey_vision_tool::run_canvas::RunCanvas;
 use odyssey_vision_tool::run_raw_canvas::RunRawCanvas;
 use odyssey_vision_tool::test_canvas::TestCanvas;
-use odyssey_vision_tool::{CloneButShorter, MotState, TestFrame, config_window, plots_window};
+use odyssey_vision_tool::{CloneButShorter as _, MotState, TestFrame, config_window, plots_window};
 use parking_lot::Mutex;
 use tokio::task::AbortHandle;
 use tracing::{Level, error, info, warn};
@@ -238,7 +239,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     > = (0..{ (odyssey_common::MAX_SCREEN_ID + 1) as usize })
         .filter_map(|i| {
             get_screens_dir().and_then(|config_dir| {
-                let screen_path = config_dir.join(std::format!("screen_{}.json", i));
+                let screen_path = config_dir.join(std::format!("screen_{i}.json"));
                 if screen_path.exists() {
                     File::open(&screen_path).ok().and_then(|file| {
                         match serde_json::from_reader(file) {
@@ -279,14 +280,12 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     // Create a main_window into which controls can be placed
-    let mut main_win =
-        iui::prelude::Window::new(&ui, "ATS Vision Tool", 640, 480, WindowType::NoMenubar);
+    let mut main_win = Window::new(&ui, "ATS Vision Tool", 640, 480, WindowType::NoMenubar);
     let (mut config_win, device_rs, accel_config_signal) =
         config_window::config_window(&ui, simulator_addr, udp_addr, mot_runner.c(), tokio_handle);
     let mut plots_window = plots_window::plots_window(&ui);
 
-    let mut test_win =
-        iui::prelude::Window::new(&ui, "Aimpoint Test", 640, 480, WindowType::NoMenubar);
+    let mut test_win = Window::new(&ui, "Aimpoint Test", 640, 480, WindowType::NoMenubar);
     test_win.set_margined(&ui, false);
     test_win.set_borderless(&ui, true);
 
@@ -429,7 +428,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         let collected_text = collected_text.c();
         let datapoints = datapoints.c();
         move |_| {
-            ui_update.with(|_| {
+            ui_update.with(|()| {
                 let datapoints = datapoints.c();
                 let datapoints = datapoints.lock();
 
@@ -536,7 +535,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             let view = view.c();
             let madgwick = &mut view.lock().state.madgwick;
             *madgwick = ahrs::Madgwick::new_with_quat(
-                1. / accel_config_signal.get().accel_odr as f32,
+                1. / f32::from(accel_config_signal.get().accel_odr),
                 0.2,
                 madgwick.quat,
             );
@@ -708,7 +707,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // });
 
     track_raw_button.on_clicked(&ui, move |_| {
-        tracking_raw.set(!tracking_raw.get_untracked())
+        tracking_raw.set(!tracking_raw.get_untracked());
     });
     track_button.on_clicked(&ui, move |_| tracking.set(!tracking.get_untracked()));
     test_button.on_clicked(&ui, move |_| testing.set(true));

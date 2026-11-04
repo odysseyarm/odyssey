@@ -9,7 +9,7 @@
 //! hash. The bootloaders advertise `CAN_DOWNLOAD` without `CAN_UPLOAD`, so the
 //! host cannot read flash back over DFU and has nothing to hash.
 
-use nusb::{DeviceInfo, MaybeFuture};
+use nusb::{DeviceInfo, MaybeFuture as _};
 
 /// Serial numbers that identify nothing.
 ///
@@ -19,7 +19,7 @@ use nusb::{DeviceInfo, MaybeFuture};
 /// a uuid. The current bootloader derives the serial from FICR instead.
 const PLACEHOLDER_SERIALS: &[&str] = &["1235678"];
 
-pub fn is_placeholder_serial(serial: Option<&str>) -> bool {
+pub(crate) fn is_placeholder_serial(serial: Option<&str>) -> bool {
     match serial {
         Some(serial) => PLACEHOLDER_SERIALS.contains(&serial),
         // A bootloader that publishes no serial at all is equally unidentifiable.
@@ -32,7 +32,7 @@ pub fn is_placeholder_serial(serial: Option<&str>) -> bool {
 /// Only resolves when exactly one device of that vendor and product is attached,
 /// so the result is unambiguous: with a second device present there is no way to
 /// tell which one was asked for, and guessing would flash the wrong unit.
-pub fn single_unidentifiable_device(candidates: Vec<DeviceInfo>) -> Option<DeviceInfo> {
+pub(crate) fn single_unidentifiable_device(candidates: Vec<DeviceInfo>) -> Option<DeviceInfo> {
     let mut unidentifiable = candidates
         .into_iter()
         .filter(|dev| is_placeholder_serial(dev.serial_number()));
@@ -63,7 +63,7 @@ pub fn single_unidentifiable_device(candidates: Vec<DeviceInfo>) -> Option<Devic
 ///
 /// Only resolves when exactly one such device is attached; flashing then
 /// resolves the same way through `single_unidentifiable_device`.
-pub fn recovery_uuid(vid: u16, pid: u16) -> Option<[u8; 6]> {
+pub(crate) fn recovery_uuid(vid: u16, pid: u16) -> Option<[u8; 6]> {
     let candidates: Vec<_> = nusb::list_devices()
         .wait()
         .ok()?
@@ -74,7 +74,7 @@ pub fn recovery_uuid(vid: u16, pid: u16) -> Option<[u8; 6]> {
 }
 
 /// Whether a uuid is one this module invented rather than one a device reported.
-pub fn is_recovery_uuid(uuid: &[u8; 6]) -> bool {
+pub(crate) fn is_recovery_uuid(uuid: &[u8; 6]) -> bool {
     uuid[..4] == [0xff, 0xff, 0xff, 0xff]
 }
 
@@ -84,11 +84,11 @@ pub fn is_recovery_uuid(uuid: &[u8; 6]) -> bool {
 /// distinguishable from the descriptor alone. Anything flashed before that
 /// still answers on the application's id, so a device being recovered has to be
 /// looked for there too.
-pub fn find_bootloader_sharing_app_pid(
+pub(crate) fn find_bootloader_sharing_app_pid(
     uuid: &[u8; 6],
     vid: u16,
     app_pid: u16,
-) -> Result<nusb::DeviceInfo, crate::firmware::DfuError> {
+) -> Result<DeviceInfo, crate::firmware::DfuError> {
     tracing::debug!(
         "No bootloader at {:04x}:{:04x}; looking for one that still shares the application id",
         vid,

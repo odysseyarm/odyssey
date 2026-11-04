@@ -51,16 +51,16 @@ pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
     let (lo, hi) = ir
         .pixels()
         .fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
-    if (hi as f64 - lo as f64) < MIN_CONTRAST {
+    if (f64::from(hi) - f64::from(lo)) < MIN_CONTRAST {
         return Vec::new();
     }
-    let threshold = lo as f64 + RELATIVE_THRESHOLD * (hi as f64 - lo as f64);
+    let threshold = f64::from(lo) + RELATIVE_THRESHOLD * (f64::from(hi) - f64::from(lo));
     let raw = ir.as_raw();
     let width = ir.width() as usize;
     let weight = |x: u32, y: u32| {
-        let v = raw[y as usize * width + x as usize] as f64;
+        let v = f64::from(raw[y as usize * width + x as usize]);
         if v >= threshold {
-            v - lo as f64 + 1.0
+            v - f64::from(lo) + 1.0
         } else {
             0.0
         }
@@ -110,7 +110,7 @@ fn within(v: f64, extent: f64) -> bool {
 /// image and on the screen (and whether it counts as on or near the screen), and the order
 /// the tracker needs when the markers are found.
 pub fn describe_spots(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> String {
-    use std::fmt::Write;
+    use std::fmt::Write as _;
     let [w, h] = fit.size_m;
     let ir = &geometry.ir;
     let mut out = String::new();
@@ -309,7 +309,7 @@ mod tests {
     fn spot(img: &mut GrayImage, cx: f64, cy: f64, radius: f64, peak: u8) {
         for y in 0..img.height() {
             for x in 0..img.width() {
-                let d = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt();
+                let d = ((f64::from(x) - cx).powi(2) + (f64::from(y) - cy).powi(2)).sqrt();
                 if d <= radius {
                     img.put_pixel(x, y, Luma([peak]));
                 }

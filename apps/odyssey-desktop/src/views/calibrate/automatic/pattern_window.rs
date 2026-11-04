@@ -29,7 +29,7 @@ const PLACEMENT_CHECK_DELAY: std::time::Duration = std::time::Duration::from_mil
 
 /// What the pattern window shows.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PatternMode {
+pub(crate) enum PatternMode {
     /// The dot pattern, white on black.
     Pattern,
     /// A plain black screen.
@@ -49,7 +49,7 @@ pub enum PatternMode {
 
 /// Why the pattern window can no longer do its job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PatternLoss {
+pub(crate) enum PatternLoss {
     /// Someone closed the window (Escape or Alt+F4).
     Closed,
     /// The window manager put the window on a different monitor than the one
@@ -59,7 +59,7 @@ pub enum PatternLoss {
 
 /// What the pattern window tells the wizard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PatternEvent {
+pub(crate) enum PatternEvent {
     Lost(PatternLoss),
     /// The card frame should grow (positive) or shrink by this many steps of
     /// [`super::reference::CARD_STEP_PX`]. Sent from the keyboard, which is how
@@ -90,12 +90,12 @@ impl PartialEq for Link {
 }
 
 /// An open pattern window. Dropping it closes the window.
-pub struct PatternDisplay {
+pub(crate) struct PatternDisplay {
     mode: watch::Sender<PatternMode>,
 }
 
 impl PatternDisplay {
-    pub fn show(&self, mode: PatternMode) {
+    pub(crate) fn show(&self, mode: PatternMode) {
         self.mode.send_replace(mode);
     }
 }
@@ -103,7 +103,7 @@ impl PatternDisplay {
 /// Opens a borderless fullscreen window on `monitor`. `events` hears about it if
 /// the window goes away or lands on the wrong monitor while the wizard still
 /// wants it, and about the card frame being resized from the keyboard.
-pub fn open(
+pub(crate) fn open(
     host: &DesktopContext,
     monitor: MonitorHandle,
     pattern: Pattern,
@@ -380,7 +380,7 @@ fn PatternScreen(link: Link) -> Element {
 
 /// A rectangle in desktop pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rect {
+pub(crate) struct Rect {
     pub x: i64,
     pub y: i64,
     pub width: i64,
@@ -388,7 +388,7 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub fn of_monitor(key: &MonitorKey) -> Self {
+    pub(crate) fn of_monitor(key: &MonitorKey) -> Self {
         Self {
             x: key.x.into(),
             y: key.y.into(),
@@ -398,7 +398,7 @@ impl Rect {
     }
 
     /// Whether the two share any area; touching edges do not count.
-    pub fn overlaps(&self, other: &Rect) -> bool {
+    pub(crate) fn overlaps(&self, other: &Self) -> bool {
         self.x < other.x + other.width
             && other.x < self.x + self.width
             && self.y < other.y + other.height
@@ -409,7 +409,7 @@ impl Rect {
 /// Whether showing the pattern fullscreen on `target` would cover (part of)
 /// the window `host`. Falls back to "same monitor" where the platform does not
 /// report window geometry.
-pub fn covers_window(
+pub(crate) fn covers_window(
     host: &DesktopContext,
     target: &MonitorKey,
     current_monitor: Option<MonitorKey>,

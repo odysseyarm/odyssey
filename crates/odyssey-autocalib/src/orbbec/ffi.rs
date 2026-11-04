@@ -14,131 +14,133 @@
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_context_t {
+pub(super) struct ob_context_t {
     _unused: [u8; 0],
 }
-pub type ob_context = ob_context_t;
+pub(super) type ob_context = ob_context_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_device_t {
+pub(super) struct ob_device_t {
     _unused: [u8; 0],
 }
-pub type ob_device = ob_device_t;
+pub(super) type ob_device = ob_device_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_device_list_t {
+pub(super) struct ob_device_list_t {
     _unused: [u8; 0],
 }
-pub type ob_device_list = ob_device_list_t;
+pub(super) type ob_device_list = ob_device_list_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_sensor_t {
+pub(super) struct ob_sensor_t {
     _unused: [u8; 0],
 }
-pub type ob_sensor = ob_sensor_t;
+pub(super) type ob_sensor = ob_sensor_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_sensor_list_t {
+pub(super) struct ob_sensor_list_t {
     _unused: [u8; 0],
 }
-pub type ob_sensor_list = ob_sensor_list_t;
+pub(super) type ob_sensor_list = ob_sensor_list_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_stream_profile_t {
+pub(super) struct ob_stream_profile_t {
     _unused: [u8; 0],
 }
-pub type ob_stream_profile = ob_stream_profile_t;
+pub(super) type ob_stream_profile = ob_stream_profile_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_stream_profile_list_t {
+pub(super) struct ob_stream_profile_list_t {
     _unused: [u8; 0],
 }
-pub type ob_stream_profile_list = ob_stream_profile_list_t;
+pub(super) type ob_stream_profile_list = ob_stream_profile_list_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_frame_t {
+pub(super) struct ob_frame_t {
     _unused: [u8; 0],
 }
-pub type ob_frame = ob_frame_t;
+pub(super) type ob_frame = ob_frame_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_filter_t {
+pub(super) struct ob_filter_t {
     _unused: [u8; 0],
 }
-pub type ob_filter = ob_filter_t;
+pub(super) type ob_filter = ob_filter_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_pipeline_t {
+pub(super) struct ob_pipeline_t {
     _unused: [u8; 0],
 }
-pub type ob_pipeline = ob_pipeline_t;
+pub(super) type ob_pipeline = ob_pipeline_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_config_t {
+pub(super) struct ob_config_t {
     _unused: [u8; 0],
 }
-pub type ob_config = ob_config_t;
-pub const OBPermissionType_OB_PERMISSION_READ_WRITE: OBPermissionType = 3;
-pub type OBPermissionType = ::std::os::raw::c_uint;
-pub use self::OBPermissionType as ob_permission_type;
-pub type OBStatus = ::std::os::raw::c_uint;
-pub use self::OBStatus as ob_status;
-pub const OBLogSeverity_OB_LOG_SEVERITY_OFF: OBLogSeverity = 5;
-pub type OBLogSeverity = ::std::os::raw::c_uint;
-pub use self::OBLogSeverity as ob_log_severity;
-pub type OBExceptionType = ::std::os::raw::c_uint;
-pub use self::OBExceptionType as ob_exception_type;
+pub(super) type ob_config = ob_config_t;
+pub(super) const OBPermissionType_OB_PERMISSION_READ_WRITE: OBPermissionType = 3;
+pub(super) type OBPermissionType = ::std::os::raw::c_uint;
+pub(super) use self::OBPermissionType as ob_permission_type;
+pub(super) type OBStatus = ::std::os::raw::c_uint;
+pub(super) use self::OBStatus as ob_status;
+pub(super) const OBLogSeverity_OB_LOG_SEVERITY_OFF: OBLogSeverity = 5;
+pub(super) type OBLogSeverity = ::std::os::raw::c_uint;
+pub(super) use self::OBLogSeverity as ob_log_severity;
+pub(super) type OBExceptionType = ::std::os::raw::c_uint;
+pub(super) use self::OBExceptionType as ob_exception_type;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-pub struct ob_error {
+pub(super) struct ob_error {
     pub status: ob_status,
     pub message: [::std::os::raw::c_char; 256usize],
     pub function: [::std::os::raw::c_char; 256usize],
     pub args: [::std::os::raw::c_char; 256usize],
     pub exception_type: ob_exception_type,
 }
-pub const OBSensorType_OB_SENSOR_IR: OBSensorType = 1;
-pub const OBSensorType_OB_SENSOR_COLOR: OBSensorType = 2;
-pub const OBSensorType_OB_SENSOR_DEPTH: OBSensorType = 3;
-pub const OBSensorType_OB_SENSOR_ACCEL: OBSensorType = 4;
-pub const OBSensorType_OB_SENSOR_GYRO: OBSensorType = 5;
-pub const OBSensorType_OB_SENSOR_IR_LEFT: OBSensorType = 6;
-pub type OBSensorType = ::std::os::raw::c_uint;
-pub use self::OBSensorType as ob_sensor_type;
-pub const OBFrameType_OB_FRAME_IR: OBFrameType = 1;
-pub const OBFrameType_OB_FRAME_COLOR: OBFrameType = 2;
-pub const OBFrameType_OB_FRAME_DEPTH: OBFrameType = 3;
-pub const OBFrameType_OB_FRAME_IR_LEFT: OBFrameType = 8;
-pub type OBFrameType = ::std::os::raw::c_int;
-pub use self::OBFrameType as ob_frame_type;
-pub const OBFormat_OB_FORMAT_YUYV: OBFormat = 0;
-pub const OBFormat_OB_FORMAT_UYVY: OBFormat = 2;
-pub const OBFormat_OB_FORMAT_NV12: OBFormat = 3;
-pub const OBFormat_OB_FORMAT_MJPG: OBFormat = 5;
-pub const OBFormat_OB_FORMAT_Y16: OBFormat = 8;
-pub const OBFormat_OB_FORMAT_Y8: OBFormat = 9;
-pub const OBFormat_OB_FORMAT_I420: OBFormat = 15;
-pub const OBFormat_OB_FORMAT_RGB: OBFormat = 22;
-pub type OBFormat = ::std::os::raw::c_int;
-pub use self::OBFormat as ob_format;
+pub(super) const OBSensorType_OB_SENSOR_IR: OBSensorType = 1;
+pub(super) const OBSensorType_OB_SENSOR_COLOR: OBSensorType = 2;
+pub(super) const OBSensorType_OB_SENSOR_DEPTH: OBSensorType = 3;
+pub(super) const OBSensorType_OB_SENSOR_ACCEL: OBSensorType = 4;
+pub(super) const OBSensorType_OB_SENSOR_GYRO: OBSensorType = 5;
+pub(super) const OBSensorType_OB_SENSOR_IR_LEFT: OBSensorType = 6;
+pub(super) type OBSensorType = ::std::os::raw::c_uint;
+pub(super) use self::OBSensorType as ob_sensor_type;
+pub(super) const OBFrameType_OB_FRAME_IR: OBFrameType = 1;
+pub(super) const OBFrameType_OB_FRAME_COLOR: OBFrameType = 2;
+pub(super) const OBFrameType_OB_FRAME_DEPTH: OBFrameType = 3;
+pub(super) const OBFrameType_OB_FRAME_IR_LEFT: OBFrameType = 8;
+pub(super) type OBFrameType = ::std::os::raw::c_int;
+pub(super) use self::OBFrameType as ob_frame_type;
+pub(super) const OBFormat_OB_FORMAT_YUYV: OBFormat = 0;
+pub(super) const OBFormat_OB_FORMAT_UYVY: OBFormat = 2;
+pub(super) const OBFormat_OB_FORMAT_NV12: OBFormat = 3;
+pub(super) const OBFormat_OB_FORMAT_MJPG: OBFormat = 5;
+pub(super) const OBFormat_OB_FORMAT_Y16: OBFormat = 8;
+pub(super) const OBFormat_OB_FORMAT_Y8: OBFormat = 9;
+pub(super) const OBFormat_OB_FORMAT_I420: OBFormat = 15;
+pub(super) const OBFormat_OB_FORMAT_RGB: OBFormat = 22;
+pub(super) type OBFormat = ::std::os::raw::c_int;
+pub(super) use self::OBFormat as ob_format;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-pub struct OBIntPropertyRange {
+pub(super) struct OBIntPropertyRange {
     pub cur: i32,
     pub max: i32,
     pub min: i32,
     pub step: i32,
     pub def: i32,
 }
-pub type ob_int_property_range = OBIntPropertyRange;
-pub const OBCameraDistortionModel_OB_DISTORTION_NONE: OBCameraDistortionModel = 0;
-pub const OBCameraDistortionModel_OB_DISTORTION_MODIFIED_BROWN_CONRADY: OBCameraDistortionModel = 1;
-pub const OBCameraDistortionModel_OB_DISTORTION_BROWN_CONRADY: OBCameraDistortionModel = 3;
-pub const OBCameraDistortionModel_OB_DISTORTION_BROWN_CONRADY_K6: OBCameraDistortionModel = 4;
-pub type OBCameraDistortionModel = ::std::os::raw::c_uint;
+pub(super) type ob_int_property_range = OBIntPropertyRange;
+pub(super) const OBCameraDistortionModel_OB_DISTORTION_NONE: OBCameraDistortionModel = 0;
+pub(super) const OBCameraDistortionModel_OB_DISTORTION_MODIFIED_BROWN_CONRADY:
+    OBCameraDistortionModel = 1;
+pub(super) const OBCameraDistortionModel_OB_DISTORTION_BROWN_CONRADY: OBCameraDistortionModel = 3;
+pub(super) const OBCameraDistortionModel_OB_DISTORTION_BROWN_CONRADY_K6: OBCameraDistortionModel =
+    4;
+pub(super) type OBCameraDistortionModel = ::std::os::raw::c_uint;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-pub struct OBCameraIntrinsic {
+pub(super) struct OBCameraIntrinsic {
     pub fx: f32,
     pub fy: f32,
     pub cx: f32,
@@ -146,10 +148,10 @@ pub struct OBCameraIntrinsic {
     pub width: i16,
     pub height: i16,
 }
-pub type ob_camera_intrinsic = OBCameraIntrinsic;
+pub(super) type ob_camera_intrinsic = OBCameraIntrinsic;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-pub struct OBCameraDistortion {
+pub(super) struct OBCameraDistortion {
     pub k1: f32,
     pub k2: f32,
     pub k3: f32,
@@ -160,71 +162,73 @@ pub struct OBCameraDistortion {
     pub p2: f32,
     pub model: OBCameraDistortionModel,
 }
-pub type ob_camera_distortion = OBCameraDistortion;
+pub(super) type ob_camera_distortion = OBCameraDistortion;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-pub struct OBD2CTransform {
+pub(super) struct OBD2CTransform {
     pub rot: [f32; 9usize],
     pub trans: [f32; 3usize],
 }
-pub type ob_extrinsic = OBD2CTransform;
-pub const OBAlignMode_ALIGN_DISABLE: OBAlignMode = 0;
-pub type OBAlignMode = ::std::os::raw::c_uint;
-pub use self::OBAlignMode as ob_align_mode;
-pub const OBConvertFormat_FORMAT_YUYV_TO_RGB: OBConvertFormat = 0;
-pub const OBConvertFormat_FORMAT_I420_TO_RGB: OBConvertFormat = 1;
-pub const OBConvertFormat_FORMAT_NV12_TO_RGB: OBConvertFormat = 3;
-pub const OBConvertFormat_FORMAT_MJPG_TO_RGB: OBConvertFormat = 7;
-pub const OBConvertFormat_FORMAT_UYVY_TO_RGB: OBConvertFormat = 10;
-pub type OBConvertFormat = ::std::os::raw::c_uint;
-pub use self::OBConvertFormat as ob_convert_format;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_1_5625_HZ: OBIMUSampleRate = 1;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_3_125_HZ: OBIMUSampleRate = 2;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_6_25_HZ: OBIMUSampleRate = 3;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_12_5_HZ: OBIMUSampleRate = 4;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_25_HZ: OBIMUSampleRate = 5;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_50_HZ: OBIMUSampleRate = 6;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_100_HZ: OBIMUSampleRate = 7;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_200_HZ: OBIMUSampleRate = 8;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_500_HZ: OBIMUSampleRate = 9;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_1_KHZ: OBIMUSampleRate = 10;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_2_KHZ: OBIMUSampleRate = 11;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_4_KHZ: OBIMUSampleRate = 12;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_8_KHZ: OBIMUSampleRate = 13;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_16_KHZ: OBIMUSampleRate = 14;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_32_KHZ: OBIMUSampleRate = 15;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_400_HZ: OBIMUSampleRate = 16;
-pub const OBIMUSampleRate_OB_SAMPLE_RATE_800_HZ: OBIMUSampleRate = 17;
-pub type OBIMUSampleRate = ::std::os::raw::c_uint;
-pub use self::{OBIMUSampleRate as ob_gyro_sample_rate, OBIMUSampleRate as ob_accel_sample_rate};
+pub(super) type ob_extrinsic = OBD2CTransform;
+pub(super) const OBAlignMode_ALIGN_DISABLE: OBAlignMode = 0;
+pub(super) type OBAlignMode = ::std::os::raw::c_uint;
+pub(super) use self::OBAlignMode as ob_align_mode;
+pub(super) const OBConvertFormat_FORMAT_YUYV_TO_RGB: OBConvertFormat = 0;
+pub(super) const OBConvertFormat_FORMAT_I420_TO_RGB: OBConvertFormat = 1;
+pub(super) const OBConvertFormat_FORMAT_NV12_TO_RGB: OBConvertFormat = 3;
+pub(super) const OBConvertFormat_FORMAT_MJPG_TO_RGB: OBConvertFormat = 7;
+pub(super) const OBConvertFormat_FORMAT_UYVY_TO_RGB: OBConvertFormat = 10;
+pub(super) type OBConvertFormat = ::std::os::raw::c_uint;
+pub(super) use self::OBConvertFormat as ob_convert_format;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_1_5625_HZ: OBIMUSampleRate = 1;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_3_125_HZ: OBIMUSampleRate = 2;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_6_25_HZ: OBIMUSampleRate = 3;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_12_5_HZ: OBIMUSampleRate = 4;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_25_HZ: OBIMUSampleRate = 5;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_50_HZ: OBIMUSampleRate = 6;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_100_HZ: OBIMUSampleRate = 7;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_200_HZ: OBIMUSampleRate = 8;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_500_HZ: OBIMUSampleRate = 9;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_1_KHZ: OBIMUSampleRate = 10;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_2_KHZ: OBIMUSampleRate = 11;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_4_KHZ: OBIMUSampleRate = 12;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_8_KHZ: OBIMUSampleRate = 13;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_16_KHZ: OBIMUSampleRate = 14;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_32_KHZ: OBIMUSampleRate = 15;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_400_HZ: OBIMUSampleRate = 16;
+pub(super) const OBIMUSampleRate_OB_SAMPLE_RATE_800_HZ: OBIMUSampleRate = 17;
+pub(super) type OBIMUSampleRate = ::std::os::raw::c_uint;
+pub(super) use self::{
+    OBIMUSampleRate as ob_gyro_sample_rate, OBIMUSampleRate as ob_accel_sample_rate,
+};
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
-pub struct OBAccelValue {
+pub(super) struct OBAccelValue {
     pub x: f32,
     pub y: f32,
     pub z: f32,
 }
-pub type ob_accel_value = OBAccelValue;
-pub type ob_gyro_value = OBAccelValue;
-pub const OB_FRAME_AGGREGATE_OUTPUT_MODE_OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE:
+pub(super) type ob_accel_value = OBAccelValue;
+pub(super) type ob_gyro_value = OBAccelValue;
+pub(super) const OB_FRAME_AGGREGATE_OUTPUT_MODE_OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE:
     OB_FRAME_AGGREGATE_OUTPUT_MODE = 0;
-pub type OB_FRAME_AGGREGATE_OUTPUT_MODE = ::std::os::raw::c_uint;
-pub use self::OB_FRAME_AGGREGATE_OUTPUT_MODE as ob_frame_aggregate_output_mode;
-pub type ob_frame_callback = ::std::option::Option<
+pub(super) type OB_FRAME_AGGREGATE_OUTPUT_MODE = ::std::os::raw::c_uint;
+pub(super) use self::OB_FRAME_AGGREGATE_OUTPUT_MODE as ob_frame_aggregate_output_mode;
+pub(super) type ob_frame_callback = ::std::option::Option<
     unsafe extern "C" fn(frame: *mut ob_frame, user_data: *mut ::std::os::raw::c_void),
 >;
-pub const OBPropertyID_OB_PROP_LASER_BOOL: OBPropertyID = 3;
-pub const OBPropertyID_OB_PROP_LASER_CONTROL_INT: OBPropertyID = 182;
-pub const OBPropertyID_OB_PROP_COLOR_AUTO_EXPOSURE_BOOL: OBPropertyID = 2000;
-pub const OBPropertyID_OB_PROP_COLOR_EXPOSURE_INT: OBPropertyID = 2001;
-pub const OBPropertyID_OB_PROP_COLOR_GAIN_INT: OBPropertyID = 2002;
-pub const OBPropertyID_OB_PROP_COLOR_SHARPNESS_INT: OBPropertyID = 2006;
-pub const OBPropertyID_OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT: OBPropertyID = 2015;
-pub const OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL: OBPropertyID = 2025;
-pub const OBPropertyID_OB_PROP_IR_EXPOSURE_INT: OBPropertyID = 2026;
-pub type OBPropertyID = ::std::os::raw::c_uint;
-pub use self::OBPropertyID as ob_property_id;
-pub struct OrbbecSdk {
+pub(super) const OBPropertyID_OB_PROP_LASER_BOOL: OBPropertyID = 3;
+pub(super) const OBPropertyID_OB_PROP_LASER_CONTROL_INT: OBPropertyID = 182;
+pub(super) const OBPropertyID_OB_PROP_COLOR_AUTO_EXPOSURE_BOOL: OBPropertyID = 2000;
+pub(super) const OBPropertyID_OB_PROP_COLOR_EXPOSURE_INT: OBPropertyID = 2001;
+pub(super) const OBPropertyID_OB_PROP_COLOR_GAIN_INT: OBPropertyID = 2002;
+pub(super) const OBPropertyID_OB_PROP_COLOR_SHARPNESS_INT: OBPropertyID = 2006;
+pub(super) const OBPropertyID_OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT: OBPropertyID = 2015;
+pub(super) const OBPropertyID_OB_PROP_IR_AUTO_EXPOSURE_BOOL: OBPropertyID = 2025;
+pub(super) const OBPropertyID_OB_PROP_IR_EXPOSURE_INT: OBPropertyID = 2026;
+pub(super) type OBPropertyID = ::std::os::raw::c_uint;
+pub(super) use self::OBPropertyID as ob_property_id;
+pub(super) struct OrbbecSdk {
     __library: ::libloading::Library,
     pub ob_create_context: unsafe extern "C" fn(error: *mut *mut ob_error) -> *mut ob_context,
     pub ob_delete_context:
@@ -473,7 +477,7 @@ pub struct OrbbecSdk {
     pub ob_get_patch_version: unsafe extern "C" fn() -> ::std::os::raw::c_int,
 }
 impl OrbbecSdk {
-    pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
+    pub(super) unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
     where
         P: AsRef<::std::ffi::OsStr>,
     {
@@ -482,7 +486,7 @@ impl OrbbecSdk {
             Self::from_library(library)
         }
     }
-    pub unsafe fn from_library<L>(library: L) -> Result<Self, ::libloading::Error>
+    pub(super) unsafe fn from_library<L>(library: L) -> Result<Self, ::libloading::Error>
     where
         L: Into<::libloading::Library>,
     {
@@ -660,7 +664,7 @@ impl OrbbecSdk {
             let ob_get_major_version = __library.get(b"ob_get_major_version\0").map(|sym| *sym)?;
             let ob_get_minor_version = __library.get(b"ob_get_minor_version\0").map(|sym| *sym)?;
             let ob_get_patch_version = __library.get(b"ob_get_patch_version\0").map(|sym| *sym)?;
-            Ok(OrbbecSdk {
+            Ok(Self {
                 __library,
                 ob_create_context,
                 ob_delete_context,
@@ -739,20 +743,24 @@ impl OrbbecSdk {
             })
         }
     }
-    pub unsafe fn ob_create_context(&self, error: *mut *mut ob_error) -> *mut ob_context {
+    pub(super) unsafe fn ob_create_context(&self, error: *mut *mut ob_error) -> *mut ob_context {
         unsafe { (self.ob_create_context)(error) }
     }
-    pub unsafe fn ob_delete_context(&self, context: *mut ob_context, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_context(
+        &self,
+        context: *mut ob_context,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_delete_context)(context, error) }
     }
-    pub unsafe fn ob_query_device_list(
+    pub(super) unsafe fn ob_query_device_list(
         &self,
         context: *mut ob_context,
         error: *mut *mut ob_error,
     ) -> *mut ob_device_list {
         unsafe { (self.ob_query_device_list)(context, error) }
     }
-    pub unsafe fn ob_set_logger_to_file(
+    pub(super) unsafe fn ob_set_logger_to_file(
         &self,
         severity: ob_log_severity,
         directory: *const ::std::os::raw::c_char,
@@ -760,24 +768,28 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_set_logger_to_file)(severity, directory, error) }
     }
-    pub unsafe fn ob_set_extensions_directory(
+    pub(super) unsafe fn ob_set_extensions_directory(
         &self,
         directory: *const ::std::os::raw::c_char,
         error: *mut *mut ob_error,
     ) {
         unsafe { (self.ob_set_extensions_directory)(directory, error) }
     }
-    pub unsafe fn ob_delete_device(&self, device: *mut ob_device, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_device(
+        &self,
+        device: *mut ob_device,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_delete_device)(device, error) }
     }
-    pub unsafe fn ob_device_get_sensor_list(
+    pub(super) unsafe fn ob_device_get_sensor_list(
         &self,
         device: *const ob_device,
         error: *mut *mut ob_error,
     ) -> *mut ob_sensor_list {
         unsafe { (self.ob_device_get_sensor_list)(device, error) }
     }
-    pub unsafe fn ob_device_set_int_property(
+    pub(super) unsafe fn ob_device_set_int_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
@@ -786,7 +798,7 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_device_set_int_property)(device, property_id, value, error) }
     }
-    pub unsafe fn ob_device_get_int_property(
+    pub(super) unsafe fn ob_device_get_int_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
@@ -794,7 +806,7 @@ impl OrbbecSdk {
     ) -> i32 {
         unsafe { (self.ob_device_get_int_property)(device, property_id, error) }
     }
-    pub unsafe fn ob_device_get_int_property_range(
+    pub(super) unsafe fn ob_device_get_int_property_range(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
@@ -802,7 +814,7 @@ impl OrbbecSdk {
     ) -> ob_int_property_range {
         unsafe { (self.ob_device_get_int_property_range)(device, property_id, error) }
     }
-    pub unsafe fn ob_device_set_bool_property(
+    pub(super) unsafe fn ob_device_set_bool_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
@@ -811,7 +823,7 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_device_set_bool_property)(device, property_id, value, error) }
     }
-    pub unsafe fn ob_device_get_bool_property(
+    pub(super) unsafe fn ob_device_get_bool_property(
         &self,
         device: *mut ob_device,
         property_id: ob_property_id,
@@ -819,7 +831,7 @@ impl OrbbecSdk {
     ) -> bool {
         unsafe { (self.ob_device_get_bool_property)(device, property_id, error) }
     }
-    pub unsafe fn ob_device_is_property_supported(
+    pub(super) unsafe fn ob_device_is_property_supported(
         &self,
         device: *const ob_device,
         property_id: ob_property_id,
@@ -828,21 +840,21 @@ impl OrbbecSdk {
     ) -> bool {
         unsafe { (self.ob_device_is_property_supported)(device, property_id, permission, error) }
     }
-    pub unsafe fn ob_delete_device_list(
+    pub(super) unsafe fn ob_delete_device_list(
         &self,
         list: *mut ob_device_list,
         error: *mut *mut ob_error,
     ) {
         unsafe { (self.ob_delete_device_list)(list, error) }
     }
-    pub unsafe fn ob_device_list_get_count(
+    pub(super) unsafe fn ob_device_list_get_count(
         &self,
         list: *const ob_device_list,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_device_list_get_count)(list, error) }
     }
-    pub unsafe fn ob_device_list_get_device_name(
+    pub(super) unsafe fn ob_device_list_get_device_name(
         &self,
         list: *const ob_device_list,
         index: u32,
@@ -850,7 +862,7 @@ impl OrbbecSdk {
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_device_list_get_device_name)(list, index, error) }
     }
-    pub unsafe fn ob_device_list_get_device_uid(
+    pub(super) unsafe fn ob_device_list_get_device_uid(
         &self,
         list: *const ob_device_list,
         index: u32,
@@ -858,7 +870,7 @@ impl OrbbecSdk {
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_device_list_get_device_uid)(list, index, error) }
     }
-    pub unsafe fn ob_device_list_get_device_serial_number(
+    pub(super) unsafe fn ob_device_list_get_device_serial_number(
         &self,
         list: *const ob_device_list,
         index: u32,
@@ -866,7 +878,7 @@ impl OrbbecSdk {
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_device_list_get_device_serial_number)(list, index, error) }
     }
-    pub unsafe fn ob_device_list_get_device_connection_type(
+    pub(super) unsafe fn ob_device_list_get_device_connection_type(
         &self,
         list: *const ob_device_list,
         index: u32,
@@ -874,7 +886,7 @@ impl OrbbecSdk {
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_device_list_get_device_connection_type)(list, index, error) }
     }
-    pub unsafe fn ob_device_list_get_device_by_uid(
+    pub(super) unsafe fn ob_device_list_get_device_by_uid(
         &self,
         list: *const ob_device_list,
         uid: *const ::std::os::raw::c_char,
@@ -882,32 +894,36 @@ impl OrbbecSdk {
     ) -> *mut ob_device {
         unsafe { (self.ob_device_list_get_device_by_uid)(list, uid, error) }
     }
-    pub unsafe fn ob_error_get_message(
+    pub(super) unsafe fn ob_error_get_message(
         &self,
         error: *const ob_error,
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_error_get_message)(error) }
     }
-    pub unsafe fn ob_error_get_function(
+    pub(super) unsafe fn ob_error_get_function(
         &self,
         error: *const ob_error,
     ) -> *const ::std::os::raw::c_char {
         unsafe { (self.ob_error_get_function)(error) }
     }
-    pub unsafe fn ob_delete_error(&self, error: *mut ob_error) {
+    pub(super) unsafe fn ob_delete_error(&self, error: *mut ob_error) {
         unsafe { (self.ob_delete_error)(error) }
     }
-    pub unsafe fn ob_create_filter(
+    pub(super) unsafe fn ob_create_filter(
         &self,
         name: *const ::std::os::raw::c_char,
         error: *mut *mut ob_error,
     ) -> *mut ob_filter {
         unsafe { (self.ob_create_filter)(name, error) }
     }
-    pub unsafe fn ob_delete_filter(&self, filter: *mut ob_filter, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_filter(
+        &self,
+        filter: *mut ob_filter,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_delete_filter)(filter, error) }
     }
-    pub unsafe fn ob_filter_set_config_value(
+    pub(super) unsafe fn ob_filter_set_config_value(
         &self,
         filter: *mut ob_filter,
         config_name: *const ::std::os::raw::c_char,
@@ -916,7 +932,7 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_filter_set_config_value)(filter, config_name, value, error) }
     }
-    pub unsafe fn ob_filter_process(
+    pub(super) unsafe fn ob_filter_process(
         &self,
         filter: *mut ob_filter,
         frame: *const ob_frame,
@@ -924,73 +940,73 @@ impl OrbbecSdk {
     ) -> *mut ob_frame {
         unsafe { (self.ob_filter_process)(filter, frame, error) }
     }
-    pub unsafe fn ob_delete_frame(&self, frame: *const ob_frame, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_frame(&self, frame: *const ob_frame, error: *mut *mut ob_error) {
         unsafe { (self.ob_delete_frame)(frame, error) }
     }
-    pub unsafe fn ob_frame_get_format(
+    pub(super) unsafe fn ob_frame_get_format(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> ob_format {
         unsafe { (self.ob_frame_get_format)(frame, error) }
     }
-    pub unsafe fn ob_frame_get_timestamp_us(
+    pub(super) unsafe fn ob_frame_get_timestamp_us(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> u64 {
         unsafe { (self.ob_frame_get_timestamp_us)(frame, error) }
     }
-    pub unsafe fn ob_frame_get_data(
+    pub(super) unsafe fn ob_frame_get_data(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> *mut u8 {
         unsafe { (self.ob_frame_get_data)(frame, error) }
     }
-    pub unsafe fn ob_frame_get_data_size(
+    pub(super) unsafe fn ob_frame_get_data_size(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_frame_get_data_size)(frame, error) }
     }
-    pub unsafe fn ob_video_frame_get_width(
+    pub(super) unsafe fn ob_video_frame_get_width(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_video_frame_get_width)(frame, error) }
     }
-    pub unsafe fn ob_video_frame_get_height(
+    pub(super) unsafe fn ob_video_frame_get_height(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_video_frame_get_height)(frame, error) }
     }
-    pub unsafe fn ob_depth_frame_get_value_scale(
+    pub(super) unsafe fn ob_depth_frame_get_value_scale(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> f32 {
         unsafe { (self.ob_depth_frame_get_value_scale)(frame, error) }
     }
-    pub unsafe fn ob_accel_frame_get_value(
+    pub(super) unsafe fn ob_accel_frame_get_value(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> ob_accel_value {
         unsafe { (self.ob_accel_frame_get_value)(frame, error) }
     }
-    pub unsafe fn ob_gyro_frame_get_value(
+    pub(super) unsafe fn ob_gyro_frame_get_value(
         &self,
         frame: *const ob_frame,
         error: *mut *mut ob_error,
     ) -> ob_gyro_value {
         unsafe { (self.ob_gyro_frame_get_value)(frame, error) }
     }
-    pub unsafe fn ob_frameset_get_frame(
+    pub(super) unsafe fn ob_frameset_get_frame(
         &self,
         frameset: *const ob_frame,
         frame_type: ob_frame_type,
@@ -998,17 +1014,21 @@ impl OrbbecSdk {
     ) -> *mut ob_frame {
         unsafe { (self.ob_frameset_get_frame)(frameset, frame_type, error) }
     }
-    pub unsafe fn ob_create_pipeline_with_device(
+    pub(super) unsafe fn ob_create_pipeline_with_device(
         &self,
         dev: *const ob_device,
         error: *mut *mut ob_error,
     ) -> *mut ob_pipeline {
         unsafe { (self.ob_create_pipeline_with_device)(dev, error) }
     }
-    pub unsafe fn ob_delete_pipeline(&self, pipeline: *mut ob_pipeline, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_pipeline(
+        &self,
+        pipeline: *mut ob_pipeline,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_delete_pipeline)(pipeline, error) }
     }
-    pub unsafe fn ob_pipeline_start_with_config(
+    pub(super) unsafe fn ob_pipeline_start_with_config(
         &self,
         pipeline: *mut ob_pipeline,
         config: *const ob_config,
@@ -1016,10 +1036,14 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_pipeline_start_with_config)(pipeline, config, error) }
     }
-    pub unsafe fn ob_pipeline_stop(&self, pipeline: *mut ob_pipeline, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_pipeline_stop(
+        &self,
+        pipeline: *mut ob_pipeline,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_pipeline_stop)(pipeline, error) }
     }
-    pub unsafe fn ob_pipeline_wait_for_frameset(
+    pub(super) unsafe fn ob_pipeline_wait_for_frameset(
         &self,
         pipeline: *mut ob_pipeline,
         timeout_ms: u32,
@@ -1027,7 +1051,7 @@ impl OrbbecSdk {
     ) -> *mut ob_frame {
         unsafe { (self.ob_pipeline_wait_for_frameset)(pipeline, timeout_ms, error) }
     }
-    pub unsafe fn ob_pipeline_get_stream_profile_list(
+    pub(super) unsafe fn ob_pipeline_get_stream_profile_list(
         &self,
         pipeline: *const ob_pipeline,
         sensorType: ob_sensor_type,
@@ -1035,20 +1059,24 @@ impl OrbbecSdk {
     ) -> *mut ob_stream_profile_list {
         unsafe { (self.ob_pipeline_get_stream_profile_list)(pipeline, sensorType, error) }
     }
-    pub unsafe fn ob_pipeline_enable_frame_sync(
+    pub(super) unsafe fn ob_pipeline_enable_frame_sync(
         &self,
         pipeline: *mut ob_pipeline,
         error: *mut *mut ob_error,
     ) {
         unsafe { (self.ob_pipeline_enable_frame_sync)(pipeline, error) }
     }
-    pub unsafe fn ob_create_config(&self, error: *mut *mut ob_error) -> *mut ob_config {
+    pub(super) unsafe fn ob_create_config(&self, error: *mut *mut ob_error) -> *mut ob_config {
         unsafe { (self.ob_create_config)(error) }
     }
-    pub unsafe fn ob_delete_config(&self, config: *mut ob_config, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_config(
+        &self,
+        config: *mut ob_config,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_delete_config)(config, error) }
     }
-    pub unsafe fn ob_config_enable_stream_with_stream_profile(
+    pub(super) unsafe fn ob_config_enable_stream_with_stream_profile(
         &self,
         config: *mut ob_config,
         profile: *const ob_stream_profile,
@@ -1056,7 +1084,7 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_config_enable_stream_with_stream_profile)(config, profile, error) }
     }
-    pub unsafe fn ob_config_set_align_mode(
+    pub(super) unsafe fn ob_config_set_align_mode(
         &self,
         config: *mut ob_config,
         mode: ob_align_mode,
@@ -1064,7 +1092,7 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_config_set_align_mode)(config, mode, error) }
     }
-    pub unsafe fn ob_config_set_frame_aggregate_output_mode(
+    pub(super) unsafe fn ob_config_set_frame_aggregate_output_mode(
         &self,
         config: *mut ob_config,
         mode: ob_frame_aggregate_output_mode,
@@ -1072,14 +1100,14 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_config_set_frame_aggregate_output_mode)(config, mode, error) }
     }
-    pub unsafe fn ob_sensor_get_stream_profile_list(
+    pub(super) unsafe fn ob_sensor_get_stream_profile_list(
         &self,
         sensor: *const ob_sensor,
         error: *mut *mut ob_error,
     ) -> *mut ob_stream_profile_list {
         unsafe { (self.ob_sensor_get_stream_profile_list)(sensor, error) }
     }
-    pub unsafe fn ob_sensor_start(
+    pub(super) unsafe fn ob_sensor_start(
         &self,
         sensor: *mut ob_sensor,
         profile: *const ob_stream_profile,
@@ -1089,20 +1117,24 @@ impl OrbbecSdk {
     ) {
         unsafe { (self.ob_sensor_start)(sensor, profile, callback, user_data, error) }
     }
-    pub unsafe fn ob_sensor_stop(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_sensor_stop(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) {
         unsafe { (self.ob_sensor_stop)(sensor, error) }
     }
-    pub unsafe fn ob_delete_sensor(&self, sensor: *mut ob_sensor, error: *mut *mut ob_error) {
+    pub(super) unsafe fn ob_delete_sensor(
+        &self,
+        sensor: *mut ob_sensor,
+        error: *mut *mut ob_error,
+    ) {
         unsafe { (self.ob_delete_sensor)(sensor, error) }
     }
-    pub unsafe fn ob_sensor_list_get_count(
+    pub(super) unsafe fn ob_sensor_list_get_count(
         &self,
         sensor_list: *const ob_sensor_list,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_sensor_list_get_count)(sensor_list, error) }
     }
-    pub unsafe fn ob_sensor_list_get_sensor_type(
+    pub(super) unsafe fn ob_sensor_list_get_sensor_type(
         &self,
         sensor_list: *const ob_sensor_list,
         index: u32,
@@ -1110,7 +1142,7 @@ impl OrbbecSdk {
     ) -> ob_sensor_type {
         unsafe { (self.ob_sensor_list_get_sensor_type)(sensor_list, index, error) }
     }
-    pub unsafe fn ob_sensor_list_get_sensor_by_type(
+    pub(super) unsafe fn ob_sensor_list_get_sensor_by_type(
         &self,
         sensor_list: *const ob_sensor_list,
         sensorType: ob_sensor_type,
@@ -1118,28 +1150,28 @@ impl OrbbecSdk {
     ) -> *mut ob_sensor {
         unsafe { (self.ob_sensor_list_get_sensor_by_type)(sensor_list, sensorType, error) }
     }
-    pub unsafe fn ob_delete_sensor_list(
+    pub(super) unsafe fn ob_delete_sensor_list(
         &self,
         sensor_list: *mut ob_sensor_list,
         error: *mut *mut ob_error,
     ) {
         unsafe { (self.ob_delete_sensor_list)(sensor_list, error) }
     }
-    pub unsafe fn ob_delete_stream_profile(
+    pub(super) unsafe fn ob_delete_stream_profile(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) {
         unsafe { (self.ob_delete_stream_profile)(profile, error) }
     }
-    pub unsafe fn ob_stream_profile_get_format(
+    pub(super) unsafe fn ob_stream_profile_get_format(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> ob_format {
         unsafe { (self.ob_stream_profile_get_format)(profile, error) }
     }
-    pub unsafe fn ob_stream_profile_get_extrinsic_to(
+    pub(super) unsafe fn ob_stream_profile_get_extrinsic_to(
         &self,
         source: *const ob_stream_profile,
         target: *mut ob_stream_profile,
@@ -1147,63 +1179,63 @@ impl OrbbecSdk {
     ) -> ob_extrinsic {
         unsafe { (self.ob_stream_profile_get_extrinsic_to)(source, target, error) }
     }
-    pub unsafe fn ob_video_stream_profile_get_fps(
+    pub(super) unsafe fn ob_video_stream_profile_get_fps(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_video_stream_profile_get_fps)(profile, error) }
     }
-    pub unsafe fn ob_video_stream_profile_get_width(
+    pub(super) unsafe fn ob_video_stream_profile_get_width(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_video_stream_profile_get_width)(profile, error) }
     }
-    pub unsafe fn ob_video_stream_profile_get_height(
+    pub(super) unsafe fn ob_video_stream_profile_get_height(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_video_stream_profile_get_height)(profile, error) }
     }
-    pub unsafe fn ob_video_stream_profile_get_intrinsic(
+    pub(super) unsafe fn ob_video_stream_profile_get_intrinsic(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> ob_camera_intrinsic {
         unsafe { (self.ob_video_stream_profile_get_intrinsic)(profile, error) }
     }
-    pub unsafe fn ob_video_stream_profile_get_distortion(
+    pub(super) unsafe fn ob_video_stream_profile_get_distortion(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> ob_camera_distortion {
         unsafe { (self.ob_video_stream_profile_get_distortion)(profile, error) }
     }
-    pub unsafe fn ob_accel_stream_profile_get_sample_rate(
+    pub(super) unsafe fn ob_accel_stream_profile_get_sample_rate(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> ob_accel_sample_rate {
         unsafe { (self.ob_accel_stream_profile_get_sample_rate)(profile, error) }
     }
-    pub unsafe fn ob_gyro_stream_profile_get_sample_rate(
+    pub(super) unsafe fn ob_gyro_stream_profile_get_sample_rate(
         &self,
         profile: *const ob_stream_profile,
         error: *mut *mut ob_error,
     ) -> ob_gyro_sample_rate {
         unsafe { (self.ob_gyro_stream_profile_get_sample_rate)(profile, error) }
     }
-    pub unsafe fn ob_stream_profile_list_get_count(
+    pub(super) unsafe fn ob_stream_profile_list_get_count(
         &self,
         profile_list: *const ob_stream_profile_list,
         error: *mut *mut ob_error,
     ) -> u32 {
         unsafe { (self.ob_stream_profile_list_get_count)(profile_list, error) }
     }
-    pub unsafe fn ob_stream_profile_list_get_profile(
+    pub(super) unsafe fn ob_stream_profile_list_get_profile(
         &self,
         profile_list: *const ob_stream_profile_list,
         index: ::std::os::raw::c_int,
@@ -1211,20 +1243,20 @@ impl OrbbecSdk {
     ) -> *mut ob_stream_profile {
         unsafe { (self.ob_stream_profile_list_get_profile)(profile_list, index, error) }
     }
-    pub unsafe fn ob_delete_stream_profile_list(
+    pub(super) unsafe fn ob_delete_stream_profile_list(
         &self,
         profile_list: *const ob_stream_profile_list,
         error: *mut *mut ob_error,
     ) {
         unsafe { (self.ob_delete_stream_profile_list)(profile_list, error) }
     }
-    pub unsafe fn ob_get_major_version(&self) -> ::std::os::raw::c_int {
+    pub(super) unsafe fn ob_get_major_version(&self) -> ::std::os::raw::c_int {
         unsafe { (self.ob_get_major_version)() }
     }
-    pub unsafe fn ob_get_minor_version(&self) -> ::std::os::raw::c_int {
+    pub(super) unsafe fn ob_get_minor_version(&self) -> ::std::os::raw::c_int {
         unsafe { (self.ob_get_minor_version)() }
     }
-    pub unsafe fn ob_get_patch_version(&self) -> ::std::os::raw::c_int {
+    pub(super) unsafe fn ob_get_patch_version(&self) -> ::std::os::raw::c_int {
         unsafe { (self.ob_get_patch_version)() }
     }
 }

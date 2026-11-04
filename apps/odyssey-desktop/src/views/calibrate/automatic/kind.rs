@@ -11,13 +11,13 @@ use odyssey_autocalib::display::{
     SuspectReason,
 };
 use odyssey_autocalib::session::{KnownSize, SizeSource};
-pub use odyssey_hub_common::config::DisplayKind;
+pub(crate) use odyssey_hub_common::config::DisplayKind;
 
 use super::settings::Entered;
 
 /// Where a size that anchors the measurement came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SizeOrigin {
+pub(crate) enum SizeOrigin {
     /// The display's own EDID.
     Panel,
     /// Typed in by the tech.
@@ -29,20 +29,20 @@ pub enum SizeOrigin {
 
 /// The physical size an EDID reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PanelSize {
+pub(crate) struct PanelSize {
     pub width_mm: u32,
     pub height_mm: u32,
     pub precision: SizePrecision,
 }
 
 impl PanelSize {
-    pub fn diagonal_in(&self) -> f64 {
+    pub(crate) fn diagonal_in(&self) -> f64 {
         f64::from(self.width_mm).hypot(f64::from(self.height_mm)) / 25.4
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FindingKind {
+pub(crate) enum FindingKind {
     /// Dimensions that passed every reliability check.
     Found(PanelSize),
     /// Dimensions were reported but should not anchor a measurement.
@@ -59,7 +59,7 @@ pub enum FindingKind {
 
 /// What looking up the selected monitor's EDID found.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Finding {
+pub(crate) struct Finding {
     pub kind: FindingKind,
     /// Where the data came from, in words, for the Details section.
     pub source: String,
@@ -100,7 +100,7 @@ fn source_words(source: &LookupSource) -> String {
 }
 
 impl Finding {
-    pub fn from_lookup(lookup: &DisplayLookup) -> Self {
+    pub(crate) fn from_lookup(lookup: &DisplayLookup) -> Self {
         let source = source_words(&lookup.source);
         let kind = match &lookup.edid {
             Some(info) => match (panel_size(info), info.reliability) {
@@ -122,7 +122,7 @@ impl Finding {
     }
 
     /// The simulated TV the demo camera looks at.
-    pub fn demo(width_m: f64, height_m: f64) -> Self {
+    pub(crate) fn demo(width_m: f64, height_m: f64) -> Self {
         let mm = |m: f64| (m * 1000.0).round() as u32;
         Self {
             kind: FindingKind::Found(PanelSize {
@@ -136,7 +136,7 @@ impl Finding {
     }
 
     /// The scale anchor the display offers, present only when it can be trusted.
-    pub fn known_size(&self) -> Option<KnownSize> {
+    pub(crate) fn known_size(&self) -> Option<KnownSize> {
         match &self.kind {
             FindingKind::Found(p) => Some(KnownSize::Dimensions {
                 width_m: f64::from(p.width_mm) / 1000.0,
@@ -147,7 +147,7 @@ impl Finding {
     }
 
     /// One sentence on what was found, for the flat-screen question.
-    pub fn headline(&self) -> String {
+    pub(crate) fn headline(&self) -> String {
         match &self.kind {
             FindingKind::Found(p) => {
                 let size = format!(
@@ -171,7 +171,7 @@ impl Finding {
     }
 
     /// What to do about it, when the size is not known.
-    pub fn advice(&self) -> Option<&'static str> {
+    pub(crate) fn advice(&self) -> Option<&'static str> {
         match self.kind {
             FindingKind::Found(_) => None,
             _ => Some(
@@ -183,19 +183,19 @@ impl Finding {
 
     /// A gentle pointer for displays that report nothing, which is typical of
     /// projectors. Never switches the choice by itself.
-    pub fn projector_aside(&self) -> Option<&'static str> {
+    pub(crate) fn projector_aside(&self) -> Option<&'static str> {
         matches!(self.kind, FindingKind::NoSize)
             .then_some("Projectors usually don't report a size. If this is a projector, choose Projector above.")
     }
 
     /// Whether the size is known, which decides whether "Not right?" or the
     /// plain size field is offered.
-    pub fn is_found(&self) -> bool {
+    pub(crate) fn is_found(&self) -> bool {
         matches!(self.kind, FindingKind::Found(_))
     }
 
     /// Technical lines for the Details section.
-    pub fn detail_lines(&self) -> Vec<String> {
+    pub(crate) fn detail_lines(&self) -> Vec<String> {
         let mut lines = vec![format!("Source: {}", self.source)];
         match &self.kind {
             FindingKind::Found(p) => {
@@ -214,10 +214,10 @@ impl Finding {
                 lines.push(format!("Not used because {}", suspect_words(*reason)));
             }
             FindingKind::NoSize => {
-                lines.push("The display's information holds no physical size.".into())
+                lines.push("The display's information holds no physical size.".into());
             }
             FindingKind::Missing(note) => {
-                lines.push(format!("Not used because {}", note_words(note)))
+                lines.push(format!("Not used because {}", note_words(note)));
             }
         }
         lines
@@ -275,13 +275,13 @@ fn note_words(note: &LookupNote) -> String {
 /// screen. The EDID deliberately does not move the default. A display that
 /// reports no size might be a projector or a TV with a stingy EDID, and a
 /// wrong silent guess changes how the measurement is anchored.
-pub fn default_kind(remembered: Option<DisplayKind>) -> DisplayKind {
+pub(crate) fn default_kind(remembered: Option<DisplayKind>) -> DisplayKind {
     remembered.unwrap_or(DisplayKind::Flat)
 }
 
 /// What the session is told about the screen's size.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SizePlan {
+pub(crate) struct SizePlan {
     pub known_size: Option<KnownSize>,
     pub origin: Option<SizeOrigin>,
     /// A size declared for a flat screen describes its panel, so the picture
@@ -297,7 +297,7 @@ pub struct SizePlan {
 /// which turns a typed width into a full size. `prefer_camera` skips the
 /// display's own size, which leaves a flat screen exactly as if its EDID had
 /// said nothing: the camera measures it, and the picture may be cropped.
-pub fn plan(
+pub(crate) fn plan(
     kind: DisplayKind,
     finding: Option<&Finding>,
     entered: Option<Entered>,
@@ -344,7 +344,7 @@ pub fn plan(
 }
 
 /// Where the size on the review screen came from, in words.
-pub fn source_label(source: SizeSource, origin: Option<SizeOrigin>) -> &'static str {
+pub(crate) fn source_label(source: SizeSource, origin: Option<SizeOrigin>) -> &'static str {
     match (source, origin) {
         (SizeSource::Measured, _) => "Measured by the camera",
         (_, Some(SizeOrigin::Entered)) => "From the size you entered",

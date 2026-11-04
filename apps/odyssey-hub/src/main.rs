@@ -33,7 +33,7 @@ async fn main() {
 
     // Wait for server task to complete
     let result = server_handle.await;
-    println!("Server exited with: {:?}", result);
+    println!("Server exited with: {result:?}");
 }
 
 async fn handle_server_status(mut receiver: tokio::sync::mpsc::UnboundedReceiver<Message>) {

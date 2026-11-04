@@ -31,7 +31,7 @@ use super::kind::SizeOrigin;
 /// Label of the size-agreement check, which the review also looks up.
 /// What to tell the tech when the camera and the declared size disagree: how
 /// far apart they are, and why that might be.
-pub fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>) -> String {
+pub(crate) fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>) -> String {
     let ratio = (check.ratio_w + check.ratio_h) / 2.0;
     let percent = ((ratio - 1.0).abs() * 100.0).round();
     let how_much = if percent < 1.0 {
@@ -53,23 +53,23 @@ pub fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>) -> St
     }
 }
 
-pub const SIZE_LABEL: &str = "Size agreement";
+pub(crate) const SIZE_LABEL: &str = "Size agreement";
 
-pub const RMSE_GOOD_M: f64 = 0.005;
-pub const RMSE_FAIR_M: f64 = 0.010;
-pub const DOTS_GOOD: f64 = 0.90;
-pub const DOTS_FAIR: f64 = 0.70;
+pub(crate) const RMSE_GOOD_M: f64 = 0.005;
+pub(crate) const RMSE_FAIR_M: f64 = 0.010;
+pub(crate) const DOTS_GOOD: f64 = 0.90;
+pub(crate) const DOTS_FAIR: f64 = 0.70;
 
 /// Ordered worst last, so `max` picks the overall verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Verdict {
+pub(crate) enum Verdict {
     Good,
     Fair,
     Poor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Check {
+pub(crate) struct Check {
     pub label: &'static str,
     /// The measured value, formatted for the Details list.
     pub value: String,
@@ -77,14 +77,14 @@ pub struct Check {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Quality {
+pub(crate) struct Quality {
     pub verdict: Verdict,
     pub checks: Vec<Check>,
 }
 
 /// The numbers a verdict is computed from.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Measures {
+pub(crate) struct Measures {
     pub plane_rmse_m: f64,
     pub dots_used: usize,
     pub dots_expected: usize,
@@ -118,7 +118,7 @@ fn grade_low(value: f64, good: f64, fair: f64) -> Verdict {
     }
 }
 
-pub fn assess(m: &Measures) -> Quality {
+pub(crate) fn assess(m: &Measures) -> Quality {
     let dots_share = if m.dots_expected == 0 {
         0.0
     } else {
@@ -161,7 +161,7 @@ pub fn assess(m: &Measures) -> Quality {
 
 impl Quality {
     /// The worst check, which the advice is about.
-    pub fn weakest(&self) -> &Check {
+    pub(crate) fn weakest(&self) -> &Check {
         // `max_by_key` keeps the last of equal checks, so scan for the first
         // worst one to keep the advice stable.
         let worst = self
@@ -177,7 +177,7 @@ impl Quality {
     }
 
     /// What to do next, in words for the person holding the camera.
-    pub fn advice(&self) -> &'static str {
+    pub(crate) fn advice(&self) -> &'static str {
         match self.verdict {
             Verdict::Good => "The measurement is accurate. Save it to start using this screen.",
             Verdict::Fair => match self.weakest().label {

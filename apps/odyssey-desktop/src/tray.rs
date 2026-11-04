@@ -32,7 +32,7 @@ fn show_window() {
 ///
 /// Must be called from a component so the hooks run inside the Dioxus event
 /// loop; the main App component is the natural place.
-pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) {
+pub(crate) fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) {
     platform::use_tray(cancellation_token);
 }
 
@@ -45,7 +45,7 @@ pub fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) {
 mod platform {
     use dioxus::prelude::*;
     use ksni::menu::StandardItem;
-    use ksni::{Icon, MenuItem, Tray, TrayMethods};
+    use ksni::{Icon, MenuItem, Tray, TrayMethods as _};
     use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
     use tokio_util::sync::CancellationToken;
 
@@ -101,7 +101,7 @@ mod platform {
     /// decoder hands back.
     fn icon_from(image: TrayImage) -> Icon {
         let mut data = Vec::with_capacity(image.rgba.len());
-        for pixel in image.rgba.chunks_exact(4) {
+        for pixel in image.rgba.as_chunks::<4>().0 {
             data.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
         }
         Icon {
@@ -111,7 +111,7 @@ mod platform {
         }
     }
 
-    pub fn use_tray(cancellation_token: CancellationToken) {
+    pub(super) fn use_tray(cancellation_token: CancellationToken) {
         use_future(move || {
             let cancellation_token = cancellation_token.clone();
             async move {

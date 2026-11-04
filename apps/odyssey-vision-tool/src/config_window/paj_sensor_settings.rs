@@ -4,8 +4,8 @@ use anyhow::Result;
 use iui::UI;
 use iui::controls::Form;
 use leptos_reactive::{
-    ReadSignal, RwSignal, SignalGetUntracked, SignalSet, SignalUpdate, SignalWith,
-    SignalWithUntracked, create_rw_signal,
+    ReadSignal, RwSignal, SignalGetUntracked as _, SignalSet as _, SignalUpdate as _,
+    SignalWith as _, SignalWithUntracked as _, create_rw_signal,
 };
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::Port;
@@ -13,7 +13,7 @@ use odyssey_usb::packets::vm::Port;
 use super::retry;
 
 #[derive(Copy, Clone)]
-pub struct PajSensorSettingsForm {
+pub(super) struct PajSensorSettingsForm {
     port: Port,
     pid: RwSignal<String>,
     resolution_x: RwSignal<String>,
@@ -32,8 +32,8 @@ pub struct PajSensorSettingsForm {
 }
 
 impl PajSensorSettingsForm {
-    pub fn new(ui: &UI, device: ReadSignal<Option<VmDevice>>, port: Port) -> (Form, Self) {
-        let connected = move || device.with(|d| d.is_some());
+    pub(super) fn new(ui: &UI, device: ReadSignal<Option<VmDevice>>, port: Port) -> (Form, Self) {
+        let connected = move || device.with(Option::is_some);
         let pid = create_rw_signal(String::new());
         let resolution_x = create_rw_signal(String::new());
         let resolution_y = create_rw_signal(String::new());
@@ -50,15 +50,15 @@ impl PajSensorSettingsForm {
 
         let exposure_time_ms = move || match exposure_time.with(|s| s.parse::<u16>()) {
             Ok(n) => format!("{:.4}", f64::from(n) * 200.0 / 1e6),
-            Err(_) => format!("???"),
+            Err(_) => "???".to_string(),
         };
         let frame_period_ms = move || match frame_period.with(|s| s.parse::<u32>()) {
             Ok(n) => format!("{:.4}", f64::from(n) / 1e4),
-            Err(_) => format!("???"),
+            Err(_) => "???".to_string(),
         };
         let fps = move || match frame_period.with(|s| s.parse::<u32>()) {
             Ok(n) => format!("{:.2}", 1e7 / f64::from(n)),
-            Err(_) => format!("???"),
+            Err(_) => "???".to_string(),
         };
         crate::layout! { &ui,
             let form = Form(padded: true) {
@@ -94,7 +94,7 @@ impl PajSensorSettingsForm {
             }
         }
         for (label, _) in &GAIN_TABLE {
-            gain_combobox.append(&ui, label);
+            gain_combobox.append(ui, label);
         }
         (
             form,
@@ -117,7 +117,7 @@ impl PajSensorSettingsForm {
         )
     }
 
-    pub async fn load_from_device(&self, device: &VmDevice) -> Result<()> {
+    pub(super) async fn load_from_device(&self, device: &VmDevice) -> Result<()> {
         self.pid.set("Connecting...".into());
         let timeout = Duration::from_millis(2000);
         let pid = retry(|| device.product_id(self.port), timeout, 3)
@@ -177,16 +177,15 @@ impl PajSensorSettingsForm {
 
         self.operation_mode.set(i32::from(operation_mode));
         self.frame_subtraction.set(i32::from(frame_subtraction));
-        self.gain
-            .set(i32::from(Gain::index_from_reg(gain_1, gain_2)));
+        self.gain.set(Gain::index_from_reg(gain_1, gain_2));
         Ok(())
     }
 
-    pub fn validate(&self, errors: &mut Vec<String>) {
+    pub(super) fn validate(&self, errors: &mut Vec<String>) {
         macro_rules! validators {
             ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
                 $(
-                    #[allow(unused_variables)]
+                    #[expect(unused_variables)]
                     let $reg = self.$reg.with_untracked(|s| s.parse::<$ty>());
                     match &$reg {
                         Ok(_) => (),
@@ -199,7 +198,7 @@ impl PajSensorSettingsForm {
                 $(
                     // SAFETY: all the values are already checked for errors. Can convert to
                     // unwrap_unchecked if necessary.
-                    #[allow(unused_variables)]
+                    #[expect(unused_variables)]
                     let $reg = $reg.unwrap();
                 )*
                 $(
@@ -229,7 +228,7 @@ impl PajSensorSettingsForm {
     }
 
     /// Make sure to call `validate()` before calling this method.
-    pub async fn apply(&self, device: &VmDevice) -> Result<()> {
+    pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
         let gain = usize::try_from(self.gain.get_untracked()).unwrap();
         let gain = GAIN_TABLE[gain].1;
 
@@ -291,7 +290,7 @@ impl PajSensorSettingsForm {
         Ok(())
     }
 
-    pub fn clear(&self) {
+    pub(super) fn clear(&self) {
         self.pid.update(String::clear);
         self.resolution_x.update(String::clear);
         self.resolution_y.update(String::clear);
@@ -308,7 +307,7 @@ impl PajSensorSettingsForm {
         self.gain.set(0);
     }
 
-    pub fn load_defaults(&self) {
+    pub(super) fn load_defaults(&self) {
         self.resolution_x.update(|s| s.replace_range(.., "4095"));
         self.resolution_y.update(|s| s.replace_range(.., "4095"));
         self.frame_period.update(|s| s.replace_range(.., "49780"));
@@ -327,35 +326,33 @@ impl PajSensorSettingsForm {
                 self.area_threshold_min
                     .update(|s| s.replace_range(.., "10"));
                 self.exposure_time.update(|s| s.replace_range(.., "8192"));
-                self.gain.set(i32::from(Gain::index_from_reg(16, 0)));
+                self.gain.set(Gain::index_from_reg(16, 0));
             }
             Port::Wf => {
                 self.area_threshold_min.update(|s| s.replace_range(.., "5"));
                 self.exposure_time.update(|s| s.replace_range(.., "11365"));
-                self.gain.set(i32::from(Gain::index_from_reg(8, 3)));
+                self.gain.set(Gain::index_from_reg(8, 3));
             }
         }
     }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Gain {
+pub(super) struct Gain {
     b_ggh: u8,
     b_global: u8,
 }
 
 impl Gain {
     const fn new(b_global: u8, b_ggh: u8) -> Self {
-        Self { b_global, b_ggh }
+        Self { b_ggh, b_global }
     }
 }
 
 impl Gain {
     fn index_from_reg(b_global: u8, mut b_ggh: u8) -> i32 {
         // change b_ggh from 0,2,3 to 0,1,2
-        if b_ggh > 0 {
-            b_ggh -= 1;
-        }
+        b_ggh = b_ggh.saturating_sub(1);
         let b_ggh = i32::from(b_ggh);
         let b_global = i32::from(b_global);
         b_ggh * 16 + b_global
@@ -366,12 +363,12 @@ impl Gain {
 
 const fn n_to_bstr(n: usize) -> [u8; 6] {
     [
-        '0' as u8 + (n / 10000) as u8,
-        '.' as u8 as u8,
-        '0' as u8 + (n / 1000 % 10) as u8,
-        '0' as u8 + (n / 100 % 10) as u8,
-        '0' as u8 + (n / 10 % 10) as u8,
-        '0' as u8 + (n % 10) as u8,
+        b'0' + (n / 10000) as u8,
+        b'.',
+        b'0' + (n / 1000 % 10) as u8,
+        b'0' + (n / 100 % 10) as u8,
+        b'0' + (n / 10 % 10) as u8,
+        b'0' + (n % 10) as u8,
     ]
 }
 
@@ -382,12 +379,12 @@ const fn n_to_bstr(n: usize) -> [u8; 6] {
 //         print(f'    ("{value:.4f}", Gain::new(0x{i:02x}, 0x{j:02x})),')
 // ];
 
-pub static GAIN_TABLE: [(&str, Gain); 16 * 3 + 1] = {
+pub(super) static GAIN_TABLE: [(&str, Gain); 16 * 3 + 1] = {
     const BACKING: [[u8; 6]; 16 * 3] = {
         let mut v = [[0; 6]; 16 * 3];
         let mut i = 0;
         while i < 16 {
-            v[i] = n_to_bstr((10000 + i * 10000 / 16) * 1);
+            v[i] = n_to_bstr(10000 + i * 10000 / 16);
             v[i + 16] = n_to_bstr((10000 + i * 10000 / 16) * 2);
             v[i + 32] = n_to_bstr((10000 + i * 10000 / 16) * 4);
             i += 1;

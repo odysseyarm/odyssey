@@ -5,7 +5,7 @@ use iui::controls::{Area, AreaDrawParams, AreaHandler};
 use parking_lot::Mutex;
 
 use crate::mot_runner::MotRunner;
-use crate::{CloneButShorter, tracking_canvas_helpers};
+use crate::{CloneButShorter as _, tracking_canvas_helpers};
 
 pub struct RunCanvas {
     pub ctx: UI,

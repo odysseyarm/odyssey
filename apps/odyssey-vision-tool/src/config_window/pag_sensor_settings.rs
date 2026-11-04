@@ -4,8 +4,8 @@ use anyhow::Result;
 use iui::UI;
 use iui::controls::Form;
 use leptos_reactive::{
-    ReadSignal, RwSignal, SignalGet, SignalGetUntracked, SignalSet, SignalUpdate, SignalWith,
-    create_rw_signal,
+    ReadSignal, RwSignal, SignalGet as _, SignalGetUntracked as _, SignalSet as _,
+    SignalUpdate as _, SignalWith as _, create_rw_signal,
 };
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::Port;
@@ -13,7 +13,7 @@ use odyssey_usb::packets::vm::Port;
 use super::retry;
 
 #[derive(Copy, Clone)]
-pub struct PagSensorSettingsForm {
+pub(super) struct PagSensorSettingsForm {
     cid: RwSignal<String>,
     fps: RwSignal<i32>,
     exposure_us: RwSignal<i32>,
@@ -29,8 +29,8 @@ pub struct PagSensorSettingsForm {
 }
 
 impl PagSensorSettingsForm {
-    pub fn new(ui: &UI, device: ReadSignal<Option<VmDevice>>) -> (Form, Self) {
-        let connected = move || device.with(|d| d.is_some());
+    pub(super) fn new(ui: &UI, device: ReadSignal<Option<VmDevice>>) -> (Form, Self) {
+        let connected = move || device.with(Option::is_some);
         let cid = create_rw_signal(String::new());
         let fps = create_rw_signal(0);
         let exposure_us = create_rw_signal(0);
@@ -75,7 +75,7 @@ impl PagSensorSettingsForm {
 
         let ui_ctx = ui.async_context();
 
-        img_mode_btn.on_clicked(&ui, move |_| {
+        img_mode_btn.on_clicked(ui, move |_| {
             let timeout = Duration::from_millis(2000);
             if let Some(device) = device.get_untracked() {
                 ui_ctx.spawn(async move {
@@ -108,7 +108,7 @@ impl PagSensorSettingsForm {
         )
     }
 
-    pub async fn load_from_device(&self, device: &VmDevice) -> Result<()> {
+    pub(super) async fn load_from_device(&self, device: &VmDevice) -> Result<()> {
         self.cid.set("Connecting...".into());
         let timeout = Duration::from_millis(2000);
 
@@ -119,7 +119,7 @@ impl PagSensorSettingsForm {
             3,
         )
         .await
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .and_then(|p| match p {
             odyssey_usb::packets::vm::Props::ProductId(id) => {
                 odyssey_usb::device::ProductId::from_u16(id)
@@ -205,10 +205,8 @@ impl PagSensorSettingsForm {
             .set(i32::from(u16::from(expo & !(1 << 7)) * 100));
         self.gain.set(i32::from(gain));
 
-        self.area_threshold_min
-            .set(i32::from(u16::from(area_threshold_min)));
-        self.area_threshold_max
-            .set(i32::from(u16::from(area_threshold_max)));
+        self.area_threshold_min.set(i32::from(area_threshold_min));
+        self.area_threshold_max.set(i32::from(area_threshold_max));
         self.light_threshold.set(i32::from(light_threshold));
 
         self.circle_r_min.set(i32::from(circle_r_min));
@@ -218,7 +216,7 @@ impl PagSensorSettingsForm {
         Ok(())
     }
 
-    pub fn validate(&self, errors: &mut Vec<String>) {
+    pub(super) fn validate(&self, errors: &mut Vec<String>) {
         macro_rules! validators {
             ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
                 $(
@@ -265,7 +263,7 @@ impl PagSensorSettingsForm {
     }
 
     /// Make sure to call `validate()` before calling this method.
-    pub async fn apply(&self, device: &VmDevice) -> Result<()> {
+    pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
         // Check product ID to determine PAG variant (PAG7665QN vs PAG7661QN)
         let product_id = device
             .read_prop(odyssey_usb::packets::vm::PropKind::ProductId)
@@ -288,7 +286,7 @@ impl PagSensorSettingsForm {
         assert!(exposure_us <= 12700);
         // TODO
         let led_always_on = true;
-        let exposure = (exposure_us / 100) as u8 | ((led_always_on as u8) << 7);
+        let exposure = (exposure_us / 100) as u8 | (u8::from(led_always_on) << 7);
 
         let area_threshold_min = u16::try_from(self.area_threshold_min.get_untracked()).unwrap();
         let area_threshold_max = u16::try_from(self.area_threshold_max.get_untracked()).unwrap();
@@ -330,7 +328,7 @@ impl PagSensorSettingsForm {
         Ok(())
     }
 
-    pub fn clear(&self) {
+    pub(super) fn clear(&self) {
         self.cid.update(String::clear);
         self.fps.set(0);
         self.exposure_us.set(0);
@@ -346,7 +344,7 @@ impl PagSensorSettingsForm {
         self.circle_k_max.set(0);
     }
 
-    pub fn load_defaults(&self) {
+    pub(super) fn load_defaults(&self) {
         self.fps.set(180);
         self.exposure_us.set(2000);
         self.gain.set(2);

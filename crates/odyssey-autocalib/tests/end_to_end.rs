@@ -2,7 +2,7 @@
 //! result with the scene's ground truth.
 
 use nalgebra::{Matrix3, Point2};
-use odyssey_autocalib::camera::{CameraBackend, CaptureSettings};
+use odyssey_autocalib::camera::{CameraBackend as _, CaptureSettings};
 use odyssey_autocalib::markers::MarkerError;
 use odyssey_autocalib::session::{
     Calibration, EdgeCheck, Hint, KnownSize, MARKER_FRAMES, MarkerHint, Session, SessionError,

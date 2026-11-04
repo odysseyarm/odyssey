@@ -22,7 +22,7 @@ macro_rules! artwork {
 
 /// One of the printable boards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Board {
+pub(crate) enum Board {
     /// US Letter paper, for an office printer.
     Letter,
     /// A4 paper, for an office printer.
@@ -34,9 +34,9 @@ pub enum Board {
 }
 
 impl Board {
-    pub const ALL: [Board; 4] = [Board::Letter, Board::A4, Board::Rigid, Board::RigidLarge];
+    pub(crate) const ALL: [Self; 4] = [Self::Letter, Self::A4, Self::Rigid, Self::RigidLarge];
 
-    pub fn file_name(self) -> &'static str {
+    pub(crate) fn file_name(self) -> &'static str {
         match self {
             Self::Letter => "scale-board-paper-letter.pdf",
             Self::A4 => "scale-board-paper-a4.pdf",
@@ -45,7 +45,7 @@ impl Board {
         }
     }
 
-    pub fn bytes(self) -> &'static [u8] {
+    pub(crate) fn bytes(self) -> &'static [u8] {
         match self {
             Self::Letter => artwork!("scale-board-paper-letter.pdf"),
             Self::A4 => artwork!("scale-board-paper-a4.pdf"),
@@ -56,7 +56,7 @@ impl Board {
 
     /// Distance between dot centers, millimeters, as designed. A print can
     /// differ by the printer's own scaling; see the guide's scale check.
-    pub fn pitch_mm(self) -> f64 {
+    pub(crate) fn pitch_mm(self) -> f64 {
         match self {
             Self::RigidLarge => 80.0,
             _ => 40.0,
@@ -64,18 +64,18 @@ impl Board {
     }
 
     /// Length of the printed scale bar, millimeters, as designed.
-    pub fn bar_mm(self) -> f64 {
+    pub(crate) fn bar_mm(self) -> f64 {
         self.pitch_mm() * 5.0
     }
 }
 
 /// Where the print files are written.
-pub fn print_dir() -> PathBuf {
+pub(crate) fn print_dir() -> PathBuf {
     std::env::temp_dir().join("odyssey-scale-board")
 }
 
 /// Writes `board`'s PDF into `dir`, creating it, and returns the file's path.
-pub fn save(board: Board, dir: &Path) -> io::Result<PathBuf> {
+pub(crate) fn save(board: Board, dir: &Path) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(board.file_name());
     std::fs::write(&path, board.bytes())?;
@@ -85,7 +85,7 @@ pub fn save(board: Board, dir: &Path) -> io::Result<PathBuf> {
 /// Writes `board` to [`print_dir`] and opens it in the system's PDF viewer.
 /// On failure to open, the error says where the file is so it can be opened by
 /// hand.
-pub fn save_and_open(board: Board) -> Result<PathBuf, String> {
+pub(crate) fn save_and_open(board: Board) -> Result<PathBuf, String> {
     let path = save(board, &print_dir()).map_err(|e| format!("Couldn't save the file: {e}."))?;
     open(&path).map_err(|e| {
         format!(
@@ -98,7 +98,7 @@ pub fn save_and_open(board: Board) -> Result<PathBuf, String> {
 
 /// Asks where to save `board`'s PDF and writes it there. `Ok(None)` means the
 /// dialog was cancelled.
-pub async fn save_copy(board: Board) -> Result<Option<PathBuf>, String> {
+pub(crate) async fn save_copy(board: Board) -> Result<Option<PathBuf>, String> {
     let Some(target) = rfd::AsyncFileDialog::new()
         .set_file_name(board.file_name())
         .add_filter("PDF", &["pdf"])

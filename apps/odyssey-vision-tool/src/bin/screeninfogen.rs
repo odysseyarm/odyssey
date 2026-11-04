@@ -117,7 +117,7 @@ pub fn main() {
             Some(screen_info)
         }) {
         Some(screen_info) => {
-            println!("Screen info saved to {:?}", screen_info);
+            println!("Screen info saved to {screen_info:?}");
         }
         None => {
             println!("Failed to save screen info");
@@ -141,7 +141,7 @@ pub fn main() {
             Some(screen_calibration)
         }) {
         Some(screen_calibration) => {
-            println!("Screen calibration saved to {:?}", screen_calibration);
+            println!("Screen calibration saved to {screen_calibration:?}");
         }
         None => {
             println!("Failed to save screen calibration");

@@ -49,7 +49,7 @@ use crate::{Route, ServerReady};
 
 /// How long the screen must read "ready" before Next lights up, so a hint that
 /// flickers at the edge of acceptable never enables a measurement.
-pub const READY_HOLD: Duration = Duration::from_millis(400);
+pub(crate) const READY_HOLD: Duration = Duration::from_millis(400);
 /// Seconds counted down before the pattern appears when it covers the wizard.
 const COUNTDOWN_SECONDS: u32 = 5;
 /// How long the countdown flow waits for the camera to settle on the pattern
@@ -58,7 +58,7 @@ const SETTLE_TIMEOUT: Duration = Duration::from_secs(8);
 const CAMERA_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Stage {
+pub(crate) enum Stage {
     Setup,
     Position,
     Measuring,
@@ -70,7 +70,8 @@ pub enum Stage {
 }
 
 impl Stage {
-    pub const STEPS: [&'static str; 5] = ["Setup", "Position", "Measure", "Markers", "Review"];
+    pub(crate) const STEPS: [&'static str; 5] =
+        ["Setup", "Position", "Measure", "Markers", "Review"];
 
     /// Index into [`Self::STEPS`]; `Saved` is one past the end so every step
     /// shows as done.
@@ -88,7 +89,7 @@ impl Stage {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum CameraList {
+pub(crate) enum CameraList {
     Searching,
     Found(Vec<CameraInfo>),
     /// The camera library is not usable; Setup explains why and what to do.
@@ -98,7 +99,7 @@ pub enum CameraList {
 
 /// Where a saved calibration went.
 #[derive(Clone, PartialEq, Debug)]
-pub struct SavedInfo {
+pub(crate) struct SavedInfo {
     pub screen_id: u8,
     pub path: String,
 }
@@ -106,7 +107,7 @@ pub struct SavedInfo {
 /// The tape and card helper while it is open. The monitor shows its line or
 /// card; the controls are in Setup, unless the picture would cover them.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Helper {
+pub(crate) struct Helper {
     /// The monitor showing the line or card.
     pub monitor: MonitorKey,
     pub method: Method,
@@ -138,7 +139,7 @@ impl Helper {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub struct Wizard {
+pub(crate) struct Wizard {
     pub demo: bool,
     pub monitors: MonitorSelection,
     pub stage: Signal<Stage>,
@@ -215,7 +216,7 @@ pub struct Wizard {
 
 /// Creates the wizard's state, camera thread and event pump. `args` are the
 /// command-line answers, consumed by the first wizard to open.
-pub fn use_wizard() -> Wizard {
+pub(crate) fn use_wizard() -> Wizard {
     let args = use_hook(|| cli::take_pending_calibrate().unwrap_or_default());
     let had_args = use_hook(|| args.clone() != CalibrateArgs::default());
     let demo = args.demo;
@@ -437,10 +438,10 @@ pub fn use_wizard() -> Wizard {
                 event: WindowEvent::CloseRequested,
                 ..
             } = event
+                && *window_id == own_id
+                && *wizard.stage.peek() != Stage::Setup
             {
-                if *window_id == own_id && *wizard.stage.peek() != Stage::Setup {
-                    wizard.back_to_setup();
-                }
+                wizard.back_to_setup();
             }
         }
     });
@@ -453,11 +454,11 @@ impl Wizard {
         self.worker.peek().send(command);
     }
 
-    pub fn note(mut self, text: String) {
+    pub(crate) fn note(mut self, text: String) {
         self.notes.write().push(text);
     }
 
-    pub fn set_stage(mut self, stage: Stage) {
+    pub(crate) fn set_stage(mut self, stage: Stage) {
         *self.stage.write() = stage;
         if stage != Stage::Setup {
             self.cancel_helper();
@@ -469,7 +470,7 @@ impl Wizard {
 
     // ------------------------------------------------------------- Setup --
 
-    pub fn selected_monitor(self) -> Option<MonitorKey> {
+    pub(crate) fn selected_monitor(self) -> Option<MonitorKey> {
         let monitors = self.monitors.monitors();
         monitors
             .get(self.monitors.selected()?)
@@ -477,7 +478,7 @@ impl Wizard {
     }
 
     /// The screen id Setup shows as chosen.
-    pub fn screen_id(self) -> u8 {
+    pub(crate) fn screen_id(self) -> u8 {
         if let Some(chosen) = *self.screen_choice.read() {
             return chosen;
         }
@@ -489,7 +490,7 @@ impl Wizard {
 
     /// The camera Setup shows as chosen: the picked one if it is still
     /// attached, otherwise the only one there is.
-    pub fn camera(self) -> Option<CameraInfo> {
+    pub(crate) fn camera(self) -> Option<CameraInfo> {
         let CameraList::Found(list) = &*self.cameras.read() else {
             return None;
         };
@@ -506,7 +507,7 @@ impl Wizard {
 
     /// The kind of display Setup shows as chosen: the tech's answer, else the
     /// one used last time on this monitor, else a flat screen.
-    pub fn kind(self) -> DisplayKind {
+    pub(crate) fn kind(self) -> DisplayKind {
         if let Some(chosen) = *self.kind_choice.read() {
             return chosen;
         }
@@ -518,7 +519,7 @@ impl Wizard {
 
     /// Answers "What are you calibrating?". The size typed for the other kind
     /// no longer applies.
-    pub fn set_kind(mut self, kind: DisplayKind) {
+    pub(crate) fn set_kind(mut self, kind: DisplayKind) {
         if self.kind() != kind {
             self.size_text.write().clear();
             *self.manual_size.write() = false;
@@ -529,7 +530,7 @@ impl Wizard {
 
     /// The field the size box takes: flat screens are sold by diagonal, a
     /// projected picture is also measured by width.
-    pub fn field(self) -> SizeField {
+    pub(crate) fn field(self) -> SizeField {
         match self.kind() {
             DisplayKind::Flat => SizeField::Diagonal,
             DisplayKind::Projector => *self.size_field.read(),
@@ -537,18 +538,18 @@ impl Wizard {
     }
 
     /// The size the tech typed, if any.
-    pub fn entered(self) -> Result<Option<Entered>, SizeError> {
+    pub(crate) fn entered(self) -> Result<Option<Entered>, SizeError> {
         parse_entered(&self.size_text.read(), self.field())
     }
 
     /// Whether flat screens are sized by the camera rather than by what the
     /// display reports. A remembered setting, off until someone turns it on.
-    pub fn prefer_camera_size(self) -> bool {
+    pub(crate) fn prefer_camera_size(self) -> bool {
         self.ui_state.read().prefer_camera_size
     }
 
     /// Turns the camera-size preference on or off and remembers it.
-    pub fn set_prefer_camera_size(mut self, on: bool) {
+    pub(crate) fn set_prefer_camera_size(mut self, on: bool) {
         self.ui_state.write().prefer_camera_size = on;
         spawn(async move {
             // Read again so anything else saved in the meantime is not overwritten.
@@ -561,7 +562,7 @@ impl Wizard {
     }
 
     /// The size and edge rule the session will get for the current answers.
-    pub fn size_plan(self) -> Option<SizePlan> {
+    pub(crate) fn size_plan(self) -> Option<SizePlan> {
         let aspect = self.aspect()?;
         let entered = self.entered().ok().flatten();
         Some(kind::plan(
@@ -577,7 +578,7 @@ impl Wizard {
     // ---------------------------------------------------- Tape and card --
 
     /// The size measured by hand for the selected monitor, if any.
-    pub fn reference(self) -> Option<Reference> {
+    pub(crate) fn reference(self) -> Option<Reference> {
         let key = self.selected_monitor()?;
         self.reference
             .read()
@@ -595,7 +596,7 @@ impl Wizard {
     /// Width and height in meters that a flat screen reports for itself, when
     /// it reported a usable size. A projector's own report says nothing true
     /// about the picture.
-    pub fn panel_size_m(self) -> Option<[f64; 2]> {
+    pub(crate) fn panel_size_m(self) -> Option<[f64; 2]> {
         if self.kind() != DisplayKind::Flat {
             return None;
         }
@@ -614,7 +615,7 @@ impl Wizard {
     /// the controls stay in Setup. If the picture would cover this window, as on a
     /// single screen, it is shown on request instead (`show_helper_picture`), over
     /// this window.
-    pub fn open_helper(mut self, method: Method) {
+    pub(crate) fn open_helper(mut self, method: Method) {
         *self.helper_problem.write() = None;
         let Some(key) = self.selected_monitor() else {
             *self.helper_problem.write() =
@@ -649,7 +650,7 @@ impl Wizard {
     /// is not minimized: a minimized window's page stops running, and the keys
     /// that resize the frame and the close that brings it back both arrive here.
     /// Closing the picture (Escape or Enter) shows the window again.
-    pub fn show_helper_picture(mut self) {
+    pub(crate) fn show_helper_picture(mut self) {
         let (Some(key), Some(helper)) = (self.selected_monitor(), self.helper.peek().clone())
         else {
             return;
@@ -671,7 +672,7 @@ impl Wizard {
     }
 
     /// Switches the open helper between the tape and the card.
-    pub fn set_helper_method(mut self, method: Method) {
+    pub(crate) fn set_helper_method(mut self, method: Method) {
         let Some(key) = self.selected_monitor() else {
             return;
         };
@@ -687,7 +688,7 @@ impl Wizard {
     }
 
     /// Resizes the card frame, within its bounds.
-    pub fn set_card_px(mut self, px: f64) {
+    pub(crate) fn set_card_px(mut self, px: f64) {
         let Some(key) = self.selected_monitor() else {
             return;
         };
@@ -704,7 +705,7 @@ impl Wizard {
     }
 
     /// Records what was read off the tape.
-    pub fn set_tape(mut self, text: String, unit: Unit) {
+    pub(crate) fn set_tape(mut self, text: String, unit: Unit) {
         if let Some(helper) = self.helper.write().as_mut() {
             helper.tape_text = text;
             helper.tape_unit = unit;
@@ -712,7 +713,7 @@ impl Wizard {
     }
 
     /// What the helper gives right now: nothing when it is closed.
-    pub fn helper_reading(self) -> Option<Result<Reference, ReferenceError>> {
+    pub(crate) fn helper_reading(self) -> Option<Result<Reference, ReferenceError>> {
         let key = self.selected_monitor()?;
         let helper = self.helper.read();
         let helper = helper.as_ref()?;
@@ -726,7 +727,7 @@ impl Wizard {
     }
 
     /// Takes the helper's reading as the screen's size.
-    pub fn apply_helper(mut self) {
+    pub(crate) fn apply_helper(mut self) {
         let (Some(Ok(reading)), Some(key)) = (self.helper_reading(), self.selected_monitor())
         else {
             return;
@@ -739,7 +740,7 @@ impl Wizard {
     }
 
     /// Closes the helper and takes its picture down.
-    pub fn cancel_helper(mut self) {
+    pub(crate) fn cancel_helper(mut self) {
         if self.helper.peek().is_none() {
             return;
         }
@@ -747,18 +748,18 @@ impl Wizard {
         self.close_pattern();
     }
 
-    pub fn clear_reference(mut self) {
+    pub(crate) fn clear_reference(mut self) {
         *self.reference.write() = None;
     }
 
     /// From the review, when the camera and the declared size disagree: back
     /// to Setup with the tape ready, to settle which one is right.
-    pub fn check_by_hand(self) {
+    pub(crate) fn check_by_hand(self) {
         self.back_to_setup();
         self.open_helper(Method::Tape);
     }
 
-    pub fn can_continue(self) -> bool {
+    pub(crate) fn can_continue(self) -> bool {
         self.selected_monitor().is_some()
             && self.camera().is_some()
             && self.entered().is_ok()
@@ -766,7 +767,7 @@ impl Wizard {
             && self.finding.read().is_some()
     }
 
-    pub async fn refresh_saved_screens(mut self) {
+    pub(crate) async fn refresh_saved_screens(mut self) {
         let found = tokio::task::spawn_blocking(|| {
             config::screens_dir()
                 .map(|dir| saved_screens(&dir))
@@ -779,7 +780,7 @@ impl Wizard {
 
     /// Asks the camera thread for the attached cameras, unless it is still
     /// answering the last request.
-    pub fn request_camera_list(mut self) {
+    pub(crate) fn request_camera_list(mut self) {
         if !*self.list_pending.peek() {
             *self.list_pending.write() = true;
             self.send(Command::ListCameras);
@@ -788,7 +789,7 @@ impl Wizard {
 
     /// Looks for cameras while Setup is on screen. The returned future ends
     /// with the component that runs it, which is what stops the polling.
-    pub async fn poll_cameras(self) {
+    pub(crate) async fn poll_cameras(self) {
         loop {
             self.request_camera_list();
             tokio::time::sleep(CAMERA_POLL_INTERVAL).await;
@@ -840,7 +841,7 @@ impl Wizard {
     }
 
     /// Restarts the stream with the current exposure settings.
-    pub fn restart_camera(self) {
+    pub(crate) fn restart_camera(self) {
         let pattern_visible = self.pattern.peek().is_some() || *self.hidden.peek();
         self.start_session(pattern_visible);
     }
@@ -874,7 +875,7 @@ impl Wizard {
     /// Enters Position: the pattern goes up on the target monitor and the
     /// camera starts. If that monitor is the one the wizard is on, the pattern
     /// would hide the wizard, so the pattern waits for the countdown instead.
-    pub fn begin_position(mut self) {
+    pub(crate) fn begin_position(mut self) {
         let Some(key) = self.selected_monitor() else {
             return;
         };
@@ -899,14 +900,14 @@ impl Wizard {
     }
 
     /// Whether Next is available: the pattern has read "ready" long enough.
-    pub fn position_ready(self) -> bool {
+    pub(crate) fn position_ready(self) -> bool {
         self.preview
             .read()
             .as_ref()
             .is_some_and(|p| p.ready_for >= READY_HOLD)
     }
 
-    pub fn measure_screen(mut self) {
+    pub(crate) fn measure_screen(mut self) {
         *self.progress.write() = None;
         self.set_stage(Stage::Measuring);
         self.send(Command::MeasureScreen);
@@ -917,7 +918,7 @@ impl Wizard {
     /// the wizard behind the picture until the measurement is done. The window
     /// is not minimized: a minimized window's page stops running, and this flow
     /// runs in it.
-    pub fn start_countdown(mut self) {
+    pub(crate) fn start_countdown(mut self) {
         self.cancel_flow();
         let task = spawn(async move {
             *self.hidden.write() = true;
@@ -961,24 +962,24 @@ impl Wizard {
 
     // ----------------------------------------------------------- Markers --
 
-    pub fn measure_markers(mut self) {
+    pub(crate) fn measure_markers(mut self) {
         *self.progress.write() = None;
         self.set_stage(Stage::MeasuringMarkers);
         self.send(Command::MeasureMarkers);
     }
 
-    pub fn set_ir_exposure(mut self, us: u32) {
+    pub(crate) fn set_ir_exposure(mut self, us: u32) {
         *self.ir_exposure.write() =
             us.clamp(*IR_EXPOSURE_RANGE_US.start(), *IR_EXPOSURE_RANGE_US.end());
     }
 
     /// Sends the chosen infrared exposure to the camera. Each change costs the
     /// camera a few frames to settle, so callers apply it once the slider rests.
-    pub fn apply_ir_exposure(self) {
+    pub(crate) fn apply_ir_exposure(self) {
         self.send(Command::SetIrExposure(*self.ir_exposure.peek()));
     }
 
-    pub fn set_color_exposure(mut self, us: u32) {
+    pub(crate) fn set_color_exposure(mut self, us: u32) {
         *self.color_exposure.write() = us.clamp(
             *COLOR_EXPOSURE_RANGE_US.start(),
             *COLOR_EXPOSURE_RANGE_US.end(),
@@ -1010,7 +1011,7 @@ impl Wizard {
         *self.restarting.write() = false;
     }
 
-    pub fn back_to_setup(mut self) {
+    pub(crate) fn back_to_setup(mut self) {
         self.release_hardware();
         // Ignore anything the stopped session still reports.
         *self.session.write() += 1;
@@ -1027,7 +1028,7 @@ impl Wizard {
 
     /// Calibrate another screen: back to Setup with the screen number chosen afresh and
     /// the size cleared, since it described the last screen.
-    pub fn calibrate_another(mut self) {
+    pub(crate) fn calibrate_another(mut self) {
         *self.screen_choice.write() = None;
         self.size_text.write().clear();
         *self.manual_size.write() = false;
@@ -1035,13 +1036,13 @@ impl Wizard {
     }
 
     /// Leaves the wizard for the Calibrate page.
-    pub fn exit(self) {
+    pub(crate) fn exit(self) {
         self.release_hardware();
         navigator().push(Route::Calibrate {});
     }
 
     /// Zero lives on Home.
-    pub fn go_home(self) {
+    pub(crate) fn go_home(self) {
         navigator().push(Route::Home {});
     }
 
@@ -1053,7 +1054,7 @@ impl Wizard {
     }
 
     /// The button on the problem screen: back to the step that can try again.
-    pub fn retry(self) {
+    pub(crate) fn retry(self) {
         let Some(failure) = self.failure.peek().clone() else {
             return self.back_to_setup();
         };
@@ -1066,7 +1067,7 @@ impl Wizard {
             }
             // The size lives in Setup; trying again would meet the same error.
             FailureKind::Internal | FailureKind::SizeInvalid | FailureKind::SizeShape => {
-                self.back_to_setup()
+                self.back_to_setup();
             }
             _ => self.begin_position(),
         }
@@ -1074,7 +1075,7 @@ impl Wizard {
 
     /// Asks where to save the latest attempt's diagnostic bundle, then has the
     /// camera thread write it. Nothing is written unless the user picks a place.
-    pub fn save_attempt(mut self) {
+    pub(crate) fn save_attempt(mut self) {
         spawn(async move {
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1099,7 +1100,7 @@ impl Wizard {
 
     /// Saves unless that screen already holds a calibration and the tech has not
     /// confirmed replacing it.
-    pub fn save(mut self, replace_confirmed: bool) {
+    pub(crate) fn save(mut self, replace_confirmed: bool) {
         let Some(finished) = self.finished.peek().clone() else {
             return;
         };
@@ -1212,7 +1213,7 @@ impl Wizard {
             SessionEvent::Failed(failure) => {
                 *self.attempt_status.write() = None;
                 *self.attempt_saving.write() = false;
-                self.problem(failure)
+                self.problem(failure);
             }
             SessionEvent::Closed => {}
             SessionEvent::AttemptSaved(result) => {

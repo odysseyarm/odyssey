@@ -1,12 +1,12 @@
 //! Calibration functions
 
-use argmin::core::{CostFunction, Error, Executor, Gradient, State};
-use futures::StreamExt;
+use argmin::core::{CostFunction, Error, Executor, Gradient, State as _};
+use futures::StreamExt as _;
 use nalgebra::Vector3;
 use odyssey_usb::device::VmDevice;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 #[derive(Serialize, Deserialize)]
 
@@ -122,7 +122,7 @@ impl Gradient for CostFn {
     }
 }
 
-pub async fn cmd_accel_calib(
+pub(crate) async fn cmd_accel_calib(
     device: &mut VmDevice,
 
     num_samples: usize,
@@ -143,7 +143,7 @@ pub async fn cmd_accel_calib(
     let mut measurements = Vec::new();
 
     for orientation in &orientations {
-        println!("{}", orientation);
+        println!("{orientation}");
 
         println!("Press Enter when ready to start collecting samples for this orientation.");
 
@@ -154,12 +154,12 @@ pub async fn cmd_accel_calib(
         reader
             .read_line(&mut input)
             .await
-            .map_err(|e| format!("Failed to read input: {}", e))?;
+            .map_err(|e| format!("Failed to read input: {e}"))?;
 
         let mut s = device
             .stream_accel()
             .await
-            .map_err(|e| format!("Failed to start accel stream: {}", e))?;
+            .map_err(|e| format!("Failed to start accel stream: {e}"))?;
 
         for _ in 0..num_samples {
             if let Some(v) = s.next().await {
@@ -245,18 +245,18 @@ pub async fn cmd_accel_calib(
             let data = json!(calibration);
 
             std::fs::write(output_path, serde_json::to_string_pretty(&data).unwrap())
-                .map_err(|e| format!("Unable to write file: {}", e))?;
+                .map_err(|e| format!("Unable to write file: {e}"))?;
 
-            println!("Bias and scale saved to {}", output_path);
+            println!("Bias and scale saved to {output_path}");
 
             Ok(())
         }
 
-        Err(e) => Err(format!("Optimization failed: {}", e)),
+        Err(e) => Err(format!("Optimization failed: {e}")),
     }
 }
 
-pub async fn cmd_gyro_calib(
+pub(crate) async fn cmd_gyro_calib(
     device: &mut VmDevice,
 
     num_samples: usize,
@@ -276,12 +276,12 @@ pub async fn cmd_gyro_calib(
     reader
         .read_line(&mut input)
         .await
-        .map_err(|e| format!("Failed to read input: {}", e))?;
+        .map_err(|e| format!("Failed to read input: {e}"))?;
 
     let mut s = device
         .stream_accel()
         .await
-        .map_err(|e| format!("Failed to start accel stream: {}", e))?;
+        .map_err(|e| format!("Failed to start accel stream: {e}"))?;
 
     for _ in 0..num_samples {
         if let Some(v) = s.next().await {
@@ -305,18 +305,18 @@ pub async fn cmd_gyro_calib(
         output_path,
         serde_json::to_string_pretty(&gyro_data).unwrap(),
     )
-    .map_err(|e| format!("Unable to write file: {}", e))?;
+    .map_err(|e| format!("Unable to write file: {e}"))?;
 
-    println!("Gyroscope bias saved to {}", output_path);
+    println!("Gyroscope bias saved to {output_path}");
 
     Ok(())
 }
 
-pub async fn cmd_stream(device: &mut VmDevice) -> Result<(), String> {
+pub(crate) async fn cmd_stream(device: &mut VmDevice) -> Result<(), String> {
     let mut s = device
         .stream_accel()
         .await
-        .map_err(|e| format!("Failed to start accel stream: {}", e))?;
+        .map_err(|e| format!("Failed to start accel stream: {e}"))?;
 
     let mut accel_sum = Vector3::<f64>::zeros();
 

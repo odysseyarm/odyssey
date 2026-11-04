@@ -9,14 +9,14 @@
 //! place they choose, readable only by them on Unix.
 
 use std::fs;
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Write as _};
 use std::path::Path;
 
 use image::ImageFormat;
 use odyssey_autocalib::session::AttemptFrames;
 
 /// What goes into a bundle.
-pub struct Bundle<'a> {
+pub(super) struct Bundle<'a> {
     pub summary: &'a str,
     /// `None` when no camera was open, e.g. when it would not start.
     pub frames: Option<&'a AttemptFrames>,
@@ -25,12 +25,12 @@ pub struct Bundle<'a> {
 }
 
 /// Writes the bundle to `path` and returns its size in bytes.
-pub fn write(path: &Path, bundle: &Bundle) -> Result<u64, String> {
+pub(super) fn write(path: &Path, bundle: &Bundle) -> Result<u64, String> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
     let file = options.open(path).map_err(|e| e.to_string())?;
@@ -107,7 +107,7 @@ fn is_calibration(line: &str) -> bool {
 /// The calibration events of an app log. An event can run over several lines (the
 /// marker report does), and only its first line carries the timestamp and source, so
 /// the lines after it follow it.
-pub fn calibration_log(log: &str) -> String {
+pub(super) fn calibration_log(log: &str) -> String {
     let starts_event = |line: &str| {
         let b = line.as_bytes();
         b.len() > 10 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-' && b[7] == b'-'
@@ -129,7 +129,7 @@ pub fn calibration_log(log: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs::File;
-    use std::io::Read;
+    use std::io::Read as _;
 
     use image::{GrayImage, Luma, RgbImage};
     use odyssey_autocalib::camera::{CameraGeometry, DepthImage, Extrinsics, Frames, Intrinsics};
@@ -236,7 +236,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn only_the_user_can_read_it() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
         let attempt = AttemptFrames {
             geometry: geometry(),
             screen_burst: Vec::new(),

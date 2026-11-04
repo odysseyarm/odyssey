@@ -11,11 +11,11 @@ use odyssey_cv::telemetry::Series;
 use plotters::backend::DrawingBackend;
 use plotters::chart::{ChartBuilder, LabelAreaPosition};
 use plotters::coord::Shift;
-use plotters::drawing::{DrawingArea, IntoDrawingArea};
+use plotters::drawing::{DrawingArea, IntoDrawingArea as _};
 use plotters::series::LineSeries;
 use plotters::style::{BLUE, GREEN, RED, WHITE};
 
-use crate::CloneButShorter;
+use crate::CloneButShorter as _;
 
 pub fn plots_window(ui: &UI) -> Window {
     let mut window = Window::new(ui, "le plot", 640, 480, WindowType::NoMenubar);
@@ -27,9 +27,9 @@ pub fn plots_window(ui: &UI) -> Window {
             }))
         }
     }
-    window.set_child(&ui, vbox);
+    window.set_child(ui, vbox);
 
-    window.on_closing(&ui, {
+    window.on_closing(ui, {
         let ui = ui.c();
         move |win| {
             win.hide(&ui);
@@ -42,10 +42,8 @@ pub fn plots_window(ui: &UI) -> Window {
         let area = area.c();
         let paused = paused.c();
         move || {
-            if !paused.get() {
-                if window.visible(&ui) {
-                    area.queue_redraw_all(&ui);
-                }
+            if !paused.get() && window.visible(&ui) {
+                area.queue_redraw_all(&ui);
             }
             true
         }
@@ -88,15 +86,8 @@ impl AreaHandler for MainCanvas {
     }
 
     fn key_event(&mut self, _area: &Area, area_key_event: &AreaKeyEvent) -> bool {
-        if area_key_event.up {
-            match area_key_event.ext_key {
-                _ => match area_key_event.key {
-                    b' ' => {
-                        self.paused.set(!self.paused.get());
-                    }
-                    _ => {}
-                },
-            }
+        if area_key_event.up && area_key_event.key == b' ' {
+            self.paused.set(!self.paused.get());
         }
         true
     }
@@ -124,7 +115,7 @@ fn accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     );
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn pnp_position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     let series = odyssey_cv::telemetry::pnp_solutions();
     vec3_f64_chart(
@@ -140,7 +131,7 @@ fn pnp_position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     );
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn pnp_orientation_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     let series = odyssey_cv::telemetry::pnp_solutions();
     vec3_f64_chart(
@@ -155,7 +146,7 @@ fn pnp_orientation_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     );
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn rot_bias_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
@@ -174,7 +165,7 @@ fn accel_bias_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     );
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn gravity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,
@@ -220,7 +211,7 @@ fn accel_bias_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift
     );
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn rot_bias_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) {
     vec3_f32_chart(
         area,

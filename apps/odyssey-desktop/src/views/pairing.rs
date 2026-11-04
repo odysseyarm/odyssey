@@ -32,9 +32,9 @@ fn device_label(device: &Device) -> String {
     let ty = device_type(device);
     let name = device.name();
     if name.is_empty() {
-        format!("{} ({})", ty, addr)
+        format!("{ty} ({addr})")
     } else {
-        format!("{}: {} ({})", ty, name, addr)
+        format!("{ty}: {name} ({addr})")
     }
 }
 
@@ -42,7 +42,7 @@ fn device_label(device: &Device) -> String {
 
 #[component]
 fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
-    let mut status = use_signal(|| String::new());
+    let mut status = use_signal(String::new);
     let mut pairing = use_signal(|| false);
 
     let id_for_pair = dongle.id.clone();
@@ -133,8 +133,7 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
                             format!("{} ({})", paired_name, format_uuid(paired_address))
                         };
                         status.set(format!(
-                            "Paired with {}. Please unplug and replug the dongle.",
-                            label
+                            "Paired with {label}. Please unplug and replug the dongle."
                         ));
                     } else {
                         status.set(error.clone());
@@ -247,7 +246,7 @@ fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
 
 #[component]
 fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
-    let mut status = use_signal(|| String::new());
+    let mut status = use_signal(String::new);
     let mut pairing = use_signal(|| false);
 
     let device_for_pair = device.clone();
@@ -341,8 +340,7 @@ fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                             format!("{} ({})", paired_name, format_uuid(paired_address))
                         };
                         status.set(format!(
-                            "Paired with {}. Please unplug and replug the dongle.",
-                            label
+                            "Paired with {label}. Please unplug and replug the dongle."
                         ));
                     } else {
                         status.set(error.clone());
