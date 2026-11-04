@@ -7,6 +7,7 @@
 //! connected devices breaks that invariant as soon as the device count changes,
 //! which is exactly when a device (and its settings panel) would first appear.
 
+use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_server::firmware::FirmwareManifest;
@@ -133,6 +134,8 @@ pub(super) fn ConnectedDeviceRow(
 }
 
 /// The device's label, which turns into a text field to rename it.
+/// One rename is sent at a time, with an owned client handle rather than a
+/// signal write guard held across the RPC.
 #[component]
 fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
     let label = crate::views::device_label(&device);
@@ -140,7 +143,8 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
     let mut editing = use_signal(|| false);
     let mut edit_value = use_signal(|| current_name.clone());
     let mut renamed = use_signal(|| false);
-
+    let mut rename_error = use_signal(|| None::<String>);
+    let mut rename_pending = use_signal(|| false);
     if editing() {
         return rsx! {
             input {
@@ -152,13 +156,23 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
                     let device = device.clone();
                     move |e: KeyboardEvent| {
                         if e.key() == Key::Enter {
+                            if *rename_pending.peek() {
+                                return;
+                            }
+                            rename_pending.set(true);
                             let name = edit_value();
                             let device = device.clone();
-                            let mut client = hub().client;
+                            let mut client = hub.peek().client.peek().clone();
                             editing.set(false);
-                            renamed.set(true);
                             spawn(async move {
-                                let _ = client.write().set_device_name(device, name).await;
+                                match client.set_device_name(device, name).await {
+                                    Ok(()) => renamed.set(true),
+                                    Err(e) => {
+                                        tracing::error!("Failed to rename device: {e}");
+                                        rename_error.set(Some(e.to_string()));
+                                    }
+                                }
+                                rename_pending.set(false);
                             });
                         } else if e.key() == Key::Escape {
                             editing.set(false);
@@ -180,10 +194,12 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
         }
         button {
             class: "text-xs text-gray-400 hover:text-blue-500 dark:hover:text-blue-400",
+            disabled: rename_pending(),
             title: "Rename",
             onclick: move |_| {
                 edit_value.set(current_name.clone());
                 renamed.set(false);
+                rename_error.set(None);
                 editing.set(true);
             },
             "✎"
@@ -193,6 +209,9 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
                 class: "text-xs text-yellow-500 dark:text-yellow-400 italic",
                 "USB name reflects last boot"
             }
+        }
+        if let Some(error) = rename_error() {
+            span { role: "alert", class: "text-xs text-red-500", {error} }
         }
     }
 }
