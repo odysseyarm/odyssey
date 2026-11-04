@@ -7,6 +7,8 @@
 //! to its own range before thresholding, which makes the threshold relative to
 //! the brightest feature and independent of the camera's absolute gain.
 
+use std::fmt::Write as _;
+
 use image::GrayImage;
 use nalgebra::Point2;
 
@@ -20,11 +22,17 @@ use crate::solve::ScreenFit;
 const RELATIVE_THRESHOLD: f64 = 150.0 / 255.0;
 /// Frames with less contrast than this (in 8-bit levels) hold no markers.
 const MIN_CONTRAST: f64 = 40.0;
+/// The fewest pixels in a marker's spot; smaller specks are noise.
 const MIN_AREA_PX: u32 = 6;
+/// The most pixels in a marker's spot; larger regions are lamps or reflections.
 const MAX_AREA_PX: u32 = 2000;
+/// The smallest minor-to-major axis ratio of a marker's spot, which rejects streaks.
+const MIN_AXIS_RATIO: f64 = 0.3;
 /// At most this many of the largest blobs take part in assignment, which keeps
 /// the exhaustive search small when the scene is cluttered with reflections.
 const MAX_BLOBS: usize = 24;
+/// How many markers the tracker needs.
+const MARKER_COUNT: usize = 6;
 /// A spot may lie this far beyond a screen edge, as a fraction of the screen's size on that
 /// axis, and still count as a marker.
 const NEAR_SCREEN_MARGIN: f64 = 0.25;
@@ -70,7 +78,7 @@ pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
         .filter(|c| {
             (MIN_AREA_PX..=MAX_AREA_PX).contains(&c.area)
                 && !c.touches_border
-                && c.axis_ratio >= 0.3
+                && c.axis_ratio >= MIN_AXIS_RATIO
         })
         .map(|c| MarkerBlob {
             center: c.center,
@@ -110,77 +118,108 @@ fn within(v: f64, extent: f64) -> bool {
 /// image and on the screen (and whether it counts as on or near the screen), and the order
 /// the tracker needs when the markers are found.
 pub fn describe_spots(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> String {
-    use std::fmt::Write as _;
+    let mut out = String::new();
+    // Writing to a String cannot fail.
+    let _ = write_spot_report(&mut out, geometry, fit, blobs);
+    out
+}
+
+fn write_spot_report(
+    out: &mut String,
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    blobs: &[MarkerBlob],
+) -> std::fmt::Result {
+    write_setup(out, geometry, fit)?;
+    let counted = write_spots(out, geometry, fit, blobs)?;
+    writeln!(out, "{counted} spots on or near the screen, need exactly 6")?;
+    write_tracker_order(out, geometry, fit, blobs)
+}
+
+/// The infrared camera and the screen the spots are judged against.
+fn write_setup(out: &mut String, geometry: &CameraGeometry, fit: &ScreenFit) -> std::fmt::Result {
     let [w, h] = fit.size_m;
     let ir = &geometry.ir;
-    let mut out = String::new();
-    let _ = writeln!(
+    writeln!(
         out,
         "infrared camera {}x{} fx {:.2} fy {:.2} cx {:.2} cy {:.2}",
         ir.width, ir.height, ir.fx, ir.fy, ir.cx, ir.cy
-    );
-    let _ = writeln!(
+    )?;
+    writeln!(
         out,
         "infrared to depth translation {:?}",
         geometry.ir_to_depth.translation
-    );
+    )?;
     let distance = fit.plane_depth.normal.dot(&fit.plane_depth.point).abs();
-    let _ = writeln!(
+    writeln!(
         out,
         "screen {w:.3} x {h:.3} m, plane distance {distance:.3} m"
-    );
-    let _ = writeln!(
+    )
+}
+
+/// One line per spot. Returns how many of them are on or near the screen.
+fn write_spots(
+    out: &mut String,
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    blobs: &[MarkerBlob],
+) -> Result<usize, std::fmt::Error> {
+    let [w, h] = fit.size_m;
+    writeln!(
         out,
         "bright spots (infrared pixel, area -> screen meters -> fraction of the screen):"
-    );
+    )?;
     let mut counted = 0;
     for (i, b) in blobs.iter().enumerate() {
-        match blob_on_screen(geometry, fit, b) {
-            Some(p) => {
-                let on = within(p.x, w) && within(p.y, h);
-                counted += usize::from(on);
-                let _ = writeln!(
-                    out,
-                    "  {i}: ({:.1}, {:.1}) area {} -> ({:.3}, {:.3}) -> ({:.2}, {:.2}){}",
-                    b.center.x,
-                    b.center.y,
-                    b.area,
-                    p.x,
-                    p.y,
-                    p.x / w,
-                    p.y / h,
-                    if on { " on or near the screen" } else { "" }
-                );
-            }
-            None => {
-                let _ = writeln!(
-                    out,
-                    "  {i}: ({:.1}, {:.1}) area {} -> misses the screen plane",
-                    b.center.x, b.center.y, b.area
-                );
-            }
-        }
+        let Some(p) = blob_on_screen(geometry, fit, b) else {
+            writeln!(
+                out,
+                "  {i}: ({:.1}, {:.1}) area {} -> misses the screen plane",
+                b.center.x, b.center.y, b.area
+            )?;
+            continue;
+        };
+        let on = within(p.x, w) && within(p.y, h);
+        counted += usize::from(on);
+        writeln!(
+            out,
+            "  {i}: ({:.1}, {:.1}) area {} -> ({:.3}, {:.3}) -> ({:.2}, {:.2}){}",
+            b.center.x,
+            b.center.y,
+            b.area,
+            p.x,
+            p.y,
+            p.x / w,
+            p.y / h,
+            if on { " on or near the screen" } else { "" }
+        )?;
     }
-    let _ = writeln!(out, "{counted} spots on or near the screen, need exactly 6");
-    match locate(geometry, fit, blobs) {
-        Ok(m) => {
-            let _ = writeln!(out, "tracker order (spot index, screen meters):");
-            for (n, (i, p)) in m.blob_for_marker.iter().zip(&m.points_m).enumerate() {
-                let _ = writeln!(out, "  {}: spot {i} ({:.3}, {:.3})", n + 1, p.x, p.y);
-            }
-            if let Some(c) = m.seed_circle {
-                let _ = writeln!(
-                    out,
-                    "circle through markers 1, 2 and 3: centre ({:.3}, {:.3}) radius {:.3} m",
-                    c.center.x, c.center.y, c.radius
-                );
-            }
-        }
-        Err(e) => {
-            let _ = writeln!(out, "no marker set: {e}");
-        }
+    Ok(counted)
+}
+
+/// The order [`locate`] gives the markers, or why it found none.
+fn write_tracker_order(
+    out: &mut String,
+    geometry: &CameraGeometry,
+    fit: &ScreenFit,
+    blobs: &[MarkerBlob],
+) -> std::fmt::Result {
+    let m = match locate(geometry, fit, blobs) {
+        Ok(m) => m,
+        Err(e) => return writeln!(out, "no marker set: {e}"),
+    };
+    writeln!(out, "tracker order (spot index, screen meters):")?;
+    for (n, (i, p)) in m.blob_for_marker.iter().zip(&m.points_m).enumerate() {
+        writeln!(out, "  {}: spot {i} ({:.3}, {:.3})", n + 1, p.x, p.y)?;
     }
-    out
+    let Some(c) = m.seed_circle else {
+        return Ok(());
+    };
+    writeln!(
+        out,
+        "circle through markers 1, 2 and 3: centre ({:.3}, {:.3}) radius {:.3} m",
+        c.center.x, c.center.y, c.radius
+    )
 }
 
 /// The six markers, in the order the tracker needs them.
@@ -203,7 +242,7 @@ pub fn locate(
     fit: &ScreenFit,
     blobs: &[MarkerBlob],
 ) -> Result<MarkerFit, MarkerError> {
-    if blobs.len() < 6 {
+    if blobs.len() < MARKER_COUNT {
         return Err(MarkerError::TooFewBlobs { found: blobs.len() });
     }
     let [w, h] = fit.size_m;
@@ -213,7 +252,7 @@ pub fn locate(
         .filter_map(|(i, b)| blob_on_screen(geometry, fit, b).map(|p| (i, p)))
         .filter(|(_, p)| within(p.x, w) && within(p.y, h))
         .collect();
-    let spots: [(usize, Point2<f64>); 6] =
+    let spots: [(usize, Point2<f64>); MARKER_COUNT] =
         on_screen
             .try_into()
             .map_err(|spots: Vec<_>| MarkerError::WrongCount {
@@ -236,8 +275,8 @@ pub fn relabel(
     reference: &[Point2<f64>; 6],
     points: &[Point2<f64>; 6],
 ) -> Option<[Point2<f64>; 6]> {
-    let mut taken = [false; 6];
-    let mut out = [Point2::origin(); 6];
+    let mut taken = [false; MARKER_COUNT];
+    let mut out = [Point2::origin(); MARKER_COUNT];
     for (slot, r) in out.iter_mut().zip(reference) {
         let (n, _) = points
             .iter()
