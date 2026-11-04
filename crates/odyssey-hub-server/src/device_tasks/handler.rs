@@ -1,6 +1,8 @@
 mod commands;
 mod connection_changes;
 mod sensor_control;
+#[cfg(test)]
+mod tests;
 mod zero_offset;
 
 use std::ops::ControlFlow;
