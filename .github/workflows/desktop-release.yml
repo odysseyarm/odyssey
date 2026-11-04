@@ -7,7 +7,7 @@ name: Desktop Release
 # than cross-compiled the way the FFI libraries are.
 #
 # odyssey-hub-server reaches odyssey-cv over an SSH git URL that this runner
-# has no key for, so the checkout rewrites that URL to an authenticated HTTPS
+# has no key for, so job-scoped Git config rewrites that URL to an authenticated HTTPS
 # one. ODYSSEY_CV_TOKEN is a fine-grained PAT scoped to odysseyarm/odyssey-cv,
 # Contents: read.
 #
@@ -61,10 +61,11 @@ jobs:
     runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
+      # Do not persist the PAT in a self-hosted runner's global Git config.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
+      GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
-      - name: Authenticate the odyssey-cv git dependency
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git".insteadOf "ssh://git@github.com/odysseyarm/odyssey-cv.git"
       - uses: actions/checkout@v5
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -134,10 +135,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
+      GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
-      - name: Authenticate the odyssey-cv git dependency
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git".insteadOf "ssh://git@github.com/odysseyarm/odyssey-cv.git"
       - uses: actions/checkout@v5
       - name: Install build dependencies
         run: |
