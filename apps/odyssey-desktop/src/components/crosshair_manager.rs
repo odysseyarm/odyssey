@@ -9,6 +9,7 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::TrackingEvent;
+use slab::Slab;
 use tokio::sync::broadcast;
 
 use crate::hub::HubContext;
@@ -36,12 +37,26 @@ const CROSSHAIR_IMAGES: [Asset; 6] = [
 /// Unique ID counter for CrosshairManager instances to ensure fresh subscriptions
 static CROSSHAIR_MANAGER_ID: AtomicU64 = AtomicU64::new(0);
 
-/// A crosshair's place in the container, in pixels, and the image to draw.
-type CrosshairPlacement = (f64, f64, String);
+/// A crosshair's place in the container, in pixels, and its palette slot.
+type CrosshairPlacement = (f64, f64, usize);
+type CrosshairPositions = HashMap<[u8; 6], CrosshairPlacement>;
 
 /// Image for the device at slab slot `key`; slots past the palette share the last.
-fn crosshair_image(key: usize) -> String {
-    CROSSHAIR_IMAGES[key.min(CROSSHAIR_IMAGES.len() - 1)].to_string()
+fn crosshair_image(key: usize) -> Asset {
+    CROSSHAIR_IMAGES[key.min(CROSSHAIR_IMAGES.len() - 1)]
+}
+
+/// Slab slots can be reused or reassigned on a device-list refresh. Keep
+/// positions by UUID so a new occupant never inherits the old device's aim.
+fn retain_device_crosshairs(positions: &mut CrosshairPositions, devices: &Slab<Device>) {
+    positions.retain(|uuid, (_, _, palette)| {
+        if let Some((slot, _)) = devices.iter().find(|(_, device)| device.uuid == *uuid) {
+            *palette = slot;
+            true
+        } else {
+            false
+        }
+    });
 }
 
 /// Pixel position of a normalised aimpoint inside a container of `width` x
@@ -59,7 +74,7 @@ async fn follow_tracking(
     mut receiver: broadcast::Receiver<(Device, TrackingEvent)>,
     hub: Signal<HubContext>,
     rect_signal: Signal<Rect<f64, Pixels>>,
-    mut crosshair_positions: Signal<HashMap<usize, CrosshairPlacement>>,
+    mut crosshair_positions: Signal<CrosshairPositions>,
 ) {
     tracing::info!("CrosshairManager[{}]: entering event loop", instance_id);
     loop {
@@ -93,9 +108,7 @@ async fn follow_tracking(
             size.width,
             size.height,
         );
-        crosshair_positions
-            .write()
-            .insert(key, (x, y, crosshair_image(key)));
+        crosshair_positions.write().insert(device.uuid, (x, y, key));
     }
 }
 
@@ -110,8 +123,7 @@ pub fn CrosshairManager(
 
     let mut root_div = use_signal(|| None);
     let mut rect_signal = use_signal(Rect::zero);
-    // key → (x_px, y_px, image_src)
-    let mut crosshair_positions = use_signal(HashMap::<usize, CrosshairPlacement>::new);
+    let mut crosshair_positions = use_signal(CrosshairPositions::new);
 
     let sender = tracking_sender.map_or_else(|| hub.peek().tracking_events.clone(), |ts| ts.0);
     use_future(move || {
@@ -125,10 +137,7 @@ pub fn CrosshairManager(
 
     use_effect(move || {
         let devices = (hub().devices)();
-        let current_keys: Vec<usize> = devices.iter().map(|(key, _)| key).collect();
-        crosshair_positions
-            .write()
-            .retain(|k, _| current_keys.contains(k));
+        retain_device_crosshairs(&mut crosshair_positions.write(), &devices);
     });
 
     rsx! {
@@ -152,10 +161,10 @@ pub fn CrosshairManager(
                     }
                 }
             },
-            for (key, (x, y, src)) in crosshair_positions.read().clone().into_iter() {
+            for (uuid, (x, y, palette)) in crosshair_positions.read().iter() {
                 img {
-                    key: "{key}",
-                    src,
+                    key: "{uuid:?}",
+                    src: crosshair_image(*palette),
                     class: "absolute pointer-events-none",
                     style: "left: {x}px; top: {y}px; transform: translate(-50%, -50%);",
                 }
@@ -167,6 +176,38 @@ pub fn CrosshairManager(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refreshed_slots_do_not_transfer_positions_between_devices() {
+        use odyssey_hub_common::device::{DeviceCapabilities, EventsTransport, Transport};
+
+        let surviving = Device {
+            uuid: [2; 6],
+            transport: Transport::Usb,
+            capabilities: DeviceCapabilities::new(DeviceCapabilities::EVENTS),
+            firmware_version: [1, 0, 0],
+            events_transport: EventsTransport::Wired,
+            events_connected: true,
+            product_id: 0,
+            name: [0; 33],
+            netcore_release: 0,
+        };
+        // Before the refresh, the departed device occupied slot zero and this
+        // survivor occupied slot one. A full list refresh reuses slot zero.
+        let mut positions = CrosshairPositions::from([
+            ([1; 6], (50.0, 60.0, 0)),
+            (surviving.uuid, (70.0, 80.0, 1)),
+        ]);
+        let mut devices = Slab::new();
+        devices.insert(surviving);
+
+        retain_device_crosshairs(&mut positions, &devices);
+
+        assert_eq!(
+            positions,
+            CrosshairPositions::from([([2; 6], (70.0, 80.0, 0))])
+        );
+    }
 
     #[test]
     fn aimpoint_scales_to_the_container() {
