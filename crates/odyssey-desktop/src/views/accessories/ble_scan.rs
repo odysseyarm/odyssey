@@ -13,6 +13,17 @@ use uuid::Uuid;
 /// Accessories found nearby: id -> (label, type).
 pub(super) type Nearby = HashMap<[u8; 6], (String, AccessoryType)>;
 
+/// Where the search for nearby accessories stands.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum BleScan {
+    /// No scan has finished yet.
+    Starting,
+    /// Scanning is impossible, for the reason given.
+    Unavailable(String),
+    /// What the latest scan found.
+    Found(Nearby),
+}
+
 /// The name a DryFireMag advertises.
 const DRY_FIRE_MAG_NAME: &str = "DryFireMag";
 /// The service a MantisX advertises.
@@ -45,17 +56,30 @@ impl Drop for ScanSession {
     }
 }
 
-/// Keeps `nearby` up to date with the DryFireMag and MantisX accessories in
-/// range. Does nothing when the machine has no Bluetooth adapter.
-pub(super) fn use_ble_scan(mut nearby: Signal<Nearby>) {
+/// Keeps `scan` up to date with the DryFireMag and MantisX accessories in
+/// range, or with why it cannot look for them.
+pub(super) fn use_ble_scan(mut scan: Signal<BleScan>) {
     use_future(move || async move {
-        let Ok(manager) = Manager::new().await else {
-            return;
+        let manager = match Manager::new().await {
+            Ok(manager) => manager,
+            Err(error) => {
+                tracing::warn!("Bluetooth unavailable: {error}");
+                scan.set(BleScan::Unavailable(error.to_string()));
+                return;
+            }
         };
-        let Ok(adapters) = manager.adapters().await else {
-            return;
+        let adapters = match manager.adapters().await {
+            Ok(adapters) => adapters,
+            Err(error) => {
+                tracing::warn!("Bluetooth unavailable: {error}");
+                scan.set(BleScan::Unavailable(error.to_string()));
+                return;
+            }
         };
         let Some(adapter) = adapters.into_iter().next() else {
+            scan.set(BleScan::Unavailable(
+                "this computer has no Bluetooth adapter".to_string(),
+            ));
             return;
         };
         let mut session = ScanSession {
@@ -63,7 +87,7 @@ pub(super) fn use_ble_scan(mut nearby: Signal<Nearby>) {
             active: false,
         };
         loop {
-            nearby.set(scan_once(&mut session).await);
+            scan.set(BleScan::Found(scan_once(&mut session).await));
             tokio::time::sleep(SCAN_PAUSE).await;
         }
     });

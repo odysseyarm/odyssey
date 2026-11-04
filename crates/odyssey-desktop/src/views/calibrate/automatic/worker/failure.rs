@@ -45,6 +45,7 @@ pub(crate) enum FailureKind {
 impl FailureKind {
     pub(super) fn of_solve(error: &SolveError) -> Self {
         match error {
+            SolveError::Camera(_) => Self::CameraLost,
             SolveError::PatternNotFound(_) => Self::ScreenDots,
             SolveError::TooFewDepthPoints { .. } | SolveError::NoPlane => Self::ScreenDepth,
             SolveError::DegeneratePose
@@ -91,6 +92,12 @@ mod tests {
         assert_eq!(kind(SolveError::Mirrored), FailureKind::ScreenGeometry);
         assert_eq!(
             FailureKind::of_session(&SessionError::Camera(CameraError::Timeout)),
+            FailureKind::CameraLost
+        );
+        assert_eq!(
+            kind(SolveError::Camera(CameraError::InvalidData(
+                "bad frame dimensions"
+            ))),
             FailureKind::CameraLost
         );
         assert_eq!(kind(SolveError::KnownSizeInvalid), FailureKind::SizeInvalid);

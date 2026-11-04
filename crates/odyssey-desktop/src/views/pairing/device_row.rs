@@ -9,19 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::pair_buttons::PairButtons;
 use super::pairing_state::{PAIRING_TIMEOUT_MS, PairingState, result_status};
 use crate::hub::HubContext;
-use crate::views::device_label::device_type;
-
-/// Pairing labels use the same uppercase address as the dongle's bond list.
-pub(super) fn device_label(device: &Device) -> String {
-    let addr = crate::views::device_label::format_address(&device.uuid);
-    let ty = device_type(device);
-    let name = device.name();
-    if name.is_empty() {
-        format!("{ty} ({addr})")
-    } else {
-        format!("{ty}: {name} ({addr})")
-    }
-}
+use crate::views::device_label;
 
 async fn start(hub: Signal<HubContext>, device: Device, state: PairingState) {
     state.started();
@@ -121,6 +109,7 @@ pub(super) fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
                     pairing: *state.pairing.read(),
                     command_pending: (state.command_pending)(),
                     clear_label: "Clear Bond",
+                    clear_prompt: "Forget this device's bond?",
                     on_pair: {
                         let device = device.clone();
                         move |()| state.run_command(start(hub, device.clone(), state))

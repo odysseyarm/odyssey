@@ -52,7 +52,7 @@ pub(super) async fn write_general_config(
     hub: &HubContext,
     device: &Device,
     values: GeneralValues,
-) -> anyhow::Result<()> {
+) -> eros::Result<()> {
     let mut client = hub.client.peek().clone();
     client
         .write_config(

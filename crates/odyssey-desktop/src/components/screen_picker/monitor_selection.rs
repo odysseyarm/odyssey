@@ -63,7 +63,7 @@ impl MonitorSelection {
             .update(move |state| state.selected_monitor = Some(key));
         spawn(async move {
             if let Err(e) = save.await {
-                tracing::warn!("Failed to save UI state: {e}");
+                tracing::warn!("Failed to save UI state: {e:?}");
             }
         });
     }

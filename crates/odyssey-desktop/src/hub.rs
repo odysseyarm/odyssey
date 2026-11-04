@@ -9,7 +9,7 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use futures::{Stream, StreamExt as _, stream};
 use futures_concurrency::stream::Merge as _;
-use odyssey_hub_client::client::{Client, ClientError, DongleInfo, RpcError};
+use odyssey_hub_client::client::{Client, DongleInfo, RpcError};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events as oe;
 use slab::Slab;
@@ -86,53 +86,8 @@ enum SessionEnd {
 
 /// Why the hub stopped following the server.
 enum LinkDown {
-    Connect(ConnectError),
+    Connect(eros::ErrorUnion),
     Session(SessionEnd),
-}
-
-/// The setup step that failed while dialling the hub.
-#[derive(Clone, Copy, Debug)]
-enum ConnectStep {
-    Connect,
-    GetDeviceList,
-    SubscribeDeviceList,
-    SubscribeDongleList,
-    SubscribeEvents,
-}
-
-impl fmt::Display for ConnectStep {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Connect => "connect to hub server",
-            Self::GetDeviceList => "get device list",
-            Self::SubscribeDeviceList => "subscribe to device list",
-            Self::SubscribeDongleList => "subscribe to dongle list",
-            Self::SubscribeEvents => "subscribe to events",
-        })
-    }
-}
-
-struct ConnectError {
-    step: ConnectStep,
-    // Boxed: `ClientError` is large and the error is rare, so every `Result` in
-    // the connect path would otherwise pay for it.
-    source: Box<ClientError>,
-}
-
-impl ConnectStep {
-    /// Attributes a client error to this step.
-    fn failed(self, source: ClientError) -> ConnectError {
-        ConnectError {
-            step: self,
-            source: Box::new(source),
-        }
-    }
-}
-
-impl fmt::Display for ConnectError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "Failed to {}: {}", self.step, self.source)
-    }
 }
 
 /// A connected hub: the device list as of connecting, plus every later update.
@@ -171,29 +126,24 @@ fn merged_updates(
 /// is a plain `&mut`, not a signal guard, so nothing is locked across the awaits.
 async fn connect(
     client: &mut Client,
-) -> Result<Subscriptions<impl Stream<Item = HubUpdate> + use<>>, ConnectError> {
-    client
-        .connect()
-        .await
-        .map_err(|source| ConnectStep::Connect.failed(source))?;
+) -> eros::Result<Subscriptions<impl Stream<Item = HubUpdate> + use<>>> {
+    eros::Context::context(client.connect().await, "Failed to connect to hub server")?;
     tracing::info!("Hub connected successfully");
 
-    let initial_devices = client
-        .get_device_list()
-        .await
-        .map_err(|source| ConnectStep::GetDeviceList.failed(source))?;
-    let devices = client
-        .subscribe_device_list()
-        .await
-        .map_err(|source| ConnectStep::SubscribeDeviceList.failed(source))?;
-    let dongles = client
-        .subscribe_dongle_list()
-        .await
-        .map_err(|source| ConnectStep::SubscribeDongleList.failed(source))?;
-    let events = client
-        .subscribe_events()
-        .await
-        .map_err(|source| ConnectStep::SubscribeEvents.failed(source))?;
+    let initial_devices =
+        eros::Context::context(client.get_device_list().await, "Failed to get device list")?;
+    let devices = eros::Context::context(
+        client.subscribe_device_list().await,
+        "Failed to subscribe to device list",
+    )?;
+    let dongles = eros::Context::context(
+        client.subscribe_dongle_list().await,
+        "Failed to subscribe to dongle list",
+    )?;
+    let events = eros::Context::context(
+        client.subscribe_events().await,
+        "Failed to subscribe to events",
+    )?;
 
     Ok(Subscriptions {
         initial_devices,
@@ -245,7 +195,7 @@ impl HubContext {
         })
         .retry(backoff)
         .notify(|down, delay| match down {
-            LinkDown::Connect(error) => tracing::error!("{error}"),
+            LinkDown::Connect(error) => tracing::error!("{error:?}"),
             LinkDown::Session(SessionEnd::StreamFailed(stream, error)) => {
                 tracing::error!("{stream} stream error: {error}");
                 tracing::warn!("Reconnecting in {delay:?}...");

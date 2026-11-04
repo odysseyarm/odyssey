@@ -6,10 +6,10 @@ use odyssey_hub_client::client::DongleInfo;
 use odyssey_hub_common::events::Event;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::device_row::device_label;
 use super::pair_buttons::PairButtons;
 use super::pairing_state::{PAIRING_TIMEOUT_MS, PairingState, result_status};
 use crate::hub::HubContext;
+use crate::views::device_label;
 use crate::views::device_label::format_address;
 
 /// The dongle control protocol that can list its bonds.
@@ -18,7 +18,8 @@ const BONDS_PROTOCOL_VERSION: [u16; 3] = [0, 1, 1];
 const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
 
 const DOT_CONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-green-500";
-const DOT_DISCONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-red-500";
+// A bonded device that is switched off is normal, not an error, so it is gray.
+const DOT_DISCONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-gray-400";
 
 async fn start(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
     state.started();
@@ -119,9 +120,9 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
         div {
             class: "p-3 bg-gray-50 dark:bg-gray-600 rounded-lg space-y-2",
             div {
-                class: "flex items-center justify-between",
+                class: "flex flex-wrap items-center justify-between gap-2",
                 div {
-                    class: "flex items-center gap-2",
+                    class: "flex min-w-0 flex-wrap items-center gap-x-2",
                     span {
                         class: "text-sm font-medium text-gray-700 dark:text-gray-200",
                         "Dongle"
@@ -143,6 +144,7 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
                         pairing: *state.pairing.read(),
                         command_pending: (state.command_pending)(),
                         clear_label: "Clear Bonds",
+                        clear_prompt: "Forget every device this dongle is bonded to?",
                         on_pair: {
                             let id = dongle.id.clone();
                             move |()| state.run_command(start(hub, id.clone(), state))
@@ -166,17 +168,27 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
                         {list_label}
                     }
                     for address in listed_addresses {
-                        div {
-                            class: "flex items-center gap-2",
-                            span {
-                                class: if dongle.connected_devices.contains(address) { DOT_CONNECTED } else { DOT_DISCONNECTED },
-                            }
-                            span {
-                                class: "text-xs font-mono text-gray-600 dark:text-gray-300",
-                                {devices
-                                    .iter()
-                                    .find(|(_, device)| device.uuid == *address)
-                                    .map_or_else(|| format_address(address), |(_, device)| device_label(device))}
+                        {
+                            let connected = dongle.connected_devices.contains(address);
+                            rsx! {
+                                div {
+                                    class: "flex items-center gap-2",
+                                    span {
+                                        class: if connected { DOT_CONNECTED } else { DOT_DISCONNECTED },
+                                        aria_hidden: true,
+                                    }
+                                    span {
+                                        class: "text-xs font-mono text-gray-600 dark:text-gray-300",
+                                        {devices
+                                            .iter()
+                                            .find(|(_, device)| device.uuid == *address)
+                                            .map_or_else(|| format_address(address), |(_, device)| device_label(device))}
+                                    }
+                                    span {
+                                        class: "text-xs text-gray-500 dark:text-gray-400",
+                                        if connected { "connected" } else { "not in range" }
+                                    }
+                                }
                             }
                         }
                     }

@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use backon::Retryable as _;
 use dioxus::logger::tracing;
+use eros::Context as _;
 use odyssey_hub_server::firmware;
 
 use super::poll_window::{poll_window, ready};
@@ -46,7 +47,7 @@ impl DfuSession<'_> {
 
     /// Put the device into DFU mode, detaching it first when it is running its
     /// application.
-    pub(super) async fn enter_dfu(&self) -> Result<(), String> {
+    pub(super) async fn enter_dfu(&self) -> eros::Result<()> {
         // The application also exposes a DFU interface (for the runtime descriptor
         // that takes the detach), so only the DFU-mode protocol means the bootloader
         // is already running and waiting for a download. It enumerates under its own
@@ -70,13 +71,14 @@ impl DfuSession<'_> {
         self.set_state(FirmwareUpdateState::Detaching);
         firmware::send_dfu_detach(&self.uuid, self.vid, self.pid)
             .await
-            .map_err(|e| format!("DFU detach failed: {e}"))?;
+            .context("DFU detach failed")?;
 
         tracing::info!("Waiting for device to enter DFU mode");
         self.set_state(FirmwareUpdateState::WaitingForDfu);
         firmware::wait_for_dfu_device(&self.uuid, self.vid, self.pid, DFU_ENUMERATION_TIMEOUT)
             .await
-            .map_err(|e| format!("Device did not enter DFU mode: {e}"))
+            .context("Device did not enter DFU mode")?;
+        Ok(())
     }
 
     /// Write one image to a DFU alt setting, publishing progress as it goes.
@@ -87,7 +89,7 @@ impl DfuSession<'_> {
         data: &[u8],
         what: &str,
         progress_state: fn(usize, usize) -> FirmwareUpdateState,
-    ) -> Result<(), String> {
+    ) -> eros::Result<()> {
         let total_size = data.len();
         self.set_state(progress_state(0, total_size));
 
@@ -114,12 +116,10 @@ impl DfuSession<'_> {
         )
         .await;
 
-        flash_result.map_err(|e| format!("{what} failed: {e}"))?;
+        flash_result.with_context(|| format!("{what} failed"))?;
 
         if final_progress < total_size {
-            return Err(format!(
-                "{what} incomplete: {final_progress}/{total_size} bytes written"
-            ));
+            eros::bail!("{what} incomplete: {final_progress}/{total_size} bytes written");
         }
         Ok(())
     }
@@ -142,7 +142,7 @@ impl DfuSession<'_> {
     /// work (swapping itself in, copying the net core) boots the application unless
     /// something asks for DFU, so the unit has to be taken back in rather than
     /// waited for.
-    pub(super) async fn return_to_dfu(&self, timeout: Duration) -> Result<(), String> {
+    pub(super) async fn return_to_dfu(&self, timeout: Duration) -> eros::Result<()> {
         let backoff = poll_window(timeout, RETURN_TO_DFU_POLL_INTERVAL);
         tokio::time::sleep(RETURN_TO_DFU_POLL_INTERVAL).await;
         (|| self.enter_dfu())

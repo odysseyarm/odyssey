@@ -4,6 +4,7 @@ use std::time::Duration;
 use backon::Retryable as _;
 use dioxus::logger::tracing;
 use dioxus::prelude::{ReadableExt as _, SyncSignal};
+use eros::Context as _;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware;
 use slab::Slab;
@@ -31,8 +32,8 @@ const NETCORE_INSTALL_TIMEOUT: Duration = Duration::from_secs(150);
 /// download completes before it counts as never having reset to start the copy.
 const NETCORE_RESET_TIMEOUT: Duration = Duration::from_secs(20);
 
-fn netcore_not_reported(published: u16) -> String {
-    format!(
+fn netcore_not_reported(published: u16) -> eros::ErrorUnion {
+    eros::error!(
         "the net core did not report release {published}; the device may have no radio, \
          run the update again"
     )
@@ -57,7 +58,7 @@ pub(super) async fn wait_for_netcore_release(
     devices: &SyncSignal<Slab<Device>>,
     uuid: &[u8; 6],
     published: u16,
-) -> Result<(), String> {
+) -> eros::Result<()> {
     let mut last = None;
     let backoff = poll_window(NETCORE_REPORT_TIMEOUT, NETCORE_REPORT_POLL_INTERVAL);
     tokio::time::sleep(NETCORE_REPORT_POLL_INTERVAL).await;
@@ -96,11 +97,11 @@ impl DfuSession<'_> {
     /// the caller continues in that same DFU session without detaching again. Nothing
     /// reports the net core while the device is in the bootloader, so whether the
     /// copy took is only readable once the new application runs.
-    pub(super) async fn flash_netcore(&self, image: &[u8], release: u16) -> Result<(), String> {
+    pub(super) async fn flash_netcore(&self, image: &[u8], release: u16) -> eros::Result<()> {
         self.enter_dfu().await?;
 
         let alt = firmware::find_netcore_alt_for_device(&self.uuid, self.vid, self.pid)
-            .map_err(|e| format!("The net core cannot be updated over DFU: {e}"))?;
+            .context("The net core cannot be updated over DFU")?;
         tracing::info!("Updating net core to release {} on alt {}", release, alt);
         self.flash_with_progress("NET", alt, image, "Net core flash", |progress, total| {
             FirmwareUpdateState::FlashingNetCore { progress, total }
@@ -115,17 +116,17 @@ impl DfuSession<'_> {
         // and that stale enumeration would satisfy the wait below at once, sending
         // the application image into a device that is about to reset.
         if !self.wait_for_bootloader_reset(NETCORE_RESET_TIMEOUT).await {
-            return Err(format!(
+            eros::bail!(
                 "Device did not reset within {}s after the net core download. Leave it \
                  connected and run the update again.",
                 NETCORE_RESET_TIMEOUT.as_secs()
-            ));
+            );
         }
         self.return_to_dfu(NETCORE_INSTALL_TIMEOUT)
             .await
-            .map_err(|e| {
+            .with_context(|| {
                 format!(
-                    "Device did not come back within {}s after the net core update ({e}). \
+                    "Device did not come back within {}s after the net core update. \
                      Leave it connected and run the update again.",
                     NETCORE_INSTALL_TIMEOUT.as_secs()
                 )

@@ -4,7 +4,7 @@
 //! network, so it works the same in offline mode.
 //!
 //! The PDFs are generated from `crates/odyssey-autocalib/board.json` by
-//! `tools/board_artwork.py --all`; see `tools/BOARD.md` there.
+//! `cargo xtask autocalib artwork --all`; see `tools/BOARD.md` there.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ macro_rules! artwork {
     ($name:literal) => {
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../crates/odyssey-autocalib/tools/artwork/",
+            "/../odyssey-autocalib/tools/artwork/",
             $name
         ))
     };

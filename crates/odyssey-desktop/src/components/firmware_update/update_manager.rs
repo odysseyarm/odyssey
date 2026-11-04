@@ -15,6 +15,19 @@ pub(crate) struct FirmwareUpdateManager {
     updating: Arc<Mutex<HashSet<[u8; 6]>>>,
 }
 
+/// Keeps a device claimed until its update future and final result are gone,
+/// including when that future is cancelled before it is first polled.
+pub(super) struct UpdateClaim {
+    manager: FirmwareUpdateManager,
+    uuid: [u8; 6],
+}
+
+impl Drop for UpdateClaim {
+    fn drop(&mut self) {
+        self.manager.clear_state(&self.uuid);
+    }
+}
+
 impl PartialEq for FirmwareUpdateManager {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.states, &other.states)
@@ -57,14 +70,17 @@ impl FirmwareUpdateManager {
         }
     }
 
-    /// Claim a device for an update. Returns false when one is already running,
-    /// so the check and the insert cannot race two clicks against each other.
-    pub(super) fn try_claim(&self, uuid: [u8; 6]) -> bool {
+    /// Claim a device for the lifetime of one update. The check and insert are
+    /// atomic, so two clicks cannot start competing transfers.
+    pub(super) fn try_claim(&self, uuid: [u8; 6]) -> Option<UpdateClaim> {
         if !self.updating.lock().insert(uuid) {
-            return false;
+            return None;
         }
         self.set_state(uuid, FirmwareUpdateState::Downloading);
-        true
+        Some(UpdateClaim {
+            manager: self.clone(),
+            uuid,
+        })
     }
 
     pub(super) fn is_updating(&self, uuid: &[u8; 6]) -> bool {
@@ -75,7 +91,7 @@ impl FirmwareUpdateManager {
         self.updating.lock().iter().copied().collect()
     }
 
-    pub(super) fn clear_state(&self, uuid: &[u8; 6]) {
+    fn clear_state(&self, uuid: &[u8; 6]) {
         self.states.lock().remove(uuid);
         self.updating.lock().remove(uuid);
     }
@@ -112,7 +128,7 @@ mod tests {
     fn stale_availability_cannot_replace_update_progress_or_failure() {
         let manager = FirmwareUpdateManager::new();
         let uuid = [1; 6];
-        assert!(manager.try_claim(uuid));
+        let claim = manager.try_claim(uuid).expect("the device is idle");
         manager.set_before_update_state(uuid, FirmwareUpdateState::Idle);
         assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Downloading);
         manager.set_state(uuid, FirmwareUpdateState::Failed("Disconnected".into()));
@@ -121,8 +137,23 @@ mod tests {
             manager.get_state(&uuid),
             FirmwareUpdateState::Failed("Disconnected".into())
         );
-        assert!(!manager.try_claim(uuid));
-        manager.clear_state(&uuid);
-        assert!(manager.try_claim(uuid));
+        assert!(manager.try_claim(uuid).is_none());
+        drop(claim);
+        assert!(manager.try_claim(uuid).is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelling_an_unpolled_update_releases_its_claim() {
+        let manager = FirmwareUpdateManager::new();
+        let uuid = [2; 6];
+        let claim = manager.try_claim(uuid).expect("the device is idle");
+        let task = tokio::spawn(async move {
+            let _claim = claim;
+            std::future::pending::<()>().await;
+        });
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(!manager.is_updating(&uuid));
+        assert!(manager.try_claim(uuid).is_some());
     }
 }

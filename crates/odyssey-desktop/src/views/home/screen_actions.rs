@@ -18,6 +18,7 @@ const ZERO_BUTTON: &str = "shrink-0 text-white bg-blue-700 hover:bg-blue-800 foc
 #[component]
 pub(super) fn ScreenActions(hub: Signal<HubContext>) -> Element {
     let monitor_selection = use_monitor_selection();
+    let no_devices = (hub().devices)().is_empty();
     rsx! {
         div {
             class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow flex flex-col gap-3",
@@ -34,7 +35,7 @@ pub(super) fn ScreenActions(hub: Signal<HubContext>) -> Element {
                 button {
                     class: ZERO_BUTTON,
                     r#type: "button",
-                    disabled: monitor_selection.selected().is_none(),
+                    disabled: no_devices || monitor_selection.selected().is_none(),
                     onclick: move |_| {
                         if let Some(monitor) = monitor_selection.selected_handle() {
                             open_zero_window(hub, monitor);

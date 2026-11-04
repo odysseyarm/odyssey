@@ -277,7 +277,7 @@ impl SettingsForm {
         hub_ctx: &HubContext,
         device: &Device,
         sensors: SensorFamily,
-    ) -> anyhow::Result<()> {
+    ) -> eros::Result<()> {
         match sensors {
             SensorFamily::Paj => {
                 let near_field = paj_load_from_device(hub_ctx, device, NEAR_FIELD_PORT).await;
@@ -390,7 +390,7 @@ impl SettingsForm {
         device: &Device,
         sensors: Option<SensorValues>,
     ) -> Result<(), OpStatus> {
-        let sensor_failure = |error: anyhow::Error| {
+        let sensor_failure = |error: eros::ErrorUnion| {
             write_failure(
                 "writing sensor settings",
                 "write the sensor settings",

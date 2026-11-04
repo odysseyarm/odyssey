@@ -13,7 +13,7 @@ use firmware_state::{use_firmware_manifest, use_updating_uuids};
 use offline_notice::OfflineNotice;
 use screen_actions::ScreenActions;
 
-use crate::components::FirmwareUpdateManager;
+use crate::components::{FirmwareUpdateManager, Page};
 use crate::hub::HubContext;
 
 #[component]
@@ -26,23 +26,11 @@ pub fn Home() -> Element {
     let updating = use_updating_uuids(&manager)();
 
     rsx! {
-        div {
-            class: "min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-800",
-
-            div {
-                class: "w-full max-w-md flex flex-col items-stretch gap-4",
-
-                h1 {
-                    class: "text-center text-2xl font-bold text-gray-900 dark:text-white",
-                    "Welcome!"
-                }
-
-                OfflineNotice { error: (firmware.error)() }
-
-                ConnectedDevices { hub, manifest: firmware.manifest, manager, updating }
-
-                ScreenActions { hub }
-            }
+        Page {
+            title: "Home",
+            OfflineNotice { error: (firmware.error)() }
+            ConnectedDevices { hub, manifest: firmware.manifest, manager, updating }
+            ScreenActions { hub }
         }
     }
 }

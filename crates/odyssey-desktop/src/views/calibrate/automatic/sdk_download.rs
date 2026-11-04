@@ -111,7 +111,7 @@ mod online {
                                     wizard.request_camera_list();
                                 }
                                 Ok(Installed::AfterRestart) => state.set(State::Waiting),
-                                Err(error) => state.set(State::Failed(format!("{error:#}"))),
+                                Err(error) => state.set(State::Failed(crate::error_message(&error))),
                             }
                         });
                     },

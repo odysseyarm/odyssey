@@ -10,6 +10,9 @@ pub(crate) use config_corruption_modal::ConfigCorruptionModal;
 mod navbar;
 pub(crate) use navbar::Navbar;
 
+mod page;
+pub(crate) use page::{CARD_CLASS, CARD_TITLE_CLASS, Page};
+
 pub(crate) mod crosshair_manager;
 
 pub(crate) mod firmware_update;
@@ -17,6 +20,9 @@ pub(crate) use firmware_update::{DeviceFirmwareUpdate, FirmwareUpdateManager, Up
 
 pub(crate) mod sensor_settings;
 pub(crate) use sensor_settings::{SensorSettings, TransportModePanel};
+
+mod image_viewer;
+pub(crate) use image_viewer::ImageViewer;
 
 pub(crate) mod screen_picker;
 pub(crate) use screen_picker::{ScreenPicker, use_monitor_selection};

@@ -78,7 +78,11 @@ pub(crate) fn ScreenPicker(selection: MonitorSelection) -> Element {
                     }
                 }
 
-                if let Some((i, monitor)) = selected.and_then(|i| monitors.get(i).map(|m| (i, m))) {
+                // A tile too small for its name and resolution gets them spelled out here.
+                if let Some((i, monitor)) = selected
+                    .filter(|&i| layout.tiles.get(i).is_some_and(|tile| detail_for(tile) != Detail::Full))
+                    .and_then(|i| monitors.get(i).map(|m| (i, m)))
+                {
                     div {
                         class: "text-sm text-gray-600 dark:text-gray-300 text-center",
                         "{i + 1}. {monitor.display_name()} — {monitor.resolution()}"

@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use dioxus::logger::tracing;
+use eros::Context as _;
 use odyssey_hub_server::firmware;
 
 use super::dfu_session::DfuSession;
@@ -27,24 +28,23 @@ impl DfuSession<'_> {
         &self,
         bootloader_image: Option<&ReleaseImage>,
         requires_bootloader: u16,
-    ) -> Result<(), String> {
+    ) -> eros::Result<()> {
         self.enter_dfu().await?;
 
         let running = firmware::read_bootloader_release_for_device(&self.uuid, self.vid, self.pid)
-            .map_err(|e| format!("Could not read the bootloader release: {e}"))?;
+            .context("Could not read the bootloader release")?;
         let flash_bootloader = firmware::plan_bootloader(
             running,
             bootloader_image.map(|image| image.release),
             requires_bootloader,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         let Some(image) = bootloader_image.filter(|_| flash_bootloader) else {
             tracing::info!("Bootloader {:?} stays as it is", running);
             return Ok(());
         };
 
         let alt = firmware::find_bootloader_alt_for_device(&self.uuid, self.vid, self.pid)
-            .map_err(|e| format!("Bootloader cannot be updated over DFU: {e}"))?;
+            .context("Bootloader cannot be updated over DFU")?;
         tracing::info!(
             "Updating bootloader {:?} -> release {} on alt {}",
             running,
@@ -69,22 +69,22 @@ impl DfuSession<'_> {
             .wait_for_bootloader_reset(BOOTLOADER_RESET_TIMEOUT)
             .await
         {
-            return Err("Device did not reset after the bootloader update".to_string());
+            eros::bail!("Device did not reset after the bootloader update");
         }
         self.return_to_dfu(BOOTLOADER_RETURN_TIMEOUT)
             .await
-            .map_err(|e| format!("Device did not return after the bootloader update: {e}"))?;
+            .context("Device did not return after the bootloader update")?;
 
         // A completed write and a returning device do not show the new
         // image is the one running. Nothing may go onto a bootloader that
         // never took the update, so read it back.
         let now = firmware::read_bootloader_release_for_device(&self.uuid, self.vid, self.pid)
-            .map_err(|e| format!("Could not read the bootloader after updating it: {e}"))?;
+            .context("Could not read the bootloader after updating it")?;
         if !firmware::bootloader_took_update(now, image.release) {
-            return Err(format!(
+            eros::bail!(
                 "Bootloader reports {now:?} after updating to release {}",
                 image.release
-            ));
+            );
         }
         tracing::info!("Bootloader now reports {:?}", now);
         Ok(())

@@ -1,9 +1,12 @@
 use std::future;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use backon::Retryable as _;
 use dioxus::logger::tracing;
 use dioxus::prelude::{ReadableExt as _, SyncSignal};
+use eros::Context as _;
+use futures::FutureExt as _;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 use slab::Slab;
@@ -40,25 +43,41 @@ pub(super) fn start_firmware_update(
 
     // Two tasks driving DFU on one device would interleave their control
     // transfers and corrupt the download.
-    if !manager.try_claim(device_uuid) {
+    let Some(claim) = manager.try_claim(device_uuid) else {
         tracing::warn!("Firmware update already running for {:02x?}", device_uuid);
         return;
-    }
+    };
 
-    // The update runs on tokio, independent of Dioxus. The
-    // task records its own failure in the manager, which is what the UI polls;
-    // nothing awaits the handle.
+    // Keep both the transfer and its claim outside any component's lifetime.
+    // Catch panics here because nobody awaits the detached task's handle.
     tokio::spawn(async move {
-        let result =
-            run_firmware_update(&manager, manifest, device, device_type, vid, pid, devices).await;
+        let _claim = claim;
+        let result = AssertUnwindSafe(run_firmware_update(
+            &manager,
+            manifest,
+            device,
+            device_type,
+            vid,
+            pid,
+            devices,
+        ))
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|_| {
+            Err(eros::error!(
+                "The firmware update task stopped unexpectedly"
+            ))
+        });
 
         if let Err(e) = result {
-            tracing::error!("Firmware update failed: {}", e);
-            manager.set_state(device_uuid, FirmwareUpdateState::Failed(e));
+            tracing::error!("Firmware update failed: {e:?}");
+            manager.set_state(
+                device_uuid,
+                FirmwareUpdateState::Failed(crate::error_message(&e)),
+            );
         }
 
         tokio::time::sleep(FINAL_STATE_LINGER).await;
-        manager.clear_state(&device_uuid);
     });
 }
 
@@ -70,7 +89,7 @@ async fn run_firmware_update(
     vid: u16,
     pid: u16,
     devices: SyncSignal<Slab<Device>>,
-) -> Result<(), String> {
+) -> eros::Result<()> {
     let session = DfuSession {
         manager,
         uuid: device.uuid,
@@ -78,12 +97,12 @@ async fn run_firmware_update(
         pid,
     };
 
-    let manifest = manifest.ok_or("No manifest available")?;
+    let manifest = manifest.ok_or_else(|| eros::error!("No manifest available"))?;
     // A device sitting in the bootloader has no CONTROL capability and reports
     // no version, so it takes whatever the manifest offers. Everything else
     // must have reported a version for the button to have been shown.
     if !is_in_bootloader(&device) && device.firmware_version == [0, 0, 0] {
-        return Err("No firmware version".to_string());
+        eros::bail!("No firmware version");
     }
     // The same reading the row used to pick the entry, so both agree.
     let firmware_entry = firmware::select_firmware(
@@ -93,10 +112,10 @@ async fn run_firmware_update(
         device.netcore_release,
     )
     .offered
-    .ok_or("No firmware for this device type is installable by this unit and this version of Odyssey Desktop")?;
+    .ok_or_else(|| eros::error!("No firmware for this device type is installable by this unit and this version of Odyssey Desktop"))?;
     let expected_version = firmware_entry
         .version_parts()
-        .ok_or("Firmware release has an unreadable application version")?;
+        .ok_or_else(|| eros::error!("Firmware release has an unreadable application version"))?;
 
     // The net core is released separately from the application, so the entry
     // only says which release it was tested with. Whether it has to be written
@@ -117,8 +136,7 @@ async fn run_firmware_update(
         device.netcore_release,
         published_netcore.map(|(_, release)| release),
         firmware_entry.requires_netcore,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     tracing::info!("Update steps for {:02x?}: {:?}", session.uuid, steps);
 
     session.set_state(FirmwareUpdateState::Downloading);
@@ -134,17 +152,15 @@ async fn run_firmware_update(
     for step in steps {
         match step {
             firmware::UpdateStep::FlashNetCore => {
-                let image = downloads
-                    .netcore
-                    .as_ref()
-                    .ok_or("The update plan flashes the net core but no image was downloaded")?;
+                let image = downloads.netcore.as_ref().ok_or_else(|| {
+                    eros::error!("The update plan flashes the net core but no image was downloaded")
+                })?;
                 session.flash_netcore(&image.data, image.release).await?;
             }
             firmware::UpdateStep::VerifyNetCore => {
-                let image = downloads
-                    .netcore
-                    .as_ref()
-                    .ok_or("The update plan verifies the net core but none was written")?;
+                let image = downloads.netcore.as_ref().ok_or_else(|| {
+                    eros::error!("The update plan verifies the net core but none was written")
+                })?;
                 session.set_state(FirmwareUpdateState::VerifyingNetCore);
                 wait_for_netcore_release(&devices, &session.uuid, image.release).await?;
             }
@@ -176,13 +192,13 @@ impl DfuSession<'_> {
         requires_bootloader: u16,
         devices: &SyncSignal<Slab<Device>>,
         expected_version: [u16; 3],
-    ) -> Result<(), String> {
+    ) -> eros::Result<()> {
         self.ensure_bootloader(downloads.bootloader.as_ref(), requires_bootloader)
             .await?;
 
         let (slot_name, slot_file, alt) =
             firmware::determine_target_slot_for_device(&self.uuid, self.vid, self.pid)
-                .map_err(|e| format!("Failed to determine target slot: {e}"))?;
+                .context("Failed to determine target slot")?;
 
         tracing::info!(
             "Target slot: {} (alt {}), firmware file: {}",
@@ -194,7 +210,7 @@ impl DfuSession<'_> {
         let firmware_data = downloads
             .applications
             .remove(slot_file)
-            .ok_or_else(|| format!("Firmware file {slot_file} not found in manifest"))?;
+            .ok_or_else(|| eros::error!("Firmware file {slot_file} not found in manifest"))?;
 
         tracing::info!("Flashing firmware to {}", slot_name);
         self.flash_with_progress(
@@ -230,7 +246,7 @@ impl DfuSession<'_> {
                 );
                 return Ok(());
             }
-            Err(format!(
+            Err(eros::error!(
                 "Device returned but did not report firmware {} (last reading: {}). \
                  Leave it connected and try again.",
                 format_version(expected_version),
@@ -242,7 +258,7 @@ impl DfuSession<'_> {
             // The byte count above only proves the host finished feeding the
             // writer, so a device that never comes back is the one signal left
             // that the new image is not running.
-            Err(format!(
+            Err(eros::error!(
                 "Device did not reappear within {}s after flashing. It may still be \
                  in the bootloader — leave it connected and try again.",
                 APP_MODE_TIMEOUT.as_secs()

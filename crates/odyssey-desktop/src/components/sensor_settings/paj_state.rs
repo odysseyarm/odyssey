@@ -71,7 +71,7 @@ pub(super) async fn paj_load_from_device(
     hub: &HubContext,
     device: &Device,
     port: u8,
-) -> anyhow::Result<PajState> {
+) -> eros::Result<PajState> {
     let registers = Registers::new(hub, device, port);
     let brightness_threshold = registers.read(BRIGHTNESS_THRESHOLD).await?;
     let noise_threshold = registers.read(NOISE_THRESHOLD).await?;
@@ -85,7 +85,7 @@ pub(super) async fn paj_load_from_device(
     let gain_global = registers.read(GAIN_GLOBAL_READ).await?;
     let gain_ggh = registers.read(GAIN_GGH_READ).await?;
     let gain_index = gain_index_from_reg(gain_global, gain_ggh).ok_or_else(|| {
-        anyhow::anyhow!("Unsupported PAJ gain registers: global={gain_global}, ggh={gain_ggh}")
+        eros::error!("Unsupported PAJ gain registers: global={gain_global}, ggh={gain_ggh}")
     })?;
     let resolution_x = registers.read_u16(RESOLUTION_X).await?;
     let resolution_y = registers.read_u16(RESOLUTION_Y).await?;
@@ -197,7 +197,7 @@ pub(super) async fn paj_apply_to_device(
     device: &Device,
     port: u8,
     values: &PajValues,
-) -> anyhow::Result<()> {
+) -> eros::Result<()> {
     let registers = Registers::new(hub, device, port);
     let gain = &GAIN_TABLE[values.gain_index];
 

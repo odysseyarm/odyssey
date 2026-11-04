@@ -10,6 +10,7 @@ use dioxus::prelude::*;
 use dongle_row::DongleRow;
 use odyssey_hub_common::device::Device;
 
+use crate::components::{CARD_CLASS, CARD_TITLE_CLASS, Page};
 use crate::hub::HubContext;
 
 #[component]
@@ -21,57 +22,49 @@ pub fn Pairing() -> Element {
     let ats_devices: Vec<Device> = devices.iter().map(|(_slot, d)| d.clone()).collect();
 
     rsx! {
-        div {
-            class: "min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-800",
-            div {
-                class: "w-full max-w-md flex flex-col items-stretch gap-4",
-                h1 {
-                    class: "text-center text-2xl font-bold text-gray-900 dark:text-white",
-                    "Pairing"
-                }
+        Page {
+            title: "Pairing",
+            description: "Pair a device with a dongle to use it without a cable. A dongle remembers the devices it has bonded with.",
 
-                if dongles.is_empty() && ats_devices.is_empty() {
+            if dongles.is_empty() && ats_devices.is_empty() {
+                div {
+                    class: CARD_CLASS,
+                    h2 { class: "{CARD_TITLE_CLASS} mb-1", "Nothing to pair yet" }
                     p {
-                        class: "text-center text-gray-500 dark:text-gray-400",
-                        "No devices connected"
+                        class: "text-sm text-gray-600 dark:text-gray-300",
+                        "Plug a dongle or a device into this computer. They appear here as soon as the hub finds them."
                     }
                 }
+            }
 
-                if !dongles.is_empty() {
+            if !dongles.is_empty() {
+                div {
+                    class: CARD_CLASS,
+                    h2 { class: "{CARD_TITLE_CLASS} mb-3", "Dongles" }
                     div {
-                        class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow",
-                        h2 {
-                            class: "text-lg font-semibold text-gray-900 dark:text-white mb-3",
-                            "Dongles"
-                        }
-                        div {
-                            class: "space-y-2",
-                            for dongle in dongles {
-                                DongleRow {
-                                    key: "{dongle.id}",
-                                    hub,
-                                    dongle,
-                                }
+                        class: "space-y-2",
+                        for dongle in dongles {
+                            DongleRow {
+                                key: "{dongle.id}",
+                                hub,
+                                dongle,
                             }
                         }
                     }
                 }
+            }
 
-                if !ats_devices.is_empty() {
+            if !ats_devices.is_empty() {
+                div {
+                    class: CARD_CLASS,
+                    h2 { class: "{CARD_TITLE_CLASS} mb-3", "Devices" }
                     div {
-                        class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow",
-                        h2 {
-                            class: "text-lg font-semibold text-gray-900 dark:text-white mb-3",
-                            "Devices"
-                        }
-                        div {
-                            class: "space-y-2",
-                            for ats_dev in ats_devices {
-                                DeviceRow {
-                                    key: "{ats_dev.uuid:02x?}",
-                                    hub,
-                                    device: ats_dev,
-                                }
+                        class: "space-y-2",
+                        for ats_dev in ats_devices {
+                            DeviceRow {
+                                key: "{ats_dev.uuid:02x?}",
+                                hub,
+                                device: ats_dev,
                             }
                         }
                     }

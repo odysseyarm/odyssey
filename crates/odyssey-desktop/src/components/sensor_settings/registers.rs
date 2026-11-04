@@ -52,7 +52,7 @@ impl<'a> Registers<'a> {
         Self { hub, device, port }
     }
 
-    pub(super) async fn read(&self, register: Register) -> anyhow::Result<u8> {
+    pub(super) async fn read(&self, register: Register) -> eros::Result<u8> {
         let value = self
             .hub
             .client
@@ -63,7 +63,7 @@ impl<'a> Registers<'a> {
         Ok(value)
     }
 
-    pub(super) async fn write(&self, register: Register, value: u8) -> anyhow::Result<()> {
+    pub(super) async fn write(&self, register: Register, value: u8) -> eros::Result<()> {
         self.hub
             .client
             .peek()
@@ -79,27 +79,27 @@ impl<'a> Registers<'a> {
         Ok(())
     }
 
-    pub(super) async fn read_u16(&self, run: RegisterRun<2>) -> anyhow::Result<u16> {
+    pub(super) async fn read_u16(&self, run: RegisterRun<2>) -> eros::Result<u16> {
         Ok(u16::from_le_bytes(self.read_bytes(run).await?))
     }
 
-    pub(super) async fn write_u16(&self, run: RegisterRun<2>, value: u16) -> anyhow::Result<()> {
+    pub(super) async fn write_u16(&self, run: RegisterRun<2>, value: u16) -> eros::Result<()> {
         self.write_bytes(run, value.to_le_bytes()).await
     }
 
     /// A 24-bit value held in three registers.
-    pub(super) async fn read_u24(&self, run: RegisterRun<3>) -> anyhow::Result<u32> {
+    pub(super) async fn read_u24(&self, run: RegisterRun<3>) -> eros::Result<u32> {
         let [b0, b1, b2] = self.read_bytes(run).await?;
         Ok(u32::from_le_bytes([b0, b1, b2, 0]))
     }
 
     /// The top byte of `value` is dropped; callers validate it fits in 24 bits.
-    pub(super) async fn write_u24(&self, run: RegisterRun<3>, value: u32) -> anyhow::Result<()> {
+    pub(super) async fn write_u24(&self, run: RegisterRun<3>, value: u32) -> eros::Result<()> {
         let [b0, b1, b2, _] = value.to_le_bytes();
         self.write_bytes(run, [b0, b1, b2]).await
     }
 
-    async fn read_bytes<const N: usize>(&self, run: RegisterRun<N>) -> anyhow::Result<[u8; N]> {
+    async fn read_bytes<const N: usize>(&self, run: RegisterRun<N>) -> eros::Result<[u8; N]> {
         let mut bytes = [0; N];
         for (byte, register) in bytes.iter_mut().zip(run.registers()) {
             *byte = self.read(register).await?;
@@ -111,7 +111,7 @@ impl<'a> Registers<'a> {
         &self,
         run: RegisterRun<N>,
         bytes: [u8; N],
-    ) -> anyhow::Result<()> {
+    ) -> eros::Result<()> {
         for (register, byte) in run.registers().into_iter().zip(bytes) {
             self.write(register, byte).await?;
         }

@@ -24,7 +24,7 @@ pub(super) struct Bundle<'a> {
 }
 
 /// Writes the bundle to `path` and returns its size in bytes.
-pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> Result<u64, String> {
+pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> eros::Result<u64> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -32,15 +32,16 @@ pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> Result<u64, String> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let file = options.open(path).map_err(|e| e.to_string())?;
+    let file = options.open(path)?;
     let mut zip = zip::ZipWriter::new(file);
     let text = zip::write::SimpleFileOptions::default();
     // The images are PNG already, so storing them costs nothing in size.
     let image = text.compression_method(zip::CompressionMethod::Stored);
 
-    let mut put = |name: &str, options, bytes: &[u8]| -> Result<(), String> {
-        zip.start_file(name, options).map_err(|e| e.to_string())?;
-        zip.write_all(bytes).map_err(|e| e.to_string())
+    let mut put = |name: &str, options, bytes: &[u8]| -> eros::Result<()> {
+        zip.start_file(name, options)?;
+        zip.write_all(bytes)?;
+        Ok(())
     };
     put("summary.txt", text, bundle.summary.as_bytes())?;
     put(
@@ -50,8 +51,8 @@ pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> Result<u64, String> {
     )?;
 
     let Some(frames) = bundle.frames else {
-        let file = zip.finish().map_err(|e| e.to_string())?;
-        return file.metadata().map(|m| m.len()).map_err(|e| e.to_string());
+        let file = zip.finish()?;
+        return Ok(file.metadata()?.len());
     };
     for (i, frame) in frames.screen_burst.iter().enumerate() {
         let n = i + 1;
@@ -82,19 +83,17 @@ pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> Result<u64, String> {
     if let Some(ir) = &frames.marker_preview_ir {
         put("markers/preview-infrared.png", image, &png(ir)?)?;
     }
-    let file = zip.finish().map_err(|e| e.to_string())?;
-    file.metadata().map(|m| m.len()).map_err(|e| e.to_string())
+    let file = zip.finish()?;
+    Ok(file.metadata()?.len())
 }
 
-fn png<P>(image: &image::ImageBuffer<P, Vec<P::Subpixel>>) -> Result<Vec<u8>, String>
+fn png<P>(image: &image::ImageBuffer<P, Vec<P::Subpixel>>) -> eros::Result<Vec<u8>>
 where
     P: image::PixelWithColorType,
     [P::Subpixel]: image::EncodableLayout,
 {
     let mut bytes = Vec::new();
-    image
-        .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-        .map_err(|e| e.to_string())?;
+    image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)?;
     Ok(bytes)
 }
 

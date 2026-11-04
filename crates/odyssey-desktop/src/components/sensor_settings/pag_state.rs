@@ -46,7 +46,7 @@ fn encode_exposure(exposure_us: u16) -> u8 {
 pub(super) async fn pag_load_from_device(
     hub: &HubContext,
     device: &Device,
-) -> anyhow::Result<PagState> {
+) -> eros::Result<PagState> {
     let registers = Registers::new(hub, device, NEAR_FIELD_PORT);
     let fps = registers.read(FPS).await?;
     let exposure_raw = registers.read(EXPOSURE).await?;
@@ -118,7 +118,7 @@ pub(super) async fn pag_apply_to_device(
     hub: &HubContext,
     device: &Device,
     values: &PagValues,
-) -> anyhow::Result<()> {
+) -> eros::Result<()> {
     let registers = Registers::new(hub, device, NEAR_FIELD_PORT);
     registers.write(FPS, values.fps).await?;
     registers

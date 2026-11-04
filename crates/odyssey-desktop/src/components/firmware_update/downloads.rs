@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use dioxus::logger::tracing;
+use eros::Context as _;
 use odyssey_hub_server::firmware::{self, FileEntry, FirmwareEntry, UpdateStep};
 
 /// An image whose release is versioned separately from the application.
@@ -32,29 +33,45 @@ async fn download_image(
     source: firmware::ReleaseSource<'_>,
     name: &str,
     file: &FileEntry,
-) -> Result<Vec<u8>, String> {
-    firmware::download_firmware(device_type, source, name, &file.sha256)
+) -> eros::Result<Vec<u8>> {
+    let data = firmware::download_firmware(device_type, source, name, &file.sha256, file.size)
         .await
-        .map_err(|e| format!("Download of {name} failed: {e}"))
+        .with_context(|| format!("Download of {name} failed"))?;
+    validate_image_size(name, data.len(), file.size)?;
+    Ok(data)
+}
+
+/// A matching hash does not make an empty image flashable or reconcile a bad
+/// manifest size. Reject both before any update can detach the device.
+fn validate_image_size(name: &str, actual: usize, expected: u64) -> eros::Result<()> {
+    if actual == 0 {
+        eros::bail!("Firmware image {name} is empty");
+    }
+    if actual as u64 != expected {
+        eros::bail!(
+            "Firmware image {name} has {actual} bytes, but the manifest declares {expected}"
+        );
+    }
+    Ok(())
 }
 
 /// Both banks must be available before the device is detached: only its
 /// bootloader can tell us which one is inactive.
-fn application_files(entry: &FirmwareEntry) -> Result<[(&'static str, &FileEntry); 2], String> {
+fn application_files(entry: &FirmwareEntry) -> eros::Result<[(&'static str, &FileEntry); 2]> {
     Ok([
         (
             "app-a",
             entry
                 .files
                 .get("app-a")
-                .ok_or("Firmware release has no app-a image")?,
+                .ok_or_else(|| eros::error!("Firmware release has no app-a image"))?,
         ),
         (
             "app-b",
             entry
                 .files
                 .get("app-b")
-                .ok_or("Firmware release has no app-b image")?,
+                .ok_or_else(|| eros::error!("Firmware release has no app-b image"))?,
         ),
     ])
 }
@@ -71,7 +88,7 @@ impl Downloads {
         device_type: &str,
         entry: &FirmwareEntry,
         steps: &[UpdateStep],
-    ) -> Result<Self, String> {
+    ) -> eros::Result<Self> {
         // The inactive bank is unknown until after detach. A one-bank release
         // cannot safely start an update: it may leave the unit in DFU after
         // writing its bootloader or net core with no application to finish it.
@@ -135,6 +152,14 @@ impl Downloads {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_and_mis_sized_images_cannot_reach_the_device() {
+        assert!(validate_image_size("app-a", 0, 0).is_err());
+        assert!(validate_image_size("app-a", 2, 3).is_err());
+        assert!(validate_image_size("app-a", 4, 3).is_err());
+        assert!(validate_image_size("app-a", 3, 3).is_ok());
+    }
 
     #[test]
     fn missing_bank_is_not_installable() {

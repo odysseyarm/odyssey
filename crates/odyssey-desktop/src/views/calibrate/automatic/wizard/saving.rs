@@ -63,15 +63,18 @@ impl Wizard {
         let use_measured = *self.use_measured.peek();
         let session = *self.session.peek();
         spawn(async move {
-            let calibration = finished.outcome(use_measured).calibration;
-            let written = tokio::task::spawn_blocking(move || {
-                let dir = config::screens_dir().map_err(|e| e.to_string())?;
-                odyssey_autocalib::session::save_calibration(&dir, screen_id, &calibration)
-                    .map_err(|e| e.to_string())
+            let calibration = finished.outcome(use_measured).calibration.clone();
+            let written = tokio::task::spawn_blocking(move || -> eros::Result<_> {
+                let dir = config::screens_dir()?;
+                Ok(odyssey_autocalib::session::save_calibration(
+                    &dir,
+                    screen_id,
+                    &calibration,
+                )?)
             })
             .await
-            .map_err(|e| e.to_string())
-            .and_then(|r| r);
+            .map_err(eros::ErrorUnion::from)
+            .and_then(|result| result);
             // Leaving or restarting the wizard must not be undone by a late save.
             if *self.session.peek() != session || *self.stage.peek() != Stage::Review {
                 return;
@@ -85,7 +88,7 @@ impl Wizard {
                             state.remember_display_kind(persisted_key, kind);
                         });
                         if let Err(e) = update.await {
-                            tracing::warn!("could not remember the screen: {e}");
+                            tracing::warn!("could not remember the screen: {e:?}");
                         }
                         if *self.session.peek() != session || *self.stage.peek() != Stage::Review {
                             return;
@@ -107,8 +110,8 @@ impl Wizard {
                 }
                 Err(e) => {
                     *self.saving.write() = false;
-                    tracing::error!("could not save the calibration: {e}");
-                    *self.save_error.write() = Some(e);
+                    tracing::error!("could not save the calibration: {e:?}");
+                    *self.save_error.write() = Some(crate::error_message(&e));
                 }
             }
         });

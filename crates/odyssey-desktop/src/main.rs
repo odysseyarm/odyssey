@@ -39,8 +39,18 @@ pub struct ServerReady(pub Signal<bool>);
 fn main() {
     // Log to the terminal and a file before Dioxus launches.
     logging::init();
+    #[cfg(feature = "sim")]
+    if odyssey_hub_server::sim::enabled()
+        && let Err(error) = odyssey_hub_server::sim::initialize_config()
+    {
+        tracing::error!("Could not initialize isolated simulator settings: {error}");
+        std::process::exit(1);
+    }
 
-    match cli::parse(std::env::args().skip(1)) {
+    let args = std::env::args().skip(1);
+    #[cfg(feature = "sim")]
+    let args = args.filter(|argument| !matches!(argument.as_str(), "--sim" | "--sim-legacy"));
+    match cli::parse(args) {
         Ok(cli::Command::Run) => {}
         Ok(cli::Command::Calibrate(args)) => cli::set_pending_calibrate(args),
         Ok(cli::Command::Help) => {
@@ -69,18 +79,30 @@ fn main() {
     LaunchBuilder::new().with_cfg(config).launch(app);
 }
 
-fn desktop_config() -> anyhow::Result<Config> {
+fn desktop_config() -> eros::Result<Config> {
     let config = Config::default()
         .with_menu(None)
         .with_close_behaviour(WindowCloseBehaviour::WindowCloses)
         .with_window(WindowBuilder::new().with_title("Odyssey"));
     if cfg!(target_os = "windows") {
         let user_data_dir = std::env::var_os("LOCALAPPDATA")
-            .ok_or_else(|| anyhow::anyhow!("LOCALAPPDATA is not set"))?;
+            .ok_or_else(|| eros::error!("LOCALAPPDATA is not set"))?;
         Ok(config.with_data_directory(user_data_dir))
     } else {
         Ok(config)
     }
+}
+
+/// Render diagnostics only when an error becomes a cloneable UI-state message.
+fn error_message(error: &eros::ErrorUnion) -> String {
+    use std::fmt::Write as _;
+
+    let mut message = String::new();
+    for context in error.contexts().rev() {
+        let _ = write!(message, "{}: ", context.value());
+    }
+    let _ = write!(message, "{error}");
+    message
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]

@@ -27,8 +27,7 @@ pub(crate) fn format_address(address: &[u8; 6]) -> String {
 /// The device's product, name and address, with a DFU mark for a device that
 /// can only be flashed.
 pub(crate) fn device_label(device: &Device) -> String {
-    let [a, b, c, d, e, f] = device.uuid;
-    let addr = format!("{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}");
+    let addr = format_address(&device.uuid);
     let device_type = device_type(device);
     let is_dfu = device.capabilities.contains(DeviceCapabilities::DFU)
         && !device.capabilities.contains(DeviceCapabilities::CONTROL);

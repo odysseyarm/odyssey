@@ -2,7 +2,9 @@
 //!
 //! Update state lives in a shared `Arc<Mutex<HashMap>>`. The update itself runs
 //! on `tokio::spawn`, outside any component's lifetime, and components poll the
-//! shared state to redraw.
+//! shared state to redraw. Its claim follows the future through cancellation;
+//! task panics become failures rather than leaving a device claimed forever.
+//! Every image must be nonempty and match its manifest size before DFU starts.
 
 mod bootloader;
 mod device_firmware_update;

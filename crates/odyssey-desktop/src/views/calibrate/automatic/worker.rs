@@ -8,6 +8,9 @@
 //! The camera streams only while a session is open, and a session closes on
 //! [`Command::Close`], after [`Command::Finish`], on any camera error and when
 //! the [`Worker`] is dropped. Nothing else keeps a stream alive.
+//! A missed preview frame resets readiness, even when the camera recovers before
+//! the consecutive-timeout limit. Invalid camera data closes the session rather
+//! than leaving a supposedly reusable stream behind.
 
 mod backend;
 mod command;

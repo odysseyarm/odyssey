@@ -99,7 +99,7 @@ impl Wizard {
             .update(move |state| state.prefer_camera_size = on);
         spawn(async move {
             if let Err(e) = update.await {
-                tracing::warn!("Failed to save UI state: {e}");
+                tracing::warn!("Failed to save UI state: {e:?}");
             }
         });
     }

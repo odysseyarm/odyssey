@@ -19,6 +19,11 @@ pub(crate) const USAGE: &str = "\
 Usage:
   odyssey-desktop                     Open the app
   odyssey-desktop calibrate [options] Open the automatic screen calibration
+  odyssey-desktop --sim               Open with the transport simulator (sim builds)
+
+Simulation requires --features sim at build time and --sim or ODYSSEY_SIM=1
+at runtime. Physical unit/dongle/accessory discovery is disabled; settings and
+synthetic screen 0 live in an isolated temporary directory.
 
 Calibrate options (each one pre-fills a setup question; the wizard asks for
 anything left out):

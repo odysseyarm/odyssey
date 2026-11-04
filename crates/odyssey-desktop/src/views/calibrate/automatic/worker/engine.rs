@@ -341,6 +341,11 @@ impl Engine {
     }
 
     fn stream_error(&mut self, error: SessionError) {
+        // A missed frame interrupts the observed ready run even when the
+        // camera recovers before the timeout limit closes it.
+        if let Some(live) = &mut self.live {
+            live.ready.reset();
+        }
         if matches!(error, SessionError::Camera(CameraError::Timeout)) {
             self.timeouts += 1;
             if self.timeouts < MAX_CONSECUTIVE_TIMEOUTS {
@@ -370,7 +375,7 @@ impl Engine {
     fn save_attempt(&mut self, path: PathBuf) {
         let result = match &self.attempt {
             None => Err("there is no calibration attempt to save yet".to_string()),
-            Some(attempt) => write_bundle(attempt, path),
+            Some(attempt) => write_bundle(attempt, path).map_err(|error| error.to_string()),
         };
         match &result {
             Ok(saved) => tracing::info!(
@@ -399,7 +404,7 @@ fn solve_declared_and_measured(
     Ok((declared, measured))
 }
 
-fn write_bundle(attempt: &Attempt, path: PathBuf) -> Result<SavedAttempt, String> {
+fn write_bundle(attempt: &Attempt, path: PathBuf) -> eros::Result<SavedAttempt> {
     let log = crate::paths::log_dir()
         .map(|dir| dir.join("latest.log"))
         .and_then(|file| std::fs::read_to_string(file).ok())
@@ -411,4 +416,60 @@ fn write_bundle(attempt: &Attempt, path: PathBuf) -> Result<SavedAttempt, String
         log: &log,
     };
     attempt_bundle::write(&path, &bundle).map(|bytes| SavedAttempt { path, bytes })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use odyssey_autocalib::camera::CaptureSettings;
+    use odyssey_autocalib::session::{Hint, SessionOptions};
+
+    use super::*;
+
+    #[test]
+    fn a_recovered_preview_must_reestablish_readiness_after_a_timeout() {
+        let backend = Backend::Demo {
+            overscan_fraction: 0.0,
+        };
+        let camera = backend.list().unwrap().remove(0);
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = Engine::new(backend, events, Arc::new(AtomicBool::new(false)));
+        engine.open(
+            1,
+            &OpenRequest {
+                camera,
+                settings: CaptureSettings::default(),
+                aspect: 16.0 / 9.0,
+                options: SessionOptions::default(),
+                pattern_visible: true,
+                size_origin: None,
+            },
+        );
+        engine
+            .live
+            .as_mut()
+            .unwrap()
+            .ready
+            .observe(true, Instant::now() - Duration::from_secs(1));
+        engine.stream_error(SessionError::Camera(CameraError::Timeout));
+        engine.stream_preview();
+
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            Event::Session {
+                event: SessionEvent::Opened,
+                ..
+            }
+        ));
+        let Event::Session {
+            event: SessionEvent::Preview(frame),
+            ..
+        } = received.try_recv().unwrap()
+        else {
+            panic!("the recovered camera must publish a preview");
+        };
+        assert_eq!(frame.hint, Hint::Ready);
+        assert_eq!(frame.ready_for, Duration::ZERO);
+    }
 }

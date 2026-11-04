@@ -8,18 +8,24 @@ mod status_chip;
 
 use std::num::NonZeroU64;
 
-use ble_scan::{Nearby, use_ble_scan};
+use ble_scan::{BleScan, use_ble_scan};
 use dioxus::prelude::*;
 use edits::AccessoryEdits;
 use hub_sync::{Known, use_accessory_map};
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryType};
 use status_chip::StatusChip;
 
+use crate::components::{CARD_CLASS, CARD_TITLE_CLASS, Page};
 use crate::hub::HubContext;
+use crate::views::device_label;
 use crate::views::device_label::format_address;
 
 /// The slot color shown for an accessory whose device is unknown.
 const UNASSIGNED_SLOT: usize = 5;
+
+const ROW_CLASS: &str = "flex flex-col gap-2 md:flex-row md:items-center md:justify-between py-3";
+const LIST_CLASS: &str = "divide-y divide-gray-200 dark:divide-gray-600";
+const EMPTY_CLASS: &str = "text-sm text-gray-600 dark:text-gray-300";
 
 fn slot_color_dot(slot: usize) -> &'static str {
     match slot {
@@ -48,10 +54,10 @@ pub fn Accessories() -> Element {
 
     let known = use_signal(Known::new);
     let infos = use_signal(AccessoryInfoMap::new);
-    let nearby = use_signal(Nearby::new);
+    let scan = use_signal(|| BleScan::Starting);
 
     use_accessory_map(hub, known, infos);
-    use_ble_scan(nearby);
+    use_ble_scan(scan);
     let edits = AccessoryEdits::use_new(hub, infos);
 
     let info_snapshot = infos.read().clone();
@@ -70,7 +76,7 @@ pub fn Accessories() -> Element {
             let mut bytes = [0u8; 8];
             bytes[..6].copy_from_slice(&device.uuid);
             let uuid_u64 = u64::from_le_bytes(bytes);
-            Some((NonZeroU64::new(uuid_u64)?, format!("0x{uuid_u64:x}"), slot))
+            Some((NonZeroU64::new(uuid_u64)?, device_label(device), slot))
         })
         .collect();
 
@@ -84,28 +90,36 @@ pub fn Accessories() -> Element {
         .count();
     let total_count = added_ids.len();
 
-    let mut nearby_addable: Vec<([u8; 6], (String, AccessoryType))> = nearby
-        .read()
-        .iter()
-        .filter(|(id, _)| !info_snapshot.contains_key(*id))
-        .map(|(id, found)| (*id, found.clone()))
-        .collect();
-    nearby_addable.sort_by_key(|(id, _)| *id);
+    let nearby = match &*scan.read() {
+        BleScan::Found(found) => {
+            let mut addable: Vec<([u8; 6], (String, AccessoryType))> = found
+                .iter()
+                .filter(|(id, _)| !info_snapshot.contains_key(*id))
+                .map(|(id, found)| (*id, found.clone()))
+                .collect();
+            addable.sort_by_key(|(id, _)| *id);
+            Ok(addable)
+        }
+        BleScan::Starting => Err(None),
+        BleScan::Unavailable(reason) => Err(Some(reason.clone())),
+    };
 
     rsx! {
-        div { class: "p-4 space-y-6",
+        Page {
+            title: "Accessories",
+            description: "Bluetooth accessories such as a DryFireMag or MantisX. Assign one to a device to pair their events.",
 
-            section { class: "space-y-2",
-                h2 { class: "text-lg font-semibold flex items-center gap-2",
-                    "Accessories"
-                    span { class: "text-xs font-normal opacity-70",
-                        "({connected_count}/{total_count} connected)"
+            section { class: CARD_CLASS,
+                h2 { class: "{CARD_TITLE_CLASS} flex items-baseline gap-2",
+                    "Added"
+                    span { class: "text-sm font-normal text-gray-500 dark:text-gray-400",
+                        "{connected_count} of {total_count} connected"
                     }
                 }
                 if added_ids.is_empty() {
-                    p { class: "text-sm opacity-70", "No accessories added yet." }
+                    p { class: "{EMPTY_CLASS} mt-1", "None yet. Add one from the nearby list below." }
                 } else {
-                    ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
+                    ul { class: LIST_CLASS,
                         for id in added_ids {
                             AddedAccessory {
                                 key: "{format_address(&id)}",
@@ -120,16 +134,31 @@ pub fn Accessories() -> Element {
                 }
             }
 
-            section { class: "space-y-2",
-                h2 { class: "text-lg font-semibold", "Nearby" }
-                if nearby_addable.is_empty() {
-                    p { class: "text-sm opacity-70", "No nearby devices (or all are already added)." }
-                } else {
-                    ul { class: "divide-y divide-gray-200/40 dark:divide-white/10 rounded-xl overflow-hidden shadow-sm",
-                        for (id, (label, ty)) in nearby_addable {
-                            NearbyAccessory { key: "{format_address(&id)}", id, label, ty, edits }
+            section { class: CARD_CLASS,
+                h2 { class: CARD_TITLE_CLASS, "Nearby" }
+                match nearby {
+                    Err(None) => rsx! {
+                        p { class: "{EMPTY_CLASS} mt-1", "Looking for accessories…" }
+                    },
+                    Err(Some(reason)) => rsx! {
+                        p {
+                            class: "mt-1 text-sm text-amber-700 dark:text-amber-400",
+                            role: "status",
+                            "Bluetooth is unavailable, so nearby accessories cannot be found: {reason}."
                         }
-                    }
+                    },
+                    Ok(addable) if addable.is_empty() => rsx! {
+                        p { class: "{EMPTY_CLASS} mt-1",
+                            "No new accessories in range. Switch one on and keep it near this computer; the list refreshes every few seconds."
+                        }
+                    },
+                    Ok(addable) => rsx! {
+                        ul { class: LIST_CLASS,
+                            for (id, (label, ty)) in addable {
+                                NearbyAccessory { key: "{format_address(&id)}", id, label, ty, edits }
+                            }
+                        }
+                    },
                 }
             }
         }
@@ -148,7 +177,7 @@ fn AddedAccessory(
     let assigned_uuid = info.assignment.map(NonZeroU64::get);
 
     let (assigned_slot, assigned_label) = match assigned_uuid {
-        None => (None, "(Unassigned)".to_string()),
+        None => (None, "Unassigned".to_string()),
         Some(uuid) => match device_choices
             .iter()
             .find(|(choice_uuid, _, _)| choice_uuid.get() == uuid)
@@ -160,23 +189,24 @@ fn AddedAccessory(
     let dot_class = slot_color_dot(assigned_slot.unwrap_or(UNASSIGNED_SLOT));
 
     rsx! {
-        li { class: "flex flex-col gap-2 md:flex-row md:items-center md:justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
+        li { class: ROW_CLASS,
 
             div { class: "min-w-0",
-                div { class: "font-medium truncate", "{info.name}" }
-                div { class: "text-xs opacity-70 truncate", {mac} }
+                div { class: "font-medium text-gray-900 dark:text-white truncate", "{info.name}" }
+                div { class: "text-xs font-mono text-gray-500 dark:text-gray-400 truncate", {mac} }
             }
 
             div { class: "flex items-center gap-3 flex-wrap justify-end",
                 StatusChip { connected }
 
-                span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200/70 dark:border-white/10",
-                    span { class: "h-2.5 w-2.5 rounded-full {dot_class}" }
+                span { class: "inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-gray-200 text-gray-700 dark:border-gray-500 dark:text-gray-200",
+                    span { class: "h-2.5 w-2.5 rounded-full {dot_class}", aria_hidden: true }
                     {assigned_label}
                 }
 
                 select {
-                    class: "px-2 py-1 text-sm rounded-lg border border-gray-300/70 dark:border-white/10 bg-white/60 dark:bg-zinc-900/60",
+                    class: "px-2 py-1 text-sm rounded-lg border border-gray-300 bg-white text-gray-900 dark:border-gray-500 dark:bg-gray-800 dark:text-white",
+                    aria_label: "Device for {info.name}",
                     disabled: edits.pending(),
                     value: assigned_uuid.map(|uuid| uuid.to_string()).unwrap_or_default(),
                     onchange: move |evt| {
@@ -184,14 +214,14 @@ fn AddedAccessory(
                             edits.assign(id, assignment);
                         }
                     },
-                    option { value: "", "(Unassigned)" }
+                    option { value: "", "Unassigned" }
                     for (uuid, label, slot) in device_choices {
                         option { key: "{uuid}", value: "{uuid}", "{label} (slot {slot + 1})" }
                     }
                 }
 
                 button {
-                    class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 hover:bg-red-500 hover:text-white transition",
+                    class: "px-3 py-1.5 text-sm rounded-lg border border-red-500/60 text-red-700 hover:bg-red-600 hover:text-white dark:text-red-400 transition disabled:opacity-50",
                     disabled: edits.pending(),
                     onclick: move |_| edits.remove(id),
                     "Remove"
@@ -210,13 +240,13 @@ fn NearbyAccessory(
 ) -> Element {
     let mac = format_address(&id);
     rsx! {
-        li { class: "flex items-center justify-between px-4 py-3 bg-white/70 dark:bg-zinc-900/60 backdrop-blur",
+        li { class: "flex items-center justify-between py-3",
             div { class: "min-w-0",
-                div { class: "font-medium truncate", {label.as_str()} }
-                div { class: "text-xs opacity-70 truncate", {mac} }
+                div { class: "font-medium text-gray-900 dark:text-white truncate", {label.as_str()} }
+                div { class: "text-xs font-mono text-gray-500 dark:text-gray-400 truncate", {mac} }
             }
             button {
-                class: "px-3 py-1.5 text-sm rounded-lg border border-emerald-600/60 hover:bg-emerald-600 hover:text-white transition",
+                class: "btn-secondary whitespace-nowrap",
                 disabled: edits.pending(),
                 onclick: move |_| edits.add(id, label.clone(), ty),
                 "Add"

@@ -1,7 +1,8 @@
 use std::io::{Cursor, Read as _};
 use std::path::Path;
+use std::time::Duration;
 
-use anyhow::{Context as _, Result, bail};
+use eros::{Context as _, Result, bail};
 use sha2::{Digest as _, Sha256};
 
 use super::locations::managed_dir;
@@ -14,6 +15,8 @@ use super::pin_file::{install_path, pin};
 /// only stops a corrupt or hostile archive from filling the disk.
 const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EULA_BYTES: u64 = 1024 * 1024;
+/// Covers headers and body, so a stalled server cannot leave Setup working forever.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// What the download is doing, for a progress display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +39,7 @@ pub(crate) enum Installed {
 /// Downloads, verifies and unpacks the pinned SDK into the app's data folder.
 /// The previous copy is replaced only once the new one is complete.
 pub(crate) async fn install(mut progress: impl FnMut(Phase)) -> Result<Installed> {
-    let dest = managed_dir().context("this system has no app data folder")?;
+    let dest = managed_dir().ok_or_else(|| eros::error!("this system has no app data folder"))?;
     let pin = pin();
 
     let archive = fetch(
@@ -79,6 +82,7 @@ async fn fetch(
 ) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .user_agent(concat!("odyssey-desktop/", env!("CARGO_PKG_VERSION")))
+        .timeout(DOWNLOAD_TIMEOUT)
         .build()?;
     let response = client
         .get(url)
@@ -109,6 +113,12 @@ async fn read_response(
             received: bytes.len() as u64,
             total,
         });
+    }
+    if expected_size != 0 && bytes.len() as u64 != expected_size {
+        bail!(
+            "the download has {} bytes, but {expected_size} were expected",
+            bytes.len()
+        );
     }
     Ok(bytes)
 }
@@ -279,7 +289,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream
-                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             let mut request = Vec::new();
             while !request.ends_with(b"\r\n\r\n") {
@@ -331,6 +341,13 @@ mod tests {
             read_response(response, 3, 3, &mut |_| {}).await.unwrap(),
             b"abc"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_short_complete_response_cannot_satisfy_the_pinned_size() {
+        let response =
+            response(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").await;
+        assert!(read_response(response, 4, 4, &mut |_| {}).await.is_err());
     }
 
     #[test]

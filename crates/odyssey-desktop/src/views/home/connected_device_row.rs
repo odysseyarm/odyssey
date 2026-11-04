@@ -12,7 +12,7 @@ use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Tr
 use odyssey_hub_server::firmware::FirmwareManifest;
 
 use crate::components::{
-    DeviceFirmwareUpdate, FirmwareUpdateManager, SensorSettings, TransportModePanel,
+    DeviceFirmwareUpdate, FirmwareUpdateManager, ImageViewer, SensorSettings, TransportModePanel,
 };
 use crate::hub::HubContext;
 
@@ -117,6 +117,11 @@ pub(super) fn ConnectedDeviceRow(
                 manifest,
                 manager,
                 devices: hub().devices,
+            }
+            ImageViewer {
+                hub,
+                device: device.clone(),
+                is_updating,
             }
             // Transport mode first: it decides whether sensor tuning is
             // reachable at all, so it belongs above the settings it gates.

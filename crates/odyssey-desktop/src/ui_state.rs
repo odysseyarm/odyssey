@@ -2,12 +2,13 @@
 //! spawning a waiter: separate event tasks must not reorder the persisted edits.
 
 use dioxus::prelude::{Coroutine, use_coroutine};
+use eros::Context as _;
 use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use odyssey_hub_common::config::{self, UiState};
 use tokio::sync::oneshot;
 
-type UpdateResult = Result<UiState, String>;
+type UpdateResult = eros::Result<UiState>;
 
 struct UpdateRequest {
     edit: Box<dyn FnOnce(&mut UiState) + Send>,
@@ -32,9 +33,9 @@ impl UiStateWriter {
             completion,
         });
         async move {
-            result.await.map_err(|error| {
-                format!("The UI-state writer stopped before saving the change: {error}")
-            })?
+            result
+                .await
+                .context("The UI-state writer stopped before saving the change")?
         }
     }
 }
@@ -44,7 +45,7 @@ pub(crate) fn use_ui_state_writer() -> UiStateWriter {
         while let Some(request) = updates.next().await {
             let result = config::ui_state_update_async(request.edit)
                 .await
-                .map_err(|error| error.to_string());
+                .map_err(Into::into);
             // Closing a page only drops its waiter, not the already-queued edit.
             let _ = request.completion.send(result);
         }
