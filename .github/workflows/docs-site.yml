@@ -1,0 +1,41 @@
+name: Docs site
+
+# The website (odysseyarm/odysseyarm.github.io) copies docs/ in when it builds
+# and lists the latest Odyssey Desktop release on its downloads page. This asks
+# it to rebuild whenever either changes, so neither waits for its daily build.
+#
+# Needs the SITE_DISPATCH_TOKEN secret: a fine-grained token with
+# "Contents: read and write" on odysseyarm/odysseyarm.github.io (that is the
+# permission GitHub requires to send a repository_dispatch event). Without the
+# secret this job does nothing.
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - docs/**
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Rebuild website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to the website
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          EVENT: ${{ github.event_name == 'release' && 'odyssey-release' || 'odyssey-docs-updated' }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::SITE_DISPATCH_TOKEN is not set; the website will pick this up in its next scheduled build."
+            exit 0
+          fi
+          gh api repos/odysseyarm/odysseyarm.github.io/dispatches \
+            -f event_type="$EVENT" \
+            -f "client_payload[ref]=$GITHUB_SHA"
