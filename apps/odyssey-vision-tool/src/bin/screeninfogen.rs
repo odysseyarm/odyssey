@@ -3,6 +3,8 @@
     reason = "command-line tool: stdout is its interface"
 )]
 
+use std::path::PathBuf;
+
 use anyhow::{Context as _, Result};
 use app_dirs2::{AppDataType, get_app_root};
 use nalgebra::{ComplexField, Point3, RealField, Scalar};
@@ -29,7 +31,7 @@ const SCREEN_DIMENSIONS_METERS: [f32; 2] = [2.032 * (16. / 9.), 2.032];
 
 const METERS_PER_INCH: f32 = 0.0254;
 
-/// Screen is centered at (0, 0, 0)
+/// Marker positions measured from the top-left screen corner at `(0, 0, 0)`.
 /// ```text
 /// +--x
 /// |
@@ -54,7 +56,7 @@ where
 }
 
 /// Writes `value` as pretty JSON to `<user config dir>/<directory>/<file_name>`.
-fn save_to_config_dir(directory: &str, file_name: &str, value: &impl Serialize) -> Result<()> {
+fn save_to_config_dir(directory: &str, file_name: &str, value: &impl Serialize) -> Result<PathBuf> {
     let config_dir =
         get_app_root(AppDataType::UserConfig, &APP_INFO).context("no user config directory")?;
     let directory = config_dir.join(directory);
@@ -64,10 +66,11 @@ fn save_to_config_dir(directory: &str, file_name: &str, value: &impl Serialize) 
     let file = std::fs::File::create(&path)
         .with_context(|| format!("failed to create {}", path.display()))?;
     serde_json::to_writer_pretty(file, value)
-        .with_context(|| format!("failed to write {}", path.display()))
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(path)
 }
 
-pub fn main() {
+pub fn main() -> Result<()> {
     // Other screens that have been used with this tool:
     //   3840x2160 (16:9) SVT:   [3.64631, 2.05105]
     //   1920x1080 abe's wall:   [2.28231, 1.2838]
@@ -89,18 +92,15 @@ pub fn main() {
         );
     }
 
-    match save_to_config_dir("ats-vision-tool", "new-screen-info.json", &screen_info) {
-        Ok(()) => println!("Screen info saved to {screen_info:?}"),
-        Err(e) => println!("Failed to save screen info: {e:#}"),
-    }
+    let path = save_to_config_dir("ats-vision-tool", "new-screen-info.json", &screen_info)?;
+    println!("Screen info saved to {}", path.display());
 
     let screen_calibration: odyssey_common::ScreenCalibration<f32> = screen_info.into();
-    match save_to_config_dir(
+    let path = save_to_config_dir(
         "screens",
         "new-screen-calibration.json",
         &screen_calibration,
-    ) {
-        Ok(()) => println!("Screen calibration saved to {screen_calibration:?}"),
-        Err(e) => println!("Failed to save screen calibration: {e:#}"),
-    }
+    )?;
+    println!("Screen calibration saved to {}", path.display());
+    Ok(())
 }

@@ -6,6 +6,7 @@
 use std::process::ExitCode;
 
 use anyhow::{Context as _, Result};
+use clap::{Parser, Subcommand};
 use nusb::MaybeFuture as _;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
@@ -16,10 +17,17 @@ const NORDIC_VENDOR_ID: u16 = 0x1915;
 /// Product ids a direct device may enumerate with.
 const VM_PRODUCT_IDS: [u16; 3] = [0x520F, 0x5210, 0x5211];
 
-fn print_help() {
-    eprintln!("Usage: ./cli <usb>");
-    eprintln!();
-    eprintln!("Connect to first available USB device and read product IDs");
+#[derive(Parser)]
+#[command(about = "Read sensor product IDs from the first available USB device")]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Connect to the first device in USB transport mode.
+    Usb,
 }
 
 /// Connects to the first device that is in USB transport mode.
@@ -75,11 +83,9 @@ async fn run(device: &VmDevice) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args = std::env::args().collect::<Vec<_>>();
-    if args.get(1).map(String::as_str) != Some("usb") {
-        print_help();
-        return ExitCode::FAILURE;
-    }
+    let Args {
+        command: Command::Usb,
+    } = Args::parse();
 
     let result = match connect_first_usb_mode_device().await {
         Ok(device) => run(&device).await,

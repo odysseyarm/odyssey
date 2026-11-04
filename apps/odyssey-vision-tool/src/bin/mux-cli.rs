@@ -68,7 +68,6 @@ fn list_dongles() -> Result<Vec<nusb::DeviceInfo>, String> {
 }
 
 /// The dongle selected by `--device`, or the only one connected.
-/// `devices` must not be empty.
 fn select_dongle(
     devices: Vec<nusb::DeviceInfo>,
     device_index: Option<usize>,
@@ -84,10 +83,9 @@ fn select_dongle(
             devices.len()
         ));
     }
-    Ok(devices
-        .into_iter()
-        .next()
-        .expect("devices is non-empty: checked by the caller"))
+    devices.into_iter().next().ok_or_else(|| {
+        "No dongle found (VID:0x1915 PID:0x5212). Please connect a dongle.".to_string()
+    })
 }
 
 async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice, String> {
@@ -191,8 +189,8 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<(), String> {
                 bond.name.as_str()
             );
         }
-        odyssey_usb::device::PairingEvent::Timeout => println!("Pairing timed out"),
-        odyssey_usb::device::PairingEvent::Cancelled => println!("Pairing cancelled"),
+        odyssey_usb::device::PairingEvent::Timeout => return Err("Pairing timed out".to_string()),
+        odyssey_usb::device::PairingEvent::Cancelled => return Err("Pairing cancelled".to_string()),
     }
     Ok(())
 }
@@ -223,20 +221,7 @@ async fn cmd_usb_info(device_index: Option<usize>) -> Result<(), String> {
     if devices.is_empty() {
         return Err("No dongle found (VID:0x1915 PID:0x5212)".to_string());
     }
-    let device_info = if let Some(idx) = device_index {
-        devices
-            .get(idx)
-            .cloned()
-            .ok_or_else(|| format!("Device index {idx} not found. Use 'devices' to list."))?
-    } else {
-        if devices.len() > 1 {
-            return Err(format!(
-                "Multiple dongles found ({}). Please specify with --device <index>.",
-                devices.len()
-            ));
-        }
-        devices[0].clone()
-    };
+    let device_info = select_dongle(devices, device_index)?;
     let dev = device_info
         .open()
         .await
