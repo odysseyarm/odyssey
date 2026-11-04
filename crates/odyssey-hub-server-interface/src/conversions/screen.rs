@@ -18,14 +18,14 @@ impl From<common::ScreenInfo> for ScreenInfoReply {
 }
 impl From<ScreenInfoReply> for common::ScreenInfo {
     fn from(v: ScreenInfoReply) -> Self {
-        let b = v.bounds.unwrap();
+        let bounds = v.bounds.expect("screen info carries its bounds");
         Self {
             id: v.id as u8,
             bounds: [
-                b.tl.unwrap().into(),
-                b.tr.unwrap().into(),
-                b.bl.unwrap().into(),
-                b.br.unwrap().into(),
+                bounds.tl.expect("bounds carry top-left").into(),
+                bounds.tr.expect("bounds carry top-right").into(),
+                bounds.bl.expect("bounds carry bottom-left").into(),
+                bounds.br.expect("bounds carry bottom-right").into(),
             ],
         }
     }

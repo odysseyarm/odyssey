@@ -4,5 +4,6 @@
 mod accessory;
 mod device;
 mod event;
+mod hardware_address;
 mod math;
 mod screen;

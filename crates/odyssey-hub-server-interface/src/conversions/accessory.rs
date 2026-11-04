@@ -2,6 +2,7 @@ use std::num::NonZero;
 
 use odyssey_hub_common as common;
 
+use super::hardware_address::{address_from_key, address_to_key};
 use crate::{
     AccessoryFeature, AccessoryInfo, AccessoryInfoMap, AccessoryMapReply, AccessoryStatus,
     AccessoryType,
@@ -56,7 +57,9 @@ impl From<AccessoryInfo> for common::accessory::AccessoryInfo {
     fn from(v: AccessoryInfo) -> Self {
         Self {
             name: v.name,
-            ty: AccessoryType::try_from(v.ty).unwrap().into(),
+            ty: AccessoryType::try_from(v.ty)
+                .expect("accessory type is a defined AccessoryType value")
+                .into(),
             assignment: if v.assignment != 0 {
                 NonZero::new(v.assignment)
             } else {
@@ -67,7 +70,8 @@ impl From<AccessoryInfo> for common::accessory::AccessoryInfo {
                 .into_iter()
                 .map(|f| {
                     common::accessory::AccessoryFeature::from(
-                        AccessoryFeature::try_from(f).unwrap(),
+                        AccessoryFeature::try_from(f)
+                            .expect("accessory feature is a defined AccessoryFeature value"),
                     )
                 })
                 .collect(),
@@ -78,12 +82,9 @@ impl From<AccessoryInfo> for common::accessory::AccessoryInfo {
 impl From<common::accessory::AccessoryMap> for AccessoryMapReply {
     fn from(map: common::accessory::AccessoryMap) -> Self {
         let mut accessory_map = std::collections::HashMap::new();
-        for (k6, (info, connected)) in map {
-            let mut buf = [0u8; 8];
-            buf[..6].copy_from_slice(&k6);
-            let key64 = u64::from_le_bytes(buf);
+        for (address, (info, connected)) in map {
             accessory_map.insert(
-                key64,
+                address_to_key(address),
                 AccessoryStatus {
                     accessory: Some(info.into()),
                     connected,
@@ -97,11 +98,11 @@ impl From<AccessoryMapReply> for common::accessory::AccessoryMap {
     fn from(v: AccessoryMapReply) -> Self {
         v.accessory_map
             .into_iter()
-            .map(|(k64, status)| {
-                let mut buf = [0u8; 8];
-                buf[..6].copy_from_slice(&k64.to_le_bytes()[..6]);
-                let k6: [u8; 6] = buf[..6].try_into().unwrap();
-                (k6, (status.accessory.unwrap().into(), status.connected))
+            .map(|(key, status)| {
+                let info = status
+                    .accessory
+                    .expect("accessory status carries its accessory");
+                (address_from_key(key), (info.into(), status.connected))
             })
             .collect()
     }
@@ -111,25 +112,16 @@ impl From<AccessoryInfoMap> for common::accessory::AccessoryInfoMap {
     fn from(v: AccessoryInfoMap) -> Self {
         v.accessory_info_map
             .into_iter()
-            .map(|(k64, info)| {
-                let mut buf = [0u8; 8];
-                buf[..6].copy_from_slice(&k64.to_le_bytes()[..6]);
-                let k6: [u8; 6] = buf[..6].try_into().unwrap();
-                (k6, info.into())
-            })
+            .map(|(key, info)| (address_from_key(key), info.into()))
             .collect()
     }
 }
 impl From<common::accessory::AccessoryInfoMap> for AccessoryInfoMap {
     fn from(map: common::accessory::AccessoryInfoMap) -> Self {
-        let mut m = std::collections::HashMap::new();
-        for (k6, info) in map {
-            let mut buf = [0u8; 8];
-            buf[..6].copy_from_slice(&k6);
-            m.insert(u64::from_le_bytes(buf), info.into());
+        let mut accessory_info_map = std::collections::HashMap::new();
+        for (address, info) in map {
+            accessory_info_map.insert(address_to_key(address), info.into());
         }
-        Self {
-            accessory_info_map: m,
-        }
+        Self { accessory_info_map }
     }
 }

@@ -1,5 +1,6 @@
 use odyssey_hub_common as common;
 
+use super::hardware_address::address_from_bytes;
 use crate::{
     Device, DeviceEvent, DonglePairingResultEvent, Event, Matrix3x1, Matrix3x3, Pose, Vector2,
     Vector3, device_event, event,
@@ -111,18 +112,13 @@ impl TryFrom<Event> for common::events::Event {
 
     fn try_from(event: Event) -> Result<Self, ()> {
         match event.event_oneof.ok_or(())? {
-            event::EventOneof::DonglePairingResult(e) => {
-                let mut paired_address = [0u8; 6];
-                let len = e.paired_address.len().min(6);
-                paired_address[..len].copy_from_slice(&e.paired_address[..len]);
-                Ok(Self::DonglePairingResult {
-                    dongle_id: e.dongle_id,
-                    success: e.success,
-                    paired_address,
-                    error: e.error,
-                    paired_name: e.paired_name,
-                })
-            }
+            event::EventOneof::DonglePairingResult(e) => Ok(Self::DonglePairingResult {
+                dongle_id: e.dongle_id,
+                success: e.success,
+                paired_address: address_from_bytes(&e.paired_address),
+                error: e.error,
+                paired_name: e.paired_name,
+            }),
             event::EventOneof::Device(d) => {
                 let device: common::device::Device = match d.device {
                     Some(dev) => dev.into(),
@@ -176,12 +172,9 @@ impl TryFrom<Event> for common::events::Event {
                         common::events::DeviceEventKind::CapabilitiesChanged
                     }
                     device_event::DeviceEventOneof::PairingResult(e) => {
-                        let mut paired_address = [0u8; 6];
-                        let len = e.paired_address.len().min(6);
-                        paired_address[..len].copy_from_slice(&e.paired_address[..len]);
                         common::events::DeviceEventKind::PairingResult {
                             success: e.success,
-                            paired_address,
+                            paired_address: address_from_bytes(&e.paired_address),
                             error: e.error,
                             paired_name: e.paired_name,
                         }

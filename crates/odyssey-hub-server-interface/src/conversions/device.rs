@@ -1,5 +1,6 @@
 use odyssey_hub_common as common;
 
+use super::hardware_address::address_from_bytes;
 use crate::{Device, EventsTransport, FirmwareVersion, Transport};
 
 impl From<common::device::Transport> for Transport {
@@ -49,23 +50,19 @@ impl From<common::device::Device> for Device {
 }
 impl From<Device> for common::device::Device {
     fn from(d: Device) -> Self {
-        let mut uuid = [0u8; 6];
-        if d.uuid.len() == 6 {
-            uuid.copy_from_slice(&d.uuid);
-        } else if !d.uuid.is_empty() {
-            // If we have some bytes, take first 6 (or pad)
-            let len = std::cmp::min(6, d.uuid.len());
-            uuid[..len].copy_from_slice(&d.uuid[..len]);
-        }
         Self {
-            uuid,
-            transport: Transport::try_from(d.transport).unwrap().into(),
+            uuid: address_from_bytes(&d.uuid),
+            transport: Transport::try_from(d.transport)
+                .expect("transport is a defined Transport value")
+                .into(),
             capabilities: common::device::DeviceCapabilities::new(d.capabilities as u8),
             firmware_version: d
                 .firmware_version
                 .map(|v| [v.major as u16, v.minor as u16, v.patch as u16])
                 .unwrap_or([0, 0, 0]),
-            events_transport: match EventsTransport::try_from(d.events_transport).unwrap() {
+            events_transport: match EventsTransport::try_from(d.events_transport)
+                .expect("events transport is a defined EventsTransport value")
+            {
                 EventsTransport::Wired => common::device::EventsTransport::Wired,
                 EventsTransport::Bluetooth => common::device::EventsTransport::Bluetooth,
             },
