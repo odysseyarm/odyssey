@@ -9,7 +9,8 @@ use odyssey_autocalib::session::Hint;
 use super::hints::{OVERSCAN_HELP, screen_hint};
 use super::settings::{COLOR_EXPOSURE_RANGE_US, COLOR_EXPOSURE_STEP_US};
 use super::ui::{
-    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+    CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
+    focus_primary,
 };
 use super::wizard::Wizard;
 use super::worker::PreviewFrame;
@@ -167,7 +168,7 @@ fn LivePreview(wizard: Wizard) -> Element {
     let Some(frame) = preview.as_ref() else {
         return rsx! {
             div {
-                class: "flex aspect-video w-full items-center justify-center rounded-xl bg-gray-900 text-gray-400",
+                class: CAMERA_PLACEHOLDER,
                 "Waiting for the camera…"
             }
         };

@@ -6,7 +6,7 @@ use odyssey_autocalib::session::SizeCheck;
 use crate::components::wizard::{Icon, IconView};
 use crate::views::calibrate::automatic::kind::SizeOrigin;
 use crate::views::calibrate::automatic::quality::disagreement_message;
-use crate::views::calibrate::automatic::ui::{PRIMARY_BUTTON, SECONDARY_BUTTON};
+use crate::views::calibrate::automatic::ui::{INFO_NOTE, PRIMARY_BUTTON, SECONDARY_BUTTON};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
 const AMBER_BOX: &str = "flex flex-col gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100";
@@ -76,7 +76,7 @@ pub(super) fn DisagreementNotice(
 pub(super) fn OverscanNotice() -> Element {
     rsx! {
         div {
-            class: "flex items-start gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100",
+            class: INFO_NOTE,
             IconView { icon: Icon::Crop, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
             span {
                 "This screen hides the edge of its picture. The size above is the whole picture the computer draws, including the part you can't see, and the calibration is for that picture. Turning off overscan in the TV's picture settings ('Just Scan' or 'PC mode') makes all of it visible, which also lets the TV's own size be used."

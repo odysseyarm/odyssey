@@ -10,11 +10,10 @@ use dioxus::prelude::*;
 
 use super::kind::DisplayKind;
 use super::reference::{self, Agreement, CARD_STEP_PX, Method, Unit};
-use super::ui::{PRIMARY_BUTTON, SECONDARY_BUTTON};
+use super::ui::{AMBER_ALERT, LINK_BUTTON, PRIMARY_BUTTON, SECONDARY_BUTTON};
 use super::wizard::{Helper, Wizard};
 use crate::components::wizard::{Icon, IconView};
 
-const LINK: &str = "text-base font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:text-blue-300 dark:hover:text-blue-100";
 const SEGMENT_ON: &str = "bg-blue-600 text-white";
 const SEGMENT_OFF: &str = "bg-white text-gray-800 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700";
 
@@ -32,7 +31,7 @@ pub fn ReferenceHelper(wizard: Wizard) -> Element {
         if let Some(problem) = problem {
             div {
                 role: "alert",
-                class: "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
+                class: AMBER_ALERT,
                 {problem}
             }
         }
@@ -172,13 +171,13 @@ fn Measured(wizard: Wizard) -> Element {
             div {
                 class: "flex flex-wrap gap-4",
                 button {
-                    class: LINK,
+                    class: LINK_BUTTON,
                     r#type: "button",
                     onclick: move |_| wizard.open_helper(reading.method),
                     "Measure again"
                 }
                 button {
-                    class: LINK,
+                    class: LINK_BUTTON,
                     r#type: "button",
                     onclick: move |_| wizard.clear_reference(),
                     "Don't use it"

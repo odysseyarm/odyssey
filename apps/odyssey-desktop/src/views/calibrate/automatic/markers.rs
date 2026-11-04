@@ -9,7 +9,8 @@ use dioxus::prelude::*;
 use super::hints::{MARKER_RULES, marker_hint};
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
 use super::ui::{
-    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
+    CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
+    focus_primary,
 };
 use super::wizard::Wizard;
 use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
@@ -117,7 +118,7 @@ fn MarkerPreviewView(wizard: Wizard) -> Element {
     let Some(frame) = markers.as_ref() else {
         return rsx! {
             div {
-                class: "flex aspect-video w-full items-center justify-center rounded-xl bg-gray-900 text-gray-400",
+                class: CAMERA_PLACEHOLDER,
                 "Waiting for the camera…"
             }
         };

@@ -6,10 +6,9 @@ use std::path::PathBuf;
 
 use dioxus::prelude::*;
 
-use super::ui::SECONDARY_BUTTON;
+use super::ui::{LINK_BUTTON, SECONDARY_BUTTON};
 use crate::scale_board::{self, Board};
 
-const LINK: &str = "text-base font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:text-blue-300 dark:hover:text-blue-100";
 const HEADING: &str = "text-lg font-semibold text-gray-900 dark:text-white";
 const BODY: &str = "text-base text-gray-700 dark:text-gray-200";
 
@@ -35,7 +34,7 @@ pub fn ScaleBoardInfo() -> Element {
     rsx! {
         div {
             button {
-                class: LINK,
+                class: LINK_BUTTON,
                 r#type: "button",
                 onclick: move |_| open.set(true),
                 "About the scale board (experimental)"

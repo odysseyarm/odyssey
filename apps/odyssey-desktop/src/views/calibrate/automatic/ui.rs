@@ -6,6 +6,23 @@ pub(super) const PRIMARY_BUTTON: &str = "inline-flex items-center justify-center
 pub(super) const SECONDARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-5 py-3 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600 dark:focus-visible:ring-gray-600 disabled:opacity-40 disabled:pointer-events-none";
 pub(super) const CARD: &str = "rounded-xl bg-white p-5 shadow dark:bg-gray-700";
 
+/// A text-only button that reads as a link.
+pub(super) const LINK_BUTTON: &str = "text-base font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:text-blue-300 dark:hover:text-blue-100";
+
+/// A one-line warning box.
+pub(super) const AMBER_ALERT: &str = "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100";
+
+/// A spinner beside what is being waited for.
+pub(super) const WORKING_ROW: &str =
+    "flex items-center gap-3 text-base text-gray-600 dark:text-gray-300";
+
+/// A one-line hint box with an icon.
+pub(super) const INFO_NOTE: &str = "flex items-start gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100";
+
+/// The empty stage where the live camera picture goes.
+pub(super) const CAMERA_PLACEHOLDER: &str =
+    "flex aspect-video w-full items-center justify-center rounded-xl bg-gray-900 text-gray-400";
+
 /// Element id of the step's main button, so the wizard can focus it and Enter
 /// does the obvious thing.
 pub(super) const PRIMARY_ID: &str = "primary-action";

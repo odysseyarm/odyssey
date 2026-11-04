@@ -16,7 +16,7 @@ use crate::sdk_install::{self, Advisory, Delivery, Removal};
 mod online {
     use dioxus::prelude::*;
 
-    use super::super::ui::PRIMARY_BUTTON;
+    use super::super::ui::{PRIMARY_BUTTON, WORKING_ROW};
     use super::super::wizard::Wizard;
     use crate::components::wizard::Spinner;
     use crate::sdk_install::{self, Installed, Phase};
@@ -77,7 +77,7 @@ mod online {
                 match state() {
                     State::Working(phase) => rsx! {
                         div {
-                            class: "flex items-center gap-3 text-base text-gray-600 dark:text-gray-300",
+                            class: WORKING_ROW,
                             Spinner { class: "size-5".to_string() }
                             "{describe(phase)}"
                         }
