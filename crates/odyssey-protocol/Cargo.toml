@@ -14,7 +14,6 @@ enumn = { workspace = true }
 nalgebra = { version = "0.35", default-features = false }
 serde = { version = "1.0.219", default-features = false, optional = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro", default-features = false }
-thiserror = { version = "2.0.17", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 serde_bytes = { version = "0.11.19", optional = true, default-features = false }
 heapless = { workspace = true }

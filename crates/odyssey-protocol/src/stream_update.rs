@@ -48,3 +48,22 @@ impl StreamUpdate {
         Ok(stream_update)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_update_does_not_consume_the_next_packet() {
+        for bytes in [&[][..], &[0x09][..], &[0x7f, 0][..], &[0x09, 3][..]] {
+            let mut cursor = bytes;
+            assert!(StreamUpdate::parse(&mut cursor).is_err());
+            assert_eq!(cursor, bytes);
+        }
+        let mut cursor = &[0x09, 0, 0xaa][..];
+        let update = StreamUpdate::parse(&mut cursor).unwrap();
+        assert!(matches!(update.packet_id, PacketType::ObjectReport()));
+        assert_eq!(update.action, StreamUpdateAction::Enable);
+        assert_eq!(cursor, &[0xaa]);
+    }
+}

@@ -26,7 +26,16 @@ pub trait Parse: Sized {
 }
 
 /// Writes a value into an uninitialised buffer, advancing the buffer past it.
-pub trait Serialize {
+///
+/// # Safety
+/// Implementations must initialise exactly the first [`Self::SIZE`] bytes of
+/// the original buffer and advance the cursor past those bytes. Safe callers
+/// may expose those bytes as initialised memory after this method returns.
+#[expect(
+    unsafe_code,
+    reason = "implementors guarantee initialisation of the output"
+)]
+pub unsafe trait Serialize {
     /// Exactly the number of bytes [`serialize`](Self::serialize) writes.
     const SIZE: usize;
 
@@ -45,13 +54,11 @@ pub trait Serialize {
         let mut cursor = spare;
         self.serialize(&mut cursor);
         let written = spare_len - cursor.len();
-        // `push` is the only way a cursor advances and it initialises every
-        // byte it steps over, so `written` bytes are initialised. A `SIZE`
-        // that lies about what `serialize` writes would otherwise expose
-        // uninitialised memory, so check it.
+        // The unsafe trait contract guarantees that the first `SIZE` bytes
+        // were initialised; checking the cursor also catches size mistakes.
         assert_eq!(written, Self::SIZE, "serialize wrote a different SIZE");
-        // SAFETY: the first `written` bytes of the spare capacity were
-        // initialised by `push` (see above) and `written <= spare_len`.
+        // SAFETY: `Serialize` guarantees initialisation of the first `SIZE`
+        // bytes, and the cursor check confirms the promised length.
         unsafe {
             buf.set_len(buf.len() + written);
         }
@@ -95,7 +102,9 @@ impl Parse for MotData {
     }
 }
 
-impl Serialize for MotData {
+// SAFETY: `push` initialises and advances past all 16 bytes.
+#[expect(unsafe_code, reason = "the serializer initialises exactly SIZE bytes")]
+unsafe impl Serialize for MotData {
     const SIZE: usize = MOT_DATA_SIZE;
 
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]) {
@@ -154,7 +163,9 @@ impl Parse for ObjectReport {
     }
 }
 
-impl Serialize for ObjectReport {
+// SAFETY: each field serializer and `push` initialises its entire wire field.
+#[expect(unsafe_code, reason = "the serializer initialises exactly SIZE bytes")]
+unsafe impl Serialize for ObjectReport {
     const SIZE: usize =
         TIMESTAMP_SIZE + 2 * MOT_DATA_PER_CAMERA * MOT_DATA_SIZE + OBJECT_REPORT_TRAILER.len();
 
@@ -193,7 +204,9 @@ impl Parse for CombinedMarkersReport {
     }
 }
 
-impl Serialize for CombinedMarkersReport {
+// SAFETY: `push` initialises three bytes for each of the 32 points.
+#[expect(unsafe_code, reason = "the serializer initialises exactly SIZE bytes")]
+unsafe impl Serialize for CombinedMarkersReport {
     const SIZE: usize = 2 * MOT_DATA_PER_CAMERA * PACKED_POINT_SIZE;
 
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]) {
@@ -303,22 +316,34 @@ mod tests {
     }
 
     #[test]
-    fn truncated_input_is_an_error_not_a_panic() {
-        let report = ObjectReport::default();
-        let bytes = serialized(&report);
-        let short = &bytes[..bytes.len() - 1];
+    fn every_truncated_prefix_is_rejected_without_consuming_input() {
+        fn check<T: Parse + Serialize>(value: &T) {
+            let bytes = serialized(value);
+            for length in 0..T::SIZE {
+                let mut cursor = &bytes[..length];
+                assert!(matches!(
+                    T::parse(&mut cursor),
+                    Err(Error::UnexpectedEof { .. })
+                ));
+                assert_eq!(cursor, &bytes[..length]);
+            }
+        }
+        check(&MotData::default());
+        check(&ObjectReport::default());
+        check(&CombinedMarkersReport::default());
+    }
 
-        assert!(matches!(
-            ObjectReport::parse(&mut &*short),
-            Err(Error::UnexpectedEof { .. })
-        ));
-        assert!(matches!(
-            MotData::parse(&mut &bytes[..MOT_DATA_SIZE - 1]),
-            Err(Error::UnexpectedEof { .. })
-        ));
-        assert!(matches!(
-            CombinedMarkersReport::parse(&mut &bytes[..CombinedMarkersReport::SIZE - 1]),
-            Err(Error::UnexpectedEof { .. })
-        ));
+    #[test]
+    fn serializing_appends_without_overwriting_existing_bytes() {
+        let first = sample_mot_data(1);
+        let second = sample_mot_data(2);
+        let mut bytes = Vec::from([0xaa, 0xbb]);
+        first.serialize_to_vec(&mut bytes);
+        second.serialize_to_vec(&mut bytes);
+        assert_eq!(&bytes[..2], &[0xaa, 0xbb]);
+        let mut cursor = &bytes[2..];
+        assert_eq!(MotData::parse(&mut cursor).unwrap(), first);
+        assert_eq!(MotData::parse(&mut cursor).unwrap(), second);
+        assert!(cursor.is_empty());
     }
 }
