@@ -50,6 +50,13 @@ pub enum ClientError {
     Io(#[from] std::io::Error),
 }
 
+/// Lets RPC methods use `?` straight on a `tonic::Status`.
+impl From<tonic::Status> for ClientError {
+    fn from(status: tonic::Status) -> Self {
+        Self::Rpc(status.into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
