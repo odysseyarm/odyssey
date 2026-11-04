@@ -2,19 +2,55 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 
-use super::number_field::LABEL_CLASS;
 use super::op_status::{OpStatus, StatusLine, rpc_failure};
-use super::product_ids::{PID_ATS_LITE, PID_ATS_PRO};
+use super::product_ids::supports_transport_switching;
+use super::styles::{
+    DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS, HELP_TEXT_CLASS, LABEL_CLASS,
+    MODE_BUTTON_ACTIVE_CLASS, MODE_BUTTON_INACTIVE_CLASS,
+};
 use crate::hub::HubContext;
+
+fn mode_button_class(active: bool) -> &'static str {
+    if active {
+        MODE_BUTTON_ACTIVE_CLASS
+    } else {
+        MODE_BUTTON_INACTIVE_CLASS
+    }
+}
+
+/// Asks the hub to switch the device's events transport and reports progress
+/// through `status`; the device reboots, so success only means "requested".
+async fn switch_transport_mode(
+    hub: Signal<HubContext>,
+    device: Device,
+    usb_mode: bool,
+    mut status: Signal<OpStatus>,
+    mut user_pending_usb: Signal<Option<bool>>,
+) {
+    status.set(OpStatus::Busy("Switching...".into()));
+    let hub_ctx = hub.peek().clone();
+    let mut client = hub_ctx.client.peek().clone();
+    match client.set_transport_mode(device, usb_mode).await {
+        Ok(confirmed_usb) => {
+            user_pending_usb.set(Some(confirmed_usb));
+            let mode_str = if confirmed_usb { "USB" } else { "Bluetooth" };
+            status.set(OpStatus::Busy(format!(
+                "Switching to {mode_str}. The device restarts and reconnects on its own."
+            )));
+        }
+        Err(e) => {
+            tracing::error!("set_transport_mode failed: {e:#}");
+            status.set(rpc_failure("switch the transport mode", &e));
+        }
+    }
+}
 
 /// Shows a transport mode selector (BLE / USB) for ATS Lite / Lite1 devices.
 /// Requires only CONTROL capability, so it is visible even when the device is
 /// in BLE mode and the EVENTS bulk endpoint is not available.
 #[component]
 pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
-    let pid = device.product_id;
-    // Only ATS Lite (0x5210) and Lite1 (0x5211) support transport mode switching.
-    if pid != PID_ATS_LITE && pid != PID_ATS_PRO {
+    if !supports_transport_switching(device.product_id) {
         return rsx! {};
     }
     if !device.capabilities.contains(DeviceCapabilities::CONTROL) {
@@ -42,66 +78,44 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
     }
     let pending_usb = user_pending_usb.read().unwrap_or(device_is_usb);
 
-    let device_for_set = device.clone();
-    let set_mode = std::sync::Arc::new(move |usb_mode: bool| {
-        let device = device_for_set.clone();
-        async move {
-            status.set(OpStatus::Busy("Switching...".into()));
-            let hub_ctx = hub.peek().clone();
-            let mut client = hub_ctx.client.peek().clone();
-            match client.set_transport_mode(device, usb_mode).await {
-                Ok(confirmed_usb) => {
-                    user_pending_usb.set(Some(confirmed_usb));
-                    let mode_str = if confirmed_usb { "USB" } else { "Bluetooth" };
-                    status.set(OpStatus::Busy(format!(
-                        "Switching to {mode_str}. The device restarts and reconnects on its own."
-                    )));
-                }
-                Err(e) => {
-                    tracing::error!("set_transport_mode failed: {e:#}");
-                    status.set(rpc_failure("switch the transport mode", &e));
-                }
-            }
-        }
+    let set_mode = Callback::new(move |usb_mode: bool| {
+        spawn(switch_transport_mode(
+            hub,
+            device.clone(),
+            usb_mode,
+            status,
+            user_pending_usb,
+        ));
     });
 
     rsx! {
         details {
             class: "mt-2",
             summary {
-                class: "text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer \
-                        hover:text-blue-600 dark:hover:text-blue-400 select-none",
+                class: DISCLOSURE_SUMMARY_CLASS,
                 "Connection"
             }
             div {
                 class: "mt-2 space-y-2 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg",
                 div {
-                    class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
+                    class: FIELD_GRID_CLASS,
                     label { class: LABEL_CLASS, "Transport mode" }
                     div {
                         class: "flex gap-3",
                         button {
-                            class: if !pending_usb {
-                                "btn-primary text-xs px-2 py-1"
-                            } else {
-                                "btn-secondary text-xs px-2 py-1"
-                            },
-                            onclick: { let set_mode = set_mode.clone(); move |_| set_mode(false) },
+                            class: mode_button_class(!pending_usb),
+                            onclick: move |_| set_mode.call(false),
                             "Bluetooth"
                         }
                         button {
-                            class: if pending_usb {
-                                "btn-primary text-xs px-2 py-1"
-                            } else {
-                                "btn-secondary text-xs px-2 py-1"
-                            },
-                            onclick: move |_| set_mode(true),
+                            class: mode_button_class(pending_usb),
+                            onclick: move |_| set_mode.call(true),
                             "USB"
                         }
                     }
                 }
                 p {
-                    class: "text-xs text-gray-500 dark:text-gray-400",
+                    class: HELP_TEXT_CLASS,
                     if pending_usb {
                         "USB carries sensor data and tuning. Bluetooth leaves the device wireless but limits it to basic settings."
                     } else {

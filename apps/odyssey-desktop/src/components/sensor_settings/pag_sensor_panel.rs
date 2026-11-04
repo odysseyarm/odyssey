@@ -1,34 +1,29 @@
 use dioxus::prelude::*;
 
-use super::field_issue::issue_for;
+use super::field_issue::visible_issue;
 use super::number_field::NumberField;
 use super::pag_state::{
-    PAG_AREA_MAX, PAG_AREA_MIN, PAG_EXPOSURE, PAG_FPS, PAG_GAIN, PAG_LIGHT, PagState, pag_validate,
+    PAG_AREA_MAX, PAG_AREA_MIN, PAG_EXPOSURE, PAG_FPS, PAG_GAIN, PAG_LIGHT, PagState,
+    exposure_hint, pag_validate,
 };
+use super::styles::{FIELD_GRID_CLASS, SECTION_HEADING_CLASS};
 
 #[component]
 pub(super) fn PagSensorPanel(state: Signal<PagState>, show_issues: bool) -> Element {
     let issues = pag_validate(&state.read()).err().unwrap_or_default();
-    let issue = |field: &str| {
-        show_issues
-            .then(|| issue_for(&issues, field).map(str::to_string))
-            .flatten()
-    };
+    let issue = |field: &str| visible_issue(&issues, field, show_issues);
 
-    let exposure_hint = {
-        let val: f64 = state.read().exposure_us.parse().unwrap_or(0.0);
-        format!("{:.1} ms", val / 1000.0)
-    };
+    let exposure_hint = exposure_hint(&state.read().exposure_us);
 
     rsx! {
         div {
             class: "space-y-2",
             h4 {
-                class: "text-sm font-semibold text-gray-800 dark:text-gray-200",
+                class: SECTION_HEADING_CLASS,
                 "Sensor"
             }
             div {
-                class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
+                class: FIELD_GRID_CLASS,
 
                 NumberField {
                     label: PAG_FPS,

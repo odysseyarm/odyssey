@@ -1,9 +1,26 @@
-use dioxus::prelude::ReadableExt as _;
 use odyssey_hub_common::device::Device;
 
-use super::field_issue::{FieldIssue, parse_bounded};
-use super::registers::{read_u16_reg, write_u16_reg};
+use super::field_issue::{FieldChecker, FieldIssue};
+use super::registers::{NEAR_FIELD_PORT, Register, RegisterRun, Registers};
 use crate::hub::HubContext;
+
+// PAG7665 register map (used for product_id 0x5211).
+const FPS: Register = Register::new(0x00, 0x13);
+const EXPOSURE: Register = Register::new(0x00, 0x67);
+const GAIN: Register = Register::new(0x00, 0x68);
+const LIGHT_THRESHOLD: Register = Register::new(0x00, 0x6D);
+const AREA_LOWER: RegisterRun<2> = RegisterRun::new(0x00, [0x6E, 0x6F]);
+const AREA_UPPER: RegisterRun<2> = RegisterRun::new(0x00, [0x70, 0x71]);
+
+// The exposure register holds 100us units in its low 7 bits and the
+// "LED always on" flag in bit 7.
+const EXPOSURE_UNIT_US: u16 = 100;
+const EXPOSURE_UNITS_MASK: u8 = 0x7F;
+const LED_ALWAYS_ON_FLAG: u8 = 0x80;
+
+// The exposure register's 7 bits of 100us units make 12700us the ceiling;
+// anything finer than 100us is truncated by the device.
+pub(super) const PAG_MAX_EXPOSURE_US: u16 = 12_700;
 
 #[derive(Clone, PartialEq, Default)]
 pub(super) struct PagState {
@@ -15,45 +32,32 @@ pub(super) struct PagState {
     pub(super) area_upper: String,
 }
 
-// PAG7665 register addresses (used for product_id 0x5211)
+fn decode_exposure_us(raw: u8) -> u16 {
+    u16::from(raw & EXPOSURE_UNITS_MASK) * EXPOSURE_UNIT_US
+}
+
+/// Exposure register value for `exposure_us`, with the LED forced on.
+fn encode_exposure(exposure_us: u16) -> u8 {
+    // Validation caps `exposure_us` at PAG_MAX_EXPOSURE_US, which fits the mask.
+    let units = u8::try_from(exposure_us / EXPOSURE_UNIT_US).unwrap_or(EXPOSURE_UNITS_MASK);
+    units | LED_ALWAYS_ON_FLAG
+}
+
 pub(super) async fn pag_load_from_device(
     hub: &HubContext,
     device: &Device,
 ) -> anyhow::Result<PagState> {
-    let port: u8 = 0; // PAG always uses NF port
-    let fps = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x13)
-        .await?;
-    let expo_raw = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x67)
-        .await?;
-    let gain = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x68)
-        .await?;
-    let light_threshold = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x6D)
-        .await?;
-    let area_lower = read_u16_reg(hub, device, port, 0x00, [0x6E, 0x6F]).await?;
-    let area_upper = read_u16_reg(hub, device, port, 0x00, [0x70, 0x71]).await?;
-
-    // Exposure encoding: value in units of 100us, bit 7 = led_always_on
-    let exposure_us = u16::from(expo_raw & 0x7F) * 100;
+    let registers = Registers::new(hub, device, NEAR_FIELD_PORT);
+    let fps = registers.read(FPS).await?;
+    let exposure_raw = registers.read(EXPOSURE).await?;
+    let gain = registers.read(GAIN).await?;
+    let light_threshold = registers.read(LIGHT_THRESHOLD).await?;
+    let area_lower = registers.read_u16(AREA_LOWER).await?;
+    let area_upper = registers.read_u16(AREA_UPPER).await?;
 
     Ok(PagState {
         fps: fps.to_string(),
-        exposure_us: exposure_us.to_string(),
+        exposure_us: decode_exposure_us(exposure_raw).to_string(),
         gain: gain.to_string(),
         light_threshold: light_threshold.to_string(),
         area_lower: area_lower.to_string(),
@@ -72,39 +76,41 @@ pub(super) struct PagValues {
     pub(super) area_upper: u16,
 }
 
-// The exposure register holds 100us units in its low 7 bits, so 12700us is the
-// ceiling and anything finer than 100us is truncated by the device.
-pub(super) const PAG_MAX_EXPOSURE_US: u32 = 12_700;
-
 pub(super) fn pag_validate(state: &PagState) -> Result<PagValues, Vec<FieldIssue>> {
-    let mut issues = Vec::new();
-    let mut take = |field, raw: &str, max| match parse_bounded(field, raw, max) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            issues.push(e);
-            None
-        }
+    let mut check = FieldChecker::default();
+    let fps = check.check_u8(PAG_FPS, &state.fps);
+    let exposure_us = check.check_u16_up_to(PAG_EXPOSURE, &state.exposure_us, PAG_MAX_EXPOSURE_US);
+    let gain = check.check_u8(PAG_GAIN, &state.gain);
+    let light_threshold = check.check_u8(PAG_LIGHT, &state.light_threshold);
+    let area_lower = check.check_u16(PAG_AREA_MIN, &state.area_lower);
+    let area_upper = check.check_u16(PAG_AREA_MAX, &state.area_upper);
+
+    let (
+        Some(fps),
+        Some(exposure_us),
+        Some(gain),
+        Some(light_threshold),
+        Some(area_lower),
+        Some(area_upper),
+    ) = (
+        fps,
+        exposure_us,
+        gain,
+        light_threshold,
+        area_lower,
+        area_upper,
+    )
+    else {
+        return Err(check.into_issues());
     };
 
-    const U8: u32 = u8::MAX as u32;
-    const U16: u32 = u16::MAX as u32;
-    let fps = take(PAG_FPS, &state.fps, U8);
-    let exposure = take(PAG_EXPOSURE, &state.exposure_us, PAG_MAX_EXPOSURE_US);
-    let gain = take(PAG_GAIN, &state.gain, U8);
-    let light = take(PAG_LIGHT, &state.light_threshold, U8);
-    let area_lower = take(PAG_AREA_MIN, &state.area_lower, U16);
-    let area_upper = take(PAG_AREA_MAX, &state.area_upper, U16);
-
-    if !issues.is_empty() {
-        return Err(issues);
-    }
     Ok(PagValues {
-        fps: fps.unwrap() as u8,
-        exposure_us: exposure.unwrap() as u16,
-        gain: gain.unwrap() as u8,
-        light_threshold: light.unwrap() as u8,
-        area_lower: area_lower.unwrap() as u16,
-        area_upper: area_upper.unwrap() as u16,
+        fps,
+        exposure_us,
+        gain,
+        light_threshold,
+        area_lower,
+        area_upper,
     })
 }
 
@@ -113,33 +119,24 @@ pub(super) async fn pag_apply_to_device(
     device: &Device,
     values: &PagValues,
 ) -> anyhow::Result<()> {
-    let port: u8 = 0;
-    let led_always_on = true;
-    let expo_reg = (values.exposure_us / 100) as u8 | (u8::from(led_always_on) << 7);
-
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x13, values.fps)
+    let registers = Registers::new(hub, device, NEAR_FIELD_PORT);
+    registers.write(FPS, values.fps).await?;
+    registers
+        .write(EXPOSURE, encode_exposure(values.exposure_us))
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x67, expo_reg)
+    registers.write(GAIN, values.gain).await?;
+    registers
+        .write(LIGHT_THRESHOLD, values.light_threshold)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x68, values.gain)
-        .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x6D, values.light_threshold)
-        .await?;
-    write_u16_reg(hub, device, port, 0x00, [0x6E, 0x6F], values.area_lower).await?;
-    write_u16_reg(hub, device, port, 0x00, [0x70, 0x71], values.area_upper).await?;
+    registers.write_u16(AREA_LOWER, values.area_lower).await?;
+    registers.write_u16(AREA_UPPER, values.area_upper).await?;
     Ok(())
+}
+
+/// The exposure in microseconds as milliseconds, for display next to the field.
+pub(super) fn exposure_hint(raw: &str) -> String {
+    let exposure_us: f64 = raw.parse().unwrap_or(0.0);
+    format!("{:.1} ms", exposure_us / 1000.0)
 }
 
 pub(super) fn pag_load_defaults() -> PagState {
@@ -169,10 +166,16 @@ mod tests {
     fn pag_exposure_encoding() {
         let v = ok(pag_validate(&pag_load_defaults()));
         assert_eq!(v.exposure_us, 2000);
-        assert_eq!((v.exposure_us / 100) as u8 | 0x80, 0x94);
+        assert_eq!(encode_exposure(v.exposure_us), 0x94);
+        assert_eq!(decode_exposure_us(0x94), 2000);
 
         let mut bad = pag_load_defaults();
         bad.exposure_us = "13000".into();
         assert_eq!(issues(pag_validate(&bad))[0].field, PAG_EXPOSURE);
+    }
+
+    #[test]
+    fn exposure_hint_shows_milliseconds() {
+        assert_eq!(exposure_hint("2000"), "2.0 ms");
     }
 }

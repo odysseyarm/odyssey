@@ -1,3 +1,9 @@
+#![expect(
+    unused_qualifications,
+    reason = "dioxus-rsx expands event attributes such as `onclick:` into paths the lint \
+              flags at the user's span; they cannot be shortened in the markup"
+)]
+
 mod navbar;
 pub(crate) use navbar::Navbar;
 

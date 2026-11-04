@@ -37,6 +37,67 @@ pub(super) fn issue_for<'a>(issues: &'a [FieldIssue], field: &str) -> Option<&'a
         .map(|i| i.message.as_str())
 }
 
+/// The message to show next to `field`, or `None` while issues are hidden
+/// (before the first load, empty fields are "not loaded yet", not "invalid").
+pub(super) fn visible_issue(
+    issues: &[FieldIssue],
+    field: &str,
+    show_issues: bool,
+) -> Option<String> {
+    if !show_issues {
+        return None;
+    }
+    issue_for(issues, field).map(str::to_string)
+}
+
+/// Validates several fields in one pass, remembering every failure so the form
+/// can mark all bad fields at once instead of one per attempt.
+#[derive(Default)]
+pub(super) struct FieldChecker {
+    issues: Vec<FieldIssue>,
+}
+
+impl FieldChecker {
+    /// `None` means the field was invalid and an issue was recorded.
+    pub(super) fn check(&mut self, field: &'static str, raw: &str, max: u32) -> Option<u32> {
+        match parse_bounded(field, raw, max) {
+            Ok(value) => Some(value),
+            Err(issue) => {
+                self.issues.push(issue);
+                None
+            }
+        }
+    }
+
+    pub(super) fn check_u8(&mut self, field: &'static str, raw: &str) -> Option<u8> {
+        self.check_u8_up_to(field, raw, u8::MAX)
+    }
+
+    pub(super) fn check_u8_up_to(&mut self, field: &'static str, raw: &str, max: u8) -> Option<u8> {
+        // `check` bounds the value by `max`, so the conversion cannot fail.
+        u8::try_from(self.check(field, raw, u32::from(max))?).ok()
+    }
+
+    pub(super) fn check_u16(&mut self, field: &'static str, raw: &str) -> Option<u16> {
+        self.check_u16_up_to(field, raw, u16::MAX)
+    }
+
+    pub(super) fn check_u16_up_to(
+        &mut self,
+        field: &'static str,
+        raw: &str,
+        max: u16,
+    ) -> Option<u16> {
+        u16::try_from(self.check(field, raw, u32::from(max))?).ok()
+    }
+
+    /// The recorded issues; call after a failed `let ... else` on the checked
+    /// values, which implies at least one was recorded.
+    pub(super) fn into_issues(self) -> Vec<FieldIssue> {
+        self.issues
+    }
+}
+
 /// Summarise invalid input without repeating every message; the offending
 /// fields are already marked in place.
 pub(super) fn invalid_status(issues: &[FieldIssue]) -> OpStatus {

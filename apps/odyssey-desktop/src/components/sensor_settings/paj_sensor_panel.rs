@@ -1,49 +1,32 @@
 use dioxus::prelude::*;
 
-use super::field_issue::issue_for;
+use super::field_issue::visible_issue;
 use super::gain_table::GAIN_TABLE;
-use super::number_field::{LABEL_CLASS, NumberField};
+use super::number_field::NumberField;
 use super::paj_state::{
     PAJ_AREA_MAX, PAJ_AREA_MIN, PAJ_BRIGHTNESS, PAJ_EXPOSURE, PAJ_FRAME_PERIOD, PAJ_MAX_OBJECTS,
-    PAJ_NOISE, PAJ_RESOLUTION_X, PAJ_RESOLUTION_Y, PajState, paj_validate,
+    PAJ_NOISE, PAJ_RESOLUTION_X, PAJ_RESOLUTION_Y, PajState, exposure_hint, frame_period_hint,
+    paj_validate,
 };
-
-pub(super) const SELECT_CLASS: &str = "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg \
-    focus:ring-blue-500 focus:border-blue-500 block w-full p-1.5 \
-    dark:bg-gray-700 dark:border-gray-600 dark:text-white \
-    dark:focus:ring-blue-500 dark:focus:border-blue-500";
+use super::styles::{FIELD_CLASS, FIELD_GRID_CLASS, LABEL_CLASS, SECTION_HEADING_CLASS};
 
 #[component]
 pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues: bool) -> Element {
     let issues = paj_validate(&state.read()).err().unwrap_or_default();
-    let issue = |field: &str| {
-        show_issues
-            .then(|| issue_for(&issues, field).map(str::to_string))
-            .flatten()
-    };
+    let issue = |field: &str| visible_issue(&issues, field, show_issues);
 
-    let exposure_hint = {
-        let val: f64 = state.read().exposure_time.parse().unwrap_or(0.0);
-        format!("{:.2} ms", val * 200.0 / 1e6)
-    };
-    let frame_hint = {
-        let val: f64 = state.read().frame_period.parse().unwrap_or(0.0);
-        if val > 0.0 {
-            format!("{:.2} ms ({:.1} fps)", val / 1e4, 1e7 / val)
-        } else {
-            "---".into()
-        }
-    };
+    let exposure_hint = exposure_hint(&state.read().exposure_time);
+    let frame_hint = frame_period_hint(&state.read().frame_period);
 
     rsx! {
         div {
             class: "space-y-2",
             h4 {
-                class: "text-sm font-semibold text-gray-800 dark:text-gray-200",
-                "{label}"
+                class: SECTION_HEADING_CLASS,
+                {label}
             }
             div {
-                class: "grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center",
+                class: FIELD_GRID_CLASS,
 
                 NumberField {
                     label: PAJ_BRIGHTNESS,
@@ -80,7 +63,7 @@ pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues
 
                 label { class: LABEL_CLASS, "Operation mode" }
                 select {
-                    class: SELECT_CLASS,
+                    class: FIELD_CLASS,
                     value: "{state.read().operation_mode}",
                     onchange: move |e| state.write().operation_mode = e.value(),
                     option { value: "0", "Normal" }
@@ -104,7 +87,7 @@ pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues
 
                 label { class: LABEL_CLASS, "Frame subtraction" }
                 select {
-                    class: SELECT_CLASS,
+                    class: FIELD_CLASS,
                     value: "{state.read().frame_subtraction}",
                     onchange: move |e| state.write().frame_subtraction = e.value(),
                     option { value: "0", "Off" }
@@ -113,7 +96,7 @@ pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues
 
                 label { class: LABEL_CLASS, "Gain" }
                 select {
-                    class: SELECT_CLASS,
+                    class: FIELD_CLASS,
                     value: "{state.read().gain_index}",
                     onchange: move |e| state.write().gain_index = e.value(),
                     for (i, entry) in GAIN_TABLE.iter().enumerate() {

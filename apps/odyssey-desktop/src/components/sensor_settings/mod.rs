@@ -9,7 +9,9 @@ mod paj_sensor_panel;
 mod paj_state;
 mod product_ids;
 mod registers;
+mod settings_form;
 mod settings_panel;
+mod styles;
 mod transport_mode_panel;
 
 pub(crate) use settings_panel::SensorSettings;

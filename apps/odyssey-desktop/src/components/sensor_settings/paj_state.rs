@@ -1,10 +1,36 @@
-use dioxus::prelude::ReadableExt as _;
 use odyssey_hub_common::device::Device;
 
-use super::field_issue::{FieldIssue, parse_bounded};
+use super::field_issue::{FieldChecker, FieldIssue};
 use super::gain_table::{GAIN_TABLE, gain_index_from_reg};
-use super::registers::{read_u16_reg, read_u32_3byte, write_u16_reg, write_u32_3byte};
+use super::registers::{Register, RegisterRun, Registers};
 use crate::hub::HubContext;
+
+// PAJ sensor register map. Exposure and gain are read back from different
+// addresses than they are written to; both are kept as the device defines them.
+const BRIGHTNESS_THRESHOLD: Register = Register::new(0x0C, 0x47);
+const NOISE_THRESHOLD: Register = Register::new(0x00, 0x0F);
+const AREA_THRESHOLD_MIN: Register = Register::new(0x0C, 0x46);
+const AREA_THRESHOLD_MAX: RegisterRun<2> = RegisterRun::new(0x00, [0x0B, 0x0C]);
+const MAX_OBJECT_COUNT: Register = Register::new(0x00, 0x19);
+const OPERATION_MODE: Register = Register::new(0x00, 0x12);
+const EXPOSURE_TIME_READ: RegisterRun<2> = RegisterRun::new(0x01, [0x0E, 0x0F]);
+const EXPOSURE_TIME_WRITE: RegisterRun<2> = RegisterRun::new(0x0C, [0x0F, 0x10]);
+const FRAME_PERIOD: RegisterRun<3> = RegisterRun::new(0x0C, [0x07, 0x08, 0x09]);
+const FRAME_SUBTRACTION: Register = Register::new(0x00, 0x28);
+const GAIN_GLOBAL_READ: Register = Register::new(0x01, 0x05);
+const GAIN_GGH_READ: Register = Register::new(0x01, 0x06);
+const GAIN_GLOBAL_WRITE: Register = Register::new(0x0C, 0x0B);
+const GAIN_GGH_WRITE: Register = Register::new(0x0C, 0x0C);
+const RESOLUTION_X: RegisterRun<2> = RegisterRun::new(0x0C, [0x60, 0x61]);
+const RESOLUTION_Y: RegisterRun<2> = RegisterRun::new(0x0C, [0x62, 0x63]);
+/// Latch registers; writing 1 to both applies the staged values.
+const SYNC_BANK_1: Register = Register::new(0x01, 0x01);
+const SYNC_BANK_0: Register = Register::new(0x00, 0x01);
+
+const MAX_OBJECT_COUNT_LIMIT: u8 = 16;
+const RESOLUTION_LIMIT: u16 = 4095;
+/// The frame period register is 24 bits wide.
+const FRAME_PERIOD_LIMIT: u32 = 0xFF_FFFF;
 
 #[derive(Clone, PartialEq)]
 pub(super) struct PajState {
@@ -46,59 +72,20 @@ pub(super) async fn paj_load_from_device(
     device: &Device,
     port: u8,
 ) -> anyhow::Result<PajState> {
-    let brightness_threshold = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x0C, 0x47)
-        .await?;
-    let noise_threshold = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x0F)
-        .await?;
-    let area_threshold_min = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x0C, 0x46)
-        .await?;
-    let area_threshold_max = read_u16_reg(hub, device, port, 0x00, [0x0B, 0x0C]).await?;
-    let max_object_cnt = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x19)
-        .await?;
-    let operation_mode = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x12)
-        .await?;
-    let exposure_time = read_u16_reg(hub, device, port, 0x01, [0x0E, 0x0F]).await?;
-    let frame_period = read_u32_3byte(hub, device, port, 0x0C, [0x07, 0x08, 0x09]).await?;
-    let frame_subtraction = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x00, 0x28)
-        .await?;
-    let gain_1 = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x01, 0x05)
-        .await?;
-    let gain_2 = hub
-        .client
-        .peek()
-        .clone()
-        .read_register(device.clone(), port, 0x01, 0x06)
-        .await?;
-    let resolution_x = read_u16_reg(hub, device, port, 0x0C, [0x60, 0x61]).await?;
-    let resolution_y = read_u16_reg(hub, device, port, 0x0C, [0x62, 0x63]).await?;
+    let registers = Registers::new(hub, device, port);
+    let brightness_threshold = registers.read(BRIGHTNESS_THRESHOLD).await?;
+    let noise_threshold = registers.read(NOISE_THRESHOLD).await?;
+    let area_threshold_min = registers.read(AREA_THRESHOLD_MIN).await?;
+    let area_threshold_max = registers.read_u16(AREA_THRESHOLD_MAX).await?;
+    let max_object_cnt = registers.read(MAX_OBJECT_COUNT).await?;
+    let operation_mode = registers.read(OPERATION_MODE).await?;
+    let exposure_time = registers.read_u16(EXPOSURE_TIME_READ).await?;
+    let frame_period = registers.read_u24(FRAME_PERIOD).await?;
+    let frame_subtraction = registers.read(FRAME_SUBTRACTION).await?;
+    let gain_global = registers.read(GAIN_GLOBAL_READ).await?;
+    let gain_ggh = registers.read(GAIN_GGH_READ).await?;
+    let resolution_x = registers.read_u16(RESOLUTION_X).await?;
+    let resolution_y = registers.read_u16(RESOLUTION_Y).await?;
 
     Ok(PajState {
         brightness_threshold: brightness_threshold.to_string(),
@@ -110,7 +97,7 @@ pub(super) async fn paj_load_from_device(
         exposure_time: exposure_time.to_string(),
         frame_period: frame_period.to_string(),
         frame_subtraction: frame_subtraction.to_string(),
-        gain_index: gain_index_from_reg(gain_1, gain_2).to_string(),
+        gain_index: gain_index_from_reg(gain_global, gain_ggh).to_string(),
         resolution_x: resolution_x.to_string(),
         resolution_y: resolution_y.to_string(),
     })
@@ -134,49 +121,66 @@ pub(super) struct PajValues {
 }
 
 pub(super) fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue>> {
-    let mut issues = Vec::new();
-    let mut take = |field, raw: &str, max| match parse_bounded(field, raw, max) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            issues.push(e);
-            None
-        }
+    let mut check = FieldChecker::default();
+    let brightness = check.check_u8(PAJ_BRIGHTNESS, &state.brightness_threshold);
+    let noise = check.check_u8(PAJ_NOISE, &state.noise_threshold);
+    let area_min = check.check_u8(PAJ_AREA_MIN, &state.area_threshold_min);
+    let area_max = check.check_u16(PAJ_AREA_MAX, &state.area_threshold_max);
+    let max_objects = check.check_u8_up_to(
+        PAJ_MAX_OBJECTS,
+        &state.max_object_cnt,
+        MAX_OBJECT_COUNT_LIMIT,
+    );
+    let exposure = check.check_u16(PAJ_EXPOSURE, &state.exposure_time);
+    let frame_period = check.check(PAJ_FRAME_PERIOD, &state.frame_period, FRAME_PERIOD_LIMIT);
+    let resolution_x =
+        check.check_u16_up_to(PAJ_RESOLUTION_X, &state.resolution_x, RESOLUTION_LIMIT);
+    let resolution_y =
+        check.check_u16_up_to(PAJ_RESOLUTION_Y, &state.resolution_y, RESOLUTION_LIMIT);
+
+    let (
+        Some(brightness_threshold),
+        Some(noise_threshold),
+        Some(area_threshold_min),
+        Some(area_threshold_max),
+        Some(max_object_cnt),
+        Some(exposure_time),
+        Some(frame_period),
+        Some(resolution_x),
+        Some(resolution_y),
+    ) = (
+        brightness,
+        noise,
+        area_min,
+        area_max,
+        max_objects,
+        exposure,
+        frame_period,
+        resolution_x,
+        resolution_y,
+    )
+    else {
+        return Err(check.into_issues());
     };
 
-    const U8: u32 = u8::MAX as u32;
-    const U16: u32 = u16::MAX as u32;
-    let brightness = take(PAJ_BRIGHTNESS, &state.brightness_threshold, U8);
-    let noise = take(PAJ_NOISE, &state.noise_threshold, U8);
-    let area_min = take(PAJ_AREA_MIN, &state.area_threshold_min, U8);
-    let area_max = take(PAJ_AREA_MAX, &state.area_threshold_max, U16);
-    let max_objects = take(PAJ_MAX_OBJECTS, &state.max_object_cnt, 16);
-    let exposure = take(PAJ_EXPOSURE, &state.exposure_time, U16);
-    // 24-bit register, written as three bytes.
-    let frame_period = take(PAJ_FRAME_PERIOD, &state.frame_period, 0xFF_FFFF);
-    let resolution_x = take(PAJ_RESOLUTION_X, &state.resolution_x, 4095);
-    let resolution_y = take(PAJ_RESOLUTION_Y, &state.resolution_y, 4095);
-
-    if !issues.is_empty() {
-        return Err(issues);
-    }
     Ok(PajValues {
-        brightness_threshold: brightness.unwrap() as u8,
-        noise_threshold: noise.unwrap() as u8,
-        area_threshold_min: area_min.unwrap() as u8,
-        area_threshold_max: area_max.unwrap() as u16,
-        max_object_cnt: max_objects.unwrap() as u8,
+        brightness_threshold,
+        noise_threshold,
+        area_threshold_min,
+        area_threshold_max,
+        max_object_cnt,
         // Dropdowns, so these cannot carry user typos.
         operation_mode: state.operation_mode.parse().unwrap_or(0),
-        exposure_time: exposure.unwrap() as u16,
-        frame_period: frame_period.unwrap(),
+        exposure_time,
+        frame_period,
         frame_subtraction: state.frame_subtraction.parse().unwrap_or(0),
         gain_index: state
             .gain_index
             .parse::<usize>()
             .unwrap_or(0)
             .min(GAIN_TABLE.len() - 1),
-        resolution_x: resolution_x.unwrap() as u16,
-        resolution_y: resolution_y.unwrap() as u16,
+        resolution_x,
+        resolution_y,
     })
 }
 
@@ -186,87 +190,74 @@ pub(super) async fn paj_apply_to_device(
     port: u8,
     values: &PajValues,
 ) -> anyhow::Result<()> {
+    let registers = Registers::new(hub, device, port);
     let gain = &GAIN_TABLE[values.gain_index];
 
-    hub.client
-        .peek()
-        .clone()
-        .write_register(
-            device.clone(),
-            port,
-            0x0C,
-            0x47,
-            values.brightness_threshold,
-        )
+    registers
+        .write(BRIGHTNESS_THRESHOLD, values.brightness_threshold)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x0F, values.noise_threshold)
+    registers
+        .write(NOISE_THRESHOLD, values.noise_threshold)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x0C, 0x46, values.area_threshold_min)
+    registers
+        .write(AREA_THRESHOLD_MIN, values.area_threshold_min)
         .await?;
-    write_u16_reg(
-        hub,
-        device,
-        port,
-        0x00,
-        [0x0B, 0x0C],
-        values.area_threshold_max,
-    )
-    .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x19, values.max_object_cnt)
+    registers
+        .write_u16(AREA_THRESHOLD_MAX, values.area_threshold_max)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x12, values.operation_mode)
+    registers
+        .write(MAX_OBJECT_COUNT, values.max_object_cnt)
         .await?;
-    write_u16_reg(hub, device, port, 0x0C, [0x0F, 0x10], values.exposure_time).await?;
-    write_u32_3byte(
-        hub,
-        device,
-        port,
-        0x0C,
-        [0x07, 0x08, 0x09],
-        values.frame_period,
-    )
-    .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x28, values.frame_subtraction)
+    registers
+        .write(OPERATION_MODE, values.operation_mode)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x0C, 0x0B, gain.b_global)
+    registers
+        .write_u16(EXPOSURE_TIME_WRITE, values.exposure_time)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x0C, 0x0C, gain.b_ggh)
+    registers
+        .write_u24(FRAME_PERIOD, values.frame_period)
         .await?;
-    write_u16_reg(hub, device, port, 0x0C, [0x60, 0x61], values.resolution_x).await?;
-    write_u16_reg(hub, device, port, 0x0C, [0x62, 0x63], values.resolution_y).await?;
-    // Sync
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x01, 0x01, 1)
+    registers
+        .write(FRAME_SUBTRACTION, values.frame_subtraction)
         .await?;
-    hub.client
-        .peek()
-        .clone()
-        .write_register(device.clone(), port, 0x00, 0x01, 1)
+    registers.write(GAIN_GLOBAL_WRITE, gain.b_global).await?;
+    registers.write(GAIN_GGH_WRITE, gain.b_ggh).await?;
+    registers
+        .write_u16(RESOLUTION_X, values.resolution_x)
         .await?;
+    registers
+        .write_u16(RESOLUTION_Y, values.resolution_y)
+        .await?;
+    registers.write(SYNC_BANK_1, 1).await?;
+    registers.write(SYNC_BANK_0, 1).await?;
     Ok(())
+}
+
+/// One exposure tick is 200 ns.
+const EXPOSURE_TICK_NS: f64 = 200.0;
+const NS_PER_MS: f64 = 1e6;
+/// The frame period counts 100 ns ticks.
+const FRAME_PERIOD_TICKS_PER_MS: f64 = 1e4;
+const FRAME_PERIOD_TICKS_PER_SECOND: f64 = 1e7;
+
+/// The raw exposure ticks as milliseconds, for display next to the field.
+pub(super) fn exposure_hint(raw: &str) -> String {
+    let ticks: f64 = raw.parse().unwrap_or(0.0);
+    format!("{:.2} ms", ticks * EXPOSURE_TICK_NS / NS_PER_MS)
+}
+
+/// The raw frame period as milliseconds and frames per second.
+pub(super) fn frame_period_hint(raw: &str) -> String {
+    let ticks: f64 = raw.parse().unwrap_or(0.0);
+    if ticks > 0.0 {
+        format!(
+            "{:.2} ms ({:.1} fps)",
+            ticks / FRAME_PERIOD_TICKS_PER_MS,
+            FRAME_PERIOD_TICKS_PER_SECOND / ticks
+        )
+    } else {
+        "---".into()
+    }
 }
 
 pub(super) fn paj_load_defaults(port: u8) -> PajState {
@@ -326,5 +317,13 @@ mod tests {
         bad.resolution_y = "9000".into();
         let fields: Vec<_> = issues(paj_validate(&bad)).iter().map(|i| i.field).collect();
         assert_eq!(fields, vec![PAJ_BRIGHTNESS, PAJ_RESOLUTION_Y]);
+    }
+
+    #[test]
+    fn hints_convert_ticks_to_engineering_units() {
+        assert_eq!(exposure_hint("8192"), "1.64 ms");
+        assert_eq!(frame_period_hint("49780"), "4.98 ms (200.9 fps)");
+        assert_eq!(frame_period_hint("0"), "---");
+        assert_eq!(frame_period_hint("oops"), "---");
     }
 }
