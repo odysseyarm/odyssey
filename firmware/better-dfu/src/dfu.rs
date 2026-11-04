@@ -111,6 +111,7 @@ pub struct Control<
     app_label: &'static str,
     bootloader_label: &'static str,
     state_flagger: Option<&'d mut dyn FnMut()>,
+    interface: Option<InterfaceNumber>,
 
     #[cfg(feature = "_verify")]
     public_key: &'static [u8; 32],
@@ -159,6 +160,7 @@ impl<
             app_label: "APP",
             bootloader_label: "BOOTLOADER",
             state_flagger: None,
+            interface: None,
 
             #[cfg(feature = "_verify")]
             public_key,
@@ -220,6 +222,13 @@ impl<
         };
         self._total_size = 0;
     }
+
+    fn addressed_to_us(&self, req: &embassy_usb::control::Request) -> bool {
+        (req.request_type, req.recipient) == (RequestType::Class, Recipient::Interface)
+            && self
+                .interface
+                .is_some_and(|iface| req.index == u8::from(iface) as u16)
+    }
 }
 
 impl From<FirmwareUpdaterError> for Status {
@@ -246,7 +255,10 @@ impl<
     const BLOCK_SIZE: usize,
 > Handler for Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
 {
-    fn set_alternate_setting(&mut self, _interface: InterfaceNumber, alternate: u8) {
+    fn set_alternate_setting(&mut self, interface: InterfaceNumber, alternate: u8) {
+        if self.interface != Some(interface) {
+            return;
+        }
         match alternate {
             0 => {
                 // Alt 0 is whichever app bank is not running.
@@ -299,7 +311,7 @@ impl<
         req: embassy_usb::control::Request,
         data: &[u8],
     ) -> Option<embassy_usb::control::OutResponse> {
-        if (req.request_type, req.recipient) != (RequestType::Class, Recipient::Interface) {
+        if !self.addressed_to_us(&req) {
             debug!("Unknown out request: {:?}", req);
             return None;
         }
@@ -324,8 +336,8 @@ impl<
                     return Some(OutResponse::Rejected);
                 }
 
-                if data.len() > BLOCK_SIZE {
-                    error!("USB data len exceeded block size");
+                if data.len() > BLOCK_SIZE || data.len() != req.length as usize {
+                    error!("USB data length does not match the download request or block size");
                     self.status = Status::ErrUnknown;
                     self.state = State::Error;
                     return Some(OutResponse::Rejected);
@@ -409,12 +421,15 @@ impl<
         req: embassy_usb::control::Request,
         buf: &'a mut [u8],
     ) -> Option<embassy_usb::control::InResponse<'a>> {
-        if (req.request_type, req.recipient) != (RequestType::Class, Recipient::Interface) {
+        if !self.addressed_to_us(&req) {
             debug!("Unknown in request: {:?}", req);
             return None;
         }
         match Request::try_from(req.request) {
             Ok(Request::GetStatus) => {
+                let Some(buf) = buf.get_mut(..6) else {
+                    return Some(InResponse::Rejected);
+                };
                 match self.state {
                     State::DlSync => self.state = State::Download,
                     State::ManifestSync => {
@@ -430,19 +445,15 @@ impl<
                 }
 
                 // bStatus, bwPollTimeout = 0x000032 (50 ms, fixed), bState, iString = 0 (no vendor error string).
-                buf[0..6].copy_from_slice(&[
-                    self.status as u8,
-                    0x32,
-                    0x00,
-                    0x00,
-                    self.state as u8,
-                    0x00,
-                ]);
-                Some(InResponse::Accepted(&buf[0..6]))
+                buf.copy_from_slice(&[self.status as u8, 0x32, 0x00, 0x00, self.state as u8, 0x00]);
+                Some(InResponse::Accepted(buf))
             }
             Ok(Request::GetState) => {
+                let Some(buf) = buf.get_mut(..1) else {
+                    return Some(InResponse::Rejected);
+                };
                 buf[0] = self.state as u8;
-                Some(InResponse::Accepted(&buf[0..1]))
+                Some(InResponse::Accepted(buf))
             }
             Ok(Request::Upload) if self.attrs.contains(DfuAttributes::CAN_UPLOAD) => {
                 // FirmwareUpdater can read the active partition, so upload could be supported; it is not.
@@ -521,6 +532,7 @@ pub fn usb_dfu<
     };
 
     let mut iface = func.interface();
+    handler.interface = Some(iface.interface_number());
 
     // alt=0: Inactive application bank (download goes here)
     let mut alt = iface.alt_setting(

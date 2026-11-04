@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - changed: Do not reset in the GetStatus request
 - Allow enabling the `application` and `dfu` feature at the same time
+- Scope DFU-mode class requests and alternate settings to the DFU interface.
+- Return exactly six status bytes and reject undersized response buffers.
+- Reject download payload lengths that do not match the control request.
 
 ## 0.2.0 - 2025-08-27
 

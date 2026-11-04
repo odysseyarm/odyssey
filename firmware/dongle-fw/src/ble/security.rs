@@ -4,9 +4,16 @@ use odyssey_protocol::mux::MAX_DEVICES;
 
 use crate::storage::BondData;
 
-/// Bonds waiting to be written to flash by the storage task. One slot per
-/// device task, so bonds completed by several devices at once all survive.
-pub static BOND_TO_STORE: Channel<CriticalSectionRawMutex, BondData, MAX_DEVICES> = Channel::new();
+/// Commands for the single task that owns bond persistence. Clearing through
+/// the same queue prevents an in-flight store from resurrecting a cleared bond.
+pub enum BondCommand {
+    Store(BondData),
+    Clear,
+}
+
+/// One slot per device task, so simultaneous pairing completions all survive.
+pub static BOND_COMMANDS: Channel<CriticalSectionRawMutex, BondCommand, MAX_DEVICES> =
+    Channel::new();
 
 // trouble-host's built-in security manager handles pairing; there is no
 // handler of our own.

@@ -46,10 +46,10 @@ impl BootState {
         }
     }
 
-    /// True if the magic matches [`STATE_MAGIC`] rather than erased flash or
-    /// garbage.
+    /// True if the magic matches [`STATE_MAGIC`] and both bank slots are 0 or 1.
+    /// A matching magic alone does not make corrupted slot bytes safe to boot.
     pub fn is_valid(&self) -> bool {
-        self.magic == STATE_MAGIC
+        self.magic == STATE_MAGIC && self.active_slot <= 1 && self.pending_slot <= 1
     }
 }
 
@@ -73,7 +73,7 @@ impl BootStateManager {
     }
 
     /// Reads the state stored after the magic word, or [`BootState::new`] if
-    /// its magic is not [`STATE_MAGIC`].
+    /// its magic or bank slots are invalid.
     pub fn read(&self) -> BootState {
         unsafe {
             let state_ptr =
@@ -224,11 +224,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_boot_state_new() {
-        let state = BootState::new();
-        assert!(state.is_valid());
-        assert_eq!(state.active_slot, 0);
-        assert_eq!(state.pending_slot, 0);
-        assert_eq!(state.boot_counter, 0);
+    fn rejects_corrupt_magic_and_out_of_range_banks() {
+        for active_slot in 0..=1 {
+            for pending_slot in 0..=1 {
+                let state = BootState {
+                    active_slot,
+                    pending_slot,
+                    ..BootState::new()
+                };
+                assert!(state.is_valid());
+            }
+        }
+        for invalid_slot in [2, u8::MAX] {
+            let mut state = BootState::new();
+            state.active_slot = invalid_slot;
+            assert!(!state.is_valid());
+            state.active_slot = 0;
+            state.pending_slot = invalid_slot;
+            assert!(!state.is_valid());
+        }
+        let mut state = BootState::new();
+        state.magic ^= 1;
+        assert!(!state.is_valid());
     }
 }

@@ -17,7 +17,7 @@ use trouble_host::prelude::{
 use super::DevicePacketChannel;
 use super::central::{
     ActiveConnections, DISCONNECT_COUNT, DROPPED_DATA_TO_HOST, DeviceQueue, DeviceQueues,
-    L2CAP_PSM_CONTROL, L2CAP_PSM_DATA, is_control_packet,
+    L2CAP_PSM_CONTROL, L2CAP_PSM_DATA,
 };
 use super::task_slots::{self, TaskSlot};
 
@@ -199,7 +199,9 @@ impl Device {
                             if let Some(bi) = bond {
                                 let bd = crate::ble::security::bonddata_from_info(&bi);
                                 info!("Storing bond for {:02x}", bd.bd_addr);
-                                crate::ble::security::BOND_TO_STORE.send(bd).await;
+                                crate::ble::security::BOND_COMMANDS
+                                    .send(crate::ble::security::BondCommand::Store(bd))
+                                    .await;
                             }
                             return Ok(());
                         }
@@ -239,9 +241,17 @@ impl Device {
                     match conn.next().await {
                         trouble_host::prelude::ConnectionEvent::PairingComplete {
                             security_level,
-                            ..
+                            bond,
                         } => {
                             info!("Encryption established: {:?}", security_level);
+                            // A bonded peer may pair again and replace its LTK.
+                            // Persist that replacement just like an initial bond.
+                            if let Some(bi) = bond {
+                                let bd = crate::ble::security::bonddata_from_info(&bi);
+                                crate::ble::security::BOND_COMMANDS
+                                    .send(crate::ble::security::BondCommand::Store(bd))
+                                    .await;
+                            }
                             return Ok(());
                         }
                         trouble_host::prelude::ConnectionEvent::PairingFailed(err) => {
@@ -408,7 +418,7 @@ async fn run_connection(
                 embassy_futures::select::Either::First(pkt) => pkt,
                 embassy_futures::select::Either::Second(()) => return,
             };
-            let is_control = is_control_packet(&device_pkt.pkt);
+            let is_control = device_pkt.pkt.is_control();
 
             // Mirror SetDeviceName into the dongle's stored name and name cache.
             if let odyssey_protocol::PacketData::SetDeviceName(name) = &device_pkt.pkt.data {
@@ -533,7 +543,9 @@ async fn run_connection(
                     if let Some(bi) = bond {
                         let bd = crate::ble::security::bonddata_from_info(&bi);
                         info!("Storing bond for {:02x}", bd.bd_addr);
-                        crate::ble::security::BOND_TO_STORE.send(bd).await;
+                        crate::ble::security::BOND_COMMANDS
+                            .send(crate::ble::security::BondCommand::Store(bd))
+                            .await;
                     }
                 }
                 trouble_host::prelude::ConnectionEvent::PairingFailed(err) => {

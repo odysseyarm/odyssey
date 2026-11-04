@@ -32,46 +32,15 @@ pub const PRODUCT_ID_PREFIXES: &[&[u8]] = &[b"ATS", b"ATS-LEG"];
 
 pub type Uuid = [u8; 6];
 
-pub fn is_control_packet(pkt: &odyssey_protocol::Packet) -> bool {
-    use odyssey_protocol::PacketData as P;
-
-    match &pkt.data {
-        // Request/response traffic goes on the control channel.
-        P::StreamUpdate(_)
-        | P::WriteMode(_)
-        | P::ReadVersion()
-        | P::ReadVersionResponse(_)
-        | P::ReadConfig(_)
-        | P::ReadConfigResponse(_)
-        | P::WriteConfig(_)
-        | P::ReadProp(_)
-        | P::ReadPropResponse(_)
-        | P::WriteRegister(_)
-        | P::ReadRegister(_)
-        | P::ReadRegisterResponse(_)
-        | P::ObjectReportRequest()
-        | P::Ack()
-        | P::FlashSettings()
-        | P::Vendor(_, _)
-        | P::SetDeviceName(_)
-        | P::SetDeviceNameResponse(_) => true,
-
-        // Reports go on the data channel.
-        P::ObjectReport(_)
-        | P::CombinedMarkersReport(_)
-        | P::PocMarkersReport(_)
-        | P::AccelReport(_)
-        | P::ImpactReport(_)
-        | P::BatteryReport(_) => false,
-    }
-}
-
 pub static PAIRING_FOUND_ADDR: Signal<ThreadModeRawMutex, [u8; 6]> = Signal::new();
 static PAIRING_CAPTURED: AtomicBool = AtomicBool::new(false);
 
-// Name of the device found during pairing, sent back in PairingResult.
-static PAIRING_FOUND_NAME: BlockingMutex<CriticalSectionRawMutex, RefCell<heapless::String<32>>> =
-    BlockingMutex::new(RefCell::new(heapless::String::new()));
+// Bind the captured name to its address: another device can finish bonding
+// while this pairing capture remains the latest one.
+static PAIRING_FOUND_NAME: BlockingMutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<([u8; 6], heapless::String<32>)>>,
+> = BlockingMutex::new(RefCell::new(None));
 
 // BLE names by address, refreshed from every advertisement seen.
 static DEVICE_NAMES: BlockingMutex<
@@ -132,14 +101,15 @@ impl Drop for ConnectLease {
 }
 
 pub fn reset_pairing_capture() {
+    PAIRING_FOUND_ADDR.reset();
     PAIRING_CAPTURED.store(false, Ordering::Release);
-    PAIRING_FOUND_NAME.lock(|n| n.borrow_mut().clear());
+    PAIRING_FOUND_NAME.lock(|n| *n.borrow_mut() = None);
 }
 
 pub fn report_scan_address(addr: [u8; 6], name: heapless::String<32>) {
     if !PAIRING_CAPTURED.swap(true, Ordering::AcqRel) {
         info!("First device found during pairing: {:02x}, signaling", addr);
-        PAIRING_FOUND_NAME.lock(|n| *n.borrow_mut() = name);
+        PAIRING_FOUND_NAME.lock(|n| *n.borrow_mut() = Some((addr, name)));
         PAIRING_FOUND_ADDR.signal(addr);
     }
 }
@@ -149,9 +119,15 @@ pub fn get_cached_device_name(addr: &[u8; 6]) -> heapless::String<32> {
     DEVICE_NAMES.lock(|m| m.borrow().get(addr).cloned().unwrap_or_default())
 }
 
-/// Name captured during the last pairing scan.
-pub fn get_pairing_name() -> heapless::String<32> {
-    PAIRING_FOUND_NAME.lock(|n| n.borrow().clone())
+/// Name captured for `addr` during the last pairing scan, or empty for any other address.
+pub fn get_pairing_name(addr: &[u8; 6]) -> heapless::String<32> {
+    PAIRING_FOUND_NAME.lock(|n| {
+        n.borrow()
+            .as_ref()
+            .filter(|(captured, _)| captured == addr)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_default()
+    })
 }
 
 /// Parses the local name (AD type 0x08 shortened or 0x09 complete) from AD

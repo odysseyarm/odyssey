@@ -67,6 +67,11 @@ pub async fn background_scanner_task(
 pub async fn pairing_monitor_task(settings: &'static crate::storage::Settings) -> ! {
     loop {
         let addr = PAIRING_FOUND_ADDR.wait().await;
+        // A cancellation may have happened after the advertisement callback
+        // queued this address but before this task was polled.
+        if !crate::pairing::is_active() {
+            continue;
+        }
         info!("Pairing: device found {:02x}, adding to scan targets", addr);
         let _ = settings.add_scan_target(addr).await;
         crate::ble::central::RESTART_CENTRAL.signal(());

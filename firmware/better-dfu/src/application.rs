@@ -129,14 +129,10 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
 
         match Request::try_from(req.request) {
             Ok(Request::GetStatus) => {
-                buf[0..6].copy_from_slice(&[
-                    Status::Ok as u8,
-                    0x32,
-                    0x00,
-                    0x00,
-                    self.state as u8,
-                    0x00,
-                ]);
+                let Some(buf) = buf.get_mut(..6) else {
+                    return Some(InResponse::Rejected);
+                };
+                buf.copy_from_slice(&[Status::Ok as u8, 0x32, 0x00, 0x00, self.state as u8, 0x00]);
                 Some(InResponse::Accepted(buf))
             }
             _ => None,

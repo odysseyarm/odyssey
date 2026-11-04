@@ -119,8 +119,9 @@ unsafe impl Logger for SerialLogger {
 
     unsafe fn release() {
         unsafe {
-            critical_section::release(*LOGGER_STATE.restore_state.get());
+            // Finish mutating the shared encoder before interrupts can log again.
             (*LOGGER_STATE.encoder.get()).end_frame(push_log_bytes);
+            critical_section::release(*LOGGER_STATE.restore_state.get());
         }
     }
 

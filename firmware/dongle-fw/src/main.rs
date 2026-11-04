@@ -52,13 +52,14 @@ use crate::storage::{BondData, Settings};
 // at boot. ClearBonds sends PurgeBonds here and waits on HOST_MGMT_DONE before
 // replying, so the host never keeps an LTK the dongle has forgotten.
 enum HostMgmtCmd {
-    PurgeBonds(HVec<BondData, { MAX_DEVICES }>),
+    PurgeBonds,
     AddBond(BondData),
 }
 
 static HOST_MGMT_CH: Channel<ThreadModeRawMutex, HostMgmtCmd, 2> = Channel::new();
 static HOST_MGMT_DONE: SyncSignal<ThreadModeRawMutex, ()> = SyncSignal::new();
 static HOST_MGMT_ADD_RESULT: SyncSignal<ThreadModeRawMutex, Result<(), ()>> = SyncSignal::new();
+static BONDS_CLEARED: SyncSignal<ThreadModeRawMutex, ()> = SyncSignal::new();
 // Feeds every advertisement into the name cache and, while pairing, reports
 // the first one that matches the pairing filter.
 struct HostEventHandler;
@@ -363,11 +364,27 @@ async fn main(mut spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn bond_storage_task(settings: &'static Settings) -> ! {
-    use ble::security::BOND_TO_STORE;
+    use ble::security::{BOND_COMMANDS, BondCommand};
     use defmt::info;
 
     loop {
-        let bond = BOND_TO_STORE.receive().await;
+        let bond = match BOND_COMMANDS.receive().await {
+            BondCommand::Store(bond) => bond,
+            BondCommand::Clear => {
+                // Stop every producer before dropping queued completions. No
+                // store can interleave with the clears below: this task owns both.
+                settings.scan_list_clear().await;
+                ble::task_slots::stop_all().await;
+                while BOND_COMMANDS.try_receive().is_ok() {}
+                HOST_MGMT_CH.send(HostMgmtCmd::PurgeBonds).await;
+                HOST_MGMT_DONE.wait().await;
+                settings.bonds_clear().await;
+                ble::central::clear_device_names();
+                settings.clear_device_names().await;
+                BONDS_CLEARED.signal(());
+                continue;
+            }
+        };
 
         info!("Storing bond for device {:02x}...", bond.bd_addr);
 
@@ -382,7 +399,7 @@ async fn bond_storage_task(settings: &'static Settings) -> ! {
                 // ADV_IND before the scan response carrying the name arrived.
                 let paired_name = {
                     let cached = crate::ble::central::get_cached_device_name(&bond.bd_addr);
-                    let pairing = crate::ble::central::get_pairing_name();
+                    let pairing = crate::ble::central::get_pairing_name(&bond.bd_addr);
                     info!(
                         "bond_storage: cached_name={:?} pairing_name={:?}",
                         cached.as_str(),
@@ -458,10 +475,12 @@ async fn host_mgmt_task(stack: &'static trouble_host::Stack<'static, Controller,
     defmt::info!("host_mgmt_task: starting");
     loop {
         match HOST_MGMT_CH.receive().await {
-            HostMgmtCmd::PurgeBonds(list) => {
-                defmt::info!("host_mgmt: purging {} bond(s) from host DB", list.len());
-                for bd in list.iter() {
-                    let info = ble::security::info_from_bonddata(bd);
+            HostMgmtCmd::PurgeBonds => {
+                // Include bonds paired just before cancellation, even if their
+                // persistence notification was still queued or was cancelled.
+                let bonds = stack.get_bond_information();
+                defmt::info!("host_mgmt: purging {} bond(s) from host DB", bonds.len());
+                for info in bonds {
                     let _ = stack.remove_bond_information(info.identity);
                 }
                 HOST_MGMT_DONE.signal(());
@@ -852,25 +871,10 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 info!("CTL ClearBonds received");
                 // Stop pairing so its events cannot interleave with the clear.
                 pairing::cancel();
-                let bonds = settings.get_all_bonds().await;
-                let mut to_purge: HVec<BondData, { MAX_DEVICES }> = HVec::new();
-                for opt in bonds.slots.iter() {
-                    if let Some(bd) = opt {
-                        let _ = to_purge.push(*bd);
-                    }
-                }
-                // Device tasks go first. One still running could reconnect, find
-                // its bond gone and pair again, re-adding the bond being cleared.
-                // Each task disconnects and frees its device queue before it
-                // releases its slot, so no queue is reused while a task reads it.
-                settings.scan_list_clear().await;
-                ble::task_slots::stop_all().await;
-                // Wait for the host purge so its bond DB and flash cannot disagree.
-                HOST_MGMT_CH.send(HostMgmtCmd::PurgeBonds(to_purge)).await;
-                HOST_MGMT_DONE.wait().await;
-                settings.bonds_clear().await;
-                ble::central::clear_device_names();
-                settings.clear_device_names().await;
+                ble::security::BOND_COMMANDS
+                    .send(ble::security::BondCommand::Clear)
+                    .await;
+                BONDS_CLEARED.wait().await;
 
                 control::try_send_event(C::ClearBondsResponse(ClearBondsResult::Ok()));
             }

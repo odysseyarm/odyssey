@@ -3,6 +3,8 @@
 //! an INF, and vendor control requests 0x30 (send) and 0x31 (receive) that
 //! carry postcard-encoded `DeviceMsg`s.
 
+mod connection_state;
+
 use core::cmp::max;
 
 use defmt::info;
@@ -18,13 +20,14 @@ use embassy_usb::msos::windows_version;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
 use static_cell::{ConstStaticCell, StaticCell};
 
+use self::connection_state::ConnectionState;
 use crate::static_byte_buffer;
 
 /// Most tasks that wait on the USB state at the same time. Each pending
 /// `wait_until_*` call holds one receiver slot of the watch.
 const USB_STATE_WAITERS: usize = 4;
 
-type UsbActiveWatch = Watch<CriticalSectionRawMutex, bool, USB_STATE_WAITERS>;
+type UsbActiveWatch = Watch<CriticalSectionRawMutex, ConnectionState, USB_STATE_WAITERS>;
 
 /// Waits on whether a USB host is using the device (see [`is_active`]). Up to
 /// [`USB_STATE_WAITERS`] tasks can wait at once.
@@ -37,10 +40,31 @@ pub struct UsbConfigHandle {
 /// and the bus is not suspended. False until [`usb_device`] has been called
 /// and a host has enumerated the device.
 pub fn is_active() -> bool {
-    USB_ACTIVE.try_get().unwrap_or(false)
+    USB_ACTIVE.try_get().is_some_and(|state| state.active)
 }
 
 impl UsbConfigHandle {
+    /// Changes on each active-to-inactive USB boundary, including a reset or
+    /// suspend that completes before a task next polls the configuration state.
+    pub fn generation(&self) -> u32 {
+        self.watch.try_get().map_or(0, |state| state.generation)
+    }
+
+    /// Waits for a connection boundary even if USB is already configured again.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than [`USB_STATE_WAITERS`] waits are pending at once.
+    pub async fn wait_until_generation_changes(&self, generation: u32) {
+        let mut receiver = self
+            .watch
+            .receiver()
+            .expect("no more than USB_STATE_WAITERS tasks wait on the USB state at once");
+        receiver
+            .get_and(|state| state.generation != generation)
+            .await;
+    }
+
     /// Returns once a host has configured the device and the bus is awake,
     /// immediately if that is already the case.
     ///
@@ -66,7 +90,7 @@ impl UsbConfigHandle {
             .watch
             .receiver()
             .expect("no more than USB_STATE_WAITERS tasks wait on the USB state at once");
-        receiver.get_and(|state| *state == active).await;
+        receiver.get_and(|state| state.active == active).await;
     }
 }
 
@@ -80,7 +104,7 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
 }
 
-static USB_ACTIVE: UsbActiveWatch = Watch::new_with(false);
+static USB_ACTIVE: UsbActiveWatch = Watch::new_with(ConnectionState::INITIAL);
 
 /// Called with each `DeviceMsg` the host sends with vendor request 0x30.
 pub type DeviceControlSender = fn(odyssey_protocol::control::device::DeviceMsg);
@@ -222,8 +246,9 @@ impl MyHandler {
     fn publish(&self) {
         let active = self.configured && !self.suspended;
         self.active.sender().send_if_modified(|state| {
-            let changed = *state != Some(active);
-            *state = Some(active);
+            let mut next = state.unwrap_or(ConnectionState::INITIAL);
+            let changed = next.set_active(active);
+            *state = Some(next);
             changed
         });
     }
@@ -313,6 +338,9 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
+/// Reads through a short packet, including a ZLP after a full-size payload.
+/// An exact-fit payload still needs its terminating packet consumed; the
+/// endpoint reports overflow if that packet contains more data instead.
 pub async fn read_transfer<'d>(
     ep: &mut Endpoint<'d, Out>,
     buf: &mut [u8],
@@ -321,9 +349,6 @@ pub async fn read_transfer<'d>(
     let mut offset = 0;
 
     loop {
-        if offset == buf.len() {
-            return Err(EndpointError::BufferOverflow);
-        }
         let n = ep.read(&mut buf[offset..]).await?;
         offset += n;
 
