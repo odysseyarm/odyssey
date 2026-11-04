@@ -31,6 +31,19 @@ pub(super) const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long to wait for a reply that follows a flash write.
 pub(super) const FLASH_WRITE_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// A poll deadline, distinguished from USB failures by callers that tolerate
+/// missing acknowledgements from older firmware.
+#[derive(Debug)]
+pub(super) struct ReplyTimeout;
+
+impl std::fmt::Display for ReplyTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("timeout waiting for ctrl event")
+    }
+}
+
+impl std::error::Error for ReplyTimeout {}
+
 /// What to do with a reply that does not decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum UndecodableReply {
@@ -71,7 +84,7 @@ pub(super) async fn recv_matching<M: DeserializeOwned>(
     loop {
         let elapsed = start.elapsed();
         if elapsed >= timeout {
-            return Err(anyhow!("timeout waiting for ctrl event"));
+            return Err(ReplyTimeout.into());
         }
         let slice = (timeout - elapsed).min(POLL_SLICE);
         let reply = match iface
@@ -100,7 +113,9 @@ pub(super) async fn recv_matching<M: DeserializeOwned>(
         let msg = match postcard::from_bytes::<M>(&reply) {
             Ok(msg) => msg,
             Err(e) => {
-                if undecodable == UndecodableReply::Skip && start.elapsed() < timeout {
+                if undecodable == UndecodableReply::Skip {
+                    // Report a deadline, not a decode error, when unknown
+                    // events exhaust the polling time.
                     continue;
                 }
                 return Err(anyhow!("ctrl decode failed: {e}"));

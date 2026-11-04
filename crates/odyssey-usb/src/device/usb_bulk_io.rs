@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 /// Bulk IN endpoint address (direction bit set).
@@ -27,6 +28,10 @@ const VENDOR_SPECIFIC_CLASS: u8 = 0xFF;
 const WRITE_SCRATCH_CAPACITY: usize = 1024;
 /// Initial capacity of the receive buffer for one message.
 const READ_SCRATCH_CAPACITY: usize = 256;
+/// Packets and mux envelopes are bounded protocol types; even a worst-case
+/// object report is below 1 KiB. Refuse an unterminated transfer before it can
+/// grow the host's receive buffer without bound.
+const MAX_MESSAGE_SIZE: usize = 4096;
 /// Unclassified read errors tolerated in a row before the reader gives up.
 const MAX_CONSECUTIVE_READ_ERRORS: u8 = 3;
 
@@ -53,33 +58,48 @@ pub(super) fn open_bulk_endpoints(
     Ok((in_ep, out_ep))
 }
 
-/// Encodes each message from `outgoing` and writes it as one USB transfer.
+/// Encodes each message from `outgoing`, ending it with a USB short packet or ZLP.
 ///
-/// A message that fails to encode or write is logged and dropped; the task
-/// ends when every sender is gone. `label` names the link in the log.
+/// A message that fails to encode is logged and dropped. A failed write ends
+/// the link: its partially written frame cannot safely precede another one.
 pub(super) fn spawn_writer<M>(
     mut out_ep: EndpointWrite<Bulk>,
     mut outgoing: mpsc::Receiver<M>,
     label: &'static str,
+    cancel: CancellationToken,
 ) where
     M: Serialize + Send + 'static,
 {
     tokio::spawn(async move {
         let mut raw = Vec::with_capacity(WRITE_SCRATCH_CAPACITY);
-        while let Some(msg) = outgoing.recv().await {
+        loop {
+            let msg = tokio::select! {
+                biased;
+                () = cancel.cancelled() => break,
+                message = outgoing.recv() => match message {
+                    Some(message) => message,
+                    None => break,
+                },
+            };
             raw.clear();
             if let Err(e) = postcard::to_io(&msg, &mut raw) {
                 error!("{label} postcard serialize failed: {e}");
                 continue;
             }
-            if let Err(e) = out_ep.write_all(&raw).await {
-                error!("{label} write_all failed: {e}");
-                continue;
-            }
-            if let Err(e) = out_ep.flush_end_async().await {
-                error!("{label} flush_end failed: {e:?}");
+            let result = tokio::select! {
+                biased;
+                () = cancel.cancelled() => break,
+                result = async {
+                    out_ep.write_all(&raw).await?;
+                    out_ep.flush_end_async().await
+                } => result,
+            };
+            if let Err(e) = result {
+                error!("{label} bulk write failed: {e}");
+                break;
             }
         }
+        cancel.cancel();
         info!("{label} writer exits");
     });
 }
@@ -130,6 +150,7 @@ pub(super) struct MessageReader {
     in_ep: EndpointRead<Bulk>,
     budget: ReadErrorBudget,
     label: &'static str,
+    buffer: Vec<u8>,
 }
 
 impl MessageReader {
@@ -138,6 +159,7 @@ impl MessageReader {
             in_ep,
             budget: ReadErrorBudget::default(),
             label,
+            buffer: Vec::with_capacity(READ_SCRATCH_CAPACITY),
         }
     }
 
@@ -147,8 +169,12 @@ impl MessageReader {
         let label = self.label;
         let mut reader = self.in_ep.until_short_packet();
         loop {
-            let mut buf = Vec::with_capacity(READ_SCRATCH_CAPACITY);
-            match reader.read_to_end(&mut buf).await {
+            self.buffer.clear();
+            match (&mut reader)
+                .take((MAX_MESSAGE_SIZE + 1) as u64)
+                .read_to_end(&mut self.buffer)
+                .await
+            {
                 Ok(_) => self.budget.on_success(),
                 Err(e) => match self.budget.on_error(e.kind()) {
                     ReadErrorAction::Idle => continue,
@@ -162,11 +188,15 @@ impl MessageReader {
                     }
                 },
             }
+            if self.buffer.len() > MAX_MESSAGE_SIZE {
+                error!("{label} message exceeds {MAX_MESSAGE_SIZE} bytes");
+                return None;
+            }
             if let Err(e) = reader.consume_end() {
                 warn!("{label} consume_end failed: {e:?}");
                 continue;
             }
-            match postcard::from_bytes::<M>(&buf) {
+            match postcard::from_bytes::<M>(&self.buffer) {
                 Ok(msg) => return Some(msg),
                 Err(e) => error!("{label} postcard decode failed: {e:?}"),
             }

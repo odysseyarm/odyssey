@@ -51,22 +51,29 @@ impl VmDevice {
         result
     }
 
-    /// The next control message, whatever it is.
-    async fn recv_ctrl_msg(&self, timeout: Duration) -> Result<DeviceMsg> {
-        control_transfer::recv_matching(self.ctrl_iface()?, timeout, UndecodableReply::Fail, |_| {
-            true
-        })
-        .await
-    }
-
-    /// The next control message `accept` takes; others are discarded.
+    /// The next control message `accept` takes; unrelated pairing results are
+    /// retained for the event waiter and other messages are discarded.
     async fn recv_ctrl_msg_filtered(
         &self,
         timeout: Duration,
-        accept: impl FnMut(&DeviceMsg) -> bool,
+        pending_pairing: &mut Option<PairingOutcome>,
+        mut accept: impl FnMut(&DeviceMsg) -> bool,
     ) -> Result<DeviceMsg> {
-        control_transfer::recv_matching(self.ctrl_iface()?, timeout, UndecodableReply::Skip, accept)
-            .await
+        control_transfer::recv_matching(
+            self.ctrl_iface()?,
+            timeout,
+            UndecodableReply::Skip,
+            |msg| {
+                if accept(msg) {
+                    return true;
+                }
+                if let DeviceMsg::PairingResult(outcome) = msg {
+                    *pending_pairing = Some(outcome.clone());
+                }
+                false
+            },
+        )
+        .await
     }
 
     /// Sends `msg`, then waits for the first reply `accept` takes.
@@ -76,14 +83,21 @@ impl VmDevice {
         timeout: Duration,
         accept: impl FnMut(&DeviceMsg) -> bool,
     ) -> Result<DeviceMsg> {
+        let mut pending = self.ctrl.lock().await;
         self.send_ctrl_msg(msg).await?;
-        self.recv_ctrl_msg_filtered(timeout, accept).await
+        self.recv_ctrl_msg_filtered(timeout, &mut pending, accept)
+            .await
     }
 
     pub async fn read_version(&self) -> Result<Version> {
-        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::Version))
-            .await?;
-        match self.recv_ctrl_msg(REPLY_TIMEOUT).await? {
+        match self
+            .ctrl_request(
+                DeviceMsg::ReadProp(PropKind::Version),
+                REPLY_TIMEOUT,
+                |msg| matches!(msg, DeviceMsg::ReadPropResponse(Props::Version(_))),
+            )
+            .await?
+        {
             DeviceMsg::ReadPropResponse(Props::Version(version)) => Ok(version),
             other => Err(unexpected(other)),
         }
@@ -121,9 +135,12 @@ impl VmDevice {
 
     /// Read the UUID from the device via control endpoint.
     pub async fn read_uuid(&self) -> Result<[u8; 6]> {
-        self.send_ctrl_msg(DeviceMsg::ReadProp(PropKind::Uuid))
-            .await?;
-        match self.recv_ctrl_msg(REPLY_TIMEOUT).await? {
+        match self
+            .ctrl_request(DeviceMsg::ReadProp(PropKind::Uuid), REPLY_TIMEOUT, |msg| {
+                matches!(msg, DeviceMsg::ReadPropResponse(Props::Uuid(_)))
+            })
+            .await?
+        {
             DeviceMsg::ReadPropResponse(Props::Uuid(uuid)) => Ok(uuid),
             other => Err(unexpected(other)),
         }
@@ -170,37 +187,49 @@ impl VmDevice {
     }
 
     pub async fn start_pairing(&self, timeout_ms: u32) -> Result<()> {
+        let mut pending = self.ctrl.lock().await;
+        *pending = None;
+        self.send_ctrl_msg(DeviceMsg::StartPairing(StartPairing { timeout_ms }))
+            .await?;
         match self
-            .ctrl_request(
-                DeviceMsg::StartPairing(StartPairing { timeout_ms }),
-                REPLY_TIMEOUT,
-                |msg| {
-                    matches!(
-                        msg,
-                        DeviceMsg::StartPairingResponse() | DeviceMsg::PairingResult(_)
-                    )
-                },
-            )
+            .recv_ctrl_msg_filtered(REPLY_TIMEOUT, &mut pending, |msg| {
+                matches!(
+                    msg,
+                    DeviceMsg::StartPairingResponse() | DeviceMsg::PairingResult(_)
+                )
+            })
             .await?
         {
             DeviceMsg::StartPairingResponse() => Ok(()),
-            // Pairing finished immediately; treat as success so the caller can proceed
-            DeviceMsg::PairingResult(PairingOutcome::Ok(_addr)) => Ok(()),
+            // Retain an immediate completion for wait_pairing_event.
+            DeviceMsg::PairingResult(outcome @ PairingOutcome::Ok(_)) => {
+                *pending = Some(outcome);
+                Ok(())
+            }
             other => Err(unexpected(other)),
         }
     }
 
     pub async fn wait_pairing_event(&self) -> Result<BondedDevice> {
-        loop {
-            match self.recv_ctrl_msg(PAIRING_EVENT_TIMEOUT).await? {
-                DeviceMsg::PairingResult(PairingOutcome::Ok(device)) => return Ok(device),
-                DeviceMsg::PairingResult(PairingOutcome::Err(PairingError::Timeout)) => {
-                    return Err(anyhow!("Pairing timeout"));
-                }
-                DeviceMsg::PairingResult(PairingOutcome::Err(PairingError::Cancelled)) => {
-                    return Err(anyhow!("Pairing cancelled"));
-                }
-                _ => { /* ignore unrelated ctrl msgs */ }
+        let mut pending = self.ctrl.lock().await;
+        let outcome = match pending.take() {
+            Some(outcome) => outcome,
+            None => match self
+                .recv_ctrl_msg_filtered(PAIRING_EVENT_TIMEOUT, &mut pending, |msg| {
+                    matches!(msg, DeviceMsg::PairingResult(_))
+                })
+                .await?
+            {
+                DeviceMsg::PairingResult(outcome) => outcome,
+                other => return Err(unexpected(other)),
+            },
+        };
+        match outcome {
+            PairingOutcome::Ok(device) => Ok(device),
+            PairingOutcome::Err(PairingError::Timeout) => Err(anyhow!("Pairing timeout")),
+            PairingOutcome::Err(PairingError::Cancelled) => Err(anyhow!("Pairing cancelled")),
+            PairingOutcome::Err(PairingError::NotBleMode) => {
+                Err(anyhow!("Pairing requires BLE mode"))
             }
         }
     }
@@ -212,10 +241,7 @@ impl VmDevice {
     pub async fn clear_bond(&self) -> Result<()> {
         match self
             .ctrl_request(DeviceMsg::ClearBond(), REPLY_TIMEOUT, |msg| {
-                matches!(
-                    msg,
-                    DeviceMsg::ClearBondResponse(_) | DeviceMsg::PairingResult(_)
-                )
+                matches!(msg, DeviceMsg::ClearBondResponse(_))
             })
             .await?
         {

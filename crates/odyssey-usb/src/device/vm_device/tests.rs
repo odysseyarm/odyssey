@@ -233,3 +233,185 @@ async fn failed_stream_subscription_does_not_block_the_next_attempt() {
         assert!(!err.to_string().contains("more than one"), "{err}");
     }
 }
+
+#[tokio::test]
+async fn no_reply_id_does_not_kill_the_dispatcher() {
+    let Harness {
+        device,
+        incoming_tx,
+        ..
+    } = harness();
+    incoming_tx
+        .send(Packet {
+            id: 255,
+            data: PacketData::Ack(),
+        })
+        .await
+        .unwrap();
+    let (probe, reply) = device.get_oneshot_slot().unwrap();
+    incoming_tx
+        .send(Packet {
+            id: probe.id,
+            data: PacketData::Ack(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(reply.await.unwrap(), PacketData::Ack()));
+}
+
+#[tokio::test]
+async fn replacing_stream_queues_disable_before_enable() {
+    use crate::packets::vm::{PacketType, StreamUpdateAction};
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx: _open,
+    } = harness();
+    let stream = device.stream(PacketType::BatteryReport()).await.unwrap();
+    sent.recv().await.unwrap();
+    drop(stream);
+    let replacement = device.stream(PacketType::BatteryReport()).await.unwrap();
+    assert!(matches!(
+        sent.recv().await.unwrap().data,
+        PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::Disable)
+    ));
+    assert!(matches!(
+        sent.recv().await.unwrap().data,
+        PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::Enable)
+    ));
+    drop(replacement);
+}
+
+#[tokio::test]
+async fn cancelling_blocked_stream_enable_releases_its_reservation_in_order() {
+    use std::task::Poll;
+
+    use crate::packets::vm::{PacketType, StreamUpdateAction};
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx: _open,
+    } = harness();
+    // Fill the transport queue so Enable cannot be enqueued.
+    for _ in 0..64 {
+        device
+            .send(Packet {
+                id: 255,
+                data: PacketData::Ack(),
+            })
+            .await
+            .unwrap();
+    }
+    let mut subscription = Box::pin(device.stream(PacketType::ObjectReport()));
+    assert!(
+        std::future::poll_fn(|cx| Poll::Ready(subscription.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    drop(subscription);
+    // While Disable is also blocked, no replacement may overtake it.
+    assert!(device.stream(PacketType::ObjectReport()).await.is_err());
+    for _ in 0..64 {
+        assert!(matches!(sent.recv().await.unwrap().data, PacketData::Ack()));
+    }
+    let disable = tokio::time::timeout(Duration::from_secs(1), sent.recv())
+        .await
+        .expect("cancelled subscription must queue Disable")
+        .unwrap();
+    assert!(matches!(
+        disable.data,
+        PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::Disable)
+    ));
+    let replacement = device.stream(PacketType::ObjectReport()).await.unwrap();
+    assert!(matches!(
+        sent.recv().await.unwrap().data,
+        PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::Enable)
+    ));
+    drop(replacement);
+}
+
+#[tokio::test]
+async fn clear_streams_propagates_transport_failure() {
+    let Harness {
+        device,
+        sent,
+        incoming_tx: _open,
+    } = harness();
+    drop(sent);
+    assert!(device.clear_all_streams().await.is_err());
+}
+
+#[tokio::test]
+async fn clearing_streams_closes_old_handle_without_disabling_replacement() {
+    use tokio_stream::StreamExt as _;
+
+    use crate::packets::vm::{ObjectReport, PacketType, StreamUpdateAction};
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx,
+    } = harness();
+    let mut old = Box::pin(device.stream(PacketType::ObjectReport()).await.unwrap());
+    sent.recv().await.unwrap();
+    let resetting = tokio::spawn({
+        let device = device.clone();
+        async move { device.clear_all_streams().await }
+    });
+    let reset = sent.recv().await.unwrap();
+    assert!(matches!(
+        reset.data,
+        PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::DisableAll)
+    ));
+    incoming_tx
+        .send(Packet {
+            id: reset.id,
+            data: PacketData::Ack(),
+        })
+        .await
+        .unwrap();
+    resetting.await.unwrap().unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), old.next())
+            .await
+            .expect("global reset must close the old subscription")
+            .is_none()
+    );
+
+    let mut replacement = Box::pin(device.stream(PacketType::ObjectReport()).await.unwrap());
+    let enable = sent.recv().await.unwrap();
+    drop(old);
+    assert!(sent.try_recv().is_err(), "stale handle queued a Disable");
+    incoming_tx
+        .send(Packet {
+            id: enable.id,
+            data: PacketData::ObjectReport(ObjectReport {
+                timestamp: 123,
+                ..ObjectReport::default()
+            }),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        replacement.next().await,
+        Some(PacketData::ObjectReport(report)) if report.timestamp == 123
+    ));
+}
+
+#[tokio::test]
+async fn pending_clear_fails_fast_when_transport_closes() {
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx,
+    } = harness();
+    let resetting = tokio::spawn(async move { device.clear_all_streams().await });
+    sent.recv().await.unwrap();
+    drop(incoming_tx);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), resetting)
+            .await
+            .expect("reset must not keep response channels alive after disconnect")
+            .unwrap()
+            .is_err()
+    );
+}

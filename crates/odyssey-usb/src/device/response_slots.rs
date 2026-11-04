@@ -34,7 +34,7 @@ pub(super) enum ResponseChannel {
     None,
     /// (generation, sender); see `ResponseSlot::generation`.
     Oneshot(u64, oneshot::Sender<PacketData>),
-    Stream(mpsc::Sender<PacketData>),
+    Stream(u64, PacketType, mpsc::Sender<PacketData>),
     /// A request that timed out after being sent; its id stays reserved until a
     /// late reply is consumed or [`ABANDONED_ID_QUARANTINE`] passes.
     Abandoned(tokio::time::Instant),
@@ -47,7 +47,7 @@ impl ResponseChannel {
             Self::Abandoned(since) => {
                 now.saturating_duration_since(*since) >= ABANDONED_ID_QUARANTINE
             }
-            Self::Oneshot(..) | Self::Stream(_) => false,
+            Self::Oneshot(..) | Self::Stream(..) => false,
         }
     }
 }
@@ -68,6 +68,8 @@ pub(super) struct State {
     // id 255 is reserved for requests that don't care for a response
     pub(super) response_channels: parking_lot::Mutex<[ResponseChannel; SLOT_COUNT]>,
     pub(super) streams_active: StreamsActive,
+    pub(super) stream_control: tokio::sync::Mutex<()>,
+    closed: AtomicBool,
     next_generation: AtomicU64,
 }
 
@@ -78,6 +80,8 @@ impl State {
                 ResponseChannel::None
             })),
             streams_active: StreamsActive::default(),
+            stream_control: tokio::sync::Mutex::new(()),
+            closed: AtomicBool::new(false),
             next_generation: AtomicU64::new(1),
         }
     }
@@ -87,6 +91,9 @@ impl State {
         self: &Arc<Self>,
     ) -> Option<(ResponseSlot, oneshot::Receiver<PacketData>)> {
         let mut channels = self.response_channels.lock();
+        if self.closed.load(Ordering::Relaxed) {
+            return None;
+        }
         let now = tokio::time::Instant::now();
         let (id, channel) = channels
             .iter_mut()
@@ -99,27 +106,58 @@ impl State {
         Some((ResponseSlot::new(self, id, generation), receiver))
     }
 
-    /// Reserves a stream id for replies that keep arriving until the slot drops.
+    /// Reserves a stream id until its guard drops or a global reset closes it.
     pub(super) fn reserve_stream(
         self: &Arc<Self>,
         buffer: usize,
+        stream_type: PacketType,
     ) -> Option<(ResponseSlot, mpsc::Receiver<PacketData>)> {
         let mut channels = self.response_channels.lock();
+        if self.closed.load(Ordering::Relaxed) {
+            return None;
+        }
         let (id, channel) = channels
             .iter_mut()
             .enumerate()
             .skip(STREAMING_ID_MIN)
             .find(|(_, channel)| matches!(channel, ResponseChannel::None))?;
         let (send, receiver) = mpsc::channel(buffer);
-        *channel = ResponseChannel::Stream(send);
-        // Stream slots never replace each other, so they need no generation.
-        Some((ResponseSlot::new(self, id, 0), receiver))
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        *channel = ResponseChannel::Stream(generation, stream_type, send);
+        Some((ResponseSlot::new(self, id, generation), receiver))
+    }
+
+    /// Close subscriptions after DisableAll was acknowledged. Old guards keep
+    /// their generation, so dropping them cannot stop replacement subscriptions.
+    pub(super) fn clear_streams(&self) {
+        let mut channels = self.response_channels.lock();
+        for channel in channels.iter_mut() {
+            if let ResponseChannel::Stream(_, stream_type, _) = channel {
+                self.streams_active[*stream_type].store(false, Ordering::Relaxed);
+                *channel = ResponseChannel::None;
+            }
+        }
+    }
+
+    /// Fail pending requests even if an in-progress operation still holds State.
+    pub(super) fn close(&self) {
+        let mut channels = self.response_channels.lock();
+        self.closed.store(true, Ordering::Relaxed);
+        for channel in channels.iter_mut() {
+            if let ResponseChannel::Stream(_, stream_type, _) = channel {
+                self.streams_active[*stream_type].store(false, Ordering::Relaxed);
+            }
+            *channel = ResponseChannel::None;
+        }
     }
 
     /// Hands a reply to whatever is waiting on its id.
     pub(super) fn deliver(&self, reply: Packet) -> Delivery {
         let mut channels = self.response_channels.lock();
-        let slot = &mut channels[usize::from(reply.id)];
+        let Some(slot) = channels.get_mut(usize::from(reply.id)) else {
+            // 255 is the no-reply id, not an index into the response table.
+            return Delivery::Unregistered;
+        };
         let data = reply.data;
         match std::mem::take(slot) {
             ResponseChannel::None => Delivery::Unregistered,
@@ -129,12 +167,12 @@ impl State {
                 Ok(()) => Delivery::Delivered,
                 Err(e) => Delivery::Undeliverable(format!("{e:?}")),
             },
-            ResponseChannel::Stream(tx) => {
+            ResponseChannel::Stream(generation, stream_type, tx) => {
                 let outcome = match tx.try_send(data) {
                     Ok(()) => Delivery::Delivered,
                     Err(e) => Delivery::Undeliverable(format!("{e:?}")),
                 };
-                *slot = ResponseChannel::Stream(tx);
+                *slot = ResponseChannel::Stream(generation, stream_type, tx);
                 outcome
             }
         }
@@ -149,8 +187,8 @@ pub(super) struct ResponseSlot {
     pub(super) finished: bool,
     /// Whether the request packet was handed to the transport.
     pub(super) sent: bool,
-    /// Identifies the oneshot this slot registered (0 for stream slots), so a
-    /// stale slot cannot clear a newer request that reused the id.
+    /// Identifies the reservation, so an old guard cannot clear a newer request
+    /// or a stream that reused the id after clear_all_streams.
     generation: u64,
 }
 
@@ -166,9 +204,16 @@ impl ResponseSlot {
         }
     }
 
-    /// The state of the device this slot belongs to, unless the device is gone.
-    pub(super) fn state(&self) -> Option<Arc<State>> {
-        self.thread_state.upgrade()
+    /// Run a non-blocking action while this stream reservation is still current.
+    /// Keeping the table locked orders Disable enqueueing against stream reset.
+    pub(super) fn with_current_stream<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let state = self.thread_state.upgrade()?;
+        let channels = state.response_channels.lock();
+        matches!(
+            &channels[usize::from(self.id)],
+            ResponseChannel::Stream(generation, ..) if *generation == self.generation
+        )
+        .then(action)
     }
 }
 
@@ -183,13 +228,16 @@ impl Drop for ResponseSlot {
             // The dispatcher takes a oneshot sender out of its slot before waking
             // the receiver, so a request cancelled by a timeout right after its
             // reply was delivered can find the id already handed to a newer
-            // request. Only touch the oneshot this slot registered.
+            // request. Only touch the reservation this guard registered.
             let ours = match slot {
-                ResponseChannel::Oneshot(generation, _) => *generation == self.generation,
-                ResponseChannel::Stream(_) => true,
+                ResponseChannel::Oneshot(generation, _)
+                | ResponseChannel::Stream(generation, ..) => *generation == self.generation,
                 ResponseChannel::None | ResponseChannel::Abandoned(_) => false,
             };
             if ours {
+                if let ResponseChannel::Stream(_, stream_type, _) = slot {
+                    thread_state.streams_active[*stream_type].store(false, Ordering::Relaxed);
+                }
                 // Replies carry only the 8-bit id, so once a request has hit the
                 // wire its id must not be reused while its reply may still be in
                 // flight: quarantine it. A request that never left the host has

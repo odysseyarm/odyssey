@@ -37,14 +37,6 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STREAM_REPLY_BUFFER: usize = 100;
 /// Capacity of the payload of a vendor packet, the size of `VendorData::data`.
 const VENDOR_PAYLOAD_CAPACITY: usize = 98;
-/// Packet types a device streams, i.e. everything `clear_all_streams` resets.
-const STREAM_PACKET_TYPES: [PacketType; 5] = [
-    PacketType::ObjectReport(),
-    PacketType::CombinedMarkersReport(),
-    PacketType::PocMarkersReport(),
-    PacketType::AccelReport(),
-    PacketType::ImpactReport(),
-];
 
 /// Whether a USB connection insists on the device being in USB data mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,25 +51,12 @@ enum UsbModeRequirement {
 pub struct VmDevice {
     transport: PacketTransportTx,
     thread_state: Weak<State>,
-    cancel: Arc<CancellationToken>, // Signals dispatcher to exit when VmDevice drops
+    // Arc drops the guards exactly once even when clones drop concurrently.
+    _cancel: Arc<(tokio_util::sync::DropGuard, tokio_util::sync::DropGuard)>,
     ctrl_if: Option<Interface>,
-    transport_cancel: Arc<CancellationToken>, // Signals mux reader to exit when VmDevice drops
-}
-
-impl Drop for VmDevice {
-    fn drop(&mut self) {
-        // Only cancel if this is the last clone
-        if Arc::strong_count(&self.cancel) == 1 {
-            debug!("VmDevice: last clone dropping, cancelling dispatcher");
-            self.cancel.cancel(); // Cancel dispatcher
-            self.transport_cancel.cancel(); // Cancel mux reader
-        } else {
-            debug!(
-                "VmDevice: clone dropped, {} remaining",
-                Arc::strong_count(&self.cancel) - 1
-            );
-        }
-    }
+    // Serialize request/reply pairs; retain pairing events encountered while
+    // waiting for a different reply.
+    ctrl: Arc<tokio::sync::Mutex<Option<odyssey_protocol::control::device::PairingOutcome>>>,
 }
 
 impl VmDevice {
@@ -88,14 +67,22 @@ impl VmDevice {
         let thread_state = Arc::downgrade(&state);
 
         let cancel_token = CancellationToken::new();
-        tokio::spawn(run_dispatcher(state, incoming, cancel_token.clone()));
+        let dispatcher_transport_cancel = Arc::clone(&transport_cancel);
+        let dispatcher_cancel = cancel_token.clone();
+        tokio::spawn(async move {
+            run_dispatcher(state, incoming, dispatcher_cancel).await;
+            dispatcher_transport_cancel.cancel();
+        });
 
         Self {
             transport: tx_only,
             thread_state,
-            cancel: Arc::new(cancel_token),
+            _cancel: Arc::new((
+                cancel_token.drop_guard(),
+                transport_cancel.as_ref().clone().drop_guard(),
+            )),
             ctrl_if,
-            transport_cancel,
+            ctrl: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -164,7 +151,9 @@ impl VmDevice {
         )
         .await;
         match acknowledged {
-            Some(_) => Ok(()),
+            Some(Ok(PacketData::Ack())) => Ok(()),
+            Some(Ok(other)) => Err(anyhow!("unexpected DisableAll response: {other:?}")),
+            Some(Err(error)) => Err(error),
             None => Err(anyhow!("Failed to disable all streams")),
         }
     }
@@ -239,9 +228,13 @@ impl VmDevice {
             .ok_or_else(|| anyhow!("Failed to allocate request id"))
     }
 
-    fn get_stream_slot(&self, buffer: usize) -> Result<(ResponseSlot, mpsc::Receiver<PacketData>)> {
+    fn get_stream_slot(
+        &self,
+        buffer: usize,
+        stream_type: PacketType,
+    ) -> Result<(ResponseSlot, mpsc::Receiver<PacketData>)> {
         self.live_state()?
-            .reserve_stream(buffer)
+            .reserve_stream(buffer, stream_type)
             .ok_or_else(|| anyhow!("Failed to allocate request id"))
     }
 
@@ -350,6 +343,7 @@ impl VmDevice {
         let Some(thread_state) = self.thread_state.upgrade() else {
             return Err(anyhow!("thread state dropped"));
         };
+        let _control = thread_state.stream_control.lock().await;
         if thread_state.streams_active[stream_type].swap(true, Ordering::Relaxed) {
             return Err(anyhow!("cannot have more than one {stream_type:?} stream"));
         }
@@ -357,7 +351,7 @@ impl VmDevice {
         let release_stream_type = || {
             thread_state.streams_active[stream_type].store(false, Ordering::Relaxed);
         };
-        let (slot, receiver) = match self.get_stream_slot(STREAM_REPLY_BUFFER) {
+        let (slot, receiver) = match self.get_stream_slot(STREAM_REPLY_BUFFER, stream_type) {
             Ok(reserved) => reserved,
             Err(e) => {
                 release_stream_type();
@@ -375,16 +369,16 @@ impl VmDevice {
                 action: StreamUpdateAction::Enable,
             }),
         };
-        if let Err(e) = self.transport.send(enable).await {
-            release_stream_type();
-            return Err(e.into());
-        }
-        Ok(PacketStream {
-            slot,
+        // Construct the guard before the cancellable send: dropping this
+        // future must release both its slot and the stream-type reservation.
+        let stream = PacketStream {
+            slot: Some(slot),
             receiver: ReceiverStream::new(receiver),
             sender: self.transport.writer.clone(),
             stream_type,
-        })
+        };
+        self.transport.send(enable).await?;
+        Ok(stream)
     }
 
     /// A stream narrowed to the one report type `extract` picks out.
@@ -452,26 +446,23 @@ impl VmDevice {
         self.send_without_reply(PacketData::WriteMode(mode)).await
     }
 
+    /// Stops firmware streaming and closes existing subscriptions. Generation
+    /// checks keep old subscription guards from disabling their replacements.
     pub async fn clear_all_streams(&self) -> Result<()> {
-        // Mark all streams as inactive to stop new packets
-        if let Some(thread_state) = self.thread_state.upgrade() {
-            for packet_type in STREAM_PACKET_TYPES {
-                if thread_state.streams_active[packet_type].swap(false, Ordering::Relaxed) {
-                    info!("Clearing active stream: {:?}", packet_type);
-                }
-            }
-        }
-
-        self.disable_all_streams().await
+        let state = self.live_state()?;
+        let _control = state.stream_control.lock().await;
+        self.disable_all_streams().await?;
+        state.clear_streams();
+        Ok(())
     }
 }
 
 /// Routes every packet the device sends to the request or stream waiting for
 /// its id, until the transport closes or `cancel` fires.
 ///
-/// When the transport closes, `state` is dropped on exit, which closes every
-/// pending request so callers fail immediately instead of waiting for a reply
-/// that can no longer arrive.
+/// On exit, explicitly close every response channel, even if a setup/reset
+/// operation still holds `state`. Pending requests fail immediately and no new
+/// request can reserve an id on the dead link.
 async fn run_dispatcher(
     state: Arc<State>,
     mut incoming: ReceiverStream<Packet>,
@@ -513,5 +504,6 @@ async fn run_dispatcher(
             }
         }
     }
+    state.close();
     debug!("Dispatcher: [ID:{dispatcher_id}] task exits");
 }
