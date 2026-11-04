@@ -35,11 +35,16 @@ pub struct StreamUpdate {
 
 impl StreamUpdate {
     pub fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
-        let stream_update = Self {
-            packet_id: bytes[0].try_into()?,
-            action: bytes[1].try_into()?,
+        let &[packet_id, action, ref rest @ ..] = *bytes else {
+            return Err(Error::UnexpectedEof {
+                packet_type: Some(PacketType::StreamUpdate()),
+            });
         };
-        *bytes = &bytes[2..];
+        let stream_update = Self {
+            packet_id: packet_id.try_into()?,
+            action: action.try_into()?,
+        };
+        *bytes = rest;
         Ok(stream_update)
     }
 }

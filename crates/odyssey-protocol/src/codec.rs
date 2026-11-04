@@ -6,12 +6,31 @@ use nalgebra::Point2;
 
 use crate::{CombinedMarkersReport, Error, MotData, ObjectReport, PacketType};
 
+/// Bytes of one [`MotData`] on the wire.
+const MOT_DATA_SIZE: usize = 16;
+/// Each camera (near field, wide field) reports this many objects.
+const MOT_DATA_PER_CAMERA: usize = 16;
+/// Bytes of the timestamp that opens an [`ObjectReport`].
+const TIMESTAMP_SIZE: usize = size_of::<u32>();
+/// Trailer of an [`ObjectReport`]: a format tag whose only defined value is 1,
+/// then a reserved byte. Parsing ignores it.
+const OBJECT_REPORT_TRAILER: [u8; 2] = [1, 0];
+/// A marker position is two 12-bit coordinates packed into 3 bytes.
+const PACKED_POINT_SIZE: usize = 3;
+/// Mask of the 12-bit coordinate's high nibble in its middle byte.
+const HIGH_NIBBLE_MASK: u8 = 0x0f;
+
+/// Reads a value off the front of `bytes`, advancing the slice past it.
 pub trait Parse: Sized {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
 }
 
+/// Writes a value into an uninitialised buffer, advancing the buffer past it.
 pub trait Serialize {
+    /// Exactly the number of bytes [`serialize`](Self::serialize) writes.
     const SIZE: usize;
+
+    /// Writes [`SIZE`](Self::SIZE) bytes to the front of `buf` and advances it.
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]);
 
     #[cfg(feature = "std")]
@@ -21,147 +40,162 @@ pub trait Serialize {
     )]
     fn serialize_to_vec(&self, buf: &mut Vec<u8>) {
         buf.reserve(Self::SIZE);
-        let () = self.serialize(&mut buf.spare_capacity_mut());
+        let spare = buf.spare_capacity_mut();
+        let spare_len = spare.len();
+        let mut cursor = spare;
+        self.serialize(&mut cursor);
+        let written = spare_len - cursor.len();
+        // `push` is the only way a cursor advances and it initialises every
+        // byte it steps over, so `written` bytes are initialised. A `SIZE`
+        // that lies about what `serialize` writes would otherwise expose
+        // uninitialised memory, so check it.
+        assert_eq!(written, Self::SIZE, "serialize wrote a different SIZE");
+        // SAFETY: the first `written` bytes of the spare capacity were
+        // initialised by `push` (see above) and `written <= spare_len`.
         unsafe {
-            buf.set_len(buf.len() + Self::SIZE);
+            buf.set_len(buf.len() + written);
         }
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "raw copy into an uninitialised wire buffer, bounds asserted above"
-)]
+/// Copies `data` to the front of `buf` and advances `buf` past it.
+///
+/// Panics if `buf` is shorter than `data`: `Serialize::SIZE` promises the room.
 #[inline]
 pub(crate) fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
-    assert!(buf.len() >= data.len());
-    let ptr = <[_]>::as_mut_ptr(buf).cast::<u8>();
-    unsafe {
-        ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
+    let (head, tail) = core::mem::take(buf).split_at_mut(data.len());
+    for (slot, byte) in head.iter_mut().zip(data) {
+        slot.write(*byte);
     }
-    *buf = &mut core::mem::take(buf)[data.len()..];
+    *buf = tail;
 }
 
 impl Parse for MotData {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
-        let mot_data = Self {
-            area: u16::from(bytes[0]) | (u16::from(bytes[1]) << 8),
-            cx: u16::from(bytes[2]) | u16::from(bytes[3] & 0x0f) << 8,
-            cy: u16::from(bytes[4]) | u16::from(bytes[5] & 0x0f) << 8,
-            avg_brightness: bytes[6],
-            max_brightness: bytes[7],
-            radius: bytes[8] & 0x0f,
-            range: bytes[8] >> 4,
-            boundary_left: bytes[9] & 0x7f,
-            boundary_right: bytes[10] & 0x7f,
-            boundary_up: bytes[11] & 0x7f,
-            boundary_down: bytes[12] & 0x7f,
-            aspect_ratio: bytes[13],
-            vx: bytes[14],
-            vy: bytes[15],
+        let Some((raw, rest)) = bytes.split_first_chunk::<MOT_DATA_SIZE>() else {
+            return Err(Error::UnexpectedEof { packet_type: None });
         };
-        *bytes = &bytes[16..];
-        Ok(mot_data)
+        *bytes = rest;
+        Ok(Self {
+            area: u16::from_le_bytes([raw[0], raw[1]]),
+            cx: u16::from_le_bytes([raw[2], raw[3] & HIGH_NIBBLE_MASK]),
+            cy: u16::from_le_bytes([raw[4], raw[5] & HIGH_NIBBLE_MASK]),
+            avg_brightness: raw[6],
+            max_brightness: raw[7],
+            radius: raw[8] & 0x0f,
+            range: raw[8] >> 4,
+            boundary_left: raw[9] & 0x7f,
+            boundary_right: raw[10] & 0x7f,
+            boundary_up: raw[11] & 0x7f,
+            boundary_down: raw[12] & 0x7f,
+            aspect_ratio: raw[13],
+            vx: raw[14],
+            vy: raw[15],
+        })
     }
 }
 
 impl Serialize for MotData {
-    const SIZE: usize = 16;
-    #[expect(unsafe_code, reason = "raw copy into an uninitialised wire buffer")]
+    const SIZE: usize = MOT_DATA_SIZE;
+
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]) {
-        let data = [
-            self.area as u8,
-            (self.area >> 8) as u8,
-            self.cx as u8,
-            (self.cx >> 8) as u8,
-            self.cy as u8,
-            (self.cy >> 8) as u8,
-            self.avg_brightness,
-            self.max_brightness,
-            self.radius | self.range << 4,
-            self.boundary_left,
-            self.boundary_right,
-            self.boundary_up,
-            self.boundary_down,
-            self.aspect_ratio,
-            self.vx,
-            self.vy,
-        ];
-        let ptr = <[_]>::as_mut_ptr(buf).cast::<u8>();
-        unsafe {
-            ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
-        }
+        let [area_low, area_high] = self.area.to_le_bytes();
+        let [cx_low, cx_high] = self.cx.to_le_bytes();
+        let [cy_low, cy_high] = self.cy.to_le_bytes();
+        push(
+            buf,
+            &[
+                area_low,
+                area_high,
+                cx_low,
+                cx_high,
+                cy_low,
+                cy_high,
+                self.avg_brightness,
+                self.max_brightness,
+                self.radius | self.range << 4,
+                self.boundary_left,
+                self.boundary_right,
+                self.boundary_up,
+                self.boundary_down,
+                self.aspect_ratio,
+                self.vx,
+                self.vy,
+            ],
+        );
     }
+}
+
+/// Parses `MOT_DATA_PER_CAMERA` consecutive records.
+fn parse_mot_data_array(bytes: &mut &[u8]) -> Result<[MotData; MOT_DATA_PER_CAMERA], Error> {
+    let mut objects = [MotData::default(); MOT_DATA_PER_CAMERA];
+    for object in &mut objects {
+        *object = MotData::parse(bytes)?;
+    }
+    Ok(objects)
 }
 
 impl Parse for ObjectReport {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
-        use Error as E;
-        let timestamp = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        *bytes = &bytes[4..];
-        let data = &mut &bytes[..512];
-        *bytes = &bytes[512..];
-        let [_format, _, ..] = **bytes else {
-            return Err(E::UnexpectedEof {
+        if bytes.len() < Self::SIZE {
+            return Err(Error::UnexpectedEof {
                 packet_type: Some(PacketType::ObjectReport()),
             });
-        };
-        *bytes = &bytes[2..];
+        }
+        let (report, rest) = bytes.split_at(Self::SIZE);
+        *bytes = rest;
+
+        let (timestamp, mut objects) = report.split_at(TIMESTAMP_SIZE);
         Ok(Self {
-            timestamp,
-            mot_data_nf: [(); 16].map(|()| MotData::parse(data).expect("MotData parse error")),
-            mot_data_wf: [(); 16].map(|()| MotData::parse(data).expect("MotData parse error")),
+            timestamp: u32::from_le_bytes([timestamp[0], timestamp[1], timestamp[2], timestamp[3]]),
+            mot_data_nf: parse_mot_data_array(&mut objects)?,
+            mot_data_wf: parse_mot_data_array(&mut objects)?,
         })
     }
 }
 
 impl Serialize for ObjectReport {
-    const SIZE: usize = 518;
+    const SIZE: usize =
+        TIMESTAMP_SIZE + 2 * MOT_DATA_PER_CAMERA * MOT_DATA_SIZE + OBJECT_REPORT_TRAILER.len();
+
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]) {
         push(buf, &self.timestamp.to_le_bytes());
-        for i in 0..16 {
-            self.mot_data_nf[i].serialize(buf);
+        for object in self.mot_data_nf.iter().chain(&self.mot_data_wf) {
+            object.serialize(buf);
         }
-        for i in 0..16 {
-            self.mot_data_wf[i].serialize(buf);
-        }
-        push(buf, &[1, 0]);
+        push(buf, &OBJECT_REPORT_TRAILER);
     }
 }
 
 impl Parse for CombinedMarkersReport {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
-        use Error as E;
-        let size = Self::SIZE;
-        if bytes.len() < size {
-            return Err(E::UnexpectedEof {
+        if bytes.len() < Self::SIZE {
+            return Err(Error::UnexpectedEof {
                 packet_type: Some(PacketType::CombinedMarkersReport()),
             });
         }
+        let (report, rest) = bytes.split_at(Self::SIZE);
+        *bytes = rest;
 
-        let data = &mut &bytes[..size];
-        *bytes = &bytes[size..];
-
-        let mut positions = [Point2::new(0, 0); 16 * 2];
-        for i in 0..positions.len() {
+        let (packed_points, _) = report.as_chunks::<PACKED_POINT_SIZE>();
+        let mut points = [Point2::new(0, 0); 2 * MOT_DATA_PER_CAMERA];
+        for (point, packed) in points.iter_mut().zip(packed_points) {
             // x, y is 12 bits each
-            let x = u16::from_le_bytes([data[0], data[1] & 0x0f]);
-            let y = u16::from(data[1] >> 4) | (u16::from(data[2]) << 4);
-            positions[i] = Point2::new(x, y);
-            *data = &data[3..];
+            let x = u16::from_le_bytes([packed[0], packed[1] & HIGH_NIBBLE_MASK]);
+            let y = u16::from(packed[1] >> 4) | (u16::from(packed[2]) << 4);
+            *point = Point2::new(x, y);
         }
-        let nf_positions = positions[..16].try_into().unwrap();
-        let wf_positions = positions[16..].try_into().unwrap();
 
         Ok(Self {
-            nf_points: nf_positions,
-            wf_points: wf_positions,
+            nf_points: core::array::from_fn(|i| points[i]),
+            wf_points: core::array::from_fn(|i| points[MOT_DATA_PER_CAMERA + i]),
         })
     }
 }
 
 impl Serialize for CombinedMarkersReport {
-    const SIZE: usize = 96;
+    const SIZE: usize = 2 * MOT_DATA_PER_CAMERA * PACKED_POINT_SIZE;
+
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]) {
         for p in self.nf_points.iter().chain(&self.wf_points) {
             let (x, y) = (p.x, p.y);
@@ -170,5 +204,121 @@ impl Serialize for CombinedMarkersReport {
             let byte2 = y >> 4;
             push(buf, &[byte0 as u8, byte1 as u8, byte2 as u8]);
         }
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    fn sample_mot_data(seed: u8) -> MotData {
+        MotData {
+            area: 0x0100 | u16::from(seed),
+            cx: 0x0a00 | u16::from(seed),
+            cy: 0x0500 | u16::from(seed),
+            avg_brightness: seed,
+            max_brightness: seed.wrapping_add(1),
+            range: seed & 0x0f,
+            radius: (seed >> 4) & 0x0f,
+            boundary_left: seed & 0x7f,
+            boundary_right: (seed + 1) & 0x7f,
+            boundary_up: (seed + 2) & 0x7f,
+            boundary_down: (seed + 3) & 0x7f,
+            aspect_ratio: seed,
+            vx: seed,
+            vy: seed,
+        }
+    }
+
+    fn serialized<T: Serialize>(value: &T) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        value.serialize_to_vec(&mut bytes);
+        bytes
+    }
+
+    #[test]
+    fn mot_data_layout_is_pinned() {
+        let mot_data = MotData {
+            area: 0x0102,
+            cx: 0x0a03,
+            cy: 0x0504,
+            avg_brightness: 0x06,
+            max_brightness: 0x07,
+            radius: 0x3,
+            range: 0x2,
+            boundary_left: 0x10,
+            boundary_right: 0x11,
+            boundary_up: 0x12,
+            boundary_down: 0x13,
+            aspect_ratio: 0x14,
+            vx: 0x15,
+            vy: 0x16,
+        };
+
+        let bytes = serialized(&mot_data);
+
+        assert_eq!(
+            bytes,
+            [
+                0x02, 0x01, 0x03, 0x0a, 0x04, 0x05, 0x06, 0x07, 0x23, 0x10, 0x11, 0x12, 0x13, 0x14,
+                0x15, 0x16
+            ]
+        );
+        assert_eq!(MotData::parse(&mut bytes.as_slice()).unwrap(), mot_data);
+    }
+
+    #[test]
+    fn object_report_round_trips_every_slot_in_place() {
+        let report = ObjectReport {
+            timestamp: 0xdead_beef,
+            mot_data_nf: core::array::from_fn(|i| sample_mot_data(i as u8)),
+            mot_data_wf: core::array::from_fn(|i| sample_mot_data(0x40 + i as u8)),
+        };
+
+        let mut bytes = serialized(&report);
+        assert_eq!(bytes.len(), ObjectReport::SIZE);
+        assert_eq!(bytes[..4], 0xdead_beef_u32.to_le_bytes());
+        assert_eq!(bytes[bytes.len() - 2..], [1, 0]);
+
+        bytes.push(0x55);
+        let mut cursor = bytes.as_slice();
+        assert_eq!(ObjectReport::parse(&mut cursor).unwrap(), report);
+        assert_eq!(cursor, [0x55]);
+    }
+
+    #[test]
+    fn combined_markers_round_trip() {
+        let report = CombinedMarkersReport {
+            nf_points: core::array::from_fn(|i| Point2::new(i as u16 * 100, 4095 - i as u16)),
+            wf_points: core::array::from_fn(|i| Point2::new(4095 - i as u16, i as u16 * 7)),
+        };
+
+        let bytes = serialized(&report);
+
+        assert_eq!(bytes.len(), CombinedMarkersReport::SIZE);
+        assert_eq!(
+            CombinedMarkersReport::parse(&mut bytes.as_slice()).unwrap(),
+            report
+        );
+    }
+
+    #[test]
+    fn truncated_input_is_an_error_not_a_panic() {
+        let report = ObjectReport::default();
+        let bytes = serialized(&report);
+        let short = &bytes[..bytes.len() - 1];
+
+        assert!(matches!(
+            ObjectReport::parse(&mut &*short),
+            Err(Error::UnexpectedEof { .. })
+        ));
+        assert!(matches!(
+            MotData::parse(&mut &bytes[..MOT_DATA_SIZE - 1]),
+            Err(Error::UnexpectedEof { .. })
+        ));
+        assert!(matches!(
+            CombinedMarkersReport::parse(&mut &bytes[..CombinedMarkersReport::SIZE - 1]),
+            Err(Error::UnexpectedEof { .. })
+        ));
     }
 }
