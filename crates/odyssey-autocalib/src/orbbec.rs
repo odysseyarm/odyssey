@@ -680,8 +680,10 @@ impl Frame {
         if data.is_null() || len == 0 {
             return Err(CameraError::Sdk("frame carries no data".into()));
         }
-        // SAFETY: the SDK documents `data` as `len` readable bytes owned by the
-        // frame; the slice borrows `self`, which keeps the frame alive.
+        // SAFETY: `data` is non-null (checked above) and, by the C API's
+        // contract that this crate cannot check, points at the frame's
+        // `len`-byte buffer, which lives as long as the frame. The slice
+        // borrows `self`, which owns the frame, and `u8` has no alignment need.
         Ok(unsafe { slice::from_raw_parts(data, len) })
     }
 

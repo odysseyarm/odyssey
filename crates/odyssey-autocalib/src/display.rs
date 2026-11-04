@@ -520,7 +520,9 @@ mod windows_registry {
         RegOpenKeyExW, RegQueryValueExW,
     };
 
-    use super::*;
+    use super::{
+        DisplayLookup, LookupNote, check_consistency, parse_edid, parse_monitor_device_id,
+    };
 
     /// Registry values here are a few hundred bytes; anything larger is not an EDID.
     const MAX_VALUE_BYTES: u32 = 64 * 1024;
