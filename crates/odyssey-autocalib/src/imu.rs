@@ -19,6 +19,15 @@ pub const MADGWICK_GAIN: f64 = 0.5;
 /// Gaps longer than this restart integration instead of extrapolating the
 /// gyro across a dropout.
 const MAX_STEP: Duration = Duration::from_millis(500);
+/// Accelerometer readings (m/s^2) shorter than this carry no direction, so
+/// they do not correct the filter.
+const MIN_ACCEL_NORM: f64 = 1e-9;
+/// Gradient of the gravity error shorter than this has no direction to
+/// descend, so the filter integrates the gyro alone.
+const MIN_GRADIENT_NORM: f64 = 1e-12;
+/// Readings (m/s^2) shorter than this give no gravity direction to start the
+/// filter from; such samples are skipped until a usable one arrives.
+const MIN_ACCEL_NORM_TO_START: f64 = 1e-6;
 
 /// Maps camera axes (x right, y down, z forward) to the filter's axes (x
 /// right, y forward, z up), the convention the Madgwick equations assume.
@@ -63,46 +72,60 @@ impl Madgwick {
     /// Real inter-sample intervals matter: a fixed step mis-scales the gyro
     /// whenever the sample rate differs from the assumed one.
     pub fn update(&mut self, gyro: &Vector3<f64>, accel: &Vector3<f64>, dt: f64) {
-        let [q0, q1, q2, q3] = [self.q[0], self.q[1], self.q[2], self.q[3]];
-        let mut q_dot = Vector4::new(
-            0.5 * (-q1 * gyro.x - q2 * gyro.y - q3 * gyro.z),
-            0.5 * (q0 * gyro.x + q2 * gyro.z - q3 * gyro.y),
-            0.5 * (q0 * gyro.y - q1 * gyro.z + q3 * gyro.x),
-            0.5 * (q0 * gyro.z + q1 * gyro.y - q2 * gyro.x),
-        );
-
-        let norm = accel.norm();
-        if norm > 1e-9 {
-            let a = accel / norm;
-            let f = Vector3::new(
-                2.0 * (q1 * q3 - q0 * q2) - a.x,
-                2.0 * (q0 * q1 + q2 * q3) - a.y,
-                2.0 * (0.5 - q1 * q1 - q2 * q2) - a.z,
-            );
-            let jacobian = nalgebra::Matrix3x4::new(
-                -2.0 * q2,
-                2.0 * q3,
-                -2.0 * q0,
-                2.0 * q1,
-                2.0 * q1,
-                2.0 * q0,
-                2.0 * q3,
-                2.0 * q2,
-                0.0,
-                -4.0 * q1,
-                -4.0 * q2,
-                0.0,
-            );
-            let gradient = jacobian.transpose() * f;
-            let gn = gradient.norm();
-            if gn > 1e-12 {
-                q_dot -= gradient * (self.gain / gn);
+        let mut q_dot = gyro_rate(&self.q, gyro);
+        if let Some(gradient) = gravity_gradient(&self.q, accel) {
+            let gradient_norm = gradient.norm();
+            if gradient_norm > MIN_GRADIENT_NORM {
+                q_dot -= gradient * (self.gain / gradient_norm);
             }
         }
-
         self.q += q_dot * dt;
         self.q /= self.q.norm();
     }
+}
+
+/// Rate of change of the quaternion `q` (w, x, y, z) under angular rate
+/// `gyro`.
+fn gyro_rate(q: &Vector4<f64>, gyro: &Vector3<f64>) -> Vector4<f64> {
+    let [q0, q1, q2, q3] = [q[0], q[1], q[2], q[3]];
+    Vector4::new(
+        0.5 * (-q1 * gyro.x - q2 * gyro.y - q3 * gyro.z),
+        0.5 * (q0 * gyro.x + q2 * gyro.z - q3 * gyro.y),
+        0.5 * (q0 * gyro.y - q1 * gyro.z + q3 * gyro.x),
+        0.5 * (q0 * gyro.z + q1 * gyro.y - q2 * gyro.x),
+    )
+}
+
+/// Gradient, with respect to the quaternion `q` (w, x, y, z), of how far the
+/// gravity direction that `q` predicts is from the measured `accel`. `None`
+/// when `accel` has no direction.
+fn gravity_gradient(q: &Vector4<f64>, accel: &Vector3<f64>) -> Option<Vector4<f64>> {
+    let norm = accel.norm();
+    if norm <= MIN_ACCEL_NORM {
+        return None;
+    }
+    let [q0, q1, q2, q3] = [q[0], q[1], q[2], q[3]];
+    let a = accel / norm;
+    let f = Vector3::new(
+        2.0 * (q1 * q3 - q0 * q2) - a.x,
+        2.0 * (q0 * q1 + q2 * q3) - a.y,
+        2.0 * (0.5 - q1 * q1 - q2 * q2) - a.z,
+    );
+    let jacobian = nalgebra::Matrix3x4::new(
+        -2.0 * q2,
+        2.0 * q3,
+        -2.0 * q0,
+        2.0 * q1,
+        2.0 * q1,
+        2.0 * q0,
+        2.0 * q3,
+        2.0 * q2,
+        0.0,
+        -4.0 * q1,
+        -4.0 * q2,
+        0.0,
+    );
+    Some(jacobian.transpose() * f)
 }
 
 /// Camera tilt relative to gravity, in degrees.
@@ -134,7 +157,7 @@ impl GravityEstimator {
         self.samples += 1;
 
         let Some(filter) = self.filter.as_mut() else {
-            if accel.norm() > 1e-6 {
+            if accel.norm() > MIN_ACCEL_NORM_TO_START {
                 self.filter = Some(Madgwick::from_accelerometer(MADGWICK_GAIN, &accel));
                 self.last = Some(sample.timestamp);
             }
@@ -143,11 +166,11 @@ impl GravityEstimator {
 
         let dt = self.last.map(|last| sample.timestamp.saturating_sub(last));
         self.last = Some(sample.timestamp);
-        match dt {
-            Some(dt) if !dt.is_zero() && dt <= MAX_STEP => {
-                filter.update(&gyro, &accel, dt.as_secs_f64());
-            }
-            _ => {}
+        if let Some(dt) = dt
+            && !dt.is_zero()
+            && dt <= MAX_STEP
+        {
+            filter.update(&gyro, &accel, dt.as_secs_f64());
         }
     }
 
