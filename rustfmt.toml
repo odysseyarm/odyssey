@@ -11,7 +11,3 @@ style_edition = "2024"
 
 group_imports = "StdExternalCrate"
 imports_granularity = "Module"
-
-# third_party/libui-rs is an upstream subtree (edition 2015); leave it as it is
-# so subtree updates keep merging cleanly.
-ignore = ["third_party"]

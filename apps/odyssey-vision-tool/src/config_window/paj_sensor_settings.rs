@@ -1,179 +1,199 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use iui::UI;
-use iui::controls::Form;
-use leptos_reactive::{
-    ReadSignal, RwSignal, SignalGetUntracked as _, SignalSet as _, SignalUpdate as _,
-    SignalWith as _, SignalWithUntracked as _, create_rw_signal,
-};
+use eframe::egui;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::Port;
 
-use super::{register_value, retry_checked};
+use super::{FIELD_WIDTH, form_grid, form_row, register_value, retry_checked};
 
 /// Parses a text field that `validate()` has already checked.
-fn parse_field<T>(field: RwSignal<String>, name: &str) -> Result<T>
+fn parse_field<T>(text: &str, name: &str) -> Result<T>
 where
     T: std::str::FromStr,
     T::Err: std::error::Error + Send + Sync + 'static,
 {
-    field
-        .with_untracked(|text| text.parse())
-        .with_context(|| format!("invalid {name}"))
+    text.parse().with_context(|| format!("invalid {name}"))
 }
 
-#[derive(Copy, Clone)]
+/// A single-line text field of the common form field width.
+fn text_field(ui: &mut egui::Ui, text: &mut String) {
+    ui.add(egui::TextEdit::singleline(text).desired_width(FIELD_WIDTH));
+}
+
+#[derive(Clone)]
 pub(super) struct PajSensorSettingsForm {
     port: Port,
-    pid: RwSignal<String>,
-    resolution_x: RwSignal<String>,
-    resolution_y: RwSignal<String>,
-    exposure_time: RwSignal<String>,
-    frame_period: RwSignal<String>,
-    brightness_threshold: RwSignal<String>,
-    noise_threshold: RwSignal<String>,
-    area_threshold_min: RwSignal<String>,
-    area_threshold_max: RwSignal<String>,
-    max_object_cnt: RwSignal<String>,
+    pid: String,
+    resolution_x: String,
+    resolution_y: String,
+    exposure_time: String,
+    frame_period: String,
+    brightness_threshold: String,
+    noise_threshold: String,
+    area_threshold_min: String,
+    area_threshold_max: String,
+    max_object_cnt: String,
 
-    operation_mode: RwSignal<i32>,
-    frame_subtraction: RwSignal<i32>,
-    gain: RwSignal<i32>,
+    operation_mode: i32,
+    frame_subtraction: i32,
+    gain: usize,
 }
 
 impl PajSensorSettingsForm {
-    pub(super) fn new(ui: &UI, device: ReadSignal<Option<VmDevice>>, port: Port) -> (Form, Self) {
-        let connected = move || device.with(Option::is_some);
-        let pid = create_rw_signal(String::new());
-        let resolution_x = create_rw_signal(String::new());
-        let resolution_y = create_rw_signal(String::new());
-        let exposure_time = create_rw_signal(String::new());
-        let frame_period = create_rw_signal(String::new());
-        let brightness_threshold = create_rw_signal(String::new());
-        let noise_threshold = create_rw_signal(String::new());
-        let area_threshold_min = create_rw_signal(String::new());
-        let area_threshold_max = create_rw_signal(String::new());
-        let max_object_cnt = create_rw_signal(String::new());
-        let operation_mode = create_rw_signal(0);
-        let frame_subtraction = create_rw_signal(0);
-        let gain = create_rw_signal(0);
+    pub(super) fn new(port: Port) -> Self {
+        Self {
+            port,
+            pid: String::new(),
+            resolution_x: String::new(),
+            resolution_y: String::new(),
+            exposure_time: String::new(),
+            frame_period: String::new(),
+            brightness_threshold: String::new(),
+            noise_threshold: String::new(),
+            area_threshold_min: String::new(),
+            area_threshold_max: String::new(),
+            max_object_cnt: String::new(),
+            operation_mode: 0,
+            frame_subtraction: 0,
+            gain: 0,
+        }
+    }
 
-        let exposure_time_ms = move || match exposure_time.with(|s| s.parse::<u16>()) {
+    /// Draws the form. The caller decides whether it is enabled.
+    pub(super) fn ui(&mut self, ui: &mut egui::Ui) {
+        let exposure_time_ms = match self.exposure_time.parse::<u16>() {
             Ok(n) => format!("{:.4}", f64::from(n) * 200.0 / 1e6),
             Err(_) => "???".to_string(),
         };
-        let frame_period_ms = move || match frame_period.with(|s| s.parse::<u32>()) {
-            Ok(n) => format!("{:.4}", f64::from(n) / 1e4),
-            Err(_) => "???".to_string(),
+        let (frame_period_ms, fps) = match self.frame_period.parse::<u32>() {
+            Ok(n) => (
+                format!("{:.4}", f64::from(n) / 1e4),
+                format!("{:.2}", 1e7 / f64::from(n)),
+            ),
+            Err(_) => ("???".to_string(), "???".to_string()),
         };
-        let fps = move || match frame_period.with(|s| s.parse::<u32>()) {
-            Ok(n) => format!("{:.2}", 1e7 / f64::from(n)),
-            Err(_) => "???".to_string(),
+        let id_salt = match self.port {
+            Port::Nf => "nf_sensor_settings",
+            Port::Wf => "wf_sensor_settings",
         };
-        crate::layout! { &ui,
-            let form = Form(padded: true) {
-                (Compact, "Product ID")               : let product_id = Entry(value: pid, enabled: false)
-                (Compact, "DSP brightness threshold") : let x = Entry(enabled: connected, signal: brightness_threshold)
-                (Compact, "DSP noise threshold")      : let x = Entry(enabled: connected, signal: noise_threshold)
-                (Compact, "DSP area threshold min")   : let x = Entry(enabled: connected, signal: area_threshold_min)
-                (Compact, "DSP area threshold max")   : let x = Entry(enabled: connected, signal: area_threshold_max)
-                (Compact, "DSP maximum object count") : let x = Entry(enabled: connected, signal: max_object_cnt)
-                (Compact, "DSP operation mode")       : let x = Combobox(enabled: connected, signal: operation_mode) { "Normal", "Tracking" }
-                (Compact, "Exposure time") : let x = HorizontalBox(padded: true) {
-                    Stretchy : let e = Entry(
-                        enabled: connected,
-                        signal: exposure_time,
-                    )
-                    Compact : let expo_label = LayoutGrid() {
-                        (0, 0)(1, 1) Vertical (Start, Center) : let s = Label(move || format!("× 200ns = {} ms", exposure_time_ms()))
-                    }
-                }
-                (Compact, "Frame period") : let x = HorizontalBox(padded: true) {
-                    Stretchy : let e = Entry(
-                        enabled: connected,
-                        signal: frame_period,
-                    )
-                    Compact : let fps_label = LayoutGrid() {
-                        (0, 0)(1, 1) Vertical (Start, Center) : let s = Label(move || format!("{} ms ({} fps)", frame_period_ms(), fps()))
-                    }
-                }
-                (Compact, "Frame subtraction")  : let x = Combobox(enabled: connected, signal: frame_subtraction) { "Off", "On" }
-                (Compact, "Gain")               : let gain_combobox = Combobox(enabled: connected, signal: gain) {}
-                (Compact, "Scale resolution X") : let x = Entry(enabled: connected, signal: resolution_x)
-                (Compact, "Scale resolution Y") : let x = Entry(enabled: connected, signal: resolution_y)
-            }
-        }
-        for (label, _) in &GAIN_TABLE {
-            gain_combobox.append(ui, label);
-        }
-        (
-            form,
-            Self {
-                port,
-                pid,
-                resolution_x,
-                resolution_y,
-                exposure_time,
-                frame_period,
-                brightness_threshold,
-                noise_threshold,
-                area_threshold_min,
-                area_threshold_max,
-                max_object_cnt,
-                operation_mode,
-                frame_subtraction,
-                gain,
-            },
-        )
+
+        form_grid(id_salt).show(ui, |ui| {
+            form_row(ui, "Product ID", |ui| {
+                ui.label(egui::RichText::new(&self.pid).monospace());
+            });
+            form_row(ui, "DSP brightness threshold", |ui| {
+                text_field(ui, &mut self.brightness_threshold);
+            });
+            form_row(ui, "DSP noise threshold", |ui| {
+                text_field(ui, &mut self.noise_threshold);
+            });
+            form_row(ui, "DSP area threshold min", |ui| {
+                text_field(ui, &mut self.area_threshold_min);
+            });
+            form_row(ui, "DSP area threshold max", |ui| {
+                text_field(ui, &mut self.area_threshold_max);
+            });
+            form_row(ui, "DSP maximum object count", |ui| {
+                text_field(ui, &mut self.max_object_cnt);
+            });
+            form_row(ui, "DSP operation mode", |ui| {
+                egui::ComboBox::from_id_salt("operation_mode")
+                    .width(FIELD_WIDTH)
+                    .selected_text(match self.operation_mode {
+                        0 => "Normal",
+                        1 => "Tracking",
+                        _ => "???",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.operation_mode, 0, "Normal");
+                        ui.selectable_value(&mut self.operation_mode, 1, "Tracking");
+                    });
+            });
+            form_row(ui, "Exposure time", |ui| {
+                text_field(ui, &mut self.exposure_time);
+                ui.weak(format!("× 200 ns = {exposure_time_ms} ms"));
+            });
+            form_row(ui, "Frame period", |ui| {
+                text_field(ui, &mut self.frame_period);
+                ui.weak(format!("{frame_period_ms} ms ({fps} fps)"));
+            });
+            form_row(ui, "Frame subtraction", |ui| {
+                egui::ComboBox::from_id_salt("frame_subtraction")
+                    .width(FIELD_WIDTH)
+                    .selected_text(match self.frame_subtraction {
+                        0 => "Off",
+                        1 => "On",
+                        _ => "???",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.frame_subtraction, 0, "Off");
+                        ui.selectable_value(&mut self.frame_subtraction, 1, "On");
+                    });
+            });
+            form_row(ui, "Gain", |ui| {
+                egui::ComboBox::from_id_salt("gain")
+                    .width(FIELD_WIDTH)
+                    .selected_text(GAIN_TABLE.get(self.gain).map_or("???", |gain| gain.0))
+                    .show_ui(ui, |ui| {
+                        for (index, (label, _)) in GAIN_TABLE.iter().enumerate() {
+                            ui.selectable_value(&mut self.gain, index, *label);
+                        }
+                    });
+            });
+            form_row(ui, "Scale resolution X", |ui| {
+                text_field(ui, &mut self.resolution_x);
+            });
+            form_row(ui, "Scale resolution Y", |ui| {
+                text_field(ui, &mut self.resolution_y);
+            });
+        });
     }
 
-    pub(super) async fn load_from_device(&self, device: &VmDevice) -> Result<()> {
-        self.pid.set("Connecting...".into());
+    pub(super) async fn load_from_device(device: &VmDevice, port: Port) -> Result<Self> {
         let timeout = Duration::from_millis(2000);
-        let pid = retry_checked(|| device.product_id(self.port), timeout, 3).await?;
-        let res_x = retry_checked(|| device.resolution_x(self.port), timeout, 3).await?;
-        let res_y = retry_checked(|| device.resolution_y(self.port), timeout, 3).await?;
-        let expo = retry_checked(|| device.exposure_time(self.port), timeout, 3).await?;
-        let frame_period = retry_checked(|| device.frame_period(self.port), timeout, 3).await?;
+        let pid = retry_checked(|| device.product_id(port), timeout, 3).await?;
+        let res_x = retry_checked(|| device.resolution_x(port), timeout, 3).await?;
+        let res_y = retry_checked(|| device.resolution_y(port), timeout, 3).await?;
+        let expo = retry_checked(|| device.exposure_time(port), timeout, 3).await?;
+        let frame_period = retry_checked(|| device.frame_period(port), timeout, 3).await?;
         let brightness_threshold =
-            retry_checked(|| device.brightness_threshold(self.port), timeout, 3).await?;
-        let noise_threshold =
-            retry_checked(|| device.noise_threshold(self.port), timeout, 3).await?;
+            retry_checked(|| device.brightness_threshold(port), timeout, 3).await?;
+        let noise_threshold = retry_checked(|| device.noise_threshold(port), timeout, 3).await?;
         let area_threshold_min =
-            retry_checked(|| device.area_threshold_min(self.port), timeout, 3).await?;
+            retry_checked(|| device.area_threshold_min(port), timeout, 3).await?;
         let area_threshold_max =
-            retry_checked(|| device.area_threshold_max(self.port), timeout, 3).await?;
-        let max_object_cnt = retry_checked(|| device.max_object_cnt(self.port), timeout, 3).await?;
-        let operation_mode = retry_checked(|| device.operation_mode(self.port), timeout, 3).await?;
+            retry_checked(|| device.area_threshold_max(port), timeout, 3).await?;
+        let max_object_cnt = retry_checked(|| device.max_object_cnt(port), timeout, 3).await?;
+        let operation_mode = retry_checked(|| device.operation_mode(port), timeout, 3).await?;
         let frame_subtraction =
-            retry_checked(|| device.frame_subtraction(self.port), timeout, 3).await?;
-        let gain_1 = retry_checked(|| device.gain_1(self.port), timeout, 3).await?;
-        let gain_2 = retry_checked(|| device.gain_2(self.port), timeout, 3).await?;
+            retry_checked(|| device.frame_subtraction(port), timeout, 3).await?;
+        let gain_1 = retry_checked(|| device.gain_1(port), timeout, 3).await?;
+        let gain_2 = retry_checked(|| device.gain_2(port), timeout, 3).await?;
 
-        self.pid.set(format!("0x{pid:04x}"));
-        self.resolution_x.set(res_x.to_string());
-        self.resolution_y.set(res_y.to_string());
-        self.exposure_time.set(expo.to_string());
-        self.frame_period.set(frame_period.to_string());
-        self.brightness_threshold
-            .set(brightness_threshold.to_string());
-        self.noise_threshold.set(noise_threshold.to_string());
-        self.area_threshold_min.set(area_threshold_min.to_string());
-        self.area_threshold_max.set(area_threshold_max.to_string());
-        self.max_object_cnt.set(max_object_cnt.to_string());
-
-        self.operation_mode.set(i32::from(operation_mode));
-        self.frame_subtraction.set(i32::from(frame_subtraction));
-        self.gain.set(Gain::index_from_reg(gain_1, gain_2));
-        Ok(())
+        Ok(Self {
+            port,
+            pid: format!("0x{pid:04x}"),
+            resolution_x: res_x.to_string(),
+            resolution_y: res_y.to_string(),
+            exposure_time: expo.to_string(),
+            frame_period: frame_period.to_string(),
+            brightness_threshold: brightness_threshold.to_string(),
+            noise_threshold: noise_threshold.to_string(),
+            area_threshold_min: area_threshold_min.to_string(),
+            area_threshold_max: area_threshold_max.to_string(),
+            max_object_cnt: max_object_cnt.to_string(),
+            operation_mode: i32::from(operation_mode),
+            frame_subtraction: i32::from(frame_subtraction),
+            gain: Gain::index_from_reg(gain_1, gain_2),
+        })
     }
 
     pub(super) fn validate(&self, errors: &mut Vec<String>) {
         macro_rules! validators {
             ($($display:literal $reg:ident : $ty:ty $({ $( $check:expr_2021 ),* $(,)? })? ),* $(,)?) => {
                 $(
-                    let $reg = self.$reg.with_untracked(|s| s.parse::<$ty>());
+                    let $reg = self.$reg.parse::<$ty>();
                     match &$reg {
                         Ok(_) => (),
                         Err(e) => errors.push(format!("{}: {}", $display, e)),
@@ -214,47 +234,49 @@ impl PajSensorSettingsForm {
 
     /// Make sure to call `validate()` before calling this method.
     pub(super) async fn apply(&self, device: &VmDevice) -> Result<()> {
-        let gain = register_value::<usize>(self.gain.get_untracked(), "gain")?;
         let gain = GAIN_TABLE
-            .get(gain)
-            .with_context(|| format!("gain index {gain} is out of range"))?
+            .get(self.gain)
+            .with_context(|| format!("gain index {} is out of range", self.gain))?
             .1;
 
         tokio::try_join!(
-            device.set_resolution_x(self.port, parse_field(self.resolution_x, "resolution X")?),
-            device.set_resolution_y(self.port, parse_field(self.resolution_y, "resolution Y")?),
+            device.set_resolution_x(self.port, parse_field(&self.resolution_x, "resolution X")?),
+            device.set_resolution_y(self.port, parse_field(&self.resolution_y, "resolution Y")?),
             device.set_gain_1(self.port, gain.b_global),
             device.set_gain_2(self.port, gain.b_ggh),
-            device.set_exposure_time(self.port, parse_field(self.exposure_time, "exposure time")?),
+            device.set_exposure_time(
+                self.port,
+                parse_field(&self.exposure_time, "exposure time")?
+            ),
             device.set_brightness_threshold(
                 self.port,
-                parse_field(self.brightness_threshold, "brightness threshold")?
+                parse_field(&self.brightness_threshold, "brightness threshold")?
             ),
             device.set_noise_threshold(
                 self.port,
-                parse_field(self.noise_threshold, "noise threshold")?
+                parse_field(&self.noise_threshold, "noise threshold")?
             ),
             device.set_area_threshold_max(
                 self.port,
-                parse_field(self.area_threshold_max, "area threshold max")?
+                parse_field(&self.area_threshold_max, "area threshold max")?
             ),
             device.set_area_threshold_min(
                 self.port,
-                parse_field(self.area_threshold_min, "area threshold min")?
+                parse_field(&self.area_threshold_min, "area threshold min")?
             ),
             device.set_operation_mode(
                 self.port,
-                register_value(self.operation_mode.get_untracked(), "operation mode")?
+                register_value(self.operation_mode, "operation mode")?
             ),
             device.set_max_object_cnt(
                 self.port,
-                parse_field(self.max_object_cnt, "max object count")?
+                parse_field(&self.max_object_cnt, "max object count")?
             ),
             device.set_frame_subtraction(
                 self.port,
-                register_value(self.frame_subtraction.get_untracked(), "frame subtraction")?
+                register_value(self.frame_subtraction, "frame subtraction")?
             ),
-            device.set_frame_period(self.port, parse_field(self.frame_period, "frame period")?),
+            device.set_frame_period(self.port, parse_field(&self.frame_period, "frame period")?),
         )?;
         tokio::try_join!(
             device.set_bank1_sync_updated(self.port, 1),
@@ -263,48 +285,32 @@ impl PajSensorSettingsForm {
         Ok(())
     }
 
-    pub(super) fn clear(&self) {
-        self.pid.update(String::clear);
-        self.resolution_x.update(String::clear);
-        self.resolution_y.update(String::clear);
-        self.exposure_time.update(String::clear);
-        self.frame_period.update(String::clear);
-        self.brightness_threshold.update(String::clear);
-        self.noise_threshold.update(String::clear);
-        self.area_threshold_min.update(String::clear);
-        self.area_threshold_max.update(String::clear);
-        self.max_object_cnt.update(String::clear);
-
-        self.operation_mode.set(0);
-        self.frame_subtraction.set(0);
-        self.gain.set(0);
+    pub(super) fn clear(&mut self) {
+        *self = Self::new(self.port);
     }
 
-    pub(super) fn load_defaults(&self) {
-        self.resolution_x.update(|s| s.replace_range(.., "4095"));
-        self.resolution_y.update(|s| s.replace_range(.., "4095"));
-        self.frame_period.update(|s| s.replace_range(.., "49780"));
-        self.brightness_threshold
-            .update(|s| s.replace_range(.., "110"));
-        self.noise_threshold.update(|s| s.replace_range(.., "15"));
-        self.area_threshold_max
-            .update(|s| s.replace_range(.., "9605"));
-        self.max_object_cnt.update(|s| s.replace_range(.., "16"));
+    pub(super) fn load_defaults(&mut self) {
+        self.resolution_x = "4095".into();
+        self.resolution_y = "4095".into();
+        self.frame_period = "49780".into();
+        self.brightness_threshold = "110".into();
+        self.noise_threshold = "15".into();
+        self.area_threshold_max = "9605".into();
+        self.max_object_cnt = "16".into();
 
-        self.operation_mode.set(0);
-        self.frame_subtraction.set(0);
+        self.operation_mode = 0;
+        self.frame_subtraction = 0;
 
         match self.port {
             Port::Nf => {
-                self.area_threshold_min
-                    .update(|s| s.replace_range(.., "10"));
-                self.exposure_time.update(|s| s.replace_range(.., "8192"));
-                self.gain.set(Gain::index_from_reg(16, 0));
+                self.area_threshold_min = "10".into();
+                self.exposure_time = "8192".into();
+                self.gain = Gain::index_from_reg(16, 0);
             }
             Port::Wf => {
-                self.area_threshold_min.update(|s| s.replace_range(.., "5"));
-                self.exposure_time.update(|s| s.replace_range(.., "11365"));
-                self.gain.set(Gain::index_from_reg(8, 3));
+                self.area_threshold_min = "5".into();
+                self.exposure_time = "11365".into();
+                self.gain = Gain::index_from_reg(8, 3);
             }
         }
     }
@@ -323,12 +329,10 @@ impl Gain {
 }
 
 impl Gain {
-    fn index_from_reg(b_global: u8, mut b_ggh: u8) -> i32 {
+    fn index_from_reg(b_global: u8, mut b_ggh: u8) -> usize {
         // change b_ggh from 0,2,3 to 0,1,2
         b_ggh = b_ggh.saturating_sub(1);
-        let b_ggh = i32::from(b_ggh);
-        let b_global = i32::from(b_global);
-        b_ggh * 16 + b_global
+        usize::from(b_ggh) * 16 + usize::from(b_global)
     }
 }
 

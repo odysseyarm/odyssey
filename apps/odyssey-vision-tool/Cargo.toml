@@ -18,9 +18,9 @@ anyhow = { workspace = true }
 arrayvec = { workspace = true }
 crossbeam = "0.8.4"
 csv = "1.3.0"
-iui = { path = "../../third_party/libui-rs/iui", features = ["plotters"] }
-ui-sys = { path = "../../third_party/libui-rs/ui-sys" }
-leptos_reactive = {  version = "0.6.4", features = ["serde"] }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui_plot = "0.38"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 serde = "1.0.193"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "rt", "sync", "time"] }
@@ -30,7 +30,6 @@ odyssey-playback = { path = "../../crates/odyssey-playback" }
 odyssey-usb = { workspace = true }
 odyssey-protocol = { path = "../../crates/odyssey-protocol" }
 tokio-stream = { workspace = true }
-pin-project = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 enumn = { workspace = true }
@@ -38,7 +37,6 @@ parking_lot = { workspace = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }
 cam-geom = { workspace = true }
 socket2 = "0.6.0"
-plotters = { version = "0.3.6", default-features = false, features = ["line_series", "point_series", "surface_series", "colormaps", "full_palette"] }
 app_dirs2 = { workspace = true }
 serde_json = { workspace = true }
 bevy = { version = "0.17.2", optional = true }

@@ -1,761 +1,1031 @@
 mod pag_sensor_settings;
 mod paj_sensor_settings;
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::fs::File;
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use iui::UI;
-use iui::controls::{Button, Form};
-use iui::prelude::{Window, WindowType};
-use leptos_reactive::{
-    ReadSignal, RwSignal, SignalGet as _, SignalGetUntracked as _, SignalSet as _, SignalWith as _,
-    SignalWithUntracked as _, create_effect, create_rw_signal,
-};
-use nusb::MaybeFuture as _;
+use eframe::egui;
+use nusb::DeviceInfo;
 use odyssey_protocol::control::device::TransportMode;
-use odyssey_usb::device::{MuxDevice, VmConnectionInfo, VmDevice};
-use odyssey_usb::packets::vm::{AccelConfig, GeneralConfig, GyroConfig, Port, PropKind};
+use odyssey_usb::device::{GeneralSettings, MuxDevice, ProductId, VmConnectionInfo, VmDevice};
+use odyssey_usb::packets::vm::{AccelConfig, GeneralConfig, GyroConfig, Port, PropKind, Props};
 use opencv_ros_camera::RosOpenCvIntrinsics;
+use pag_sensor_settings::{PagAction, PagSensorSettingsForm};
+use paj_sensor_settings::PajSensorSettingsForm;
 use parking_lot::Mutex;
 
-use crate::CloneButShorter as _;
 use crate::mot_runner::MotRunner;
 
-pub fn config_window(
-    ui: &UI,
+/// Width of the label column shared by every form grid, so tabs line up.
+const LABEL_WIDTH: f32 = 190.0;
+/// Width of the text fields and pickers in the forms.
+const FIELD_WIDTH: f32 = 220.0;
+/// How long a button keeps showing "Applied!" / "Saved!".
+const FLASH_DURATION: Duration = Duration::from_secs(3);
+const SUCCESS_COLOR: egui::Color32 = egui::Color32::from_rgb(0x6c, 0xc0, 0x7a);
+/// USB vendor ID of every Odyssey device.
+const VENDOR_ID: u16 = 0x1915;
+const SIMULATOR_LABEL_PREFIX: &str = "Simulator @ ";
+const M4HUB_LABEL_PREFIX: &str = "M4Hub @ ";
+/// A mux with no devices is kept in the list under this address so the next
+/// refresh can reuse its connection.
+const MUX_PLACEHOLDER_ADDR: [u8; 6] = [0; 6];
+
+/// The configuration window: a device picker, one tab per settings group, and
+/// the actions that write the settings to the device.
+///
+/// Device IO runs on the tokio runtime; results come back over a channel that
+/// [`ConfigWindow::show`] drains at the top of every frame.
+pub struct ConfigWindow {
+    runtime: tokio::runtime::Handle,
+    runner: Arc<Mutex<MotRunner>>,
+    sender: EventSender,
+    events: mpsc::Receiver<Event>,
+
     simulator_addr: Option<String>,
     udp_addr: Option<String>,
-    mot_runner: Arc<Mutex<MotRunner>>,
-    tokio_handle: &tokio::runtime::Handle,
-) -> (
-    Window,
-    ReadSignal<Option<VmDevice>>,
-    ReadSignal<AccelConfig>,
-) {
-    let ui_ctx = ui.async_context();
-    let mut config_win = Window::new(ui, "Config", 10, 10, WindowType::NoMenubar);
-    let tokio_handle = tokio_handle.clone();
+    /// Every connection the last scan found, including mux placeholders.
+    connections: Vec<VmConnectionInfo>,
+    /// What the picker lists: `connections` without placeholders, then the
+    /// simulator and M4Hub entries.
+    choices: Vec<DeviceChoice>,
+    selected: Option<usize>,
+    /// Identifies the latest connection attempt so that a slow, superseded
+    /// attempt cannot install its device.
+    connection_attempt: u64,
+    connecting: bool,
+    device: Option<VmDevice>,
+    device_revision: u64,
 
-    config_win.on_closing(ui, {
-        let ui = ui.c();
-        move |win: &mut Window| {
-            win.hide(&ui);
+    tab: Tab,
+    general: GeneralSettingsForm,
+    wf: PajSensorSettingsForm,
+    nf: PajSensorSettingsForm,
+    pag: PagSensorSettingsForm,
+
+    notice: Option<Notice>,
+    flash: Option<(Flash, Instant)>,
+}
+
+impl std::fmt::Debug for ConfigWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigWindow")
+            .field("selected", &self.selected)
+            .field("connected", &self.device.is_some())
+            .field("device_revision", &self.device_revision)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConfigWindow {
+    /// Creates the window and starts scanning for devices.
+    pub fn new(
+        simulator_addr: Option<String>,
+        udp_addr: Option<String>,
+        runner: Arc<Mutex<MotRunner>>,
+        runtime: tokio::runtime::Handle,
+        ctx: egui::Context,
+    ) -> Self {
+        let (tx, events) = mpsc::channel();
+        let mut window = Self {
+            runtime,
+            runner,
+            sender: EventSender { tx, ctx },
+            events,
+            simulator_addr,
+            udp_addr,
+            connections: Vec::new(),
+            choices: Vec::new(),
+            selected: None,
+            connection_attempt: 0,
+            connecting: false,
+            device: None,
+            device_revision: 0,
+            tab: Tab::General,
+            general: GeneralSettingsForm::default(),
+            wf: PajSensorSettingsForm::new(Port::Wf),
+            nf: PajSensorSettingsForm::new(Port::Nf),
+            pag: PagSensorSettingsForm::default(),
+            notice: None,
+            flash: None,
+        };
+        window.rebuild_choices();
+        window.refresh_devices();
+        window
+    }
+
+    /// The connected device, if any. Cloning a device is not free; compare
+    /// [`ConfigWindow::device_revision`] first.
+    pub fn device(&self) -> Option<VmDevice> {
+        self.device.clone()
+    }
+
+    /// Increments every time the connected device changes: connect,
+    /// disconnect, or switching to another device.
+    pub fn device_revision(&self) -> u64 {
+        self.device_revision
+    }
+
+    /// The accelerometer configuration as currently shown in the form.
+    pub fn accel_config(&self) -> AccelConfig {
+        self.general.accel_config
+    }
+
+    /// Applies pending async results, then draws the window.
+    pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.drain_events();
+        self.expire_flash(ui.ctx());
+
+        egui::Panel::top("config_device_bar").show(ui, |ui| {
+            self.device_bar(ui);
+            self.notice_banner(ui);
+        });
+        egui::Panel::bottom("config_actions").show(ui, |ui| self.action_bar(ui));
+        egui::CentralPanel::default().show(ui, |ui| self.tabs(ui));
+    }
+
+    fn drain_events(&mut self) {
+        while let Ok(event) = self.events.try_recv() {
+            self.handle(event);
         }
-    });
+    }
 
-    let device = create_rw_signal(None);
-    let connected = move || device.with(Option::is_some);
-
-    let (general_form, general_settings) =
-        GeneralSettingsForm::new(ui, device.read_only(), mot_runner, config_win.c());
-
-    crate::layout! { &ui,
-        let vbox = VerticalBox(padded: true) {
-            Compact : let device_hbox = HorizontalBox(padded: true) {
-                Stretchy : let device_combobox = Combobox() {}
-                Compact : let refresh_button = Button("Refresh")
+    fn handle(&mut self, event: Event) {
+        match event {
+            Event::Devices(connections) => {
+                self.connections = connections;
+                self.rebuild_choices();
             }
-            Compact : let tab_group = TabGroup() {} // sensor settings go in here
-            Compact : let buttons_hbox = HorizontalBox(padded: true) {
-                Compact : let apply_button = Button("Apply", enabled: connected)
-                Compact : let save_button = Button("Save", enabled: connected)
-                Compact : let reload_button = Button("Reload", enabled: connected)
-                Compact : let load_defaults_button = Button("Load defaults", enabled: connected)
+            Event::Connected {
+                attempt,
+                device,
+                settings,
+            } => {
+                if attempt != self.connection_attempt {
+                    return;
+                }
+                self.connecting = false;
+                self.install(*settings);
+                self.set_device(Some(device));
+            }
+            Event::ConnectFailed { attempt, error } => {
+                if attempt != self.connection_attempt {
+                    return;
+                }
+                self.connecting = false;
+                self.notify(Notice::error("Failed to connect", format!("{error:#}")));
+            }
+            Event::Reloaded(settings) => self.install(*settings),
+            Event::Uploaded { subject, upload } => {
+                match *upload {
+                    Upload::Accel(config) => self.general.accel_config = config,
+                    Upload::Gyro(config) => self.general.gyro_config = config,
+                    Upload::NfIntrinsics(intrinsics) => self.general.nf_intrinsics = intrinsics,
+                    Upload::WfIntrinsics(intrinsics) => self.general.wf_intrinsics = intrinsics,
+                    Upload::StereoIso(iso) => self.general.stereo_iso = iso,
+                }
+                let noun = subject.noun();
+                self.notify(Notice::info(
+                    format!("Uploaded {noun}"),
+                    format!("Successfully uploaded {noun}"),
+                ));
+            }
+            Event::Flash(flash) => self.flash = Some((flash, Instant::now() + FLASH_DURATION)),
+            Event::Notice(notice) => self.notify(notice),
+        }
+    }
+
+    fn notify(&mut self, notice: Notice) {
+        if notice.kind == NoticeKind::Error {
+            tracing::error!("{}: {}", notice.title, notice.message.trim_end());
+        }
+        self.notice = Some(notice);
+    }
+
+    fn expire_flash(&mut self, ctx: &egui::Context) {
+        let Some((_, until)) = self.flash else { return };
+        match until.checked_duration_since(Instant::now()) {
+            Some(remaining) => ctx.request_repaint_after(remaining),
+            None => self.flash = None,
+        }
+    }
+
+    /// Replaces the connected device and returns the previous one.
+    fn set_device(&mut self, device: Option<VmDevice>) -> Option<VmDevice> {
+        self.device_revision += 1;
+        std::mem::replace(&mut self.device, device)
+    }
+
+    fn install(&mut self, settings: LoadedSettings) {
+        self.general = settings.general;
+        match settings.sensors {
+            SensorSettings::Vm { wf, nf } => {
+                self.wf = *wf;
+                self.nf = *nf;
+            }
+            SensorSettings::Pro(pag) => self.pag = pag,
+            SensorSettings::Unsupported => {}
+        }
+    }
+
+    fn rebuild_choices(&mut self) {
+        self.choices.clear();
+        for connection in &self.connections {
+            // Skip placeholder mux entries (used to keep connection alive when 0 devices)
+            if let VmConnectionInfo::ViaMux { device_addr, .. } = connection
+                && *device_addr == MUX_PLACEHOLDER_ADDR
+            {
+                continue;
+            }
+            self.choices.push(DeviceChoice {
+                label: display_for_vm_connection(connection),
+                connection: Some(connection.clone()),
+            });
+        }
+        // The simulator and M4Hub entries have no connection path any more.
+        if let Some(addr) = &self.simulator_addr {
+            self.choices.push(DeviceChoice {
+                label: format!("{SIMULATOR_LABEL_PREFIX}{addr}"),
+                connection: None,
+            });
+        }
+        if let Some(addr) = &self.udp_addr {
+            self.choices.push(DeviceChoice {
+                label: format!("{M4HUB_LABEL_PREFIX}{addr}"),
+                connection: None,
+            });
+        }
+        if self
+            .selected
+            .is_some_and(|index| index >= self.choices.len())
+        {
+            self.selected = None;
+        }
+    }
+
+    fn visible_tabs(&self) -> &'static [Tab] {
+        match self.general.product() {
+            Some(ProductId::AtsVm | ProductId::AtsLite) => {
+                &[Tab::General, Tab::WideField, Tab::NearField]
+            }
+            Some(ProductId::AtsPro) => &[Tab::General, Tab::Pag],
+            _ => &[Tab::General],
+        }
+    }
+
+    /// The sensor forms that apply to the connected product.
+    fn sensors(&self) -> SensorSettings {
+        match self.general.product() {
+            Some(ProductId::AtsVm | ProductId::AtsLite) => SensorSettings::Vm {
+                wf: Box::new(self.wf.clone()),
+                nf: Box::new(self.nf.clone()),
+            },
+            Some(ProductId::AtsPro) => SensorSettings::Pro(self.pag.clone()),
+            _ => SensorSettings::Unsupported,
+        }
+    }
+
+    // ---- drawing ----
+
+    fn device_bar(&mut self, ui: &mut egui::Ui) {
+        let mut picked = None;
+        ui.horizontal(|ui| {
+            ui.label("Device");
+            let selected_text = self
+                .selected
+                .and_then(|index| self.choices.get(index))
+                .map_or("Select a device", |choice| choice.label.as_str());
+            egui::ComboBox::from_id_salt("config_device")
+                .width(360.0)
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for (index, choice) in self.choices.iter().enumerate() {
+                        let is_selected = self.selected == Some(index);
+                        if ui.selectable_label(is_selected, &choice.label).clicked() {
+                            // Picking the shown entry again retries a failed connection.
+                            if !is_selected || (self.device.is_none() && !self.connecting) {
+                                picked = Some(index);
+                            }
+                        }
+                    }
+                });
+            if ui.button("Refresh").clicked() {
+                self.refresh_devices();
+            }
+            if self.connecting {
+                ui.spinner();
+                ui.label("Connecting…");
+            }
+        });
+        if let Some(index) = picked {
+            self.select_device(index);
+        }
+        ui.add_space(4.0);
+    }
+
+    fn notice_banner(&mut self, ui: &mut egui::Ui) {
+        let Some(notice) = &self.notice else { return };
+        let color = match notice.kind {
+            NoticeKind::Error => ui.visuals().error_fg_color,
+            NoticeKind::Info => SUCCESS_COLOR,
+        };
+        let mut dismissed = false;
+        egui::Frame::group(ui.style())
+            .stroke(egui::Stroke::new(1.0, color))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.colored_label(color, egui::RichText::new(&notice.title).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        dismissed = ui.small_button("Dismiss").clicked();
+                    });
+                });
+                if !notice.message.is_empty() {
+                    ui.label(notice.message.trim_end());
+                }
+            });
+        if dismissed {
+            self.notice = None;
+        }
+        ui.add_space(4.0);
+    }
+
+    fn action_bar(&mut self, ui: &mut egui::Ui) {
+        let flash = self.flash.map(|(flash, _)| flash);
+        let apply_label = if flash == Some(Flash::Applied) {
+            "Applied!"
+        } else {
+            "Apply"
+        };
+        let save_label = if flash == Some(Flash::Saved) {
+            "Saved!"
+        } else {
+            "Save"
+        };
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(self.device.is_some(), |ui| {
+                if ui.button(apply_label).clicked() {
+                    self.commit(Commit::Apply);
+                }
+                if ui.button(save_label).clicked() {
+                    self.commit(Commit::Save);
+                }
+                if ui.button("Reload").clicked() {
+                    self.reload();
+                }
+                if ui.button("Load defaults").clicked() {
+                    self.load_defaults();
+                }
+            });
+        });
+        ui.add_space(4.0);
+    }
+
+    fn tabs(&mut self, ui: &mut egui::Ui) {
+        let tabs = self.visible_tabs();
+        if !tabs.contains(&self.tab) {
+            self.tab = Tab::General;
+        }
+        ui.horizontal(|ui| {
+            for &tab in tabs {
+                ui.selectable_value(&mut self.tab, tab, tab.label());
+            }
+        });
+        ui.separator();
+
+        let connected = self.device.is_some();
+        let mut general_action = None;
+        let mut pag_action = PagAction::None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| match self.tab {
+                Tab::General => general_action = self.general.ui(ui, connected),
+                Tab::WideField => {
+                    ui.add_enabled_ui(connected, |ui| self.wf.ui(ui));
+                }
+                Tab::NearField => {
+                    ui.add_enabled_ui(connected, |ui| self.nf.ui(ui));
+                }
+                Tab::Pag => {
+                    pag_action = ui.add_enabled_ui(connected, |ui| self.pag.ui(ui)).inner;
+                }
+            });
+
+        if let Some(action) = general_action {
+            self.general_action(action);
+        }
+        if let PagAction::CaptureImage = pag_action
+            && let Some(device) = self.device.clone()
+        {
+            self.runtime.spawn(async move {
+                PagSensorSettingsForm::capture_image(&device).await;
+            });
+        }
+    }
+
+    // ---- device connection ----
+
+    fn refresh_devices(&self) {
+        tracing::debug!("=== refresh_device_list called ===");
+        let existing_mux = ExistingMux::find(&self.connections);
+        let sender = self.sender.clone();
+        self.runtime.spawn(async move {
+            match scan_devices(existing_mux).await {
+                Ok(connections) => sender.send(Event::Devices(connections)),
+                Err(e) => sender.send(Event::Notice(Notice::error(
+                    "Failed to list usb devices",
+                    e.to_string(),
+                ))),
+            }
+        });
+    }
+
+    fn select_device(&mut self, index: usize) {
+        self.selected = Some(index);
+        self.general.clear();
+        self.wf.clear();
+        self.nf.clear();
+        self.pag.clear();
+        let old_device = self.set_device(None);
+        self.connection_attempt += 1;
+        self.connecting = true;
+
+        let attempt = self.connection_attempt;
+        let target = self
+            .choices
+            .get(index)
+            .and_then(|choice| choice.connection.clone());
+        let runner = Arc::clone(&self.runner);
+        let sender = self.sender.clone();
+        self.runtime.spawn(async move {
+            let event = match connect(old_device, target, &runner).await {
+                Ok((device, settings)) => Event::Connected {
+                    attempt,
+                    device,
+                    settings: Box::new(settings),
+                },
+                Err(error) => Event::ConnectFailed { attempt, error },
+            };
+            sender.send(event);
+        });
+    }
+
+    // ---- toolbar actions ----
+
+    /// Validates the forms, writes them to the device, and for
+    /// [`Commit::Save`] also flashes them.
+    fn commit(&mut self, commit: Commit) {
+        let Some(device) = self.device.clone() else {
+            return;
+        };
+        let sensors = self.sensors();
+        let mut errors = vec![];
+        self.general.validate(&mut errors);
+        let validation =
+            check_validation(&errors, "General Validation Error").and_then(|()| sensors.validate());
+        if let Err(notice) = validation {
+            self.notify(notice);
+            return;
+        }
+
+        let general = self.general.clone();
+        let runner = Arc::clone(&self.runner);
+        let sender = self.sender.clone();
+        self.runtime.spawn(async move {
+            if let Err(notice) =
+                Box::pin(apply_settings(&device, &general, &sensors, &runner)).await
+            {
+                sender.send(Event::Notice(notice));
+                return;
+            }
+            match commit {
+                Commit::Apply => sender.send(Event::Flash(Flash::Applied)),
+                Commit::Save => match device.flash_settings().await {
+                    Ok(()) => sender.send(Event::Flash(Flash::Saved)),
+                    Err(e) => sender.send(Event::Notice(Notice::error(
+                        "Failed to request flash settings",
+                        e.to_string(),
+                    ))),
+                },
+            }
+        });
+    }
+
+    fn reload(&self) {
+        let Some(device) = self.device.clone() else {
+            return;
+        };
+        let runner = Arc::clone(&self.runner);
+        let sender = self.sender.clone();
+        self.runtime.spawn(async move {
+            match load_settings(&device, &runner, LoadKind::Reload).await {
+                Ok(settings) => sender.send(Event::Reloaded(Box::new(settings))),
+                Err(e) => sender.send(Event::Notice(Notice::error(
+                    "Failed to reload settings",
+                    format!("{e:#}"),
+                ))),
+            }
+        });
+    }
+
+    fn load_defaults(&mut self) {
+        self.general.load_defaults();
+        self.nf.load_defaults();
+        self.wf.load_defaults();
+        self.pag.load_defaults();
+    }
+
+    // ---- calibration and configuration files ----
+
+    fn general_action(&mut self, action: GeneralAction) {
+        match action {
+            GeneralAction::Upload(document) => self.upload(document),
+            GeneralAction::Download(document) => self.download(document),
+            GeneralAction::SyncStereo => {
+                self.general.stereo_iso = self.runner.lock().general_config.stereo_iso;
             }
         }
     }
-    let (wf_form, wf_settings) =
-        paj_sensor_settings::PajSensorSettingsForm::new(ui, device.read_only(), Port::Wf);
-    let (nf_form, nf_settings) =
-        paj_sensor_settings::PajSensorSettingsForm::new(ui, device.read_only(), Port::Nf);
-    let (pag_form, pag_settings) =
-        pag_sensor_settings::PagSensorSettingsForm::new(ui, device.read_only());
-    tab_group.append(ui, "General", general_form);
-    tab_group.append(ui, "Wide field", wf_form.c());
-    tab_group.append(ui, "Near field", nf_form.c());
-    tab_group.append(ui, "PAG", pag_form.c());
-    tab_group.set_margined(ui, 0, true);
-    tab_group.set_margined(ui, 1, true);
-    tab_group.set_margined(ui, 2, true);
-    tab_group.set_margined(ui, 3, true);
 
-    create_effect({
-        let ui = ui.c();
-        let nf_form = nf_form.c();
-        let wf_form = wf_form.c();
-        let pag_form = pag_form.c();
-        move |_| {
-            let mut nf_form = nf_form.c();
-            let mut wf_form = wf_form.c();
-            let mut pag_form = pag_form.c();
-            general_settings
-                .device_pid
-                .with(|pid| match odyssey_usb::device::ProductId::from_u16(*pid) {
-                    Some(
-                        odyssey_usb::device::ProductId::AtsVm
-                        | odyssey_usb::device::ProductId::AtsLite,
-                    ) => {
-                        nf_form.show(&ui);
-                        wf_form.show(&ui);
-                        pag_form.hide(&ui);
-                    }
-                    Some(odyssey_usb::device::ProductId::AtsPro) => {
-                        nf_form.hide(&ui);
-                        wf_form.hide(&ui);
-                        pag_form.show(&ui);
-                    }
-                    _ => {
-                        nf_form.hide(&ui);
-                        wf_form.hide(&ui);
-                        pag_form.hide(&ui);
-                    }
-                });
+    fn upload(&self, document: Document) {
+        match document {
+            Document::Accel => self.upload_file(Subject::Configuration, |file| {
+                Ok(Upload::Accel(serde_json::from_reader(file)?))
+            }),
+            Document::Gyro => self.upload_file(Subject::Configuration, |file| {
+                Ok(Upload::Gyro(serde_json::from_reader(file)?))
+            }),
+            Document::NfCalibration => self.upload_file(Subject::Calibration, |file| {
+                Ok(Upload::NfIntrinsics(
+                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(file)
+                        .map_err(boxed_error)?,
+                ))
+            }),
+            Document::WfCalibration => self.upload_file(Subject::Calibration, |file| {
+                Ok(Upload::WfIntrinsics(
+                    odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(file)
+                        .map_err(boxed_error)?,
+                ))
+            }),
+            Document::StereoCalibration => self.upload_file(Subject::Calibration, |file| {
+                Ok(Upload::StereoIso(
+                    odyssey_common::get_isometry_from_opencv_stereo_calibration_json(file)
+                        .map_err(boxed_error)?,
+                ))
+            }),
         }
-    });
+    }
 
-    config_win.set_child(ui, vbox);
+    fn download(&self, document: Document) {
+        match document {
+            Document::Accel => {
+                let config = self.general.accel_config;
+                self.download_file(Subject::Configuration, move |file| {
+                    Ok(serde_json::to_writer(file, &config)?)
+                });
+            }
+            Document::Gyro => {
+                let config = self.general.gyro_config;
+                self.download_file(Subject::Configuration, move |file| {
+                    Ok(serde_json::to_writer(file, &config)?)
+                });
+            }
+            Document::NfCalibration => {
+                let intrinsics = self.general.nf_intrinsics.clone();
+                self.download_file(Subject::Calibration, move |file| {
+                    odyssey_common::write_opencv_minimal_camera_calibration_json(&intrinsics, file)
+                        .map_err(boxed_error)
+                });
+            }
+            Document::WfCalibration => {
+                let intrinsics = self.general.wf_intrinsics.clone();
+                self.download_file(Subject::Calibration, move |file| {
+                    odyssey_common::write_opencv_minimal_camera_calibration_json(&intrinsics, file)
+                        .map_err(boxed_error)
+                });
+            }
+            Document::StereoCalibration => {
+                let iso = self.general.stereo_iso;
+                self.download_file(Subject::Calibration, move |file| {
+                    odyssey_common::write_opencv_minimal_stereo_calibration_json(&iso, file)
+                        .map_err(boxed_error)
+                });
+            }
+        }
+    }
 
-    let device_list = create_rw_signal(Vec::<VmConnectionInfo>::new());
-    let selected_index = create_rw_signal::<Option<i32>>(None);
-    let device_combobox_on_selected = {
-        let ui = ui.c();
-        let config_win = config_win.c();
-        let general_settings = general_settings.c();
-        move |i| {
-            selected_index.set(Some(i));
-            general_settings.clear();
-            wf_settings.clear();
-            nf_settings.clear();
-            pag_settings.clear();
-            let Ok(i) = usize::try_from(i) else { return };
-            let selected_device = device_list.with_untracked(|d| d.get(i).cloned());
-            let general_settings = general_settings.c();
-            let device_signal = device.c(); // Clone the signal for the async task
-            let task = async move {
-                // Clean up old device if it exists, BEFORE connecting to new one
-                if let Some(old_device) = device_signal.get_untracked() {
-                    tracing::debug!("Cleaning up previous device connection...");
-                    let _ = old_device.clear_all_streams().await;
-                    tracing::debug!(
-                        "Previous device cleaned up (slot reservation prevents conflicts)"
-                    );
-                }
+    /// Asks for a file on the blocking pool (the dialog blocks), parses it and
+    /// reports the result as an event. Cancelling the dialog does nothing.
+    fn upload_file(
+        &self,
+        subject: Subject,
+        read: impl FnOnce(File) -> Result<Upload> + Send + 'static,
+    ) {
+        let sender = self.sender.clone();
+        self.runtime.spawn_blocking(move || {
+            let Some(path) = rfd::FileDialog::new().pick_file() else {
+                return;
+            };
+            let result = File::open(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(read);
+            sender.send(match result {
+                Ok(upload) => Event::Uploaded {
+                    subject,
+                    upload: Box::new(upload),
+                },
+                Err(e) => Event::Notice(Notice::error(
+                    format!("Failed to upload {}", subject.noun()),
+                    format!("Failed to read {}: {e:#}", path.display()),
+                )),
+            });
+        });
+    }
 
-                // NOW set device to None after cleanup
-                device_signal.set(None);
+    /// Asks for a destination on the blocking pool and writes it. Cancelling
+    /// the dialog does nothing.
+    fn download_file(
+        &self,
+        subject: Subject,
+        write: impl FnOnce(File) -> Result<()> + Send + 'static,
+    ) {
+        let sender = self.sender.clone();
+        self.runtime.spawn_blocking(move || {
+            let Some(path) = rfd::FileDialog::new().save_file() else {
+                return;
+            };
+            let noun = subject.noun();
+            let result = File::create(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(write);
+            sender.send(Event::Notice(match result {
+                Ok(()) => Notice::info(
+                    format!("Downloaded {noun}"),
+                    format!("Successfully downloaded {noun}"),
+                ),
+                Err(e) => Notice::error(
+                    format!("Failed to download {noun}"),
+                    format!("Failed to write {}: {e:#}", path.display()),
+                ),
+            }));
+        });
+    }
+}
 
-                // The simulator and M4Hub entries sit after the real devices in the
-                // combobox and have no connection path any more.
-                let Some(selected_device) = selected_device else {
-                    return Err(anyhow::anyhow!(
-                        "Simulator and M4Hub connections are not supported"
-                    ));
-                };
-                tracing::debug!("Attempting to connect to device...");
-                let usb_device = selected_device.connect().await.inspect_err(|e| {
-                    tracing::error!("Device connection failed: {e:?}");
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    General,
+    WideField,
+    NearField,
+    Pag,
+}
+
+impl Tab {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::WideField => "Wide field",
+            Self::NearField => "Near field",
+            Self::Pag => "PAG",
+        }
+    }
+}
+
+/// One entry of the device picker.
+struct DeviceChoice {
+    label: String,
+    /// `None` for the simulator and M4Hub entries, which cannot be connected.
+    connection: Option<VmConnectionInfo>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Commit {
+    Apply,
+    Save,
+}
+
+/// Which button briefly shows a success label.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flash {
+    Applied,
+    Saved,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoticeKind {
+    Error,
+    Info,
+}
+
+/// A dismissable message at the top of the window; replaces the modal dialogs.
+struct Notice {
+    kind: NoticeKind,
+    title: String,
+    message: String,
+}
+
+impl Notice {
+    fn error(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            kind: NoticeKind::Error,
+            title: title.into(),
+            message: message.into(),
+        }
+    }
+
+    fn info(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            kind: NoticeKind::Info,
+            title: title.into(),
+            message: message.into(),
+        }
+    }
+}
+
+/// What kind of file a transfer moves, for the messages.
+#[derive(Clone, Copy)]
+enum Subject {
+    Calibration,
+    Configuration,
+}
+
+impl Subject {
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Calibration => "calibration",
+            Self::Configuration => "configuration",
+        }
+    }
+}
+
+/// A file the General tab uploads and downloads.
+#[derive(Clone, Copy)]
+enum Document {
+    Accel,
+    Gyro,
+    NfCalibration,
+    WfCalibration,
+    StereoCalibration,
+}
+
+enum GeneralAction {
+    Upload(Document),
+    Download(Document),
+    /// Copy the stereo calibration the tracker is running with.
+    SyncStereo,
+}
+
+/// A value parsed from an uploaded file.
+enum Upload {
+    Accel(AccelConfig),
+    Gyro(GyroConfig),
+    NfIntrinsics(RosOpenCvIntrinsics<f32>),
+    WfIntrinsics(RosOpenCvIntrinsics<f32>),
+    StereoIso(nalgebra::Isometry3<f32>),
+}
+
+/// Results of background work, applied by [`ConfigWindow::show`].
+enum Event {
+    Devices(Vec<VmConnectionInfo>),
+    Connected {
+        attempt: u64,
+        device: VmDevice,
+        settings: Box<LoadedSettings>,
+    },
+    ConnectFailed {
+        attempt: u64,
+        error: anyhow::Error,
+    },
+    Reloaded(Box<LoadedSettings>),
+    Uploaded {
+        subject: Subject,
+        upload: Box<Upload>,
+    },
+    Flash(Flash),
+    Notice(Notice),
+}
+
+/// Posts events to the window and wakes the UI up to show them.
+#[derive(Clone)]
+struct EventSender {
+    tx: mpsc::Sender<Event>,
+    ctx: egui::Context,
+}
+
+impl EventSender {
+    fn send(&self, event: Event) {
+        // The receiver is gone only when the window was dropped.
+        if self.tx.send(event).is_ok() {
+            self.ctx.request_repaint();
+        }
+    }
+}
+
+/// Everything read from a device.
+struct LoadedSettings {
+    general: GeneralSettingsForm,
+    sensors: SensorSettings,
+}
+
+/// The sensor forms that apply to a product.
+enum SensorSettings {
+    Vm {
+        wf: Box<PajSensorSettingsForm>,
+        nf: Box<PajSensorSettingsForm>,
+    },
+    Pro(PagSensorSettingsForm),
+    Unsupported,
+}
+
+impl SensorSettings {
+    fn validate(&self) -> Result<(), Notice> {
+        let mut errors = vec![];
+        match self {
+            Self::Vm { wf, nf } => {
+                wf.validate(&mut errors);
+                check_validation(&errors, "Wide Field Validation Error")?;
+                nf.validate(&mut errors);
+                check_validation(&errors, "Near Field Validation Error")
+            }
+            Self::Pro(pag) => {
+                pag.validate(&mut errors);
+                check_validation(&errors, "Pag Validation Error")
+            }
+            Self::Unsupported => Err(Notice::error(
+                "Failed to apply settings",
+                "This product has no sensor settings to apply",
+            )),
+        }
+    }
+
+    /// Make sure to call `validate()` before calling this method.
+    async fn apply(&self, device: &VmDevice) -> Result<(), Notice> {
+        match self {
+            Self::Vm { wf, nf } => {
+                Box::pin(wf.apply(device)).await.map_err(|e| {
+                    Notice::error("Failed to apply wide field settings", e.to_string())
                 })?;
-
-                tracing::debug!("Connection successful, disabling any active streams...");
-                // Disable all streams from previous session to prevent flooding
-                if let Err(e) = usb_device.clear_all_streams().await {
-                    tracing::warn!("Failed to disable streams: {e:?}");
-                }
-                tracing::debug!("Streams disabled, loading general settings...");
-
-                let product_id = general_settings
-                    .load_from_device(&usb_device, true)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Failed to load general settings: {e:?}");
-                        anyhow::anyhow!("{e:?}")
-                    })?;
-                tracing::debug!("General settings loaded successfully");
-                load_sensor_settings(
-                    &usb_device,
-                    product_id,
-                    &wf_settings,
-                    &nf_settings,
-                    &pag_settings,
-                )
-                .await?;
-                tracing::debug!("All settings loaded, setting device...");
-                device.set(Some(usb_device));
-                tracing::debug!("Device set successfully");
-                Result::<()>::Ok(())
-            };
-            ui.spawn({
-                let ui = ui.c();
-                let config_win = config_win.c();
-                async move {
-                    if let Err(e) = task.await {
-                        config_win
-                            .modal_err_async(&ui, "Failed to connect", &e.to_string())
-                            .await;
-                    }
-                }
-            });
+                Box::pin(nf.apply(device)).await.map_err(|e| {
+                    Notice::error("Failed to apply near field settings", e.to_string())
+                })
+            }
+            Self::Pro(pag) => Box::pin(pag.apply(device))
+                .await
+                .map_err(|e| Notice::error("Failed to apply PAG settings", e.to_string())),
+            Self::Unsupported => Ok(()),
         }
-    };
-    device_combobox.on_selected(ui, device_combobox_on_selected.c());
+    }
+}
 
-    create_effect({
-        // update device combobox when device_list changes
-        let device_combobox = device_combobox.c();
-        let ui = ui.c();
-        let simulator_addr = simulator_addr.c();
-        let udp_addr = udp_addr.c();
-        move |_| {
-            let mut device_combobox = device_combobox.c();
-            let saved_selection = selected_index.get_untracked();
-            device_combobox.clear(&ui);
-            device_list.with(|device_list| {
-                for device in device_list {
-                    // Skip placeholder mux entries (used to keep connection alive when 0 devices)
-                    if let VmConnectionInfo::ViaMux { device_addr, .. } = device
-                        && device_addr == &[0, 0, 0, 0, 0, 0]
-                    {
-                        continue; // Skip placeholder
-                    }
-                    device_combobox.append(&ui, &display_for_vm_connection(device));
-                }
-            });
-            if let Some(sim_addr) = &simulator_addr {
-                device_combobox.append(&ui, &format!("Simulator @ {sim_addr}"));
-            }
-            if let Some(udp_addr) = &udp_addr {
-                device_combobox.append(&ui, &format!("M4Hub @ {udp_addr}"));
-            }
-            device_combobox.enable(&ui);
-            if let Some(idx) = saved_selection {
-                device_combobox.set_selected(&ui, idx);
-            }
-        }
-    });
-    let refresh_device_list = {
-        let config_win = config_win.c();
-        let ui = ui.c();
-        let _simulator_addr = simulator_addr.c();
-        let _udp_addr = udp_addr.c();
-        let ui_ctx = ui.async_context();
-        let _device_combobox_on_selected = device_combobox_on_selected.c();
-        move || {
-            tracing::debug!("=== refresh_device_list called ===");
+fn check_validation(errors: &[String], title: &str) -> Result<(), Notice> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(Notice::error(title, validation_message(errors)))
+    }
+}
 
-            let devices = nusb::list_devices().wait();
-            let usb_devices: Vec<_> = match devices {
-                Ok(p) => p,
-                Err(e) => {
-                    config_win.modal_err(&ui, "Failed to list usb devices", &e.to_string());
-                    return;
-                }
-            }
-            .filter(|info| info.vendor_id() == 0x1915)
-            .collect();
+async fn apply_settings(
+    device: &VmDevice,
+    general: &GeneralSettingsForm,
+    sensors: &SensorSettings,
+    runner: &Mutex<MotRunner>,
+) -> Result<(), Notice> {
+    Box::pin(sensors.apply(device)).await?;
+    general
+        .apply(device, runner)
+        .await
+        .map_err(|e| Notice::error("Failed to apply general settings", e.to_string()))
+}
 
-            // Separate direct USB vision modules and mux devices, probing transport mode for vision modules
-            let mut vm_connections: Vec<VmConnectionInfo> = Vec::new();
-            let mut hub_devices: Vec<_> = Vec::new();
+/// Whether the tracker's own copy of the config is replaced by the load.
+#[derive(Clone, Copy)]
+enum LoadKind {
+    /// First load after connecting: the tracker adopts the device's config.
+    Initial,
+    Reload,
+}
 
-            for info in usb_devices {
-                match info.product_id() {
-                    0x520F..=0x5211 => {
-                        match tokio_handle.block_on(VmDevice::probe_transport_mode(&info)) {
-                            Ok(TransportMode::Usb) => {
-                                vm_connections.push(VmConnectionInfo::DirectUsb(info.clone()));
-                            }
-                            Ok(mode) => {
-                                tracing::debug!(
-                                    "Skipping {:04x}:{:04x} - transport mode {:?}",
-                                    info.vendor_id(),
-                                    info.product_id(),
-                                    mode
-                                );
-                            }
-                            Err(e) => {
-                                tracing::debug!(
-                                    "Skipping {:04x}:{:04x} - failed to probe mode: {e}",
-                                    info.vendor_id(),
-                                    info.product_id()
-                                );
-                            }
-                        }
-                    }
-                    0x5212 => hub_devices.push(info.clone()),
-                    _ => {}
-                }
-            }
+/// Lays out a `label | widget` form; every tab uses the same column widths.
+fn form_grid(id_salt: &'static str) -> egui::Grid {
+    egui::Grid::new(id_salt)
+        .num_columns(2)
+        .min_col_width(LABEL_WIDTH)
+        .spacing([16.0, 8.0])
+        .striped(true)
+}
 
-            tracing::debug!(
-                "Found {} USB-mode devices, {} mux devices",
-                vm_connections.len(),
-                hub_devices.len()
-            );
-
-            tracing::debug!("Found {} mux devices", hub_devices.len());
-            if !hub_devices.is_empty() {
-                // Check if we have an existing mux connection in the device list
-                // This will be reused without disrupting any active device connections
-                let existing_mux_and_devices = device_list.with_untracked(|list| {
-                    let mut mux = None;
-                    let mut mux_devices = Vec::new();
-                    for conn in list {
-                        if let VmConnectionInfo::ViaMux {
-                            mux: m,
-                            device_addr,
-                        } = conn
-                        {
-                            if mux.is_none() {
-                                mux = Some(m.clone());
-                            }
-                            mux_devices.push(*device_addr);
-                        }
-                    }
-                    mux.map(|m| (m, mux_devices))
-                });
-
-                if let Some((existing_mux, existing_mux_devices)) = existing_mux_and_devices {
-                    tracing::debug!(
-                        "Reusing existing mux connection for refresh (with {} existing mux devices)",
-                        existing_mux_devices.len()
-                    );
-
-                    let device_list = device_list.c();
-
-                    ui_ctx.spawn(async move {
-                        tracing::debug!("Mux refresh task started (reusing connection)");
-                        let mut all_connections = vm_connections;
-
-                        tracing::debug!("Querying devices from existing mux...");
-                        match existing_mux.request_devices().await {
-                            Ok(devices) => {
-                                tracing::debug!(
-                                    "Mux query successful, found {} device(s)",
-                                    devices.len()
-                                );
-                                for device_addr in devices {
-                                    tracing::debug!(
-                                        "  Device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                                        device_addr[0],
-                                        device_addr[1],
-                                        device_addr[2],
-                                        device_addr[3],
-                                        device_addr[4],
-                                        device_addr[5]
-                                    );
-                                    all_connections.push(VmConnectionInfo::ViaMux {
-                                        mux: existing_mux.clone(),
-                                        device_addr,
-                                    });
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to query existing mux: {e}");
-                                tracing::debug!(
-                                    "Preserving {} existing mux devices in the list",
-                                    existing_mux_devices.len()
-                                );
-                                for device_addr in existing_mux_devices {
-                                    all_connections.push(VmConnectionInfo::ViaMux {
-                                        mux: existing_mux.clone(),
-                                        device_addr,
-                                    });
-                                }
-                            }
-                        }
-
-                        tracing::debug!(
-                            "Updating device list with {} total devices",
-                            all_connections.len()
-                        );
-                        device_list.set(all_connections);
-                        tracing::debug!("Mux refresh task completed");
-                    });
-                } else {
-                    tracing::debug!("No existing mux connection, creating new one");
-
-                    // Query mux devices asynchronously and update the list
-                    let device_list = device_list.c();
-
-                    tracing::debug!("Spawning mux query task...");
-                    ui_ctx.spawn(async move {
-                        tracing::debug!("Mux query task started");
-                        let mut all_connections = vm_connections;
-
-                        // Query each mux for connected devices
-                        for hub_info in hub_devices {
-                            tracing::debug!("Attempting to connect to mux...");
-                            match MuxDevice::connect_usb(hub_info.clone()).await {
-                                Ok(hub) => {
-                                    tracing::debug!("Mux connected successfully, requesting devices...");
-                                    match hub.request_devices().await {
-                                        Ok(devices) => {
-                                            tracing::debug!("Mux query successful, found {} device(s)", devices.len());
-                                            // If no devices, add a placeholder to keep mux alive for next refresh
-                                            if devices.is_empty() {
-                                                tracing::debug!("No devices found, adding placeholder to keep mux connection alive");
-                                                all_connections.push(VmConnectionInfo::ViaMux {
-                                                    mux: hub.clone(),
-                                                    device_addr: [0, 0, 0, 0, 0, 0], // Placeholder
-                                                });
-                                            } else {
-                                            for device_addr in devices {
-                                                tracing::debug!("  Device: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                                                    device_addr[0], device_addr[1], device_addr[2],
-                                                    device_addr[3], device_addr[4], device_addr[5]);
-                                                all_connections.push(VmConnectionInfo::ViaMux {
-                                                    mux: hub.clone(),
-                                                    device_addr,
-                                                });
-                                            }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("Failed to query mux devices: {e}");
-                                        }
-                                    }
-                                    tracing::debug!("Mux devices added to connection list");
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to connect to mux: {e}");
-                                }
-                            }
-                        }
-
-                        tracing::debug!("Updating device list with {} total devices", all_connections.len());
-                        device_list.set(all_connections);
-                        tracing::debug!("Mux query task completed");
-                    });
-                }
-            } else {
-                // No muxes found, just use direct USB connections
-                device_list.set(vm_connections);
-            }
-        }
-    };
-    refresh_device_list();
-    refresh_button.on_clicked(ui, move |_| refresh_device_list());
-
-    let apply_button_on_click = {
-        let config_win = config_win.c();
-        let ui = ui.c();
-        let general_settings = general_settings.c();
-        move |device: VmDevice| async move {
-            let mut errors = vec![];
-            general_settings.validate(&mut errors);
-            if !errors.is_empty() {
-                config_win
-                    .modal_err_async(
-                        &ui,
-                        "General Validation Error",
-                        &validation_message(&errors),
-                    )
-                    .await;
-                return false;
-            }
-
-            match odyssey_usb::device::ProductId::from_u16(
-                general_settings.device_pid.get_untracked(),
-            ) {
-                Some(
-                    odyssey_usb::device::ProductId::AtsVm | odyssey_usb::device::ProductId::AtsLite,
-                ) => {
-                    wf_settings.validate(&mut errors);
-                    if !errors.is_empty() {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Wide Field Validation Error",
-                                &validation_message(&errors),
-                            )
-                            .await;
-                        return false;
-                    }
-
-                    nf_settings.validate(&mut errors);
-                    if !errors.is_empty() {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Near Field Validation Error",
-                                &validation_message(&errors),
-                            )
-                            .await;
-                        return false;
-                    }
-
-                    if let Err(e) = Box::pin(wf_settings.apply(&device)).await {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Failed to apply wide field settings",
-                                &e.to_string(),
-                            )
-                            .await;
-                        return false;
-                    }
-                    if let Err(e) = Box::pin(nf_settings.apply(&device)).await {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Failed to apply near field settings",
-                                &e.to_string(),
-                            )
-                            .await;
-                        return false;
-                    }
-                }
-                Some(odyssey_usb::device::ProductId::AtsPro) => {
-                    pag_settings.validate(&mut errors);
-                    if !errors.is_empty() {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Pag Validation Error",
-                                &validation_message(&errors),
-                            )
-                            .await;
-                        return false;
-                    }
-                    if let Err(e) = Box::pin(pag_settings.apply(&device)).await {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Failed to apply wide field settings",
-                                &e.to_string(),
-                            )
-                            .await;
-                        return false;
-                    }
-                }
-                _ => unreachable!(),
-            }
-            if let Err(e) = general_settings.apply(&device).await {
-                config_win
-                    .modal_err_async(&ui, "Failed to apply general settings", &e.to_string())
-                    .await;
-                return false;
-            }
-            true
-        }
-    };
-    apply_button.on_clicked(ui, {
-        let f = apply_button_on_click.clone();
-        let device = device.c();
-        let ui = ui.c();
-        move |apply_button| {
-            let Some(device) = device.get_untracked() else {
-                return;
-            };
-            let f = f.clone();
-            let mut apply_button = apply_button.c();
-            let ui2 = ui.c();
-            ui.spawn(async move {
-                Box::pin(f(device)).await;
-                apply_button.set_text(&ui2, "Applied!");
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                apply_button.set_text(&ui2, "Apply");
-            });
-        }
-    });
-    save_button.on_clicked(ui, {
-        let config_win = config_win.c();
-        let ui = ui.c();
-        let device = device.c();
-        move |save_button| {
-            let Some(device) = device.get_untracked() else {
-                return;
-            };
-            ui.spawn({
-                let ui = ui.c();
-                let config_win = config_win.c();
-                let apply_button_on_click = apply_button_on_click.c();
-                let mut save_button = save_button.c();
-                async move {
-                    if !Box::pin(apply_button_on_click(device.clone())).await {
-                        // callback should have already displayed an error modal, just return
-                        return;
-                    }
-                    if let Err(e) = device.flash_settings().await {
-                        config_win
-                            .modal_err_async(
-                                &ui,
-                                "Failed to request flash settings",
-                                &e.to_string(),
-                            )
-                            .await;
-                    }
-                    save_button.set_text(&ui, "Saved!");
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                    save_button.set_text(&ui, "Save");
-                }
-            });
-        }
-    });
-    load_defaults_button.on_clicked(ui, {
-        let general_settings = general_settings.c();
-        move |_| {
-            if let Some(_device) = device.get_untracked() {
-                general_settings.load_defaults();
-                nf_settings.load_defaults();
-                wf_settings.load_defaults();
-                pag_settings.load_defaults();
-            }
-        }
-    });
-
-    reload_button.on_clicked(ui, {
-        let general_settings = general_settings.c();
-        move |_| {
-            if let Some(device) = device.get_untracked() {
-                let general_settings = general_settings.c();
-                ui_ctx.spawn(async move {
-                    _ = general_settings.load_from_device(&device, false).await;
-                    _ = nf_settings.load_from_device(&device).await;
-                    _ = wf_settings.load_from_device(&device).await;
-                    _ = pag_settings.load_from_device(&device).await;
-                });
-            }
-        }
-    });
-
-    (
-        config_win,
-        device.read_only(),
-        general_settings.accel_config.read_only(),
-    )
+fn form_row(ui: &mut egui::Ui, label: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+    ui.label(label);
+    ui.horizontal(add_contents);
+    ui.end_row();
 }
 
 #[derive(Clone)]
 struct GeneralSettingsForm {
-    device_uuid: RwSignal<[u8; 6]>,
-    device_pid: RwSignal<u16>,
-    impact_threshold: RwSignal<i32>,
-    suppress_ms: RwSignal<i32>,
-    accel_config: RwSignal<AccelConfig>,
-    gyro_config: RwSignal<GyroConfig>,
-    nf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    wf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
-    mot_runner: Arc<Mutex<MotRunner>>,
+    device_uuid: [u8; 6],
+    device_pid: u16,
+    impact_threshold: i32,
+    suppress_ms: i32,
+    accel_config: AccelConfig,
+    gyro_config: GyroConfig,
+    nf_intrinsics: RosOpenCvIntrinsics<f32>,
+    wf_intrinsics: RosOpenCvIntrinsics<f32>,
+    stereo_iso: nalgebra::Isometry3<f32>,
+}
+
+impl Default for GeneralSettingsForm {
+    fn default() -> Self {
+        Self {
+            device_uuid: [0; 6],
+            device_pid: 0,
+            impact_threshold: 0,
+            suppress_ms: 0,
+            accel_config: AccelConfig::default(),
+            gyro_config: GyroConfig::default(),
+            nf_intrinsics: RosOpenCvIntrinsics::from_params(145., 0., 145., 45., 45.),
+            wf_intrinsics: RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.),
+            stereo_iso: nalgebra::Isometry3::identity(),
+        }
+    }
 }
 
 impl GeneralSettingsForm {
-    fn new(
-        ui: &UI,
-        device: ReadSignal<Option<VmDevice>>,
-        mot_runner: Arc<Mutex<MotRunner>>,
-        win: Window,
-    ) -> (Form, Self) {
-        let device_uuid = create_rw_signal([0; 6]);
-        let device_pid = create_rw_signal(0u16);
-        let connected = move || device.with(Option::is_some);
-        let impact_threshold = create_rw_signal(0);
-        let suppress_ms = create_rw_signal(0);
-        let accel_config = create_rw_signal(AccelConfig::default());
-        let gyro_config = create_rw_signal(GyroConfig::default());
-        let nf_intrinsics =
-            create_rw_signal(RosOpenCvIntrinsics::from_params(145., 0., 145., 45., 45.));
-        let wf_intrinsics =
-            create_rw_signal(RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.));
-        let stereo_iso = create_rw_signal(nalgebra::Isometry3::identity());
-        crate::layout! { &ui,
-            let form = Form(padded: true) {
-                (Compact, "Device UUID") : let x = Label(move || {
-                    if connected() {
-                        let id = device_uuid.get();
-                        format!(
-                            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                            id[0],
-                            id[1],
-                            id[2],
-                            id[3],
-                            id[4],
-                            id[5],
-                        )
-                    } else {
-                        "".into()
-                    }
-                })
-                (Compact, "Impact threshold") : let x = Spinbox(enabled: connected, signal: impact_threshold)
-                (Compact, "Suppress (ms)") : let x = Spinbox(enabled: connected, signal: suppress_ms)
-                (Compact, "Accelerometer Config") : let x = HorizontalBox(padded: true) {
-                    Compact : let upload_accel_config = Button("Upload")
-                    Compact : let download_accel_config = Button("Download")
-                }
-                (Compact, "Gyroscope Config") : let x = HorizontalBox(padded: true) {
-                    Compact : let upload_gyro_config = Button("Upload")
-                    Compact : let download_gyro_config = Button("Download")
-                }
-                (Compact, "Nearfield Calibration") : let x = HorizontalBox(padded: true) {
-                    Compact : let upload_nf_json = Button("Upload")
-                    Compact : let download_nf_json = Button("Download")
-                }
-                (Compact, "Widefield Calibration") : let x = HorizontalBox(padded: true) {
-                    Compact : let upload_wf_json = Button("Upload")
-                    Compact : let download_wf_json = Button("Download")
-                }
-                (Compact, "Stereo Calibration") : let x = HorizontalBox(padded: true) {
-                    Compact : let upload_stereo_json = Button("Upload")
-                    Compact : let download_stereo_json = Button("Download")
-                    Compact : let sync_stereo = Button("Sync")
-                }
-            }
-        }
-        let calibration_signals = CalibrationSignals {
-            nf_intrinsics,
-            wf_intrinsics,
-            stereo_iso,
-        };
-        set_calibration_upload_handlers(
-            ui,
-            &mut upload_nf_json,
-            &mut upload_wf_json,
-            &mut upload_stereo_json,
-            calibration_signals,
-            win.c(),
-        );
-        set_accel_upload_handler(ui, &mut upload_accel_config, accel_config.c(), win.c());
-        set_gyro_upload_handler(ui, &mut upload_gyro_config, gyro_config.c(), win.c());
-        set_calibration_download_handlers(
-            ui,
-            &mut download_nf_json,
-            &mut download_wf_json,
-            &mut download_stereo_json,
-            calibration_signals,
-            win.c(),
-        );
-        set_accel_download_handler(ui, &mut download_accel_config, accel_config.c(), win.c());
-        set_gyro_download_handler(ui, &mut download_gyro_config, gyro_config.c(), win.c());
-
-        sync_stereo.on_clicked(ui, {
-            let stereo_iso = stereo_iso.c();
-            let mot_runner = mot_runner.c();
-            move |_| {
-                let iso = mot_runner.lock().general_config.stereo_iso;
-                stereo_iso.set(iso);
-            }
-        });
-
-        (
-            form,
-            Self {
-                device_uuid,
-                device_pid,
-                impact_threshold,
-                suppress_ms,
-                accel_config,
-                gyro_config,
-                nf_intrinsics,
-                wf_intrinsics,
-                stereo_iso,
-                mot_runner,
-            },
-        )
+    fn product(&self) -> Option<ProductId> {
+        ProductId::from_u16(self.device_pid)
     }
 
-    async fn load_from_device(&self, device: &VmDevice, first_load: bool) -> Result<u16> {
+    /// Draws the General tab. The settings are editable only while `connected`;
+    /// the file transfers work any time.
+    fn ui(&mut self, ui: &mut egui::Ui, connected: bool) -> Option<GeneralAction> {
+        let mut action = None;
+        section(ui, "Device", |ui| {
+            form_grid("general_device").show(ui, |ui| {
+                form_row(ui, "Device UUID", |ui| {
+                    if connected {
+                        let id = self.device_uuid;
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                                id[0], id[1], id[2], id[3], id[4], id[5]
+                            ))
+                            .monospace(),
+                        );
+                    }
+                });
+                form_row(ui, "Impact threshold", |ui| {
+                    ui.add_enabled(
+                        connected,
+                        egui::DragValue::new(&mut self.impact_threshold).range(0..=255),
+                    );
+                });
+                form_row(ui, "Suppress (ms)", |ui| {
+                    ui.add_enabled(
+                        connected,
+                        egui::DragValue::new(&mut self.suppress_ms).range(0..=255),
+                    );
+                });
+            });
+        });
+        ui.add_space(8.0);
+        section(ui, "Sensor configuration", |ui| {
+            form_grid("general_sensor_config").show(ui, |ui| {
+                form_row(ui, "Accelerometer Config", |ui| {
+                    action = transfer_buttons(ui, Document::Accel).or(action.take());
+                });
+                form_row(ui, "Gyroscope Config", |ui| {
+                    action = transfer_buttons(ui, Document::Gyro).or(action.take());
+                });
+            });
+        });
+        ui.add_space(8.0);
+        section(ui, "Calibration", |ui| {
+            form_grid("general_calibration").show(ui, |ui| {
+                form_row(ui, "Nearfield Calibration", |ui| {
+                    action = transfer_buttons(ui, Document::NfCalibration).or(action.take());
+                });
+                form_row(ui, "Widefield Calibration", |ui| {
+                    action = transfer_buttons(ui, Document::WfCalibration).or(action.take());
+                });
+                form_row(ui, "Stereo Calibration", |ui| {
+                    action = transfer_buttons(ui, Document::StereoCalibration).or(action.take());
+                    if ui.button("Sync").clicked() {
+                        action = Some(GeneralAction::SyncStereo);
+                    }
+                });
+            });
+        });
+        action
+    }
+
+    async fn load_from_device(
+        device: &VmDevice,
+        runner: &Mutex<MotRunner>,
+        kind: LoadKind,
+    ) -> Result<Self> {
         let timeout = Duration::from_millis(5000);
 
         // Read all config values at once
@@ -787,48 +1057,49 @@ impl GeneralSettingsForm {
             };
 
         // Extract values from enum variants
-        let odyssey_usb::packets::vm::Props::Uuid(uuid) = uuid_prop else {
+        let Props::Uuid(uuid) = uuid_prop else {
             return Err(anyhow::anyhow!("Unexpected prop variant for Uuid"));
         };
-        let odyssey_usb::packets::vm::Props::ProductId(product_id) = product_id_prop else {
+        let Props::ProductId(product_id) = product_id_prop else {
             return Err(anyhow::anyhow!("Unexpected prop variant for ProductId"));
         };
-        self.impact_threshold
-            .set(i32::from(config.impact_threshold));
-        self.suppress_ms.set(i32::from(config.suppress_ms));
-        self.accel_config.set(config.accel_config);
-        self.gyro_config.set(config.gyro_config);
-        self.nf_intrinsics.set(config.camera_model_nf.clone());
-        self.wf_intrinsics.set(config.camera_model_wf.clone());
-        self.stereo_iso.set(config.stereo_iso);
-        self.device_uuid.set(uuid);
-        self.device_pid.set(product_id);
+        let form = Self {
+            device_uuid: uuid,
+            device_pid: product_id,
+            impact_threshold: i32::from(config.impact_threshold),
+            suppress_ms: i32::from(config.suppress_ms),
+            accel_config: config.accel_config,
+            gyro_config: config.gyro_config,
+            nf_intrinsics: config.camera_model_nf.clone(),
+            wf_intrinsics: config.camera_model_wf.clone(),
+            stereo_iso: config.stereo_iso,
+        };
 
-        if first_load {
-            self.mot_runner.lock().general_config = config;
+        if let LoadKind::Initial = kind {
+            runner.lock().general_config = config;
         }
-        Ok(product_id)
+        Ok(form)
     }
 
     fn validate(&self, errors: &mut Vec<String>) {
-        if !(0..256).contains(&self.impact_threshold.get_untracked()) {
+        if !(0..256).contains(&self.impact_threshold) {
             errors.push("impact threshold: must be between 0 and 255".into());
         }
-        if !(0..256).contains(&self.suppress_ms.get_untracked()) {
+        if !(0..256).contains(&self.suppress_ms) {
             errors.push("suppress (ms): must be between 0 and 255".into());
         }
     }
 
     /// Make sure to call `validate()` before calling this method.
-    async fn apply(&self, device: &VmDevice) -> Result<()> {
-        let config = odyssey_usb::device::GeneralSettings {
-            impact_threshold: self.impact_threshold.get_untracked() as u8,
-            suppress_ms: self.suppress_ms.get_untracked() as u8,
-            accel_config: self.accel_config.get_untracked(),
-            gyro_config: self.gyro_config.get_untracked(),
-            camera_model_nf: self.nf_intrinsics.get_untracked(),
-            camera_model_wf: self.wf_intrinsics.get_untracked(),
-            stereo_iso: self.stereo_iso.get_untracked(),
+    async fn apply(&self, device: &VmDevice, runner: &Mutex<MotRunner>) -> Result<()> {
+        let config = GeneralSettings {
+            impact_threshold: register_value(self.impact_threshold, "impact threshold")?,
+            suppress_ms: register_value(self.suppress_ms, "suppress (ms)")?,
+            accel_config: self.accel_config,
+            gyro_config: self.gyro_config,
+            camera_model_nf: self.nf_intrinsics.clone(),
+            camera_model_wf: self.wf_intrinsics.clone(),
+            stereo_iso: self.stereo_iso,
         };
 
         // Write each config field separately using the new API
@@ -859,7 +1130,7 @@ impl GeneralSettingsForm {
             .await?;
 
         {
-            let general_config = &mut self.mot_runner.lock().general_config;
+            let general_config = &mut runner.lock().general_config;
             general_config.impact_threshold = config.impact_threshold;
             general_config.suppress_ms = config.suppress_ms;
             general_config.accel_config = config.accel_config;
@@ -871,383 +1142,281 @@ impl GeneralSettingsForm {
         Ok(())
     }
 
-    fn clear(&self) {
-        self.accel_config.set(AccelConfig::default());
-        self.gyro_config.set(GyroConfig::default());
+    /// Forgets the previous device: its sensor configs and product, which also
+    /// hides the tabs that only apply to that product.
+    fn clear(&mut self) {
+        self.device_pid = 0;
+        self.accel_config = AccelConfig::default();
+        self.gyro_config = GyroConfig::default();
     }
 
-    fn load_defaults(&self) {
-        self.impact_threshold.set(5);
-        self.suppress_ms.set(100);
-        self.accel_config.set(AccelConfig::default());
-        self.gyro_config.set(GyroConfig::default());
+    fn load_defaults(&mut self) {
+        self.impact_threshold = 5;
+        self.suppress_ms = 100;
+        self.accel_config = AccelConfig::default();
+        self.gyro_config = GyroConfig::default();
 
         // Set intrinsics based on device type
-        match odyssey_usb::device::ProductId::from_u16(self.device_pid.get_untracked()) {
-            Some(odyssey_usb::device::ProductId::AtsPro) => {
+        match self.product() {
+            Some(ProductId::AtsPro) => {
                 // PAG7665QN sensor defaults:
                 // 78° horizontal FOV, 62.7° vertical FOV, 320x240 resolution
                 // With 6-bit fractional: 20480x15360 max coordinate range
                 // fx = (20480/2) / tan(78°/2) ≈ 12645
                 // fy = (15360/2) / tan(62.7°/2) ≈ 12601
                 // cx = 20480/2 = 10240, cy = 15360/2 = 7680
-                self.nf_intrinsics.set(RosOpenCvIntrinsics::from_params(
-                    12645., 0., 12601., 10240., 7680.,
-                ));
-                self.wf_intrinsics
-                    .set(RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.));
+                self.nf_intrinsics =
+                    RosOpenCvIntrinsics::from_params(12645., 0., 12601., 10240., 7680.);
+                self.wf_intrinsics = RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.);
             }
             _ => {
                 // Default NF/WF intrinsics for AtsVm, AtsLite, etc.
-                self.nf_intrinsics
-                    .set(RosOpenCvIntrinsics::from_params(145., 0., 145., 45., 45.));
-                self.wf_intrinsics
-                    .set(RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.));
+                self.nf_intrinsics = RosOpenCvIntrinsics::from_params(145., 0., 145., 45., 45.);
+                self.wf_intrinsics = RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.);
             }
         }
-        self.stereo_iso.set(nalgebra::Isometry3::identity());
+        self.stereo_iso = nalgebra::Isometry3::identity();
     }
 }
 
-/// The calibration signals the upload and download buttons read and write.
-#[derive(Clone, Copy)]
-struct CalibrationSignals {
-    nf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    wf_intrinsics: RwSignal<RosOpenCvIntrinsics<f32>>,
-    stereo_iso: RwSignal<nalgebra::Isometry3<f32>>,
-}
-
-fn set_calibration_upload_handlers(
-    ui: &UI,
-    upload_nf: &mut Button,
-    upload_wf: &mut Button,
-    upload_stereo: &mut Button,
-    signals: CalibrationSignals,
-    win: Window,
-) {
-    let CalibrationSignals {
-        nf_intrinsics,
-        wf_intrinsics,
-        stereo_iso,
-    } = signals;
-    upload_nf.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.open_file(&ui) {
-                let Ok(()) = (|| {
-                    let reader = std::fs::File::open(&path)?;
-                    let intrinsics =
-                        odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(reader)?;
-                    nf_intrinsics.set(intrinsics);
-                    win.modal_msg(
-                        &ui,
-                        "Uploaded calibration",
-                        "Successfully uploaded calibration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(&ui, "Failed to upload calibration", "Failed to read file");
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to upload calibration", "No file selected");
-            }
-        }
-    });
-
-    upload_wf.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.open_file(&ui) {
-                let Ok(()) = (|| {
-                    let reader = std::fs::File::open(&path)?;
-                    let intrinsics =
-                        odyssey_common::get_intrinsics_from_opencv_camera_calibration_json(reader)?;
-                    wf_intrinsics.set(intrinsics);
-                    win.modal_msg(
-                        &ui,
-                        "Uploaded calibration",
-                        "Successfully uploaded calibration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(&ui, "Failed to upload calibration", "Failed to read file");
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to upload calibration", "No file selected");
-            }
-        }
-    });
-
-    upload_stereo.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.open_file(&ui) {
-                let Ok(()) = (|| {
-                    let reader = std::fs::File::open(&path)?;
-                    let iso =
-                        odyssey_common::get_isometry_from_opencv_stereo_calibration_json(reader)?;
-                    stereo_iso.set(iso);
-                    win.modal_msg(
-                        &ui,
-                        "Uploaded calibration",
-                        "Successfully uploaded calibration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(&ui, "Failed to upload calibration", "Failed to read file");
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to upload calibration", "No file selected");
-            }
-        }
+/// A titled group box.
+fn section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(egui::RichText::new(title).strong());
+        ui.add_space(4.0);
+        add_contents(ui);
     });
 }
 
-fn set_calibration_download_handlers(
-    ui: &UI,
-    download_nf: &mut Button,
-    download_wf: &mut Button,
-    download_stereo: &mut Button,
-    signals: CalibrationSignals,
-    win: Window,
-) {
-    let CalibrationSignals {
-        nf_intrinsics,
-        wf_intrinsics,
-        stereo_iso,
-    } = signals;
-    download_nf.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.save_file(&ui) {
-                let Ok(()) = (|| {
-                    let writer = std::fs::File::create(&path)?;
-                    odyssey_common::write_opencv_minimal_camera_calibration_json(
-                        &nf_intrinsics.get(),
-                        writer,
-                    )?;
-                    win.modal_msg(
-                        &ui,
-                        "Downloaded calibration",
-                        "Successfully downloaded calibration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(
-                        &ui,
-                        "Failed to download calibration",
-                        "Failed to write file",
-                    );
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to download calibration", "No file selected");
-            }
-        }
-    });
-
-    download_wf.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.save_file(&ui) {
-                let Ok(()) = (|| {
-                    let writer = std::fs::File::create(&path)?;
-                    odyssey_common::write_opencv_minimal_camera_calibration_json(
-                        &wf_intrinsics.get(),
-                        writer,
-                    )?;
-                    win.modal_msg(
-                        &ui,
-                        "Downloaded calibration",
-                        "Successfully downloaded calibration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(
-                        &ui,
-                        "Failed to download calibration",
-                        "Failed to write file",
-                    );
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to download calibration", "No file selected");
-            }
-        }
-    });
-
-    download_stereo.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.save_file(&ui) {
-                let Ok(()) = (|| {
-                    let writer = std::fs::File::create(&path)?;
-                    odyssey_common::write_opencv_minimal_stereo_calibration_json(
-                        &stereo_iso.get(),
-                        writer,
-                    )?;
-                    win.modal_msg(
-                        &ui,
-                        "Downloaded calibration",
-                        "Successfully downloaded calibration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(
-                        &ui,
-                        "Failed to download calibration",
-                        "Failed to write file",
-                    );
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to download calibration", "No file selected");
-            }
-        }
-    });
+/// "Upload" and "Download" buttons for one document.
+fn transfer_buttons(ui: &mut egui::Ui, document: Document) -> Option<GeneralAction> {
+    let mut action = None;
+    if ui.button("Upload").clicked() {
+        action = Some(GeneralAction::Upload(document));
+    }
+    if ui.button("Download").clicked() {
+        action = Some(GeneralAction::Download(document));
+    }
+    action
 }
 
-fn set_accel_upload_handler(
-    ui: &UI,
-    upload_accel: &mut Button,
-    accel_config_signal: RwSignal<AccelConfig>,
-    win: Window,
-) {
-    upload_accel.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.open_file(&ui) {
-                let Ok(()) = (|| {
-                    let reader = std::fs::File::open(&path)?;
-                    let accel_config: AccelConfig = serde_json::from_reader(reader)?;
-                    accel_config_signal.set(accel_config);
-                    win.modal_msg(
-                        &ui,
-                        "Uploaded configuration",
-                        "Successfully uploaded configuration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(&ui, "Failed to upload configuration", "Failed to read file");
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to upload configuration", "No file selected");
-            }
-        }
-    });
+/// Connects to `target` after releasing `old_device`, and loads its settings.
+async fn connect(
+    old_device: Option<VmDevice>,
+    target: Option<VmConnectionInfo>,
+    runner: &Mutex<MotRunner>,
+) -> Result<(VmDevice, LoadedSettings)> {
+    // Clean up old device if it exists, BEFORE connecting to new one
+    if let Some(old_device) = old_device {
+        tracing::debug!("Cleaning up previous device connection...");
+        let _ = old_device.clear_all_streams().await;
+        tracing::debug!("Previous device cleaned up (slot reservation prevents conflicts)");
+    }
+
+    let Some(target) = target else {
+        return Err(anyhow::anyhow!(
+            "Simulator and M4Hub connections are not supported"
+        ));
+    };
+    tracing::debug!("Attempting to connect to device...");
+    let device = target.connect().await.inspect_err(|e| {
+        tracing::error!("Device connection failed: {e:?}");
+    })?;
+
+    tracing::debug!("Connection successful, disabling any active streams...");
+    // Disable all streams from previous session to prevent flooding
+    if let Err(e) = device.clear_all_streams().await {
+        tracing::warn!("Failed to disable streams: {e:?}");
+    }
+    tracing::debug!("Streams disabled, loading general settings...");
+
+    let settings = load_settings(&device, runner, LoadKind::Initial).await?;
+    tracing::debug!("All settings loaded, setting device...");
+    Ok((device, settings))
 }
 
-fn set_accel_download_handler(
-    ui: &UI,
-    download_accel: &mut Button,
-    accel_config_signal: RwSignal<AccelConfig>,
-    win: Window,
-) {
-    download_accel.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.save_file(&ui) {
-                let Ok(()) = (|| {
-                    let writer = std::fs::File::create(&path)?;
-                    serde_json::to_writer(writer, &accel_config_signal.get())?;
-                    win.modal_msg(
-                        &ui,
-                        "Downloaded configuration",
-                        "Successfully downloaded configuration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(
-                        &ui,
-                        "Failed to download configuration",
-                        "Failed to write file",
-                    );
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to download configuration", "No file selected");
-            }
-        }
-    });
+async fn load_settings(
+    device: &VmDevice,
+    runner: &Mutex<MotRunner>,
+    kind: LoadKind,
+) -> Result<LoadedSettings> {
+    let general = GeneralSettingsForm::load_from_device(device, runner, kind)
+        .await
+        .inspect_err(|e| tracing::error!("Failed to load general settings: {e:?}"))?;
+    tracing::debug!("General settings loaded successfully");
+    let sensors = load_sensor_settings(device, general.device_pid).await?;
+    Ok(LoadedSettings { general, sensors })
 }
 
-fn set_gyro_upload_handler(
-    ui: &UI,
-    upload_gyro: &mut Button,
-    gyro_config_signal: RwSignal<GyroConfig>,
-    win: Window,
-) {
-    upload_gyro.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.open_file(&ui) {
-                let Ok(()) = (|| {
-                    let reader = std::fs::File::open(&path)?;
-                    let gyro_config: GyroConfig = serde_json::from_reader(reader)?;
-                    gyro_config_signal.set(gyro_config);
-                    win.modal_msg(
-                        &ui,
-                        "Uploaded configuration",
-                        "Successfully uploaded configuration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(&ui, "Failed to upload configuration", "Failed to read file");
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to upload configuration", "No file selected");
-            }
-        }
-    });
+/// A mux connection from the previous scan, reused so that it does not
+/// disrupt devices that are connected through it.
+struct ExistingMux {
+    mux: MuxDevice,
+    device_addrs: Vec<[u8; 6]>,
 }
 
-fn set_gyro_download_handler(
-    ui: &UI,
-    download_gyro: &mut Button,
-    gyro_config_signal: RwSignal<GyroConfig>,
-    win: Window,
-) {
-    download_gyro.on_clicked(ui, {
-        let ui = ui.c();
-        let win = win.c();
-        move |_| {
-            if let Some(path) = win.save_file(&ui) {
-                let Ok(()) = (|| {
-                    let writer = std::fs::File::create(&path)?;
-                    serde_json::to_writer(writer, &gyro_config_signal.get())?;
-                    win.modal_msg(
-                        &ui,
-                        "Downloaded configuration",
-                        "Successfully downloaded configuration",
-                    );
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                })() else {
-                    win.modal_err(
-                        &ui,
-                        "Failed to download configuration",
-                        "Failed to write file",
-                    );
-                    return;
-                };
-            } else {
-                win.modal_err(&ui, "Failed to download configuration", "No file selected");
+impl ExistingMux {
+    fn find(connections: &[VmConnectionInfo]) -> Option<Self> {
+        let mut mux = None;
+        let mut device_addrs = Vec::new();
+        for connection in connections {
+            if let VmConnectionInfo::ViaMux {
+                mux: found,
+                device_addr,
+            } = connection
+            {
+                if mux.is_none() {
+                    mux = Some(found.clone());
+                }
+                device_addrs.push(*device_addr);
             }
         }
-    });
+        mux.map(|mux| Self { mux, device_addrs })
+    }
+}
+
+/// Lists the connectable devices: vision modules on USB, and the vision
+/// modules behind every mux.
+async fn scan_devices(existing_mux: Option<ExistingMux>) -> Result<Vec<VmConnectionInfo>> {
+    let usb_devices: Vec<DeviceInfo> = nusb::list_devices()
+        .await?
+        .filter(|info| info.vendor_id() == VENDOR_ID)
+        .collect();
+
+    // Separate direct USB vision modules and mux devices, probing transport mode for vision modules
+    let mut vm_connections: Vec<VmConnectionInfo> = Vec::new();
+    let mut hub_devices: Vec<DeviceInfo> = Vec::new();
+
+    for info in usb_devices {
+        match info.product_id() {
+            0x520F..=0x5211 => match VmDevice::probe_transport_mode(&info).await {
+                Ok(TransportMode::Usb) => {
+                    vm_connections.push(VmConnectionInfo::DirectUsb(info));
+                }
+                Ok(mode) => {
+                    tracing::debug!(
+                        "Skipping {:04x}:{:04x} - transport mode {:?}",
+                        info.vendor_id(),
+                        info.product_id(),
+                        mode
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "Skipping {:04x}:{:04x} - failed to probe mode: {e}",
+                        info.vendor_id(),
+                        info.product_id()
+                    );
+                }
+            },
+            0x5212 => hub_devices.push(info),
+            _ => {}
+        }
+    }
+
+    tracing::debug!(
+        "Found {} USB-mode devices, {} mux devices",
+        vm_connections.len(),
+        hub_devices.len()
+    );
+
+    // No muxes found, just use direct USB connections
+    if hub_devices.is_empty() {
+        return Ok(vm_connections);
+    }
+
+    let mut all_connections = vm_connections;
+    if let Some(existing) = existing_mux {
+        tracing::debug!(
+            "Reusing existing mux connection for refresh (with {} existing mux devices)",
+            existing.device_addrs.len()
+        );
+        scan_existing_mux(existing, &mut all_connections).await;
+    } else {
+        tracing::debug!("No existing mux connection, creating new one");
+        // Query each mux for connected devices
+        for hub_info in hub_devices {
+            scan_new_mux(hub_info, &mut all_connections).await;
+        }
+    }
+    tracing::debug!(
+        "Updating device list with {} total devices",
+        all_connections.len()
+    );
+    Ok(all_connections)
+}
+
+async fn scan_existing_mux(existing: ExistingMux, connections: &mut Vec<VmConnectionInfo>) {
+    let ExistingMux { mux, device_addrs } = existing;
+    tracing::debug!("Querying devices from existing mux...");
+    let device_addrs = match mux.request_devices().await {
+        Ok(devices) => {
+            tracing::debug!("Mux query successful, found {} device(s)", devices.len());
+            devices.into_iter().collect()
+        }
+        Err(e) => {
+            tracing::warn!("Failed to query existing mux: {e}");
+            tracing::debug!(
+                "Preserving {} existing mux devices in the list",
+                device_addrs.len()
+            );
+            device_addrs
+        }
+    };
+    for device_addr in device_addrs {
+        tracing::debug!("  Device: {}", format_device_addr(device_addr));
+        connections.push(VmConnectionInfo::ViaMux {
+            mux: mux.clone(),
+            device_addr,
+        });
+    }
+}
+
+async fn scan_new_mux(hub_info: DeviceInfo, connections: &mut Vec<VmConnectionInfo>) {
+    tracing::debug!("Attempting to connect to mux...");
+    let hub = match MuxDevice::connect_usb(hub_info).await {
+        Ok(hub) => hub,
+        Err(e) => {
+            tracing::warn!("Failed to connect to mux: {e}");
+            return;
+        }
+    };
+    tracing::debug!("Mux connected successfully, requesting devices...");
+    match hub.request_devices().await {
+        Ok(devices) => {
+            tracing::debug!("Mux query successful, found {} device(s)", devices.len());
+            // If no devices, add a placeholder to keep mux alive for next refresh
+            if devices.is_empty() {
+                tracing::debug!(
+                    "No devices found, adding placeholder to keep mux connection alive"
+                );
+                connections.push(VmConnectionInfo::ViaMux {
+                    mux: hub,
+                    device_addr: MUX_PLACEHOLDER_ADDR,
+                });
+            } else {
+                for device_addr in devices {
+                    tracing::debug!("  Device: {}", format_device_addr(device_addr));
+                    connections.push(VmConnectionInfo::ViaMux {
+                        mux: hub.clone(),
+                        device_addr,
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to query mux devices: {e}");
+        }
+    }
+    tracing::debug!("Mux devices added to connection list");
+}
+
+fn format_device_addr(addr: [u8; 6]) -> String {
+    format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
+    )
 }
 
 fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
@@ -1271,15 +1440,7 @@ fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
             out
         }
         VmConnectionInfo::ViaMux { device_addr, .. } => {
-            format!(
-                "VM via Mux ({:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X})",
-                device_addr[0],
-                device_addr[1],
-                device_addr[2],
-                device_addr[3],
-                device_addr[4],
-                device_addr[5]
-            )
+            format!("VM via Mux ({})", format_device_addr(*device_addr))
         }
     }
 }
@@ -1314,7 +1475,7 @@ where
     }
 }
 
-/// Converts a UI spinbox value to the register type it is written as.
+/// Converts a UI field value to the register type it is written as.
 fn register_value<T>(value: i32, name: &str) -> Result<T>
 where
     T: TryFrom<i32>,
@@ -1323,7 +1484,7 @@ where
     T::try_from(value).with_context(|| format!("{name} is out of range"))
 }
 
-/// One line per validation error, for display in a modal.
+/// One line per validation error, for display in the error banner.
 fn validation_message(errors: &[String]) -> String {
     let mut message = String::new();
     for msg in errors {
@@ -1334,42 +1495,42 @@ fn validation_message(errors: &[String]) -> String {
 }
 
 /// Loads the sensor tabs that apply to the connected product.
-async fn load_sensor_settings(
-    device: &VmDevice,
-    product_id: u16,
-    wf_settings: &paj_sensor_settings::PajSensorSettingsForm,
-    nf_settings: &paj_sensor_settings::PajSensorSettingsForm,
-    pag_settings: &pag_sensor_settings::PagSensorSettingsForm,
-) -> Result<()> {
-    match odyssey_usb::device::ProductId::from_u16(product_id) {
-        Some(odyssey_usb::device::ProductId::AtsLite | odyssey_usb::device::ProductId::AtsVm) => {
+async fn load_sensor_settings(device: &VmDevice, product_id: u16) -> Result<SensorSettings> {
+    match ProductId::from_u16(product_id) {
+        Some(ProductId::AtsLite | ProductId::AtsVm) => {
             tracing::debug!("Loading WF settings...");
-            wf_settings
-                .load_from_device(device)
+            let wf = PajSensorSettingsForm::load_from_device(device, Port::Wf)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("Failed to load WF settings: {e:?}");
                 })?;
             tracing::debug!("WF settings loaded, loading NF settings...");
-            nf_settings
-                .load_from_device(device)
+            let nf = PajSensorSettingsForm::load_from_device(device, Port::Nf)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("Failed to load NF settings: {e:?}");
                 })?;
             tracing::debug!("NF settings loaded successfully");
+            Ok(SensorSettings::Vm {
+                wf: Box::new(wf),
+                nf: Box::new(nf),
+            })
         }
-        Some(odyssey_usb::device::ProductId::AtsPro) => {
+        Some(ProductId::AtsPro) => {
             tracing::debug!("Loading PAG settings...");
-            pag_settings
-                .load_from_device(device)
+            let pag = PagSensorSettingsForm::load_from_device(device)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("Failed to load PAG settings: {e:?}");
                 })?;
             tracing::debug!("PAG settings loaded successfully");
+            Ok(SensorSettings::Pro(pag))
         }
-        Some(odyssey_usb::device::ProductId::Mux) | None => {}
+        Some(ProductId::Mux) | None => Ok(SensorSettings::Unsupported),
     }
-    Ok(())
+}
+
+/// `anyhow` cannot wrap the `Box<dyn Error>` the calibration file helpers return.
+fn boxed_error(error: Box<dyn std::error::Error>) -> anyhow::Error {
+    anyhow::anyhow!("{error}")
 }

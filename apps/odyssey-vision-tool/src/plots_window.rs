@@ -1,33 +1,252 @@
-use std::cell::Cell;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 use std::ops::Range;
-use std::rc::Rc;
 use std::sync::{MutexGuard, PoisonError};
 use std::time::Instant;
 
-use iui::UI;
-use iui::controls::{Area, AreaDrawParams, AreaHandler, AreaKeyEvent, Window, WindowType};
-use iui::draw::plotters::PlottersBackend;
+use eframe::egui::{Color32, Frame, Key, Rect, RichText, ScrollArea, Sense, Ui, UiBuilder, vec2};
+use egui_plot::{Corner, Legend, Line, Plot, PlotPoint};
 use nalgebra::Vector3;
 use odyssey_cv::telemetry::Series;
-use plotters::backend::DrawingBackend;
-use plotters::chart::{ChartBuilder, LabelAreaPosition};
-use plotters::coord::Shift;
-use plotters::drawing::{DrawingArea, DrawingAreaErrorKind, IntoDrawingArea as _};
-use plotters::series::LineSeries;
-use plotters::style::{BLUE, GREEN, RED, WHITE};
 
-use crate::CloneButShorter as _;
+/// Number of chart rows the plots window is divided into.
+const PLOT_ROWS: usize = 6;
 
-/// Result of drawing one chart onto a plotters backend.
-type PlotResult<DB> = Result<(), DrawingAreaErrorKind<<DB as DrawingBackend>::ErrorType>>;
+/// Number of chart columns the plots window is divided into.
+const PLOT_COLUMNS: usize = 2;
 
-/// Number of chart rows and columns the plots window is divided into.
-const PLOT_GRID: (usize, usize) = (6, 2);
+/// Charts are never squeezed below this height; the window scrolls instead.
+const MIN_CELL_HEIGHT: f32 = 150.0;
 
-/// Interval between plot redraws, in milliseconds (about 60 Hz).
-const REDRAW_INTERVAL_MS: i32 = 16;
+/// Width of the y axis label area, so plots in a column line up.
+const Y_AXIS_MIN_WIDTH: f32 = 34.0;
+
+/// Fraction of the y range left empty above and below the data.
+const Y_MARGIN_FRACTION: f32 = 0.05;
+
+/// Line width of every trace, in points.
+const TRACE_WIDTH: f32 = 1.5;
+
+/// Lighter than the pure primaries so they stay readable on the dark theme.
+const RED: Color32 = Color32::from_rgb(235, 87, 87);
+const GREEN: Color32 = Color32::from_rgb(87, 200, 110);
+const BLUE: Color32 = Color32::from_rgb(92, 150, 255);
+
+/// One plotted line: its legend name and color.
+#[derive(Debug)]
+struct Trace {
+    name: &'static str,
+    color: Color32,
+}
+
+const XYZ: &[Trace] = &[
+    Trace {
+        name: "x",
+        color: RED,
+    },
+    Trace {
+        name: "y",
+        color: GREEN,
+    },
+    Trace {
+        name: "z",
+        color: BLUE,
+    },
+];
+
+const COUNT: &[Trace] = &[Trace {
+    name: "count",
+    color: RED,
+}];
+
+/// The points of every trace of one chart. Scalar charts only fill the first.
+type Traces = [Vec<PlotPoint>; 3];
+
+/// A chart: what to plot, and how to read it from the telemetry.
+#[derive(Debug)]
+struct Chart {
+    title: &'static str,
+    /// The y axis always shows at least this range, and grows to fit the data.
+    y_range: Range<f64>,
+    traces: &'static [Trace],
+    /// Replaces the points in `out` with the current samples and returns the
+    /// number of samples the series keeps, which is the width of the x axis.
+    fill: fn(out: &mut Traces) -> usize,
+}
+
+const GYRO: Chart = Chart {
+    title: "IMU Angular Velocity",
+    y_range: -0.03..0.03,
+    traces: XYZ,
+    fill: |out| {
+        let series = odyssey_cv::telemetry::imu_data();
+        fill_vec3(series, out, |sample| sample.1.cast())
+    },
+};
+
+const ACCEL: Chart = Chart {
+    title: "IMU Acceleration",
+    y_range: -10.0..10.0,
+    traces: XYZ,
+    fill: |out| {
+        let series = odyssey_cv::telemetry::imu_data();
+        fill_vec3(series, out, |sample| sample.0.cast())
+    },
+};
+
+#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
+const PNP_POSITION: Chart = Chart {
+    title: "PnP Position",
+    y_range: -5.0..1.0,
+    traces: XYZ,
+    fill: |out| {
+        let series = odyssey_cv::telemetry::pnp_solutions();
+        fill_vec3(series, out, |pose| {
+            pose.inverse_transform_point(&[0., 0., 0.].into())
+                .coords
+                .cast()
+        })
+    },
+};
+
+#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
+const PNP_ORIENTATION: Chart = Chart {
+    title: "PnP Orientation",
+    y_range: -3.15..3.15,
+    traces: XYZ,
+    fill: |out| {
+        let series = odyssey_cv::telemetry::pnp_solutions();
+        fill_vec3(series, out, |pose| {
+            let (x, y, z) = pose.rotation.inverse().euler_angles();
+            Vector3::new(x, y, z).cast()
+        })
+    },
+};
+
+#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
+const ROT_BIAS: Chart = Chart {
+    title: "ESKF Rot. Bias",
+    y_range: -1.0..1.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_rot_bias(), out),
+};
+
+const ACCEL_BIAS: Chart = Chart {
+    title: "ESKF Accel. Bias",
+    y_range: -5.0..5.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_accel_bias(), out),
+};
+
+#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
+const GRAVITY: Chart = Chart {
+    title: "ESKF Gravity",
+    y_range: -10.0..10.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_gravity(), out),
+};
+
+const LOCAL_GRAVITY: Chart = Chart {
+    title: "ESKF Local Gravity",
+    y_range: -10.0..10.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_local_gravity(), out),
+};
+
+const APPARENT_ACCEL: Chart = Chart {
+    title: "ESKF Apparent Accel.",
+    y_range: -10.0..10.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_apparent_accel(), out),
+};
+
+const VELOCITY: Chart = Chart {
+    title: "ESKF Velocity",
+    y_range: -1.0..1.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_velocity(), out),
+};
+
+const ACCEL_BIAS_UNCERTAINTY: Chart = Chart {
+    title: "ESKF Accel. Bias Uncertainty",
+    y_range: 0.0..1.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_accel_bias_uncertainty(), out),
+};
+
+#[expect(dead_code, reason = "alternative chart; add it to `CHARTS` to show it")]
+const ROT_BIAS_UNCERTAINTY: Chart = Chart {
+    title: "ESKF Rot. Bias Uncertainty",
+    y_range: 0.0..1.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_rot_bias_uncertainty(), out),
+};
+
+const VELOCITY_UNCERTAINTY: Chart = Chart {
+    title: "ESKF Velocity Uncertainty",
+    y_range: 0.0..1.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_velocity_uncertainty(), out),
+};
+
+const ORIENTATION_UNCERTAINTY: Chart = Chart {
+    title: "ESKF Orientation Uncertainty",
+    y_range: 0.0..10.0,
+    traces: XYZ,
+    fill: |out| {
+        let series = odyssey_cv::telemetry::eskf_orientation_uncertainty();
+        // The telemetry is in radians; the chart is in degrees.
+        fill_vec3(series, out, |sample| sample.cast() * 180.0 / PI)
+    },
+};
+
+const ESKF_MISMATCH: Chart = Chart {
+    title: "ESKF/P3P Mismatch Count",
+    y_range: 0.0..10.0,
+    traces: COUNT,
+    fill: |out| {
+        let series = odyssey_cv::telemetry::eskf_mismatch_count();
+        let values = locked_values(series);
+        out[0].clear();
+        out[0].extend(
+            values
+                .iter()
+                .enumerate()
+                .map(|(i, sample)| PlotPoint::new(index_to_x(i), f64::from(sample.1))),
+        );
+        series.size
+    },
+};
+
+const POSITION_UNCERTAINTY: Chart = Chart {
+    title: "ESKF Position Uncertainty",
+    y_range: 0.0..1.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_position_uncertainty(), out),
+};
+
+const POSITION: Chart = Chart {
+    title: "ESKF Position",
+    y_range: 0.0..5.0,
+    traces: XYZ,
+    fill: |out| fill_vec3_f32(odyssey_cv::telemetry::eskf_position(), out),
+};
+
+/// The charts shown, row by row. Its length is the grid size.
+const CHARTS: [&Chart; PLOT_ROWS * PLOT_COLUMNS] = [
+    &GYRO,
+    &ACCEL,
+    &ESKF_MISMATCH,
+    &APPARENT_ACCEL,
+    &ACCEL_BIAS,
+    &LOCAL_GRAVITY,
+    &VELOCITY_UNCERTAINTY,
+    &VELOCITY,
+    &POSITION_UNCERTAINTY,
+    &POSITION,
+    &ACCEL_BIAS_UNCERTAINTY,
+    &ORIENTATION_UNCERTAINTY,
+];
 
 /// The samples of a telemetry series. A poisoned lock only means another
 /// thread panicked mid-update; the plots can still show what is there.
@@ -35,407 +254,165 @@ fn locked_values<T>(series: &Series<T>) -> MutexGuard<'_, VecDeque<(Instant, T)>
     series.values.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-pub fn plots_window(ui: &UI) -> Window {
-    let mut window = Window::new(ui, "le plot", 640, 480, WindowType::NoMenubar);
-    let paused = Rc::new(Cell::new(false));
-    crate::layout! { ui,
-        let vbox = VerticalBox(padded: false) {
-            Stretchy : let area = Area(Box::new(MainCanvas {
-                paused: paused.c(),
-            }))
+/// The x coordinate of the `index`th sample: the x axis counts samples.
+const fn index_to_x(index: usize) -> f64 {
+    index as f64
+}
+
+/// Replaces the points in `out` with `series` mapped through `to_vec3`.
+/// Returns the number of samples the series keeps.
+fn fill_vec3<T>(
+    series: &Series<T>,
+    out: &mut Traces,
+    to_vec3: impl Fn(&T) -> Vector3<f64>,
+) -> usize {
+    let [xs, ys, zs] = out;
+    xs.clear();
+    ys.clear();
+    zs.clear();
+    for (i, sample) in locked_values(series).iter().enumerate() {
+        let x = index_to_x(i);
+        let v = to_vec3(&sample.1);
+        xs.push(PlotPoint::new(x, v.x));
+        ys.push(PlotPoint::new(x, v.y));
+        zs.push(PlotPoint::new(x, v.z));
+    }
+    series.size
+}
+
+fn fill_vec3_f32(series: &Series<Vector3<f32>>, out: &mut Traces) -> usize {
+    fill_vec3(series, out, |sample| sample.cast())
+}
+
+/// A chart and the points it currently shows.
+#[derive(Debug)]
+struct ChartData {
+    chart: &'static Chart,
+    points: Traces,
+    sample_count: usize,
+}
+
+impl ChartData {
+    fn new(chart: &'static Chart) -> Self {
+        Self {
+            chart,
+            points: Traces::default(),
+            sample_count: 0,
         }
     }
-    window.set_child(ui, vbox);
 
-    window.on_closing(ui, {
-        let ui = ui.c();
-        move |win| {
-            win.hide(&ui);
+    fn refresh(&mut self) {
+        self.sample_count = (self.chart.fill)(&mut self.points);
+    }
+
+    /// Draws the title and the plot, filling the space available in `ui`.
+    fn show(&self, ui: &mut Ui) {
+        let chart = self.chart;
+        ui.label(RichText::new(chart.title).strong());
+
+        let mut plot = Plot::new(chart.title)
+            // Static view: the x axis always spans the whole history and the
+            // y axis always fits the data, so there is nothing to pan or zoom.
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .allow_boxed_zoom(false)
+            .allow_double_click_reset(false)
+            .set_margin_fraction(vec2(0.0, Y_MARGIN_FRACTION))
+            .include_x(0.0)
+            .include_x(index_to_x(self.sample_count))
+            .include_y(chart.y_range.start)
+            .include_y(chart.y_range.end)
+            .show_grid([false, true])
+            .y_axis_min_width(Y_AXIS_MIN_WIDTH);
+        if chart.traces.len() > 1 {
+            plot = plot.legend(
+                Legend::default()
+                    .position(Corner::RightTop)
+                    .background_alpha(0.5),
+            );
         }
-    });
-
-    ui.ui_timer(REDRAW_INTERVAL_MS, {
-        let window = window.c();
-        let ui = ui.c();
-        let area = area.c();
-        let paused = paused.c();
-        move || {
-            if !paused.get() && window.visible(&ui) {
-                area.queue_redraw_all(&ui);
+        plot.show(ui, |plot_ui| {
+            for (trace, points) in chart.traces.iter().zip(&self.points) {
+                plot_ui.line(
+                    Line::new(trace.name, points.as_slice())
+                        .color(trace.color)
+                        .width(TRACE_WIDTH),
+                );
             }
-            true
-        }
-    });
-    window.visible(ui);
-    window
-}
-
-struct MainCanvas {
-    paused: Rc<Cell<bool>>,
-}
-
-impl MainCanvas {
-    fn draw_charts<DB: DrawingBackend>(root: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-        root.fill(&WHITE)?;
-        let subplots = root.split_evenly(PLOT_GRID);
-
-        gyro_chart(&subplots[0])?;
-        accel_chart(&subplots[1])?;
-        eskf_mismatch_chart(&subplots[2])?;
-        apparent_accel_chart(&subplots[3])?;
-        accel_bias_chart(&subplots[4])?;
-        local_gravity_chart(&subplots[5])?;
-        velocity_uncertainty_chart(&subplots[6])?;
-        velocity_chart(&subplots[7])?;
-        // pnp_position_chart(&subplots[8])?;
-        // pnp_orientation_chart(&subplots[9])?;
-        position_uncertainty_chart(&subplots[8])?;
-        position_chart(&subplots[9])?;
-        accel_bias_uncertainty_chart(&subplots[10])?;
-        orientation_uncertainty_chart(&subplots[11])
+        });
     }
 }
 
-impl AreaHandler for MainCanvas {
-    fn draw(&mut self, _area: &Area, draw_params: &AreaDrawParams) {
-        let root = PlottersBackend::new(
-            draw_params,
-            (
-                draw_params.area_width as u32,
-                draw_params.area_height as u32,
-            ),
-        )
-        .into_drawing_area();
-        // A failed redraw is not worth taking the UI down; the next timer tick retries.
-        if let Err(e) = Self::draw_charts(&root) {
-            tracing::warn!("Failed to draw plots: {e}");
-        }
-    }
+/// The "le plot" window contents: telemetry charts in a grid that fills the
+/// window. Space pauses and resumes them.
+#[derive(Debug)]
+pub struct PlotsWindow {
+    /// While set, the charts keep showing the data they had when paused.
+    paused: bool,
+    charts: Vec<ChartData>,
+}
 
-    fn key_event(&mut self, _area: &Area, area_key_event: &AreaKeyEvent) -> bool {
-        if area_key_event.up && area_key_event.key == b' ' {
-            self.paused.set(!self.paused.get());
-        }
-        true
+impl Default for PlotsWindow {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-fn gyro_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    let series = odyssey_cv::telemetry::imu_data();
-    vec3_f64_chart(
-        area,
-        "IMU Angular Velocity",
-        locked_values(series).iter().map(|p| p.1.1.cast()),
-        series.size,
-        -0.03..0.03,
-    )
-}
+impl PlotsWindow {
+    pub fn new() -> Self {
+        Self {
+            paused: false,
+            charts: CHARTS.iter().copied().map(ChartData::new).collect(),
+        }
+    }
 
-fn accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    let series = odyssey_cv::telemetry::imu_data();
-    vec3_f64_chart(
-        area,
-        "IMU Acceleration",
-        locked_values(series).iter().map(|p| p.1.0.cast()),
-        series.size,
-        -10.0..10.0,
-    )
-}
+    pub fn show(&mut self, ui: &mut Ui) {
+        if ui.input(|i| i.key_released(Key::Space)) {
+            self.paused = !self.paused;
+        }
+        if !self.paused {
+            for chart in &mut self.charts {
+                chart.refresh();
+            }
+        }
 
-#[expect(
-    dead_code,
-    reason = "alternative chart; add it to `MainCanvas::draw_charts` to show it"
-)]
-fn pnp_position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    let series = odyssey_cv::telemetry::pnp_solutions();
-    vec3_f64_chart(
-        area,
-        "PnP Position",
-        locked_values(series).iter().map(|p| {
-            p.1.inverse_transform_point(&[0., 0., 0.].into())
-                .coords
-                .cast()
-        }),
-        series.size,
-        -5.0..1.0,
-    )
-}
+        ui.horizontal(|ui| {
+            ui.weak("Space pauses and resumes the plots");
+            if self.paused {
+                ui.colored_label(Color32::ORANGE, "Paused");
+            }
+        });
 
-#[expect(
-    dead_code,
-    reason = "alternative chart; add it to `MainCanvas::draw_charts` to show it"
-)]
-fn pnp_orientation_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    let series = odyssey_cv::telemetry::pnp_solutions();
-    vec3_f64_chart(
-        area,
-        "PnP Orientation",
-        locked_values(series).iter().map(|p| {
-            let (x, y, z) = p.1.rotation.inverse().euler_angles();
-            Vector3::new(x, y, z).cast()
-        }),
-        series.size,
-        -3.15..3.15,
-    )
-}
+        ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| self.show_grid(ui));
+    }
 
-#[expect(
-    dead_code,
-    reason = "alternative chart; add it to `MainCanvas::draw_charts` to show it"
-)]
-fn rot_bias_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Rot. Bias",
-        odyssey_cv::telemetry::eskf_rot_bias(),
-        -1.0..1.0,
-    )
-}
+    /// Lays the charts out in equally sized cells that fill the available space.
+    fn show_grid(&self, ui: &mut Ui) {
+        let spacing = ui.spacing().item_spacing;
+        let available = ui.available_size();
+        let cell = vec2(
+            (available.x - spacing.x * (PLOT_COLUMNS - 1) as f32) / PLOT_COLUMNS as f32,
+            ((available.y - spacing.y * (PLOT_ROWS - 1) as f32) / PLOT_ROWS as f32)
+                .max(MIN_CELL_HEIGHT),
+        );
+        let grid_size = vec2(
+            available.x,
+            (cell.y + spacing.y) * PLOT_ROWS as f32 - spacing.y,
+        );
+        let (grid_rect, _) = ui.allocate_exact_size(grid_size, Sense::hover());
 
-fn accel_bias_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Accel. Bias",
-        odyssey_cv::telemetry::eskf_accel_bias(),
-        -5.0..5.0,
-    )
-}
-
-#[expect(
-    dead_code,
-    reason = "alternative chart; add it to `MainCanvas::draw_charts` to show it"
-)]
-fn gravity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Gravity",
-        odyssey_cv::telemetry::eskf_gravity(),
-        -10.0..10.0,
-    )
-}
-
-fn local_gravity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Local Gravity",
-        odyssey_cv::telemetry::eskf_local_gravity(),
-        -10.0..10.0,
-    )
-}
-
-fn apparent_accel_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Apparent Accel.",
-        odyssey_cv::telemetry::eskf_apparent_accel(),
-        -10.0..10.0,
-    )
-}
-
-fn velocity_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Velocity",
-        odyssey_cv::telemetry::eskf_velocity(),
-        -1.0..1.0,
-    )
-}
-
-fn accel_bias_uncertainty_chart<DB: DrawingBackend>(
-    area: &DrawingArea<DB, Shift>,
-) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Accel. Bias Uncertainty",
-        odyssey_cv::telemetry::eskf_accel_bias_uncertainty(),
-        0.0..1.0,
-    )
-}
-
-#[expect(
-    dead_code,
-    reason = "alternative chart; add it to `MainCanvas::draw_charts` to show it"
-)]
-fn rot_bias_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Rot. Bias Uncertainty",
-        odyssey_cv::telemetry::eskf_rot_bias_uncertainty(),
-        0.0..1.0,
-    )
-}
-
-fn velocity_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Velocity Uncertainty",
-        odyssey_cv::telemetry::eskf_velocity_uncertainty(),
-        0.0..1.0,
-    )
-}
-
-fn orientation_uncertainty_chart<DB: DrawingBackend>(
-    area: &DrawingArea<DB, Shift>,
-) -> PlotResult<DB> {
-    let series = odyssey_cv::telemetry::eskf_orientation_uncertainty();
-    vec3_f64_chart(
-        area,
-        "ESKF Orientation Uncertainty",
-        locked_values(series)
-            .iter()
-            .map(|p| p.1.cast() * 180.0 / PI),
-        series.size,
-        0.0..10.0,
-    )
-}
-
-fn eskf_mismatch_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    let series = odyssey_cv::telemetry::eskf_mismatch_count();
-    scalar_f64_chart(
-        area,
-        "ESKF/P3P Mismatch Count",
-        locked_values(series).iter().map(|p| f64::from(p.1)),
-        series.size,
-        0.0..10.0,
-    )
-}
-
-fn position_uncertainty_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Position Uncertainty",
-        odyssey_cv::telemetry::eskf_position_uncertainty(),
-        0.0..1.0,
-    )
-}
-
-fn position_chart<DB: DrawingBackend>(area: &DrawingArea<DB, Shift>) -> PlotResult<DB> {
-    vec3_f32_chart(
-        area,
-        "ESKF Position",
-        odyssey_cv::telemetry::eskf_position(),
-        0.0..5.0,
-    )
-}
-
-fn vec3_f32_chart<DB: DrawingBackend>(
-    area: &DrawingArea<DB, Shift>,
-    caption: &str,
-    series: &Series<Vector3<f32>>,
-    default_range: Range<f32>,
-) -> PlotResult<DB> {
-    let data = locked_values(series);
-    let min = data
-        .iter()
-        .flat_map(|p| p.1.as_slice())
-        .copied()
-        .min_by(f32::total_cmp)
-        .unwrap_or(default_range.start)
-        .min(default_range.start);
-    let max = data
-        .iter()
-        .flat_map(|p| p.1.as_slice())
-        .copied()
-        .max_by(f32::total_cmp)
-        .unwrap_or(default_range.end)
-        .max(default_range.end);
-
-    let mut chart = ChartBuilder::on(area)
-        .caption(caption, ("sans-serif", 12))
-        .margin(20)
-        // .set_left_and_bottom_label_area_size(30)
-        .set_label_area_size(LabelAreaPosition::Left, 30)
-        .build_cartesian_2d(0..series.size, min..max)?;
-    chart
-        .configure_mesh()
-        .disable_x_mesh()
-        .max_light_lines(1)
-        .draw()?;
-
-    let x = data.iter().map(|p| p.1.x).enumerate();
-    let y = data.iter().map(|p| p.1.y).enumerate();
-    let z = data.iter().map(|p| p.1.z).enumerate();
-    chart.draw_series(LineSeries::new(x, &RED))?;
-    chart.draw_series(LineSeries::new(y, &GREEN))?;
-    chart.draw_series(LineSeries::new(z, &BLUE))?;
-    Ok(())
-}
-
-fn vec3_f64_chart<DB: DrawingBackend>(
-    area: &DrawingArea<DB, Shift>,
-    caption: &str,
-    data: impl IntoIterator<Item = Vector3<f64>> + Clone,
-    series_size: usize,
-    default_range: Range<f64>,
-) -> PlotResult<DB> {
-    let min = data
-        .clone()
-        .into_iter()
-        .flat_map(|p| [p.x, p.y, p.z])
-        .min_by(f64::total_cmp)
-        .unwrap_or(default_range.start)
-        .min(default_range.start);
-    let max = data
-        .clone()
-        .into_iter()
-        .flat_map(|p| [p.x, p.y, p.z])
-        .max_by(f64::total_cmp)
-        .unwrap_or(default_range.end)
-        .max(default_range.end);
-
-    let mut chart = ChartBuilder::on(area)
-        .caption(caption, ("sans-serif", 12))
-        .margin(20)
-        // .set_left_and_bottom_label_area_size(30)
-        .set_label_area_size(LabelAreaPosition::Left, 30)
-        .build_cartesian_2d(0..series_size, min..max)?;
-    chart
-        .configure_mesh()
-        .disable_x_mesh()
-        .max_light_lines(1)
-        .draw()?;
-
-    let x = data.clone().into_iter().map(|p| p.x).enumerate();
-    let y = data.clone().into_iter().map(|p| p.y).enumerate();
-    let z = data.clone().into_iter().map(|p| p.z).enumerate();
-    chart.draw_series(LineSeries::new(x, &RED))?;
-    chart.draw_series(LineSeries::new(y, &GREEN))?;
-    chart.draw_series(LineSeries::new(z, &BLUE))?;
-    Ok(())
-}
-
-fn scalar_f64_chart<DB: DrawingBackend>(
-    area: &DrawingArea<DB, Shift>,
-    caption: &str,
-    data: impl IntoIterator<Item = f64> + Clone,
-    series_size: usize,
-    default_range: Range<f64>,
-) -> PlotResult<DB> {
-    let min = data
-        .clone()
-        .into_iter()
-        .min_by(f64::total_cmp)
-        .unwrap_or(default_range.start)
-        .min(default_range.start);
-    let max = data
-        .clone()
-        .into_iter()
-        .max_by(f64::total_cmp)
-        .unwrap_or(default_range.end)
-        .max(default_range.end);
-
-    let mut chart = ChartBuilder::on(area)
-        .caption(caption, ("sans-serif", 12))
-        .margin(20)
-        // .set_left_and_bottom_label_area_size(30)
-        .set_label_area_size(LabelAreaPosition::Left, 30)
-        .build_cartesian_2d(0..series_size, min..max)?;
-    chart
-        .configure_mesh()
-        .disable_x_mesh()
-        .max_light_lines(1)
-        .draw()?;
-
-    chart.draw_series(LineSeries::new(data.into_iter().enumerate(), &RED))?;
-    Ok(())
+        for (index, chart) in self.charts.iter().enumerate() {
+            let offset = vec2(
+                (index % PLOT_COLUMNS) as f32 * (cell.x + spacing.x),
+                (index / PLOT_COLUMNS) as f32 * (cell.y + spacing.y),
+            );
+            let cell_rect = Rect::from_min_size(grid_rect.min + offset, cell);
+            ui.scope_builder(UiBuilder::new().max_rect(cell_rect), |ui| {
+                Frame::group(ui.style()).show(ui, |ui| chart.show(ui));
+            });
+        }
+    }
 }

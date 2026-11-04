@@ -3,8 +3,6 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use ahrs::Ahrs as _;
 use arrayvec::ArrayVec;
-use iui::concurrent::Context;
-use leptos_reactive::RwSignal;
 use nalgebra::{Isometry3, Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
 use odyssey_protocol::PocMarkersReport;
@@ -14,7 +12,7 @@ use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
 use tokio_stream::StreamExt as _;
 
-use crate::{CloneButShorter as _, Marker, TestFrame};
+use crate::{Marker, TestFrame};
 
 /// Most markers either sensor reports in one frame.
 const MAX_MARKERS: usize = 16;
@@ -30,8 +28,6 @@ pub struct MotRunner {
     pub record_packets: bool,
     pub datapoints: Arc<Mutex<Vec<TestFrame>>>,
     pub packets: Arc<Mutex<Vec<(u128, PacketData)>>>,
-    pub ui_update: RwSignal<()>,
-    pub ui_ctx: Context,
     pub wfnf_realign: bool,
     pub screen_calibrations: ArrayVec<
         (u8, odyssey_common::ScreenCalibration<f32>),
@@ -62,7 +58,7 @@ impl MotRunner {
 
 /// The device currently selected in the UI, if any.
 fn current_device(runner: &Mutex<MotRunner>) -> Option<VmDevice> {
-    runner.lock().device.c()
+    runner.lock().device.clone()
 }
 
 pub async fn run(runner: Arc<Mutex<MotRunner>>) {
@@ -442,12 +438,6 @@ async fn impact_loop(runner: Arc<Mutex<MotRunner>>) {
             }
 
             runner.datapoints.lock().push(frame);
-
-            let ui_update = runner.ui_update.c();
-
-            runner.ui_ctx.queue_main(move || {
-                leptos_reactive::SignalSet::set(&ui_update, ());
-            });
         }
         if runner.record_packets {
             runner.push_recorded_packet(PacketData::ImpactReport(impact));

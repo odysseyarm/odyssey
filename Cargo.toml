@@ -17,8 +17,6 @@ members = [
     "crates/odyssey-protocol",
     "crates/odyssey-protocol-macros",
     "crates/odyssey-usb",
-    "third_party/libui-rs/iui",
-    "third_party/libui-rs/ui-sys",
     "tools/cargo-bin",
 ]
 
