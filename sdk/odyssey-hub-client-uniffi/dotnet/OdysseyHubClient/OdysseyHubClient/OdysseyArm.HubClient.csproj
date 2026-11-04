@@ -17,7 +17,7 @@
          odyssey-hub-client-uniffi-v* tag via -p:Version. Keep the prefix in
          sync with odyssey_hub_client_uniffi/Cargo.toml. -->
     <PropertyGroup>
-        <VersionPrefix>0.2.1</VersionPrefix>
+        <VersionPrefix>0.2.3</VersionPrefix>
         <VersionSuffix>dev</VersionSuffix>
     </PropertyGroup>
 
