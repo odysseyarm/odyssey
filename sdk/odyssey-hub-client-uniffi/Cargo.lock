@@ -1289,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-hub-client-uniffi"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "futures",
  "nalgebra",
