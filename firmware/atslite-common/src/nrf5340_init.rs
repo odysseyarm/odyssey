@@ -86,6 +86,8 @@ unsafe fn configure_spu_for_network_core() {
 }
 
 pub fn init() -> (cortex_m::Peripherals, Peripherals) {
+    crate::crash_record::report_previous_boot();
+
     let mut config = Config::default();
 
     config.dcdc.regh = true;

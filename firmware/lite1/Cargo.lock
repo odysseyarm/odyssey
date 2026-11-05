@@ -120,6 +120,7 @@ dependencies = [
  "bytemuck",
  "cfg-noodle",
  "cortex-m",
+ "cortex-m-rt",
  "defmt 1.0.1",
  "donger-common",
  "embassy-embedded-hal",

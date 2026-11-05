@@ -100,6 +100,13 @@ static RAM in `__pre_init` (`atslite-common/src/nrf5340_init.rs`). A stack
 overflow raises a UsageFault at the instruction that crosses the limit, which
 probe-rs reports as a HardFault with `CFSR.STKOF` set, instead of corrupting statics.
 
+Without a probe, a panic or hard fault resets the device immediately instead of
+waiting for the 60 s watchdog. The handlers in `atslite-common/src/crash_record.rs`
+keep a record in `.uninit` RAM across that reset, and the next boot logs
+`previous boot crashed: <Panic|Fault> pc=… lr=… cfsr=…`. Panics record no
+location (lite1 lacks the flash for it). With probe-rs attached, its default
+hard-fault catch halts first, so the backtrace and panic message are still shown.
+
 The calibration library requires native OpenCV. The Nix development shell supplies
 OpenCV and clang include paths; Windows ChArUco detection uses
 [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe).

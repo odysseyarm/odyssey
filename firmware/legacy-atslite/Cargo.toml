@@ -28,7 +28,6 @@ cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
 defmt-rtt = "1.0.0"
-panic-probe = "1.0.0"
 static_cell = "2.1.1"
 bytemuck = "1.24.0"
 nalgebra = { version = "0.35", default-features = false, features = ["libm"] }

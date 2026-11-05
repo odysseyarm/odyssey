@@ -6,6 +6,7 @@
 #![no_std]
 
 pub mod ble;
+pub mod crash_record;
 pub mod device_control;
 pub mod device_control_task;
 pub mod nrf5340_init;

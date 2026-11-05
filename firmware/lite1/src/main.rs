@@ -33,7 +33,6 @@ use lite1::{
 use npm1300_rs::NPM1300;
 use odyssey_protocol::control::device::TransportMode;
 use pag7665qn::{Pag7665Qn, mode};
-use panic_probe as _;
 use static_cell::StaticCell;
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";

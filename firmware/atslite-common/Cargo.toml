@@ -11,6 +11,7 @@ atslite-transport = { path = "../atslite-transport" }
 # Core
 defmt = "1.0.1"
 cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
 static_cell = "2.1.1"
 bytemuck = "1.24.0"
 backon = { version = "1.6", default-features = false, features = ["embassy-sleep"] }

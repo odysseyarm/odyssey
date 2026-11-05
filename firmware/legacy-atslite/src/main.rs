@@ -30,7 +30,6 @@ use legacy_common::object_mode::{ObjectModeContext, object_mode};
 use legacy_common::odyssey_protocol::control::device::TransportMode;
 use legacy_common::{Paj, settings, usb};
 use npm1300_rs::{self, NPM1300};
-use panic_probe as _;
 use static_cell::StaticCell;
 
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
