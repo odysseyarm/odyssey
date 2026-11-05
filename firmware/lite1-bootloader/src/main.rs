@@ -45,7 +45,7 @@ const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F
 /// host replaces a bootloader only when the published counter is higher.
 macro_rules! release {
     () => {
-        4
+        5
     };
 }
 

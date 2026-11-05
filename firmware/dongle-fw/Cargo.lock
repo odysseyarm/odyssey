@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "dongle-fw"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "backon",
  "bt-hci",

@@ -39,7 +39,7 @@ use crate::icmsg_config::ALIGN;
 /// `cargo xtask firmware release-counter`, which ignores layout. 0 is reserved for "unknown" on the host side.
 macro_rules! release {
     () => {
-        1
+        2
     };
 }
 
