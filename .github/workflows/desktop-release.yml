@@ -261,3 +261,10 @@ jobs:
             "Odyssey-$VERSION-win-x64.msi" \
             "Odyssey-$VERSION-win-x64-full.msi" \
             "Odyssey-$VERSION-x86_64.AppImage"
+
+  # A release created with GITHUB_TOKEN starts no workflows, so docs-site.yml's
+  # `release` trigger never sees this one; call it directly instead.
+  website:
+    needs: github-release
+    uses: ./.github/workflows/docs-site.yml
+    secrets: inherit

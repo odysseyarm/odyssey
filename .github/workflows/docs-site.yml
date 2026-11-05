@@ -17,6 +17,7 @@ on:
       - docs/**
   release:
     types: [published]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -30,7 +31,7 @@ jobs:
       - name: Send repository_dispatch to the website
         env:
           GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
-          EVENT: ${{ github.event_name == 'release' && 'odyssey-release' || 'odyssey-docs-updated' }}
+          EVENT: ${{ startsWith(github.ref, 'refs/tags/') && 'odyssey-release' || 'odyssey-docs-updated' }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::notice::SITE_DISPATCH_TOKEN is not set; the website will pick this up in its next scheduled build."
