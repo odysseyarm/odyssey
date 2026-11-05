@@ -9,8 +9,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::display::Link;
 use super::mode::{CARD_BIG_STEPS, PatternEvent, PatternLoss, PatternMode};
 use super::pictures::{CardPicture, Countdown, PatternPicture, RulerPicture};
-
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+use crate::components::Theme;
 
 #[component]
 pub(super) fn PatternScreen(link: Link) -> Element {
@@ -50,7 +49,7 @@ pub(super) fn PatternScreen(link: Link) -> Element {
     let events = link.0.events.clone();
 
     rsx! {
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        Theme {}
 
         div {
             class: "fixed inset-0 bg-black select-none overflow-hidden outline-none",

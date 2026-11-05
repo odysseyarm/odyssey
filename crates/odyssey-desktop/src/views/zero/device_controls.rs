@@ -10,8 +10,8 @@ use super::save_zero_button::SaveZeroButton;
 use super::shot_delay_control::ShotDelayControl;
 use crate::hub::HubContext;
 
-const BUTTON: &str = "btn-secondary";
-const DANGER_BUTTON: &str = "btn-secondary-danger";
+const BUTTON: &str = "btn btn-secondary btn-sm";
+const DANGER_BUTTON: &str = "btn btn-secondary btn-sm text-danger-ink hover:border-danger-ink";
 
 #[component]
 pub(super) fn DeviceControls(
@@ -27,7 +27,7 @@ pub(super) fn DeviceControls(
         li {
             class: "flex flex-col gap-2",
             span {
-                class: "text-gray-900 dark:text-white",
+                class: "text-fg-strong",
                 {label},
             }
             ul { class: "flex flex-col gap-2",

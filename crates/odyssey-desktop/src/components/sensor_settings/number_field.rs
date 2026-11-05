@@ -30,13 +30,13 @@ pub(super) fn NumberField(
                 }
                 if let Some(hint) = hint {
                     span {
-                        class: "text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap",
+                        class: "help whitespace-nowrap",
                         {hint}
                     }
                 }
             }
             if let Some(issue) = issue {
-                p { class: "text-xs text-red-600 dark:text-red-400", {issue} }
+                p { class: "text-xs text-danger-ink", {issue} }
             }
         }
     }

@@ -9,8 +9,8 @@ use crate::views::calibrate::automatic::kind::Finding;
 use crate::views::calibrate::automatic::ui::{INFO_NOTE, LINK_BUTTON, WORKING_ROW};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
-const FOUND_ICON: &str = "mt-0.5 size-6 shrink-0 text-emerald-600 dark:text-emerald-400";
-const MISSING_ICON: &str = "mt-0.5 size-6 shrink-0 text-gray-500 dark:text-gray-400";
+const FOUND_ICON: &str = "mt-0.5 size-6 shrink-0 text-success-ink";
+const MISSING_ICON: &str = "mt-0.5 size-6 shrink-0 text-fg-muted";
 
 #[component]
 pub(super) fn FlatSize(wizard: Wizard) -> Element {
@@ -70,7 +70,7 @@ pub(super) fn FlatSize(wizard: Wizard) -> Element {
 
             div {
                 class: INFO_NOTE,
-                IconView { icon: Icon::Bulb, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
+                IconView { icon: Icon::Bulb, class: "mt-0.5 size-6 shrink-0 text-info-ink".to_string() }
                 span {
                     span { class: "font-semibold", "Before you start: " }
                     "set the TV to Game or PC mode, or turn on Just Scan, so it doesn't crop the picture."
@@ -78,7 +78,7 @@ pub(super) fn FlatSize(wizard: Wizard) -> Element {
             }
 
             details {
-                class: "text-sm text-gray-600 dark:text-gray-300",
+                class: "text-sm text-fg-muted",
                 summary { class: "cursor-pointer select-none font-medium", "Details" }
                 ul {
                     class: "mt-2 flex flex-col gap-1",
@@ -109,7 +109,7 @@ fn FindingSummary(wizard: Wizard, finding: Finding) -> Element {
             div {
                 class: "flex flex-col gap-1",
                 p {
-                    class: "text-lg font-medium text-gray-900 dark:text-white",
+                    class: "text-lg font-medium text-fg-strong",
                     if typed && found {
                         "Using the size you entered instead of the TV's."
                     } else if by_hand {
@@ -121,10 +121,10 @@ fn FindingSummary(wizard: Wizard, finding: Finding) -> Element {
                     }
                 }
                 if let Some(advice) = finding.advice() {
-                    p { class: "text-base text-gray-600 dark:text-gray-300", {advice} }
+                    p { class: "text-base text-fg-muted", {advice} }
                 }
                 if let Some(aside) = finding.projector_aside() {
-                    p { class: "text-base text-gray-600 dark:text-gray-300", {aside} }
+                    p { class: "text-base text-fg-muted", {aside} }
                 }
             }
         }
@@ -139,7 +139,7 @@ fn PreferCameraSizeToggle(wizard: Wizard) -> Element {
     rsx! {
         label {
             r#for: "prefer-camera-size",
-            class: "flex w-fit items-start gap-3 text-base text-gray-900 dark:text-white",
+            class: "flex w-fit items-start gap-3 text-base text-fg-strong",
             input {
                 id: "prefer-camera-size",
                 r#type: "checkbox",
@@ -150,7 +150,7 @@ fn PreferCameraSizeToggle(wizard: Wizard) -> Element {
             span {
                 "Measure the size with the camera instead of using the TV's own"
                 span {
-                    class: "block text-sm text-gray-600 dark:text-gray-300",
+                    class: "block text-sm text-fg-muted",
                     "Remembered for every screen. A size you type still wins."
                 }
             }

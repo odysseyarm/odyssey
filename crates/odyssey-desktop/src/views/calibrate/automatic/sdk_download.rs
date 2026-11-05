@@ -54,17 +54,17 @@ mod online {
             div {
                 class: "flex max-w-xl flex-col items-center gap-3 pt-2",
                 p {
-                    class: "text-sm text-gray-600 dark:text-gray-300",
+                    class: "text-sm text-fg-muted",
                     "Odyssey can download Orbbec SDK {pin.version} for you (about {megabytes} MB). \
                      Orbbec licenses it for use with Orbbec cameras under their End User License Agreement."
                 }
                 a {
-                    class: "text-sm text-blue-700 underline dark:text-blue-300",
+                    class: "link text-sm",
                     href: "{pin.eula.url}",
                     "Read the licence"
                 }
                 label {
-                    class: "flex items-center gap-2 text-base text-gray-900 dark:text-white",
+                    class: "flex items-center gap-2 text-base text-fg-strong",
                     input {
                         r#type: "checkbox",
                         class: "size-5",
@@ -85,14 +85,14 @@ mod online {
                     State::Waiting => rsx! {
                         div {
                             role: "status",
-                            class: "text-sm text-gray-700 dark:text-gray-200",
+                            class: "text-sm text-fg",
                             "Downloaded. Restart Odyssey to switch to it."
                         }
                     },
                     State::Failed(error) => rsx! {
                         div {
                             role: "alert",
-                            class: "text-sm text-red-700 dark:text-red-300",
+                            class: "text-sm text-danger-ink",
                             "The download didn't work: {error}"
                         }
                     },
@@ -133,7 +133,7 @@ pub fn DownloadSdk(wizard: Wizard) -> Element {
     rsx! {}
 }
 
-const NOTE_CLASS: &str = "flex flex-col gap-2 rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100";
+const NOTE_CLASS: &str = "alert alert-warning flex flex-col gap-2 text-base";
 
 /// Says so when the camera software in use is not the version this app is tested
 /// with. Only a warning: the loader accepts 2.8 and newer, so the cameras still
@@ -208,7 +208,7 @@ pub fn DownloadedSdkRow(wizard: Wizard) -> Element {
 
     rsx! {
         div {
-            class: "flex flex-wrap items-center gap-3 text-sm text-gray-500 dark:text-gray-400",
+            class: "flex flex-wrap items-center gap-3 text-sm text-fg-muted",
             if removal_pending {
                 "The camera software Odyssey downloaded will be removed the next time Odyssey starts."
             } else {
@@ -232,7 +232,7 @@ pub fn DownloadedSdkRow(wizard: Wizard) -> Element {
                 }
             }
             if let Some(message) = error() {
-                span { role: "alert", class: "text-red-700 dark:text-red-300", {message} }
+                span { role: "alert", class: "text-danger-ink", {message} }
             }
         }
     }

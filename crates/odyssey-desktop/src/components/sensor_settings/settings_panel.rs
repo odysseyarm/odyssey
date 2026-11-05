@@ -10,10 +10,7 @@ use super::pag_sensor_panel::PagSensorPanel;
 use super::paj_sensor_panel::PajSensorPanel;
 use super::product_ids::SensorFamily;
 use super::settings_form::{LoadTarget, SettingsForm, use_settings_form};
-use super::styles::{
-    ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS,
-    HELP_TEXT_CLASS, SECTION_HEADING_CLASS,
-};
+use super::styles::{DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS, SECTION_HEADING_CLASS};
 use crate::hub::HubContext;
 
 enum SettingsOperation {
@@ -113,7 +110,7 @@ pub(crate) fn SensorSettings(hub: Signal<HubContext>, device: Device) -> Element
                 "Device Settings"
             }
             div {
-                class: "mt-2 space-y-3 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg",
+                class: "mt-2 space-y-3 p-3 bg-surface-alt rounded-lg",
 
                 SettingsActions {
                     busy,
@@ -154,28 +151,28 @@ fn SettingsActions(
         div {
             class: "flex items-center gap-2 flex-wrap",
             button {
-                class: ACTION_PRIMARY_CLASS,
+                class: "btn btn-primary btn-sm",
                 disabled: busy || has_invalid,
                 title: "Write these values and keep them across power cycles",
                 onclick: move |_| on_write.call(true),
                 "Save to device"
             }
             button {
-                class: ACTION_SECONDARY_CLASS,
+                class: "btn btn-secondary btn-sm",
                 disabled: busy || has_invalid,
                 title: "Write these values for this session only",
                 onclick: move |_| on_write.call(false),
                 "Try without saving"
             }
             button {
-                class: ACTION_SECONDARY_CLASS,
+                class: "btn btn-secondary btn-sm",
                 disabled: busy,
                 title: "Discard edits and re-read the device",
                 onclick: move |_| on_reload.call(()),
                 "Reload"
             }
             button {
-                class: ACTION_SECONDARY_CLASS,
+                class: "btn btn-secondary btn-sm",
                 disabled: busy,
                 title: "Fill the form with factory values; nothing is written yet",
                 onclick: move |_| on_restore.call(()),
@@ -247,7 +244,7 @@ fn ShotDelaySection(
                 }
             }
             p {
-                class: HELP_TEXT_CLASS,
+                class: "help",
                 "Stored on this computer, not on the device."
             }
         }
@@ -275,13 +272,13 @@ fn SensorTuning(form: SettingsForm, sensors: Option<SensorFamily>, show_issues: 
         },
         None => rsx! {
             div {
-                class: "space-y-1 border-t border-gray-300 dark:border-gray-600 pt-2",
+                class: "space-y-1 border-t border-line pt-2",
                 h4 {
                     class: SECTION_HEADING_CLASS,
                     "Sensor tuning"
                 }
                 p {
-                    class: HELP_TEXT_CLASS,
+                    class: "help",
                     "Sensor tuning needs an active sensor data connection. Connect \
                      over USB or Bluetooth, then reload the settings."
                 }

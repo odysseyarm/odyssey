@@ -29,19 +29,19 @@ pub fn SaveAttempt(wizard: Wizard) -> Element {
                 }
             }
             p {
-                class: "text-sm text-gray-600 dark:text-gray-300",
+                class: "text-sm text-fg-muted",
                 "A zip of what this attempt used: the frames of the screen measurement (color, depth and infrared) and the infrared frames of the marker measurement. They show the room. It also holds the calibration lines of the app's log, the camera's serial number and the settings, and is tens of megabytes. Nothing is sent anywhere; send it yourself if you want help."
             }
             match status {
                 Some(Ok(saved)) => rsx! {
                     p {
                         role: "status",
-                        class: "text-sm text-gray-700 dark:text-gray-200",
+                        class: "text-sm text-fg",
                         "Saved {saved.path.display()} ({megabytes(saved.bytes)})."
                     }
                 },
                 Some(Err(error)) => rsx! {
-                    p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", "Couldn't save the details: {error}" }
+                    p { role: "alert", class: "text-sm text-danger-ink", "Couldn't save the details: {error}" }
                 },
                 None => rsx! {},
             }

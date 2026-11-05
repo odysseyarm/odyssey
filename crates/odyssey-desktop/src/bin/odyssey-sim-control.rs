@@ -233,6 +233,7 @@ fn control_window() -> Element {
         None => "No simulator state received yet.".to_owned(),
     };
     rsx! {
+        style { {TOKENS} }
         style { {STYLE} }
         main {
             h1 { "Odyssey Simulator Controls" }
@@ -335,18 +336,23 @@ fn control_window() -> Element {
     }
 }
 
+const TOKENS: &str = include_str!("../../../../docs/design/tokens.css");
+
 const STYLE: &str = r#"
-body { margin: 0; color: #17202a; background: #f3f5f8; font: 15px system-ui, sans-serif; }
+:root { color-scheme: light dark; }
+body { margin: 0; color: var(--oa-fg); background: var(--oa-canvas); font: 15px var(--oa-font-sans); accent-color: var(--oa-accent); }
 main { max-width: 900px; margin: auto; padding: 20px; }
+h1, h2 { color: var(--oa-fg-strong); letter-spacing: var(--oa-tracking-heading); }
 h1 { margin-top: 0; font-size: 24px; } h2 { font-size: 19px; }
 p { line-height: 1.45; }
-fieldset { border: 1px solid #b9c4d0; border-radius: 6px; background: white; margin: 14px 0; padding: 12px; }
-legend { font-weight: 650; }
+fieldset { border: 1px solid var(--oa-line); border-radius: var(--oa-radius-lg); background: var(--oa-surface); margin: 14px 0; padding: 12px; }
+legend { font-weight: 650; color: var(--oa-fg-strong); }
 label { display: inline-flex; align-items: center; gap: 6px; margin: 5px 12px 5px 0; }
 .number-field { flex-direction: column; align-items: flex-start; }
-input[type=number] { width: 125px; padding: 6px; font: inherit; }
-button { margin: 5px 8px 5px 0; padding: 8px 12px; border: 1px solid #7c8da0; border-radius: 4px; background: #eef4ff; color: #17202a; cursor: pointer; font: inherit; }
-button:hover { background: #d8e7ff; } button:disabled { cursor: not-allowed; opacity: .5; }
-.error { color: #a01515; background: #fff0f0; border: 1px solid #d98b8b; padding: 10px; }
-pre { padding: 14px; border-radius: 6px; background: #17202a; color: #eff6ff; overflow: auto; font-size: 13px; }
+input[type=number] { width: 125px; padding: 6px; font: inherit; color: var(--oa-fg); background: var(--oa-surface-alt); border: 1px solid var(--oa-fg-faint); border-radius: var(--oa-radius); }
+button { margin: 5px 8px 5px 0; padding: 8px 14px; border: 1px solid var(--oa-line-strong); border-radius: 999px; background: transparent; color: var(--oa-fg-strong); cursor: pointer; font: inherit; font-weight: 600; transition: background-color var(--oa-duration-fast) var(--oa-ease-out); }
+button:hover { background: var(--oa-surface-hover); } button:disabled { cursor: not-allowed; opacity: .4; }
+:focus-visible { outline: 2px solid var(--oa-accent-ink); outline-offset: 2px; }
+.error { color: var(--oa-danger-ink); background: var(--oa-danger-soft); border: 1px solid var(--oa-danger); border-radius: var(--oa-radius-lg); padding: 10px; }
+pre { padding: 14px; border-radius: var(--oa-radius); background: var(--oa-surface-alt); color: var(--oa-fg); overflow: auto; font: 13px var(--oa-font-mono); }
 "#;

@@ -89,7 +89,7 @@ pub fn PositionStep(wizard: Wizard) -> Element {
             LivePreview { wizard }
 
             div {
-                class: "rounded-xl bg-white p-4 shadow dark:bg-gray-700",
+                class: "card p-4",
                 Slider {
                     id: "color-exposure",
                     label: "Brightness",
@@ -174,7 +174,11 @@ fn LivePreview(wizard: Wizard) -> Element {
         };
     };
     let ready = frame.hint == Hint::Ready;
-    let color = if ready { "#22c55e" } else { "#f59e0b" };
+    let color = if ready {
+        "var(--oa-success)"
+    } else {
+        "var(--oa-warning)"
+    };
     let unit = f64::from(frame.width) / 640.0;
     let dot_radius = 6.0 * unit;
     let line = 3.0 * unit;
@@ -210,7 +214,7 @@ fn LivePreview(wizard: Wizard) -> Element {
                 polygon {
                     points: points,
                     fill: "none",
-                    stroke: color,
+                    style: "stroke: {color}",
                     stroke_width: "{line}",
                     stroke_linejoin: "round",
                 }
@@ -222,7 +226,7 @@ fn LivePreview(wizard: Wizard) -> Element {
                     y1: "{edge[0][1]}",
                     x2: "{edge[1][0]}",
                     y2: "{edge[1][1]}",
-                    stroke: "#ef4444",
+                    style: "stroke: var(--oa-danger)",
                     stroke_width: "{line * 2.2}",
                     stroke_linecap: "round",
                 }
@@ -234,7 +238,7 @@ fn LivePreview(wizard: Wizard) -> Element {
                     cy: "{dot[1]}",
                     r: "{dot_radius}",
                     fill: "none",
-                    stroke: color,
+                    style: "stroke: {color}",
                     stroke_width: "{line * 0.7}",
                 }
             }
@@ -277,9 +281,9 @@ fn PositionDetails(wizard: Wizard) -> Element {
             Fact { label: "Color exposure", value: format!("{exposure} µs") }
             if preview.as_ref().is_some_and(|f| f.hint == Hint::EdgesCropped) {
                 div {
-                    class: "mt-1 flex flex-col gap-2 border-t border-gray-200 pt-3 dark:border-gray-600",
-                    div { class: "font-medium text-gray-900 dark:text-white", "Where to turn off overscan" }
-                    p { class: "text-gray-600 dark:text-gray-300", "Menu names differ between models and years. These are the usual places:" }
+                    class: "mt-1 flex flex-col gap-2 border-t border-line pt-3",
+                    div { class: "font-medium text-fg-strong", "Where to turn off overscan" }
+                    p { class: "text-fg-muted", "Menu names differ between models and years. These are the usual places:" }
                     for (brand, steps) in OVERSCAN_HELP {
                         div {
                             key: "{brand}",

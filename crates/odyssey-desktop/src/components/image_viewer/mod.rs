@@ -16,8 +16,8 @@ use self::frame::{FrameView, PresentedFrame};
 use self::session::LiveSession;
 use crate::hub::HubContext;
 
-const BUTTON: &str = "px-3 py-1 text-sm rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 disabled:opacity-50";
-const HELP: &str = "text-sm text-gray-600 dark:text-gray-300";
+const BUTTON: &str = "btn btn-secondary btn-sm";
+const HELP: &str = "text-sm text-fg-muted";
 
 fn unavailable(device: &Device, is_updating: bool) -> Option<&'static str> {
     if is_updating {
@@ -55,7 +55,7 @@ pub(crate) fn ImageViewer(hub: Signal<HubContext>, device: Device, is_updating: 
                     "Image / IR"
                 }
                 if needs_reboot() {
-                    span { class: "text-sm text-amber-700 dark:text-amber-300", "Legacy image mode: reboot/reconnect required" }
+                    span { class: "text-sm text-warning-ink", "Legacy image mode: reboot/reconnect required" }
                 }
             }
             if open() {
@@ -110,14 +110,14 @@ fn ImageDialog(
 
     rsx! {
         div {
-            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4",
+            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4",
             onclick: move |_| on_close.call(()),
             div {
                 role: "dialog",
                 aria_modal: "true",
                 aria_label: "Live USB infrared image",
                 tabindex: 0,
-                class: "flex max-h-full w-full max-w-3xl flex-col gap-4 overflow-y-auto rounded-xl bg-white p-6 shadow-xl outline-none dark:bg-gray-800",
+                class: "flex max-h-full w-full max-w-3xl flex-col gap-4 overflow-y-auto rounded-xl bg-surface p-6 shadow-xl outline-none",
                 onclick: move |event| event.stop_propagation(),
                 onmounted: move |event| async move { let _ = event.set_focus(true).await; },
                 onkeydown: move |event| {
@@ -137,7 +137,7 @@ fn ImageDialog(
                     }
                 }
                 if let Some(reason) = reason {
-                    p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", {reason} }
+                    p { role: "alert", class: "text-sm text-danger-ink", {reason} }
                 }
                 div {
                     class: "flex items-center gap-3 flex-wrap",
@@ -145,7 +145,7 @@ fn ImageDialog(
                         class: HELP,
                         "Camera "
                         select {
-                            class: "rounded bg-gray-100 dark:bg-gray-700 p-1",
+                            class: "field px-2 py-1",
                             aria_label: "Image camera",
                             disabled: running(),
                             value: if camera() == Port::Wf { "wf" } else { "nf" },
@@ -161,7 +161,7 @@ fn ImageDialog(
                         class: HELP,
                         "Requested FPS "
                         select {
-                            class: "rounded bg-gray-100 dark:bg-gray-700 p-1",
+                            class: "field px-2 py-1",
                             aria_label: "Requested image frames per second",
                             disabled: running(),
                             value: "{fps}",
@@ -196,7 +196,7 @@ fn ImageDialog(
                     }
                 }
                 if needs_reboot() {
-                    p { role: "alert", class: "text-sm text-amber-700 dark:text-amber-300",
+                    p { role: "alert", class: "text-sm text-warning-ink",
                         "Tracking has not been restored. Reboot then wait for a new USB connection before using tracking/settings. If reboot is unavailable or recovery fails, fully power-cycle the device (disconnecting USB alone may leave a battery-powered unit on)."
                     }
                     button {
@@ -225,7 +225,7 @@ fn ImageDialog(
                 }
                 p { role: "status", class: HELP, "{status}" }
                 if let Some(message) = error() {
-                    p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", {message} }
+                    p { role: "alert", class: "text-sm text-danger-ink", {message} }
                 }
                 if running() && can_stream {
                     LiveSession { hub, device, camera: camera(), fps: fps(), latest, status, error, running }

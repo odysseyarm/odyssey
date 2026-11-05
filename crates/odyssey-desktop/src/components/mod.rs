@@ -11,7 +11,10 @@ mod navbar;
 pub(crate) use navbar::Navbar;
 
 mod page;
-pub(crate) use page::{CARD_CLASS, CARD_TITLE_CLASS, Page};
+pub(crate) use page::Page;
+
+mod theme;
+pub(crate) use theme::Theme;
 
 pub(crate) mod crosshair_manager;
 

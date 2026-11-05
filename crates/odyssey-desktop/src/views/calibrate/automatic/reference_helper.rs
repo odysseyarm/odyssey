@@ -14,8 +14,8 @@ use super::ui::{AMBER_ALERT, LINK_BUTTON, PRIMARY_BUTTON, SECONDARY_BUTTON};
 use super::wizard::{Helper, Wizard};
 use crate::components::wizard::{Icon, IconView};
 
-const SEGMENT_ON: &str = "bg-blue-600 text-white";
-const SEGMENT_OFF: &str = "bg-white text-gray-800 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700";
+const SEGMENT_ON: &str = "bg-accent text-on-accent";
+const SEGMENT_OFF: &str = "bg-surface text-fg hover:bg-surface-hover";
 
 #[component]
 pub fn ReferenceHelper(wizard: Wizard) -> Element {
@@ -98,20 +98,20 @@ fn Prompt(wizard: Wizard) -> Element {
         )
     };
     let frame = if silent {
-        "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/60"
+        "border-warning/40 bg-warning-soft"
     } else {
-        "border-gray-200 bg-gray-50 dark:border-gray-600 dark:bg-gray-800/60"
+        "border-line bg-surface-alt"
     };
     rsx! {
         div {
             class: "flex flex-col gap-3 rounded-xl border-2 p-4 {frame}",
             div {
                 class: "flex items-start gap-3",
-                IconView { icon: Icon::Bulb, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
+                IconView { icon: Icon::Bulb, class: "mt-0.5 size-6 shrink-0 text-info-ink".to_string() }
                 div {
                     class: "flex flex-col gap-1",
-                    p { class: "text-lg font-medium text-gray-900 dark:text-white", {title} }
-                    p { class: "text-base text-gray-600 dark:text-gray-300", {detail} }
+                    p { class: "text-lg font-medium text-fg-strong", {title} }
+                    p { class: "text-base text-fg-muted", {detail} }
                 }
             }
             div {
@@ -130,7 +130,7 @@ fn Prompt(wizard: Wizard) -> Element {
                 }
             }
             p {
-                class: "text-sm text-gray-600 dark:text-gray-300",
+                class: "text-sm text-fg-muted",
                 "The tape is the most exact; the card is quicker."
             }
         }
@@ -151,19 +151,19 @@ fn Measured(wizard: Wizard) -> Element {
     let note = agreement_note(wizard, size);
     rsx! {
         div {
-            class: "flex flex-col gap-2 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-700 dark:bg-emerald-950/50",
+            class: "flex flex-col gap-2 rounded-xl border-2 border-success/40 bg-success-soft p-4",
             div {
                 class: "flex items-start gap-3",
-                IconView { icon: Icon::Check, class: "mt-0.5 size-6 shrink-0 text-emerald-600 dark:text-emerald-400".to_string() }
+                IconView { icon: Icon::Check, class: "mt-0.5 size-6 shrink-0 text-success-ink".to_string() }
                 div {
                     class: "flex flex-col gap-1",
                     p {
-                        class: "text-lg font-medium text-gray-900 dark:text-white",
+                        class: "text-lg font-medium text-fg-strong",
                         "Using your {how} measurement: {width_words(size)}."
                     }
                     if let Some((text, warn)) = note {
                         p {
-                            class: if warn { "text-base text-amber-800 dark:text-amber-200" } else { "text-base text-gray-600 dark:text-gray-300" },
+                            class: if warn { "text-base text-warning-ink" } else { "text-base text-fg-muted" },
                             {text}
                         }
                     }
@@ -208,14 +208,14 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
     };
     rsx! {
         div {
-            class: "flex flex-col gap-4 rounded-xl border-2 border-blue-300 bg-blue-50 p-4 dark:border-blue-700 dark:bg-blue-950/40",
+            class: "flex flex-col gap-4 rounded-xl border-2 border-accent-ink/40 bg-accent-soft p-4",
             div {
                 class: "flex flex-wrap items-center justify-between gap-3",
-                p { class: "text-lg font-semibold text-gray-900 dark:text-white", "Measure the size by hand" }
+                p { class: "text-lg font-semibold text-fg-strong", "Measure the size by hand" }
                 div {
                     role: "radiogroup",
                     aria_label: "How to measure",
-                    class: "inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-500",
+                    class: "inline-flex overflow-hidden rounded-lg border border-line-strong",
                     for (option, label) in [(Method::Tape, "Tape measure"), (Method::Card, "Credit card")] {
                         {
                             let tone = if option == method { SEGMENT_ON } else { SEGMENT_OFF };
@@ -225,7 +225,7 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
                                     r#type: "button",
                                     role: "radio",
                                     aria_checked: option == method,
-                                    class: "px-4 py-2 text-base font-medium focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 {tone}",
+                                    class: "px-4 py-2 text-base font-medium {tone}",
                                     onclick: move |_| wizard.set_helper_method(option),
                                     {label}
                                 }
@@ -243,17 +243,17 @@ fn OpenHelper(wizard: Wizard, helper: Helper) -> Element {
             if let Some((width, note)) = preview {
                 div {
                     class: "flex flex-col gap-1",
-                    p { class: "text-base text-gray-900 dark:text-white", "That makes the picture {width}." }
+                    p { class: "text-base text-fg", "That makes the picture {width}." }
                     if let Some((text, warn)) = note {
                         p {
-                            class: if warn { "text-base text-amber-800 dark:text-amber-200" } else { "text-sm text-gray-600 dark:text-gray-300" },
+                            class: if warn { "text-base text-warning-ink" } else { "text-sm text-fg-muted" },
                             {text}
                         }
                     }
                 }
             }
             if let Some(error) = error {
-                p { role: "alert", class: "text-base text-red-700 dark:text-red-300", {error} }
+                p { role: "alert", class: "text-base text-danger-ink", {error} }
             }
 
             div {
@@ -283,7 +283,7 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
         div {
             class: "flex flex-col gap-3",
             ol {
-                class: "flex list-decimal flex-col gap-1 pl-6 text-base text-gray-800 dark:text-gray-100",
+                class: "flex list-decimal flex-col gap-1 pl-6 text-base text-fg",
                 if helper.covers {
                     li { "Press \u{201c}Show the line\u{201d}. The screen shows a line with a tick at each end, over this window." }
                     li { "Lay the tape along the line and read the length from the middle of one tick to the middle of the other. Then press Escape to come back." }
@@ -312,14 +312,14 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
                     autocomplete: "off",
                     aria_label: "Length read from the tape",
                     placeholder: if unit == Unit::Inches { "47 5/8" } else { "121.0" },
-                    class: "w-40 rounded-lg border border-gray-300 bg-white px-3 py-2 text-lg text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-200 dark:border-gray-500 dark:bg-gray-800 dark:text-white dark:focus:ring-blue-900",
+                    class: "field w-40 text-lg",
                     value: "{helper.tape_text}",
                     oninput: move |e| wizard.set_tape(e.value(), unit),
                 }
                 div {
                     role: "radiogroup",
                     aria_label: "Unit of the number you typed",
-                    class: "inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-500",
+                    class: "inline-flex overflow-hidden rounded-lg border border-line-strong",
                     for (option, label) in [(Unit::Inches, "in"), (Unit::Centimeters, "cm"), (Unit::Millimeters, "mm")] {
                         {
                             let tone = if option == unit { SEGMENT_ON } else { SEGMENT_OFF };
@@ -330,7 +330,7 @@ fn TapeSteps(wizard: Wizard, helper: Helper) -> Element {
                                     r#type: "button",
                                     role: "radio",
                                     aria_checked: option == unit,
-                                    class: "px-3 py-2 text-base font-medium focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 {tone}",
+                                    class: "px-3 py-2 text-base font-medium {tone}",
                                     onclick: move |_| wizard.set_tape(text.clone(), option),
                                     {label}
                                 }
@@ -351,7 +351,7 @@ fn CardSteps(wizard: Wizard, helper: Helper) -> Element {
         div {
             class: "flex flex-col gap-3",
             ol {
-                class: "flex list-decimal flex-col gap-1 pl-6 text-base text-gray-800 dark:text-gray-100",
+                class: "flex list-decimal flex-col gap-1 pl-6 text-base text-fg",
                 li { "Take any bank card, driver's licence or ID card." }
                 if helper.covers {
                     li { "Press \u{201c}Show the frame\u{201d}. The screen shows a white frame, over this window." }
@@ -370,7 +370,7 @@ fn CardSteps(wizard: Wizard, helper: Helper) -> Element {
                         onclick: move |_| wizard.show_helper_picture(),
                         "Show the frame"
                     }
-                    span { class: "text-sm text-gray-600 dark:text-gray-300", "{px:.2} pixels wide" }
+                    span { class: "text-sm text-fg-muted", "{px:.2} pixels wide" }
                 }
             } else {
                 div {
@@ -403,7 +403,7 @@ fn CardSteps(wizard: Wizard, helper: Helper) -> Element {
                         onclick: move |_| wizard.set_card_px(px + CARD_STEP_PX),
                         "+"
                     }
-                    span { class: "text-sm text-gray-600 dark:text-gray-300", "{px:.2} pixels wide" }
+                    span { class: "text-sm text-fg-muted", "{px:.2} pixels wide" }
                 }
             }
         }

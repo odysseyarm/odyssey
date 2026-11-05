@@ -21,17 +21,17 @@ pub(super) fn ConnectedDevices(
     if devices.is_empty() && updating.is_empty() {
         return rsx! {
             div {
-                class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow",
+                class: "card",
                 h2 {
-                    class: "text-lg font-semibold text-gray-900 dark:text-white mb-1",
+                    class: "card-title mb-1",
                     "No devices connected"
                 }
                 p {
-                    class: "text-sm text-gray-600 dark:text-gray-300",
+                    class: "text-sm text-fg-muted",
                     "Plug a device in with its USB cable, or "
                     Link {
                         to: Route::Pairing {},
-                        class: "font-medium text-blue-700 underline hover:no-underline dark:text-blue-400",
+                        class: "link",
                         "pair it with a dongle"
                     }
                     "."
@@ -48,9 +48,9 @@ pub(super) fn ConnectedDevices(
 
     rsx! {
         div {
-            class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow",
+            class: "card",
             h2 {
-                class: "text-lg font-semibold text-gray-900 dark:text-white mb-3",
+                class: "card-title mb-3",
                 "Connected Devices"
             }
             div {

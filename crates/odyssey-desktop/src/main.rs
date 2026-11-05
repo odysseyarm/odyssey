@@ -125,8 +125,6 @@ enum Route {
     CalibrateAutomatic {},
 }
 
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
-
 /// Runs the hub server for the life of the window and reports its status through
 /// the two signals. Closes the window when another instance already owns the hub.
 fn use_server_task(
@@ -203,7 +201,7 @@ fn app() -> Element {
     use_context_provider(|| ServerReady(server_ready));
 
     rsx! {
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        components::Theme {}
 
         ConfigCorruptionModal {
             corruptions: config_corruptions,

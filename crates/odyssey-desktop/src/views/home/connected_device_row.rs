@@ -40,11 +40,11 @@ fn transport_suffix(device: &Device) -> &'static str {
 
 fn status_dot_class(is_updating: bool, is_dfu: bool) -> &'static str {
     if is_updating {
-        "w-2 h-2 bg-yellow-500 rounded-full animate-pulse"
+        "size-2 bg-accent rounded-full animate-pulse"
     } else if is_dfu {
-        "w-2 h-2 bg-orange-500 rounded-full animate-pulse"
+        "size-2 bg-warning rounded-full animate-pulse"
     } else {
-        "w-2 h-2 bg-green-500 rounded-full"
+        "size-2 bg-success rounded-full"
     }
 }
 
@@ -63,7 +63,7 @@ pub(super) fn ConnectedDeviceRow(
 
     rsx! {
         div {
-            class: "flex flex-col p-3 bg-gray-50 dark:bg-gray-600 rounded gap-2",
+            class: "flex flex-col p-3 bg-surface-alt rounded-lg gap-2",
             div {
                 class: "flex items-center justify-between",
                 div {
@@ -72,7 +72,7 @@ pub(super) fn ConnectedDeviceRow(
                     DeviceName { hub, device: device.clone() }
                 }
                 span {
-                    class: "text-xs text-gray-500 dark:text-gray-400",
+                    class: "text-xs text-fg-muted",
                     {transport_name(device.transport)}
                     {transport_suffix(&device)}
                 }
@@ -80,17 +80,17 @@ pub(super) fn ConnectedDeviceRow(
             div {
                 class: "flex items-center gap-2 text-xs",
                 span {
-                    class: "text-gray-500 dark:text-gray-400",
+                    class: "text-fg-muted",
                     "Firmware:"
                 }
                 if firmware_version != UNKNOWN_FIRMWARE_VERSION {
                     span {
-                        class: "text-gray-700 dark:text-gray-200 font-mono",
+                        class: "text-fg font-mono",
                         "{firmware_version[0]}.{firmware_version[1]}.{firmware_version[2]}"
                     }
                 } else {
                     span {
-                        class: "text-gray-400 dark:text-gray-500 italic",
+                        class: "text-fg-muted italic",
                         "Not available"
                     }
                 }
@@ -99,15 +99,15 @@ pub(super) fn ConnectedDeviceRow(
                 div {
                     class: "flex items-center gap-2 text-xs",
                     span {
-                        class: "text-gray-500 dark:text-gray-400",
+                        class: "text-fg-muted",
                         "Battery:"
                     }
                     span {
-                        class: "text-gray-700 dark:text-gray-200 font-mono",
+                        class: "text-fg font-mono",
                         "{percent}%"
                     }
                     span {
-                        class: if charging { "text-green-500" } else { "text-gray-400 dark:text-gray-500" },
+                        class: if charging { "text-success-ink" } else { "text-fg-muted" },
                         if charging { "Charging" } else { "Discharging" }
                     }
                 }
@@ -152,7 +152,7 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
     if editing() {
         return rsx! {
             input {
-                class: "text-sm font-mono text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border border-blue-400 rounded px-1 w-48",
+                class: "field px-1 py-0.5 font-mono w-48",
                 value: "{edit_value}",
                 autofocus: true,
                 oninput: move |e| edit_value.set(e.value()),
@@ -191,7 +191,7 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
                 },
             }
             button {
-                class: "text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200",
+                class: "text-xs text-fg-muted hover:text-fg-strong",
                 onclick: move |_| editing.set(false),
                 "✕"
             }
@@ -199,11 +199,11 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
     }
     rsx! {
         span {
-            class: "text-sm font-mono text-gray-700 dark:text-gray-200",
+            class: "text-sm font-mono text-fg",
             {label}
         }
         button {
-            class: "text-xs text-gray-400 hover:text-blue-500 dark:hover:text-blue-400",
+            class: "text-xs text-fg-muted hover:text-accent-ink",
             disabled: rename_pending(),
             title: "Rename",
             onclick: move |_| {
@@ -216,12 +216,12 @@ fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
         }
         if renamed() {
             span {
-                class: "text-xs text-yellow-500 dark:text-yellow-400 italic",
+                class: "text-xs text-warning-ink italic",
                 "USB name reflects last boot"
             }
         }
         if let Some(error) = rename_error() {
-            span { role: "alert", class: "text-xs text-red-500", {error} }
+            span { role: "alert", class: "text-xs text-danger-ink", {error} }
         }
     }
 }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=input.css");
+    println!("cargo:rerun-if-changed=../../docs/design/tokens.css");
     // Tailwind generates only the classes it finds in the sources, so a new
     // class in a view has to rerun it too.
     println!("cargo:rerun-if-changed=src");

@@ -16,13 +16,13 @@ pub(super) fn held_back_note(held_back: &HeldBack) -> Element {
     let offline = odyssey_hub_server::policy::offline();
     rsx! {
         span {
-            class: "text-xs text-gray-500 dark:text-gray-400 italic",
+            class: "text-xs text-fg-muted italic",
             "v{held_back.version} needs Odyssey Desktop {held_back.min_desktop} or newer. "
             if offline {
                 "Ask your Odyssey provider for it."
             } else {
                 a {
-                    class: "underline text-blue-600 dark:text-blue-400",
+                    class: "link",
                     href: DESKTOP_RELEASES_URL,
                     "Get the latest"
                 }
@@ -42,7 +42,7 @@ pub(crate) struct NetCoreBlocked {
 pub(super) fn net_core_blocked_note(blocked: &NetCoreBlocked, bridge: Option<&str>) -> Element {
     rsx! {
         span {
-            class: "text-xs text-gray-500 dark:text-gray-400 italic",
+            class: "text-xs text-fg-muted italic",
             if let Some(bridge) = bridge {
                 "v{blocked.version} needs a newer net core; update to v{bridge} first."
             } else {

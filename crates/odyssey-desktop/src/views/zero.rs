@@ -20,10 +20,9 @@ use dioxus::prelude::*;
 use history::use_tracking_history;
 use zeroing::{use_zero_on_impact, zero_on_key};
 
+use crate::components::Theme;
 use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
 use crate::hub::HubContext;
-
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 /// Zero point in screen space. The target layer covers the window, the window
 /// is fullscreen on the screen the hub resolves against, and the target image
@@ -54,10 +53,10 @@ pub(crate) fn Zero(
     use_device_signal_sync(hub, device_signals);
 
     rsx! {
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        Theme {}
 
         div {
-            class: "flex h-screen bg-gray-50 dark:bg-gray-800",
+            class: "flex h-screen bg-canvas",
             tabindex: "0",
             autofocus: true,
             onkeydown: move |e: KeyboardEvent| {
@@ -67,7 +66,7 @@ pub(crate) fn Zero(
             aside {
                 class: "fixed top-0 left-0 z-40 h-screen transition-transform -translate-x-full sm:translate-x-0",
                 div {
-                    class: "h-full px-3 py-4 overflow-y-auto bg-gray-100/5 dark:bg-gray-900/5",
+                    class: "h-full px-3 py-4 overflow-y-auto bg-surface/80",
                     ul { class: "space-y-2 font-medium",
                         for (slot, device) in devices {
                             if let Some(signals) = device_signals.peek().get(&device.uuid).copied() {
@@ -91,7 +90,7 @@ pub(crate) fn Zero(
             }
 
             button {
-                class: "fixed z-50 top-4 right-4 w-10 h-10 rounded-full bg-gray-900/60 hover:bg-gray-900/80 dark:bg-white/15 dark:hover:bg-white/30 text-white text-xl flex items-center justify-center transition-colors",
+                class: "fixed z-50 top-4 right-4 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-white text-xl flex items-center justify-center transition-colors",
                 onclick: move |_| dioxus::desktop::window().close(),
                 "✕"
             }

@@ -4,9 +4,8 @@ use dioxus::prelude::*;
 
 use super::wizard::{Stage, Wizard, use_wizard};
 use super::{markers, measuring, position, problem, review, setup};
+use crate::components::Theme;
 use crate::components::wizard::Stepper;
-
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 #[component]
 pub fn CalibrateAutomatic() -> Element {
@@ -15,10 +14,10 @@ pub fn CalibrateAutomatic() -> Element {
     let step = *wizard.step.read();
 
     rsx! {
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        Theme {}
 
         div {
-            class: "min-h-screen bg-gray-50 dark:bg-gray-800",
+            class: "min-h-screen bg-canvas",
             tabindex: 0,
             onkeydown: move |e| {
                 // Escape steps back, like the Back button on every step.
@@ -49,17 +48,17 @@ fn WizardHeader(wizard: Wizard) -> Element {
             class: "flex items-center justify-between gap-4",
             div {
                 class: "flex items-center gap-3",
-                span { class: "text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400", "Calibrate screen · Automatic" }
+                span { class: "eyebrow", "Calibrate screen · Automatic" }
                 if wizard.demo {
                     span {
-                        class: "rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-800 dark:bg-purple-900 dark:text-purple-100",
+                        class: "badge badge-accent",
                         title: "A simulated camera and screen are used. Nothing real is measured.",
                         "Demo · simulated camera"
                     }
                 }
             }
             button {
-                class: "rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-200 focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 dark:text-gray-300 dark:hover:bg-gray-700",
+                class: "btn btn-ghost btn-sm",
                 r#type: "button",
                 onclick: move |_| wizard.exit(),
                 "Exit"

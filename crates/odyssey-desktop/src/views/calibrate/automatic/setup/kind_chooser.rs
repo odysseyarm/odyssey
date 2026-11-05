@@ -56,9 +56,9 @@ pub(super) fn KindChooser(wizard: Wizard) -> Element {
                 {
                     let selected = kind == chosen;
                     let class = if selected {
-                        "border-blue-600 bg-blue-50 ring-4 ring-blue-200 dark:border-blue-400 dark:bg-blue-950/50 dark:ring-blue-900"
+                        "border-accent-ink bg-accent-soft ring-4 ring-accent/30"
                     } else {
-                        "border-gray-300 bg-white hover:border-blue-400 dark:border-gray-500 dark:bg-gray-800"
+                        "border-line bg-surface hover:border-accent-ink"
                     };
                     rsx! {
                         button {
@@ -68,11 +68,11 @@ pub(super) fn KindChooser(wizard: Wizard) -> Element {
                             role: "radio",
                             aria_checked: selected,
                             tabindex: if selected { "0" } else { "-1" },
-                            class: "relative flex flex-col items-center gap-2 rounded-2xl border-2 px-4 pb-4 pt-5 text-center transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 {class}",
+                            class: "relative flex flex-col items-center gap-2 rounded-xl border-2 px-4 pb-4 pt-5 text-center transition-colors {class}",
                             onclick: move |_| wizard.set_kind(kind),
                             if selected {
                                 span {
-                                    class: "absolute right-3 top-3 text-blue-600 dark:text-blue-300",
+                                    class: "absolute right-3 top-3 text-accent-ink",
                                     IconView { icon: Icon::Check, class: "size-7".to_string() }
                                 }
                             }
@@ -80,8 +80,8 @@ pub(super) fn KindChooser(wizard: Wizard) -> Element {
                                 DisplayKind::Flat => rsx! { TvIllustration { class: "h-28".to_string() } },
                                 DisplayKind::Projector => rsx! { ProjectorIllustration { class: "h-28".to_string() } },
                             }
-                            span { class: "text-xl font-semibold text-gray-900 dark:text-white", "{kind_title(kind)}" }
-                            span { class: "text-base text-gray-600 dark:text-gray-300", "{kind_blurb(kind)}" }
+                            span { class: "text-xl font-semibold text-fg-strong", "{kind_title(kind)}" }
+                            span { class: "text-base text-fg-muted", "{kind_blurb(kind)}" }
                         }
                     }
                 }

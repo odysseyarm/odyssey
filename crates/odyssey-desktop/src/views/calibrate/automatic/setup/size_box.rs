@@ -35,7 +35,7 @@ pub(super) fn SizeBox(wizard: Wizard, label: String) -> Element {
             class: "flex flex-col gap-1",
             label {
                 r#for: "size-input",
-                class: "text-base font-medium text-gray-900 dark:text-white",
+                class: "label text-base",
                 {label}
             }
             div {
@@ -47,7 +47,7 @@ pub(super) fn SizeBox(wizard: Wizard, label: String) -> Element {
                     autocomplete: "off",
                     placeholder,
                     title: "{range} {unit}",
-                    class: "w-48 rounded-lg border border-gray-300 bg-white px-3 py-2 text-lg text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-200 dark:border-gray-500 dark:bg-gray-800 dark:text-white dark:focus:ring-blue-900",
+                    class: "field w-48 text-lg",
                     value: "{wizard.size_text}",
                     oninput: move |e| {
                         left_box.set(false);
@@ -55,10 +55,10 @@ pub(super) fn SizeBox(wizard: Wizard, label: String) -> Element {
                     },
                     onblur: move |_| left_box.set(true),
                 }
-                span { class: "text-lg text-gray-600 dark:text-gray-300", {unit} }
+                span { class: "text-lg text-fg-muted", {unit} }
             }
             if let Some(error) = error {
-                span { role: "alert", class: "text-sm text-red-700 dark:text-red-300", {error} }
+                span { role: "alert", class: "text-sm text-danger-ink", {error} }
             }
         }
     }

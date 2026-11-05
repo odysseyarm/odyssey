@@ -53,20 +53,20 @@ pub fn SetupStep(wizard: Wizard) -> Element {
 
             section {
                 class: "{CARD} flex flex-col gap-4",
-                h2 { class: "text-xl font-semibold text-gray-900 dark:text-white", "1. What are you calibrating?" }
+                h2 { class: "text-xl font-semibold text-fg-strong", "1. What are you calibrating?" }
                 KindChooser { wizard }
             }
 
             section {
                 class: "{CARD} flex flex-col gap-4",
-                h2 { class: "text-xl font-semibold text-gray-900 dark:text-white", "2. Which screen?" }
+                h2 { class: "text-xl font-semibold text-fg-strong", "2. Which screen?" }
                 ScreenPicker { selection: wizard.monitors }
                 ScreenNumberPicker { wizard }
             }
 
             section {
                 class: "{CARD} flex flex-col gap-3",
-                h2 { class: "text-xl font-semibold text-gray-900 dark:text-white", "3. Which camera?" }
+                h2 { class: "text-xl font-semibold text-fg-strong", "3. Which camera?" }
                 CameraPicker { wizard }
                 SdkVersionNote { wizard }
                 DownloadedSdkRow { wizard }
@@ -75,7 +75,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
             section {
                 class: "{CARD} flex flex-col gap-3",
                 h2 {
-                    class: "text-xl font-semibold text-gray-900 dark:text-white",
+                    class: "text-xl font-semibold text-fg-strong",
                     match wizard.kind() {
                         DisplayKind::Flat => "4. How big is the screen?",
                         DisplayKind::Projector => "4. How big is the picture? (optional)",
@@ -84,7 +84,7 @@ pub fn SetupStep(wizard: Wizard) -> Element {
                 SizeSection { wizard }
                 ReferenceHelper { wizard }
                 details {
-                    class: "text-sm text-gray-600 dark:text-gray-300",
+                    class: "text-sm text-fg-muted",
                     summary { class: "cursor-pointer select-none font-medium", "Scale board (optional, prototype)" }
                     div {
                         class: "mt-2 flex flex-col gap-2",

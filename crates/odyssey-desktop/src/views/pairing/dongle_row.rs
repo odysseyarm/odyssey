@@ -17,10 +17,6 @@ const BONDS_PROTOCOL_VERSION: [u16; 3] = [0, 1, 1];
 /// The firmware version shown for a dongle until it reports its own.
 const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
 
-const DOT_CONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-green-500";
-// A bonded device that is switched off is normal, not an error, so it is gray.
-const DOT_DISCONNECTED: &str = "inline-block w-2 h-2 rounded-full bg-gray-400";
-
 /// The UI-facing reason a call could not be made without a hub connection.
 const NOT_CONNECTED: &str = "not connected to the hub";
 
@@ -133,22 +129,22 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
 
     rsx! {
         div {
-            class: "p-3 bg-gray-50 dark:bg-gray-600 rounded-lg space-y-2",
+            class: "p-3 bg-surface-alt rounded-lg space-y-2",
             div {
                 class: "flex flex-wrap items-center justify-between gap-2",
                 div {
                     class: "flex min-w-0 flex-wrap items-center gap-x-2",
                     span {
-                        class: "text-sm font-medium text-gray-700 dark:text-gray-200",
+                        class: "text-sm font-medium text-fg",
                         "Dongle"
                     }
                     span {
-                        class: "text-xs font-mono text-gray-500 dark:text-gray-400",
+                        class: "text-xs font-mono text-fg-muted",
                         "{dongle.id}{firmware_suffix}"
                     }
                     if !state.status.read().is_empty() {
                         span {
-                            class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                            class: "text-xs text-fg-muted italic",
                             "{state.status}"
                         }
                     }
@@ -179,7 +175,7 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
                 div {
                     class: "ml-4 space-y-1",
                     div {
-                        class: "text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400",
+                        class: "eyebrow",
                         {list_label}
                     }
                     for address in listed_addresses {
@@ -189,18 +185,19 @@ pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element 
                                 div {
                                     class: "flex items-center gap-2",
                                     span {
-                                        class: if connected { DOT_CONNECTED } else { DOT_DISCONNECTED },
+                                        // A bonded device that is switched off is normal, not an error, so its dot is neutral.
+                                        class: if connected { "size-2 rounded-full bg-success" } else { "size-2 rounded-full bg-fg-faint" },
                                         aria_hidden: true,
                                     }
                                     span {
-                                        class: "text-xs font-mono text-gray-600 dark:text-gray-300",
+                                        class: "text-xs font-mono text-fg-muted",
                                         {devices
                                             .iter()
                                             .find(|(_, device)| device.uuid == *address)
                                             .map_or_else(|| format_address(address), |(_, device)| device_label(device))}
                                     }
                                     span {
-                                        class: "text-xs text-gray-500 dark:text-gray-400",
+                                        class: "text-xs text-fg-muted",
                                         if connected { "connected" } else { "not in range" }
                                     }
                                 }

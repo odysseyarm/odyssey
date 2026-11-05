@@ -10,7 +10,7 @@ use dioxus::prelude::*;
 use dongle_row::DongleRow;
 use odyssey_hub_common::device::Device;
 
-use crate::components::{CARD_CLASS, CARD_TITLE_CLASS, Page};
+use crate::components::Page;
 use crate::hub::HubContext;
 
 #[component]
@@ -28,10 +28,10 @@ pub fn Pairing() -> Element {
 
             if dongles.is_empty() && ats_devices.is_empty() {
                 div {
-                    class: CARD_CLASS,
-                    h2 { class: "{CARD_TITLE_CLASS} mb-1", "Nothing to pair yet" }
+                    class: "card",
+                    h2 { class: "card-title mb-1", "Nothing to pair yet" }
                     p {
-                        class: "text-sm text-gray-600 dark:text-gray-300",
+                        class: "text-sm text-fg-muted",
                         "Plug a dongle or a device into this computer. They appear here as soon as the hub finds them."
                     }
                 }
@@ -39,8 +39,8 @@ pub fn Pairing() -> Element {
 
             if !dongles.is_empty() {
                 div {
-                    class: CARD_CLASS,
-                    h2 { class: "{CARD_TITLE_CLASS} mb-3", "Dongles" }
+                    class: "card",
+                    h2 { class: "card-title mb-3", "Dongles" }
                     div {
                         class: "space-y-2",
                         for dongle in dongles {
@@ -56,8 +56,8 @@ pub fn Pairing() -> Element {
 
             if !ats_devices.is_empty() {
                 div {
-                    class: CARD_CLASS,
-                    h2 { class: "{CARD_TITLE_CLASS} mb-3", "Devices" }
+                    class: "card",
+                    h2 { class: "card-title mb-3", "Devices" }
                     div {
                         class: "space-y-2",
                         for ats_dev in ats_devices {

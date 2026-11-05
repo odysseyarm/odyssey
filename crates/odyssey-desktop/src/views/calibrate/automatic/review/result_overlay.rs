@@ -8,13 +8,13 @@ use crate::views::calibrate::automatic::quality::Verdict;
 /// The width the overlay's stroke sizes are specified for; wider pictures
 /// scale them up to stay equally visible.
 const REFERENCE_WIDTH_PX: f64 = 640.0;
-const MARKER_COLOR: &str = "#38bdf8";
+const MARKER_COLOR: &str = "var(--oa-info)";
 
 pub(super) fn outline_color(verdict: Verdict) -> &'static str {
     match verdict {
-        Verdict::Good => "#22c55e",
-        Verdict::Fair => "#f59e0b",
-        Verdict::Poor => "#ef4444",
+        Verdict::Good => "var(--oa-success)",
+        Verdict::Fair => "var(--oa-warning)",
+        Verdict::Poor => "var(--oa-danger)",
     }
 }
 
@@ -47,7 +47,7 @@ pub(super) fn ResultOverlay(
             polygon {
                 points,
                 fill: "none",
-                stroke: outline,
+                style: "stroke: {outline}",
                 stroke_width: "{3.0 * unit}",
                 stroke_linejoin: "round",
             }
@@ -58,13 +58,13 @@ pub(super) fn ResultOverlay(
                     cy: "{marker[1]}",
                     r: "{9.0 * unit}",
                     fill: "none",
-                    stroke: MARKER_COLOR,
+                    style: "stroke: {MARKER_COLOR}",
                     stroke_width: "{2.5 * unit}",
                 }
                 text {
                     x: "{f64::from(marker[0]) + 12.0 * unit}",
                     y: "{f64::from(marker[1]) - 10.0 * unit}",
-                    fill: MARKER_COLOR,
+                    style: "fill: {MARKER_COLOR}",
                     font_size: "{16.0 * unit}",
                     font_weight: "700",
                     "{i + 1}"

@@ -32,11 +32,11 @@ pub(crate) fn ScreenPicker(selection: MonitorSelection) -> Element {
                 class: "flex flex-row items-center justify-between",
                 span {
                     id: LABEL_ID,
-                    class: "text-base font-medium text-gray-500 dark:text-gray-400",
+                    class: "text-base font-medium text-fg-muted",
                     "Choose a display:"
                 }
                 button {
-                    class: "btn-secondary",
+                    class: "btn btn-secondary btn-sm",
                     r#type: "button",
                     disabled: monitors.is_empty() || identifying(),
                     title: "Briefly show each display's number on that display",
@@ -55,7 +55,7 @@ pub(crate) fn ScreenPicker(selection: MonitorSelection) -> Element {
 
             if let Some(layout) = layout {
                 div {
-                    class: "flex justify-center rounded-lg bg-gray-100 dark:bg-gray-800 p-3",
+                    class: "flex justify-center rounded-lg bg-surface-alt p-3",
                     div {
                         role: "radiogroup",
                         aria_labelledby: LABEL_ID,
@@ -84,7 +84,7 @@ pub(crate) fn ScreenPicker(selection: MonitorSelection) -> Element {
                     .and_then(|i| monitors.get(i).map(|m| (i, m)))
                 {
                     div {
-                        class: "text-sm text-gray-600 dark:text-gray-300 text-center",
+                        class: "text-sm text-fg-muted text-center",
                         "{i + 1}. {monitor.display_name()} — {monitor.resolution()}"
                         if monitor.primary {
                             " — Primary"
@@ -93,13 +93,13 @@ pub(crate) fn ScreenPicker(selection: MonitorSelection) -> Element {
                 }
                 if monitors.iter().zip(layout.tiles.iter()).any(|(m, t)| m.primary && detail_for(t) != Detail::Full) {
                     div {
-                        class: "text-xs text-gray-500 dark:text-gray-400 text-center",
+                        class: "text-xs text-fg-muted text-center",
                         "★ primary display"
                     }
                 }
             } else {
                 div {
-                    class: "rounded-lg bg-gray-100 dark:bg-gray-800 p-6 text-center text-sm text-gray-600 dark:text-gray-300",
+                    class: "rounded-lg bg-surface-alt p-6 text-center text-sm text-fg-muted",
                     "No displays found."
                 }
             }
@@ -136,14 +136,14 @@ fn MonitorTile(props: MonitorTileProps) -> Element {
     } = props;
 
     let tile_class = if selected {
-        "bg-blue-600 border-blue-300 text-white shadow-md hover:bg-blue-500 dark:border-blue-400"
+        "bg-accent border-accent-strong text-on-accent shadow-md hover:bg-accent-strong"
     } else {
-        "bg-gray-200 border-gray-300 text-gray-700 hover:bg-gray-300 hover:border-blue-400 dark:bg-gray-600 dark:border-gray-500 dark:text-gray-100 dark:hover:bg-gray-500 dark:hover:border-blue-400"
+        "bg-surface border-line-strong text-fg hover:bg-surface-hover hover:border-accent-ink"
     };
     let badge_class = if selected {
-        "bg-white text-blue-700"
+        "bg-black/15 text-on-accent"
     } else {
-        "bg-white/70 text-gray-900 dark:bg-black/30 dark:text-white"
+        "bg-surface-alt text-fg-strong"
     };
     let description = format!(
         "{number}. {}, {}{}",
@@ -158,7 +158,7 @@ fn MonitorTile(props: MonitorTileProps) -> Element {
             class: "absolute p-0.5",
             style: "left: {left:.3}%; top: {top:.3}%; width: {width:.3}%; height: {height:.3}%;",
             button {
-                class: "relative w-full h-full overflow-hidden rounded-md border-2 px-1 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 {tile_class}",
+                class: "relative w-full h-full overflow-hidden rounded-lg border-2 px-1 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer transition-colors {tile_class}",
                 r#type: "button",
                 role: "radio",
                 aria_checked: selected,
@@ -179,7 +179,7 @@ fn MonitorTile(props: MonitorTileProps) -> Element {
                 if monitor.primary {
                     if detail == Detail::Full {
                         span {
-                            class: "rounded-full px-1.5 text-[10px] font-semibold uppercase tracking-wide bg-black/15 dark:bg-white/20",
+                            class: "rounded-full px-1.5 text-[10px] font-semibold uppercase tracking-wide bg-current/15",
                             "Primary"
                         }
                     } else {

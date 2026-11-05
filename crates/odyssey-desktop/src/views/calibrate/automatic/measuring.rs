@@ -40,17 +40,17 @@ pub fn MeasuringStep(
                 span {}
             },
             div {
-                class: "flex flex-col items-center gap-6 rounded-xl bg-white px-6 py-14 shadow dark:bg-gray-700",
-                Spinner { class: "size-14 text-blue-600".to_string() }
-                div { class: "text-2xl font-semibold text-gray-900 dark:text-white", "{shown.text}" }
+                class: "card flex flex-col items-center gap-6 px-6 py-14",
+                Spinner { class: "size-14 text-accent-ink".to_string() }
+                div { class: "text-2xl font-semibold text-fg-strong", "{shown.text}" }
                 div {
-                    class: "h-3 w-full max-w-md overflow-hidden rounded-full bg-gray-200 dark:bg-gray-600",
+                    class: "progress h-3 w-full max-w-md",
                     role: "progressbar",
                     aria_valuemin: "0",
                     aria_valuemax: "100",
                     aria_valuenow: "{percent}",
                     div {
-                        class: "h-full rounded-full bg-blue-600 transition-all duration-200",
+                        class: "progress-fill transition-all duration-200",
                         style: "width: {percent}%;",
                     }
                 }

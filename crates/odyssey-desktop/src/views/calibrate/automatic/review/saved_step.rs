@@ -35,17 +35,17 @@ pub fn SavedStep(wizard: Wizard) -> Element {
             },
 
             div {
-                class: "flex flex-col items-center gap-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 px-6 py-8 text-center text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-100",
-                IconView { icon: Icon::Check, class: "size-16 text-emerald-600 dark:text-emerald-400".to_string() }
+                class: "alert alert-success flex flex-col items-center gap-3 px-6 py-8 text-center",
+                IconView { icon: Icon::Check, class: "size-16 text-success-ink".to_string() }
                 div { class: "text-2xl font-semibold", "All done" }
                 div { class: "text-base", "The new calibration is active as soon as the hub picks it up, which takes a second or two." }
             }
 
             section {
-                class: "flex items-center justify-between gap-4 rounded-xl bg-white px-5 py-4 shadow dark:bg-gray-700",
+                class: "card flex items-center justify-between gap-4 px-5 py-4",
                 p {
-                    class: "text-base text-gray-700 dark:text-gray-200",
-                    span { class: "font-semibold text-gray-900 dark:text-white", "Recommended: " }
+                    class: "text-base text-fg",
+                    span { class: "font-semibold text-fg-strong", "Recommended: " }
                     "re-zero your devices so aiming matches the new calibration."
                 }
                 button {

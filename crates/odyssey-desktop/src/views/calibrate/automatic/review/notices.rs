@@ -9,7 +9,7 @@ use crate::views::calibrate::automatic::quality::disagreement_message;
 use crate::views::calibrate::automatic::ui::{INFO_NOTE, PRIMARY_BUTTON, SECONDARY_BUTTON};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
-const AMBER_BOX: &str = "flex flex-col gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100";
+const WARNING_BOX: &str = "alert alert-warning flex flex-col gap-3";
 
 /// The camera and the declared size disagree: what that means and what to do.
 #[component]
@@ -23,10 +23,10 @@ pub(super) fn DisagreementNotice(
     rsx! {
         div {
             role: "alert",
-            class: AMBER_BOX,
+            class: WARNING_BOX,
             div {
                 class: "flex items-start gap-3",
-                IconView { icon: Icon::Warning, class: "mt-0.5 size-6 shrink-0 text-amber-600 dark:text-amber-400".to_string() }
+                IconView { icon: Icon::Warning, class: "mt-0.5 size-6 shrink-0 text-warning-ink".to_string() }
                 div {
                     class: "flex flex-col gap-1",
                     div { class: "text-lg font-semibold", "The camera and the screen's size don't agree" }
@@ -80,7 +80,7 @@ pub(super) fn OverscanNotice() -> Element {
     rsx! {
         div {
             class: INFO_NOTE,
-            IconView { icon: Icon::Crop, class: "mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-300".to_string() }
+            IconView { icon: Icon::Crop, class: "mt-0.5 size-6 shrink-0 text-info-ink".to_string() }
             span {
                 "This screen hides the edge of its picture. The size above is the whole picture the computer draws, including the part you can't see, and the calibration is for that picture. Turning off overscan in the TV's picture settings ('Just Scan' or 'PC mode') makes all of it visible, which also lets the TV's own size be used."
             }
@@ -94,7 +94,7 @@ pub(super) fn UsingMeasuredNotice(wizard: Wizard) -> Element {
     let saving = *wizard.saving.read();
     rsx! {
         div {
-            class: "flex flex-wrap items-center justify-between gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100",
+            class: "alert alert-info flex flex-wrap items-center justify-between gap-3 text-base",
             span { "Using the camera's own measurement instead of the declared size." }
             button {
                 class: SECONDARY_BUTTON,
@@ -115,7 +115,7 @@ pub(super) fn ReplaceConfirmation(wizard: Wizard, screen: String) -> Element {
         div {
             role: "alertdialog",
             aria_label: "Replace the existing calibration?",
-            class: AMBER_BOX,
+            class: WARNING_BOX,
             div { class: "text-lg font-semibold", "{screen} already has a calibration" }
             div { class: "text-base", "Saving replaces it. The old calibration can't be brought back." }
             div {
@@ -144,7 +144,7 @@ pub(super) fn SaveError(error: String) -> Element {
     rsx! {
         div {
             role: "alert",
-            class: "rounded-xl border-2 border-red-300 bg-red-50 px-4 py-3 text-base text-red-900 dark:border-red-700 dark:bg-red-950/60 dark:text-red-100",
+            class: "alert alert-danger text-base",
             "Couldn't save the calibration: {error}"
         }
     }

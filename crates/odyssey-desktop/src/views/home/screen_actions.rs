@@ -12,16 +12,13 @@ use crate::components::{ScreenPicker, use_monitor_selection};
 use crate::hub::HubContext;
 use crate::views::zero::{Zero, ZeroProps};
 
-const CALIBRATE_LINK: &str = "shrink-0 text-gray-900 bg-white border border-gray-300 hover:bg-gray-100 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-base px-5 py-2.5 focus:outline-none dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:bg-gray-700 dark:focus:ring-gray-700";
-const ZERO_BUTTON: &str = "shrink-0 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-base px-5 py-2.5 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800 disabled:opacity-50 disabled:pointer-events-none";
-
 #[component]
 pub(super) fn ScreenActions(hub: Signal<HubContext>) -> Element {
     let monitor_selection = use_monitor_selection();
     let no_devices = (hub().devices)().is_empty();
     rsx! {
         div {
-            class: "bg-white dark:bg-gray-700 rounded-lg p-4 shadow flex flex-col gap-3",
+            class: "card flex flex-col gap-3",
 
             ScreenPicker { selection: monitor_selection }
 
@@ -29,11 +26,11 @@ pub(super) fn ScreenActions(hub: Signal<HubContext>) -> Element {
                 class: "flex flex-row justify-end gap-3",
                 Link {
                     to: Route::Calibrate {},
-                    class: CALIBRATE_LINK,
+                    class: "btn btn-secondary shrink-0",
                     "Calibrate screen"
                 }
                 button {
-                    class: ZERO_BUTTON,
+                    class: "btn btn-primary shrink-0",
                     r#type: "button",
                     disabled: no_devices || monitor_selection.selected().is_none(),
                     onclick: move |_| {

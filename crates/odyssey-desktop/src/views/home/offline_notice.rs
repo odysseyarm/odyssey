@@ -18,7 +18,7 @@ pub(super) fn OfflineNotice(error: Option<String>) -> Element {
     rsx! {
         div {
             role: "note",
-            class: "flex flex-col gap-1 rounded-lg border-2 border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100",
+            class: "alert alert-warning flex flex-col gap-1",
             if policy.offline {
                 span { class: "font-semibold", "Offline mode is on" }
                 span {

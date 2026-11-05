@@ -39,32 +39,32 @@ pub(crate) fn UpdatingDeviceRow(props: UpdatingDeviceRowProps) -> Element {
 
     rsx! {
         div {
-            class: "flex flex-col p-3 bg-gray-50 dark:bg-gray-600 rounded gap-2",
+            class: "flex flex-col p-3 bg-surface-alt rounded-lg gap-2",
             div {
                 class: "flex items-center justify-between",
                 div {
                     class: "flex items-center gap-3",
                     div {
-                        class: if is_error { "w-2 h-2 bg-red-500 rounded-full" }
-                               else if is_complete { "w-2 h-2 bg-green-500 rounded-full" }
-                               else { "w-2 h-2 bg-yellow-500 rounded-full animate-pulse" }
+                        class: if is_error { "size-2 bg-danger rounded-full" }
+                               else if is_complete { "size-2 bg-success rounded-full" }
+                               else { "size-2 bg-warning rounded-full animate-pulse" }
                     }
                     span {
-                        class: "text-sm font-mono text-gray-700 dark:text-gray-200",
+                        class: "text-sm font-mono text-fg",
                         "{uuid[0]:02x}:{uuid[1]:02x}:{uuid[2]:02x}:{uuid[3]:02x}:{uuid[4]:02x}:{uuid[5]:02x}"
                     }
                 }
                 span {
-                    class: if is_error { "text-xs text-red-500" }
-                           else if is_complete { "text-xs text-green-500" }
-                           else { "text-xs text-yellow-500" },
+                    class: if is_error { "text-xs text-danger-ink" }
+                           else if is_complete { "text-xs text-success-ink" }
+                           else { "text-xs text-warning-ink" },
                     {state_display}
                 }
             }
             if let Some((progress, total)) = current_state.flash_progress() {
                 ProgressBar { percent: percent_complete(progress, total) }
                 span {
-                    class: "text-xs text-gray-400",
+                    class: "text-xs text-fg-muted",
                     "{progress / BYTES_PER_KB} / {total / BYTES_PER_KB} KB"
                 }
             }

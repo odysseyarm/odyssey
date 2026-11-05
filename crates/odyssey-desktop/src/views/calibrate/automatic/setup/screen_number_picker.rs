@@ -15,7 +15,7 @@ pub(super) fn ScreenNumberPicker(wizard: Wizard) -> Element {
             class: "flex flex-col gap-2",
             span {
                 id: "screen-number-label",
-                class: "text-base font-medium text-gray-500 dark:text-gray-400",
+                class: "text-base font-medium text-fg-muted",
                 "Save the result as:"
             }
             div {
@@ -27,18 +27,18 @@ pub(super) fn ScreenNumberPicker(wizard: Wizard) -> Element {
                         let selected = id == chosen;
                         let taken = saved[usize::from(id)];
                         let class = if selected {
-                            "border-blue-600 bg-blue-600 text-white"
+                            "border-accent bg-accent text-on-accent"
                         } else {
-                            "border-gray-300 bg-white text-gray-800 hover:border-blue-400 dark:border-gray-500 dark:bg-gray-800 dark:text-gray-100"
+                            "border-line bg-surface text-fg hover:border-accent-ink"
                         };
-                        let status_class = if selected { "opacity-90" } else { "text-gray-500 dark:text-gray-400" };
+                        let status_class = if selected { "opacity-90" } else { "text-fg-muted" };
                         rsx! {
                             button {
                                 key: "{id}",
                                 r#type: "button",
                                 role: "radio",
                                 aria_checked: selected,
-                                class: "flex flex-col items-center rounded-lg border-2 px-2 py-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 {class}",
+                                class: "flex flex-col items-center rounded-lg border-2 px-2 py-2 {class}",
                                 onclick: move |_| *wizard.screen_choice.write() = Some(id),
                                 span { class: "text-base font-semibold", "{screen_label(id)}" }
                                 span {
@@ -52,7 +52,7 @@ pub(super) fn ScreenNumberPicker(wizard: Wizard) -> Element {
             }
             if saved[usize::from(chosen)] {
                 span {
-                    class: "text-sm text-amber-700 dark:text-amber-300",
+                    class: "text-sm text-warning-ink",
                     "{screen_label(chosen)} already has a calibration. You'll be asked before it is replaced."
                 }
             }

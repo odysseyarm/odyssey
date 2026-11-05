@@ -5,6 +5,7 @@ use dioxus::desktop::{Config, DesktopContext, WindowBuilder, WindowCloseBehaviou
 use dioxus::prelude::*;
 
 use super::monitor_layout::{MonitorInfo, monitor_key};
+use crate::components::Theme;
 
 /// How long the numbered overlay stays on each monitor.
 pub(super) const IDENTIFY_DURATION: Duration = Duration::from_millis(1800);
@@ -32,8 +33,6 @@ pub(super) fn identify_monitors(window: &DesktopContext) {
     }
 }
 
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
-
 #[component]
 fn IdentifyOverlay(number: usize, label: String) -> Element {
     use_future(|| async {
@@ -42,10 +41,10 @@ fn IdentifyOverlay(number: usize, label: String) -> Element {
     });
 
     rsx! {
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        Theme {}
 
         div {
-            class: "h-screen flex flex-col items-center justify-center gap-6 bg-blue-700 text-white select-none cursor-pointer",
+            class: "h-screen flex flex-col items-center justify-center gap-6 bg-accent text-on-accent select-none cursor-pointer",
             onclick: move |_| dioxus::desktop::window().close(),
             div { class: "text-[16rem] leading-none font-bold", "{number}" }
             div { class: "text-2xl opacity-90", {label} }

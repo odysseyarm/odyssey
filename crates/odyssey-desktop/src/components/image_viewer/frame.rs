@@ -74,7 +74,7 @@ pub(super) fn FrameView(
             }
             // Lossless native-resolution pixels, scaled only for display.
             div {
-                style: "position:relative;width:100%;background:#000;line-height:0;",
+                class: "stage relative w-full leading-none",
                 img {
                     src: frame.image_url.as_str(),
                     alt: "Full-resolution grayscale infrared sensor image",

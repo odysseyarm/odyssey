@@ -161,23 +161,23 @@ pub fn ReviewStep(wizard: Wizard) -> Element {
             div {
                 class: "grid grid-cols-2 gap-3",
                 div {
-                    class: "rounded-xl bg-white p-4 shadow dark:bg-gray-700",
-                    div { class: "text-sm text-gray-500 dark:text-gray-400", "Screen size" }
+                    class: "card p-4",
+                    div { class: "text-sm text-fg-muted", "Screen size" }
                     div {
-                        class: "text-2xl font-semibold text-gray-900 dark:text-white",
+                        class: "text-2xl font-semibold text-fg-strong",
                         "{outcome.diagonal_in:.1} inches"
                     }
                     div {
-                        class: "text-sm text-gray-600 dark:text-gray-300",
+                        class: "text-sm text-fg-muted",
                         "{outcome.size_m[0] * 100.0:.0} × {outcome.size_m[1] * 100.0:.0} cm"
                     }
-                    div { class: "mt-1 text-sm font-medium text-gray-700 dark:text-gray-200", {source} }
+                    div { class: "mt-1 text-sm font-medium text-fg", {source} }
                 }
                 div {
-                    class: "rounded-xl bg-white p-4 shadow dark:bg-gray-700",
-                    div { class: "text-sm text-gray-500 dark:text-gray-400", "Will be saved as" }
-                    div { class: "text-2xl font-semibold text-gray-900 dark:text-white", {screen.as_str()} }
-                    div { class: "truncate text-sm text-gray-600 dark:text-gray-300", {monitor} }
+                    class: "card p-4",
+                    div { class: "text-sm text-fg-muted", "Will be saved as" }
+                    div { class: "text-2xl font-semibold text-fg-strong", {screen.as_str()} }
+                    div { class: "truncate text-sm text-fg-muted", {monitor} }
                 }
             }
 

@@ -33,9 +33,15 @@ pub(super) fn SaveZeroButton(
         signals.set_save_status(None);
     });
     let (class, label) = match (signals.save_zero_status)() {
-        None => ("btn-secondary", "Save Zero".to_string()),
-        Some(Ok(())) => ("btn-secondary-success", "Saved".to_string()),
-        Some(Err(e)) => ("btn-secondary-danger", format!("Error: {e}")),
+        None => ("btn btn-secondary btn-sm", "Save Zero".to_string()),
+        Some(Ok(())) => (
+            "btn btn-secondary btn-sm border-success/40 text-success-ink",
+            "Saved".to_string(),
+        ),
+        Some(Err(e)) => (
+            "btn btn-secondary btn-sm text-danger-ink hover:border-danger-ink",
+            format!("Error: {e}"),
+        ),
     };
     rsx! {
         button {

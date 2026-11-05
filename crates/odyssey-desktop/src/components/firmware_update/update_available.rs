@@ -30,7 +30,7 @@ pub(super) fn UpdateAvailable(
         div {
             class: "flex items-center gap-2",
             span {
-                class: "text-xs text-yellow-600 dark:text-yellow-400",
+                class: "text-xs text-warning-ink",
                 if is_dfu_bootloader { "Device in DFU mode — flash v{available}" }
                 else { "Update available: v{current} → v{available}" }
             }
@@ -44,7 +44,7 @@ pub(super) fn UpdateAvailable(
                 // The state below is polled, so a second click can land
                 // before this branch stops being rendered.
                 disabled: manager.is_updating(&device.uuid),
-                class: "btn-primary-sm",
+                class: "btn btn-primary btn-sm",
                 onclick: move |_| {
                     start_firmware_update(
                         manager.clone(),

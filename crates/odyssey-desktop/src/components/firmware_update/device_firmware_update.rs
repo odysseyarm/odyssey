@@ -54,11 +54,11 @@ pub(crate) fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element 
                 div {
                     class: "flex items-center gap-2",
                     span {
-                        class: "text-xs text-yellow-600 dark:text-yellow-400",
+                        class: "text-xs text-warning-ink",
                         "Update available: v{current} → v{available}"
                     }
                     span {
-                        class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                        class: "text-xs text-fg-muted italic",
                         "Plug in USB to update"
                     }
                 }
@@ -104,16 +104,16 @@ pub(crate) fn DeviceFirmwareUpdate(props: DeviceFirmwareUpdateProps) -> Element 
         | FirmwareUpdateState::InstallingNetCore
         | FirmwareUpdateState::Rebooting
         | FirmwareUpdateState::Verifying => rsx! {
-            span { class: "text-xs text-blue-500", {state.status_text()} }
+            span { class: "text-xs text-accent-ink", {state.status_text()} }
         },
         FirmwareUpdateState::Complete => rsx! {
-            span { class: "text-xs text-green-500", {state.status_text()} }
+            span { class: "text-xs text-success-ink", {state.status_text()} }
         },
         FirmwareUpdateState::Failed(error) => rsx! {
             div {
                 class: "flex flex-col gap-1",
-                span { class: "text-xs text-red-500 font-semibold", {state.status_text()} }
-                span { class: "text-xs text-red-400", {error.clone()} }
+                span { class: "text-xs text-danger-ink font-semibold", {state.status_text()} }
+                span { class: "text-xs text-danger-ink", {error.clone()} }
             }
         },
     }
@@ -126,10 +126,10 @@ fn FlashProgress(label: &'static str, progress: usize, total: usize) -> Element 
     rsx! {
         div {
             class: "flex flex-col gap-1 min-w-32",
-            span { class: "text-xs text-blue-500", "{label} {percent}%" }
+            span { class: "text-xs text-accent-ink", "{label} {percent}%" }
             ProgressBar { percent }
             span {
-                class: "text-xs text-gray-400",
+                class: "text-xs text-fg-muted",
                 "{progress / BYTES_PER_KB} / {total / BYTES_PER_KB} KB"
             }
         }

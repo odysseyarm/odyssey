@@ -78,23 +78,17 @@ pub(crate) enum Tone {
 impl Tone {
     fn banner_class(self) -> &'static str {
         match self {
-            Self::Good => {
-                "bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-100"
-            }
-            Self::Attention => {
-                "bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/60 dark:border-amber-700 dark:text-amber-100"
-            }
-            Self::Bad => {
-                "bg-red-50 border-red-300 text-red-900 dark:bg-red-950/60 dark:border-red-700 dark:text-red-100"
-            }
+            Self::Good => "bg-success-soft border-success/40 text-success-ink",
+            Self::Attention => "bg-warning-soft border-warning/50 text-warning-ink",
+            Self::Bad => "bg-danger-soft border-danger/50 text-danger-ink",
         }
     }
 
     fn icon_class(self) -> &'static str {
         match self {
-            Self::Good => "text-emerald-600 dark:text-emerald-400",
-            Self::Attention => "text-amber-600 dark:text-amber-400",
-            Self::Bad => "text-red-600 dark:text-red-400",
+            Self::Good => "text-success-ink",
+            Self::Attention => "text-warning-ink",
+            Self::Bad => "text-danger-ink",
         }
     }
 }
@@ -150,20 +144,20 @@ pub fn Stepper(steps: Vec<&'static str>, current: usize) -> Element {
                     let done = i < current;
                     let active = i == current;
                     let dot = if done {
-                        "bg-blue-600 text-white border-blue-600"
+                        "bg-success-soft text-success-ink border-success"
                     } else if active {
-                        "bg-white text-blue-700 border-blue-600 ring-4 ring-blue-200 dark:bg-gray-800 dark:text-blue-300 dark:ring-blue-900"
+                        "bg-accent text-on-accent border-accent ring-4 ring-accent/25"
                     } else {
-                        "bg-white text-gray-400 border-gray-300 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-500"
+                        "bg-surface text-fg-muted border-line-strong"
                     };
                     let text = if active {
-                        "text-gray-900 dark:text-white font-semibold"
+                        "text-fg-strong font-semibold"
                     } else if done {
-                        "text-gray-700 dark:text-gray-300"
+                        "text-fg"
                     } else {
-                        "text-gray-400 dark:text-gray-500"
+                        "text-fg-muted"
                     };
-                    let bar = if done { "bg-blue-600" } else { "bg-gray-300 dark:bg-gray-600" };
+                    let bar = if done { "bg-success" } else { "bg-line-strong" };
                     rsx! {
                         li {
                             key: "{label}",
@@ -182,7 +176,7 @@ pub fn Stepper(steps: Vec<&'static str>, current: usize) -> Element {
                                 span { class: "text-sm whitespace-nowrap {text}", {label} }
                             }
                             if i != last {
-                                div { class: "mx-3 h-0.5 flex-1 rounded {bar}" }
+                                div { class: "mx-3 h-0.5 flex-1 rounded-full {bar}" }
                             }
                         }
                     }
@@ -213,13 +207,13 @@ pub fn Slider(
             class: "flex flex-col gap-1",
             div {
                 class: "flex items-baseline justify-between",
-                label { r#for: id.clone(), class: "text-base font-medium text-gray-900 dark:text-white", {label} }
-                span { class: "text-sm tabular-nums text-gray-600 dark:text-gray-300", {value_text} }
+                label { r#for: id.clone(), class: "text-base font-medium text-fg-strong", {label} }
+                span { class: "text-sm tabular-nums text-fg-muted", {value_text} }
             }
             input {
                 id,
                 r#type: "range",
-                class: "w-full accent-blue-600 disabled:opacity-50",
+                class: "w-full disabled:opacity-50",
                 min: "{min}",
                 max: "{max}",
                 step: "{step}",
@@ -232,7 +226,7 @@ pub fn Slider(
                 },
             }
             if let Some(help) = help {
-                span { class: "text-sm text-gray-500 dark:text-gray-400", {help} }
+                span { class: "text-sm text-fg-muted", {help} }
             }
         }
     }
@@ -267,7 +261,7 @@ pub fn OverlayImage(
 ) -> Element {
     rsx! {
         div {
-            class: "relative w-full overflow-hidden rounded-xl bg-black shadow-inner",
+            class: "stage relative w-full shadow-inner",
             style: "aspect-ratio: {width} / {height};",
             if !src.is_empty() {
                 img { class: "absolute inset-0 size-full object-fill", src, alt }

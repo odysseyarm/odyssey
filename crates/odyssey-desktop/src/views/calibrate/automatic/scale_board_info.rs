@@ -9,8 +9,8 @@ use dioxus::prelude::*;
 use super::ui::{LINK_BUTTON, SECONDARY_BUTTON};
 use crate::scale_board::{self, Board};
 
-const HEADING: &str = "text-lg font-semibold text-gray-900 dark:text-white";
-const BODY: &str = "text-base text-gray-700 dark:text-gray-200";
+const HEADING: &str = "text-lg font-semibold text-fg-strong";
+const BODY: &str = "text-base text-fg";
 
 fn board_label(board: Board) -> &'static str {
     match board {
@@ -52,14 +52,14 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
     let mut status = use_signal(|| None::<Result<Done, String>>);
     rsx! {
         div {
-            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4",
+            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4",
             onclick: move |_| on_close.call(()),
             div {
                 role: "dialog",
                 aria_modal: "true",
                 aria_labelledby: "scale-board-title",
                 tabindex: 0,
-                class: "flex max-h-full w-full max-w-3xl flex-col gap-5 overflow-y-auto rounded-xl bg-white p-6 shadow-xl outline-none dark:bg-gray-800",
+                class: "flex max-h-full w-full max-w-3xl flex-col gap-5 overflow-y-auto rounded-xl bg-surface p-6 shadow-xl outline-none",
                 onclick: move |e| e.stop_propagation(),
                 onmounted: move |e| async move {
                     let _ = e.set_focus(true).await;
@@ -72,7 +72,7 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
 
                 div {
                     class: "flex items-start justify-between gap-4",
-                    h2 { id: "scale-board-title", class: "text-2xl font-semibold text-gray-900 dark:text-white", "The scale board (experimental)" }
+                    h2 { id: "scale-board-title", class: "text-2xl font-semibold text-fg-strong", "The scale board (experimental)" }
                     button {
                         class: SECONDARY_BUTTON,
                         r#type: "button",
@@ -135,13 +135,13 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
                     }
                     match status() {
                         Some(Ok(Done::Opened(path))) => rsx! {
-                            p { role: "status", class: "text-sm text-gray-600 dark:text-gray-300", "Opened {path.display()}. Print or save it from your PDF viewer." }
+                            p { role: "status", class: "text-sm text-fg-muted", "Opened {path.display()}. Print or save it from your PDF viewer." }
                         },
                         Some(Ok(Done::Saved(path))) => rsx! {
-                            p { role: "status", class: "text-sm text-gray-600 dark:text-gray-300", "Saved {path.display()}." }
+                            p { role: "status", class: "text-sm text-fg-muted", "Saved {path.display()}." }
                         },
                         Some(Err(message)) => rsx! {
-                            p { role: "alert", class: "text-sm text-red-700 dark:text-red-300", {message} }
+                            p { role: "alert", class: "text-sm text-danger-ink", {message} }
                         },
                         None => rsx! {},
                     }
@@ -171,7 +171,7 @@ fn ScaleBoardWindow(on_close: EventHandler<()>) -> Element {
                         class: BODY,
                         "With a ruler or tape, measure the printed bar from the middle of its left end tick to the middle of its right end tick. It should be 200 mm (7.87 in); on the 24 \u{d7} 17 in board, 400 mm. If it isn't, don't fix the printer: the test tool takes the distance between dots, not the bar length, so work it out:"
                     }
-                    p { class: "font-mono text-base text-gray-900 dark:text-white", "pitch = 40 \u{d7} measured bar \u{f7} 200   (24 \u{d7} 17 in board: 80 \u{d7} measured bar \u{f7} 400)" }
+                    p { class: "font-mono text-base text-fg-strong", "pitch = 40 \u{d7} measured bar \u{f7} 200   (24 \u{d7} 17 in board: 80 \u{d7} measured bar \u{f7} 400)" }
                     p {
                         class: BODY,
                         "For example, a bar that measures 201.4 mm means a pitch of 40.28 mm."

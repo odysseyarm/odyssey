@@ -73,7 +73,7 @@ pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues
                         option { value: "1", "Tracking" }
                     }
                     if let Some(message) = issue(PAJ_OPERATION_MODE) {
-                        p { class: "text-xs text-red-600 dark:text-red-400", {message} }
+                        p { class: "text-xs text-danger-ink", {message} }
                     }
                 }
 
@@ -102,7 +102,7 @@ pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues
                         option { value: "1", "On" }
                     }
                     if let Some(message) = issue(PAJ_FRAME_SUBTRACTION) {
-                        p { class: "text-xs text-red-600 dark:text-red-400", {message} }
+                        p { class: "text-xs text-danger-ink", {message} }
                     }
                 }
 
@@ -117,7 +117,7 @@ pub(super) fn PajSensorPanel(label: String, state: Signal<PajState>, show_issues
                         }
                     }
                     if let Some(message) = issue(PAJ_GAIN) {
-                        p { class: "text-xs text-red-600 dark:text-red-400", {message} }
+                        p { class: "text-xs text-danger-ink", {message} }
                     }
                 }
 

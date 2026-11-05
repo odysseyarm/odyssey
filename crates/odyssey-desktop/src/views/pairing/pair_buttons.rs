@@ -2,8 +2,7 @@
 
 use dioxus::prelude::*;
 
-const BUTTON: &str = "btn-secondary text-xs whitespace-nowrap";
-const DANGER_BUTTON: &str = "py-2.5 px-4 text-xs whitespace-nowrap rounded-lg font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-red-300 dark:focus:ring-red-900 disabled:opacity-50";
+const BUTTON: &str = "btn btn-secondary btn-sm whitespace-nowrap";
 
 #[component]
 pub(super) fn PairButtons(
@@ -22,9 +21,9 @@ pub(super) fn PairButtons(
 
     if confirming_clear() {
         return rsx! {
-            span { class: "text-xs text-gray-700 dark:text-gray-200", {clear_prompt} }
+            span { class: "text-xs text-fg", {clear_prompt} }
             button {
-                class: DANGER_BUTTON,
+                class: "btn btn-danger btn-sm whitespace-nowrap",
                 disabled: command_pending,
                 onclick: move |_| {
                     confirming_clear.set(false);

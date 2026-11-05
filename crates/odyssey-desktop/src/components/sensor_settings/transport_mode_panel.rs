@@ -4,17 +4,14 @@ use odyssey_hub_common::device::{Device, DeviceCapabilities};
 
 use super::op_status::{OpStatus, StatusLine, rpc_failure};
 use super::product_ids::supports_transport_switching;
-use super::styles::{
-    ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS,
-    HELP_TEXT_CLASS, LABEL_CLASS,
-};
+use super::styles::{DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS, LABEL_CLASS};
 use crate::hub::HubContext;
 
 fn mode_button_class(active: bool) -> &'static str {
     if active {
-        ACTION_PRIMARY_CLASS
+        "btn btn-primary btn-sm"
     } else {
-        ACTION_SECONDARY_CLASS
+        "btn btn-secondary btn-sm"
     }
 }
 
@@ -116,7 +113,7 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
                 "Connection"
             }
             div {
-                class: "mt-2 space-y-2 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg",
+                class: "mt-2 space-y-2 p-3 bg-surface-alt rounded-lg",
                 div {
                     class: FIELD_GRID_CLASS,
                     label { class: LABEL_CLASS, "Transport mode" }
@@ -137,7 +134,7 @@ pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Ele
                     }
                 }
                 p {
-                    class: HELP_TEXT_CLASS,
+                    class: "help",
                     if pending_usb {
                         "USB carries sensor data and tuning over the wired connection."
                     } else {

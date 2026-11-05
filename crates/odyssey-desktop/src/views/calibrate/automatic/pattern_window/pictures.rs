@@ -9,8 +9,8 @@ use dioxus::prelude::*;
 use super::display::Link;
 use crate::views::calibrate::automatic::reference;
 
-/// The gray of the instructions under the ruler and the card.
-const HINT_COLOR: &str = "#9ca3af";
+/// Muted gray of the instructions; this token is the same in both themes and legible on black.
+const HINT_COLOR: &str = "var(--oa-fg-faint)";
 const HINT_FONT_SIZE: &str = "28";
 
 /// Half the height of the tick at each end of the ruler's line, in pixels.
@@ -32,7 +32,7 @@ fn Hint(x: f64, y: f64, text: &'static str) -> Element {
             x: "{x}",
             y: "{y}",
             text_anchor: "middle",
-            fill: HINT_COLOR,
+            style: "fill: {HINT_COLOR}",
             font_size: HINT_FONT_SIZE,
             font_family: "sans-serif",
             {text}

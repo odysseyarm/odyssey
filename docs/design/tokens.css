@@ -1,0 +1,132 @@
+/* Odyssey Arm design tokens: the one source for colour, type, shape and motion.
+   docs/design/README.md explains each token and when to use it.
+
+   Plain CSS custom properties so any web surface can import this file as is.
+   Odyssey Desktop maps them to Tailwind utilities in
+   crates/odyssey-desktop/input.css. The website (odysseyarm.github.io,
+   src/styles/tokens.css) and the Unity projects copy the values; change them
+   here first, then there.
+
+   The theme follows the system setting. A page that picks its own theme sets
+   data-theme="light" or data-theme="dark" on <html>, which wins over the
+   system setting. */
+
+:root {
+	--oa-brand-orange: #ffa44f;
+	--oa-brand-ochre: #c2852c;
+	--oa-brand-flame: #ff8344;
+	--oa-brand-charcoal: #272525;
+
+	--oa-font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--oa-font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+	--oa-tracking-heading: -0.03em;
+
+	--oa-radius-sm: 6px;
+	--oa-radius: 10px;
+	--oa-radius-lg: 14px;
+	--oa-radius-xl: 22px;
+
+	--oa-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+	--oa-duration-fast: 150ms;
+	--oa-duration: 200ms;
+
+	--oa-data-x: #ff7b72;
+	--oa-data-y: #4ac26b;
+	--oa-data-z: #6cb6ff;
+
+	--oa-accent: var(--oa-brand-orange);
+	--oa-accent-strong: #ffb36b;
+	--oa-on-accent: #111111;
+	--oa-on-danger: #ffffff;
+	--oa-on-warning: #1c1917;
+}
+
+:root,
+:root[data-theme='light'] {
+	--oa-canvas: #faf8f7;
+	--oa-surface: #ffffff;
+	--oa-surface-alt: #f1eeed;
+	--oa-surface-hover: #e9e5e4;
+	--oa-line: #e5e0df;
+	--oa-line-strong: #cfc9c8;
+	--oa-fg: #2b2727;
+	--oa-fg-strong: #111111;
+	--oa-fg-muted: #5f5957;
+	--oa-fg-faint: #857f7e;
+
+	--oa-accent-ink: #994a00;
+	--oa-accent-soft: #ffe4c9;
+
+	--oa-success: #1a7f37;
+	--oa-success-ink: #176f30;
+	--oa-success-soft: #e3f6e8;
+	--oa-warning: #fbbf24;
+	--oa-warning-ink: #8a5a00;
+	--oa-warning-soft: #fff4d6;
+	--oa-danger: #c4302b;
+	--oa-danger-ink: #b42823;
+	--oa-danger-soft: #fde8e7;
+	--oa-info: #0b5cad;
+	--oa-info-ink: #0b5cad;
+	--oa-info-soft: #e5f1ff;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--oa-canvas: #272525;
+		--oa-surface: #2f2c2c;
+		--oa-surface-alt: #1f1d1d;
+		--oa-surface-hover: #3a3636;
+		--oa-line: #45403f;
+		--oa-line-strong: #5f5957;
+		--oa-fg: #e5e0df;
+		--oa-fg-strong: #ffffff;
+		--oa-fg-muted: #b5b0af;
+		--oa-fg-faint: #857f7e;
+
+		--oa-accent-ink: #ffa44f;
+		--oa-accent-soft: #3d2510;
+
+		--oa-success: #2ea043;
+		--oa-success-ink: #4ac26b;
+		--oa-success-soft: #16301e;
+		--oa-warning: #fbbf24;
+		--oa-warning-ink: #fbbf24;
+		--oa-warning-soft: #3a2e10;
+		--oa-danger: #c4302b;
+		--oa-danger-ink: #ff7b72;
+		--oa-danger-soft: #3d1a19;
+		--oa-info: #6cb6ff;
+		--oa-info-ink: #6cb6ff;
+		--oa-info-soft: #15263b;
+	}
+}
+
+:root[data-theme='dark'] {
+	--oa-canvas: #272525;
+	--oa-surface: #2f2c2c;
+	--oa-surface-alt: #1f1d1d;
+	--oa-surface-hover: #3a3636;
+	--oa-line: #45403f;
+	--oa-line-strong: #5f5957;
+	--oa-fg: #e5e0df;
+	--oa-fg-strong: #ffffff;
+	--oa-fg-muted: #b5b0af;
+	--oa-fg-faint: #857f7e;
+
+	--oa-accent-ink: #ffa44f;
+	--oa-accent-soft: #3d2510;
+
+	--oa-success: #2ea043;
+	--oa-success-ink: #4ac26b;
+	--oa-success-soft: #16301e;
+	--oa-warning: #fbbf24;
+	--oa-warning-ink: #fbbf24;
+	--oa-warning-soft: #3a2e10;
+	--oa-danger: #c4302b;
+	--oa-danger-ink: #ff7b72;
+	--oa-danger-soft: #3d1a19;
+	--oa-info: #6cb6ff;
+	--oa-info-ink: #6cb6ff;
+	--oa-info-soft: #15263b;
+}

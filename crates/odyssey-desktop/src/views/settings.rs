@@ -2,8 +2,8 @@ use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_server::firmware::FirmwareChannel;
 
+use crate::components::Page;
 use crate::components::firmware_update::{FIRMWARE_CHANNEL, ensure_firmware_channel_loaded};
-use crate::components::{CARD_CLASS, CARD_TITLE_CLASS, Page};
 
 #[component]
 pub fn Settings() -> Element {
@@ -28,8 +28,8 @@ pub fn Settings() -> Element {
         Page {
             title: "Settings",
 
-            div { class: "{CARD_CLASS} space-y-4",
-                h2 { class: CARD_TITLE_CLASS, "Firmware updates" }
+            div { class: "card space-y-4",
+                h2 { class: "card-title", "Firmware updates" }
 
                 for (channel, label, help) in [
                     (FirmwareChannel::Stable, "Stable", "Firmware that has been tested and promoted. Recommended."),
@@ -44,24 +44,24 @@ pub fn Settings() -> Element {
                             onchange: move |_| choose(channel),
                         }
                         span {
-                            span { class: "block text-sm font-medium text-gray-900 dark:text-white", {label} }
-                            span { class: "block text-sm text-gray-600 dark:text-gray-300", {help} }
+                            span { class: "block text-sm font-medium text-fg-strong", {label} }
+                            span { class: "block text-sm text-fg-muted", {help} }
                         }
                     }
                 }
 
                 if let Some(error) = save_error() {
                     p {
-                        class: "text-sm text-red-600 dark:text-red-400",
+                        class: "text-sm text-danger-ink",
                         role: "alert",
                         "Applied for now, but could not be saved, so it resets when the app restarts: {error}"
                     }
                 }
             }
 
-            div { class: "{CARD_CLASS} space-y-1",
-                h2 { class: CARD_TITLE_CLASS, "About" }
-                p { class: "text-sm text-gray-600 dark:text-gray-300",
+            div { class: "card space-y-1",
+                h2 { class: "card-title", "About" }
+                p { class: "text-sm text-fg-muted",
                     {format!("Odyssey Desktop v{}", env!("CARGO_PKG_VERSION"))}
                 }
             }

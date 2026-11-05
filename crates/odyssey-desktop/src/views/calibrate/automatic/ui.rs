@@ -2,26 +2,25 @@
 
 use dioxus::prelude::*;
 
-pub(super) const PRIMARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-7 py-3 text-lg font-semibold text-white shadow hover:bg-blue-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 disabled:opacity-40 disabled:pointer-events-none";
-pub(super) const SECONDARY_BUTTON: &str = "inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-5 py-3 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600 dark:focus-visible:ring-gray-600 disabled:opacity-40 disabled:pointer-events-none";
-pub(super) const CARD: &str = "rounded-xl bg-white p-5 shadow dark:bg-gray-700";
+pub(super) const PRIMARY_BUTTON: &str = "btn btn-primary btn-lg";
+pub(super) const SECONDARY_BUTTON: &str = "btn btn-secondary btn-lg";
+pub(super) const CARD: &str = "card";
 
 /// A text-only button that reads as a link.
-pub(super) const LINK_BUTTON: &str = "text-base font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:text-blue-300 dark:hover:text-blue-100";
+pub(super) const LINK_BUTTON: &str = "link text-base";
 
 /// A one-line warning box.
-pub(super) const AMBER_ALERT: &str = "rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100";
+pub(super) const AMBER_ALERT: &str = "alert alert-warning text-base";
 
 /// A spinner beside what is being waited for.
-pub(super) const WORKING_ROW: &str =
-    "flex items-center gap-3 text-base text-gray-600 dark:text-gray-300";
+pub(super) const WORKING_ROW: &str = "flex items-center gap-3 text-base text-fg-muted";
 
 /// A one-line hint box with an icon.
-pub(super) const INFO_NOTE: &str = "flex items-start gap-3 rounded-xl bg-sky-50 px-4 py-3 text-base text-sky-900 dark:bg-sky-950/50 dark:text-sky-100";
+pub(super) const INFO_NOTE: &str = "alert alert-info flex items-start gap-3 text-base";
 
 /// The empty stage where the live camera picture goes.
 pub(super) const CAMERA_PLACEHOLDER: &str =
-    "flex aspect-video w-full items-center justify-center rounded-xl bg-gray-900 text-gray-400";
+    "stage flex aspect-video w-full items-center justify-center";
 
 /// Element id of the step's main button, so the wizard can focus it and Enter
 /// does the obvious thing.
@@ -47,9 +46,9 @@ pub fn StepPage(
         div {
             class: "flex flex-col gap-5",
             div {
-                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white", {title} }
+                h1 { class: "text-3xl font-bold text-fg-strong", {title} }
                 if let Some(subtitle) = subtitle {
-                    p { class: "mt-1 text-lg text-gray-600 dark:text-gray-300", {subtitle} }
+                    p { class: "mt-1 text-lg text-fg-muted", {subtitle} }
                 }
             }
             {children}
@@ -64,12 +63,12 @@ pub fn Details(summary: Option<String>, children: Element) -> Element {
     let summary = summary.unwrap_or_else(|| "Details".into());
     rsx! {
         details {
-            class: "group rounded-xl border border-gray-200 bg-white/60 px-4 py-3 dark:border-gray-600 dark:bg-gray-700/50",
+            class: "group rounded-xl border border-line bg-surface-alt px-4 py-3",
             summary {
-                class: "cursor-pointer select-none text-base font-medium text-gray-700 dark:text-gray-200",
+                class: "cursor-pointer select-none text-base font-medium text-fg",
                 {summary}
             }
-            div { class: "mt-3 flex flex-col gap-2 text-sm text-gray-700 dark:text-gray-200", {children} }
+            div { class: "mt-3 flex flex-col gap-2 text-sm text-fg", {children} }
         }
     }
 }
@@ -80,7 +79,7 @@ pub fn Fact(label: String, value: String) -> Element {
     rsx! {
         div {
             class: "flex justify-between gap-4",
-            span { class: "text-gray-500 dark:text-gray-400", {label} }
+            span { class: "text-fg-muted", {label} }
             span { class: "text-right tabular-nums", {value} }
         }
     }

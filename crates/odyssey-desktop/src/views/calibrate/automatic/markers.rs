@@ -62,7 +62,7 @@ pub fn MarkersStep(wizard: Wizard) -> Element {
             MarkerPreviewView { wizard }
 
             div {
-                class: "rounded-xl bg-white p-4 shadow dark:bg-gray-700",
+                class: "card p-4",
                 Slider {
                     id: "ir-exposure",
                     label: "Marker brightness",
@@ -136,7 +136,7 @@ fn MarkerPreviewView(wizard: Wizard) -> Element {
                 {
                     // A blob matched to one of the six markers is green and numbered.
                     let marker = frame.matched.and_then(|m| m.iter().position(|&b| b == i));
-                    let color = if marker.is_some() { "#22c55e" } else { "#f59e0b" };
+                    let color = if marker.is_some() { "var(--oa-success)" } else { "var(--oa-warning)" };
                     rsx! {
                         circle {
                             key: "{i}",
@@ -144,14 +144,14 @@ fn MarkerPreviewView(wizard: Wizard) -> Element {
                             cy: "{blob[1]}",
                             r: "{radius}",
                             fill: "none",
-                            stroke: color,
+                            style: "stroke: {color}",
                             stroke_width: "{line}",
                         }
                         if let Some(marker) = marker {
                             text {
                                 x: "{f64::from(blob[0]) + radius * 1.3}",
                                 y: "{f64::from(blob[1]) - radius * 1.1}",
-                                fill: color,
+                                style: "fill: {color}",
                                 font_size: "{radius * 1.7}",
                                 font_weight: "700",
                                 "{marker + 1}"
@@ -192,7 +192,7 @@ fn MarkerRules() -> Element {
                     key: "{title}",
                     class: "flex flex-col gap-0.5",
                     span { class: "font-medium", {title} }
-                    span { class: "text-gray-600 dark:text-gray-300", {text} }
+                    span { class: "text-fg-muted", {text} }
                 }
             }
         }

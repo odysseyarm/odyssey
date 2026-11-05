@@ -7,14 +7,10 @@ use odyssey_hub_common::device::Device;
 use super::device_signals::{DeviceSignals, MAX_SHOT_DELAY_MS};
 use crate::hub::HubContext;
 
-const BUTTON: &str = "btn-secondary";
+const BUTTON: &str = "btn btn-secondary btn-sm";
 
-const STEP_BUTTON_START: &str = "bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-600 dark:border-gray-600 \
-                                hover:bg-gray-200 border border-gray-300 rounded-s-lg p-2 h-10 focus:ring-gray-100 \
-                                dark:focus:ring-gray-700 focus:ring-2 focus:outline-none";
-const STEP_BUTTON_END: &str = "bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-600 dark:border-gray-600 \
-                                hover:bg-gray-200 border border-gray-300 rounded-e-lg p-2 h-10 focus:ring-gray-100 \
-                                dark:focus:ring-gray-700 focus:ring-2 focus:outline-none";
+const STEP_BUTTON: &str =
+    "bg-surface-alt hover:bg-surface-hover border border-fg-faint/70 p-2 h-10 disabled:opacity-50";
 
 /// The shot delay a typed value stands for: out-of-range numbers stick to the
 /// nearest end of the range.
@@ -36,7 +32,7 @@ pub(super) fn ShotDelayControl(
 
             label {
                 r#for: "shot-delay-input-{slot}",
-                class: "text-sm text-gray-900 dark:text-white",
+                class: "text-sm text-fg-strong",
                 "Shot Delay (ms):"
             }
 
@@ -45,7 +41,7 @@ pub(super) fn ShotDelayControl(
 
                 button {
                     id: "decrement-button",
-                    class: STEP_BUTTON_START,
+                    class: "{STEP_BUTTON} rounded-s-lg",
                     disabled: pending(),
                     onclick: move |_| {
                         let delay_ms = signals.shot_delay_ms();
@@ -54,7 +50,7 @@ pub(super) fn ShotDelayControl(
                         }
                     },
                     svg {
-                        class: "w-3 h-3 text-gray-900 dark:text-white",
+                        class: "w-3 h-3 text-fg-strong",
                         xmlns: "http://www.w3.org/2000/svg",
                         fill: "none",
                         view_box: "0 0 18 2",
@@ -75,10 +71,7 @@ pub(super) fn ShotDelayControl(
                     id: "shot-delay-input-{slot}",
                     disabled: pending(),
                     value: "{signals.shot_delay}",
-                    class: "bg-gray-50 border-x-0 border-gray-300 h-10 text-center text-gray-900 text-sm \
-                            focus:ring-blue-500 focus:border-blue-500 block w-full py-1.5 \
-                            dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 \
-                            dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500",
+                    class: "field rounded-none border-x-0 h-10 text-center block w-full py-1.5",
                     oninput: move |e| {
                         if let Ok(typed) = e.value().parse::<i32>() {
                             signals.set_shot_delay_ms(clamp_shot_delay(typed));
@@ -88,7 +81,7 @@ pub(super) fn ShotDelayControl(
 
                 button {
                     id: "increment-button",
-                    class: STEP_BUTTON_END,
+                    class: "{STEP_BUTTON} rounded-e-lg",
                     disabled: pending(),
                     onclick: move |_| {
                         let delay_ms = signals.shot_delay_ms();
@@ -97,7 +90,7 @@ pub(super) fn ShotDelayControl(
                         }
                     },
                     svg {
-                        class: "w-3 h-3 text-gray-900 dark:text-white",
+                        class: "w-3 h-3 text-fg-strong",
                         xmlns: "http://www.w3.org/2000/svg",
                         fill: "none",
                         view_box: "0 0 18 18",

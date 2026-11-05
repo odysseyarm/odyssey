@@ -36,11 +36,11 @@ pub fn Calibrate() -> Element {
                 Link {
                     key: "{method.title}",
                     to: (method.route)(),
-                    class: "flex items-center gap-4 rounded-lg bg-white p-5 shadow hover:ring-4 hover:ring-blue-200 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:bg-gray-700 dark:hover:ring-blue-900",
-                    IconView { icon: method.icon, class: "size-10 shrink-0 text-blue-600 dark:text-blue-400".to_string() }
+                    class: "card flex items-center gap-4 p-5 transition-colors hover:border-accent-ink",
+                    IconView { icon: method.icon, class: "size-10 shrink-0 text-accent-ink".to_string() }
                     div {
-                        div { class: "text-lg font-semibold text-gray-900 dark:text-white", "{method.title}" }
-                        div { class: "text-sm text-gray-600 dark:text-gray-300", "{method.description}" }
+                        div { class: "text-lg font-semibold text-fg-strong", "{method.title}" }
+                        div { class: "text-sm text-fg-muted", "{method.description}" }
                     }
                 }
             }

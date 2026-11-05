@@ -109,16 +109,16 @@ pub(super) fn DeviceRow(hub: Signal<HubContext>, device: Device) -> Element {
 
     rsx! {
         div {
-            class: "flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-600 rounded-lg",
+            class: "flex items-center justify-between p-3 bg-surface-alt rounded-lg",
             div {
                 class: "flex items-center gap-2",
                 span {
-                    class: "text-sm font-mono text-gray-700 dark:text-gray-200",
+                    class: "text-sm font-mono text-fg",
                     "{device_label(&device)}"
                 }
                 if !state.status.read().is_empty() {
                     span {
-                        class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                        class: "text-xs text-fg-muted italic",
                         "{state.status}"
                     }
                 }

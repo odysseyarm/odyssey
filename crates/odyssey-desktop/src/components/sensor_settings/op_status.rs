@@ -44,23 +44,23 @@ pub(super) fn StatusLine(status: OpStatus) -> Element {
     match status {
         OpStatus::Idle => rsx! {},
         OpStatus::Busy(msg) => rsx! {
-            span { class: "text-xs text-gray-500 dark:text-gray-400 italic", {msg} }
+            span { class: "text-xs text-fg-muted italic", {msg} }
         },
         OpStatus::Done(msg) => rsx! {
-            span { class: "text-xs text-green-600 dark:text-green-400", {msg} }
+            span { class: "text-xs text-success-ink", {msg} }
         },
         OpStatus::Failed { summary, detail } => rsx! {
             div {
-                class: "text-xs text-red-600 dark:text-red-400 space-y-1 basis-full",
+                class: "text-xs text-danger-ink space-y-1 basis-full",
                 p { {summary} }
                 if let Some(detail) = detail {
                     details {
                         summary {
-                            class: "cursor-pointer text-gray-500 dark:text-gray-400 select-none",
+                            class: "cursor-pointer text-fg-muted select-none",
                             "Technical details"
                         }
                         p {
-                            class: "mt-1 font-mono text-[11px] text-gray-500 dark:text-gray-400 break-all",
+                            class: "mt-1 font-mono text-[11px] text-fg-muted break-all",
                             {detail}
                         }
                     }

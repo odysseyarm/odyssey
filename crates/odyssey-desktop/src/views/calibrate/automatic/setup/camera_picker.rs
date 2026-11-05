@@ -51,9 +51,9 @@ pub(super) fn CameraPicker(wizard: Wizard) -> Element {
                     {
                         let selected = chosen.as_ref().is_some_and(|c| c.id == camera.id);
                         let class = if selected {
-                            "border-blue-600 bg-blue-50 dark:bg-blue-950/50 dark:border-blue-400"
+                            "border-accent-ink bg-accent-soft"
                         } else {
-                            "border-gray-300 bg-white hover:border-blue-400 dark:border-gray-500 dark:bg-gray-800"
+                            "border-line bg-surface hover:border-accent-ink"
                         };
                         let id = camera.id.clone();
                         rsx! {
@@ -62,18 +62,18 @@ pub(super) fn CameraPicker(wizard: Wizard) -> Element {
                                 r#type: "button",
                                 role: "radio",
                                 aria_checked: selected,
-                                class: "flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:focus-visible:ring-blue-800 {class}",
+                                class: "flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left {class}",
                                 onclick: move |_| *wizard.camera_choice.write() = Some(id.clone()),
-                                IconView { icon: Icon::Camera, class: "size-7 shrink-0 text-blue-600 dark:text-blue-400".to_string() }
+                                IconView { icon: Icon::Camera, class: "size-7 shrink-0 text-accent-ink".to_string() }
                                 span {
                                     class: "flex min-w-0 flex-col",
-                                    span { class: "text-lg font-medium text-gray-900 dark:text-white", "{camera.name}" }
+                                    span { class: "text-lg font-medium text-fg-strong", "{camera.name}" }
                                     if !camera.serial.is_empty() {
-                                        span { class: "text-sm text-gray-500 dark:text-gray-400", "Serial {camera.serial}" }
+                                        span { class: "text-sm text-fg-muted", "Serial {camera.serial}" }
                                     }
                                 }
                                 if selected {
-                                    IconView { icon: Icon::Check, class: "ms-auto size-6 text-blue-600 dark:text-blue-400".to_string() }
+                                    IconView { icon: Icon::Check, class: "ms-auto size-6 text-accent-ink".to_string() }
                                 }
                             }
                             if let Some(warning) = camera.link.warning() {
@@ -101,14 +101,14 @@ pub(super) fn NoCamera(
 ) -> Element {
     rsx! {
         div {
-            class: "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-gray-300 px-4 py-6 text-center dark:border-gray-500",
-            IconView { icon: Icon::Camera, class: "size-10 text-gray-400".to_string() }
-            div { class: "text-xl font-semibold text-gray-900 dark:text-white", {title} }
-            div { class: "text-base text-gray-600 dark:text-gray-300", {detail} }
+            class: "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line px-4 py-6 text-center",
+            IconView { icon: Icon::Camera, class: "size-10 text-fg-faint".to_string() }
+            div { class: "text-xl font-semibold text-fg-strong", {title} }
+            div { class: "text-base text-fg-muted", {detail} }
             {children}
             if !technical.is_empty() {
                 details {
-                    class: "w-full text-left text-sm text-gray-500 dark:text-gray-400",
+                    class: "w-full text-left text-sm text-fg-muted",
                     summary { class: "cursor-pointer text-center", "Details" }
                     div {
                         class: "mt-2 flex flex-col gap-1",
@@ -141,14 +141,14 @@ pub(super) fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
                         Delivery::Download => rsx! { DownloadSdk { wizard } },
                         Delivery::Installer => rsx! {
                             p {
-                                class: "max-w-xl text-sm text-gray-600 dark:text-gray-300",
+                                class: "max-w-xl text-sm text-fg-muted",
                                 "This copy of Odyssey doesn't download the camera software. To add Orbbec camera support, run the \
                                  Odyssey installer again, choose Change, and tick \"Orbbec camera support\"."
                             }
                         },
                         Delivery::Offline => rsx! {
                             p {
-                                class: "max-w-xl text-sm text-gray-600 dark:text-gray-300",
+                                class: "max-w-xl text-sm text-fg-muted",
                                 "Offline mode is on, so Odyssey won't download the camera software. Install it from \
                                  the full Odyssey installer (the \"Orbbec camera support\" option), or ask your \
                                  administrator."

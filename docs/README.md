@@ -4,6 +4,7 @@
 |---|---|---|
 | `sdk/` | Developers building on Odyssey with the client SDK | [odysseyarm.com/developers](https://odysseyarm.com/developers/) |
 | `contributing/` | People working on this repository | Here on GitHub only |
+| `design/` | Anyone designing for Odyssey Arm: website, apps, games ([style guide](design/README.md), [tokens](design/tokens.css)) | Here on GitHub only |
 
 The website ([odysseyarm/odysseyarm.github.io](https://github.com/odysseyarm/odysseyarm.github.io))
 copies `sdk/` in when it builds. Docs for people using Odyssey, rather than

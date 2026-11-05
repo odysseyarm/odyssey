@@ -6,8 +6,9 @@ use super::size_box::SizeBox;
 use crate::views::calibrate::automatic::settings::SizeField;
 use crate::views::calibrate::automatic::wizard::Wizard;
 
-const SIZE_FIELD_SELECTED: &str = "bg-blue-600 px-4 py-2 text-base font-medium text-white focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300";
-const SIZE_FIELD_IDLE: &str = "bg-white px-4 py-2 text-base font-medium text-gray-800 hover:bg-gray-100 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700";
+const SIZE_FIELD_SELECTED: &str = "bg-accent px-4 py-2 text-base font-medium text-on-accent";
+const SIZE_FIELD_IDLE: &str =
+    "bg-surface px-4 py-2 text-base font-medium text-fg hover:bg-surface-hover";
 
 #[component]
 pub(super) fn ProjectorSize(wizard: Wizard) -> Element {
@@ -16,17 +17,17 @@ pub(super) fn ProjectorSize(wizard: Wizard) -> Element {
         div {
             class: "flex flex-col gap-3",
             p {
-                class: "text-lg font-medium text-gray-900 dark:text-white",
+                class: "text-lg font-medium text-fg-strong",
                 "We'll measure the picture with the camera."
             }
             p {
-                class: "text-base text-gray-600 dark:text-gray-300",
+                class: "text-base text-fg-muted",
                 "If you happen to know how big the picture is, type it in for a slightly more exact result. Otherwise leave it empty."
             }
             div {
                 role: "radiogroup",
                 aria_label: "Which size do you know?",
-                class: "inline-flex w-fit overflow-hidden rounded-lg border border-gray-300 dark:border-gray-500",
+                class: "inline-flex w-fit overflow-hidden rounded-lg border border-line",
                 for (option, label) in [(SizeField::Diagonal, "Diagonal"), (SizeField::Width, "Width")] {
                     button {
                         key: "{label}",
