@@ -1,6 +1,6 @@
 [package]
 name = "odyssey-desktop"
-version = "0.6.7"
+version = "0.7.0"
 edition.workspace = true
 default-run = "odyssey-desktop"
 
