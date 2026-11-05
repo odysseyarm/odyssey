@@ -592,7 +592,7 @@ def up_glyph(s, c, up, color):
 
 
 def engines():
-    s = Svg(760, 700, "Axis conventions in common engines",
+    s = Svg(760, 636, "Axis conventions in common engines",
             "Two hands make the axis sign: thumb +X pointing right, index finger +Y up, "
             "middle finger +Z. On the right hand, palm toward you, the middle finger points at "
             "you; on the left hand, back toward you, it points away. Below them, a two-by-two "
@@ -601,13 +601,13 @@ def engines():
             "OpenGL. Unity is left-handed with Y up and forward along +Z. Blender is "
             "right-handed with Z up and forward along -Y. Unreal Engine is left-handed with Z "
             "up and forward along +X.")
-    X0, Y0, CW, CH, G = 136, 322, 297, 156, 14
+    X0, Y0, CW, CH, G = 136, 258, 297, 156, 14
     heads = [("Right-handed", "right", "Z points toward you"), ("Left-handed", "left", "Z points away from you")]
     for i, (title, side, ztext) in enumerate(heads):
         mx = X0 + i * (CW + G) + CW / 2
         text(s, mx, 30, title, "l b", anchor="middle")
         text(s, mx, 52, ztext, "s m", anchor="middle")
-        axis_hand(s, mx - 10, 222, 0.86, side)
+        axis_hand(s, mx - 6, 178, 0.6, side)
     up_glyph(s, (64, Y0 + 92), "Y", "var(--y)")
     up_glyph(s, (64, Y0 + CH + G + 92), "Z", "var(--z)")
     cells = [
