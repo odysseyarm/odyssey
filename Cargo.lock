@@ -7688,7 +7688,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-desktop"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "backon",
  "base64 0.22.1",
