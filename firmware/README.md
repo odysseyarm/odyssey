@@ -95,6 +95,11 @@ stack into static RAM. Linker RAM usage excludes stack space; inspect prologue
 Object-mode queues use thread-mode mutexes and must only be accessed from the
 application executor.
 
+Both ATSlite applications arm the Cortex-M33 stack limit (MSPLIM) at the end of
+static RAM in `__pre_init` (`atslite-common/src/nrf5340_init.rs`). A stack
+overflow raises a UsageFault at the instruction that crosses the limit, which
+probe-rs reports as a HardFault with `CFSR.STKOF` set, instead of corrupting statics.
+
 The calibration library requires native OpenCV. The Nix development shell supplies
 OpenCV and clang include paths; Windows ChArUco detection uses
 [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe).

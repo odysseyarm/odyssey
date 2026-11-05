@@ -1,6 +1,23 @@
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource, LfxoCapacitance};
 use embassy_nrf::{Peripherals, pac};
 
+// Arms the Cortex-M33 stack limit (MSPLIM) at the end of .uninit before any Rust frame exists,
+// so a stack overflow into statics raises a UsageFault at the `sub sp` that crosses it instead
+// of corrupting RAM. Assembly because cortex-m-rt calls `__pre_init` before RAM is initialised.
+// MSPLIM ignores bits [2:0], so the limit is rounded up to keep the last .uninit word covered.
+core::arch::global_asm!(
+    ".section .text.__pre_init,\"ax\"",
+    ".global __pre_init",
+    ".type __pre_init,%function",
+    ".thumb_func",
+    "__pre_init:",
+    "ldr r0, =_stack_end",
+    "adds r0, r0, #7",
+    "bic r0, r0, #7",
+    "msr MSPLIM, r0",
+    "bx lr",
+);
+
 /// Opens every flash region, EXTDOMAIN[0] and the ICMSG RX/TX RAM regions to the network core.
 unsafe fn configure_spu_for_network_core() {
     use embassy_nrf::pac::spu::vals;
