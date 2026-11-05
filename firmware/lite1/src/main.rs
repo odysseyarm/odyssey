@@ -416,6 +416,14 @@ async fn pmic_irq_task(
 
     loop {
         irq.wait_for_high().await;
+        // nPM1300 events stay latched across an nRF reset and until written to clear. A
+        // VBUS_REMOVED left over from an earlier unplug holds the IRQ line high once VBUS is
+        // back, so clear it before reading the status instead of only when VBUS is absent.
+        pmic.lock()
+            .await
+            .clear_vbusin0_event_mask(npm1300_rs::mainreg::Vbusin0EventMask::VBUS_REMOVED)
+            .await
+            .unwrap();
         if !pmic
             .lock()
             .await
@@ -424,11 +432,6 @@ async fn pmic_irq_task(
             .unwrap()
             .is_vbus_in_present
         {
-            pmic.lock()
-                .await
-                .clear_vbusin0_event_mask(npm1300_rs::mainreg::Vbusin0EventMask::VBUS_REMOVED)
-                .await
-                .unwrap();
             defmt::debug!("VBUS removed");
             power::notify_vbus_removed();
         }
