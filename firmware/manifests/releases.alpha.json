@@ -468,18 +468,18 @@
     "atslite1": {
       "firmwares": [
         {
-          "version": "0.1.21",
+          "version": "0.1.22",
           "requires_bootloader": 0,
           "requires_netcore": 0,
           "min_desktop": "0.7.0",
           "files": {
             "app-a": {
-              "sha256": "d992e9b8666d93baed5ff87cc2840cc0f472dc4a6cd0f988367c4bc31f3e2140",
-              "size": 363536
+              "sha256": "d1c6a785b1cd0cba335812c7868a7f867dde3ce942967a9c657a459821dd6edb",
+              "size": 363984
             },
             "app-b": {
-              "sha256": "a507e9cff9e4c6087f2a1b107dfa026b34b95895a11d8f6d03eaaea568885495",
-              "size": 363536
+              "sha256": "4487c432649ebd7c2ebc06d967deb63a5c9c00d8899f46489bd6371f44b07254",
+              "size": 363984
             },
             "net-core": {
               "sha256": "29bacedd13d35a7ca7af7e3c9b4283b2aa786a76801cde8ed096c043b898e27e",
@@ -493,33 +493,6 @@
             }
           },
           "released": "2026-11-05"
-        },
-        {
-          "version": "0.1.20",
-          "requires_bootloader": 0,
-          "requires_netcore": 0,
-          "min_desktop": "0.7.0",
-          "files": {
-            "app-a": {
-              "sha256": "d53c06fde6b844a93e03fa9a361671713632a38789475030e5a7db07265e3d93",
-              "size": 361296
-            },
-            "app-b": {
-              "sha256": "c4c34f88b70f5a47ff54628059d92c6161251e939a083979ac63a111f81f7cb4",
-              "size": 361296
-            },
-            "net-core": {
-              "sha256": "29bacedd13d35a7ca7af7e3c9b4283b2aa786a76801cde8ed096c043b898e27e",
-              "size": 165968,
-              "release": 2
-            },
-            "stage2-bootloader": {
-              "sha256": "ac44fa967cd9f446521c2823e2465e8d36149094c75440fefd82490766d64684",
-              "size": 44168,
-              "release": 5
-            }
-          },
-          "released": "2026-11-04"
         },
         {
           "version": "0.1.19",
