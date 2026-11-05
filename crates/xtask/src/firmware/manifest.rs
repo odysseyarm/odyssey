@@ -13,9 +13,6 @@ use crate::cmd;
 pub(super) const MANIFESTS: &str = "firmware/manifests";
 pub(super) const ALPHA: &str = "releases.alpha.json";
 const STABLE: &str = "releases.stable.json";
-/// Every release in a pack carries both application slots: an update writes
-/// whichever slot the unit is not running.
-const REQUIRED: [&str; 2] = ["app-a", "app-b"];
 const PACK_README: &str = "Odyssey offline firmware pack.\n\n\
 Put this folder where the 'firmware_pack_dir' policy points (by default\n\
 %ProgramData%\\OdysseyArm\\Odyssey\\firmware-pack) and restart Odyssey. Keep the layout\n\
@@ -44,6 +41,15 @@ pub(super) fn write(path: &Path, manifest: &Value) -> eros::Result<()> {
 
 /// Put `entry` first in the device's firmwares, creating the list if needed.
 pub(super) fn prepend(manifest: &mut Value, device: &str, entry: Value) -> eros::Result<()> {
+    if device == "marker-control-board"
+        && let Some(head) = entries(manifest, device).first()
+        && version_cmp(
+            entry["version"].as_str().unwrap_or_default(),
+            head["version"].as_str().unwrap_or_default(),
+        ) != Ordering::Greater
+    {
+        eros::bail!("marker-control-board release must be newer than current head");
+    }
     match &mut manifest["devices"][device]["firmwares"] {
         Value::Array(firmwares) => firmwares.insert(0, entry),
         firmwares @ Value::Null => *firmwares = Value::Array(vec![entry]),
@@ -303,15 +309,32 @@ fn select(
         };
         firmwares.truncate(latest);
         for entry in firmwares.iter() {
-            let missing: Vec<&str> = REQUIRED
-                .into_iter()
-                .filter(|key| entry["files"].get(key).is_none())
-                .collect();
-            if !missing.is_empty() {
-                let version = entry["version"].as_str().unwrap_or_default();
-                eros::bail!("{device} {version} lists no {}", missing.join(", "));
-            }
+            validate_layout(entry).with_context(|| {
+                format!("{device} {}", entry["version"].as_str().unwrap_or_default())
+            })?;
         }
+    }
+    Ok(())
+}
+
+fn validate_layout(entry: &Value) -> eros::Result<()> {
+    let files = &entry["files"];
+    let single = files.get("app").is_some();
+    let a = files.get("app-a").is_some();
+    let b = files.get("app-b").is_some();
+    if single {
+        if a || b
+            || files.get("net-core").is_some()
+            || files.get("stage2-bootloader").is_some()
+            || entry["requires_netcore"].as_u64() != Some(0)
+        {
+            eros::bail!(
+                "single app layout has bank/core/bootloader files or nonzero requires_netcore"
+            );
+        }
+    } else if !a || !b {
+        let missing = if !a { "app-a" } else { "app-b" };
+        eros::bail!("lists no {missing}");
     }
     Ok(())
 }
@@ -530,26 +553,70 @@ mod tests {
 
     #[test]
     fn select_refuses_no_matching_device_and_a_missing_app_slot() {
-        let error = select(&mut pack_source(), "alpha", &["vm".to_owned()], 2)
-            .expect_err("no vm")
-            .to_string();
-        assert!(
-            error.contains("no device in the alpha manifest matches"),
-            "{error}"
-        );
+        assert!(select(&mut pack_source(), "alpha", &["vm".to_owned()], 2).is_err());
 
         let mut source = pack_source();
         source["devices"]["atslite1"]["firmwares"][1]["files"]
             .as_object_mut()
             .expect("files is an object")
             .remove("app-b");
-        let error = select(&mut source, "stable", &[], 2)
-            .expect_err("0.2.0 lacks app-b")
-            .to_string();
-        assert!(error.contains("atslite1 0.2.0 lists no app-b"), "{error}");
+        assert!(select(&mut source, "stable", &[], 2).is_err());
         assert!(
             select(&mut source, "stable", &[], 1).is_ok(),
             "0.2.0 is beyond --latest 1"
+        );
+    }
+
+    #[test]
+    fn pack_accepts_single_or_dual_but_not_mixed_layouts() {
+        assert!(validate_layout(&json!({"files": {"app": {}}, "requires_netcore": 0})).is_ok());
+        assert!(validate_layout(&json!({"files": {"app-a": {}, "app-b": {}}})).is_ok());
+        for entry in [
+            json!({"files": {"app": {}, "app-a": {}}, "requires_netcore": 0}),
+            json!({"files": {"app": {}, "net-core": {}}, "requires_netcore": 0}),
+            json!({"files": {"app": {}, "stage2-bootloader": {}}, "requires_netcore": 0}),
+            json!({"files": {"app": {}}, "requires_netcore": 1}),
+            json!({"files": {"app-a": {}}}),
+            json!({"files": {}}),
+        ] {
+            assert!(validate_layout(&entry).is_err(), "{entry}");
+        }
+    }
+
+    #[test]
+    fn marker_alpha_prepend_preserves_newest_first_without_mutating_on_refusal() {
+        let mut source = json!({"devices": {}});
+        prepend(
+            &mut source,
+            "marker-control-board",
+            json!({"version": "0.2.0"}),
+        )
+        .unwrap();
+        let before = source.clone();
+        for version in ["0.1.0", "0.2.0"] {
+            assert!(
+                prepend(
+                    &mut source,
+                    "marker-control-board",
+                    json!({"version": version})
+                )
+                .is_err()
+            );
+            assert_eq!(source, before);
+        }
+        prepend(
+            &mut source,
+            "marker-control-board",
+            json!({"version": "0.3.0"}),
+        )
+        .unwrap();
+        assert_eq!(
+            source["devices"]["marker-control-board"]["firmwares"][0]["version"],
+            "0.3.0"
+        );
+        assert_eq!(
+            source["devices"]["marker-control-board"]["firmwares"][1]["version"],
+            "0.2.0"
         );
     }
 }

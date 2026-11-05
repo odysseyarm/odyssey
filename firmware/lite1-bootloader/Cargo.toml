@@ -48,4 +48,5 @@ defmt = [
 ]
 
 [profile.release]
+opt-level = "s"
 debug = 2

@@ -8,6 +8,7 @@ publish = false
 clap = { version = "4.5", features = ["derive"] }
 eros = "0.8"
 hex = "0.4"
+memory-spec = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.11"

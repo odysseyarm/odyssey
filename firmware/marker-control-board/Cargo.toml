@@ -1,0 +1,55 @@
+[package]
+name = "marker-control-board"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "nRF52833 marker control board firmware"
+
+[package.metadata.firmware]
+min-desktop = "0.7.3"
+upstream = "https://github.com/odysseyarm/marker-control-board"
+upstream-revision = "9c0779478329d84e9bfaafd6b11119c7a6ee3dea"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+test = false
+bench = false
+
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies]
+better-dfu = { path = "../better-dfu", features = ["application", "cortex-m"] }
+embassy-boot = "0.6.1"
+odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-nrf = { version = "0.9.0", features = ["nrf52833", "gpiote", "time-driver-rtc1", "time", "nfc-pins-as-gpio", "unstable-pac"] }
+embassy-time = "0.5.0"
+embassy-usb = { version = "0.5.1", default-features = false }
+embassy-sync = "0.7.2"
+embassy-futures = "0.1.2"
+embedded-storage = "0.3.1"
+cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+
+[build-dependencies]
+memory-spec = "0.3.0"
+
+[patch.crates-io]
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = 2

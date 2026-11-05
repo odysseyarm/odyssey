@@ -26,13 +26,16 @@ pub(super) enum Part {
 }
 
 impl Part {
-    /// Only dual-core boards release components on their own.
+    /// Single-core marker bootloaders are factory-only; legacy-vm has no release recipe.
     pub(super) fn krate(self, board: &Board) -> eros::Result<&Crate> {
-        let dual = board.dual_core()?;
-        Ok(match self {
-            Self::Bootloader => &board.bootloader,
-            Self::NetCore => &dual.net_core,
-        })
+        match self {
+            Self::Bootloader if board.name == "marker-control-board" => Ok(&board.bootloader),
+            Self::Bootloader => {
+                board.dual_core()?;
+                Ok(&board.bootloader)
+            }
+            Self::NetCore => Ok(&board.dual_core()?.net_core),
+        }
     }
 
     pub(super) fn dist_dir(self) -> &'static str {
@@ -47,6 +50,14 @@ impl Part {
         match self {
             Self::Bootloader => "stage2-bootloader",
             Self::NetCore => "net-core",
+        }
+    }
+
+    pub(super) fn asset_stem(self, board: &Board) -> &'static str {
+        if matches!(self, Self::Bootloader) && board.name == "marker-control-board" {
+            "bootloader"
+        } else {
+            self.stem()
         }
     }
 
@@ -122,11 +133,16 @@ fn read_counter(main_rs: &str) -> eros::Result<u32> {
 }
 
 pub(super) fn publish(board: &Board, part: Part) -> eros::Result<()> {
-    let dual = board.dual_core()?;
+    let (device, product) = if board.name == "marker-control-board" {
+        (board.name, "Marker Control Board")
+    } else {
+        let dual = board.dual_core()?;
+        (dual.device, dual.product)
+    };
     super::dist(board, part)?;
     let main_rs = part.krate(board)?.main_rs();
     let release = read_counter(&main_rs)?;
-    let tag = part.tag(dual.device, release);
+    let tag = part.tag(device, release);
     let changes = cmd::output(cmd::at(board.dir, "git").args([
         "status",
         "--porcelain",
@@ -144,7 +160,13 @@ pub(super) fn publish(board: &Board, part: Part) -> eros::Result<()> {
     if release_exists(board, &tag)? {
         eros::bail!("release {tag} already exists. Raise the counter in {main_rs}.");
     }
-    let (title, notes) = part.title_and_notes(dual.product, release);
+    let (title, mut notes) = part.title_and_notes(product, release);
+    if board.name == "marker-control-board" {
+        notes = format!(
+            "Factory USB DFU bootloader release {release} (bcdDevice {}). SWD installation only; application DFU cannot update this bootloader.",
+            bcd_device(release)
+        );
+    }
     let dist = part.dist_dir();
     if std::env::var("DRY_RUN").as_deref() == Ok("1") {
         println!("Dry run: would publish {tag} from {commit} with:");
@@ -153,7 +175,7 @@ pub(super) fn publish(board: &Board, part: Part) -> eros::Result<()> {
         }
         return Ok(());
     }
-    let stem = part.stem();
+    let stem = part.asset_stem(board);
     cmd::run(
         cmd::at(board.dir, "gh")
             .args(["release", "create", &tag, "--draft", "--target", &commit])
@@ -207,6 +229,9 @@ pub(super) fn gen_release(
     requires_netcore: u32,
     min_desktop: &str,
 ) -> eros::Result<()> {
+    if board.name == "marker-control-board" {
+        return gen_single_release(board, requires_bootloader, requires_netcore, min_desktop);
+    }
     let dual = board.dual_core()?;
     if !is_plain_version(min_desktop) {
         eros::bail!("min_desktop must be a version like 0.6.0, got '{min_desktop}'.");
@@ -298,6 +323,45 @@ fn read_digest(board: &Board, name: &str) -> eros::Result<FileDigest> {
     let path = board.path(OUTPUT_DIR).join(name);
     let data = fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
     Ok(FileDigest::of(&data))
+}
+
+fn gen_single_release(
+    board: &Board,
+    requires_bootloader: u32,
+    requires_netcore: u32,
+    min_desktop: &str,
+) -> eros::Result<()> {
+    if requires_netcore != 0 || requires_bootloader != 1 {
+        eros::bail!(
+            "marker-control-board requires bootloader 1 and requires_netcore 0; bootloader updates require SWD"
+        );
+    }
+    if !is_plain_version(min_desktop) {
+        eros::bail!("min_desktop must be a version like 0.6.0");
+    }
+    let version = cmd::package_version(board.dir)?;
+    let base = std::env::var("RELEASES_BASE_URL").unwrap_or_else(|_| RELEASES_BASE_URL.to_owned());
+    let data = download(&format!("{base}/{}-v{version}/app.bin", board.name))?;
+    if data.is_empty() {
+        eros::bail!("published app.bin is empty");
+    }
+    let app = FileDigest::of(&data);
+    let today = cmd::output(Command::new("date").arg("+%Y-%m-%d"))?;
+    let path = cmd::root().join(manifest::MANIFESTS).join(ALPHA);
+    let mut manifest = manifest::read(&path)?;
+    manifest::prepend(
+        &mut manifest,
+        board.name,
+        json!({
+            "version": version,
+            "requires_bootloader": requires_bootloader,
+            "requires_netcore": 0,
+            "min_desktop": min_desktop,
+            "files": { "app": { "sha256": app.sha256, "size": app.size } },
+            "released": today,
+        }),
+    )?;
+    manifest::write(&path, &manifest)
 }
 
 /// `MAJOR.MINOR.PATCH`, digits only.

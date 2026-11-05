@@ -21,8 +21,8 @@ impl DeviceCapabilities {
     pub const CONTROL: u8 = 0b01;
     /// Packet and event streams.
     pub const EVENTS: u8 = 0b10;
-    /// The device is in DFU mode or speaks a broken protocol, so only firmware flashing
-    /// works. `firmware_version` is then `[0, 0, 0]` and normal communication is unavailable.
+    /// Firmware flashing is available without the control protocol.
+    /// Bootloader entries report `[0, 0, 0]`; DFU-only applications also set `DFU_RUNTIME_ONLY`.
     pub const DFU: u8 = 0b100;
     /// `netcore_release` is a settled reading, not a read still in progress.
     /// Without this flag a 0 can also mean "not answered yet", which a unit shows for a
@@ -32,6 +32,8 @@ impl DeviceCapabilities {
     /// Bluetooth otherwise. There is no transport mode to choose, and
     /// `SetTransportMode` only reports the link in use.
     pub const AUTO_TRANSPORT: u8 = 0b1_0000;
+    /// Application exposes USB DFU runtime but no Odyssey control or event interfaces.
+    pub const DFU_RUNTIME_ONLY: u8 = 0b10_0000;
 
     pub const fn empty() -> Self {
         Self { bits: 0 }
@@ -79,7 +81,7 @@ pub struct Device {
     pub events_transport: EventsTransport,
     /// True while events and sensor data are arriving.
     pub events_connected: bool,
-    /// USB PID (0x520F = AtsVm, 0x5210 = AtsLite, 0x5211 = Lite1, 0x5212 = Mux), 0 if unknown.
+    /// USB application PID (0x520F VM, 0x5210 Lite, 0x5211 Lite1, 0x5212 Mux, 0x5213 marker board), 0 if unknown.
     pub product_id: u16,
     /// NUL-terminated UTF-8, at most 32 bytes plus the NUL. C layout: `uint8_t name[33]`.
     pub name: [u8; 33],

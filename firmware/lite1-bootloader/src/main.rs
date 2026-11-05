@@ -1,7 +1,9 @@
 #![no_std]
 #![no_main]
 
-use core::cell::RefCell;
+mod dfu_timeout;
+
+use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::sync::atomic::Ordering;
 use core::task::Poll;
@@ -13,6 +15,7 @@ use cortex_m_rt::exception;
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
 use embassy_executor::Spawner;
+use embassy_futures::select::select;
 use embassy_nrf::ipc::{Ipc, IpcChannel};
 use embassy_nrf::nvmc::{Nvmc, PAGE_SIZE};
 use embassy_nrf::usb::Driver;
@@ -31,6 +34,8 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 });
 
 use lite1_pcd::{PcdRegion, PcdStatusCode};
+
+const DFU_ENTRY_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Set in high RAM by the application's DFU detach; survives a soft reset.
 #[repr(C)]
@@ -586,6 +591,40 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
     }
 }
 
+fn stored_boot_state() -> BootState {
+    unsafe extern "C" {
+        static __bootloader_state_start: u32;
+    }
+    let address = &raw const __bootloader_state_start as usize + size_of::<u32>();
+    // SAFETY: The linker places the aligned BootState after the state partition magic.
+    unsafe { core::ptr::read_volatile(address as *const BootState) }
+}
+
+fn valid_resume_vectors(slot: u8) -> bool {
+    unsafe extern "C" {
+        static __bootloader_app_a_start: u32;
+        static __bootloader_app_a_end: u32;
+        static __bootloader_app_b_start: u32;
+        static __bootloader_app_b_end: u32;
+    }
+    let bank = match slot {
+        SLOT_A => {
+            (&raw const __bootloader_app_a_start as usize)
+                ..(&raw const __bootloader_app_a_end as usize)
+        }
+        SLOT_B => {
+            (&raw const __bootloader_app_b_start as usize)
+                ..(&raw const __bootloader_app_b_end as usize)
+        }
+        _ => return false,
+    };
+    // SAFETY: Linker-defined application banks contain aligned, readable vector tables.
+    let sp = unsafe { core::ptr::read_volatile(bank.start as *const u32) };
+    // SAFETY: The reset vector is the second aligned word in the application bank.
+    let reset = unsafe { core::ptr::read_volatile((bank.start + 4) as *const u32) };
+    dfu_timeout::valid_vectors(bank, sp, reset)
+}
+
 /// Picks the bank to boot from vector-table validity and the boot state, and
 /// rolls back a pending slot that failed to confirm.
 fn select_boot_bank(
@@ -998,6 +1037,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // Read any status the netcore bootloader left, then restore the RAM command from flash.
     let pcd = get_pcd_region();
+    let netcore_recovery = pcd.cmd.is_valid() || pcd.status.is_valid();
 
     if pcd.status.is_valid() {
         if let Some(status) = pcd.status.get_status() {
@@ -1049,6 +1089,7 @@ async fn main(spawner: Spawner) -> ! {
         pcd.cmd.get_image_size()
     );
 
+    let netcore_was_pending = netcore_recovery || pcd.copy_pending();
     // A terminal status from the netcore bootloader settles the update: clear the persisted command and skip DFU.
     if pcd.status.is_valid() {
         if let Some(status) = pcd.status.get_status() {
@@ -1286,6 +1327,17 @@ async fn main(spawner: Spawner) -> ! {
         netcore_dfu_pending
     );
 
+    let entry_state = stored_boot_state();
+    let confirmed_application = entry_state.is_valid()
+        && entry_state.active_slot == entry_state.pending_slot
+        && entry_state.boot_counter == 0
+        && matches!(entry_state.active_slot, SLOT_A | SLOT_B);
+    let resume_after_timeout = should_enter_dfu
+        && confirmed_application
+        && !netcore_was_pending
+        && !netcore_gave_up
+        && valid_resume_vectors(entry_state.active_slot);
+
     let (boot_offset, boot_bank_name, _boot_state) = select_boot_bank(&flash);
 
     // Stage1 swaps a new bootloader in on trial and puts the old one back at the
@@ -1396,6 +1448,7 @@ async fn main(spawner: Spawner) -> ! {
             move || flag_dfu_requested(flash_ref, boot_state)
         };
 
+        let download_started = Cell::new(false);
         let mut state = Control::new(
             updater,
             // Self-detach: the device resets itself after manifest.
@@ -1407,6 +1460,7 @@ async fn main(spawner: Spawner) -> ! {
         );
         state.set_state_flagger(&mut dfu_flagger);
         state.set_bootloader_label(concat!("BOOTLOADER ", release!()));
+        state.set_download_started_flag(&download_started);
 
         let mut builder = Builder::new(
             driver,
@@ -1439,7 +1493,22 @@ async fn main(spawner: Spawner) -> ! {
         let mut dev = builder.build();
 
         defmt::info!("USB device built, starting run loop");
-        dev.run().await;
+        if !resume_after_timeout {
+            dev.run().await;
+        } else {
+            select(
+                dev.run(),
+                dfu_timeout::abandoned_entry(Timer::after(DFU_ENTRY_TIMEOUT), &download_started),
+            )
+            .await;
+            dev.disable().await;
+            if write_boot_state(&flash, &entry_state).is_err() {
+                defmt::error!("Cannot clear abandoned DFU request; staying in recovery");
+                dev.run().await;
+            } else {
+                defmt::info!("No DFU download within 60 seconds; booting confirmed application");
+            }
+        }
     }
 
     // Booting the app while the netcore copy is still running would leave it half-written.

@@ -6,9 +6,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bootloader_devices::BootloaderDevice;
 use futures::StreamExt as _;
 use nusb::hotplug::HotplugWatch;
+use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::Event;
 use odyssey_protocol::ProductId;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
@@ -71,8 +71,8 @@ struct RunningHub {
 struct PresentUsbDevices {
     /// Opaque USB ids of devices that are Odyssey units (connected or not).
     direct_usb_ids: HashSet<String>,
-    /// Opaque USB ids of units sitting in their DFU bootloader.
-    bootloader_ids: HashSet<String>,
+    /// Opaque USB ids of DFU-only peripherals and units sitting in their bootloader.
+    dfu_ids: HashSet<String>,
 }
 
 /// USB device manager: discovers USB devices, handles hubs, and spawns per-device handlers.
@@ -92,10 +92,8 @@ struct UsbDeviceManager {
     /// reports a placeholder serial can still be matched to the device that just
     /// detached. See `migration`.
     last_uuid_by_pid: HashMap<u16, DeviceAddress>,
-    /// Opaque USB device id -> unit, for devices detected in DFU mode or with broken
-    /// protocol. These are surfaced in the device list so the user can flash firmware
-    /// even when normal communication is unavailable.
-    bootloader_devices: HashMap<String, BootloaderDevice>,
+    /// USB ids of DFU-only peripherals and recovery devices, with their device-list entries.
+    dfu_devices: HashMap<String, Device>,
     /// Devices in the last scan whose list was logged; the timer rescans every
     /// `SCAN_INTERVAL`, so an unchanged list is not logged again.
     logged_device_ids: Vec<nusb::DeviceId>,
@@ -120,7 +118,7 @@ impl UsbDeviceManager {
             hubs: Vec::new(),
             direct_usb_id_to_uuid: HashMap::new(),
             last_uuid_by_pid: HashMap::new(),
-            bootloader_devices: HashMap::new(),
+            dfu_devices: HashMap::new(),
             logged_device_ids: Vec::new(),
             #[cfg(feature = "sim")]
             simulated: None,
@@ -197,8 +195,25 @@ impl UsbDeviceManager {
             if dev_info.vendor_id() != ODYSSEY_USB_VENDOR_ID {
                 continue;
             }
+            let device_type =
+                |pid| crate::firmware::device_type_from_vid_pid(dev_info.vendor_id(), pid);
+            if device_type(dev_info.product_id()).or_else(|| {
+                dev_info
+                    .product_id()
+                    .checked_sub(0x10)
+                    .and_then(device_type)
+            }) == Some("marker-control-board")
+            {
+                self.on_marker_control_board(dev_info, &mut present).await;
+                continue;
+            }
             // Not an ATS product.
-            let Some(product_id) = ProductId::from_u16(dev_info.product_id()) else {
+            let Some(product_id) = ProductId::from_u16(dev_info.product_id()).or_else(|| {
+                dev_info
+                    .product_id()
+                    .checked_sub(0x10)
+                    .and_then(ProductId::from_u16)
+            }) else {
                 continue;
             };
             // ATS Lites in BLE mode are enumerated too, for DFU/pairing support: a unit is
@@ -215,7 +230,7 @@ impl UsbDeviceManager {
         self.scan_simulated(&mut present).await;
 
         self.reconcile_direct_usb_disconnects(&present).await;
-        self.reconcile_bootloader_disconnects(&present).await;
+        self.reconcile_dfu_disconnects(&present).await;
     }
 
     /// Stop the hub manager of every hub that is no longer plugged in (compared by

@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use board::{Board, Cores, Crate, Flash, LEGACY_ATSLITE, LEGACY_VM, LITE1};
+use board::{Board, Cores, Crate, Flash, LEGACY_ATSLITE, LEGACY_VM, LITE1, MARKER_CONTROL_BOARD};
 use eros::Context as _;
 use release::Part;
 use sha2::{Digest as _, Sha256};
@@ -36,6 +36,9 @@ pub(crate) enum Cmd {
     /// Legacy VM (nRF52840): firmware/legacy-vm and its bootloader.
     #[command(subcommand)]
     LegacyVm(Task),
+    /// Marker control board (nRF52833), single application and USB DFU bootloader.
+    #[command(subcommand)]
+    MarkerControlBoard(Task),
     /// Print the release counter a bootloader or net-core main.rs declares with
     /// `macro_rules! release { () => { N }; }`, or nothing when there is none.
     ///
@@ -54,9 +57,8 @@ pub(crate) enum Cmd {
     /// For each channel it writes OUT/releases.<channel>.json, holding the newest
     /// N releases of each device from the manifests, and downloads every file
     /// those releases list into OUT/<tag>/<name>.bin, checking each against the
-    /// size and sha256 in the manifest. Both application slots (app-a and app-b)
-    /// are always downloaded, because an update writes whichever slot the unit is
-    /// not running.
+    /// size and sha256 in the manifest. Single-image boards download app; dual-bank
+    /// boards download both app-a and app-b, whichever slot unit is not running.
     ///
     /// The result goes wherever the administrator points Odyssey's
     /// `firmware_pack_dir` policy, by default
@@ -92,9 +94,9 @@ pub(crate) enum Task {
     BuildStage1,
     /// Build the bootloader (the DFU stage2 bootloader on nRF5340 boards).
     BuildBootloader,
-    /// Build the stage2 bootloader artifacts a bootloader release publishes, into dist-bootloader/.
+    /// Build bootloader release artifacts into dist-bootloader/ (marker: factory SWD only).
     DistBootloader,
-    /// Publish the stage2 bootloader as its own GitHub release, <device>-bootloader-v<release>.
+    /// Publish bootloader GitHub release, <device>-bootloader-v<release> (marker: SWD only).
     ///
     /// Set DRY_RUN=1 to run every check and stop before publishing.
     ///
@@ -169,6 +171,7 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
         Cmd::Lite1(task) => run_task(&LITE1, task),
         Cmd::LegacyAtslite(task) => run_task(&LEGACY_ATSLITE, task),
         Cmd::LegacyVm(task) => run_task(&LEGACY_VM, task),
+        Cmd::MarkerControlBoard(task) => run_task(&MARKER_CONTROL_BOARD, task),
         Cmd::ReleaseCounter { source } => {
             let text = fs::read_to_string(&source)
                 .with_context(|| format!("could not read {}", source.display()))?;
@@ -337,7 +340,11 @@ fn build_full(board: &Board) -> eros::Result<()> {
             Image {
                 name: "app",
                 elf: board.app.elf(),
-                formats: Formats::Hex,
+                formats: if board.name == "marker-control-board" {
+                    Formats::HexAndBin
+                } else {
+                    Formats::Hex
+                },
             },
         ];
         return package(board, &images, Images::Full.merged());
@@ -463,7 +470,7 @@ fn dist(board: &Board, part: Part) -> eros::Result<()> {
     remove_dir(&dist)?;
     create_dir(&dist)?;
     let elf = krate.elf();
-    let stem = part.stem();
+    let stem = part.asset_stem(board);
     copy(&elf, &dist.join(format!("{stem}.elf")))?;
     objcopy(
         board,
@@ -530,6 +537,9 @@ fn flash(board: &Board, images: Images, erase: Erase) -> eros::Result<()> {
             "--allow-erase-all",
         ]))?;
     }
+    if board.name == "marker-control-board" && matches!(erase, Erase::Sector) {
+        erase_marker_state(board)?;
+    }
     if !matches!(board.flash, Flash::Merged) {
         erase_pages(board, erase)?;
     }
@@ -572,6 +582,37 @@ fn erase_pages(board: &Board, erase: Erase) -> eros::Result<()> {
     Ok(())
 }
 
+fn erase_marker_state(board: &Board) -> eros::Result<()> {
+    let path = cmd::root().join("firmware/memory/memory-marker-control-board.kdl");
+    let text = fs::read_to_string(&path).context("could not read marker memory layout")?;
+    let spec = match text.parse::<memory_spec::MemorySpec>() {
+        Ok(spec) => spec,
+        Err(error) => eros::bail!("invalid marker memory layout: {error}"),
+    };
+    let regions = spec.regions();
+    let state = regions
+        .get("flash")
+        .and_then(|flash| flash.get("bootloader_state"))
+        .context("marker memory layout has no flash.bootloader_state")?;
+    let blank = output("erased-state.bin");
+    fs::write(board.path(&blank), vec![0xff; state.length() as usize])
+        .context("could not write erased marker state")?;
+    cmd::run(
+        cmd::at(board.dir, "probe-rs")
+            .args([
+                "download",
+                "--chip",
+                board.chip,
+                "--binary-format",
+                "bin",
+                "--base-address",
+                &format!("{:#x}", state.origin()),
+                "--verify",
+            ])
+            .arg(blank),
+    )
+}
+
 fn flash_app(board: &Board) -> eros::Result<()> {
     build(&board.app)?;
     create_dir(&board.path(OUTPUT_DIR))?;
@@ -580,6 +621,9 @@ fn flash_app(board: &Board) -> eros::Result<()> {
     copy(&board.app.elf(), &board.path(&elf))?;
     let tool = cmd::llvm_objcopy()?;
     objcopy(board, &tool, "ihex", Path::new(&elf), Path::new(&hex))?;
+    if board.name == "marker-control-board" {
+        erase_marker_state(board)?;
+    }
     cmd::run(
         cmd::at(board.dir, "probe-rs")
             .args([

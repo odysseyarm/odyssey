@@ -1,5 +1,6 @@
 //! Firmware manifest fetching and DFU update support.
 
+mod dfu_download;
 pub mod pack;
 
 use std::collections::HashMap;
@@ -77,6 +78,7 @@ pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
     (0x1915, 0x5210, "legacy-atslite1"),
     (0x1915, 0x5211, "atslite1"),
     (0x1915, 0x5212, "dongle"),
+    (0x1915, 0x5213, "marker-control-board"),
 ];
 
 /// The product id a device enumerates under while its bootloader is running.
@@ -159,6 +161,26 @@ impl FirmwareEntry {
     /// `[major, minor, patch]`, or `None` when the version string does not parse.
     pub fn version_parts(&self) -> Option<[u16; 3]> {
         parse_version(&self.version)
+    }
+
+    /// All candidate application images, or `None` for missing or mixed single/dual-bank images.
+    pub fn application_files(&self) -> Option<impl Iterator<Item = (&'static str, &FileEntry)>> {
+        let files = match (
+            self.files.get("app"),
+            self.files.get("app-a"),
+            self.files.get("app-b"),
+        ) {
+            (Some(app), None, None)
+                if self.requires_netcore == 0
+                    && !self.files.contains_key("net-core")
+                    && !self.files.contains_key("stage2-bootloader") =>
+            {
+                [Some(("app", app)), None]
+            }
+            (None, Some(a), Some(b)) => [Some(("app-a", a)), Some(("app-b", b))],
+            _ => return None,
+        };
+        Some(files.into_iter().flatten())
     }
 }
 
@@ -649,7 +671,13 @@ pub fn find_dfu_interface(device: &nusb::Device) -> Result<u8, DfuError> {
     Err(DfuError::DfuInterfaceNotFound)
 }
 
-/// The alt setting whose string descriptor contains `slot` (e.g. "APP_A" or "APP_B").
+fn slot_label_matches(descriptor: &str, slot: &str) -> bool {
+    descriptor
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|label| label == slot)
+}
+
+/// The alt setting whose string descriptor names `slot` (e.g. "APP", "APP_A" or "APP_B").
 pub fn find_alt_for_slot(
     device: &nusb::Device,
     interface_num: u8,
@@ -673,11 +701,9 @@ pub fn find_alt_for_slot(
                         if let Ok(desc) = device
                             .get_string_descriptor(string_index, lang, Duration::from_secs(3))
                             .wait()
+                            && slot_label_matches(&desc, slot)
                         {
-                            // The descriptor contains the slot name (e.g. "APP_A").
-                            if desc.contains(slot) {
-                                return Ok(alt.alternate_setting());
-                            }
+                            return Ok(alt.alternate_setting());
                         }
                     }
                 }
@@ -687,10 +713,8 @@ pub fn find_alt_for_slot(
     Err(DfuError::AltInterfaceNotFound(slot.to_string()))
 }
 
-/// Which slot to flash, from the DFU interface's alt settings. The bootloader only
-/// exposes the inactive bank, so the string descriptor that is present names it.
-/// Returns the DFU slot name ("APP_A"/"APP_B"), the firmware file ("app-a"/"app-b")
-/// and the alt setting.
+/// Selects the inactive dual-bank slot or the single-bank staging image.
+/// Returns USB slot name, manifest file name and alternate setting.
 pub fn determine_target_slot(
     device: &nusb::Device,
     interface_num: u8,
@@ -715,7 +739,7 @@ pub fn determine_target_slot(
             );
             Ok(("APP_B", "app-b", alt))
         }
-        _ => Err(DfuError::AltInterfaceNotFound("APP_A or APP_B".to_string())),
+        _ => find_alt_for_slot(device, interface_num, "APP").map(|alt| ("APP", "app", alt)),
     }
 }
 
@@ -985,9 +1009,8 @@ pub fn open_dfu_device(
 /// Send DFU detach to a device running its application; it resets and re-enumerates
 /// in its bootloader.
 ///
-/// A device with the WILL_DETACH capability (like ATS Lite) resets as soon as it gets
-/// the DETACH request, before the control transfer completes. The host sees an
-/// endpoint stall, which DFU 1.1 allows and which counts as success here.
+/// An immediate reset can interrupt the control transfer. Transfer errors count as
+/// success only when the same device enumerates its DFU-mode interface within 10 s.
 pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), DfuError> {
     let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
@@ -1006,17 +1029,22 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
             let _ = dfu_async.usb_reset().await;
         }
         Err(e) => {
-            // A stall means a WILL_DETACH device has already reset.
-            let is_stall = matches!(
+            let reset_interrupted_transfer = matches!(
                 &e,
-                dfu_nusb::Error::Transfer(nusb::transfer::TransferError::Stall)
+                dfu_nusb::Error::Transfer(
+                    nusb::transfer::TransferError::Stall
+                        | nusb::transfer::TransferError::Fault
+                        | nusb::transfer::TransferError::Disconnected
+                )
             );
-            if !is_stall {
+            if !reset_interrupted_transfer
+                || wait_for_dfu_device(uuid, vid, pid, Duration::from_secs(10))
+                    .await
+                    .is_err()
+            {
                 return Err(e.into());
             }
-            tracing::debug!(
-                "DFU detach received stall (device reset immediately, as expected for WILL_DETACH)"
-            );
+            tracing::debug!("DFU bootloader enumerated after interrupted detach transfer: {e}");
         }
     }
 
@@ -1120,7 +1148,6 @@ where
     let interface = device.claim_interface(interface_num).wait()?;
     let dfu = DfuNusb::open(device, interface, alt)?;
     let transfer_size = dfu.functional_descriptor().transfer_size as usize;
-    let mut dfu_async = dfu.into_async_dfu();
 
     let total_size = firmware.len();
 
@@ -1132,49 +1159,8 @@ where
         transfer_size
     );
 
-    // The wrapper also records how much the library has read, which decides below
-    // whether an error at the end is the handshake or a real failure.
-    let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let mut progress_callback = progress_callback;
-    let progress_callback = {
-        let sent = std::sync::Arc::clone(&sent);
-        move |done: usize, total: usize| {
-            sent.store(done, std::sync::atomic::Ordering::Relaxed);
-            progress_callback(done, total);
-        }
-    };
     let cursor = ProgressReader::new(Cursor::new(firmware), total_size, Some(progress_callback));
-
-    // A bootloader that resets itself once it has all the data (WILL_DETACH)
-    // can drop the final status poll, which surfaces as a cancelled transfer or
-    // a stall. That is only the expected end of the download once every byte has
-    // gone out; the same errors earlier mean the device refused the image.
-    match dfu_async.download(cursor, total_size as u32).await {
-        Ok(()) => {}
-        Err(dfu_nusb::Error::Transfer(
-            nusb::transfer::TransferError::Cancelled | nusb::transfer::TransferError::Stall,
-        )) if sent.load(std::sync::atomic::Ordering::Relaxed) >= total_size => {
-            tracing::info!("Download completed (device reset during final handshake, as expected)");
-        }
-        Err(e) => return Err(e.into()),
-    }
-
-    tracing::info!("Firmware flash complete");
-
-    // Reboot into the new firmware. The device may already have reset itself after the
-    // download, so errors here are expected.
-    if let Err(e) = dfu_async.detach().await {
-        tracing::debug!(
-            "Post-flash detach error (expected if device auto-reset): {}",
-            e
-        );
-    }
-    if let Err(e) = dfu_async.usb_reset().await {
-        tracing::debug!(
-            "Post-flash USB reset error (expected if device auto-reset): {}",
-            e
-        );
-    }
+    dfu_download::download(&dfu, cursor, total_size as u32).await?;
 
     Ok(())
 }
@@ -1821,5 +1807,67 @@ mod tests {
             ReleaseSource::NetCore { release: 2 }.tag("atslite1"),
             "atslite1-netcore-v2"
         );
+    }
+
+    #[test]
+    fn single_bank_label_never_selects_a_dual_bank_image() {
+        for (descriptor, slot, matches) in [
+            ("APP", "APP", true),
+            ("APP_A", "APP", false),
+            ("APP_B", "APP", false),
+            ("@APP/0x11000", "APP", true),
+            ("APP_A", "APP_A", true),
+            ("APP_B", "APP_A", false),
+            ("BOOTLOADER 1", "BOOTLOADER", true),
+        ] {
+            assert_eq!(
+                slot_label_matches(descriptor, slot),
+                matches,
+                "{descriptor:?} {slot:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn application_layout_rejects_missing_mixed_and_single_core_auxiliary_images() {
+        for (names, required_netcore, expected) in [
+            (vec![], 0, None),
+            (vec!["app"], 0, Some(vec!["app"])),
+            (vec!["app-a"], 0, None),
+            (vec!["app-b"], 0, None),
+            (vec!["app-a", "app-b"], 0, Some(vec!["app-a", "app-b"])),
+            (vec!["app", "app-a"], 0, None),
+            (vec!["app", "app-b"], 0, None),
+            (vec!["app", "app-a", "app-b"], 0, None),
+            (vec!["app", "net-core"], 0, None),
+            (vec!["app", "stage2-bootloader"], 0, None),
+            (vec!["app"], 1, None),
+        ] {
+            let mut entry = FirmwareEntry {
+                version: "0.1.0".into(),
+                requires_bootloader: 1,
+                requires_netcore: required_netcore,
+                min_desktop: "0.7.3".into(),
+                files: HashMap::new(),
+                released: None,
+            };
+            for name in &names {
+                entry.files.insert(
+                    (*name).into(),
+                    FileEntry {
+                        sha256: "unused".into(),
+                        size: 1,
+                        release: None,
+                    },
+                );
+            }
+            assert_eq!(
+                entry
+                    .application_files()
+                    .map(|files| files.map(|(name, _)| name).collect::<Vec<_>>()),
+                expected,
+                "{names:?} requires_netcore={required_netcore}",
+            );
+        }
     }
 }

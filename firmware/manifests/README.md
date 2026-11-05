@@ -22,10 +22,18 @@ release pins the exact component releases it was tested with.
 | Application | `<device>-v<semver>` | Cargo version | `app-a.bin`, `app-b.bin` |
 | Stage2 bootloader | `<device>-bootloader-v<N>` | counter `N` in `firmware/<board>-bootloader/src/main.rs` | `stage2-bootloader.{bin,hex,elf}` |
 | Net core | `<device>-netcore-v<N>` | counter `N` in `firmware/<board>-net-core/src/main.rs` | `net-core.{bin,hex,elf}` |
+| Marker application | `marker-control-board-v<semver>` | Cargo version | `app.{bin,hex,elf}`, `merged.hex`, factory `bootloader.{hex,elf}` |
+| Marker factory bootloader | `marker-control-board-bootloader-v<N>` | release counter | `bootloader.{bin,hex,elf}` (SWD only) |
 
 `<device>` is the manifest device key: `atslite1` (board `lite1`) or
 `legacy-atslite1` (board `legacy-atslite`). Run every command from the
 repository root.
+
+`marker-control-board` is also both board name and manifest device key. Its
+nRF52833 has one application image, no net core, and one USB DFU bootloader.
+Manifest `files` contains only `app`; `requires_bootloader` is `1` and
+`requires_netcore` is `0`. Never add `app-a`, `app-b`, `net-core`, or
+`stage2-bootloader` to this device. Bootloader cannot self-update through DFU.
 
 The bootloader counter is the `release!` literal in its `main.rs`. It is
 published as `bcdDevice = 0xF000 | N` and as the DFU label `BOOTLOADER N`, and
@@ -157,6 +165,48 @@ bridge first, then the entry that requires it.
 
 The xtask unit tests (`cargo test --manifest-path crates/xtask/Cargo.toml`) run
 these refusals against synthetic manifests and leave the committed manifests alone.
+
+### Marker control board
+
+Initial installation requires SWD: old upstream firmware has no USB DFU loader.
+`cargo xtask firmware marker-control-board build` creates `build/merged.hex`
+for factory programming and `build/app.{bin,hex,elf}` for application releases.
+`check` checks both crates; `dist-bootloader` produces independent factory
+artifacts. `flash`, `flash-chiperase`, `flash-recover`, and `flash-app` use
+`nRF52833_xxAA`; full sector flashing resets boot state from
+`firmware/memory/memory-marker-control-board.kdl`, never nRF5340 state addresses.
+Probe commands write hardware; invoke only with device owner's approval.
+
+Set `[package.metadata.firmware] min-desktop` in application Cargo.toml to oldest
+tested Desktop version; marker DFU-only discovery and single-image updates
+require **0.7.3+**. Desktop lists markers without tracker controls and verifies
+application version from USB `bcdDevice` after updating. Merge application
+version and compatibility floor to master, then push
+`marker-control-board-v<semver>` matching Cargo version.
+*Marker Control Board Release* builds application plus factory images, publishes
+immutable GitHub assets, downloads published `app.bin`, computes SHA256 and size,
+then commits newest-first alpha entry onto latest master. Existing releases are
+not overwritten; reruns accept identical manifest entries, reject changed hashes,
+and refuse older versions. Concurrent master changes make non-fast-forward push
+fail safely; rerun workflow to merge against fresh master.
+
+Manual *Marker Control Board Release* dispatch builds/uploads artifacts only.
+Factory bootloader release uses existing *Bootloader Release* workflow with
+`marker-control-board-bootloader-v1`; no separate component release is required
+before application publication. Factory images install through SWD only.
+
+Local manifest generation runs **after** publishing application assets:
+
+```
+cargo xtask firmware marker-control-board gen-release 1 0 <min_desktop>
+cargo xtask firmware promote marker-control-board <version>
+```
+
+Unlike dual-bank recipes, marker `gen-release` hashes published `app.bin` directly,
+never local build or unpublished components. Offline packs accept either single
+`app` or complete `app-a`/`app-b` layout, refusing mixed or incomplete layouts;
+single-image entries cannot carry net-core/bootloader files or nonzero net-core
+requirement. Existing checksum and relative-path checks apply unchanged.
 
 ## Schema rules
 

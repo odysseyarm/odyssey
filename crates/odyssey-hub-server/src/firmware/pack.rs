@@ -13,8 +13,8 @@
 //!
 //! An update writes whichever application slot the unit is not running, and cannot
 //! know which until it starts, so a release is only offered when **every** file its
-//! manifest entry lists is in the folder at its listed size, both application slots
-//! included. A pack that is missing a file, or holds a half-copied one, therefore
+//! manifest entry lists is in the folder at its listed size, including the single
+//! application or both relocation-specific banks. A missing or half-copied file
 //! offers less rather than starting an update that cannot finish. Each file is
 //! checked against its manifest hash again when it is read, as a download is.
 
@@ -25,9 +25,6 @@ use super::{
     FileEntry, FirmwareChannel, FirmwareEntry, FirmwareManifest, ReleaseSource,
     SUPPORTED_MANIFEST_VERSION, verify_sha256,
 };
-
-/// The application slots an update chooses between.
-const REQUIRED_FILES: [&str; 2] = ["app-a", "app-b"];
 
 /// A release left out of the offered ones, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,10 +76,8 @@ fn source_of<'a>(
 /// Everything wrong with one release in this folder.
 fn problems(dir: &Path, device: &str, entry: &FirmwareEntry) -> Vec<String> {
     let mut found = Vec::new();
-    for required in REQUIRED_FILES {
-        if !entry.files.contains_key(required) {
-            found.push(format!("the manifest lists no {required}"));
-        }
+    if entry.application_files().is_none() {
+        found.push("the manifest must list app or both app-a and app-b, not mixed images".into());
     }
     let mut keys: Vec<_> = entry.files.keys().collect();
     keys.sort();
@@ -279,6 +274,39 @@ mod tests {
         let loaded = load_manifest(&dir, FirmwareChannel::Stable).unwrap();
         assert_eq!(versions(&loaded), ["0.2.0"]);
         assert!(loaded.dropped.is_empty());
+    }
+
+    #[test]
+    fn single_core_pack_installs_without_dual_bank_or_netcore_images() {
+        let dir = scratch("single-core");
+        let image = b"single application";
+        let manifest = serde_json::json!({
+            "version": 1,
+            "devices": { "marker-control-board": { "firmwares": [{
+                "version": "0.1.0", "requires_bootloader": 1, "requires_netcore": 0,
+                "min_desktop": "0.7.3",
+                "files": { "app": { "sha256": sha(image), "size": image.len() } }
+            }] } }
+        });
+        put(&dir, "releases.alpha.json", manifest.to_string().as_bytes());
+        put(&dir, "marker-control-board-v0.1.0/app.bin", image);
+        let loaded = load_manifest(&dir, FirmwareChannel::Alpha).unwrap();
+        let entry = &loaded.manifest.devices["marker-control-board"].firmwares[0];
+        let file = &entry.files["app"];
+        assert_eq!(
+            read_file(
+                &dir,
+                "marker-control-board",
+                ReleaseSource::Application {
+                    version: &entry.version
+                },
+                "app",
+                &file.sha256,
+                file.size
+            )
+            .unwrap(),
+            image
+        );
     }
 
     #[test]

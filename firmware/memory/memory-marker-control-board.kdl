@@ -1,0 +1,21 @@
+// nRF52833_xxAA: one application, embassy-boot scratch-page swap.
+vars {
+    page_size "4K"
+}
+regions {
+    flash origin=0x0000_0000 length="512K" {
+        bootloader       origin=0x0000_0000 length="64K"
+        bootloader_state origin=0x0001_0000 length="page_size" align="page_size"
+        app_flash        origin=0x0001_1000 length="220K" align="page_size"
+        dfu              origin=0x0004_8000 length="224K" align="page_size"
+    }
+    ram origin=0x2000_0000 length="128K"
+}
+symbols {
+    __bootloader_state_start  "flash.bootloader_state.origin"
+    __bootloader_state_end    "flash.bootloader_state.end"
+    __bootloader_active_start "flash.app_flash.origin"
+    __bootloader_active_end   "flash.app_flash.end"
+    __bootloader_dfu_start    "flash.dfu.origin"
+    __bootloader_dfu_end      "flash.dfu.end"
+}

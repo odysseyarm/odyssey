@@ -59,7 +59,7 @@ pub(super) struct Board {
 }
 
 pub(super) enum Cores {
-    /// nRF52840: one application behind one bootloader.
+    /// nRF528xx: one application behind one bootloader.
     Single,
     /// nRF5340: stage1 and stage2 bootloaders, two application banks, and a net
     /// core with its own bootloader.
@@ -93,7 +93,7 @@ impl Board {
         match self.cores {
             Cores::Dual(dual) => Ok(dual),
             Cores::Single => eros::bail!(
-                "{} is single-core: it has no stage1 bootloader, second app bank, net core or released components",
+                "{} is single-core: it has no stage1 bootloader, second app bank or net core",
                 self.name
             ),
         }
@@ -255,4 +255,29 @@ pub(super) const LEGACY_VM: Board = Board {
     flash: Flash::Merged,
     clean: &[&LEGACY_VM_APP, &LEGACY_VM_BOOTLOADER],
     check: &[],
+};
+
+const MARKER_APP: Crate = Crate {
+    dir: "firmware/marker-control-board",
+    bin: "app",
+    target: NRF52840_TARGET,
+    build: LEGACY_VM_RELEASE,
+};
+const MARKER_BOOTLOADER: Crate = Crate {
+    dir: "firmware/marker-control-board-bootloader",
+    bin: "marker-control-board-bootloader",
+    target: NRF52840_TARGET,
+    build: LEGACY_VM_RELEASE,
+};
+
+pub(super) const MARKER_CONTROL_BOARD: Board = Board {
+    name: "marker-control-board",
+    dir: "firmware/marker-control-board",
+    chip: "nRF52833_xxAA",
+    app: MARKER_APP,
+    bootloader: MARKER_BOOTLOADER,
+    cores: Cores::Single,
+    flash: Flash::Merged,
+    clean: &[&MARKER_APP, &MARKER_BOOTLOADER],
+    check: &[&MARKER_APP, &MARKER_BOOTLOADER],
 };

@@ -101,13 +101,14 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
 
         match Request::try_from(req.request) {
             Ok(Request::Detach) => {
-                self.detach_start = Some(Instant::now());
-                self.timeout = Some(Duration::from_millis(req.value as u64));
                 self.state = State::AppDetach;
                 if self.attrs.contains(DfuAttributes::WILL_DETACH) {
                     trace!("Received DETACH, performing reset");
-                    self.reset();
+                    self.dfu_marker.mark_dfu();
+                    self.reset.sys_reset();
                 } else {
+                    self.detach_start = Some(Instant::now());
+                    self.timeout = Some(Duration::from_millis(req.value as u64));
                     trace!("Received DETACH, awaiting USB reset");
                 }
                 Some(OutResponse::Accepted)
@@ -183,4 +184,53 @@ pub fn usb_dfu<'d, D: Driver<'d>, MARK: DfuMarker, RST: Reset>(
 
     drop(func);
     builder.handler(handler);
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+
+    use super::*;
+
+    struct Marker<'a>(&'a Cell<bool>);
+
+    impl DfuMarker for Marker<'_> {
+        fn mark_dfu(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    struct ResetFlag<'a>(&'a Cell<bool>);
+
+    impl Reset for ResetFlag<'_> {
+        fn sys_reset(&self) {
+            self.0.set(true);
+        }
+    }
+
+    #[test]
+    fn immediate_detach_marks_and_resets_even_with_zero_timeout() {
+        let marked = Cell::new(false);
+        let reset = Cell::new(false);
+        let mut handler = Control::new(
+            Marker(&marked),
+            DfuAttributes::WILL_DETACH,
+            ResetFlag(&reset),
+        );
+        handler.interface = Some(InterfaceNumber(0));
+        let unrelated =
+            embassy_usb::control::Request::parse(&[0x21, Request::Detach as u8, 0, 0, 1, 0, 0, 0]);
+        assert!(handler.control_out(unrelated, &[]).is_none());
+        assert!(!marked.get());
+        assert!(!reset.get());
+        let detach =
+            embassy_usb::control::Request::parse(&[0x21, Request::Detach as u8, 0, 0, 0, 0, 0, 0]);
+        assert!(matches!(
+            handler.control_out(detach, &[]),
+            Some(OutResponse::Accepted)
+        ));
+        assert!(marked.get());
+        assert!(reset.get());
+        assert!(matches!(handler.state, State::AppDetach));
+    }
 }

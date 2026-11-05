@@ -1,0 +1,128 @@
+name: Marker Control Board Release
+
+on:
+  push:
+    tags: ['marker-control-board-v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marker-control-board-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate version and desktop floor
+        id: version
+        run: |
+          python3 - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          package = tomllib.loads(Path('firmware/marker-control-board/Cargo.toml').read_text())['package']
+          version = package['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version), version
+          assert re.fullmatch(r'\d+\.\d+\.\d+', package['metadata']['firmware']['min-desktop'])
+          if os.environ['GITHUB_REF_TYPE'] == 'tag':
+              assert os.environ['GITHUB_REF_NAME'] == f'marker-control-board-v{version}'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'version={version}\n')
+          PY
+      - name: Install target and tools
+        working-directory: firmware/marker-control-board
+        run: |
+          rustup target add thumbv7em-none-eabihf
+          rustup component add llvm-tools
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            firmware/marker-control-board -> target
+            firmware/marker-control-board-bootloader -> target
+      - name: Check startup and DFU boundaries
+        run: |
+          rustc --edition=2024 --test firmware/marker-control-board/src/lib.rs -o "$RUNNER_TEMP/marker-policy-tests"
+          "$RUNNER_TEMP/marker-policy-tests"
+          cargo test --manifest-path firmware/better-dfu/Cargo.toml --features dfu,application,embassy-time/std
+      - name: Build application and factory images
+        run: cargo xtask firmware marker-control-board build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: marker-control-board
+          path: |
+            firmware/marker-control-board/build/app.*
+            firmware/marker-control-board/build/bootloader.*
+            firmware/marker-control-board/build/merged.hex
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref_type == 'tag' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
+        with:
+          name: marker-control-board
+          path: dist
+      - name: Publish immutable application assets
+        run: |
+          set -eu
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
+              --title "Marker Control Board v$VERSION" \
+              --notes "app.bin installs through USB DFU. merged.hex and bootloader artifacts require SWD for initial installation; bootloader cannot self-update." \
+              dist/app.bin dist/app.elf dist/app.hex dist/merged.hex dist/bootloader.elf dist/bootloader.hex
+            gh release edit "$GITHUB_REF_NAME" --draft=false
+          fi
+          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = false
+      - name: Publish alpha manifest from published bytes
+        run: |
+          set -eu
+          # Desktop compatibility floor is versioned alongside firmware, never inferred from latest desktop.
+          min_desktop=$(python3 -c 'import tomllib; print(tomllib.load(open("firmware/marker-control-board/Cargo.toml", "rb"))["package"]["metadata"]["firmware"]["min-desktop"])')
+          git fetch origin master
+          git checkout -B manifest-update origin/master
+          # Read tagged package/source, but merge manifest onto latest master to preserve concurrent device releases.
+          gh release download "$GITHUB_REF_NAME" --pattern app.bin --dir published
+          VERSION="$VERSION" MIN_DESKTOP="$min_desktop" python3 - <<'PY'
+          import datetime, hashlib, json, os, re
+          from pathlib import Path
+          version, floor = os.environ['VERSION'], os.environ['MIN_DESKTOP']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', floor), floor
+          path = Path('firmware/manifests/releases.alpha.json')
+          manifest = json.loads(path.read_text())
+          entries = manifest['devices'].setdefault('marker-control-board', {}).setdefault('firmwares', [])
+          data = Path('published/app.bin').read_bytes()
+          assert data, 'empty app.bin'
+          entry = dict(version=version, requires_bootloader=1, requires_netcore=0, min_desktop=floor,
+                       files={'app': dict(sha256=hashlib.sha256(data).hexdigest(), size=len(data))},
+                       released=datetime.date.today().isoformat())
+          old = next((e for e in entries if e['version'] == version), None)
+          if old:
+              assert all(old[k] == entry[k] for k in entry if k != 'released'), 'published entry differs'
+          else:
+              key = lambda v: tuple(map(int, v.split('.')))
+              assert not entries or key(version) > key(entries[0]['version']), 'release older than alpha head'
+              entries.insert(0, entry)
+              tmp = path.with_suffix('.json.tmp')
+              tmp.write_text(json.dumps(manifest, indent=2) + '\n')
+              tmp.replace(path)
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add firmware/manifests/releases.alpha.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish marker-control-board $VERSION alpha manifest"
+            git push origin HEAD:master
+          fi
