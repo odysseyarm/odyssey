@@ -87,6 +87,9 @@ impl UsbDeviceManager {
         let direct_usb_id = format!("{:?}", dev_info.id());
         present.direct_usb_ids.insert(direct_usb_id.clone());
         debug!("Found direct USB device {product_id:?}, checking if already connected");
+        if self.handler_holds_usb(&direct_usb_id).await {
+            return;
+        }
 
         let Some(probed) = self
             .probe_direct_usb_device(dev_info, product_id, &direct_usb_id, present)
@@ -96,6 +99,28 @@ impl UsbDeviceManager {
         };
         self.register_direct_usb(direct_usb_id, DirectUsbMetadata::from_usb(dev_info), probed)
             .await;
+    }
+
+    /// True while a running handler owns this USB device's connection. Probing it then
+    /// can only fail with EBUSY (which nusb logs as an error), and a successful probe
+    /// would be dropped by `hand_to_existing_handler` anyway.
+    async fn handler_holds_usb(&self, direct_usb_id: &str) -> bool {
+        let Some(&uuid) = self.direct_usb_id_to_uuid.get(direct_usb_id) else {
+            return false;
+        };
+        let running = self
+            .device_handles
+            .lock()
+            .await
+            .get(&uuid)
+            .is_some_and(|device| !device.task.is_finished());
+        running
+            && self
+                .context
+                .direct_usb_handler_uuids
+                .lock()
+                .await
+                .contains(&uuid)
     }
 
     #[cfg(feature = "sim")]
