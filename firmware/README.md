@@ -87,6 +87,14 @@ DWARF debug information for probe-rs. Build with the pinned nightly and
 `cargo xtask firmware legacy-atslite build-app-a` / `build-app-b`, which rebuild the
 standard library with size optimization; no bank boundaries or BLE features are changed.
 
+Modern ATSlite keeps its object-mode packet queues in static storage. Built as
+locals they inflate `main`'s poll frame, and spawning `ble_task` (whose future
+embassy builds on the stack before moving it into its pool) then overflows the
+stack into static RAM. Linker RAM usage excludes stack space; inspect prologue
+`sub sp` sizes as well as static RAM usage when changing large buffers.
+Object-mode queues use thread-mode mutexes and must only be accessed from the
+application executor.
+
 The calibration library requires native OpenCV. The Nix development shell supplies
 OpenCV and clang include paths; Windows ChArUco detection uses
 [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe).

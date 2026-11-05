@@ -10,7 +10,7 @@ pub use donger_common::usb_device::{UsbConfigHandle, read_transfer, write_transf
 use embassy_futures::join::{join, join5};
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_nrf::usb::{Endpoint, In, Out};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
@@ -32,9 +32,10 @@ use crate::settings::PagSettings;
 mod image_state;
 use image_state::ImageOwnership;
 
-type Channel<T, const N: usize> = embassy_sync::channel::Channel<NoopRawMutex, T, N>;
-type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMutex, T, N>;
-type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
+type Channel<T, const N: usize> = embassy_sync::channel::Channel<ThreadModeRawMutex, T, N>;
+type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, ThreadModeRawMutex, T, N>;
+type Receiver<'a, T, const N: usize> =
+    embassy_sync::channel::Receiver<'a, ThreadModeRawMutex, T, N>;
 
 /// USB requests read but not handled yet. USB is read in its own loop so a multi-packet bulk
 /// OUT transfer is never cancelled half-way when a BLE request wins the race.
@@ -293,11 +294,15 @@ where
 {
     defmt::info!("[object_mode] Starting object mode");
 
-    let reports = Channel::<Packet, 64>::new();
-    let usb_requests = Channel::<UsbPacket, USB_REQUEST_QUEUE>::new();
-    let usb_replies = Channel::<UsbPacket, USB_REPLY_QUEUE>::new();
-    let image_requests = Channel::<ImageRequest, 2>::new();
-    let image_data = Channel::<Packet, IMAGE_QUEUE>::new();
+    // Packet queues live in statics: built as locals they inflate main's poll frame enough
+    // to overflow the startup stack once task spawns stack on top of it.
+    static REPORTS: Channel<Packet, 64> = Channel::new();
+    static USB_REQUESTS: Channel<UsbPacket, USB_REQUEST_QUEUE> = Channel::new();
+    static USB_REPLIES: Channel<UsbPacket, USB_REPLY_QUEUE> = Channel::new();
+    static IMAGE_REQUESTS: Channel<ImageRequest, 2> = Channel::new();
+    static IMAGE_DATA: Channel<Packet, IMAGE_QUEUE> = Channel::new();
+    let (usb_requests, usb_replies, image_requests, image_data) =
+        (&USB_REQUESTS, &USB_REPLIES, &IMAGE_REQUESTS, &IMAGE_DATA);
     let image_state = ImageState::new();
     let stream_infos = StreamInfos::new();
 
@@ -322,24 +327,24 @@ where
     let imu_task = imu_loop(
         &mut ctx.imu,
         &mut ctx.imu_int,
-        reports.sender(),
+        REPORTS.sender(),
         &stream_infos,
     );
 
     let obj_task = obj_loop(
         ctx.pag,
         &mut ctx.pag_int,
-        reports.sender(),
+        REPORTS.sender(),
         &stream_infos,
         image_requests.receiver(),
         usb_replies.sender(),
-        &image_data,
+        image_data,
         &image_state,
         ctx.usb_configured,
     );
 
     let stream_task = stream_loop(
-        reports.receiver(),
+        REPORTS.receiver(),
         usb_replies.receiver(),
         image_data.receiver(),
         &image_state,
@@ -348,7 +353,7 @@ where
         ctx.usb_configured,
     );
 
-    let battery_task = battery_loop(reports.sender(), &stream_infos);
+    let battery_task = battery_loop(REPORTS.sender(), &stream_infos);
 
     join(
         usb_read_task,
